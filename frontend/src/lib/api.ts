@@ -35,6 +35,15 @@ export interface Task {
   dueAt: string | null;
   createdAt: string;
   updatedAt: string;
+  attachments: TaskAttachment[];
+}
+
+export interface TaskAttachment {
+  id: string;
+  taskId: string;
+  name: string;
+  url: string;
+  createdAt: string;
 }
 
 export interface Team {
@@ -209,13 +218,49 @@ export async function getTasks(projectId: string): Promise<Task[]> {
 
 export async function createTask(
   projectId: string,
-  body: { title: string; description?: string; priority?: string },
+  body: { title: string; description?: string; priority?: string; dueAt?: string },
 ): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/projects/${projectId}/tasks`, {
     method: "POST",
     body: JSON.stringify(body),
   });
   return data.task;
+}
+
+export async function updateTask(
+  taskId: string,
+  body: {
+    title?: string;
+    description?: string | null;
+    priority?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    status?: "open" | "in_progress" | "review" | "done";
+    dueAt?: string | null;
+  },
+): Promise<Task> {
+  const data = await request<{ task: Task }>(`/api/tasks/${taskId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  return data.task;
+}
+
+export async function deleteTask(taskId: string): Promise<void> {
+  await request(`/api/tasks/${taskId}`, { method: "DELETE" });
+}
+
+export async function addTaskAttachment(
+  taskId: string,
+  body: { name: string; url: string },
+): Promise<TaskAttachment> {
+  const data = await request<{ attachment: TaskAttachment }>(`/api/tasks/${taskId}/attachments`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return data.attachment;
+}
+
+export async function deleteTaskAttachment(taskId: string, attachmentId: string): Promise<void> {
+  await request(`/api/tasks/${taskId}/attachments/${attachmentId}`, { method: "DELETE" });
 }
 
 export async function claimTask(taskId: string): Promise<Task> {

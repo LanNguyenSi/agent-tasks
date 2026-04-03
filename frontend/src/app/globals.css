@@ -55,3 +55,19 @@ input:focus, textarea:focus {
   outline: 2px solid var(--primary);
   outline-offset: -1px;
 }
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 1100px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-select-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
