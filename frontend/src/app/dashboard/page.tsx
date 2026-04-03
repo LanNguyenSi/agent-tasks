@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getCurrentUser, getTasks, type User, type Task } from "../../lib/api";
+import { getCurrentUser, getTasks, logout, type User, type Task } from "../../lib/api";
 
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
@@ -185,16 +185,22 @@ export default function DashboardPage() {
                 />
               )}
               <span style={{ color: "var(--muted)", fontSize: "0.875rem" }}>{user.login}</span>
-              <a
-                href="/"
+              <button
+                onClick={() => {
+                  void logout().then(() => { window.location.href = "/"; });
+                }}
                 style={{
+                  background: "none",
+                  border: "1px solid var(--border)",
                   color: "var(--muted)",
                   fontSize: "0.875rem",
-                  textDecoration: "none",
+                  padding: "0.25rem 0.75rem",
+                  borderRadius: "6px",
+                  cursor: "pointer",
                 }}
               >
                 Logout
-              </a>
+              </button>
             </>
           ) : (
             <a
