@@ -5,6 +5,7 @@ import { healthRouter } from "./routes/health.js";
 import { authRouter } from "./routes/auth.js";
 import { agentTokenRouter } from "./routes/agent-tokens.js";
 import { taskRouter } from "./routes/tasks.js";
+import { projectRouter } from "./routes/projects.js";
 import { authMiddleware } from "./middleware/auth.js";
 import type { AppVariables } from "./types/hono.js";
 
@@ -29,9 +30,11 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.use("/api/agent-tokens/*", authMiddleware);
   app.use("/api/tasks/*", authMiddleware);
   app.use("/api/projects/*", authMiddleware);
+  app.use("/api/auth/me", authMiddleware);
 
   app.route("/api/auth", authRouter);
   app.route("/api/agent-tokens", agentTokenRouter);
+  app.route("/api", projectRouter);
   app.route("/api", taskRouter);
 
   // 404

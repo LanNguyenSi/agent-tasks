@@ -1,43 +1,109 @@
 import { Hono } from "hono";
 import type { AppVariables } from "../types/hono.js";
-import { randomBytes } from "node:crypto";
-import { buildGitHubAuthorizeUrl } from "../services/auth-service.js";
+import { config } from "../config/index.js";
+import {
+  buildAuthorizationUrl,
+  exchangeCodeForToken,
+  fetchGitHubUser,
+  generateState,
+} from "../services/github-oauth.js";
+import {
+  createSessionToken,
+  verifySessionToken,
+  extractSessionCookie,
+  buildSessionCookie,
+  buildClearSessionCookie,
+} from "../services/session.js";
+import { upsertUserFromGitHub, getUserById } from "../services/user.js";
 
 export const authRouter = new Hono<{ Variables: AppVariables }>();
 
-authRouter.get("/github", async (c) => {
-  const state = randomBytes(16).toString("hex");
-  const authorizeUrl = buildGitHubAuthorizeUrl(state);
-  return c.redirect(authorizeUrl, 302);
+const oauthConfig = {
+  clientId: config.GITHUB_CLIENT_ID,
+  clientSecret: config.GITHUB_CLIENT_SECRET,
+};
+
+// ── Initiate OAuth ────────────────────────────────────────────────────────────
+
+authRouter.get("/github", (c) => {
+  const state = generateState();
+  const url = buildAuthorizationUrl(oauthConfig, state);
+
+  // Store state in cookie for CSRF protection
+  c.header("Set-Cookie", `oauth_state=${state}; HttpOnly; SameSite=Lax; Max-Age=600; Path=/`);
+
+  return c.redirect(url);
 });
 
-/**
- * GitHub OAuth callback — Wave 2 implementation.
- * Placeholder: accepts code from GitHub, exchanges for access token, upserts user.
- */
+// ── OAuth Callback ────────────────────────────────────────────────────────────
+
 authRouter.get("/github/callback", async (c) => {
   const code = c.req.query("code");
+  const state = c.req.query("state");
+  const cookieHeader = c.req.header("Cookie");
+  const storedState = cookieHeader?.match(/(?:^|;\s*)oauth_state=([^;]+)/)?.[1];
+
   if (!code) {
     return c.json({ error: "bad_request", message: "Missing code parameter" }, 400);
   }
 
-  // TODO (Wave 2): Exchange code for access token via GitHub OAuth
-  // const tokenResponse = await exchangeGitHubCode(code);
-  // const user = await upsertUserFromGitHub(tokenResponse.access_token);
-  // Set session cookie...
+  // CSRF state check
+  if (!storedState || storedState !== state) {
+    return c.json({ error: "bad_request", message: "Invalid OAuth state" }, 400);
+  }
 
-  return c.json({ message: "OAuth callback — Wave 2 implementation pending" }, 501);
+  try {
+    const tokenResponse = await exchangeCodeForToken(oauthConfig, code);
+    const githubUser = await fetchGitHubUser(tokenResponse.access_token);
+    const user = await upsertUserFromGitHub(githubUser);
+
+    const sessionToken = await createSessionToken(user.id, tokenResponse.access_token, config.SESSION_SECRET);
+    const isSecure = config.NODE_ENV === "production";
+
+    c.header("Set-Cookie", buildSessionCookie(sessionToken, isSecure));
+    c.header("Set-Cookie", "oauth_state=; Max-Age=0; Path=/"); // clear state cookie
+
+    return c.redirect(`${config.FRONTEND_URL}/dashboard`);
+  } catch (err) {
+    console.error("OAuth callback error:", err);
+    return c.redirect(`${config.FRONTEND_URL}/auth/error`);
+  }
 });
 
-authRouter.post("/logout", async (c) => {
-  // TODO (Wave 2): Invalidate session
-  return c.json({ message: "Logged out" });
-});
+// ── Current User ──────────────────────────────────────────────────────────────
 
 authRouter.get("/me", async (c) => {
-  const actor = c.get("actor");
-  if (!actor) {
-    return c.json({ error: "unauthorized", message: "Not authenticated" }, 401);
+  const cookieHeader = c.req.header("Cookie");
+  const sessionToken = extractSessionCookie(cookieHeader);
+
+  if (!sessionToken) {
+    return c.json({ user: null });
   }
-  return c.json({ actor });
+
+  const session = await verifySessionToken(sessionToken, config.SESSION_SECRET);
+  if (!session) {
+    return c.json({ user: null });
+  }
+
+  const user = await getUserById(session.userId);
+  if (!user) {
+    return c.json({ user: null });
+  }
+
+  return c.json({
+    user: {
+      id: user.id,
+      login: user.login,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+      email: user.email,
+    },
+  });
+});
+
+// ── Logout ────────────────────────────────────────────────────────────────────
+
+authRouter.post("/logout", (c) => {
+  c.header("Set-Cookie", buildClearSessionCookie());
+  return c.json({ message: "Logged out" });
 });
