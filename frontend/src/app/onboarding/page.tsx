@@ -145,7 +145,7 @@ export default function OnboardingPage() {
             </div>
 
             {error && (
-              <AlertBanner tone="danger" title="Team konnte nicht erstellt werden">
+              <AlertBanner tone="danger" title="Failed to create team">
                 {error}
               </AlertBanner>
             )}

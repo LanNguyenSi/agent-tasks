@@ -72,7 +72,7 @@ export default function HomePage() {
         <div style={{ textAlign: "center", marginBottom: "1.5rem" }}>
           <h1 style={{ fontSize: "2rem", fontWeight: 700, marginBottom: "0.5rem" }}>agent-tasks</h1>
           <p style={{ color: "var(--muted)" }}>
-            Registrierung und Login per E-Mail. GitHub-Verbindung ist optional in den Settings.
+            Register and sign in with email/password. GitHub connection is optional in settings.
           </p>
         </div>
 
@@ -116,7 +116,7 @@ export default function HomePage() {
                 fontWeight: 600,
               }}
             >
-              Registrieren
+              Register
             </button>
           </div>
 
@@ -129,7 +129,7 @@ export default function HomePage() {
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Max Mustermann"
+                  placeholder="Jane Doe"
                   style={{ width: "100%", display: "block" }}
                 />
               </div>
@@ -137,7 +137,7 @@ export default function HomePage() {
 
             <div style={{ marginBottom: "0.75rem" }}>
               <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
-                E-Mail
+                Email
               </label>
               <input
                 type="email"
@@ -151,7 +151,7 @@ export default function HomePage() {
 
             <div style={{ marginBottom: "1rem" }}>
               <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
-                Passwort
+                Password
               </label>
               <input
                 type="password"
@@ -164,7 +164,7 @@ export default function HomePage() {
             </div>
 
             {error && (
-              <AlertBanner tone="danger" title="Fehler">
+              <AlertBanner tone="danger" title="Error">
                 {error}
               </AlertBanner>
             )}
@@ -185,7 +185,7 @@ export default function HomePage() {
                 opacity: submitting ? 0.7 : 1,
               }}
             >
-              {submitting ? "Bitte warten…" : mode === "register" ? "Account erstellen" : "Einloggen"}
+              {submitting ? "Please wait…" : mode === "register" ? "Create account" : "Sign in"}
             </button>
           </form>
         </div>
@@ -200,7 +200,7 @@ export default function HomePage() {
           }}
         >
           <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginBottom: "0.625rem" }}>
-            Alternativ kannst du direkt mit GitHub einsteigen.
+            Or continue directly with GitHub.
           </p>
           <a
             href="/api/auth/github"
@@ -217,7 +217,7 @@ export default function HomePage() {
               fontWeight: 600,
             }}
           >
-            Mit GitHub anmelden
+            Continue with GitHub
           </a>
         </div>
       </div>

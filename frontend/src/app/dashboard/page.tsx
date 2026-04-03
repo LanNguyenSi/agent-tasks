@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
@@ -18,6 +18,8 @@ import {
 } from "../../lib/api";
 import AppHeader from "../../components/AppHeader";
 import AlertBanner from "../../components/ui/AlertBanner";
+import ConfirmDialog from "../../components/ui/ConfirmDialog";
+import DropdownMenu from "../../components/ui/DropdownMenu";
 
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
@@ -223,6 +225,8 @@ export default function DashboardPage() {
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
   const [hideDone, setHideDone] = useState(false);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const projectTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const activeTask = useMemo(
@@ -251,6 +255,7 @@ export default function DashboardPage() {
 
   const [savingTask, setSavingTask] = useState(false);
   const [deletingTask, setDeletingTask] = useState(false);
+  const [showDeleteTaskConfirm, setShowDeleteTaskConfirm] = useState(false);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
 
   const [editTitle, setEditTitle] = useState("");
@@ -333,6 +338,10 @@ export default function DashboardPage() {
     setEditDueAt(toDateInputValue(activeTask.dueAt));
   }, [activeTask]);
 
+  useEffect(() => {
+    if (!activeTask) setShowDeleteTaskConfirm(false);
+  }, [activeTask]);
+
   async function handleProjectChange(projectId: string) {
     if (!selectedTeamId) return;
     setSelectedProjectId(projectId);
@@ -356,7 +365,7 @@ export default function DashboardPage() {
     const hasAttachmentName = newTaskAttachmentName.trim().length > 0;
     const hasAttachmentUrl = newTaskAttachmentUrl.trim().length > 0;
     if (hasAttachmentName !== hasAttachmentUrl) {
-      setError("Für ein Start-Attachment bitte Name und URL vollständig ausfüllen.");
+      setError("For a starter attachment, both name and URL are required.");
       return;
     }
 
@@ -379,7 +388,7 @@ export default function DashboardPage() {
           });
           task = { ...task, attachments: [attachment, ...task.attachments] };
         } catch (attachmentError) {
-          setError(`Task erstellt, Attachment konnte nicht hinzugefügt werden: ${(attachmentError as Error).message}`);
+          setError(`Task created, but attachment could not be added: ${(attachmentError as Error).message}`);
         }
       }
 
@@ -415,13 +424,13 @@ export default function DashboardPage() {
 
   async function handleDeleteTask() {
     if (!activeTask) return;
-    if (!confirm(`Task \"${activeTask.title}\" wirklich löschen?`)) return;
     setDeletingTask(true);
     setError(null);
     try {
       await deleteTask(activeTask.id);
       setTasks((prev) => prev.filter((task) => task.id !== activeTask.id));
       setActiveTaskId(null);
+      setShowDeleteTaskConfirm(false);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -486,7 +495,7 @@ export default function DashboardPage() {
       />
 
       <div style={{ border: "1px solid var(--border)", background: "var(--surface)", borderRadius: "10px", padding: "0.75rem 0.9rem", marginBottom: "1rem", color: "var(--muted)", fontSize: "0.84rem" }}>
-        Flow: Projekt wählen, Task anklicken, im Modal bearbeiten.
+        Flow: choose a project, open a task, and edit it in the modal.
       </div>
 
       <section
@@ -500,19 +509,65 @@ export default function DashboardPage() {
         }}
       >
         <div>
-          <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Projekt</label>
-          <select
-            value={selectedProjectId}
-            onChange={(e) => {
-              void handleProjectChange(e.target.value);
-            }}
-            style={{ width: "100%" }}
+          <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Project</label>
+          <button
+            ref={projectTriggerRef}
+            type="button"
             disabled={loading || projects.length === 0}
+            onClick={() => setProjectMenuOpen((value) => !value)}
+            style={{
+              width: "100%",
+              background: "var(--surface)",
+              color: "var(--text)",
+              border: "1px solid var(--border)",
+              borderRadius: "8px",
+              padding: "0.5rem 0.75rem",
+              textAlign: "left",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "0.5rem",
+              opacity: loading || projects.length === 0 ? 0.7 : 1,
+            }}
+            aria-haspopup="menu"
+            aria-expanded={projectMenuOpen}
           >
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>{project.name}</option>
-            ))}
-          </select>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {projects.find((project) => project.id === selectedProjectId)?.name ?? "Select a project"}
+            </span>
+            <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>{projectMenuOpen ? "▲" : "▼"}</span>
+          </button>
+          <DropdownMenu
+            anchorRef={projectTriggerRef}
+            open={projectMenuOpen}
+            onClose={() => setProjectMenuOpen(false)}
+            align="start"
+            minWidth={260}
+            className="project-picker-menu"
+          >
+            <div role="menu" className="menu-scroll" style={{ maxHeight: "300px" }}>
+              {projects.map((project) => {
+                const active = project.id === selectedProjectId;
+                return (
+                  <button
+                    key={project.id}
+                    type="button"
+                    role="menuitem"
+                    className={`menu-option ${active ? "menu-option-active" : ""}`}
+                    onClick={() => {
+                      setProjectMenuOpen(false);
+                      if (project.id !== selectedProjectId) {
+                        void handleProjectChange(project.id);
+                      }
+                    }}
+                    title={project.name}
+                  >
+                    {project.name}
+                  </button>
+                );
+              })}
+            </div>
+          </DropdownMenu>
         </div>
 
         <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end", gap: "0.5rem", flexWrap: "wrap" }}>
@@ -542,25 +597,25 @@ export default function DashboardPage() {
         <div className="modal-overlay" onClick={closeNewTaskModal}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.7rem" }}>
-              <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>Neue Task</h3>
+              <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>New Task</h3>
               <button
                 type="button"
                 onClick={closeNewTaskModal}
                 style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: "6px", padding: "0.2rem 0.5rem" }}
               >
-                Schließen
+                Close
               </button>
             </div>
             <form onSubmit={(e) => void handleCreateTask(e)}>
               <div className="task-detail-grid" style={{ marginBottom: "0.75rem" }}>
                 <div>
                   <div style={{ marginBottom: "0.5rem" }}>
-                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Titel</label>
+                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Title</label>
                     <input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} required style={{ width: "100%" }} />
                   </div>
 
                   <div style={{ marginBottom: "0.5rem" }}>
-                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Beschreibung</label>
+                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Description</label>
                     <textarea value={newTaskDescription} onChange={(e) => setNewTaskDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
                   </div>
 
@@ -572,7 +627,7 @@ export default function DashboardPage() {
                       </select>
                     </div>
                     <div>
-                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Priorität</label>
+                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Priority</label>
                       <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value as Priority)} style={{ width: "100%" }}>
                         <option value="LOW">LOW</option>
                         <option value="MEDIUM">MEDIUM</option>
@@ -588,7 +643,7 @@ export default function DashboardPage() {
                 </div>
 
                 <div style={{ border: "1px solid var(--border)", borderRadius: "10px", padding: "0.75rem" }}>
-                  <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.45rem" }}>Start-Attachment (optional)</p>
+                  <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.45rem" }}>Starter attachment (optional)</p>
                   <input
                     value={newTaskAttachmentName}
                     onChange={(e) => setNewTaskAttachmentName(e.target.value)}
@@ -603,7 +658,7 @@ export default function DashboardPage() {
                     style={{ width: "100%" }}
                   />
                   <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginTop: "0.45rem" }}>
-                    Attachment wird direkt nach Task-Erstellung angelegt.
+                    This attachment is created immediately after task creation.
                   </p>
                 </div>
               </div>
@@ -620,7 +675,7 @@ export default function DashboardPage() {
                   fontWeight: 600,
                 }}
               >
-                {creatingTask ? "Creating…" : "Task erstellen"}
+                {creatingTask ? "Creating…" : "Create task"}
               </button>
             </form>
           </div>
@@ -632,7 +687,7 @@ export default function DashboardPage() {
           <input
             value={taskQuery}
             onChange={(e) => setTaskQuery(e.target.value)}
-            placeholder="Tasks suchen…"
+            placeholder="Search tasks..."
             style={{ width: "100%" }}
           />
           <select
@@ -640,9 +695,9 @@ export default function DashboardPage() {
             onChange={(e) => setTaskScope(e.target.value as "all" | "mine" | "overdue" | "unassigned")}
             style={{ width: "100%" }}
           >
-            <option value="all">Scope: Alle</option>
-            <option value="mine">Scope: Meine</option>
-            <option value="overdue">Scope: Überfällig</option>
+            <option value="all">Scope: All</option>
+            <option value="mine">Scope: Mine</option>
+            <option value="overdue">Scope: Overdue</option>
             <option value="unassigned">Scope: Unassigned</option>
           </select>
           <label className="board-scope-inline">
@@ -666,12 +721,12 @@ export default function DashboardPage() {
       {loading ? (
         <div style={{ color: "var(--muted)", padding: "2rem", textAlign: "center" }}>Loading…</div>
       ) : error ? (
-        <AlertBanner tone="danger" title="Fehler">
+        <AlertBanner tone="danger" title="Error">
           {error}
         </AlertBanner>
       ) : !selectedProjectId ? (
         <div style={{ border: "1px dashed var(--border)", borderRadius: "10px", padding: "2rem", textAlign: "center", color: "var(--muted)" }}>
-          Dieses Team hat noch kein Projekt. Erstelle ein Projekt auf der Teams-Seite.
+          This team has no projects yet. Create a project on the teams page.
         </div>
       ) : (
         <div className="dashboard-grid">
@@ -699,7 +754,7 @@ export default function DashboardPage() {
                 onClick={() => setActiveTaskId(null)}
                 style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: "6px", padding: "0.2rem 0.5rem" }}
               >
-                Schließen
+                Close
               </button>
             </div>
 
@@ -712,12 +767,12 @@ export default function DashboardPage() {
                 </div>
 
                 <div style={{ marginBottom: "0.5rem" }}>
-                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Titel</label>
+                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Title</label>
                   <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ width: "100%" }} />
                 </div>
 
                 <div style={{ marginBottom: "0.5rem" }}>
-                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Beschreibung</label>
+                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Description</label>
                   <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
                 </div>
 
@@ -729,7 +784,7 @@ export default function DashboardPage() {
                     </select>
                   </div>
                   <div>
-                    <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Priorität</label>
+                    <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Priority</label>
                     <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as Priority)} style={{ width: "100%" }}>
                       <option value="LOW">LOW</option>
                       <option value="MEDIUM">MEDIUM</option>
@@ -751,15 +806,15 @@ export default function DashboardPage() {
                     disabled={savingTask || deletingTask}
                     style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.45rem 0.7rem", fontWeight: 600 }}
                   >
-                    {savingTask ? "Saving…" : "Speichern"}
+                    {savingTask ? "Saving…" : "Save"}
                   </button>
                   <button
                     type="button"
-                    onClick={() => void handleDeleteTask()}
+                    onClick={() => setShowDeleteTaskConfirm(true)}
                     disabled={savingTask || deletingTask}
                     style={{ background: "transparent", color: "var(--danger)", border: "1px solid var(--danger)", borderRadius: "8px", padding: "0.45rem 0.7rem" }}
                   >
-                    {deletingTask ? "Deleting…" : "Löschen"}
+                    {deletingTask ? "Deleting…" : "Delete"}
                   </button>
                 </div>
               </div>
@@ -791,7 +846,7 @@ export default function DashboardPage() {
                 </form>
 
                 {activeTask.attachments.length === 0 ? (
-                  <p style={{ color: "var(--muted)", fontSize: "0.78rem" }}>Keine Attachments.</p>
+                  <p style={{ color: "var(--muted)", fontSize: "0.78rem" }}>No attachments.</p>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
                     {activeTask.attachments.map((attachment) => (
@@ -818,6 +873,21 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={showDeleteTaskConfirm && Boolean(activeTask)}
+        title="Delete task?"
+        message={activeTask ? `Task "${activeTask.title}" will be permanently removed.` : ""}
+        confirmLabel="Delete task"
+        cancelLabel="Keep task"
+        tone="danger"
+        busy={deletingTask}
+        onConfirm={() => void handleDeleteTask()}
+        onCancel={() => {
+          if (deletingTask) return;
+          setShowDeleteTaskConfirm(false);
+        }}
+      />
     </main>
   );
 }
