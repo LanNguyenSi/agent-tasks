@@ -1,10 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getCurrentUser, getTeams, getTasks, createTask, claimTask, transitionTask, logout, type User, type Task } from "../../lib/api";
+import { useEffect, useMemo, useState } from "react";
+import {
+  getCurrentUser,
+  getTeams,
+  getProjects,
+  getTasks,
+  createTask,
+  updateTask,
+  deleteTask,
+  addTaskAttachment,
+  deleteTaskAttachment,
+  logout,
+  type User,
+  type Team,
+  type Project,
+  type Task,
+} from "../../lib/api";
 
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
+
+type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
 const STATUS_LABELS: Record<Status, string> = {
   open: "Open",
@@ -13,103 +30,134 @@ const STATUS_LABELS: Record<Status, string> = {
   done: "Done",
 };
 
-const PRIORITY_COLORS: Record<string, string> = {
-  LOW: "#888",
-  MEDIUM: "#faa81a",
-  HIGH: "#ed4245",
-  CRITICAL: "#ff0040",
+const PRIORITY_COLORS: Record<Priority, string> = {
+  LOW: "#6b7280",
+  MEDIUM: "#f59e0b",
+  HIGH: "#ef4444",
+  CRITICAL: "#be123c",
 };
 
-function TaskCard({ task }: { task: Task }) {
+function toDateInputValue(value: string | null): string {
+  if (!value) return "";
+  return value.slice(0, 10);
+}
+
+function toIsoDateOrNull(value: string): string | null {
+  if (!value) return null;
+  return new Date(`${value}T00:00:00`).toISOString();
+}
+
+function updateUrl(teamId: string, projectId: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set("teamId", teamId);
+  url.searchParams.set("projectId", projectId);
+  window.history.replaceState({}, "", url.toString());
+}
+
+function TaskCard({
+  task,
+  active,
+  onSelect,
+}: {
+  task: Task;
+  active: boolean;
+  onSelect: (taskId: string) => void;
+}) {
   return (
-    <div
+    <button
+      type="button"
+      onClick={() => onSelect(task.id)}
       style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: "8px",
+        width: "100%",
+        textAlign: "left",
+        background: active ? "#202b3d" : "var(--surface)",
+        border: `1px solid ${active ? "#30435f" : "var(--border)"}`,
+        borderRadius: "10px",
         padding: "0.75rem",
         marginBottom: "0.5rem",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.5rem" }}>
-        <p style={{ fontWeight: 500, fontSize: "0.875rem", flexGrow: 1 }}>{task.title}</p>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.25rem" }}>
+        <p style={{ fontWeight: 600, fontSize: "0.875rem", lineHeight: 1.35 }}>{task.title}</p>
         <span
           style={{
-            display: "inline-block",
-            width: "8px",
-            height: "8px",
+            width: "9px",
+            height: "9px",
             borderRadius: "50%",
-            background: PRIORITY_COLORS[task.priority] ?? "#888",
+            background: PRIORITY_COLORS[task.priority],
             flexShrink: 0,
             marginTop: "4px",
           }}
           title={task.priority}
         />
       </div>
-      {(task.claimedByUserId || task.claimedByAgentId) && (
-        <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginTop: "0.25rem" }}>
-          {task.claimedByAgentId ? "🤖 Agent" : "👤 Human"}
+      {task.description && (
+        <p
+          style={{
+            color: "var(--muted)",
+            fontSize: "0.75rem",
+            lineHeight: 1.35,
+            marginBottom: "0.35rem",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}
+        >
+          {task.description}
         </p>
       )}
-    </div>
+      <div style={{ display: "flex", justifyContent: "space-between", color: "var(--muted)", fontSize: "0.72rem" }}>
+        <span>{task.attachments.length} attachments</span>
+        <span>{task.dueAt ? `Due ${toDateInputValue(task.dueAt)}` : "No due date"}</span>
+      </div>
+    </button>
   );
 }
 
-function KanbanBoard({ tasks }: { tasks: Task[] }) {
+function BoardColumns({
+  tasks,
+  activeTaskId,
+  onSelectTask,
+}: {
+  tasks: Task[];
+  activeTaskId: string | null;
+  onSelectTask: (taskId: string) => void;
+}) {
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(4, 1fr)",
-        gap: "1rem",
+        gridTemplateColumns: "repeat(4, minmax(220px, 1fr))",
+        gap: "0.9rem",
         overflowX: "auto",
       }}
     >
       {STATUSES.map((status) => {
-        const colTasks = tasks.filter((t) => t.status === status);
+        const columnTasks = tasks.filter((task) => task.status === status);
         return (
-          <div key={status}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: "0.75rem",
-              }}
-            >
-              <h3 style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          <section key={status}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+              <h3 style={{ fontSize: "0.78rem", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--muted)" }}>
                 {STATUS_LABELS[status]}
               </h3>
-              <span
-                style={{
-                  background: "var(--border)",
-                  color: "var(--muted)",
-                  borderRadius: "9999px",
-                  padding: "0 0.5rem",
-                  fontSize: "0.75rem",
-                  fontWeight: 600,
-                }}
-              >
-                {colTasks.length}
-              </span>
+              <span style={{ color: "var(--muted)", fontSize: "0.75rem" }}>{columnTasks.length}</span>
             </div>
-            {colTasks.length === 0 ? (
-              <div
-                style={{
-                  border: "1px dashed var(--border)",
-                  borderRadius: "8px",
-                  padding: "1rem",
-                  textAlign: "center",
-                  color: "var(--muted)",
-                  fontSize: "0.75rem",
-                }}
-              >
+            {columnTasks.length === 0 ? (
+              <div style={{ border: "1px dashed var(--border)", borderRadius: "10px", padding: "1rem", color: "var(--muted)", textAlign: "center", fontSize: "0.75rem" }}>
                 No tasks
               </div>
             ) : (
-              colTasks.map((task) => <TaskCard key={task.id} task={task} />)
+              columnTasks.map((task) => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  active={task.id === activeTaskId}
+                  onSelect={onSelectTask}
+                />
+              ))
             )}
-          </div>
+          </section>
         );
       })}
     </div>
@@ -118,250 +166,541 @@ function KanbanBoard({ tasks }: { tasks: Task[] }) {
 
 export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState<string>("");
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [tasks, setTasks] = useState<Task[]>([]);
+
   const [loading, setLoading] = useState(true);
-  const [projectId, setProjectId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
-  // New task form
   const [showNewTask, setShowNewTask] = useState(false);
-  const [newTaskTitle, setNewTaskTitle] = useState("");
-  const [newTaskPriority, setNewTaskPriority] = useState("MEDIUM");
   const [creatingTask, setCreatingTask] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskDescription, setNewTaskDescription] = useState("");
+  const [newTaskPriority, setNewTaskPriority] = useState<Priority>("MEDIUM");
+  const [newTaskDueAt, setNewTaskDueAt] = useState("");
+
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const activeTask = useMemo(
+    () => tasks.find((task) => task.id === activeTaskId) ?? null,
+    [tasks, activeTaskId],
+  );
+
+  const [savingTask, setSavingTask] = useState(false);
+  const [deletingTask, setDeletingTask] = useState(false);
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
+
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editPriority, setEditPriority] = useState<Priority>("MEDIUM");
+  const [editStatus, setEditStatus] = useState<Status>("open");
+  const [editDueAt, setEditDueAt] = useState("");
+
+  const [attachmentName, setAttachmentName] = useState("");
+  const [attachmentUrl, setAttachmentUrl] = useState("");
 
   useEffect(() => {
     void (async () => {
-      const me = await getCurrentUser();
-      if (!me) { window.location.href = "/"; return; }
-      setUser(me);
-
-      // Check if user has teams — redirect to onboarding if not
-      const teams = await getTeams();
-      if (teams.length === 0) { window.location.href = "/onboarding"; return; }
-
-      // Load tasks if projectId is set via URL params
-      const params = new URLSearchParams(window.location.search);
-      const pid = params.get("projectId");
-      if (pid) {
-        setProjectId(pid);
-        try {
-          const t = await getTasks(pid);
-          setTasks(t);
-        } catch (e) {
-          setError((e as Error).message);
+      try {
+        const me = await getCurrentUser();
+        if (!me) {
+          window.location.href = "/";
+          return;
         }
+        setUser(me);
+
+        const userTeams = await getTeams();
+        if (userTeams.length === 0) {
+          window.location.href = "/onboarding";
+          return;
+        }
+        setTeams(userTeams);
+
+        const params = new URLSearchParams(window.location.search);
+        const requestedTeamId = params.get("teamId");
+        const requestedProjectId = params.get("projectId");
+
+        const resolvedTeam =
+          userTeams.find((team) => team.id === requestedTeamId) ?? userTeams[0]!;
+        setSelectedTeamId(resolvedTeam.id);
+
+        const teamProjects = await getProjects(resolvedTeam.id);
+        setProjects(teamProjects);
+
+        if (teamProjects.length === 0) {
+          setSelectedProjectId("");
+          setTasks([]);
+          setLoading(false);
+          return;
+        }
+
+        const resolvedProject =
+          teamProjects.find((project) => project.id === requestedProjectId) ?? teamProjects[0]!;
+        setSelectedProjectId(resolvedProject.id);
+
+        const projectTasks = await getTasks(resolvedProject.id);
+        setTasks(projectTasks);
+        setActiveTaskId(projectTasks[0]?.id ?? null);
+
+        updateUrl(resolvedTeam.id, resolvedProject.id);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     })();
   }, []);
 
+  useEffect(() => {
+    if (!activeTask) return;
+    setEditTitle(activeTask.title);
+    setEditDescription(activeTask.description ?? "");
+    setEditPriority(activeTask.priority);
+    setEditStatus(activeTask.status as Status);
+    setEditDueAt(toDateInputValue(activeTask.dueAt));
+  }, [activeTask]);
+
+  async function handleTeamChange(teamId: string) {
+    setSelectedTeamId(teamId);
+    setError(null);
+    setLoading(true);
+    try {
+      const teamProjects = await getProjects(teamId);
+      setProjects(teamProjects);
+      if (teamProjects.length === 0) {
+        setSelectedProjectId("");
+        setTasks([]);
+        setActiveTaskId(null);
+        return;
+      }
+      const projectId = teamProjects[0]!.id;
+      setSelectedProjectId(projectId);
+      const projectTasks = await getTasks(projectId);
+      setTasks(projectTasks);
+      setActiveTaskId(projectTasks[0]?.id ?? null);
+      updateUrl(teamId, projectId);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleProjectChange(projectId: string) {
+    if (!selectedTeamId) return;
+    setSelectedProjectId(projectId);
+    setError(null);
+    setLoading(true);
+    try {
+      const projectTasks = await getTasks(projectId);
+      setTasks(projectTasks);
+      setActiveTaskId(projectTasks[0]?.id ?? null);
+      updateUrl(selectedTeamId, projectId);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCreateTask(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedProjectId || !newTaskTitle.trim()) return;
+    setCreatingTask(true);
+    setError(null);
+    try {
+      const task = await createTask(selectedProjectId, {
+        title: newTaskTitle.trim(),
+        description: newTaskDescription.trim() || undefined,
+        priority: newTaskPriority,
+        dueAt: toIsoDateOrNull(newTaskDueAt) ?? undefined,
+      });
+      setTasks((prev) => [task, ...prev]);
+      setActiveTaskId(task.id);
+      setShowNewTask(false);
+      setNewTaskTitle("");
+      setNewTaskDescription("");
+      setNewTaskDueAt("");
+      setNewTaskPriority("MEDIUM");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCreatingTask(false);
+    }
+  }
+
+  async function handleSaveTask() {
+    if (!activeTask) return;
+    setSavingTask(true);
+    setError(null);
+    try {
+      const updated = await updateTask(activeTask.id, {
+        title: editTitle.trim(),
+        description: editDescription.trim() || null,
+        priority: editPriority,
+        status: editStatus,
+        dueAt: toIsoDateOrNull(editDueAt),
+      });
+      setTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSavingTask(false);
+    }
+  }
+
+  async function handleDeleteTask() {
+    if (!activeTask) return;
+    if (!confirm(`Task \"${activeTask.title}\" wirklich löschen?`)) return;
+    setDeletingTask(true);
+    setError(null);
+    try {
+      await deleteTask(activeTask.id);
+      setTasks((prev) => prev.filter((task) => task.id !== activeTask.id));
+      const next = tasks.find((task) => task.id !== activeTask.id);
+      setActiveTaskId(next?.id ?? null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDeletingTask(false);
+    }
+  }
+
+  async function handleAddAttachment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeTask || !attachmentName.trim() || !attachmentUrl.trim()) return;
+    setAttachmentBusy(true);
+    setError(null);
+    try {
+      const attachment = await addTaskAttachment(activeTask.id, {
+        name: attachmentName.trim(),
+        url: attachmentUrl.trim(),
+      });
+      setTasks((prev) =>
+        prev.map((task) =>
+          task.id === activeTask.id
+            ? { ...task, attachments: [attachment, ...task.attachments] }
+            : task,
+        ),
+      );
+      setAttachmentName("");
+      setAttachmentUrl("");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setAttachmentBusy(false);
+    }
+  }
+
+  async function handleDeleteAttachment(attachmentId: string) {
+    if (!activeTask) return;
+    setAttachmentBusy(true);
+    setError(null);
+    try {
+      await deleteTaskAttachment(activeTask.id, attachmentId);
+      setTasks((prev) =>
+        prev.map((task) =>
+          task.id === activeTask.id
+            ? {
+                ...task,
+                attachments: task.attachments.filter((attachment) => attachment.id !== attachmentId),
+              }
+            : task,
+        ),
+      );
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setAttachmentBusy(false);
+    }
+  }
+
   return (
-    <main
-      style={{
-        padding: "1.5rem",
-        maxWidth: "1400px",
-        margin: "0 auto",
-        minHeight: "100vh",
-      }}
-    >
-      {/* Header */}
+    <main style={{ padding: "1.25rem", maxWidth: "1500px", margin: "0 auto", minHeight: "100vh" }}>
       <header
         style={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          marginBottom: "2rem",
+          gap: "1rem",
+          marginBottom: "1rem",
           borderBottom: "1px solid var(--border)",
-          paddingBottom: "1rem",
+          paddingBottom: "0.9rem",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <span style={{ fontWeight: 700, fontSize: "1rem", color: "var(--primary)" }}>agent-tasks</span>
-          {projectId && (
-            <>
-              <span style={{ color: "var(--muted)" }}>/</span>
-              <span style={{ color: "var(--muted)", fontSize: "0.875rem" }}>Project Board</span>
-            </>
-          )}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 700, color: "var(--primary)" }}>agent-tasks</span>
+          <a href="/teams" style={{ color: "var(--muted)", fontSize: "0.85rem" }}>Teams</a>
+          <a href="/settings" style={{ color: "var(--muted)", fontSize: "0.85rem" }}>Settings</a>
+          <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>Board</span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-          {user ? (
-            <>
-              {user.avatarUrl && (
-                <img
-                  src={user.avatarUrl}
-                  alt={user.login}
-                  style={{ width: "28px", height: "28px", borderRadius: "50%" }}
-                />
-              )}
-              <span style={{ color: "var(--muted)", fontSize: "0.875rem" }}>{user.login}</span>
-              <button
-                onClick={() => {
-                  void logout().then(() => { window.location.href = "/"; });
-                }}
-                style={{
-                  background: "none",
-                  border: "1px solid var(--border)",
-                  color: "var(--muted)",
-                  fontSize: "0.875rem",
-                  padding: "0.25rem 0.75rem",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                }}
-              >
-                Logout
-              </button>
-            </>
-          ) : (
-            <a
-              href="/"
-              style={{
-                background: "var(--primary)",
-                color: "white",
-                padding: "0.5rem 1rem",
-                borderRadius: "6px",
-                fontSize: "0.875rem",
-                fontWeight: 600,
-                textDecoration: "none",
-              }}
-            >
-              Zur Anmeldung
-            </a>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.65rem" }}>
+          {user?.avatarUrl && (
+            <img src={user.avatarUrl} alt={user.login} style={{ width: "28px", height: "28px", borderRadius: "50%" }} />
           )}
+          <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>{user?.login}</span>
+          <button
+            onClick={() => {
+              void logout().then(() => {
+                window.location.href = "/";
+              });
+            }}
+            style={{
+              border: "1px solid var(--border)",
+              background: "transparent",
+              color: "var(--muted)",
+              borderRadius: "6px",
+              padding: "0.25rem 0.6rem",
+            }}
+          >
+            Logout
+          </button>
         </div>
       </header>
 
-      {loading ? (
-        <div style={{ textAlign: "center", padding: "4rem", color: "var(--muted)" }}>
-          Loading…
+      <section
+        className="dashboard-select-grid"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(160px, 240px) minmax(220px, 320px) 1fr",
+          gap: "0.6rem",
+          marginBottom: "1rem",
+        }}
+      >
+        <div>
+          <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Team</label>
+          <select
+            value={selectedTeamId}
+            onChange={(e) => {
+              void handleTeamChange(e.target.value);
+            }}
+            style={{ width: "100%" }}
+            disabled={loading}
+          >
+            {teams.map((team) => (
+              <option key={team.id} value={team.id}>{team.name}</option>
+            ))}
+          </select>
         </div>
-      ) : error ? (
-        <div
-          style={{
-            background: "#2a1a1a",
-            border: "1px solid var(--danger)",
-            borderRadius: "8px",
-            padding: "1rem",
-            color: "var(--danger)",
-          }}
-        >
-          {error}
+
+        <div>
+          <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Projekt</label>
+          <select
+            value={selectedProjectId}
+            onChange={(e) => {
+              void handleProjectChange(e.target.value);
+            }}
+            style={{ width: "100%" }}
+            disabled={loading || projects.length === 0}
+          >
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>{project.name}</option>
+            ))}
+          </select>
         </div>
-      ) : !projectId ? (
-        <div style={{ textAlign: "center", padding: "4rem" }}>
-          <h2 style={{ marginBottom: "1rem", fontSize: "1.25rem" }}>Welcome to agent-tasks</h2>
-          <p style={{ color: "var(--muted)", marginBottom: "1.5rem" }}>
-            Open a project board via{" "}
-            <code
-              style={{
-                background: "var(--border)",
-                padding: "0.125rem 0.375rem",
-                borderRadius: "4px",
-                fontFamily: "monospace",
-              }}
-            >
-              /dashboard?projectId={"<id>"}
-            </code>
-          </p>
-          {!user && (
-            <a
-              href="/"
-              style={{
-                display: "inline-block",
-                background: "var(--primary)",
-                color: "white",
-                padding: "0.75rem 1.5rem",
-                borderRadius: "8px",
-                fontWeight: 600,
-                textDecoration: "none",
-              }}
-            >
-              Zur Anmeldung
-            </a>
-          )}
-        </div>
-      ) : (
-        <>
-          {/* Stats row */}
-          <div
+
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end", gap: "0.5rem" }}>
+          <button
+            type="button"
+            onClick={() => setShowNewTask((value) => !value)}
+            disabled={!selectedProjectId}
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(4, 1fr)",
-              gap: "0.75rem",
-              marginBottom: "1.5rem",
+              background: "var(--primary)",
+              color: "white",
+              border: "none",
+              borderRadius: "8px",
+              padding: "0.5rem 0.85rem",
+              fontWeight: 600,
+              opacity: selectedProjectId ? 1 : 0.7,
             }}
           >
-            {STATUSES.map((status) => (
-              <div
-                key={status}
-                style={{
-                  background: "var(--surface)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "8px",
-                  padding: "1rem",
-                  textAlign: "center",
-                }}
-              >
-                <p style={{ color: "var(--muted)", fontSize: "0.75rem", textTransform: "uppercase", marginBottom: "0.25rem" }}>
-                  {STATUS_LABELS[status]}
-                </p>
-                <p style={{ fontSize: "1.5rem", fontWeight: 700 }}>
-                  {tasks.filter((t) => t.status === status).length}
-                </p>
+            {showNewTask ? "Form schließen" : "+ New Task"}
+          </button>
+        </div>
+      </section>
+
+      {showNewTask && (
+        <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.9rem", marginBottom: "1rem" }}>
+          <form onSubmit={(e) => void handleCreateTask(e)}>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: "0.5rem", marginBottom: "0.5rem" }}>
+              <div>
+                <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Titel</label>
+                <input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} required style={{ width: "100%" }} />
               </div>
-            ))}
-          </div>
-
-          {/* New Task Button */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-            <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{tasks.length} tasks total</p>
+              <div>
+                <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Priorität</label>
+                <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value as Priority)} style={{ width: "100%" }}>
+                  <option value="LOW">LOW</option>
+                  <option value="MEDIUM">MEDIUM</option>
+                  <option value="HIGH">HIGH</option>
+                  <option value="CRITICAL">CRITICAL</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Due Date</label>
+                <input type="date" value={newTaskDueAt} onChange={(e) => setNewTaskDueAt(e.target.value)} style={{ width: "100%" }} />
+              </div>
+            </div>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Beschreibung</label>
+              <textarea value={newTaskDescription} onChange={(e) => setNewTaskDescription(e.target.value)} rows={3} style={{ width: "100%", resize: "vertical" }} />
+            </div>
             <button
-              onClick={() => setShowNewTask((v) => !v)}
-              style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "6px", padding: "0.375rem 0.875rem", fontWeight: 600, cursor: "pointer", fontSize: "0.8125rem", fontFamily: "inherit" }}
+              type="submit"
+              disabled={creatingTask}
+              style={{
+                background: "var(--primary)",
+                color: "white",
+                border: "none",
+                borderRadius: "8px",
+                padding: "0.45rem 0.85rem",
+                fontWeight: 600,
+              }}
             >
-              + New Task
+              {creatingTask ? "Creating…" : "Task erstellen"}
             </button>
-          </div>
+          </form>
+        </section>
+      )}
 
-          {showNewTask && (
-            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
-              <form onSubmit={(e) => {
-                e.preventDefault();
-                void (async () => {
-                  if (!newTaskTitle.trim() || !projectId) return;
-                  setCreatingTask(true);
-                  try {
-                    const t = await createTask(projectId, { title: newTaskTitle.trim(), priority: newTaskPriority });
-                    setTasks((prev) => [t, ...prev]);
-                    setNewTaskTitle("");
-                    setShowNewTask(false);
-                  } finally {
-                    setCreatingTask(false);
-                  }
-                })();
-              }}>
-                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Title</label>
-                    <input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="Task title…" required style={{ width: "100%", display: "block" }} />
-                  </div>
+      {loading ? (
+        <div style={{ color: "var(--muted)", padding: "2rem", textAlign: "center" }}>Loading…</div>
+      ) : error ? (
+        <div style={{ background: "#2a1a1a", color: "var(--danger)", border: "1px solid var(--danger)", borderRadius: "10px", padding: "0.9rem", marginBottom: "0.9rem" }}>
+          {error}
+        </div>
+      ) : !selectedProjectId ? (
+        <div style={{ border: "1px dashed var(--border)", borderRadius: "10px", padding: "2rem", textAlign: "center", color: "var(--muted)" }}>
+          Dieses Team hat noch kein Projekt. Erstelle ein Projekt auf der Teams-Seite.
+        </div>
+      ) : (
+        <div className="dashboard-grid">
+          <section style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.6rem" }}>
+              <p style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{tasks.length} Tasks</p>
+              <p style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
+                {projects.find((project) => project.id === selectedProjectId)?.name}
+              </p>
+            </div>
+            <BoardColumns tasks={tasks} activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} />
+          </section>
+
+          <aside style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.9rem", minHeight: "320px" }}>
+            {!activeTask ? (
+              <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>Wähle eine Task aus, um Details zu bearbeiten.</p>
+            ) : (
+              <>
+                <h3 style={{ fontSize: "0.95rem", marginBottom: "0.75rem" }}>Task Details</h3>
+
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Titel</label>
+                  <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ width: "100%" }} />
+                </div>
+
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Beschreibung</label>
+                  <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={4} style={{ width: "100%", resize: "vertical" }} />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", marginBottom: "0.5rem" }}>
                   <div>
-                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Priority</label>
-                    <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value)} style={{ height: "37px" }}>
-                      {["LOW", "MEDIUM", "HIGH", "CRITICAL"].map((p) => <option key={p}>{p}</option>)}
+                    <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Status</label>
+                    <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as Status)} style={{ width: "100%" }}>
+                      {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
                     </select>
                   </div>
-                  <button type="submit" disabled={creatingTask} style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "6px", padding: "0.5rem 1rem", fontWeight: 600, cursor: "pointer", height: "37px", fontFamily: "inherit" }}>{creatingTask ? "…" : "Create"}</button>
-                  <button type="button" onClick={() => setShowNewTask(false)} style={{ background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.5rem 0.75rem", cursor: "pointer", height: "37px", fontFamily: "inherit" }}>×</button>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Priorität</label>
+                    <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as Priority)} style={{ width: "100%" }}>
+                      <option value="LOW">LOW</option>
+                      <option value="MEDIUM">MEDIUM</option>
+                      <option value="HIGH">HIGH</option>
+                      <option value="CRITICAL">CRITICAL</option>
+                    </select>
+                  </div>
                 </div>
-              </form>
-            </div>
-          )}
 
-          {/* Kanban Board */}
-          <KanbanBoard tasks={tasks} />
-        </>
+                <div style={{ marginBottom: "0.8rem" }}>
+                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Due Date</label>
+                  <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)} style={{ width: "100%" }} />
+                </div>
+
+                <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.9rem" }}>
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveTask()}
+                    disabled={savingTask || deletingTask}
+                    style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.45rem 0.7rem", fontWeight: 600 }}
+                  >
+                    {savingTask ? "Saving…" : "Speichern"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDeleteTask()}
+                    disabled={savingTask || deletingTask}
+                    style={{ background: "transparent", color: "var(--danger)", border: "1px solid var(--danger)", borderRadius: "8px", padding: "0.45rem 0.7rem" }}
+                  >
+                    {deletingTask ? "Deleting…" : "Löschen"}
+                  </button>
+                </div>
+
+                <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.7rem" }}>
+                  <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.45rem" }}>Attachments</p>
+
+                  <form onSubmit={(e) => void handleAddAttachment(e)} style={{ marginBottom: "0.65rem" }}>
+                    <input
+                      value={attachmentName}
+                      onChange={(e) => setAttachmentName(e.target.value)}
+                      placeholder="Name"
+                      style={{ width: "100%", marginBottom: "0.35rem" }}
+                    />
+                    <input
+                      value={attachmentUrl}
+                      onChange={(e) => setAttachmentUrl(e.target.value)}
+                      placeholder="https://..."
+                      type="url"
+                      style={{ width: "100%", marginBottom: "0.35rem" }}
+                    />
+                    <button
+                      type="submit"
+                      disabled={attachmentBusy}
+                      style={{ background: "var(--border)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "7px", padding: "0.35rem 0.6rem" }}
+                    >
+                      Add attachment
+                    </button>
+                  </form>
+
+                  {activeTask.attachments.length === 0 ? (
+                    <p style={{ color: "var(--muted)", fontSize: "0.78rem" }}>Keine Attachments.</p>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                      {activeTask.attachments.map((attachment) => (
+                        <div key={attachment.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.4rem 0.5rem" }}>
+                          <a href={attachment.url} target="_blank" rel="noreferrer" style={{ color: "var(--text)", fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {attachment.name}
+                          </a>
+                          <button
+                            type="button"
+                            disabled={attachmentBusy}
+                            onClick={() => {
+                              void handleDeleteAttachment(attachment.id);
+                            }}
+                            style={{ background: "transparent", border: "1px solid var(--danger)", color: "var(--danger)", borderRadius: "6px", padding: "0.2rem 0.45rem", fontSize: "0.72rem" }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </aside>
+        </div>
       )}
     </main>
   );

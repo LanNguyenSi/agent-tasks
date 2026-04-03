@@ -164,9 +164,24 @@ model Task {
   claimedByAgent   AgentToken? @relation("TaskAgentClaimant", fields: [claimedByAgentId], references: [id])
 
   comments         Comment[]
+  attachments      TaskAttachment[]
   auditLogs        AuditLog[]
 
   @@map("tasks")
+}
+
+model TaskAttachment {
+  id              String   @id @default(uuid())
+  taskId          String
+  name            String
+  url             String
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  task            Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@map("task_attachments")
 }
 
 enum TaskPriority {
