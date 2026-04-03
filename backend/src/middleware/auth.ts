@@ -3,6 +3,8 @@ import type { AppVariables } from "../types/hono.js";
 import { prisma } from "../lib/prisma.js";
 import { createHash } from "node:crypto";
 import type { Actor } from "../types/auth.js";
+import { verifySessionToken, extractSessionCookie } from "../services/session.js";
+import { config } from "../config/index.js";
 
 /**
  * Extracts and validates the actor from the request.
@@ -41,13 +43,12 @@ export async function authMiddleware(c: Context<{ Variables: AppVariables }>, ne
     return next();
   }
 
-  // Session auth (cookie-based — placeholder for Wave 2 OAuth)
-  // TODO (Wave 2): Replace with proper session cookie / JWT validation
-  // SECURITY: X-Session-User-Id header is ONLY enabled in development mode
-  if (process.env.NODE_ENV === "development") {
-    const sessionUserId = c.req.header("X-Session-User-Id");
-    if (sessionUserId) {
-      const actor: Actor = { type: "human", userId: sessionUserId };
+  // Session cookie auth (GitHub OAuth session)
+  const sessionToken = extractSessionCookie(c.req.header("Cookie"));
+  if (sessionToken) {
+    const session = await verifySessionToken(sessionToken, config.SESSION_SECRET);
+    if (session) {
+      const actor: Actor = { type: "human", userId: session.userId };
       c.set("actor", actor);
       return next();
     }
