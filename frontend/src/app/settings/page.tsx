@@ -111,7 +111,7 @@ export default function SettingsPage() {
   const selectedTeam = teams.find((t) => t.id === selectedTeamId);
 
   return (
-    <main style={{ padding: "1.5rem", maxWidth: "960px", margin: "0 auto", minHeight: "100vh" }}>
+    <main className="page-shell">
       <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
 
       <nav style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", fontSize: "0.82rem" }}>

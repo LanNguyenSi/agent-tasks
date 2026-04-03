@@ -38,6 +38,36 @@ const PRIORITY_COLORS: Record<Priority, string> = {
   CRITICAL: "#be123c",
 };
 
+const PRIORITY_RANK: Record<Priority, number> = {
+  CRITICAL: 0,
+  HIGH: 1,
+  MEDIUM: 2,
+  LOW: 3,
+};
+
+function isOverdue(task: Task): boolean {
+  if (!task.dueAt || task.status === "done") return false;
+  return new Date(task.dueAt).getTime() < Date.now();
+}
+
+function sortTasksForBoardColumn(tasks: Task[]): Task[] {
+  return [...tasks].sort((a, b) => {
+    const overdueDiff = Number(isOverdue(b)) - Number(isOverdue(a));
+    if (overdueDiff !== 0) return overdueDiff;
+
+    const priorityDiff = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
+    if (priorityDiff !== 0) return priorityDiff;
+
+    if (a.dueAt || b.dueAt) {
+      const aDue = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
+      const bDue = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
+      if (aDue !== bDue) return aDue - bDue;
+    }
+
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  });
+}
+
 function toDateInputValue(value: string | null): string {
   if (!value) return "";
   return value.slice(0, 10);
@@ -135,7 +165,7 @@ function BoardColumns({
       }}
     >
       {STATUSES.map((status) => {
-        const columnTasks = tasks.filter((task) => task.status === status);
+        const columnTasks = sortTasksForBoardColumn(tasks.filter((task) => task.status === status));
         return (
           <section key={status}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
@@ -183,12 +213,35 @@ export default function DashboardPage() {
   const [newTaskDescription, setNewTaskDescription] = useState("");
   const [newTaskPriority, setNewTaskPriority] = useState<Priority>("MEDIUM");
   const [newTaskDueAt, setNewTaskDueAt] = useState("");
+  const [taskQuery, setTaskQuery] = useState("");
+  const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
+  const [hideDone, setHideDone] = useState(false);
+  const [showDetails, setShowDetails] = useState(true);
 
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const activeTask = useMemo(
     () => tasks.find((task) => task.id === activeTaskId) ?? null,
     [tasks, activeTaskId],
   );
+  const filteredTasks = useMemo(() => {
+    const normalizedQuery = taskQuery.trim().toLowerCase();
+
+    return tasks.filter((task) => {
+      if (hideDone && task.status === "done") return false;
+      if (taskScope === "mine" && task.claimedByUserId !== user?.id) return false;
+      if (taskScope === "unassigned" && (task.claimedByUserId || task.claimedByAgentId)) return false;
+      if (taskScope === "overdue" && !isOverdue(task)) return false;
+      if (!normalizedQuery) return true;
+      return `${task.title} ${task.description ?? ""}`.toLowerCase().includes(normalizedQuery);
+    });
+  }, [tasks, taskQuery, taskScope, hideDone, user?.id]);
+
+  const statusSummary = useMemo(() => {
+    return STATUSES.reduce<Record<Status, number>>((acc, status) => {
+      acc[status] = filteredTasks.filter((task) => task.status === status).length;
+      return acc;
+    }, { open: 0, in_progress: 0, review: 0, done: 0 });
+  }, [filteredTasks]);
 
   const [savingTask, setSavingTask] = useState(false);
   const [deletingTask, setDeletingTask] = useState(false);
@@ -420,7 +473,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <main style={{ padding: "1.25rem", maxWidth: "1200px", margin: "0 auto", minHeight: "100vh" }}>
+    <main className="page-shell">
       <AppHeader
         user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null}
         boardHref={selectedTeamId && selectedProjectId ? `/dashboard?teamId=${selectedTeamId}&projectId=${selectedProjectId}` : "/dashboard"}
@@ -535,6 +588,42 @@ export default function DashboardPage() {
         </section>
       )}
 
+      <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.75rem", marginBottom: "0.9rem" }}>
+        <div className="board-toolbar">
+          <input
+            value={taskQuery}
+            onChange={(e) => setTaskQuery(e.target.value)}
+            placeholder="Tasks suchen…"
+            style={{ width: "100%" }}
+          />
+          <select
+            value={taskScope}
+            onChange={(e) => setTaskScope(e.target.value as "all" | "mine" | "overdue" | "unassigned")}
+            style={{ width: "100%" }}
+          >
+            <option value="all">Scope: Alle</option>
+            <option value="mine">Scope: Meine</option>
+            <option value="overdue">Scope: Überfällig</option>
+            <option value="unassigned">Scope: Unassigned</option>
+          </select>
+          <label className="board-scope-inline">
+            <input
+              type="checkbox"
+              checked={hideDone}
+              onChange={(e) => setHideDone(e.target.checked)}
+            />
+            Hide done
+          </label>
+        </div>
+        <div className="status-summary">
+          {STATUSES.map((status) => (
+            <span key={status} className="status-chip">
+              {STATUS_LABELS[status]}: {statusSummary[status]}
+            </span>
+          ))}
+        </div>
+      </section>
+
       {loading ? (
         <div style={{ color: "var(--muted)", padding: "2rem", textAlign: "center" }}>Loading…</div>
       ) : error ? (
@@ -548,16 +637,28 @@ export default function DashboardPage() {
       ) : (
         <div className="dashboard-grid">
           <section style={{ minWidth: 0 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.6rem" }}>
-              <p style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{tasks.length} Tasks</p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem", gap: "0.5rem", flexWrap: "wrap" }}>
               <p style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
-                {projects.find((project) => project.id === selectedProjectId)?.name}
+                {filteredTasks.length} / {tasks.length} Tasks
               </p>
+              <div style={{ display: "inline-flex", gap: "0.5rem", alignItems: "center" }}>
+                <p style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
+                  {projects.find((project) => project.id === selectedProjectId)?.name}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowDetails((value) => !value)}
+                  style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: "6px", padding: "0.2rem 0.45rem", fontSize: "0.74rem" }}
+                >
+                  {showDetails ? "Details ausblenden" : "Details zeigen"}
+                </button>
+              </div>
             </div>
-            <BoardColumns tasks={tasks} activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} />
+            <BoardColumns tasks={filteredTasks} activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} />
           </section>
 
-          <aside style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.9rem", minHeight: "320px" }}>
+          {showDetails && (
+          <aside className="task-detail-panel" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.9rem", minHeight: "320px" }}>
             {!activeTask ? (
               <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>Wähle eine Task aus, um Details zu bearbeiten.</p>
             ) : (
@@ -669,6 +770,7 @@ export default function DashboardPage() {
               </>
             )}
           </aside>
+          )}
         </div>
       )}
     </main>
