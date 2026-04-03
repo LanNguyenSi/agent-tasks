@@ -1,6 +1,4 @@
 export default function HomePage() {
-  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
-
   return (
     <main
       style={{
@@ -45,7 +43,7 @@ export default function HomePage() {
             Sign in with GitHub to access your projects and tasks.
           </p>
           <a
-            href={`${apiBase}/api/auth/github`}
+            href="/api/auth/github"
             style={{
               display: "inline-flex",
               alignItems: "center",

@@ -9,6 +9,7 @@ import {
 } from "../services/github-webhook.js";
 
 const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET ?? "";
+const REQUIRE_WEBHOOK_SECRET = process.env.NODE_ENV === "production";
 
 export const webhookRouter = new Hono();
 
@@ -17,8 +18,15 @@ webhookRouter.post("/github", async (c) => {
   const event = c.req.header("X-GitHub-Event") ?? "";
   const rawBody = await c.req.text();
 
-  // Verify signature if secret is configured
-  if (WEBHOOK_SECRET && !verifyWebhookSignature(rawBody, signature, WEBHOOK_SECRET)) {
+  if (!WEBHOOK_SECRET) {
+    if (REQUIRE_WEBHOOK_SECRET) {
+      // In production: reject all unsigned payloads
+      console.error("[webhook] GITHUB_WEBHOOK_SECRET is not configured — rejecting request");
+      return c.json({ error: "unauthorized", message: "Webhook secret not configured" }, 401);
+    }
+    // In development: warn and proceed (allows testing without secret)
+    console.warn("[webhook] GITHUB_WEBHOOK_SECRET not set — accepting unsigned payload (dev mode)");
+  } else if (!verifyWebhookSignature(rawBody, signature, WEBHOOK_SECRET)) {
     return c.json({ error: "unauthorized", message: "Invalid webhook signature" }, 401);
   }
 
