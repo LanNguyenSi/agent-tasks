@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getCurrentUser, getTeams, getProjects, createProject, type User, type Team, type Project } from "../../lib/api";
+import {
+  getCurrentUser,
+  getTeams,
+  getProjects,
+  createProject,
+  syncTeamFromGitHub,
+  type User,
+  type Team,
+  type Project,
+} from "../../lib/api";
 
 export default function TeamsPage() {
   const [user, setUser] = useState<User | null>(null);
@@ -10,6 +19,8 @@ export default function TeamsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [projectsLoading, setProjectsLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   // New project form
   const [showNewProject, setShowNewProject] = useState(false);
@@ -89,6 +100,7 @@ export default function TeamsPage() {
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem", borderBottom: "1px solid var(--border)", paddingBottom: "1rem" }}>
         <span style={{ fontWeight: 700, color: "var(--primary)" }}>agent-tasks</span>
         <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          <a href="/settings" style={{ color: "var(--muted)", fontSize: "0.875rem" }}>Settings</a>
           {user?.avatarUrl && <img src={user.avatarUrl} alt={user.login} style={{ width: "28px", height: "28px", borderRadius: "50%" }} />}
           <span style={{ color: "var(--muted)", fontSize: "0.875rem" }}>{user?.login}</span>
         </div>
@@ -134,13 +146,81 @@ export default function TeamsPage() {
                   <h1 style={{ fontSize: "1.25rem", fontWeight: 700 }}>{selectedTeam.name}</h1>
                   <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{selectedTeam.projectCount ?? projects.length} projects</p>
                 </div>
-                <button
-                  onClick={() => setShowNewProject(true)}
-                  style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.5rem 1.25rem", fontWeight: 600, cursor: "pointer", fontSize: "0.875rem", fontFamily: "inherit" }}
-                >
-                  + New Project
-                </button>
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  <button
+                    onClick={() => setShowNewProject(true)}
+                    style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.5rem 1.25rem", fontWeight: 600, cursor: "pointer", fontSize: "0.875rem", fontFamily: "inherit" }}
+                  >
+                    + New Project
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!selectedTeam) return;
+                      void (async () => {
+                        setSyncMessage(null);
+                        setSyncing(true);
+                        try {
+                          const result = await syncTeamFromGitHub(selectedTeam.id);
+                          await loadProjects(selectedTeam.id);
+                          setSyncMessage(`GitHub-Sync fertig: ${result.created} erstellt, ${result.updated} aktualisiert.`);
+                        } catch (err) {
+                          setSyncMessage((err as Error).message);
+                        } finally {
+                          setSyncing(false);
+                        }
+                      })();
+                    }}
+                    disabled={syncing || !user?.githubConnected}
+                    style={{
+                      background: user?.githubConnected ? "#0f172a" : "var(--border)",
+                      color: user?.githubConnected ? "white" : "var(--muted)",
+                      border: "none",
+                      borderRadius: "8px",
+                      padding: "0.5rem 1rem",
+                      fontWeight: 600,
+                      cursor: syncing || !user?.githubConnected ? "not-allowed" : "pointer",
+                      fontSize: "0.875rem",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    {syncing ? "Sync läuft…" : "Sync GitHub"}
+                  </button>
+                </div>
               </div>
+
+              {!user?.githubConnected && (
+                <div
+                  style={{
+                    border: "1px solid var(--border)",
+                    background: "var(--surface)",
+                    borderRadius: "10px",
+                    padding: "0.75rem 0.875rem",
+                    marginBottom: "1rem",
+                    color: "var(--muted)",
+                    fontSize: "0.875rem",
+                  }}
+                >
+                  GitHub ist noch nicht verbunden. Ohne Verbindung ist kein Sync möglich.
+                  {" "}
+                  <a href="/settings" style={{ color: "var(--primary)", textDecoration: "none" }}>Jetzt verbinden</a>
+                </div>
+              )}
+
+              {syncMessage && (
+                <div
+                  style={{
+                    border: "1px solid var(--border)",
+                    background: "var(--surface)",
+                    borderRadius: "10px",
+                    padding: "0.75rem 0.875rem",
+                    marginBottom: "1rem",
+                    color: "var(--muted)",
+                    fontSize: "0.875rem",
+                  }}
+                >
+                  {syncMessage}
+                </div>
+              )}
 
               {showNewProject && (
                 <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1.25rem", marginBottom: "1.25rem" }}>

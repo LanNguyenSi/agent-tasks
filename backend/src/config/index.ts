@@ -4,8 +4,8 @@ const configSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(3001),
   DATABASE_URL: z.string().url(),
-  GITHUB_CLIENT_ID: z.string(),
-  GITHUB_CLIENT_SECRET: z.string(),
+  GITHUB_CLIENT_ID: z.string().default(""),
+  GITHUB_CLIENT_SECRET: z.string().default(""),
   SESSION_SECRET: z.string().min(32),
   FRONTEND_URL: z.string().url().default("http://localhost:3000"),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
@@ -22,3 +22,6 @@ function loadConfig() {
 
 export const config = loadConfig();
 export type Config = typeof config;
+
+export const hasGitHubOAuthConfigured =
+  config.GITHUB_CLIENT_ID.length > 0 && config.GITHUB_CLIENT_SECRET.length > 0;

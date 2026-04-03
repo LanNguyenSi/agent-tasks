@@ -6,6 +6,8 @@ import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import { logAuditEvent } from "../services/audit.js";
+import { listUserRepos } from "../services/github-sync.js";
+import { ensureDefaultBoardForProject } from "../services/board-default.js";
 
 export const teamRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -17,6 +19,30 @@ const createTeamSchema = z.object({
     .max(50)
     .regex(/^[a-z0-9-]+$/, "Slug must be lowercase alphanumeric with dashes"),
 });
+
+function toSlug(value: string): string {
+  const slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.length > 0 ? slug.slice(0, 100) : "project";
+}
+
+async function ensureUniqueProjectSlug(teamId: string, baseName: string): Promise<string> {
+  const base = toSlug(baseName);
+  let index = 0;
+  while (true) {
+    const slug = index === 0 ? base : `${base}-${index}`;
+    const existing = await prisma.project.findUnique({
+      where: { teamId_slug: { teamId, slug } },
+      select: { id: true },
+    });
+    if (!existing) return slug;
+    index += 1;
+  }
+}
 
 // ── List user's teams ─────────────────────────────────────────────────────────
 
@@ -148,3 +174,76 @@ teamRouter.post(
     return c.json({ member }, 201);
   },
 );
+
+// ── Sync team projects from connected GitHub account ─────────────────────────
+
+teamRouter.post("/teams/:id/sync", async (c) => {
+  const actor = c.get("actor");
+  const teamId = c.req.param("id");
+
+  if (actor.type !== "human") {
+    return forbidden(c, "Agents cannot trigger sync");
+  }
+
+  const membership = await prisma.teamMember.findUnique({
+    where: { teamId_userId: { teamId, userId: actor.userId } },
+  });
+  if (!membership) {
+    return forbidden(c, "Not a member of this team");
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: actor.userId } });
+  if (!user?.githubAccessToken) {
+    return c.json(
+      { error: "forbidden", message: "Connect your GitHub account in settings before syncing" },
+      403,
+    );
+  }
+
+  const repos = await listUserRepos(user.githubAccessToken);
+  const now = new Date();
+  let created = 0;
+  let updated = 0;
+
+  for (const repo of repos) {
+    const existingProject = await prisma.project.findFirst({
+      where: { teamId, githubRepo: repo.full_name },
+    });
+
+    if (existingProject) {
+      await prisma.project.update({
+        where: { id: existingProject.id },
+        data: {
+          name: repo.name,
+          description: repo.description ?? undefined,
+          githubSyncAt: now,
+        },
+      });
+      await ensureDefaultBoardForProject(existingProject.id);
+      updated += 1;
+      continue;
+    }
+
+    const slug = await ensureUniqueProjectSlug(teamId, repo.name);
+    const project = await prisma.project.create({
+      data: {
+        teamId,
+        name: repo.name,
+        slug,
+        description: repo.description ?? undefined,
+        githubRepo: repo.full_name,
+        githubSyncAt: now,
+      },
+    });
+
+    await ensureDefaultBoardForProject(project.id);
+    created += 1;
+  }
+
+  return c.json({
+    synced: repos.length,
+    created,
+    updated,
+    message: `Synced ${repos.length} repositories`,
+  });
+});

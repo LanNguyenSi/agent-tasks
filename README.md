@@ -7,7 +7,7 @@ Collaborative task platform for humans and agents.
 - **Frontend:** Next.js 15 (React 19, App Router)
 - **Backend:** Hono + Node.js
 - **Database:** PostgreSQL + Prisma
-- **Auth:** GitHub OAuth (humans) + API tokens with scopes (agents)
+- **Auth:** Email/Password + optional GitHub connect (humans) + API tokens with scopes (agents)
 
 ## Monorepo Structure
 
@@ -94,14 +94,20 @@ make docker-down
 # Health
 GET  /api/health
 
-# Auth (Wave 2: GitHub OAuth)
+# Auth
+POST /api/auth/register
+POST /api/auth/login
 GET  /api/auth/github
+GET  /api/auth/github/connect
 GET  /api/auth/github/callback
 
-# Agent Tokens
+# Agent Tokens (managed in user settings, scoped per team)
 POST /api/agent-tokens        # Create token (admin only)
 GET  /api/agent-tokens?teamId= # List tokens
 POST /api/agent-tokens/:id/revoke
+
+# Team GitHub sync (each repo -> project)
+POST /api/teams/:id/sync
 
 # Tasks
 GET  /api/projects/:id/tasks

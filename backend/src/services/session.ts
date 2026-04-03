@@ -1,13 +1,12 @@
 /**
  * Session management
  *
- * Simple JWT-based sessions for Wave 2.
- * Stores userId + githubAccessToken in a signed JWT cookie.
+ * Simple JWT-based sessions.
+ * Stores userId in a signed JWT cookie.
  */
 
 export interface SessionPayload {
   userId: string;
-  githubAccessToken: string;
   iat: number;
   exp: number;
 }
@@ -17,13 +16,11 @@ const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7; // 7 days
 /** Encode a session payload as a simple base64url signed token (HMAC-SHA256) */
 export async function createSessionToken(
   userId: string,
-  githubAccessToken: string,
   secret: string,
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const payload: SessionPayload = {
     userId,
-    githubAccessToken,
     iat: now,
     exp: now + SESSION_DURATION_SECONDS,
   };
@@ -49,7 +46,7 @@ export async function verifySessionToken(
   if (!timingSafeEqual(signature, expectedSig)) return null;
 
   try {
-    const payload = JSON.parse(atob(body.replace(/-/g, "+").replace(/_/g, "/"))) as SessionPayload;
+    const payload = JSON.parse(Buffer.from(base64urlToBase64(body), "base64").toString("utf8")) as SessionPayload;
     if (payload.exp < Math.floor(Date.now() / 1000)) return null;
     return payload;
   } catch {
@@ -85,7 +82,7 @@ export function buildClearSessionCookie(): string {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function base64url(input: string): string {
-  return btoa(input).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return Buffer.from(input, "utf8").toString("base64url");
 }
 
 async function sign(data: string, secret: string): Promise<string> {
@@ -97,7 +94,7 @@ async function sign(data: string, secret: string): Promise<string> {
     ["sign"],
   );
   const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
-  return base64url(String.fromCharCode(...new Uint8Array(sig)));
+  return Buffer.from(sig).toString("base64url");
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -107,4 +104,8 @@ function timingSafeEqual(a: string, b: string): boolean {
     diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
   return diff === 0;
+}
+
+function base64urlToBase64(value: string): string {
+  return value.replace(/-/g, "+").replace(/_/g, "/");
 }

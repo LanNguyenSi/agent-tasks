@@ -33,11 +33,11 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   // Protected
   app.use("/api/auth/me", authMiddleware);
   app.use("/api/auth/logout", authMiddleware);
+  app.use("/api/auth/github/connect", authMiddleware);
   app.use("/api/teams/*", authMiddleware);
   app.use("/api/agent-tokens/*", authMiddleware);
   app.use("/api/tasks/*", authMiddleware);
   app.use("/api/projects/*", authMiddleware);
-  app.use("/api/auth/me", authMiddleware);
 
   app.route("/api/auth", authRouter);
   app.route("/api", teamRouter);

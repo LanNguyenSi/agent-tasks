@@ -12,11 +12,14 @@ datasource db {
 
 model User {
   id            String   @id @default(uuid())
-  githubId      String   @unique
+  githubId      String?  @unique
   login         String   @unique
   name          String?
   avatarUrl     String?
-  email         String?
+  email         String?  @unique
+  passwordHash  String?
+  githubAccessToken String?
+  githubConnectedAt DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

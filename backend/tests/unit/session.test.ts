@@ -9,31 +9,29 @@ import {
 
 const SECRET = "test-session-secret-must-be-32chars!!";
 const USER_ID = "user-abc-123";
-const GITHUB_TOKEN = "gho_test_token";
 
 describe("createSessionToken + verifySessionToken", () => {
   it("creates a token that can be verified", async () => {
-    const token = await createSessionToken(USER_ID, GITHUB_TOKEN, SECRET);
+    const token = await createSessionToken(USER_ID, SECRET);
     const session = await verifySessionToken(token, SECRET);
     expect(session).not.toBeNull();
     expect(session!.userId).toBe(USER_ID);
-    expect(session!.githubAccessToken).toBe(GITHUB_TOKEN);
   });
 
   it("token has 3 parts (header.payload.signature)", async () => {
-    const token = await createSessionToken(USER_ID, GITHUB_TOKEN, SECRET);
+    const token = await createSessionToken(USER_ID, SECRET);
     expect(token.split(".")).toHaveLength(3);
   });
 
   it("returns null for tampered token", async () => {
-    const token = await createSessionToken(USER_ID, GITHUB_TOKEN, SECRET);
+    const token = await createSessionToken(USER_ID, SECRET);
     const parts = token.split(".");
     const tampered = `${parts[0]}.${parts[1]}.invalid-signature`;
     expect(await verifySessionToken(tampered, SECRET)).toBeNull();
   });
 
   it("returns null for token with wrong secret", async () => {
-    const token = await createSessionToken(USER_ID, GITHUB_TOKEN, SECRET);
+    const token = await createSessionToken(USER_ID, SECRET);
     expect(await verifySessionToken(token, "different-secret-32chars-long!!")).toBeNull();
   });
 

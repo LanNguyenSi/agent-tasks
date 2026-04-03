@@ -226,7 +226,7 @@ export default function DashboardPage() {
                 textDecoration: "none",
               }}
             >
-              Login with GitHub
+              Zur Anmeldung
             </a>
           )}
         </div>
@@ -277,7 +277,7 @@ export default function DashboardPage() {
                 textDecoration: "none",
               }}
             >
-              Login with GitHub
+              Zur Anmeldung
             </a>
           )}
         </div>
@@ -366,4 +366,3 @@ export default function DashboardPage() {
     </main>
   );
 }
-
