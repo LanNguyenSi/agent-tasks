@@ -22,7 +22,7 @@ export default function OnboardingPage() {
     void (async () => {
       const me = await getCurrentUser();
       if (!me) {
-        router.replace("/");
+        router.replace("/auth");
         return;
       }
       setUser(me);

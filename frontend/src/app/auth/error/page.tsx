@@ -17,7 +17,7 @@ export default function AuthErrorPage() {
           Something went wrong during GitHub login. Please try again.
         </p>
         <a
-          href="/"
+          href="/auth"
           style={{
             background: "var(--primary)",
             color: "white",
