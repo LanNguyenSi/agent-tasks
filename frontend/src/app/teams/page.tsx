@@ -1,0 +1,198 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { getCurrentUser, getTeams, getProjects, createProject, type User, type Team, type Project } from "../../lib/api";
+
+export default function TeamsPage() {
+  const [user, setUser] = useState<User | null>(null);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+
+  // New project form
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [projectSlug, setProjectSlug] = useState("");
+  const [githubRepo, setGithubRepo] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const me = await getCurrentUser();
+      if (!me) { window.location.href = "/"; return; }
+      setUser(me);
+
+      const t = await getTeams();
+      if (t.length === 0) { window.location.href = "/onboarding"; return; }
+
+      setTeams(t);
+      const first = t[0]!;
+      setSelectedTeam(first);
+      setLoading(false);
+
+      setProjectsLoading(true);
+      const p = await getProjects(first.id);
+      setProjects(p);
+      setProjectsLoading(false);
+    })();
+  }, []);
+
+  async function loadProjects(teamId: string) {
+    setProjectsLoading(true);
+    try {
+      const p = await getProjects(teamId);
+      setProjects(p);
+    } finally {
+      setProjectsLoading(false);
+    }
+  }
+
+  function handleProjectNameChange(name: string) {
+    setProjectName(name);
+    setProjectSlug(name.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").slice(0, 50));
+  }
+
+  async function handleCreateProject(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedTeam) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const p = await createProject({
+        teamId: selectedTeam.id,
+        name: projectName.trim(),
+        slug: projectSlug.trim(),
+        githubRepo: githubRepo.trim() || undefined,
+      });
+      setProjects((prev) => [...prev, p]);
+      setShowNewProject(false);
+      setProjectName("");
+      setProjectSlug("");
+      setGithubRepo("");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  if (loading) {
+    return <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}><p style={{ color: "var(--muted)" }}>Loading…</p></main>;
+  }
+
+  return (
+    <main style={{ padding: "1.5rem", maxWidth: "1200px", margin: "0 auto", minHeight: "100vh" }}>
+      {/* Header */}
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem", borderBottom: "1px solid var(--border)", paddingBottom: "1rem" }}>
+        <span style={{ fontWeight: 700, color: "var(--primary)" }}>agent-tasks</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          {user?.avatarUrl && <img src={user.avatarUrl} alt={user.login} style={{ width: "28px", height: "28px", borderRadius: "50%" }} />}
+          <span style={{ color: "var(--muted)", fontSize: "0.875rem" }}>{user?.login}</span>
+        </div>
+      </header>
+
+      <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: "1.5rem" }}>
+        {/* Sidebar */}
+        <aside>
+          <p style={{ color: "var(--muted)", fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.5rem" }}>Teams</p>
+          {teams.map((team) => (
+            <button
+              key={team.id}
+              onClick={() => {
+                setSelectedTeam(team);
+                void loadProjects(team.id);
+              }}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                background: selectedTeam?.id === team.id ? "var(--border)" : "transparent",
+                border: "none",
+                borderRadius: "6px",
+                padding: "0.5rem 0.75rem",
+                color: "var(--text)",
+                cursor: "pointer",
+                fontSize: "0.875rem",
+                fontWeight: selectedTeam?.id === team.id ? 600 : 400,
+                marginBottom: "0.25rem",
+              }}
+            >
+              {team.name}
+            </button>
+          ))}
+        </aside>
+
+        {/* Main */}
+        <div>
+          {selectedTeam && (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+                <div>
+                  <h1 style={{ fontSize: "1.25rem", fontWeight: 700 }}>{selectedTeam.name}</h1>
+                  <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{selectedTeam.projectCount ?? projects.length} projects</p>
+                </div>
+                <button
+                  onClick={() => setShowNewProject(true)}
+                  style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.5rem 1.25rem", fontWeight: 600, cursor: "pointer", fontSize: "0.875rem", fontFamily: "inherit" }}
+                >
+                  + New Project
+                </button>
+              </div>
+
+              {showNewProject && (
+                <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1.25rem", marginBottom: "1.25rem" }}>
+                  <h3 style={{ fontSize: "0.9375rem", fontWeight: 600, marginBottom: "1rem" }}>New Project</h3>
+                  <form onSubmit={(e) => void handleCreateProject(e)}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "0.75rem" }}>
+                      <div>
+                        <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Name</label>
+                        <input value={projectName} onChange={(e) => handleProjectNameChange(e.target.value)} placeholder="My Project" required style={{ width: "100%", display: "block" }} />
+                      </div>
+                      <div>
+                        <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Slug</label>
+                        <input value={projectSlug} onChange={(e) => setProjectSlug(e.target.value)} placeholder="my-project" pattern="[a-z0-9-]+" required style={{ width: "100%", display: "block", fontFamily: "monospace" }} />
+                      </div>
+                    </div>
+                    <div style={{ marginBottom: "0.75rem" }}>
+                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>GitHub Repo (optional)</label>
+                      <input value={githubRepo} onChange={(e) => setGithubRepo(e.target.value)} placeholder="owner/repo" style={{ width: "100%", display: "block" }} />
+                    </div>
+                    {error && <p style={{ color: "var(--danger)", fontSize: "0.8125rem", marginBottom: "0.75rem" }}>{error}</p>}
+                    <div style={{ display: "flex", gap: "0.5rem" }}>
+                      <button type="submit" disabled={creating} style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "6px", padding: "0.5rem 1rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{creating ? "Creating…" : "Create"}</button>
+                      <button type="button" onClick={() => setShowNewProject(false)} style={{ background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.5rem 1rem", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {projectsLoading ? (
+                <p style={{ color: "var(--muted)" }}>Loading projects…</p>
+              ) : projects.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "3rem", border: "1px dashed var(--border)", borderRadius: "10px", color: "var(--muted)" }}>
+                  <p style={{ marginBottom: "0.5rem" }}>No projects yet.</p>
+                  <button onClick={() => setShowNewProject(true)} style={{ color: "var(--primary)", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: "inherit" }}>Create your first project →</button>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
+                  {projects.map((project) => (
+                    <a key={project.id} href={`/dashboard?projectId=${project.id}`} style={{ textDecoration: "none", display: "block" }}>
+                      <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1.25rem", transition: "border-color 0.15s", cursor: "pointer" }}>
+                        <h3 style={{ fontWeight: 600, marginBottom: "0.25rem", color: "var(--text)" }}>{project.name}</h3>
+                        {project.githubRepo && <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.5rem" }}>⚡ {project.githubRepo}</p>}
+                        {project.description && <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{project.description}</p>}
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </main>
+  );
+}

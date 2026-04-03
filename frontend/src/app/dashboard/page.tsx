@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getCurrentUser, getTasks, logout, type User, type Task } from "../../lib/api";
+import { getCurrentUser, getTasks, createTask, claimTask, transitionTask, logout, type User, type Task } from "../../lib/api";
 
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
@@ -122,6 +122,12 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [projectId, setProjectId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+
+  // New task form
+  const [showNewTask, setShowNewTask] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskPriority, setNewTaskPriority] = useState("MEDIUM");
+  const [creatingTask, setCreatingTask] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -301,6 +307,52 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
+
+          {/* New Task Button */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+            <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{tasks.length} tasks total</p>
+            <button
+              onClick={() => setShowNewTask((v) => !v)}
+              style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "6px", padding: "0.375rem 0.875rem", fontWeight: 600, cursor: "pointer", fontSize: "0.8125rem", fontFamily: "inherit" }}
+            >
+              + New Task
+            </button>
+          </div>
+
+          {showNewTask && (
+            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                void (async () => {
+                  if (!newTaskTitle.trim() || !projectId) return;
+                  setCreatingTask(true);
+                  try {
+                    const t = await createTask(projectId, { title: newTaskTitle.trim(), priority: newTaskPriority });
+                    setTasks((prev) => [t, ...prev]);
+                    setNewTaskTitle("");
+                    setShowNewTask(false);
+                  } finally {
+                    setCreatingTask(false);
+                  }
+                })();
+              }}>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Title</label>
+                    <input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="Task title…" required style={{ width: "100%", display: "block" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Priority</label>
+                    <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value)} style={{ height: "37px" }}>
+                      {["LOW", "MEDIUM", "HIGH", "CRITICAL"].map((p) => <option key={p}>{p}</option>)}
+                    </select>
+                  </div>
+                  <button type="submit" disabled={creatingTask} style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "6px", padding: "0.5rem 1rem", fontWeight: 600, cursor: "pointer", height: "37px", fontFamily: "inherit" }}>{creatingTask ? "…" : "Create"}</button>
+                  <button type="button" onClick={() => setShowNewTask(false)} style={{ background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.5rem 0.75rem", cursor: "pointer", height: "37px", fontFamily: "inherit" }}>×</button>
+                </div>
+              </form>
+            </div>
+          )}
 
           {/* Kanban Board */}
           <KanbanBoard tasks={tasks} />

@@ -9,6 +9,7 @@ import { projectRouter } from "./routes/projects.js";
 import { workflowRouter } from "./routes/workflows.js";
 import { boardRouter } from "./routes/boards.js";
 import { auditRouter } from "./routes/audit.js";
+import { teamRouter } from "./routes/teams.js";
 import { webhookRouter } from "./routes/webhooks.js";
 import { authMiddleware } from "./middleware/auth.js";
 import type { AppVariables } from "./types/hono.js";
@@ -32,12 +33,14 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   // Protected
   app.use("/api/auth/me", authMiddleware);
   app.use("/api/auth/logout", authMiddleware);
+  app.use("/api/teams/*", authMiddleware);
   app.use("/api/agent-tokens/*", authMiddleware);
   app.use("/api/tasks/*", authMiddleware);
   app.use("/api/projects/*", authMiddleware);
   app.use("/api/auth/me", authMiddleware);
 
   app.route("/api/auth", authRouter);
+  app.route("/api", teamRouter);
   app.route("/api/agent-tokens", agentTokenRouter);
   app.route("/api", projectRouter);
   app.route("/api", taskRouter);
