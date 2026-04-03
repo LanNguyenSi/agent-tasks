@@ -36,6 +36,16 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   attachments: TaskAttachment[];
+  claimedByUser?: {
+    id: string;
+    login: string;
+    name: string | null;
+    avatarUrl: string | null;
+  } | null;
+  claimedByAgent?: {
+    id: string;
+    name: string;
+  } | null;
 }
 
 export interface TaskAttachment {

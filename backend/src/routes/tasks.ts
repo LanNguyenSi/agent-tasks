@@ -9,6 +9,24 @@ import { hasProjectAccess } from "../services/team-access.js";
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
+const taskInclude = {
+  attachments: { orderBy: { createdAt: "desc" as const } },
+  claimedByUser: {
+    select: {
+      id: true,
+      login: true,
+      name: true,
+      avatarUrl: true,
+    },
+  },
+  claimedByAgent: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+};
+
 const createTaskSchema = z.object({
   title: z.string().min(1).max(255),
   description: z.string().optional(),
@@ -47,7 +65,7 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
 
   const tasks = await prisma.task.findMany({
     where: { projectId },
-    include: { attachments: { orderBy: { createdAt: "desc" } } },
+    include: taskInclude,
     orderBy: { createdAt: "desc" },
   });
   return c.json({ tasks });
@@ -84,7 +102,7 @@ taskRouter.post(
         createdByUserId: actor.type === "human" ? actor.userId : null,
         createdByAgentId: actor.type === "agent" ? actor.tokenId : null,
       },
-      include: { attachments: { orderBy: { createdAt: "desc" } } },
+      include: taskInclude,
     });
 
     return c.json({ task }, 201);
@@ -147,7 +165,7 @@ taskRouter.get("/tasks/claimable", async (c) => {
     orderBy: { createdAt: "asc" },
     take: limit,
     include: {
-      attachments: { orderBy: { createdAt: "desc" } },
+      ...taskInclude,
       project: { select: { id: true, name: true, slug: true } },
     },
   });
@@ -161,7 +179,7 @@ taskRouter.get("/tasks/:id", async (c) => {
   const actor = c.get("actor") as Actor;
   const task = await prisma.task.findUnique({
     where: { id: c.req.param("id") },
-    include: { comments: true, attachments: { orderBy: { createdAt: "desc" } } },
+    include: { comments: true, ...taskInclude },
   });
   if (!task) return notFound(c);
 
@@ -198,7 +216,7 @@ taskRouter.patch("/tasks/:id", zValidator("json", updateTaskSchema), async (c) =
       ...(body.dueAt !== undefined ? { dueAt: body.dueAt ? new Date(body.dueAt) : null } : {}),
       updatedAt: new Date(),
     },
-    include: { attachments: { orderBy: { createdAt: "desc" } } },
+    include: taskInclude,
   });
 
   return c.json({ task: updated });
@@ -305,7 +323,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
       claimedAt: new Date(),
       status: "in_progress",
     },
-    include: { attachments: { orderBy: { createdAt: "desc" } } },
+    include: taskInclude,
   });
 
   return c.json({ task: updated });
@@ -339,7 +357,7 @@ taskRouter.post("/tasks/:id/release", async (c) => {
       claimedAt: null,
       status: "open",
     },
-    include: { attachments: { orderBy: { createdAt: "desc" } } },
+    include: taskInclude,
   });
 
   return c.json({ task: updated });
@@ -369,7 +387,7 @@ taskRouter.post(
     const updated = await prisma.task.update({
       where: { id: task.id },
       data: { status, updatedAt: new Date() },
-      include: { attachments: { orderBy: { createdAt: "desc" } } },
+      include: taskInclude,
     });
 
     return c.json({ task: updated });
