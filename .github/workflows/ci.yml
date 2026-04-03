@@ -2,9 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, develop, "release/*"]
   pull_request:
-    branches: [master, main]
+    branches: [master, main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   backend:
@@ -30,30 +34,27 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
-      - name: Install backend dependencies
-        working-directory: backend
-        run: npm install
+      - name: Install dependencies
+        run: npm ci
 
       - name: Generate Prisma client
-        working-directory: backend
         env:
           DATABASE_URL: postgresql://agent_tasks:agent_tasks@localhost:5432/agent_tasks_test
-        run: npx prisma generate
+        run: npm run db:generate --workspace=backend
 
       - name: Type check
-        working-directory: backend
-        run: npm run typecheck
+        run: npm run typecheck --workspace=backend
 
       - name: Run tests
-        working-directory: backend
         env:
           DATABASE_URL: postgresql://agent_tasks:agent_tasks@localhost:5432/agent_tasks_test
           GITHUB_CLIENT_ID: test-client-id
           GITHUB_CLIENT_SECRET: test-client-secret
           SESSION_SECRET: test-session-secret-must-be-32chars!!
           NODE_ENV: test
-        run: npm test
+        run: npm run test --workspace=backend
 
   frontend:
     name: Frontend
@@ -64,15 +65,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm install --legacy-peer-deps
+      - name: Install dependencies
+        run: npm ci
 
       - name: Type check
-        working-directory: frontend
-        run: npm run typecheck
+        run: npm run typecheck --workspace=frontend
 
       - name: Build
-        working-directory: frontend
-        run: npm run build
+        run: npm run build --workspace=frontend

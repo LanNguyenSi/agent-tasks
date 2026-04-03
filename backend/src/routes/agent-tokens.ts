@@ -1,11 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
-import { randomBytes, createHash } from "node:crypto";
-import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
+import { createAgentToken, listAgentTokens, revokeAgentToken } from "../services/agent-token-service.js";
 
 export const agentTokenRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -16,12 +15,6 @@ const createTokenSchema = z.object({
   expiresAt: z.string().datetime().optional(),
 });
 
-function generateToken(): { raw: string; hash: string } {
-  const raw = `at_${randomBytes(32).toString("hex")}`;
-  const hash = createHash("sha256").update(raw).digest("hex");
-  return { raw, hash };
-}
-
 agentTokenRouter.get("/", async (c) => {
   const actor = c.get("actor") as Actor;
   const teamId = c.req.query("teamId");
@@ -30,19 +23,12 @@ agentTokenRouter.get("/", async (c) => {
     return c.json({ error: "bad_request", message: "teamId required" }, 400);
   }
 
-  const tokens = await prisma.agentToken.findMany({
-    where: { teamId, revokedAt: null },
-    select: {
-      id: true,
-      name: true,
-      scopes: true,
-      expiresAt: true,
-      lastUsedAt: true,
-      createdAt: true,
-    },
-  });
+  const result = await listAgentTokens(actor, teamId);
+  if (!result.ok) {
+    return forbidden(c, "Access denied to this team");
+  }
 
-  return c.json({ tokens });
+  return c.json(result.data);
 });
 
 agentTokenRouter.post(
@@ -50,54 +36,26 @@ agentTokenRouter.post(
   zValidator("json", createTokenSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
-
-    // Only admins can create tokens
-    if (actor.type !== "human") {
-      return forbidden(c, "Only humans can create agent tokens");
+    const body = c.req.valid("json");
+    const result = await createAgentToken(actor, body);
+    if (!result.ok) {
+      return forbidden(c, "Only team admins can create agent tokens");
     }
 
-    const body = c.req.valid("json");
-    const { raw, hash } = generateToken();
-
-    const token = await prisma.agentToken.create({
-      data: {
-        teamId: body.teamId,
-        createdById: actor.userId,
-        name: body.name,
-        tokenHash: hash,
-        scopes: body.scopes,
-        expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
-      },
-      select: {
-        id: true,
-        name: true,
-        scopes: true,
-        expiresAt: true,
-        createdAt: true,
-      },
-    });
-
-    return c.json({ token, rawToken: raw }, 201);
+    return c.json(result.data, 201);
   },
 );
 
 agentTokenRouter.post("/:id/revoke", async (c) => {
   const actor = c.get("actor") as Actor;
+  const result = await revokeAgentToken(actor, c.req.param("id"));
 
-  if (actor.type !== "human") {
-    return forbidden(c);
+  if (!result.ok && result.error === "not_found") {
+    return notFound(c);
   }
-
-  const token = await prisma.agentToken.findUnique({
-    where: { id: c.req.param("id") },
-  });
-
-  if (!token) return notFound(c);
-
-  await prisma.agentToken.update({
-    where: { id: token.id },
-    data: { revokedAt: new Date() },
-  });
+  if (!result.ok) {
+    return forbidden(c, "Only team admins can revoke agent tokens");
+  }
 
   return c.json({ message: "Token revoked" });
 });

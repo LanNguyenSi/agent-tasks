@@ -5,25 +5,7 @@ import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound, conflict } from "../middleware/error.js";
-
-/** Verify actor has access to the project's team */
-async function assertTeamAccess(actor: Actor, projectId: string): Promise<boolean> {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { teamId: true },
-  });
-  if (!project) return false;
-
-  if (actor.type === "agent") {
-    return actor.teamId === project.teamId;
-  }
-
-  // Human: check team membership
-  const membership = await prisma.teamMember.findUnique({
-    where: { teamId_userId: { teamId: project.teamId, userId: actor.userId } },
-  });
-  return !!membership;
-}
+import { hasProjectAccess } from "../services/team-access.js";
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -45,7 +27,7 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
   const actor = c.get("actor") as Actor;
   const projectId = c.req.param("projectId");
 
-  if (!(await assertTeamAccess(actor, projectId))) {
+  if (!(await hasProjectAccess(actor, projectId))) {
     return forbidden(c, "Access denied to this project");
   }
 
@@ -63,7 +45,12 @@ taskRouter.post(
   zValidator("json", createTaskSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
+    const projectId = c.req.param("projectId");
     const body = c.req.valid("json");
+
+    if (!(await hasProjectAccess(actor, projectId))) {
+      return forbidden(c, "Access denied to this project");
+    }
 
     // Agents need tasks:create scope
     if (actor.type === "agent" && !actor.scopes.includes("tasks:create")) {
@@ -72,7 +59,7 @@ taskRouter.post(
 
     const task = await prisma.task.create({
       data: {
-        projectId: c.req.param("projectId"),
+        projectId,
         title: body.title,
         description: body.description,
         priority: body.priority,
@@ -97,7 +84,7 @@ taskRouter.get("/tasks/:id", async (c) => {
   });
   if (!task) return notFound(c);
 
-  if (!(await assertTeamAccess(actor, task.projectId))) {
+  if (!(await hasProjectAccess(actor, task.projectId))) {
     return forbidden(c, "Access denied to this project");
   }
 
@@ -115,6 +102,10 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
 
   const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
   if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
 
   // Already claimed
   if (task.claimedByUserId || task.claimedByAgentId) {
@@ -140,6 +131,10 @@ taskRouter.post("/tasks/:id/release", async (c) => {
   const actor = c.get("actor") as Actor;
   const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
   if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
 
   // Only current claimant can release
   const isClaimant =
@@ -177,6 +172,10 @@ taskRouter.post(
 
     const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
     if (!task) return notFound(c);
+
+    if (!(await hasProjectAccess(actor, task.projectId))) {
+      return forbidden(c, "Access denied to this project");
+    }
 
     const { status } = c.req.valid("json");
 

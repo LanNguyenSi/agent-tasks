@@ -5,6 +5,7 @@
 - Agent-Zugriff nur über Tokens mit Scopes
 - Token-Rotation und Widerruf
 - Auditierbarkeit aller kritischen Aktionen
+- Policy-basierte Zugriffskontrolle
 
 ## Skalierung
 - Mehrmandantenfähig pro Team
@@ -20,10 +21,18 @@
 - Metriken für Sync, Claims, Transitionen, Fehler
 - Tracing über Request-/Event-Korrelation
 
+## Integrationszuverlässigkeit
+- GitHub-Webhook-Verarbeitung zuverlässig und fehlertolerant
+- Explizite Fehlerpfade für OAuth und Synchronisation
+
 ## Wartbarkeit
 - modulare Architektur
 - klar getrennte Fachdomänen
 - testbare Workflow-Regeln
+- API-First: alle Kernfunktionen via REST verfügbar
+
+## Betrieb
+- Docker-basierte lokale und CI-nahe Ausführung
 
 ## UX
 - klare Zustände und Verantwortlichkeiten

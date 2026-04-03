@@ -16,7 +16,8 @@ agent-tasks/
 ├── backend/          # Hono API (port 3001)
 │   ├── src/
 │   │   ├── routes/   # HTTP handlers
-│   │   ├── services/ # Business logic
+│   │   ├── services/ # Domain / authz logic
+│   │   ├── repositories/ # Persistence access
 │   │   ├── middleware/ # Auth, error handling
 │   │   └── config/   # Env config
 │   └── prisma/       # Schema + migrations
@@ -24,7 +25,6 @@ agent-tasks/
 │   └── src/
 │       ├── app/      # App Router pages
 │       ├── lib/      # API client
-│       └── components/
 ├── docs/             # Specs (from planforge)
 └── .github/          # CI workflows
 ```
@@ -35,23 +35,55 @@ agent-tasks/
 # Copy env
 cp .env.example .env
 
-# Install
-npm ci --workspace=backend
-npm ci --workspace=frontend
+# Install + setup
+make install
+make setup
 
 # Database
-cd backend && npx prisma db push
+make db-push
 
-# Dev servers
-npm run dev:backend  # port 3001
-npm run dev:frontend # port 3000
+# Dev servers (local)
+make dev
 ```
+
+Alternative local run in separate terminals:
+
+```bash
+make dev-backend
+make dev-frontend
+```
+
+### Docker Development
+
+```bash
+# Start db + backend + frontend
+make docker-up
+
+# Stop services
+make docker-down
+```
+
+## Useful Make Targets
+
+- `make install` installs workspace dependencies.
+- `make setup` prepares `.env` and generates Prisma client.
+- `make db-push` syncs Prisma schema to the configured database.
+- `make dev` starts backend and frontend locally.
+- `make dev-docker` starts full stack in Docker.
+- `make ci` runs typecheck, tests, and build.
+- `make hooks` installs pre-commit hooks.
+
+## Planning Artifacts
+
+- `.planforge/` and `scaffold/` are currently preserved as migration sources.
+- Canonical operational docs are being consolidated into `docs/` and `adr/`.
 
 ## Wave Status
 
 | Wave | Scope | Status |
 |------|-------|--------|
 | 1 | Monorepo, schema, auth shell, CI | ✅ Done |
+| 1.5 | Authz hardening + route/service/repository split for Wave 2 | ✅ Done |
 | 2 | GitHub OAuth, session management | ⏳ Next |
 | 3 | Full task/project/board features | ⏳ Planned |
 | 4 | Integration hardening, policies | ⏳ Planned |
@@ -63,6 +95,7 @@ npm run dev:frontend # port 3000
 GET  /api/health
 
 # Auth (Wave 2: GitHub OAuth)
+GET  /api/auth/github
 GET  /api/auth/github/callback
 
 # Agent Tokens

@@ -5,6 +5,11 @@
 Sie soll strukturierte Zusammenarbeit rund um Softwareprojekte ermöglichen, inklusive
 Aufgabenerstellung, Claiming, Review-Handoffs, konfigurierbaren Boards und klaren Verantwortlichkeiten.
 
+## Zielgruppen
+- Software-Teams, die AI-Agenten in ihren Workflow einbinden
+- AI-Agenten, die Tasks autonom übernehmen und umsetzen
+- Tech Leads, die Workflows, Rollen und Policies steuern
+
 ## Kernidee
 - Menschen und Agenten arbeiten auf denselben Projekten
 - Projekte können manuell angelegt oder aus GitHub synchronisiert werden
