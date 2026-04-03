@@ -14,7 +14,9 @@ import {
   type AgentToken,
 } from "../../lib/api";
 import AppHeader from "../../components/AppHeader";
+import AlertBanner from "../../components/ui/AlertBanner";
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 const ALL_SCOPES = [
   { id: "tasks:read", label: "Read tasks" },
   { id: "tasks:create", label: "Create tasks" },
@@ -35,6 +37,7 @@ export default function SettingsPage() {
   const [tokens, setTokens] = useState<TokenRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [newToken, setNewToken] = useState<string | null>(null);
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
 
   const [showCreate, setShowCreate] = useState(false);
   const [tokenName, setTokenName] = useState("");
@@ -46,6 +49,14 @@ export default function SettingsPage() {
     if (typeof window === "undefined") return false;
     return new URLSearchParams(window.location.search).get("github_connected") === "1";
   }, []);
+  const docsUrl = `${API_BASE}/docs`;
+  const openApiUrl = `${API_BASE}/api/openapi.json`;
+  const setupSnippet = [
+    "Agent Setup",
+    `Swagger Docs: ${docsUrl}`,
+    `OpenAPI JSON: ${openApiUrl}`,
+    "Authorization: Bearer <TOKEN>",
+  ].join("\n");
 
   useEffect(() => {
     void (async () => {
@@ -100,6 +111,12 @@ export default function SettingsPage() {
     setTokens((prev) => prev.filter((t) => t.id !== tokenId));
   }
 
+  async function copyToClipboard(value: string, message: string) {
+    await navigator.clipboard.writeText(value);
+    setCopyMessage(message);
+    setTimeout(() => setCopyMessage(null), 2400);
+  }
+
   if (loading) {
     return (
       <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -130,17 +147,19 @@ export default function SettingsPage() {
       <section id="github" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
         <h2 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "0.5rem" }}>GitHub Integration</h2>
         {githubConnectedNow && (
-          <div style={{ background: "#0d2a1a", border: "1px solid var(--success)", borderRadius: "8px", padding: "0.625rem", marginBottom: "0.75rem", color: "var(--success)", fontSize: "0.875rem" }}>
+          <AlertBanner tone="success" title="Verbindung aktualisiert">
             GitHub erfolgreich verbunden.
-          </div>
+          </AlertBanner>
         )}
         {user?.githubConnected ? (
-          <p style={{ color: "var(--success)", fontSize: "0.875rem" }}>GitHub ist verbunden. Sync ist verfügbar.</p>
+          <AlertBanner tone="success">
+            GitHub ist verbunden. Sync ist verfügbar.
+          </AlertBanner>
         ) : (
           <div>
-            <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginBottom: "0.75rem" }}>
+            <AlertBanner tone="warning" title="GitHub nicht verbunden">
               Noch keine GitHub-Verbindung. Ohne Verbindung ist kein Repository-Sync möglich.
-            </p>
+            </AlertBanner>
             <Link
               href="/api/auth/github/connect"
               style={{
@@ -204,15 +223,73 @@ export default function SettingsPage() {
           </div>
         )}
 
+        <AlertBanner tone="info" title="Agent Setup (2 Schritte)">
+          <ol style={{ margin: "0 0 0.625rem 1.1rem", padding: 0 }}>
+            <li>Token erzeugen und dem Agenten als Bearer Token geben.</li>
+            <li>Swagger-Link teilen, damit der Agent alle Endpunkte sieht.</li>
+          </ol>
+          <div style={{ display: "grid", gap: "0.5rem", marginBottom: "0.4rem" }}>
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>Swagger Docs</span>
+              <span style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "0.78rem", wordBreak: "break-all", flex: "1 1 380px" }}>
+                  {docsUrl}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => void copyToClipboard(docsUrl, "Swagger-Link kopiert.")}
+                  style={{ background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.75rem", fontSize: "0.78rem", fontFamily: "inherit" }}
+                >
+                  Copy
+                </button>
+              </span>
+            </label>
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>OpenAPI JSON</span>
+              <span style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "0.78rem", wordBreak: "break-all", flex: "1 1 380px" }}>
+                  {openApiUrl}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => void copyToClipboard(openApiUrl, "OpenAPI-Link kopiert.")}
+                  style={{ background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.75rem", fontSize: "0.78rem", fontFamily: "inherit" }}
+                >
+                  Copy
+                </button>
+              </span>
+            </label>
+          </div>
+          <p style={{ color: "var(--muted)", fontSize: "0.75rem", margin: 0 }}>
+            Auth im Agent via HTTP Header: <code>Authorization: Bearer &lt;TOKEN&gt;</code>
+          </p>
+          <button
+            type="button"
+            onClick={() => void copyToClipboard(setupSnippet, "Setup-Infos kopiert.")}
+            style={{ marginTop: "0.55rem", background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.75rem", fontSize: "0.78rem", fontFamily: "inherit" }}
+          >
+            Copy all setup info
+          </button>
+          {copyMessage && (
+            <p style={{ color: "var(--text)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+              {copyMessage}
+            </p>
+          )}
+        </AlertBanner>
+
         {newToken && (
-          <div style={{ background: "#0d2a1a", border: "1px solid var(--success)", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
-            <p style={{ fontWeight: 600, color: "var(--success)", marginBottom: "0.5rem" }}>Token erstellt — einmalig sichtbar:</p>
+          <AlertBanner tone="success" title="Token erstellt — einmalig sichtbar">
             <code style={{ display: "block", background: "var(--surface)", padding: "0.625rem 0.75rem", borderRadius: "6px", fontFamily: "monospace", fontSize: "0.875rem", wordBreak: "break-all", color: "var(--text)" }}>
               {newToken}
             </code>
-            <button onClick={() => { void navigator.clipboard.writeText(newToken); }} style={{ marginTop: "0.625rem", background: "var(--success)", color: "white", border: "none", borderRadius: "6px", padding: "0.375rem 0.875rem", cursor: "pointer", fontSize: "0.8125rem", fontFamily: "inherit" }}>Copy</button>
+            <button
+              onClick={() => void copyToClipboard(newToken, "Token kopiert.")}
+              style={{ marginTop: "0.625rem", background: "var(--success)", color: "white", border: "none", borderRadius: "6px", padding: "0.375rem 0.875rem", cursor: "pointer", fontSize: "0.8125rem", fontFamily: "inherit" }}
+            >
+              Copy
+            </button>
             <button onClick={() => setNewToken(null)} style={{ marginTop: "0.625rem", marginLeft: "0.5rem", background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.375rem 0.875rem", cursor: "pointer", fontSize: "0.8125rem", fontFamily: "inherit" }}>Dismiss</button>
-          </div>
+          </AlertBanner>
         )}
 
         {showCreate && teams.length > 0 && (
@@ -241,7 +318,11 @@ export default function SettingsPage() {
                   ))}
                 </div>
               </div>
-              {error && <p style={{ color: "var(--danger)", fontSize: "0.8125rem", marginBottom: "0.75rem" }}>{error}</p>}
+              {error && (
+                <AlertBanner tone="danger" title="Token konnte nicht erstellt werden">
+                  {error}
+                </AlertBanner>
+              )}
               <div style={{ display: "flex", gap: "0.5rem" }}>
                 <button type="submit" disabled={creating} style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "6px", padding: "0.5rem 1rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{creating ? "Creating…" : "Create"}</button>
                 <button type="button" onClick={() => setShowCreate(false)} style={{ background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.5rem 1rem", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>

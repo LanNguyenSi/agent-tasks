@@ -14,6 +14,7 @@ import {
   type Project,
 } from "../../lib/api";
 import AppHeader from "../../components/AppHeader";
+import AlertBanner from "../../components/ui/AlertBanner";
 
 type ProjectSort = "name_asc" | "name_desc" | "newest" | "recent_sync";
 const PROJECT_PAGE_SIZE = 9;
@@ -27,6 +28,7 @@ export default function TeamsPage() {
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncTone, setSyncTone] = useState<"success" | "danger">("success");
 
   const [showNewProject, setShowNewProject] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -191,13 +193,16 @@ export default function TeamsPage() {
                   onClick={() => {
                     void (async () => {
                       setSyncMessage(null);
+                      setSyncTone("success");
                       setSyncing(true);
                       try {
                         const result = await syncTeamFromGitHub(selectedTeam.id);
                         await loadProjects(selectedTeam.id);
                         setSyncMessage(`GitHub-Sync fertig: ${result.created} erstellt, ${result.updated} aktualisiert.`);
+                        setSyncTone("success");
                       } catch (err) {
                         setSyncMessage((err as Error).message);
+                        setSyncTone("danger");
                       } finally {
                         setSyncing(false);
                       }
@@ -232,37 +237,17 @@ export default function TeamsPage() {
           </div>
 
           {!user?.githubConnected && (
-            <div
-              style={{
-                border: "1px solid var(--border)",
-                background: "var(--surface)",
-                borderRadius: "10px",
-                padding: "0.75rem 0.875rem",
-                marginBottom: "1rem",
-                color: "var(--muted)",
-                fontSize: "0.875rem",
-              }}
-            >
+            <AlertBanner tone="warning" title="GitHub ist noch nicht verbunden">
               GitHub ist noch nicht verbunden. Ohne Verbindung ist kein Sync möglich.
               {" "}
               <Link href="/settings" style={{ color: "var(--primary)", textDecoration: "none" }}>Jetzt verbinden</Link>
-            </div>
+            </AlertBanner>
           )}
 
           {syncMessage && (
-            <div
-              style={{
-                border: "1px solid var(--border)",
-                background: "var(--surface)",
-                borderRadius: "10px",
-                padding: "0.75rem 0.875rem",
-                marginBottom: "1rem",
-                color: "var(--muted)",
-                fontSize: "0.875rem",
-              }}
-            >
+            <AlertBanner tone={syncTone} title={syncTone === "success" ? "Synchronisierung erfolgreich" : "Synchronisierung fehlgeschlagen"}>
               {syncMessage}
-            </div>
+            </AlertBanner>
           )}
 
           {showNewProject && (
@@ -293,7 +278,11 @@ export default function TeamsPage() {
                     <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>GitHub Repo (optional)</label>
                     <input value={githubRepo} onChange={(e) => setGithubRepo(e.target.value)} placeholder="owner/repo" style={{ width: "100%", display: "block" }} />
                   </div>
-                  {error && <p style={{ color: "var(--danger)", fontSize: "0.8125rem", marginBottom: "0.75rem" }}>{error}</p>}
+                  {error && (
+                    <AlertBanner tone="danger" title="Projekt konnte nicht erstellt werden">
+                      {error}
+                    </AlertBanner>
+                  )}
                   <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                     <button type="submit" disabled={creating} style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "6px", padding: "0.5rem 1rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{creating ? "Creating…" : "Create"}</button>
                     <button type="button" onClick={closeNewProjectModal} style={{ background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.5rem 1rem", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>

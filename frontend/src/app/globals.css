@@ -99,6 +99,78 @@ input:focus, textarea:focus {
   white-space: nowrap;
 }
 
+.app-dropdown-menu {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, #000 8%);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.45);
+  padding: 0.35rem;
+  backdrop-filter: blur(8px);
+}
+
+.app-dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  border-radius: 7px;
+  padding: 0.5rem 0.62rem;
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.app-dropdown-item:hover {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  text-decoration: none;
+}
+
+.app-dropdown-item-danger {
+  color: var(--danger);
+}
+
+.app-dropdown-item-danger:hover {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+.alert-banner {
+  border-radius: 10px;
+  border: 1px solid;
+  padding: 0.72rem 0.85rem;
+  font-size: 0.84rem;
+  margin-bottom: 0.9rem;
+}
+
+.alert-title {
+  font-weight: 700;
+  margin-bottom: 0.2rem;
+}
+
+.alert-info {
+  border-color: #2a4c7a;
+  background: #102239;
+  color: #9bc7ff;
+}
+
+.alert-success {
+  border-color: #275a3f;
+  background: #0f2c1e;
+  color: #8ce4b3;
+}
+
+.alert-warning {
+  border-color: #71561a;
+  background: #33270d;
+  color: #ffd98a;
+}
+
+.alert-danger {
+  border-color: color-mix(in srgb, var(--danger) 70%, #522 30%);
+  background: #2a1a1a;
+  color: #ff9ca0;
+}
+
 .teams-layout {
   display: grid;
   grid-template-columns: 240px 1fr;
