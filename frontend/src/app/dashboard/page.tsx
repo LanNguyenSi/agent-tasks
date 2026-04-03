@@ -420,7 +420,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <main style={{ padding: "1.25rem", maxWidth: "1500px", margin: "0 auto", minHeight: "100vh" }}>
+    <main style={{ padding: "1.25rem", maxWidth: "1200px", margin: "0 auto", minHeight: "100vh" }}>
       <AppHeader
         user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null}
         boardHref={selectedTeamId && selectedProjectId ? `/dashboard?teamId=${selectedTeamId}&projectId=${selectedProjectId}` : "/dashboard"}
@@ -494,7 +494,7 @@ export default function DashboardPage() {
       {showNewTask && (
         <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.9rem", marginBottom: "1rem" }}>
           <form onSubmit={(e) => void handleCreateTask(e)}>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: "0.5rem", marginBottom: "0.5rem" }}>
+            <div className="new-task-grid" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: "0.5rem", marginBottom: "0.5rem" }}>
               <div>
                 <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Titel</label>
                 <input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} required style={{ width: "100%" }} />
@@ -597,7 +597,7 @@ export default function DashboardPage() {
                   <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)} style={{ width: "100%" }} />
                 </div>
 
-                <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.9rem" }}>
+                <div className="task-detail-actions" style={{ display: "flex", gap: "0.5rem", marginBottom: "0.9rem", flexWrap: "wrap" }}>
                   <button
                     type="button"
                     onClick={() => void handleSaveTask()}

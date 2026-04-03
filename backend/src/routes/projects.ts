@@ -40,10 +40,19 @@ async function assertMembership(actor: Actor, teamId: string): Promise<boolean> 
 
 projectRouter.get("/projects", async (c) => {
   const actor = c.get("actor");
-  const teamId = c.req.query("teamId");
+  const requestedTeamId = c.req.query("teamId");
+  let teamId: string;
 
-  if (!teamId) {
-    return c.json({ error: "bad_request", message: "teamId required" }, 400);
+  if (actor.type === "agent") {
+    if (requestedTeamId && requestedTeamId !== actor.teamId) {
+      return forbidden(c, "Token is only valid for its own team");
+    }
+    teamId = actor.teamId;
+  } else {
+    if (!requestedTeamId) {
+      return c.json({ error: "bad_request", message: "teamId required" }, 400);
+    }
+    teamId = requestedTeamId;
   }
 
   if (!(await assertMembership(actor, teamId))) {
@@ -56,6 +65,51 @@ projectRouter.get("/projects", async (c) => {
   });
 
   return c.json({ projects });
+});
+
+// ── List token-available projects (agent-friendly) ──────────────────────────
+
+projectRouter.get("/projects/available", async (c) => {
+  const actor = c.get("actor");
+  const requestedTeamId = c.req.query("teamId");
+  let teamId: string;
+
+  if (actor.type === "agent") {
+    if (requestedTeamId && requestedTeamId !== actor.teamId) {
+      return forbidden(c, "Token is only valid for its own team");
+    }
+    teamId = actor.teamId;
+  } else {
+    if (!requestedTeamId) {
+      return c.json({ error: "bad_request", message: "teamId required for human users" }, 400);
+    }
+    teamId = requestedTeamId;
+  }
+
+  if (!(await assertMembership(actor, teamId))) {
+    return forbidden(c, "Access denied to this team");
+  }
+
+  const projects = await prisma.project.findMany({
+    where: { teamId },
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      description: true,
+      githubRepo: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  return c.json({
+    projects: projects.map((project) => ({
+      ...project,
+      displayName: `${project.name} (${project.slug})`,
+    })),
+  });
 });
 
 // ── Create project ────────────────────────────────────────────────────────────

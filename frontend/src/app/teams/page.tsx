@@ -99,7 +99,7 @@ export default function TeamsPage() {
   }
 
   return (
-    <main style={{ padding: "1.5rem", maxWidth: "1200px", margin: "0 auto", minHeight: "100vh" }}>
+    <main style={{ padding: "1.25rem", maxWidth: "1200px", margin: "0 auto", minHeight: "100vh" }}>
       <AppHeader
         user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null}
         boardHref={selectedTeam && projects[0] ? `/dashboard?teamId=${selectedTeam.id}&projectId=${projects[0].id}` : "/dashboard"}
@@ -109,7 +109,7 @@ export default function TeamsPage() {
         Startpunkt: Team auswählen, danach Projekt öffnen. Ohne GitHub-Verbindung kannst du Projekte manuell anlegen, mit Verbindung kannst du synchronisieren.
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: "1.5rem" }}>
+      <div className="teams-layout" style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: "1.5rem" }}>
         {/* Sidebar */}
         <aside>
           <p style={{ color: "var(--muted)", fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.5rem" }}>Teams</p>
@@ -144,12 +144,12 @@ export default function TeamsPage() {
         <div>
           {selectedTeam && (
             <>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+              <div className="teams-header-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem", gap: "0.75rem" }}>
                 <div>
                   <h1 style={{ fontSize: "1.25rem", fontWeight: 700 }}>{selectedTeam.name}</h1>
                   <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{selectedTeam.projectCount ?? projects.length} projects</p>
                 </div>
-                <div style={{ display: "flex", gap: "0.5rem" }}>
+                <div className="teams-actions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
                   {!user?.githubConnected ? (
                     <Link
                       href="/api/auth/github/connect"
@@ -246,7 +246,7 @@ export default function TeamsPage() {
                 <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1.25rem", marginBottom: "1.25rem" }}>
                   <h3 style={{ fontSize: "0.9375rem", fontWeight: 600, marginBottom: "1rem" }}>New Project</h3>
                   <form onSubmit={(e) => void handleCreateProject(e)}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "0.75rem" }}>
+                    <div className="project-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "0.75rem" }}>
                       <div>
                         <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Name</label>
                         <input value={projectName} onChange={(e) => handleProjectNameChange(e.target.value)} placeholder="My Project" required style={{ width: "100%", display: "block" }} />

@@ -11,6 +11,7 @@ import { boardRouter } from "./routes/boards.js";
 import { auditRouter } from "./routes/audit.js";
 import { teamRouter } from "./routes/teams.js";
 import { webhookRouter } from "./routes/webhooks.js";
+import { docsRouter } from "./routes/docs.js";
 import { authMiddleware } from "./middleware/auth.js";
 import type { AppVariables } from "./types/hono.js";
 
@@ -29,6 +30,7 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   // Public
   app.route("/api/health", healthRouter);
   app.route("/api/webhooks", webhookRouter); // GitHub webhooks — signature-verified, no auth
+  app.route("/", docsRouter);
 
   // Protected
   app.use("/api/auth/me", authMiddleware);

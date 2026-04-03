@@ -90,6 +90,9 @@ make docker-down
 
 ## API Highlights
 
+- Swagger UI: `GET /docs` (alias: `/api/docs`)
+- OpenAPI JSON: `GET /api/openapi.json`
+
 ```bash
 # Health
 GET  /api/health
@@ -112,9 +115,13 @@ POST /api/teams/:id/sync
 # Tasks
 GET  /api/projects/:id/tasks
 POST /api/projects/:id/tasks
+GET  /api/tasks/claimable
 POST /api/tasks/:id/claim
 POST /api/tasks/:id/release
 POST /api/tasks/:id/transition
+
+# Agent discovery
+GET  /api/projects/available
 ```
 
 ## Agent Auth

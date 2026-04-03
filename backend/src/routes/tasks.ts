@@ -89,6 +89,70 @@ taskRouter.post(
   },
 );
 
+// ── List claimable tasks ─────────────────────────────────────────────────────
+
+taskRouter.get("/tasks/claimable", async (c) => {
+  const actor = c.get("actor") as Actor;
+  const projectId = c.req.query("projectId");
+  const teamIdQuery = c.req.query("teamId");
+  const limitRaw = c.req.query("limit");
+
+  const parsedLimit = limitRaw ? Number.parseInt(limitRaw, 10) : 50;
+  const limit =
+    Number.isFinite(parsedLimit) && parsedLimit >= 1 && parsedLimit <= 200 ? parsedLimit : 50;
+
+  const where: {
+    status: string;
+    claimedByUserId: null;
+    claimedByAgentId: null;
+    projectId?: string;
+    project?: { teamId: string };
+  } = {
+    status: "open",
+    claimedByUserId: null,
+    claimedByAgentId: null,
+  };
+
+  if (projectId) {
+    if (!(await hasProjectAccess(actor, projectId))) {
+      return forbidden(c, "Access denied to this project");
+    }
+    where.projectId = projectId;
+  } else if (actor.type === "agent") {
+    // For agents, team scope is implicit via token.
+    where.project = { teamId: actor.teamId };
+  } else {
+    // For human sessions, keep team boundary explicit when no project is given.
+    if (!teamIdQuery) {
+      return c.json(
+        { error: "bad_request", message: "teamId or projectId required" },
+        400,
+      );
+    }
+
+    const membership = await prisma.teamMember.findUnique({
+      where: { teamId_userId: { teamId: teamIdQuery, userId: actor.userId } },
+    });
+    if (!membership) {
+      return forbidden(c, "Access denied to this team");
+    }
+
+    where.project = { teamId: teamIdQuery };
+  }
+
+  const tasks = await prisma.task.findMany({
+    where,
+    orderBy: { createdAt: "asc" },
+    take: limit,
+    include: {
+      attachments: { orderBy: { createdAt: "desc" } },
+      project: { select: { id: true, name: true, slug: true } },
+    },
+  });
+
+  return c.json({ tasks });
+});
+
 // ── Get task ─────────────────────────────────────────────────────────────────
 
 taskRouter.get("/tasks/:id", async (c) => {
