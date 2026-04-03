@@ -1,17 +1,33 @@
 "use client";
 
 import { useState } from "react";
-import { login, register } from "../lib/api";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { getCurrentUser, getTeams, login, register } from "../lib/api";
 
 type Mode = "login" | "register";
 
 export default function HomePage() {
+  const router = useRouter();
+  const [checkingSession, setCheckingSession] = useState(true);
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const me = await getCurrentUser();
+      if (me) {
+        const teams = await getTeams();
+        router.replace(teams.length === 0 ? "/onboarding" : "/teams");
+        return;
+      }
+      setCheckingSession(false);
+    })();
+  }, [router]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,11 +39,20 @@ export default function HomePage() {
       } else {
         await login({ email, password });
       }
-      window.location.href = "/teams";
+      const teams = await getTeams();
+      router.replace(teams.length === 0 ? "/onboarding" : "/teams");
     } catch (err) {
       setError((err as Error).message);
       setSubmitting(false);
     }
+  }
+
+  if (checkingSession) {
+    return (
+      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <p style={{ color: "var(--muted)" }}>Loading…</p>
+      </main>
+    );
   }
 
   return (

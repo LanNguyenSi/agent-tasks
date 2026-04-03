@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
   getTeams,
@@ -11,6 +13,7 @@ import {
   type Team,
   type AgentToken,
 } from "../../lib/api";
+import AppHeader from "../../components/AppHeader";
 
 const ALL_SCOPES = [
   { id: "tasks:read", label: "Read tasks" },
@@ -25,6 +28,7 @@ const ALL_SCOPES = [
 type TokenRecord = AgentToken;
 
 export default function SettingsPage() {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string>("");
@@ -47,7 +51,7 @@ export default function SettingsPage() {
     void (async () => {
       const me = await getCurrentUser();
       if (!me) {
-        window.location.href = "/";
+        router.replace("/");
         return;
       }
       setUser(me);
@@ -64,7 +68,7 @@ export default function SettingsPage() {
 
       setLoading(false);
     })();
-  }, []);
+  }, [router]);
 
   async function loadTokens(teamId: string) {
     setError(null);
@@ -108,23 +112,22 @@ export default function SettingsPage() {
 
   return (
     <main style={{ padding: "1.5rem", maxWidth: "960px", margin: "0 auto", minHeight: "100vh" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem", borderBottom: "1px solid var(--border)", paddingBottom: "1rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <a href="/teams" style={{ color: "var(--primary)", fontWeight: 700 }}>agent-tasks</a>
-          <span style={{ color: "var(--muted)" }}>/</span>
-          <span style={{ color: "var(--muted)" }}>Settings</span>
-        </div>
-        <span style={{ color: "var(--muted)", fontSize: "0.875rem" }}>{user?.login}</span>
-      </header>
+      <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
 
-      <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
+      <nav style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", fontSize: "0.82rem" }}>
+        <a href="#account" style={{ color: "var(--muted)" }}>Account</a>
+        <a href="#github" style={{ color: "var(--muted)" }}>GitHub</a>
+        <a href="#api-tokens" style={{ color: "var(--muted)" }}>API Tokens</a>
+      </nav>
+
+      <section id="account" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
         <h2 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "0.5rem" }}>Account</h2>
         <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginBottom: "0.25rem" }}>Login: {user?.login}</p>
         <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginBottom: "0.25rem" }}>Name: {user?.name ?? "-"}</p>
         <p style={{ color: "var(--muted)", fontSize: "0.875rem" }}>E-Mail: {user?.email ?? "-"}</p>
       </section>
 
-      <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
+      <section id="github" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
         <h2 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "0.5rem" }}>GitHub Integration</h2>
         {githubConnectedNow && (
           <div style={{ background: "#0d2a1a", border: "1px solid var(--success)", borderRadius: "8px", padding: "0.625rem", marginBottom: "0.75rem", color: "var(--success)", fontSize: "0.875rem" }}>
@@ -138,7 +141,7 @@ export default function SettingsPage() {
             <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginBottom: "0.75rem" }}>
               Noch keine GitHub-Verbindung. Ohne Verbindung ist kein Repository-Sync möglich.
             </p>
-            <a
+            <Link
               href="/api/auth/github/connect"
               style={{
                 display: "inline-block",
@@ -152,12 +155,12 @@ export default function SettingsPage() {
               }}
             >
               GitHub verbinden
-            </a>
+            </Link>
           </div>
         )}
       </section>
 
-      <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem" }}>
+      <section id="api-tokens" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
           <div>
             <h2 style={{ fontSize: "1rem", fontWeight: 700 }}>API Tokens</h2>

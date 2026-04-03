@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { getCurrentUser, getTeams, createTeam, type User, type Team } from "../../lib/api";
 
 export default function OnboardingPage() {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
@@ -19,7 +21,7 @@ export default function OnboardingPage() {
     void (async () => {
       const me = await getCurrentUser();
       if (!me) {
-        window.location.href = "/";
+        router.replace("/");
         return;
       }
       setUser(me);
@@ -30,12 +32,12 @@ export default function OnboardingPage() {
       if (existingTeams.length > 0) {
         // Already has teams — redirect to teams page
         setStep("redirect");
-        window.location.href = "/teams";
+        router.replace("/teams");
       } else {
         setStep("create-team");
       }
     })();
-  }, []);
+  }, [router]);
 
   // Auto-generate slug from name
   function handleNameChange(name: string) {
@@ -55,8 +57,8 @@ export default function OnboardingPage() {
     setCreating(true);
     setError(null);
     try {
-      const team = await createTeam({ name: teamName.trim(), slug: teamSlug.trim() });
-      window.location.href = '/teams';
+      await createTeam({ name: teamName.trim(), slug: teamSlug.trim() });
+      router.replace("/teams");
     } catch (err) {
       setError((err as Error).message);
       setCreating(false);

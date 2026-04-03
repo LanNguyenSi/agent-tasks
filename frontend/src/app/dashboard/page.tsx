@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
   getTeams,
@@ -11,12 +12,12 @@ import {
   deleteTask,
   addTaskAttachment,
   deleteTaskAttachment,
-  logout,
   type User,
   type Team,
   type Project,
   type Task,
 } from "../../lib/api";
+import AppHeader from "../../components/AppHeader";
 
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
@@ -165,6 +166,7 @@ function BoardColumns({
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -206,14 +208,14 @@ export default function DashboardPage() {
       try {
         const me = await getCurrentUser();
         if (!me) {
-          window.location.href = "/";
+          router.replace("/");
           return;
         }
         setUser(me);
 
         const userTeams = await getTeams();
         if (userTeams.length === 0) {
-          window.location.href = "/onboarding";
+          router.replace("/onboarding");
           return;
         }
         setTeams(userTeams);
@@ -251,7 +253,7 @@ export default function DashboardPage() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     if (!activeTask) return;
@@ -419,47 +421,14 @@ export default function DashboardPage() {
 
   return (
     <main style={{ padding: "1.25rem", maxWidth: "1500px", margin: "0 auto", minHeight: "100vh" }}>
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: "1rem",
-          marginBottom: "1rem",
-          borderBottom: "1px solid var(--border)",
-          paddingBottom: "0.9rem",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 700, color: "var(--primary)" }}>agent-tasks</span>
-          <a href="/teams" style={{ color: "var(--muted)", fontSize: "0.85rem" }}>Teams</a>
-          <a href="/settings" style={{ color: "var(--muted)", fontSize: "0.85rem" }}>Settings</a>
-          <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>Board</span>
-        </div>
+      <AppHeader
+        user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null}
+        boardHref={selectedTeamId && selectedProjectId ? `/dashboard?teamId=${selectedTeamId}&projectId=${selectedProjectId}` : "/dashboard"}
+      />
 
-        <div style={{ display: "flex", alignItems: "center", gap: "0.65rem" }}>
-          {user?.avatarUrl && (
-            <img src={user.avatarUrl} alt={user.login} style={{ width: "28px", height: "28px", borderRadius: "50%" }} />
-          )}
-          <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>{user?.login}</span>
-          <button
-            onClick={() => {
-              void logout().then(() => {
-                window.location.href = "/";
-              });
-            }}
-            style={{
-              border: "1px solid var(--border)",
-              background: "transparent",
-              color: "var(--muted)",
-              borderRadius: "6px",
-              padding: "0.25rem 0.6rem",
-            }}
-          >
-            Logout
-          </button>
-        </div>
-      </header>
+      <div style={{ border: "1px solid var(--border)", background: "var(--surface)", borderRadius: "10px", padding: "0.75rem 0.9rem", marginBottom: "1rem", color: "var(--muted)", fontSize: "0.84rem" }}>
+        Flow: Team wählen, Projekt wählen, Task anklicken und rechts bearbeiten.
+      </div>
 
       <section
         className="dashboard-select-grid"
