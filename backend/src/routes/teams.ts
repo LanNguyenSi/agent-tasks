@@ -242,15 +242,7 @@ teamRouter.post("/teams/:id/sync", async (c) => {
     created += 1;
   }
 
-  if (repoFullNames.length === 0) {
-    const deleted = await prisma.project.deleteMany({
-      where: {
-        teamId,
-        githubRepo: { not: null },
-      },
-    });
-    pruned = deleted.count;
-  } else {
+  if (repoFullNames.length > 0) {
     const deleted = await prisma.project.deleteMany({
       where: {
         teamId,
@@ -263,11 +255,16 @@ teamRouter.post("/teams/:id/sync", async (c) => {
     pruned = deleted.count;
   }
 
+  const skippedPrune = repoFullNames.length === 0;
+
   return c.json({
     synced: repos.length,
     created,
     updated,
     pruned,
-    message: `Synced ${repos.length} repositories (${created} created, ${updated} updated, ${pruned} pruned)`,
+    skippedPrune,
+    message: skippedPrune
+      ? "GitHub sync returned 0 repositories; prune was skipped for safety."
+      : `Synced ${repos.length} repositories (${created} created, ${updated} updated, ${pruned} pruned)`,
   });
 });

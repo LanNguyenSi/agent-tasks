@@ -30,7 +30,7 @@ export default function TeamsPage() {
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [syncTone, setSyncTone] = useState<"success" | "danger">("success");
+  const [syncTone, setSyncTone] = useState<"success" | "warning" | "danger">("success");
 
   const [showNewProject, setShowNewProject] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -219,10 +219,15 @@ export default function TeamsPage() {
                       try {
                         const result = await syncTeamFromGitHub(selectedTeam.id);
                         await loadProjects(selectedTeam.id);
-                        setSyncMessage(
-                          `GitHub sync complete: ${result.created} created, ${result.updated} updated, ${result.pruned} pruned.`,
-                        );
-                        setSyncTone("success");
+                        if (result.skippedPrune) {
+                          setSyncMessage(result.message);
+                          setSyncTone("warning");
+                        } else {
+                          setSyncMessage(
+                            `GitHub sync complete: ${result.created} created, ${result.updated} updated, ${result.pruned} pruned.`,
+                          );
+                          setSyncTone("success");
+                        }
                       } catch (err) {
                         setSyncMessage((err as Error).message);
                         setSyncTone("danger");

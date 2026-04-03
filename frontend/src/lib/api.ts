@@ -219,6 +219,7 @@ export async function syncTeamFromGitHub(teamId: string): Promise<{
   created: number;
   updated: number;
   pruned: number;
+  skippedPrune: boolean;
   message: string;
 }> {
   return request(`/api/teams/${teamId}/sync`, { method: "POST" });
