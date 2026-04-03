@@ -8,6 +8,7 @@ export interface User {
   name: string | null;
   avatarUrl: string | null;
   email: string | null;
+  githubConnected: boolean;
 }
 
 export interface Project {
@@ -139,6 +140,26 @@ export async function logout(): Promise<void> {
   await request("/api/auth/logout", { method: "POST" });
 }
 
+export async function register(body: {
+  email: string;
+  password: string;
+  name?: string;
+}): Promise<User> {
+  const data = await request<{ user: User }>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return data.user;
+}
+
+export async function login(body: { email: string; password: string }): Promise<User> {
+  const data = await request<{ user: User }>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return data.user;
+}
+
 // ── Projects ──────────────────────────────────────────────────────────────────
 
 export async function getProjects(teamId: string): Promise<Project[]> {
@@ -168,6 +189,15 @@ export async function getProject(id: string): Promise<Project> {
 export async function syncProject(id: string): Promise<Project> {
   const data = await request<{ project: Project }>(`/api/projects/${id}/sync`, { method: "POST" });
   return data.project;
+}
+
+export async function syncTeamFromGitHub(teamId: string): Promise<{
+  synced: number;
+  created: number;
+  updated: number;
+  message: string;
+}> {
+  return request(`/api/teams/${teamId}/sync`, { method: "POST" });
 }
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────

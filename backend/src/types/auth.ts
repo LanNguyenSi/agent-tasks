@@ -18,5 +18,4 @@ export type Actor = HumanActor | AgentActor;
 
 export interface SessionData {
   userId: string;
-  githubAccessToken: string;
 }

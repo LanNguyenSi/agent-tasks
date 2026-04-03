@@ -1,7 +1,10 @@
 # Use Cases
 
-## 1. Login via GitHub OAuth
-Ein Human meldet sich über GitHub an. Benutzerkonto, Teams und verfügbare Repositories werden synchronisiert.
+## 1. Registrierung/Login
+Ein Human registriert sich mit E-Mail + Passwort oder meldet sich mit vorhandenen Zugangsdaten an.
+
+## 1a. Optional: GitHub verbinden
+Ein Human verbindet sein Konto optional mit GitHub, um Repository-Sync nutzen zu können.
 
 ## 2. Projekt aus Repository provisionieren
 Ein Repository wird synchronisiert und als Projekt angelegt oder aktualisiert.

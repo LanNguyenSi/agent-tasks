@@ -9,7 +9,7 @@ import { config } from "../config/index.js";
 /**
  * Extracts and validates the actor from the request.
  * - Bearer token → AgentActor (API token)
- * - Session cookie → HumanActor (GitHub OAuth session)
+ * - Session cookie → HumanActor (user session)
  */
 export async function authMiddleware(c: Context<{ Variables: AppVariables }>, next: Next): Promise<Response | void> {
   const authorization = c.req.header("Authorization");
@@ -43,7 +43,7 @@ export async function authMiddleware(c: Context<{ Variables: AppVariables }>, ne
     return next();
   }
 
-  // Session cookie auth (GitHub OAuth session)
+  // Session cookie auth
   const sessionToken = extractSessionCookie(c.req.header("Cookie"));
   if (sessionToken) {
     const session = await verifySessionToken(sessionToken, config.SESSION_SECRET);

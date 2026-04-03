@@ -1,33 +1,52 @@
-// Note: redirect logic for logged-in users handled in middleware or client-side
+"use client";
+
+import { useState } from "react";
+import { login, register } from "../lib/api";
+
+type Mode = "login" | "register";
+
 export default function HomePage() {
+  const [mode, setMode] = useState<Mode>("login");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      if (mode === "register") {
+        await register({ email, password, name: name || undefined });
+      } else {
+        await login({ email, password });
+      }
+      window.location.href = "/teams";
+    } catch (err) {
+      setError((err as Error).message);
+      setSubmitting(false);
+    }
+  }
+
   return (
     <main
       style={{
         minHeight: "100vh",
         display: "flex",
-        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         padding: "2rem",
-        background: "var(--bg)",
+        background:
+          "radial-gradient(circle at 10% 10%, rgba(56, 189, 248, 0.16), transparent 40%), radial-gradient(circle at 90% 20%, rgba(16, 185, 129, 0.12), transparent 40%), var(--bg)",
       }}
     >
-      <div style={{ maxWidth: "480px", width: "100%", textAlign: "center" }}>
-        <div style={{ marginBottom: "2rem" }}>
-          <h1
-            style={{
-              fontSize: "2rem",
-              fontWeight: 700,
-              marginBottom: "0.5rem",
-              background: "linear-gradient(90deg, #5865f2, #3ba55c)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-            }}
-          >
-            agent-tasks
-          </h1>
-          <p style={{ color: "var(--muted)", fontSize: "1rem" }}>
-            Collaborative task platform for humans and agents.
+      <div style={{ width: "100%", maxWidth: "460px" }}>
+        <div style={{ textAlign: "center", marginBottom: "1.5rem" }}>
+          <h1 style={{ fontSize: "2rem", fontWeight: 700, marginBottom: "0.5rem" }}>agent-tasks</h1>
+          <p style={{ color: "var(--muted)" }}>
+            Registrierung und Login per E-Mail. GitHub-Verbindung ist optional in den Settings.
           </p>
         </div>
 
@@ -36,38 +55,155 @@ export default function HomePage() {
             background: "var(--surface)",
             border: "1px solid var(--border)",
             borderRadius: "12px",
-            padding: "2rem",
-            marginBottom: "1.5rem",
+            padding: "1.25rem",
+            marginBottom: "1rem",
           }}
         >
-          <p style={{ color: "var(--muted)", marginBottom: "1.5rem", fontSize: "0.875rem" }}>
-            Sign in with GitHub to access your projects and tasks.
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", marginBottom: "1rem" }}>
+            <button
+              onClick={() => setMode("login")}
+              type="button"
+              style={{
+                border: "1px solid var(--border)",
+                background: mode === "login" ? "var(--border)" : "transparent",
+                color: "var(--text)",
+                borderRadius: "8px",
+                padding: "0.5rem",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontWeight: 600,
+              }}
+            >
+              Login
+            </button>
+            <button
+              onClick={() => setMode("register")}
+              type="button"
+              style={{
+                border: "1px solid var(--border)",
+                background: mode === "register" ? "var(--border)" : "transparent",
+                color: "var(--text)",
+                borderRadius: "8px",
+                padding: "0.5rem",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontWeight: 600,
+              }}
+            >
+              Registrieren
+            </button>
+          </div>
+
+          <form onSubmit={(e) => void handleSubmit(e)}>
+            {mode === "register" && (
+              <div style={{ marginBottom: "0.75rem" }}>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+                  Name (optional)
+                </label>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Max Mustermann"
+                  style={{ width: "100%", display: "block" }}
+                />
+              </div>
+            )}
+
+            <div style={{ marginBottom: "0.75rem" }}>
+              <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+                E-Mail
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                required
+                style={{ width: "100%", display: "block" }}
+              />
+            </div>
+
+            <div style={{ marginBottom: "1rem" }}>
+              <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+                Passwort
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                minLength={8}
+                required
+                style={{ width: "100%", display: "block" }}
+              />
+            </div>
+
+            {error && (
+              <div
+                style={{
+                  border: "1px solid var(--danger)",
+                  color: "var(--danger)",
+                  background: "#2a1a1a",
+                  borderRadius: "8px",
+                  padding: "0.625rem",
+                  fontSize: "0.875rem",
+                  marginBottom: "0.75rem",
+                }}
+              >
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={submitting}
+              style={{
+                width: "100%",
+                border: "none",
+                borderRadius: "8px",
+                padding: "0.75rem",
+                background: "var(--primary)",
+                color: "white",
+                fontWeight: 600,
+                cursor: submitting ? "not-allowed" : "pointer",
+                fontFamily: "inherit",
+                opacity: submitting ? 0.7 : 1,
+              }}
+            >
+              {submitting ? "Bitte warten…" : mode === "register" ? "Account erstellen" : "Einloggen"}
+            </button>
+          </form>
+        </div>
+
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "12px",
+            padding: "1rem",
+            textAlign: "center",
+          }}
+        >
+          <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginBottom: "0.625rem" }}>
+            Alternativ kannst du direkt mit GitHub einsteigen.
           </p>
           <a
             href="/api/auth/github"
             style={{
               display: "inline-flex",
               alignItems: "center",
+              justifyContent: "center",
               gap: "0.5rem",
-              background: "var(--primary)",
-              color: "white",
-              padding: "0.75rem 1.5rem",
               borderRadius: "8px",
-              fontWeight: 600,
+              padding: "0.625rem 1rem",
+              background: "#0f172a",
+              color: "white",
               textDecoration: "none",
-              transition: "background 0.15s",
+              fontWeight: 600,
             }}
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
-            </svg>
-            Login with GitHub
+            Mit GitHub anmelden
           </a>
         </div>
-
-        <p style={{ color: "var(--muted)", fontSize: "0.75rem" }}>
-          Agents use API tokens — no OAuth required.
-        </p>
       </div>
     </main>
   );

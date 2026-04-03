@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
+import { ensureDefaultBoardForProject } from "../services/board-default.js";
 
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -90,6 +91,8 @@ projectRouter.post("/projects", zValidator("json", createProjectSchema), async (
     },
   });
 
+  await ensureDefaultBoardForProject(project.id);
+
   return c.json({ project }, 201);
 });
 
@@ -155,11 +158,20 @@ projectRouter.post("/projects/:id/sync", async (c) => {
     return c.json({ error: "bad_request", message: "Project has no GitHub repository configured" }, 400);
   }
 
-  // TODO (Wave 3): Trigger actual GitHub sync
+  const user = await prisma.user.findUnique({ where: { id: actor.userId } });
+  if (!user?.githubAccessToken) {
+    return c.json(
+      { error: "forbidden", message: "Connect your GitHub account in settings before syncing" },
+      403,
+    );
+  }
+
   const updated = await prisma.project.update({
     where: { id: project.id },
     data: { githubSyncAt: new Date() },
   });
+
+  await ensureDefaultBoardForProject(updated.id);
 
   return c.json({ project: updated, message: "Sync initiated (Wave 3: full implementation)" });
 });
