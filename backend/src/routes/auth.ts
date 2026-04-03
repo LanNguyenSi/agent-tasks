@@ -60,8 +60,8 @@ authRouter.get("/github/callback", async (c) => {
     const sessionToken = await createSessionToken(user.id, tokenResponse.access_token, config.SESSION_SECRET);
     const isSecure = config.NODE_ENV === "production";
 
-    c.header("Set-Cookie", buildSessionCookie(sessionToken, isSecure));
-    c.header("Set-Cookie", "oauth_state=; Max-Age=0; Path=/"); // clear state cookie
+    c.header("Set-Cookie", buildSessionCookie(sessionToken, isSecure), { append: true });
+    c.header("Set-Cookie", "oauth_state=; Max-Age=0; Path=/", { append: true }); // clear state cookie
 
     return c.redirect(`${config.FRONTEND_URL}/dashboard`);
   } catch (err) {
