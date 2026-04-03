@@ -50,6 +50,20 @@ const openApiSpec = {
         },
         required: ["id", "teamId", "name", "slug", "createdAt", "updatedAt"],
       },
+      AvailableProject: {
+        type: "object",
+        properties: {
+          id: { type: "string", format: "uuid" },
+          name: { type: "string" },
+          slug: { type: "string" },
+          displayName: { type: "string", example: "Foobar API (foobar-api)" },
+          description: { type: "string", nullable: true },
+          githubRepo: { type: "string", nullable: true, example: "owner/repo" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+        required: ["id", "name", "slug", "displayName", "createdAt", "updatedAt"],
+      },
       TaskAttachment: {
         type: "object",
         properties: {
@@ -95,6 +109,27 @@ const openApiSpec = {
           "updatedAt",
         ],
       },
+      ProjectRef: {
+        type: "object",
+        properties: {
+          id: { type: "string", format: "uuid" },
+          name: { type: "string" },
+          slug: { type: "string" },
+        },
+        required: ["id", "name", "slug"],
+      },
+      ClaimableTask: {
+        allOf: [
+          { $ref: "#/components/schemas/Task" },
+          {
+            type: "object",
+            properties: {
+              project: { $ref: "#/components/schemas/ProjectRef" },
+            },
+            required: ["project"],
+          },
+        ],
+      },
       CreateTaskRequest: {
         type: "object",
         properties: {
@@ -119,15 +154,17 @@ const openApiSpec = {
     "/api/projects": {
       get: {
         tags: ["Projects"],
-        summary: "List projects for a team",
-        description: "Requires membership (human) or matching teamId in agent token.",
+        summary: "List projects",
+        description:
+          "For human sessions, provide teamId. For agent tokens, teamId is inferred from the token.",
         security: [{ bearerAuth: [] }],
         parameters: [
           {
             name: "teamId",
             in: "query",
-            required: true,
+            required: false,
             schema: { type: "string", format: "uuid" },
+            description: "Required for humans, optional/ignored for agent tokens.",
           },
         ],
         responses: {
@@ -153,6 +190,51 @@ const openApiSpec = {
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "403": {
+            description: "No team access",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/projects/available": {
+      get: {
+        tags: ["Projects"],
+        summary: "List token-available projects (ID + cleartext)",
+        description:
+          "Recommended discovery endpoint for agents. Returns project id plus human-readable name and slug.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "teamId",
+            in: "query",
+            required: false,
+            schema: { type: "string", format: "uuid" },
+            description: "Optional for agents, required for humans.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Available projects for current auth context",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    projects: {
+                      type: "array",
+                      items: { $ref: "#/components/schemas/AvailableProject" },
+                    },
+                  },
+                  required: ["projects"],
+                },
               },
             },
           },
@@ -283,6 +365,71 @@ const openApiSpec = {
           },
           "403": {
             description: "Missing scope or no access",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/tasks/claimable": {
+      get: {
+        tags: ["Tasks"],
+        summary: "List claimable (open + unclaimed) tasks",
+        description:
+          "For agents, team scope is inferred from token; optionally narrow by projectId. For humans, provide projectId or teamId.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "projectId",
+            in: "query",
+            required: false,
+            schema: { type: "string", format: "uuid" },
+          },
+          {
+            name: "teamId",
+            in: "query",
+            required: false,
+            schema: { type: "string", format: "uuid" },
+            description: "Needed for humans when projectId is omitted.",
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Claimable tasks with project cleartext",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    tasks: {
+                      type: "array",
+                      items: { $ref: "#/components/schemas/ClaimableTask" },
+                    },
+                  },
+                  required: ["tasks"],
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Missing required query parameters",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "403": {
+            description: "Access denied",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorResponse" },

@@ -115,9 +115,13 @@ POST /api/teams/:id/sync
 # Tasks
 GET  /api/projects/:id/tasks
 POST /api/projects/:id/tasks
+GET  /api/tasks/claimable
 POST /api/tasks/:id/claim
 POST /api/tasks/:id/release
 POST /api/tasks/:id/transition
+
+# Agent discovery
+GET  /api/projects/available
 ```
 
 ## Agent Auth
