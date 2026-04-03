@@ -1,34 +1,160 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface User {
+  id: string;
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+  email: string | null;
+}
+
+export interface Project {
+  id: string;
+  teamId: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  githubRepo: string | null;
+  githubSyncAt: string | null;
+  createdAt: string;
+}
+
+export interface Task {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string | null;
+  status: string;
+  priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  claimedByUserId: string | null;
+  claimedByAgentId: string | null;
+  claimedAt: string | null;
+  dueAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuditLog {
+  id: string;
+  action: string;
+  actorId: string | null;
+  taskId: string | null;
+  projectId: string | null;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ApiError {
+  error: string;
+  message: string;
+}
+
+// ── Core request ──────────────────────────────────────────────────────────────
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...init?.headers },
     credentials: "include",
     ...init,
   });
+
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: "Request failed" }));
+    const err = (await res.json().catch(() => ({ message: "Request failed" }))) as ApiError;
     throw new Error(err.message ?? "Request failed");
   }
+
   return res.json() as Promise<T>;
 }
 
-export async function getTasks(projectId: string) {
-  return request<{ tasks: unknown[] }>(`/api/projects/${projectId}/tasks`);
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+export async function getCurrentUser(): Promise<User | null> {
+  try {
+    const data = await request<{ user: User | null }>("/api/auth/me");
+    return data.user;
+  } catch {
+    return null;
+  }
 }
 
-export async function createTask(projectId: string, body: { title: string; priority?: string }) {
-  return request(`/api/projects/${projectId}/tasks`, { method: "POST", body: JSON.stringify(body) });
+export async function logout(): Promise<void> {
+  await request("/api/auth/logout", { method: "POST" });
 }
 
-export async function claimTask(taskId: string) {
-  return request(`/api/tasks/${taskId}/claim`, { method: "POST" });
+// ── Projects ──────────────────────────────────────────────────────────────────
+
+export async function getProjects(teamId: string): Promise<Project[]> {
+  const data = await request<{ projects: Project[] }>(`/api/projects?teamId=${teamId}`);
+  return data.projects;
 }
 
-export async function releaseTask(taskId: string) {
-  return request(`/api/tasks/${taskId}/release`, { method: "POST" });
+export async function createProject(body: {
+  teamId: string;
+  name: string;
+  slug: string;
+  description?: string;
+  githubRepo?: string;
+}): Promise<Project> {
+  const data = await request<{ project: Project }>("/api/projects", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return data.project;
 }
 
-export async function transitionTask(taskId: string, status: string) {
-  return request(`/api/tasks/${taskId}/transition`, { method: "POST", body: JSON.stringify({ status }) });
+export async function getProject(id: string): Promise<Project> {
+  const data = await request<{ project: Project }>(`/api/projects/${id}`);
+  return data.project;
+}
+
+export async function syncProject(id: string): Promise<Project> {
+  const data = await request<{ project: Project }>(`/api/projects/${id}/sync`, { method: "POST" });
+  return data.project;
+}
+
+// ── Tasks ─────────────────────────────────────────────────────────────────────
+
+export async function getTasks(projectId: string): Promise<Task[]> {
+  const data = await request<{ tasks: Task[] }>(`/api/projects/${projectId}/tasks`);
+  return data.tasks;
+}
+
+export async function createTask(
+  projectId: string,
+  body: { title: string; description?: string; priority?: string },
+): Promise<Task> {
+  const data = await request<{ task: Task }>(`/api/projects/${projectId}/tasks`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return data.task;
+}
+
+export async function claimTask(taskId: string): Promise<Task> {
+  const data = await request<{ task: Task }>(`/api/tasks/${taskId}/claim`, { method: "POST" });
+  return data.task;
+}
+
+export async function releaseTask(taskId: string): Promise<Task> {
+  const data = await request<{ task: Task }>(`/api/tasks/${taskId}/release`, { method: "POST" });
+  return data.task;
+}
+
+export async function transitionTask(taskId: string, status: string): Promise<Task> {
+  const data = await request<{ task: Task }>(`/api/tasks/${taskId}/transition`, {
+    method: "POST",
+    body: JSON.stringify({ status }),
+  });
+  return data.task;
+}
+
+// ── Audit ─────────────────────────────────────────────────────────────────────
+
+export async function getProjectAuditLogs(projectId: string, limit = 50): Promise<AuditLog[]> {
+  const data = await request<{ logs: AuditLog[] }>(
+    `/api/projects/${projectId}/audit?limit=${limit}`,
+  );
+  return data.logs;
 }
