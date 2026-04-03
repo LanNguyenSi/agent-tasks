@@ -10,8 +10,8 @@ import {
   createTask,
   updateTask,
   deleteTask,
-  addTaskAttachment,
-  deleteTaskAttachment,
+  claimTask,
+  releaseTask,
   type User,
   type Project,
   type Task,
@@ -25,6 +25,7 @@ const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
 
 type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+type ListSort = "updated_desc" | "priority_desc" | "due_asc" | "title_asc";
 
 const STATUS_LABELS: Record<Status, string> = {
   open: "Open",
@@ -46,6 +47,7 @@ const PRIORITY_RANK: Record<Priority, number> = {
   MEDIUM: 2,
   LOW: 3,
 };
+const LIST_PAGE_SIZE = 12;
 
 function isOverdue(task: Task): boolean {
   if (!task.dueAt || task.status === "done") return false;
@@ -88,8 +90,14 @@ function updateUrl(teamId: string, projectId: string): void {
 }
 
 function getClaimLabel(task: Task): string {
-  if (task.claimedByUserId) return "Claimed by user";
-  if (task.claimedByAgentId) return "Claimed by agent";
+  if (task.claimedByUser) {
+    return `Assignee: ${task.claimedByUser.name ?? task.claimedByUser.login}`;
+  }
+  if (task.claimedByAgent) {
+    return `Assignee: Agent ${task.claimedByAgent.name}`;
+  }
+  if (task.claimedByUserId) return `Assignee: User ${task.claimedByUserId.slice(0, 8)}`;
+  if (task.claimedByAgentId) return `Assignee: Agent ${task.claimedByAgentId.slice(0, 8)}`;
   return "Unclaimed";
 }
 
@@ -148,8 +156,8 @@ function TaskCard({
         </p>
       )}
       <div style={{ display: "flex", justifyContent: "space-between", color: "var(--muted)", fontSize: "0.72rem" }}>
-        <span>{task.attachments.length} attachments</span>
         <span>{task.dueAt ? `Due ${toDateInputValue(task.dueAt)}` : "No due date"}</span>
+        <span>{task.claimedByUserId || task.claimedByAgentId ? "Assigned" : "Unassigned"}</span>
       </div>
     </button>
   );
@@ -220,12 +228,14 @@ export default function DashboardPage() {
   const [newTaskStatus, setNewTaskStatus] = useState<Status>("open");
   const [newTaskPriority, setNewTaskPriority] = useState<Priority>("MEDIUM");
   const [newTaskDueAt, setNewTaskDueAt] = useState("");
-  const [newTaskAttachmentName, setNewTaskAttachmentName] = useState("");
-  const [newTaskAttachmentUrl, setNewTaskAttachmentUrl] = useState("");
+  const [newTaskAssignee, setNewTaskAssignee] = useState<"unassigned" | "me">("unassigned");
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
   const [hideDone, setHideDone] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"board" | "list">("board");
+  const [listSort, setListSort] = useState<ListSort>("updated_desc");
+  const [listPage, setListPage] = useState(1);
   const projectTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -253,19 +263,42 @@ export default function DashboardPage() {
     }, { open: 0, in_progress: 0, review: 0, done: 0 });
   }, [filteredTasks]);
 
+  const listSortedTasks = useMemo(() => {
+    return [...filteredTasks].sort((a, b) => {
+      if (listSort === "title_asc") return a.title.localeCompare(b.title);
+
+      if (listSort === "priority_desc") {
+        const priorityDiff = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
+        if (priorityDiff !== 0) return priorityDiff;
+      }
+
+      if (listSort === "due_asc") {
+        const aDue = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
+        const bDue = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
+        if (aDue !== bDue) return aDue - bDue;
+      }
+
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
+  }, [filteredTasks, listSort]);
+
+  const listTotalPages = Math.max(1, Math.ceil(listSortedTasks.length / LIST_PAGE_SIZE));
+  const currentListPage = Math.min(listPage, listTotalPages);
+  const listPageTasks = useMemo(() => {
+    const start = (currentListPage - 1) * LIST_PAGE_SIZE;
+    return listSortedTasks.slice(start, start + LIST_PAGE_SIZE);
+  }, [currentListPage, listSortedTasks]);
+
   const [savingTask, setSavingTask] = useState(false);
   const [deletingTask, setDeletingTask] = useState(false);
   const [showDeleteTaskConfirm, setShowDeleteTaskConfirm] = useState(false);
-  const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [claimBusy, setClaimBusy] = useState(false);
 
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editPriority, setEditPriority] = useState<Priority>("MEDIUM");
   const [editStatus, setEditStatus] = useState<Status>("open");
   const [editDueAt, setEditDueAt] = useState("");
-
-  const [attachmentName, setAttachmentName] = useState("");
-  const [attachmentUrl, setAttachmentUrl] = useState("");
 
   function closeNewTaskModal() {
     setShowNewTask(false);
@@ -274,8 +307,7 @@ export default function DashboardPage() {
     setNewTaskStatus("open");
     setNewTaskPriority("MEDIUM");
     setNewTaskDueAt("");
-    setNewTaskAttachmentName("");
-    setNewTaskAttachmentUrl("");
+    setNewTaskAssignee("unassigned");
   }
 
   useEffect(() => {
@@ -342,6 +374,10 @@ export default function DashboardPage() {
     if (!activeTask) setShowDeleteTaskConfirm(false);
   }, [activeTask]);
 
+  useEffect(() => {
+    setListPage(1);
+  }, [selectedProjectId, taskQuery, taskScope, hideDone, listSort, viewMode]);
+
   async function handleProjectChange(projectId: string) {
     if (!selectedTeamId) return;
     setSelectedProjectId(projectId);
@@ -362,12 +398,6 @@ export default function DashboardPage() {
   async function handleCreateTask(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedProjectId || !newTaskTitle.trim()) return;
-    const hasAttachmentName = newTaskAttachmentName.trim().length > 0;
-    const hasAttachmentUrl = newTaskAttachmentUrl.trim().length > 0;
-    if (hasAttachmentName !== hasAttachmentUrl) {
-      setError("For a starter attachment, both name and URL are required.");
-      return;
-    }
 
     setCreatingTask(true);
     setError(null);
@@ -380,15 +410,11 @@ export default function DashboardPage() {
         dueAt: toIsoDateOrNull(newTaskDueAt) ?? undefined,
       });
 
-      if (hasAttachmentName && hasAttachmentUrl) {
+      if (newTaskAssignee === "me") {
         try {
-          const attachment = await addTaskAttachment(task.id, {
-            name: newTaskAttachmentName.trim(),
-            url: newTaskAttachmentUrl.trim(),
-          });
-          task = { ...task, attachments: [attachment, ...task.attachments] };
-        } catch (attachmentError) {
-          setError(`Task created, but attachment could not be added: ${(attachmentError as Error).message}`);
+          task = await claimTask(task.id);
+        } catch (claimError) {
+          setError(`Task created, but assignment failed: ${(claimError as Error).message}`);
         }
       }
 
@@ -438,52 +464,31 @@ export default function DashboardPage() {
     }
   }
 
-  async function handleAddAttachment(e: React.FormEvent) {
-    e.preventDefault();
-    if (!activeTask || !attachmentName.trim() || !attachmentUrl.trim()) return;
-    setAttachmentBusy(true);
+  async function handleClaimActiveTask() {
+    if (!activeTask) return;
+    setClaimBusy(true);
     setError(null);
     try {
-      const attachment = await addTaskAttachment(activeTask.id, {
-        name: attachmentName.trim(),
-        url: attachmentUrl.trim(),
-      });
-      setTasks((prev) =>
-        prev.map((task) =>
-          task.id === activeTask.id
-            ? { ...task, attachments: [attachment, ...task.attachments] }
-            : task,
-        ),
-      );
-      setAttachmentName("");
-      setAttachmentUrl("");
+      const updated = await claimTask(activeTask.id);
+      setTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
     } catch (err) {
       setError((err as Error).message);
     } finally {
-      setAttachmentBusy(false);
+      setClaimBusy(false);
     }
   }
 
-  async function handleDeleteAttachment(attachmentId: string) {
+  async function handleReleaseActiveTask() {
     if (!activeTask) return;
-    setAttachmentBusy(true);
+    setClaimBusy(true);
     setError(null);
     try {
-      await deleteTaskAttachment(activeTask.id, attachmentId);
-      setTasks((prev) =>
-        prev.map((task) =>
-          task.id === activeTask.id
-            ? {
-                ...task,
-                attachments: task.attachments.filter((attachment) => attachment.id !== attachmentId),
-              }
-            : task,
-        ),
-      );
+      const updated = await releaseTask(activeTask.id);
+      setTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
     } catch (err) {
       setError((err as Error).message);
     } finally {
-      setAttachmentBusy(false);
+      setClaimBusy(false);
     }
   }
 
@@ -508,7 +513,7 @@ export default function DashboardPage() {
           alignItems: "end",
         }}
       >
-        <div>
+        <div className="project-select-wrap">
           <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Project</label>
           <button
             ref={projectTriggerRef}
@@ -542,7 +547,7 @@ export default function DashboardPage() {
             open={projectMenuOpen}
             onClose={() => setProjectMenuOpen(false)}
             align="start"
-            minWidth={260}
+            minWidth={220}
             className="project-picker-menu"
           >
             <div role="menu" className="menu-scroll" style={{ maxHeight: "300px" }}>
@@ -607,8 +612,7 @@ export default function DashboardPage() {
               </button>
             </div>
             <form onSubmit={(e) => void handleCreateTask(e)}>
-              <div className="task-detail-grid" style={{ marginBottom: "0.75rem" }}>
-                <div>
+              <div style={{ marginBottom: "0.75rem" }}>
                   <div style={{ marginBottom: "0.5rem" }}>
                     <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Title</label>
                     <input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} required style={{ width: "100%" }} />
@@ -640,27 +644,17 @@ export default function DashboardPage() {
                       <input type="date" value={newTaskDueAt} onChange={(e) => setNewTaskDueAt(e.target.value)} style={{ width: "100%" }} />
                     </div>
                   </div>
-                </div>
-
-                <div style={{ border: "1px solid var(--border)", borderRadius: "10px", padding: "0.75rem" }}>
-                  <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.45rem" }}>Starter attachment (optional)</p>
-                  <input
-                    value={newTaskAttachmentName}
-                    onChange={(e) => setNewTaskAttachmentName(e.target.value)}
-                    placeholder="Name"
-                    style={{ width: "100%", marginBottom: "0.35rem" }}
-                  />
-                  <input
-                    value={newTaskAttachmentUrl}
-                    onChange={(e) => setNewTaskAttachmentUrl(e.target.value)}
-                    placeholder="https://..."
-                    type="url"
-                    style={{ width: "100%" }}
-                  />
-                  <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginTop: "0.45rem" }}>
-                    This attachment is created immediately after task creation.
-                  </p>
-                </div>
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Assignee</label>
+                    <select
+                      value={newTaskAssignee}
+                      onChange={(e) => setNewTaskAssignee(e.target.value as "unassigned" | "me")}
+                      style={{ width: "100%" }}
+                    >
+                      <option value="unassigned">Unassigned</option>
+                      <option value="me">Assign to me</option>
+                    </select>
+                  </div>
               </div>
 
               <button
@@ -683,6 +677,36 @@ export default function DashboardPage() {
       )}
 
       <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.75rem", marginBottom: "0.9rem" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.65rem", gap: "0.5rem", flexWrap: "wrap" }}>
+          <div className="view-toggle">
+            <button
+              type="button"
+              className={viewMode === "board" ? "view-toggle-active" : ""}
+              onClick={() => setViewMode("board")}
+            >
+              Board
+            </button>
+            <button
+              type="button"
+              className={viewMode === "list" ? "view-toggle-active" : ""}
+              onClick={() => setViewMode("list")}
+            >
+              List
+            </button>
+          </div>
+          {viewMode === "list" && (
+            <select
+              value={listSort}
+              onChange={(e) => setListSort(e.target.value as ListSort)}
+              style={{ minWidth: "210px" }}
+            >
+              <option value="updated_desc">Sort: Recently updated</option>
+              <option value="priority_desc">Sort: Priority</option>
+              <option value="due_asc">Sort: Due date</option>
+              <option value="title_asc">Sort: Title A-Z</option>
+            </select>
+          )}
+        </div>
         <div className="board-toolbar">
           <input
             value={taskQuery}
@@ -739,7 +763,82 @@ export default function DashboardPage() {
                 {projects.find((project) => project.id === selectedProjectId)?.name}
               </p>
             </div>
-            <BoardColumns tasks={filteredTasks} activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} />
+            {viewMode === "board" ? (
+              <BoardColumns tasks={filteredTasks} activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} />
+            ) : (
+              <div className="task-list-shell">
+                <div className="task-list-head">
+                  <span>Task</span>
+                  <span>Assignee</span>
+                  <span>Due</span>
+                  <span>Priority</span>
+                </div>
+                {listPageTasks.length === 0 ? (
+                  <div style={{ padding: "1rem", color: "var(--muted)", textAlign: "center" }}>No tasks in this list view.</div>
+                ) : (
+                  listPageTasks.map((task, index) => (
+                    <button
+                      key={task.id}
+                      type="button"
+                      className="task-list-row"
+                      onClick={() => setActiveTaskId(task.id)}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        border: "none",
+                        background: "transparent",
+                        color: "var(--text)",
+                        padding: "0.72rem 0.78rem",
+                        borderBottom: index < listPageTasks.length - 1 ? "1px solid var(--border)" : "none",
+                      }}
+                    >
+                      <span className="task-list-cell-main">
+                        <span style={{ display: "block", fontSize: "0.86rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {task.title}
+                        </span>
+                        <span style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)" }}>
+                          {STATUS_LABELS[task.status as Status]}
+                        </span>
+                      </span>
+                      <span className="task-list-cell-muted">
+                        {task.claimedByUser ? task.claimedByUser.login : task.claimedByAgent ? `Agent ${task.claimedByAgent.name}` : "Unassigned"}
+                      </span>
+                      <span className="task-list-cell-muted">
+                        {task.dueAt ? toDateInputValue(task.dueAt) : "No due date"}
+                      </span>
+                      <span className="task-list-cell-priority">
+                        <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>
+                          {task.priority}
+                        </span>
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+            {viewMode === "list" && listTotalPages > 1 && (
+              <div className="teams-pagination">
+                <span>Page {currentListPage} of {listTotalPages}</span>
+                <div style={{ display: "flex", gap: "0.4rem" }}>
+                  <button
+                    type="button"
+                    disabled={currentListPage <= 1}
+                    onClick={() => setListPage((page) => Math.max(1, page - 1))}
+                    style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: "6px", padding: "0.3rem 0.6rem", opacity: currentListPage <= 1 ? 0.5 : 1 }}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={currentListPage >= listTotalPages}
+                    onClick={() => setListPage((page) => Math.min(listTotalPages, page + 1))}
+                    style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: "6px", padding: "0.3rem 0.6rem", opacity: currentListPage >= listTotalPages ? 0.5 : 1 }}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
         </div>
       )}
@@ -758,12 +857,44 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            <div className="task-detail-grid">
-              <div>
+            <div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginBottom: "0.7rem" }}>
                   <span className="status-chip">{STATUS_LABELS[activeTask.status as Status]}</span>
                   <span className="status-chip">{activeTask.priority}</span>
                   <span className="status-chip">{getClaimLabel(activeTask)}</span>
+                </div>
+
+                <div style={{ marginBottom: "0.6rem" }}>
+                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Assignee</label>
+                  <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.45rem 0.55rem", color: "var(--text)", fontSize: "0.84rem", background: "color-mix(in srgb, var(--surface) 88%, #0b111d 12%)" }}>
+                    {activeTask.claimedByUser
+                      ? `${activeTask.claimedByUser.name ?? activeTask.claimedByUser.login} (user)`
+                      : activeTask.claimedByAgent
+                        ? `${activeTask.claimedByAgent.name} (agent)`
+                        : "Unassigned"}
+                  </div>
+                  <div style={{ display: "flex", gap: "0.45rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
+                    {!activeTask.claimedByUserId && !activeTask.claimedByAgentId && (
+                      <button
+                        type="button"
+                        onClick={() => void handleClaimActiveTask()}
+                        disabled={claimBusy || savingTask || deletingTask}
+                        style={{ background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.35rem 0.6rem" }}
+                      >
+                        {claimBusy ? "Claiming…" : "Claim for me"}
+                      </button>
+                    )}
+                    {activeTask.claimedByUserId === user?.id && (
+                      <button
+                        type="button"
+                        onClick={() => void handleReleaseActiveTask()}
+                        disabled={claimBusy || savingTask || deletingTask}
+                        style={{ background: "transparent", color: "var(--warning)", border: "1px solid var(--warning)", borderRadius: "8px", padding: "0.35rem 0.6rem" }}
+                      >
+                        {claimBusy ? "Releasing…" : "Release"}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div style={{ marginBottom: "0.5rem" }}>
@@ -817,58 +948,6 @@ export default function DashboardPage() {
                     {deletingTask ? "Deleting…" : "Delete"}
                   </button>
                 </div>
-              </div>
-
-              <div style={{ border: "1px solid var(--border)", borderRadius: "10px", padding: "0.75rem" }}>
-                <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.45rem" }}>Attachments</p>
-
-                <form onSubmit={(e) => void handleAddAttachment(e)} style={{ marginBottom: "0.65rem" }}>
-                  <input
-                    value={attachmentName}
-                    onChange={(e) => setAttachmentName(e.target.value)}
-                    placeholder="Name"
-                    style={{ width: "100%", marginBottom: "0.35rem" }}
-                  />
-                  <input
-                    value={attachmentUrl}
-                    onChange={(e) => setAttachmentUrl(e.target.value)}
-                    placeholder="https://..."
-                    type="url"
-                    style={{ width: "100%", marginBottom: "0.35rem" }}
-                  />
-                  <button
-                    type="submit"
-                    disabled={attachmentBusy}
-                    style={{ background: "var(--border)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "7px", padding: "0.35rem 0.6rem" }}
-                  >
-                    Add attachment
-                  </button>
-                </form>
-
-                {activeTask.attachments.length === 0 ? (
-                  <p style={{ color: "var(--muted)", fontSize: "0.78rem" }}>No attachments.</p>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-                    {activeTask.attachments.map((attachment) => (
-                      <div key={attachment.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.4rem 0.5rem" }}>
-                        <a href={attachment.url} target="_blank" rel="noreferrer" style={{ color: "var(--text)", fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {attachment.name}
-                        </a>
-                        <button
-                          type="button"
-                          disabled={attachmentBusy}
-                          onClick={() => {
-                            void handleDeleteAttachment(attachment.id);
-                          }}
-                          style={{ background: "transparent", border: "1px solid var(--danger)", color: "var(--danger)", borderRadius: "6px", padding: "0.2rem 0.45rem", fontSize: "0.72rem" }}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         </div>
