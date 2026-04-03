@@ -66,8 +66,29 @@ input:focus, textarea:focus {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
+}
+
+.board-columns {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  gap: 0.9rem;
+}
+
+.task-card {
+  transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+
+.task-card:hover {
+  border-color: #3a4f70 !important;
+  transform: translateY(-1px);
+}
+
+.task-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr);
+  gap: 0.85rem;
 }
 
 .app-header-nav {
@@ -86,7 +107,7 @@ input:focus, textarea:focus {
 
 .teams-filter-bar {
   display: grid;
-  grid-template-columns: minmax(220px, 1.3fr) minmax(180px, 0.8fr) auto;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.8fr) auto;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
 }
@@ -122,7 +143,7 @@ input:focus, textarea:focus {
 
 .board-toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) repeat(2, minmax(150px, 0.9fr));
+  grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(150px, 0.9fr));
   gap: 0.5rem;
   margin-bottom: 0.8rem;
 }
@@ -151,26 +172,39 @@ input:focus, textarea:focus {
   font-size: 0.72rem;
 }
 
-.task-detail-panel {
-  position: sticky;
-  top: 1rem;
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(4, 6, 11, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.modal-card {
+  width: min(860px, 100%);
   max-height: calc(100vh - 2rem);
   overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
 }
 
 @media (max-width: 1100px) {
-  .dashboard-grid {
-    grid-template-columns: 1fr;
-  }
-
   .dashboard-select-grid {
     grid-template-columns: 1fr !important;
   }
 
-  .task-detail-panel {
-    position: static;
-    max-height: none;
-    overflow: visible;
+  .board-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .task-detail-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -207,12 +241,22 @@ input:focus, textarea:focus {
     justify-content: flex-start !important;
   }
 
+  .teams-actions > a,
+  .teams-actions > button {
+    width: 100%;
+    text-align: center;
+  }
+
   .project-form-grid {
     grid-template-columns: 1fr !important;
   }
 
   .teams-filter-bar {
     grid-template-columns: 1fr;
+  }
+
+  .projects-grid {
+    grid-template-columns: 1fr !important;
   }
 
   .teams-pagination {
@@ -230,5 +274,15 @@ input:focus, textarea:focus {
 
   .task-detail-actions > button {
     flex: 1 1 160px;
+  }
+}
+
+@media (max-width: 760px) {
+  .board-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-card {
+    padding: 0.85rem;
   }
 }
