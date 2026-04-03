@@ -65,7 +65,7 @@ export default function SettingsPage() {
     void (async () => {
       const me = await getCurrentUser();
       if (!me) {
-        router.replace("/");
+        router.replace("/auth");
         return;
       }
       setUser(me);

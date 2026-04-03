@@ -66,11 +66,7 @@ button {
   cursor: pointer;
   font-family: inherit;
   font-size: inherit;
-  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-}
-
-button:hover {
-  transform: translateY(-1px);
+  transition: box-shadow 0.12s ease, border-color 0.12s ease, background 0.12s ease;
 }
 
 input, textarea, select {
@@ -102,6 +98,106 @@ input:focus, textarea:focus, select:focus {
   margin: 0 auto;
   min-height: 100vh;
   padding: 1.25rem;
+}
+
+.landing-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.landing-card {
+  width: min(980px, 100%);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, #314e7d 20%);
+  border-radius: 16px;
+  background:
+    radial-gradient(700px 320px at -10% -30%, rgba(79, 131, 255, 0.2), transparent 60%),
+    radial-gradient(580px 280px at 120% -10%, rgba(56, 185, 120, 0.13), transparent 55%),
+    color-mix(in srgb, var(--surface) 90%, #060b15 10%);
+  padding: clamp(1.2rem, 3vw, 2.2rem);
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.42);
+}
+
+.landing-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+.landing-title {
+  font-size: clamp(1.7rem, 4.2vw, 2.7rem);
+  line-height: 1.15;
+  font-weight: 760;
+  max-width: 16ch;
+  margin-bottom: 0.75rem;
+}
+
+.landing-copy {
+  font-size: 0.98rem;
+  color: color-mix(in srgb, var(--muted) 80%, #d2def2 20%);
+  max-width: 62ch;
+  margin-bottom: 1.15rem;
+}
+
+.landing-cta-row {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.4rem;
+}
+
+.landing-cta-primary,
+.landing-cta-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  padding: 0.55rem 0.95rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.landing-cta-primary {
+  border: 1px solid color-mix(in srgb, var(--primary) 66%, transparent);
+  background: color-mix(in srgb, var(--primary) 24%, #0f1b31 76%);
+  color: #edf3ff;
+}
+
+.landing-cta-secondary {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 83%, #0a111d 17%);
+  color: var(--text);
+}
+
+.landing-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.landing-feature {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 82%, #0a101b 18%);
+  padding: 0.75rem 0.8rem;
+}
+
+.landing-feature > h2 {
+  font-size: 0.84rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.landing-feature > p {
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 
 .dashboard-grid {
@@ -255,9 +351,9 @@ input:focus, textarea:focus, select:focus {
 
 .board-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(150px, 0.9fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.5rem;
-  margin-bottom: 0.8rem;
+  margin-bottom: 0.6rem;
 }
 
 .board-scope-inline {
@@ -341,6 +437,41 @@ input:focus, textarea:focus, select:focus {
 
 .task-list-cell-priority {
   font-size: 0.73rem;
+}
+
+.scope-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.65rem;
+}
+
+.filter-chip {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 84%, #0b111d 16%);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.26rem 0.56rem;
+  font-size: 0.75rem;
+}
+
+.filter-chip.filter-chip-active {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--primary) 52%, var(--border) 48%);
+  background: color-mix(in srgb, var(--primary) 16%, #0b1423 84%);
+}
+
+.filter-chip.filter-chip-clear {
+  color: #ffd2d5;
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border) 40%);
+}
+
+.section-kicker {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
 }
 
 .status-summary {
@@ -438,6 +569,10 @@ input:focus, textarea:focus, select:focus {
 @media (max-width: 900px) {
   .page-shell {
     padding: 1rem;
+  }
+
+  .landing-feature-grid {
+    grid-template-columns: 1fr;
   }
 
   .app-header {

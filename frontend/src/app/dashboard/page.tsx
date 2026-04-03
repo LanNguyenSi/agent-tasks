@@ -13,6 +13,7 @@ import {
   claimTask,
   releaseTask,
   type User,
+  type Team,
   type Project,
   type Task,
 } from "../../lib/api";
@@ -82,23 +83,48 @@ function toIsoDateOrNull(value: string): string | null {
   return new Date(`${value}T00:00:00`).toISOString();
 }
 
-function updateUrl(teamId: string, projectId: string): void {
+function updateUrl(teamId: string, projectId?: string): void {
   const url = new URL(window.location.href);
   url.searchParams.set("teamId", teamId);
-  url.searchParams.set("projectId", projectId);
+  if (projectId) {
+    url.searchParams.set("projectId", projectId);
+  } else {
+    url.searchParams.delete("projectId");
+  }
   window.history.replaceState({}, "", url.toString());
 }
 
+function getTeamProjectStorageKey(teamId: string): string {
+  return `dashboard:lastProject:${teamId}`;
+}
+
+function readStoredProjectId(teamId: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(getTeamProjectStorageKey(teamId));
+  } catch {
+    return null;
+  }
+}
+
+function storeProjectId(teamId: string, projectId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(getTeamProjectStorageKey(teamId), projectId);
+  } catch {
+    // No-op for blocked storage contexts.
+  }
+}
+
+function getAssigneeName(task: Task): string {
+  if (task.claimedByUser) return task.claimedByUser.name ?? task.claimedByUser.login;
+  if (task.claimedByAgent) return `Agent ${task.claimedByAgent.name}`;
+  return "Unassigned";
+}
+
 function getClaimLabel(task: Task): string {
-  if (task.claimedByUser) {
-    return `Assignee: ${task.claimedByUser.name ?? task.claimedByUser.login}`;
-  }
-  if (task.claimedByAgent) {
-    return `Assignee: Agent ${task.claimedByAgent.name}`;
-  }
-  if (task.claimedByUserId) return `Assignee: User ${task.claimedByUserId.slice(0, 8)}`;
-  if (task.claimedByAgentId) return `Assignee: Agent ${task.claimedByAgentId.slice(0, 8)}`;
-  return "Unclaimed";
+  if (!task.claimedByUserId && !task.claimedByAgentId) return "Unassigned";
+  return `Assignee: ${getAssigneeName(task)}`;
 }
 
 function TaskCard({
@@ -155,9 +181,19 @@ function TaskCard({
           {task.description}
         </p>
       )}
-      <div style={{ display: "flex", justifyContent: "space-between", color: "var(--muted)", fontSize: "0.72rem" }}>
-        <span>{task.dueAt ? `Due ${toDateInputValue(task.dueAt)}` : "No due date"}</span>
-        <span>{task.claimedByUserId || task.claimedByAgentId ? "Assigned" : "Unassigned"}</span>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", alignItems: "flex-end" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+          <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>{task.priority}</span>
+          {isOverdue(task) && (
+            <span className="status-chip" style={{ color: "var(--danger)", borderColor: "color-mix(in srgb, var(--danger) 55%, var(--border) 45%)" }}>
+              Overdue
+            </span>
+          )}
+        </div>
+        <div style={{ textAlign: "right", fontSize: "0.72rem", color: "var(--muted)" }}>
+          <div>{getAssigneeName(task)}</div>
+          <div>{task.dueAt ? `Due ${toDateInputValue(task.dueAt)}` : "No due date"}</div>
+        </div>
       </div>
     </button>
   );
@@ -213,6 +249,7 @@ function BoardColumns({
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string>("");
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
@@ -237,6 +274,10 @@ export default function DashboardPage() {
   const [listSort, setListSort] = useState<ListSort>("updated_desc");
   const [listPage, setListPage] = useState(1);
   const projectTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const selectedTeam = useMemo(
+    () => teams.find((team) => team.id === selectedTeamId) ?? null,
+    [teams, selectedTeamId],
+  );
 
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const activeTask = useMemo(
@@ -262,6 +303,7 @@ export default function DashboardPage() {
       return acc;
     }, { open: 0, in_progress: 0, review: 0, done: 0 });
   }, [filteredTasks]);
+  const hasActiveFilters = taskQuery.trim().length > 0 || taskScope !== "all" || hideDone;
 
   const listSortedTasks = useMemo(() => {
     return [...filteredTasks].sort((a, b) => {
@@ -315,12 +357,13 @@ export default function DashboardPage() {
       try {
         const me = await getCurrentUser();
         if (!me) {
-          router.replace("/");
+          router.replace("/auth");
           return;
         }
         setUser(me);
 
         const userTeams = await getTeams();
+        setTeams(userTeams);
         if (userTeams.length === 0) {
           router.replace("/onboarding");
           return;
@@ -340,13 +383,17 @@ export default function DashboardPage() {
         if (teamProjects.length === 0) {
           setSelectedProjectId("");
           setTasks([]);
+          updateUrl(resolvedTeam.id);
           setLoading(false);
           return;
         }
 
+        const storedProjectId = readStoredProjectId(resolvedTeam.id);
+        const preferredProjectId = requestedProjectId ?? storedProjectId;
         const resolvedProject =
-          teamProjects.find((project) => project.id === requestedProjectId) ?? teamProjects[0]!;
+          teamProjects.find((project) => project.id === preferredProjectId) ?? teamProjects[0]!;
         setSelectedProjectId(resolvedProject.id);
+        storeProjectId(resolvedTeam.id, resolvedProject.id);
 
         const projectTasks = await getTasks(resolvedProject.id);
         setTasks(projectTasks);
@@ -378,6 +425,40 @@ export default function DashboardPage() {
     setListPage(1);
   }, [selectedProjectId, taskQuery, taskScope, hideDone, listSort, viewMode]);
 
+  async function handleTeamChange(teamId: string) {
+    if (!teamId) return;
+    setSelectedTeamId(teamId);
+    setError(null);
+    setProjectMenuOpen(false);
+    setLoading(true);
+    try {
+      const teamProjects = await getProjects(teamId);
+      setProjects(teamProjects);
+      if (teamProjects.length === 0) {
+        setSelectedProjectId("");
+        setTasks([]);
+        setActiveTaskId(null);
+        updateUrl(teamId);
+        return;
+      }
+
+      const storedProjectId = readStoredProjectId(teamId);
+      const resolvedProject =
+        teamProjects.find((project) => project.id === storedProjectId) ?? teamProjects[0]!;
+      setSelectedProjectId(resolvedProject.id);
+      storeProjectId(teamId, resolvedProject.id);
+
+      const projectTasks = await getTasks(resolvedProject.id);
+      setTasks(projectTasks);
+      setActiveTaskId(null);
+      updateUrl(teamId, resolvedProject.id);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleProjectChange(projectId: string) {
     if (!selectedTeamId) return;
     setSelectedProjectId(projectId);
@@ -387,6 +468,7 @@ export default function DashboardPage() {
       const projectTasks = await getTasks(projectId);
       setTasks(projectTasks);
       setActiveTaskId(null);
+      storeProjectId(selectedTeamId, projectId);
       updateUrl(selectedTeamId, projectId);
     } catch (err) {
       setError((err as Error).message);
@@ -441,6 +523,7 @@ export default function DashboardPage() {
         dueAt: toIsoDateOrNull(editDueAt),
       });
       setTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
+      setActiveTaskId(null);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -499,26 +582,40 @@ export default function DashboardPage() {
         boardHref={selectedTeamId && selectedProjectId ? `/dashboard?teamId=${selectedTeamId}&projectId=${selectedProjectId}` : "/dashboard"}
       />
 
-      <div style={{ border: "1px solid var(--border)", background: "var(--surface)", borderRadius: "10px", padding: "0.75rem 0.9rem", marginBottom: "1rem", color: "var(--muted)", fontSize: "0.84rem" }}>
-        Flow: choose a project, open a task, and edit it in the modal.
-      </div>
-
       <section
         className="dashboard-select-grid"
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(220px, 360px) auto",
+          gridTemplateColumns: "minmax(190px, 260px) minmax(220px, 360px) auto",
           gap: "0.6rem",
           marginBottom: "1rem",
           alignItems: "end",
         }}
       >
+        <div>
+          <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Team</label>
+          <select
+            value={selectedTeamId}
+            onChange={(event) => {
+              void handleTeamChange(event.target.value);
+            }}
+            style={{ width: "100%" }}
+            disabled={loading || teams.length === 0}
+          >
+            {teams.map((team) => (
+              <option key={team.id} value={team.id}>
+                {team.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="project-select-wrap">
           <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Project</label>
           <button
             ref={projectTriggerRef}
             type="button"
-            disabled={loading || projects.length === 0}
+            disabled={loading || !selectedTeamId || projects.length === 0}
             onClick={() => setProjectMenuOpen((value) => !value)}
             style={{
               width: "100%",
@@ -532,7 +629,7 @@ export default function DashboardPage() {
               justifyContent: "space-between",
               alignItems: "center",
               gap: "0.5rem",
-              opacity: loading || projects.length === 0 ? 0.7 : 1,
+              opacity: loading || !selectedTeamId || projects.length === 0 ? 0.7 : 1,
             }}
             aria-haspopup="menu"
             aria-expanded={projectMenuOpen}
@@ -576,6 +673,27 @@ export default function DashboardPage() {
         </div>
 
         <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end", gap: "0.5rem", flexWrap: "wrap" }}>
+          <div>
+            <p style={{ color: "var(--muted)", fontSize: "0.7rem", marginBottom: "0.25rem" }}>View</p>
+            <div className="view-toggle" aria-label="Task view mode">
+              <button
+                type="button"
+                className={viewMode === "board" ? "view-toggle-active" : ""}
+                aria-pressed={viewMode === "board"}
+                onClick={() => setViewMode("board")}
+              >
+                Board view
+              </button>
+              <button
+                type="button"
+                className={viewMode === "list" ? "view-toggle-active" : ""}
+                aria-pressed={viewMode === "list"}
+                onClick={() => setViewMode("list")}
+              >
+                List view
+              </button>
+            </div>
+          </div>
           <button
             type="button"
             onClick={() => {
@@ -677,24 +795,8 @@ export default function DashboardPage() {
       )}
 
       <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.75rem", marginBottom: "0.9rem" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.65rem", gap: "0.5rem", flexWrap: "wrap" }}>
-          <div className="view-toggle">
-            <button
-              type="button"
-              className={viewMode === "board" ? "view-toggle-active" : ""}
-              onClick={() => setViewMode("board")}
-            >
-              Board
-            </button>
-            <button
-              type="button"
-              className={viewMode === "list" ? "view-toggle-active" : ""}
-              onClick={() => setViewMode("list")}
-            >
-              List
-            </button>
-          </div>
-          {viewMode === "list" && (
+        {viewMode === "list" && (
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.65rem" }}>
             <select
               value={listSort}
               onChange={(e) => setListSort(e.target.value as ListSort)}
@@ -705,8 +807,8 @@ export default function DashboardPage() {
               <option value="due_asc">Sort: Due date</option>
               <option value="title_asc">Sort: Title A-Z</option>
             </select>
-          )}
-        </div>
+          </div>
+        )}
         <div className="board-toolbar">
           <input
             value={taskQuery}
@@ -714,24 +816,36 @@ export default function DashboardPage() {
             placeholder="Search tasks..."
             style={{ width: "100%" }}
           />
-          <select
-            value={taskScope}
-            onChange={(e) => setTaskScope(e.target.value as "all" | "mine" | "overdue" | "unassigned")}
-            style={{ width: "100%" }}
-          >
-            <option value="all">Scope: All</option>
-            <option value="mine">Scope: Mine</option>
-            <option value="overdue">Scope: Overdue</option>
-            <option value="unassigned">Scope: Unassigned</option>
-          </select>
-          <label className="board-scope-inline">
-            <input
-              type="checkbox"
-              checked={hideDone}
-              onChange={(e) => setHideDone(e.target.checked)}
-            />
+        </div>
+        <div className="scope-chip-row">
+          <button type="button" className={`filter-chip ${taskScope === "all" ? "filter-chip-active" : ""}`} onClick={() => setTaskScope("all")}>
+            All tasks
+          </button>
+          <button type="button" className={`filter-chip ${taskScope === "mine" ? "filter-chip-active" : ""}`} onClick={() => setTaskScope("mine")}>
+            Assigned to me
+          </button>
+          <button type="button" className={`filter-chip ${taskScope === "overdue" ? "filter-chip-active" : ""}`} onClick={() => setTaskScope("overdue")}>
+            Overdue
+          </button>
+          <button type="button" className={`filter-chip ${taskScope === "unassigned" ? "filter-chip-active" : ""}`} onClick={() => setTaskScope("unassigned")}>
+            Unassigned
+          </button>
+          <button type="button" className={`filter-chip ${hideDone ? "filter-chip-active" : ""}`} onClick={() => setHideDone((value) => !value)}>
             Hide done
-          </label>
+          </button>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              className="filter-chip filter-chip-clear"
+              onClick={() => {
+                setTaskQuery("");
+                setTaskScope("all");
+                setHideDone(false);
+              }}
+            >
+              Clear filters
+            </button>
+          )}
         </div>
         <div className="status-summary">
           {STATUSES.map((status) => (
@@ -748,9 +862,13 @@ export default function DashboardPage() {
         <AlertBanner tone="danger" title="Error">
           {error}
         </AlertBanner>
+      ) : !selectedTeamId ? (
+        <div style={{ border: "1px dashed var(--border)", borderRadius: "10px", padding: "2rem", textAlign: "center", color: "var(--muted)" }}>
+          Select a team to continue.
+        </div>
       ) : !selectedProjectId ? (
         <div style={{ border: "1px dashed var(--border)", borderRadius: "10px", padding: "2rem", textAlign: "center", color: "var(--muted)" }}>
-          This team has no projects yet. Create a project on the teams page.
+          Select a project to view tasks for {selectedTeam?.name ?? "this team"}.
         </div>
       ) : (
         <div className="dashboard-grid">
@@ -801,7 +919,7 @@ export default function DashboardPage() {
                         </span>
                       </span>
                       <span className="task-list-cell-muted">
-                        {task.claimedByUser ? task.claimedByUser.login : task.claimedByAgent ? `Agent ${task.claimedByAgent.name}` : "Unassigned"}
+                        {getAssigneeName(task)}
                       </span>
                       <span className="task-list-cell-muted">
                         {task.dueAt ? toDateInputValue(task.dueAt) : "No due date"}
@@ -858,55 +976,25 @@ export default function DashboardPage() {
             </div>
 
             <div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginBottom: "0.7rem" }}>
-                  <span className="status-chip">{STATUS_LABELS[activeTask.status as Status]}</span>
-                  <span className="status-chip">{activeTask.priority}</span>
-                  <span className="status-chip">{getClaimLabel(activeTask)}</span>
-                </div>
-
-                <div style={{ marginBottom: "0.6rem" }}>
-                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Assignee</label>
-                  <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.45rem 0.55rem", color: "var(--text)", fontSize: "0.84rem", background: "color-mix(in srgb, var(--surface) 88%, #0b111d 12%)" }}>
-                    {activeTask.claimedByUser
-                      ? `${activeTask.claimedByUser.name ?? activeTask.claimedByUser.login} (user)`
-                      : activeTask.claimedByAgent
-                        ? `${activeTask.claimedByAgent.name} (agent)`
-                        : "Unassigned"}
-                  </div>
-                  <div style={{ display: "flex", gap: "0.45rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
-                    {!activeTask.claimedByUserId && !activeTask.claimedByAgentId && (
-                      <button
-                        type="button"
-                        onClick={() => void handleClaimActiveTask()}
-                        disabled={claimBusy || savingTask || deletingTask}
-                        style={{ background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.35rem 0.6rem" }}
-                      >
-                        {claimBusy ? "Claiming…" : "Claim for me"}
-                      </button>
-                    )}
-                    {activeTask.claimedByUserId === user?.id && (
-                      <button
-                        type="button"
-                        onClick={() => void handleReleaseActiveTask()}
-                        disabled={claimBusy || savingTask || deletingTask}
-                        style={{ background: "transparent", color: "var(--warning)", border: "1px solid var(--warning)", borderRadius: "8px", padding: "0.35rem 0.6rem" }}
-                      >
-                        {claimBusy ? "Releasing…" : "Release"}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
+              <section style={{ marginBottom: "0.8rem" }}>
+                <p className="section-kicker">Overview</p>
                 <div style={{ marginBottom: "0.5rem" }}>
                   <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Title</label>
                   <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ width: "100%" }} />
                 </div>
-
-                <div style={{ marginBottom: "0.5rem" }}>
+                <div style={{ marginBottom: "0.3rem" }}>
                   <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Description</label>
                   <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
                 </div>
+              </section>
 
+              <section style={{ marginBottom: "0.8rem" }}>
+                <p className="section-kicker">Workflow</p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginBottom: "0.55rem" }}>
+                  <span className="status-chip">{STATUS_LABELS[activeTask.status as Status]}</span>
+                  <span className="status-chip">{activeTask.priority}</span>
+                  <span className="status-chip">{isOverdue(activeTask) ? "Overdue" : "On track"}</span>
+                </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", marginBottom: "0.5rem" }}>
                   <div>
                     <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Status</label>
@@ -924,30 +1012,68 @@ export default function DashboardPage() {
                     </select>
                   </div>
                 </div>
-
-                <div style={{ marginBottom: "0.8rem" }}>
+                <div>
                   <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Due Date</label>
                   <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)} style={{ width: "100%" }} />
                 </div>
+              </section>
 
-                <div className="task-detail-actions" style={{ display: "flex", gap: "0.5rem", marginBottom: "0.2rem", flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveTask()}
-                    disabled={savingTask || deletingTask}
-                    style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.45rem 0.7rem", fontWeight: 600 }}
-                  >
-                    {savingTask ? "Saving…" : "Save"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowDeleteTaskConfirm(true)}
-                    disabled={savingTask || deletingTask}
-                    style={{ background: "transparent", color: "var(--danger)", border: "1px solid var(--danger)", borderRadius: "8px", padding: "0.45rem 0.7rem" }}
-                  >
-                    {deletingTask ? "Deleting…" : "Delete"}
-                  </button>
+              <section style={{ marginBottom: "0.8rem" }}>
+                <p className="section-kicker">Ownership</p>
+                <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.45rem 0.55rem", color: "var(--text)", fontSize: "0.84rem", background: "color-mix(in srgb, var(--surface) 88%, #0b111d 12%)" }}>
+                  {getClaimLabel(activeTask)}
                 </div>
+                <div style={{ display: "flex", gap: "0.45rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
+                  {!activeTask.claimedByUserId && !activeTask.claimedByAgentId && (
+                    <button
+                      type="button"
+                      onClick={() => void handleClaimActiveTask()}
+                      disabled={claimBusy || savingTask || deletingTask}
+                      style={{ background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.35rem 0.6rem" }}
+                    >
+                      {claimBusy ? "Claiming…" : "Claim for me"}
+                    </button>
+                  )}
+                  {activeTask.claimedByUserId === user?.id && (
+                    <button
+                      type="button"
+                      onClick={() => void handleReleaseActiveTask()}
+                      disabled={claimBusy || savingTask || deletingTask}
+                      style={{ background: "transparent", color: "var(--warning)", border: "1px solid var(--warning)", borderRadius: "8px", padding: "0.35rem 0.6rem" }}
+                    >
+                      {claimBusy ? "Releasing…" : "Release"}
+                    </button>
+                  )}
+                </div>
+              </section>
+
+              <div className="task-detail-actions" style={{ display: "flex", gap: "0.5rem", marginBottom: "0.4rem", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveTask()}
+                  disabled={savingTask || deletingTask}
+                  style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.45rem 0.7rem", fontWeight: 600 }}
+                >
+                  {savingTask ? "Saving…" : "Save changes"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTaskId(null)}
+                  disabled={savingTask || deletingTask}
+                  style={{ background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.45rem 0.7rem" }}
+                >
+                  Close
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowDeleteTaskConfirm(true)}
+                disabled={savingTask || deletingTask}
+                style={{ background: "transparent", color: "var(--danger)", border: "1px solid var(--danger)", borderRadius: "8px", padding: "0.35rem 0.65rem", fontSize: "0.78rem" }}
+              >
+                {deletingTask ? "Deleting…" : "Delete task"}
+              </button>
             </div>
           </div>
         </div>
