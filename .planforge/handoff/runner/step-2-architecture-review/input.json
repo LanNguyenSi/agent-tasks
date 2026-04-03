@@ -1,0 +1,12 @@
+{
+  "stepId": "step-2-architecture-review",
+  "requiredInputFiles": [
+    "planforge-index.json",
+    "planning/plan-output.json",
+    "PROJECT.md",
+    "architecture-overview.md",
+    ".ai/ARCHITECTURE.md",
+    "delivery-plan.md",
+    "prompts/architecture-analysis.md"
+  ]
+}

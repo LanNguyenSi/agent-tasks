@@ -1,0 +1,139 @@
+{
+  "version": "1.0",
+  "summary": "Machine-readable contract for downstream agents consuming the planforge handoff manifest.",
+  "statusLifecycle": [
+    {
+      "id": "queued",
+      "meaning": "Step exists but should not start yet."
+    },
+    {
+      "id": "ready",
+      "meaning": "Dependencies are satisfied and the step may begin."
+    },
+    {
+      "id": "in_progress",
+      "meaning": "The agent is actively working on the step."
+    },
+    {
+      "id": "blocked",
+      "meaning": "A blocker prevents progress and escalation is required."
+    },
+    {
+      "id": "partial",
+      "meaning": "Partial outputs exist but acceptance criteria are not yet satisfied."
+    },
+    {
+      "id": "completed",
+      "meaning": "The step finished with required outputs and status evidence."
+    }
+  ],
+  "requiredStatusFields": [
+    "stepId",
+    "agentId",
+    "status",
+    "updatedAt",
+    "summary",
+    "blockers",
+    "outputArtifacts"
+  ],
+  "requiredResultFields": [
+    "stepId",
+    "agentId",
+    "completedAt",
+    "outcomeSummary",
+    "artifacts",
+    "openIssues",
+    "nextStepRecommendations"
+  ],
+  "stepContracts": [
+    {
+      "stepId": "step-2-architecture-review",
+      "name": "Review Architecture Direction",
+      "requiredInputFiles": [
+        "planforge-index.json",
+        "planning/plan-output.json",
+        "PROJECT.md",
+        "architecture-overview.md",
+        ".ai/ARCHITECTURE.md",
+        "delivery-plan.md",
+        "prompts/architecture-analysis.md"
+      ],
+      "expectedOutputFiles": [
+        "architecture review notes",
+        "ADR update proposals",
+        "recommended architecture adjustments"
+      ],
+      "statusFiles": {
+        "input": "handoff/runner/step-2-architecture-review/input.json",
+        "status": "handoff/runner/step-2-architecture-review/status.json",
+        "result": "handoff/runner/step-2-architecture-review/result.json",
+        "blockers": "handoff/runner/step-2-architecture-review/blockers.json"
+      },
+      "allowedStatuses": [
+        "queued",
+        "ready",
+        "in_progress",
+        "blocked",
+        "partial",
+        "completed"
+      ],
+      "dependencyPolicy": {
+        "hard": [],
+        "soft": []
+      },
+      "approvalGate": {
+        "required": false,
+        "approvers": [
+          "human owner"
+        ],
+        "reason": "No explicit approval gate required beyond normal review."
+      }
+    },
+    {
+      "stepId": "step-4-wave-1-execution",
+      "name": "Execute First Delivery Wave",
+      "requiredInputFiles": [
+        "planforge-index.json",
+        "planning/plan-output.json",
+        "PROJECT.md",
+        "delivery-plan.md",
+        ".ai/TASKS.md",
+        "prompts/execution-next-wave.md",
+        "tasks/001-write-project-charter-and-architecture-baseline.md",
+        "tasks/002-set-up-repository-and-delivery-baseline.md"
+      ],
+      "expectedOutputFiles": [
+        "implemented wave-1 scope",
+        "updated tests and docs",
+        "next-wave handoff notes"
+      ],
+      "statusFiles": {
+        "input": "handoff/runner/step-4-wave-1-execution/input.json",
+        "status": "handoff/runner/step-4-wave-1-execution/status.json",
+        "result": "handoff/runner/step-4-wave-1-execution/result.json",
+        "blockers": "handoff/runner/step-4-wave-1-execution/blockers.json"
+      },
+      "allowedStatuses": [
+        "queued",
+        "ready",
+        "in_progress",
+        "blocked",
+        "partial",
+        "completed"
+      ],
+      "dependencyPolicy": {
+        "hard": [
+          "step-2-architecture-review"
+        ],
+        "soft": []
+      },
+      "approvalGate": {
+        "required": false,
+        "approvers": [
+          "human owner"
+        ],
+        "reason": "No explicit approval gate required beyond normal review."
+      }
+    }
+  ]
+}

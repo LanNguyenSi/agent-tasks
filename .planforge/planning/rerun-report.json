@@ -1,0 +1,18 @@
+{
+  "mode": "fresh",
+  "sourceRun": null,
+  "changedAssumptions": [],
+  "changedRecommendations": [],
+  "regeneratedArtifacts": [
+    "planning/plan-output.json",
+    "handoff/manifest.json",
+    "PROJECT.md",
+    "project-charter.md",
+    "architecture-overview.md",
+    "delivery-plan.md",
+    "handoff/runner-contract.json",
+    "exports/scaffoldkit-input.json",
+    "exports/devreview.json"
+  ],
+  "preservedArtifacts": []
+}

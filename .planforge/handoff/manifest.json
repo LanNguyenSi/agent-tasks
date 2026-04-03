@@ -1,0 +1,175 @@
+{
+  "version": "1.0",
+  "summary": "Coordinate downstream planning, governance, and execution agents from a single generated manifest.",
+  "policySummary": "Use platform profile policies for concurrency, blocker escalation, and approval gating.",
+  "runnerContractPath": "handoff/runner-contract.json",
+  "coordinationStrategy": "Use planning review steps in parallel where possible, then move into execution on the first delivery wave.",
+  "recommendedArchitectureOptionId": "option-a",
+  "recommendedArchitectureShape": "modular monolith",
+  "sharedContext": {
+    "phase": "phase_1",
+    "path": "core",
+    "plannerProfile": "platform",
+    "intakeCompleteness": "complete"
+  },
+  "sharedArtifacts": [
+    "AGENTS.md",
+    "planforge-index.json",
+    "planning/plan-output.json",
+    "planning/structured-input.json",
+    "PROJECT.md",
+    "project-charter.md",
+    "architecture-overview.md",
+    "delivery-plan.md",
+    "handoff/runner-contract.json",
+    "exports/devreview.json",
+    "exports/scaffoldkit-input.json",
+    ".ai/AGENTS.md",
+    ".ai/ARCHITECTURE.md",
+    ".ai/TASKS.md",
+    ".ai/DECISIONS.md",
+    "/root/.openclaw/workspace/git/agent-planforge/playbooks/planning-and-scoping.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/01-project-setup.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/02-architecture.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/03-team-roles.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/04-design-principles.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/05-development-workflow.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/06-testing-strategy.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/07-quality-assurance.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/08-documentation.md",
+    "adrs/001-initial-architecture-shape.md",
+    "adrs/002-primary-data-store.md",
+    "adrs/003-integration-strategy.md"
+  ],
+  "steps": [
+    {
+      "id": "step-2-architecture-review",
+      "name": "Review Architecture Direction",
+      "objective": "Challenge the default architecture and confirm whether the recommended option still fits the clarified scope.",
+      "executionMode": "parallel",
+      "dependsOn": [],
+      "parallelGroup": "planning-review",
+      "agentAssignments": [
+        {
+          "id": "agent-architecture-reviewer",
+          "role": "architecture-reviewer",
+          "promptExportId": "architecture-analysis",
+          "promptPath": "prompts/architecture-analysis.md",
+          "reads": [
+            "planforge-index.json",
+            "planning/plan-output.json",
+            "PROJECT.md",
+            "architecture-overview.md",
+            ".ai/ARCHITECTURE.md",
+            "delivery-plan.md",
+            "prompts/architecture-analysis.md"
+          ],
+          "writes": [
+            "architecture review notes",
+            "ADR update proposals",
+            "recommended architecture adjustments"
+          ],
+          "successCriteria": [
+            "The recommended option is either confirmed or replaced with an explicit rationale.",
+            "Key tradeoffs and module boundaries are clear enough to guide the first implementation wave."
+          ]
+        }
+      ],
+      "dependencyPolicy": {
+        "hard": [],
+        "soft": []
+      },
+      "blockerPolicy": {
+        "onBlocked": "review-before-continue",
+        "escalationTarget": "human owner",
+        "maxAutoRetries": 0
+      },
+      "approvalGate": {
+        "required": false,
+        "approvers": [
+          "human owner"
+        ],
+        "reason": "No explicit approval gate required beyond normal review."
+      },
+      "profilePolicy": {
+        "plannerProfile": "platform",
+        "maxParallelAgents": 3,
+        "autoContinue": true,
+        "reviewRequired": false
+      },
+      "statusFiles": {
+        "input": "handoff/runner/step-2-architecture-review/input.json",
+        "status": "handoff/runner/step-2-architecture-review/status.json",
+        "result": "handoff/runner/step-2-architecture-review/result.json",
+        "blockers": "handoff/runner/step-2-architecture-review/blockers.json"
+      }
+    },
+    {
+      "id": "step-4-wave-1-execution",
+      "name": "Execute First Delivery Wave",
+      "objective": "Implement the initial foundation tasks with the current architecture and control assumptions.",
+      "executionMode": "sequential",
+      "dependsOn": [
+        "step-2-architecture-review"
+      ],
+      "parallelGroup": "delivery",
+      "agentAssignments": [
+        {
+          "id": "agent-delivery-lead",
+          "role": "implementation-lead",
+          "promptExportId": "execution-next-wave",
+          "promptPath": "prompts/execution-next-wave.md",
+          "reads": [
+            "planforge-index.json",
+            "planning/plan-output.json",
+            "PROJECT.md",
+            "delivery-plan.md",
+            ".ai/TASKS.md",
+            "prompts/execution-next-wave.md",
+            "tasks/001-write-project-charter-and-architecture-baseline.md",
+            "tasks/002-set-up-repository-and-delivery-baseline.md"
+          ],
+          "writes": [
+            "implemented wave-1 scope",
+            "updated tests and docs",
+            "next-wave handoff notes"
+          ],
+          "successCriteria": [
+            "All tasks in wave-1 are either completed or explicitly re-scoped with reasons.",
+            "Dependency-sensitive work lands in a reviewable sequence without skipping tests or documentation."
+          ]
+        }
+      ],
+      "dependencyPolicy": {
+        "hard": [
+          "step-2-architecture-review"
+        ],
+        "soft": []
+      },
+      "blockerPolicy": {
+        "onBlocked": "review-before-continue",
+        "escalationTarget": "human owner",
+        "maxAutoRetries": 0
+      },
+      "approvalGate": {
+        "required": false,
+        "approvers": [
+          "human owner"
+        ],
+        "reason": "No explicit approval gate required beyond normal review."
+      },
+      "profilePolicy": {
+        "plannerProfile": "platform",
+        "maxParallelAgents": 3,
+        "autoContinue": true,
+        "reviewRequired": false
+      },
+      "statusFiles": {
+        "input": "handoff/runner/step-4-wave-1-execution/input.json",
+        "status": "handoff/runner/step-4-wave-1-execution/status.json",
+        "result": "handoff/runner/step-4-wave-1-execution/result.json",
+        "blockers": "handoff/runner/step-4-wave-1-execution/blockers.json"
+      }
+    }
+  ]
+}

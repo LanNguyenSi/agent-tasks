@@ -1,0 +1,1196 @@
+{
+  "projectName": "agent-tasks",
+  "inputFormat": "json",
+  "inputParsing": {
+    "structuredInputSource": "/tmp/agent-tasks-input.json",
+    "parserWarnings": []
+  },
+  "inputSnapshot": {
+    "projectName": "agent-tasks",
+    "summary": "agent-tasks ist eine kollaborative Task-Plattform für Menschen und Agenten. Sie ermöglicht strukturierte Zusammenarbeit rund um Softwareprojekte, inklusive Aufgabenerstellung, Claiming, Review-Handoffs, konfigurierbaren Boards und klaren Verantwortlichkeiten. Agenten arbeiten mit dedizierten API-Tokens, Menschen mit GitHub OAuth. Alle Aktionen sind auditierbar und policy-gesteuert.",
+    "targetUsers": [
+      "Software-Teams die AI-Agenten in ihren Workflow einbinden",
+      "AI-Agenten (Ice, Lava) die Tasks autonom übernehmen und implementieren",
+      "Tech Leads die Workflows und Policies konfigurieren"
+    ],
+    "coreFeatures": [
+      "GitHub OAuth Login für Menschen",
+      "Dedizierte API-Tokens für Agenten (kein Session-basierter Zugriff)",
+      "Projektsynchronisation aus GitHub (Repos, Issues, PRs)",
+      "Manuelle Projekterstellung möglich",
+      "Task-Erstellung durch Menschen und Agenten",
+      "Task-Claiming durch Menschen und Agenten",
+      "Konfigurierbare Workflow-Regeln (Statusübergänge, Review-Pflicht, Deployment-Verantwortung)",
+      "Teams und Projekte als zentrale Mandanten-/Struktureinheit",
+      "Audit-Trail für alle relevanten Aktionen",
+      "Board-Ansicht für Tasks (Kanban-style)",
+      "Review-Handoff zwischen Agenten und Menschen",
+      "Policy-gesteuerte Zugriffsrechte: was dürfen Agenten tun?"
+    ],
+    "constraints": [
+      "Kein unkontrollierter Vollzugriff für Agenten",
+      "Kein rein informelles Task-Tracking ohne Workflow-Regeln",
+      "Kein Deployment ohne klar definierte Verantwortlichkeit",
+      "Workflow-Regeln konfigurierbar, nicht hartkodiert"
+    ],
+    "nonFunctionalRequirements": [
+      "Audit-Trail: alle relevanten Aktionen nachvollziehbar",
+      "Policy-basierte Zugriffskontrolle",
+      "GitHub Webhook-Verarbeitung zuverlässig",
+      "API-First: alle Funktionen via REST API verfügbar",
+      "Docker-basiertes Deployment"
+    ],
+    "integrations": [
+      "GitHub OAuth",
+      "GitHub REST API (Repo-Sync, Issue-Sync, PR-Handling)",
+      "GitHub Webhooks"
+    ],
+    "dataSensitivity": "moderate",
+    "plannerProfile": "platform",
+    "teamSize": "small",
+    "productionExpectedSoon": false,
+    "liveUsers": false,
+    "openQuestions": [
+      "TypeScript/Node.js oder Python als Backend-Stack?",
+      "Welche Workflow-Engine für State-Machines (hardkodiert vs. konfigurierbar)?",
+      "Monolith oder Service-Trennung für Auth/Webhook-Handling?"
+    ]
+  },
+  "plannerProfile": "platform",
+  "intakeCompleteness": "complete",
+  "missingInformation": [],
+  "intakeQuestions": [],
+  "followUpQuestions": [],
+  "phase": "phase_1",
+  "phaseRationale": [
+    "The current input looks exploratory and low-risk.",
+    "Selected planning phase: phase_1."
+  ],
+  "path": "core",
+  "recommendedPlaybooks": [
+    "/root/.openclaw/workspace/git/agent-planforge/playbooks/planning-and-scoping.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/01-project-setup.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/02-architecture.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/03-team-roles.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/04-design-principles.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/05-development-workflow.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/06-testing-strategy.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/07-quality-assurance.md",
+    "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/08-documentation.md"
+  ],
+  "recommendedGuidanceAreas": [
+    "project setup",
+    "architecture",
+    "development workflow",
+    "testing strategy",
+    "quality assurance",
+    "documentation",
+    "service reliability",
+    "platform operating model"
+  ],
+  "recommendedArtifacts": [
+    "project-charter.md",
+    "architecture-overview.md",
+    "adrs/",
+    "tasks/",
+    "platform readiness notes"
+  ],
+  "architectureOptions": [
+    {
+      "id": "option-a",
+      "name": "Lean Modular Monolith",
+      "shape": "modular monolith",
+      "summary": "One deployable application with explicit domain modules and a single primary data store.",
+      "scores": {
+        "deliverySpeed": 5,
+        "operationalSimplicity": 5,
+        "scalabilityHeadroom": 4,
+        "governanceFit": 4
+      },
+      "strengths": [
+        "Fastest path to a coherent first release.",
+        "Lowest coordination and deployment overhead.",
+        "Strong fit for small teams."
+      ],
+      "tradeoffs": [
+        "Harder to isolate workloads if scale diverges later.",
+        "Governance boundaries rely more on discipline than on topology."
+      ]
+    },
+    {
+      "id": "option-b",
+      "name": "Modular Monolith With Background Jobs",
+      "shape": "modular monolith with background jobs",
+      "summary": "Single primary deployable unit with explicit modules plus a worker path for async workflows and integrations.",
+      "scores": {
+        "deliverySpeed": 4,
+        "operationalSimplicity": 4,
+        "scalabilityHeadroom": 4,
+        "governanceFit": 4
+      },
+      "strengths": [
+        "Balances fast delivery with explicit async workflow support.",
+        "Keeps the system operable without early service sprawl.",
+        "Supports clearer control points for integrations and audit workflows."
+      ],
+      "tradeoffs": [
+        "Slightly more moving parts than a pure monolith.",
+        "Still requires later extraction if independent scaling becomes dominant."
+      ]
+    },
+    {
+      "id": "option-c",
+      "name": "Early Service Separation",
+      "shape": "small service-oriented split",
+      "summary": "Separate user-facing application, workflow engine, and integration boundary early for stronger isolation.",
+      "scores": {
+        "deliverySpeed": 2,
+        "operationalSimplicity": 2,
+        "scalabilityHeadroom": 5,
+        "governanceFit": 3
+      },
+      "strengths": [
+        "Stronger hard boundaries for scaling and ownership.",
+        "Can align better with strict isolation or governance requirements."
+      ],
+      "tradeoffs": [
+        "Higher delivery and operational cost from the start.",
+        "Adds distributed failure modes before the product is proven."
+      ]
+    }
+  ],
+  "architectureRecommendation": {
+    "optionId": "option-a",
+    "shape": "modular monolith",
+    "summary": "Start with modular monolith as the default architecture.",
+    "reasons": [
+      "This option offers the best balance between delivery speed and long-term maintainability.",
+      "It avoids premature distributed complexity while keeping room for future extraction."
+    ]
+  },
+  "adrCandidates": [
+    {
+      "id": "ADR-001",
+      "title": "Initial Architecture Shape",
+      "decision": "Start with modular monolith as the default architecture."
+    },
+    {
+      "id": "ADR-002",
+      "title": "Primary Data Store",
+      "decision": "Use a relational primary data store unless the domain clearly requires a different model."
+    },
+    {
+      "id": "ADR-003",
+      "title": "Integration Strategy",
+      "decision": "Encapsulate third-party integrations behind internal modules and keep failure handling explicit."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "001",
+      "title": "Write project charter and architecture baseline",
+      "category": "foundation",
+      "priority": "P0",
+      "summary": "Capture the product scope, users, constraints, architecture shape, and open questions.",
+      "problem": "The project starts from rough requirements and needs a shared baseline before implementation can be reviewed or sequenced safely.",
+      "solution": "Create the charter, architecture overview, and first ADRs so later execution work inherits explicit assumptions instead of guesswork.",
+      "files": [
+        "PROJECT.md",
+        "project-charter.md",
+        "architecture-overview.md",
+        "adrs/001-initial-architecture-shape.md",
+        "adrs/002-primary-data-store.md"
+      ],
+      "acceptanceCriteria": [
+        "The charter captures summary, users, features, constraints, and unresolved questions.",
+        "The architecture overview names a recommended starting shape and its tradeoffs.",
+        "Initial ADRs exist for the highest-leverage early decisions."
+      ],
+      "implementationNotes": [
+        "Use the recommended architecture as the default, not as a final truth claim.",
+        "Keep open questions visible so downstream agents know what may still change.",
+        "Reference the applicable playbooks directly in the generated charter."
+      ],
+      "wave": "wave-1",
+      "dependsOn": [],
+      "blocks": [
+        "002",
+        "003",
+        "004",
+        "005",
+        "006",
+        "007",
+        "008",
+        "009",
+        "010",
+        "011",
+        "012",
+        "013",
+        "014"
+      ],
+      "deliveryPhase": "foundation"
+    },
+    {
+      "id": "002",
+      "title": "Set up repository and delivery baseline",
+      "category": "foundation",
+      "priority": "P0",
+      "summary": "Create the repository structure, quality checks, and basic documentation needed for implementation.",
+      "problem": "Execution work will fragment quickly if the repository, quality gates, and documentation expectations are not defined up front.",
+      "solution": "Establish the test path, delivery workflow expectations, and starter documentation before feature branches accumulate drift.",
+      "files": [
+        "package.json",
+        "README.md",
+        "tests/",
+        ".github/workflows/"
+      ],
+      "acceptanceCriteria": [
+        "A repeatable local test command exists for the project baseline.",
+        "Core delivery expectations are documented for humans and agents.",
+        "The repository has enough structure that the first implementation wave can begin without setup churn."
+      ],
+      "implementationNotes": [
+        "Keep the baseline minimal but reviewable.",
+        "Prefer a small number of reliable checks over aspirational tooling that nobody runs.",
+        "Align branch and review behavior with the development workflow playbook."
+      ],
+      "wave": "wave-1",
+      "dependsOn": [
+        "001"
+      ],
+      "blocks": [
+        "003",
+        "004",
+        "005",
+        "006",
+        "007",
+        "008",
+        "009",
+        "010",
+        "011",
+        "012",
+        "013",
+        "014"
+      ],
+      "deliveryPhase": "foundation"
+    },
+    {
+      "id": "003",
+      "title": "Implement GitHub OAuth Login für Menschen",
+      "category": "feature",
+      "priority": "P0",
+      "summary": "Design and implement the capability for: GitHub OAuth Login für Menschen.",
+      "problem": "The product cannot satisfy its initial scope until GitHub OAuth Login für Menschen exists as a reviewable, testable capability.",
+      "solution": "Add a focused module for GitHub OAuth Login für Menschen that matches the recommended modular monolith and keeps integration boundaries explicit.",
+      "files": [
+        "lib/auth/jwt.ts — Token generation + verification (jsonwebtoken)",
+        "lib/auth/password.ts — bcrypt hashing + verification",
+        "lib/auth/middleware.ts — withAuth() HOF for protected routes",
+        "lib/auth/validation.ts — Zod schemas (RegisterInput, LoginInput)",
+        "lib/auth/service.ts — User registration + login business logic",
+        "app/api/auth/register/route.ts — POST registration endpoint",
+        "app/api/auth/login/route.ts — POST login endpoint",
+        "app/api/auth/me/route.ts — GET current user (protected)",
+        "prisma/schema.prisma — User model with email, password, name",
+        "tests/auth/jwt.test.ts — Token generation + verification tests",
+        "tests/auth/password.test.ts — Hash + verify tests",
+        "tests/auth/validation.test.ts — Zod schema tests"
+      ],
+      "acceptanceCriteria": [
+        "The GitHub OAuth Login für Menschen capability is available through the intended application surface.",
+        "Core validation, error handling, and persistence for GitHub OAuth Login für Menschen are covered by tests."
+      ],
+      "implementationNotes": [
+        "Start from domain rules and access constraints before UI or transport details.",
+        "Keep module boundaries explicit so later extraction remains possible if the system grows.",
+        "Update docs and tests in the same change instead of leaving them for cleanup."
+      ],
+      "wave": "wave-2",
+      "dependsOn": [
+        "001",
+        "002"
+      ],
+      "blocks": [
+        "015"
+      ],
+      "deliveryPhase": "implementation"
+    },
+    {
+      "id": "004",
+      "title": "Implement Dedizierte API-Tokens für Agenten (kein Session-basierter Zugriff)",
+      "category": "feature",
+      "priority": "P0",
+      "summary": "Design and implement the capability for: Dedizierte API-Tokens für Agenten (kein Session-basierter Zugriff).",
+      "problem": "The product cannot satisfy its initial scope until Dedizierte API-Tokens für Agenten (kein Session-basierter Zugriff) exists as a reviewable, testable capability.",
+      "solution": "Add a focused module for Dedizierte API-Tokens für Agenten (kein Session-basierter Zugriff) that matches the recommended modular monolith and keeps integration boundaries explicit.",
+      "files": [
+        "src/modules/dedizierte-api-tokens-f-r-agenten-kein-s/index.ts",
+        "src/modules/dedizierte-api-tokens-f-r-agenten-kein-s/dedizierte-api-tokens-f-r-agenten-kein-s.service.ts",
+        "src/modules/dedizierte-api-tokens-f-r-agenten-kein-s/dedizierte-api-tokens-f-r-agenten-kein-s.repository.ts",
+        "tests/integration/dedizierte-api-tokens-f-r-agenten-kein-s.test.js"
+      ],
+      "acceptanceCriteria": [
+        "The Dedizierte API-Tokens für Agenten (kein Session-basierter Zugriff) capability is available through the intended application surface.",
+        "Core validation, error handling, and persistence for Dedizierte API-Tokens für Agenten (kein Session-basierter Zugriff) are covered by tests."
+      ],
+      "implementationNotes": [
+        "Start from domain rules and access constraints before UI or transport details.",
+        "Keep module boundaries explicit so later extraction remains possible if the system grows.",
+        "Update docs and tests in the same change instead of leaving them for cleanup."
+      ],
+      "wave": "wave-2",
+      "dependsOn": [
+        "001",
+        "002"
+      ],
+      "blocks": [
+        "015"
+      ],
+      "deliveryPhase": "implementation"
+    },
+    {
+      "id": "005",
+      "title": "Implement Projektsynchronisation aus GitHub (Repos, Issues, PRs)",
+      "category": "feature",
+      "priority": "P1",
+      "summary": "Design and implement the capability for: Projektsynchronisation aus GitHub (Repos, Issues, PRs).",
+      "problem": "The product cannot satisfy its initial scope until Projektsynchronisation aus GitHub (Repos, Issues, PRs) exists as a reviewable, testable capability.",
+      "solution": "Add a focused module for Projektsynchronisation aus GitHub (Repos, Issues, PRs) that matches the recommended modular monolith and keeps integration boundaries explicit.",
+      "files": [
+        "lib/github/client.ts — GitHub API client with octokit",
+        "lib/github/types.ts — GitHub API types (Repository, PR, Check, Workflow)",
+        "lib/github/repos.ts — Repository health functions (CI status, open PRs)",
+        "lib/github/checks.ts — Check runs and check suites",
+        "lib/github/prs.ts — Pull request operations",
+        "lib/github/workflows.ts — GitHub Actions workflow runs",
+        "app/api/github/repos/route.ts — GET repositories with health status",
+        "app/api/github/repos/[owner]/[repo]/route.ts — GET single repo details",
+        "app/api/github/prs/route.ts — GET open pull requests",
+        "app/api/github/checks/route.ts — GET failing checks",
+        "components/RepoCard.tsx — Repository card with CI status badge",
+        "components/RepoList.tsx — Repository list component",
+        "components/PRCard.tsx — Pull request card",
+        "components/CheckStatus.tsx — Check run status indicator",
+        "tests/github/client.test.ts — API client tests with mocked octokit",
+        "tests/github/repos.test.ts — Repository health logic tests"
+      ],
+      "acceptanceCriteria": [
+        "The Projektsynchronisation aus GitHub (Repos, Issues, PRs) capability is available through the intended application surface.",
+        "Core validation, error handling, and persistence for Projektsynchronisation aus GitHub (Repos, Issues, PRs) are covered by tests."
+      ],
+      "implementationNotes": [
+        "Start from domain rules and access constraints before UI or transport details.",
+        "Keep module boundaries explicit so later extraction remains possible if the system grows.",
+        "Update docs and tests in the same change instead of leaving them for cleanup."
+      ],
+      "wave": "wave-3",
+      "dependsOn": [
+        "001",
+        "002"
+      ],
+      "blocks": [
+        "015"
+      ],
+      "deliveryPhase": "implementation"
+    },
+    {
+      "id": "006",
+      "title": "Implement Manuelle Projekterstellung möglich",
+      "category": "feature",
+      "priority": "P1",
+      "summary": "Design and implement the capability for: Manuelle Projekterstellung möglich.",
+      "problem": "The product cannot satisfy its initial scope until Manuelle Projekterstellung möglich exists as a reviewable, testable capability.",
+      "solution": "Add a focused module for Manuelle Projekterstellung möglich that matches the recommended modular monolith and keeps integration boundaries explicit.",
+      "files": [
+        "src/modules/manuelle-projekterstellung-m-glich/index.ts",
+        "src/modules/manuelle-projekterstellung-m-glich/manuelle-projekterstellung-m-glich.service.ts",
+        "src/modules/manuelle-projekterstellung-m-glich/manuelle-projekterstellung-m-glich.repository.ts",
+        "tests/integration/manuelle-projekterstellung-m-glich.test.js"
+      ],
+      "acceptanceCriteria": [
+        "The Manuelle Projekterstellung möglich capability is available through the intended application surface.",
+        "Core validation, error handling, and persistence for Manuelle Projekterstellung möglich are covered by tests."
+      ],
+      "implementationNotes": [
+        "Start from domain rules and access constraints before UI or transport details.",
+        "Keep module boundaries explicit so later extraction remains possible if the system grows.",
+        "Update docs and tests in the same change instead of leaving them for cleanup."
+      ],
+      "wave": "wave-3",
+      "dependsOn": [
+        "001",
+        "002"
+      ],
+      "blocks": [
+        "015"
+      ],
+      "deliveryPhase": "implementation"
+    },
+    {
+      "id": "007",
+      "title": "Implement Task-Erstellung durch Menschen und Agenten",
+      "category": "feature",
+      "priority": "P1",
+      "summary": "Design and implement the capability for: Task-Erstellung durch Menschen und Agenten.",
+      "problem": "The product cannot satisfy its initial scope until Task-Erstellung durch Menschen und Agenten exists as a reviewable, testable capability.",
+      "solution": "Add a focused module for Task-Erstellung durch Menschen und Agenten that matches the recommended modular monolith and keeps integration boundaries explicit.",
+      "files": [
+        "src/modules/task-erstellung-durch-menschen-und-agent/index.ts",
+        "src/modules/task-erstellung-durch-menschen-und-agent/task-erstellung-durch-menschen-und-agent.service.ts",
+        "src/modules/task-erstellung-durch-menschen-und-agent/task-erstellung-durch-menschen-und-agent.repository.ts",
+        "tests/integration/task-erstellung-durch-menschen-und-agent.test.js"
+      ],
+      "acceptanceCriteria": [
+        "The Task-Erstellung durch Menschen und Agenten capability is available through the intended application surface.",
+        "Core validation, error handling, and persistence for Task-Erstellung durch Menschen und Agenten are covered by tests."
+      ],
+      "implementationNotes": [
+        "Start from domain rules and access constraints before UI or transport details.",
+        "Keep module boundaries explicit so later extraction remains possible if the system grows.",
+        "Update docs and tests in the same change instead of leaving them for cleanup."
+      ],
+      "wave": "wave-3",
+      "dependsOn": [
+        "001",
+        "002"
+      ],
+      "blocks": [
+        "015"
+      ],
+      "deliveryPhase": "implementation"
+    },
+    {
+      "id": "008",
+      "title": "Implement Task-Claiming durch Menschen und Agenten",
+      "category": "feature",
+      "priority": "P1",
+      "summary": "Design and implement the capability for: Task-Claiming durch Menschen und Agenten.",
+      "problem": "The product cannot satisfy its initial scope until Task-Claiming durch Menschen und Agenten exists as a reviewable, testable capability.",
+      "solution": "Add a focused module for Task-Claiming durch Menschen und Agenten that matches the recommended modular monolith and keeps integration boundaries explicit.",
+      "files": [
+        "lib/ai/types.ts — ChatMessage, DashboardContext interfaces + Zod schemas",
+        "lib/ai/context.ts — formatContextForAI() helper",
+        "lib/ai/service.ts — OpenAI API integration",
+        "app/api/chat/route.ts — POST chat endpoint",
+        "app/api/chat/clear/route.ts — DELETE chat history endpoint",
+        "components/Chat.tsx — Chat UI component",
+        "tests/ai/types.test.ts — Zod schema tests",
+        "tests/ai/context.test.ts — Context formatting tests"
+      ],
+      "acceptanceCriteria": [
+        "The Task-Claiming durch Menschen und Agenten capability is available through the intended application surface.",
+        "Core validation, error handling, and persistence for Task-Claiming durch Menschen und Agenten are covered by tests."
+      ],
+      "implementationNotes": [
+        "Start from domain rules and access constraints before UI or transport details.",
+        "Keep module boundaries explicit so later extraction remains possible if the system grows.",
+        "Update docs and tests in the same change instead of leaving them for cleanup."
+      ],
+      "wave": "wave-3",
+      "dependsOn": [
+        "001",
+        "002"
+      ],
+      "blocks": [
+        "015"
+      ],
+      "deliveryPhase": "implementation"
+    },
+    {
+      "id": "009",
+      "title": "Implement Konfigurierbare Workflow-Regeln (Statusübergänge, Review-Pflicht, Deployment-Verantwortung)",
+      "category": "feature",
+      "priority": "P1",
+      "summary": "Design and implement the capability for: Konfigurierbare Workflow-Regeln (Statusübergänge, Review-Pflicht, Deployment-Verantwortung).",
+      "problem": "The product cannot satisfy its initial scope until Konfigurierbare Workflow-Regeln (Statusübergänge, Review-Pflicht, Deployment-Verantwortung) exists as a reviewable, testable capability.",
+      "solution": "Add a focused module for Konfigurierbare Workflow-Regeln (Statusübergänge, Review-Pflicht, Deployment-Verantwortung) that matches the recommended modular monolith and keeps integration boundaries explicit.",
+      "files": [
+        "lib/github/client.ts — GitHub API client with octokit",
+        "lib/github/types.ts — GitHub API types (Repository, PR, Check, Workflow)",
+        "lib/github/repos.ts — Repository health functions (CI status, open PRs)",
+        "lib/github/checks.ts — Check runs and check suites",
+        "lib/github/prs.ts — Pull request operations",
+        "lib/github/workflows.ts — GitHub Actions workflow runs",
+        "app/api/github/repos/route.ts — GET repositories with health status",
+        "app/api/github/repos/[owner]/[repo]/route.ts — GET single repo details",
+        "app/api/github/prs/route.ts — GET open pull requests",
+        "app/api/github/checks/route.ts — GET failing checks",
+        "components/RepoCard.tsx — Repository card with CI status badge",
+        "components/RepoList.tsx — Repository list component",
+        "components/PRCard.tsx — Pull request card",
+        "components/CheckStatus.tsx — Check run status indicator",
+        "tests/github/client.test.ts — API client tests with mocked octokit",
+        "tests/github/repos.test.ts — Repository health logic tests"
+      ],
+      "acceptanceCriteria": [
+        "The Konfigurierbare Workflow-Regeln (Statusübergänge, Review-Pflicht, Deployment-Verantwortung) capability is available through the intended application surface.",
+        "Core validation, error handling, and persistence for Konfigurierbare Workflow-Regeln (Statusübergänge, Review-Pflicht, Deployment-Verantwortung) are covered by tests."
+      ],
+      "implementationNotes": [
+        "Start from domain rules and access constraints before UI or transport details.",
+        "Keep module boundaries explicit so later extraction remains possible if the system grows.",
+        "Update docs and tests in the same change instead of leaving them for cleanup."
+      ],
+      "wave": "wave-3",
+      "dependsOn": [
+        "001",
+        "002"
+      ],
+      "blocks": [
+        "015"
+      ],
+      "deliveryPhase": "implementation"
+    },
+    {
+      "id": "010",
+      "title": "Implement Teams und Projekte als zentrale Mandanten-/Struktureinheit",
+      "category": "feature",
+      "priority": "P1",
+      "summary": "Design and implement the capability for: Teams und Projekte als zentrale Mandanten-/Struktureinheit.",
+      "problem": "The product cannot satisfy its initial scope until Teams und Projekte als zentrale Mandanten-/Struktureinheit exists as a reviewable, testable capability.",
+      "solution": "Add a focused module for Teams und Projekte als zentrale Mandanten-/Struktureinheit that matches the recommended modular monolith and keeps integration boundaries explicit.",
+      "files": [
+        "lib/users/types.ts — User, Role, Permission interfaces + Zod schemas",
+        "lib/users/service.ts — User CRUD, role assignment, team management",
+        "lib/users/permissions.ts — RBAC check functions (hasPermission, requireRole)",
+        "app/api/users/route.ts — GET (list) + POST (invite) endpoints",
+        "app/api/users/[id]/route.ts — GET/PUT/DELETE user",
+        "app/api/users/[id]/role/route.ts — PUT change user role",
+        "app/admin/users/page.tsx — User management admin page",
+        "prisma/schema.prisma — User, Role, TeamMember models",
+        "tests/users/service.test.ts — User CRUD tests",
+        "tests/users/permissions.test.ts — RBAC logic tests"
+      ],
+      "acceptanceCriteria": [
+        "The Teams und Projekte als zentrale Mandanten-/Struktureinheit capability is available through the intended application surface.",
+        "Core validation, error handling, and persistence for Teams und Projekte als zentrale Mandanten-/Struktureinheit are covered by tests."
+      ],
+      "implementationNotes": [
+        "Start from domain rules and access constraints before UI or transport details.",
+        "Keep module boundaries explicit so later extraction remains possible if the system grows.",
+        "Update docs and tests in the same change instead of leaving them for cleanup."
+      ],
+      "wave": "wave-3",
+      "dependsOn": [
+        "001",
+        "002"
+      ],
+      "blocks": [
+        "015"
+      ],
+      "deliveryPhase": "implementation"
+    },
+    {
+      "id": "011",
+      "title": "Implement Audit-Trail für alle relevanten Aktionen",
+      "category": "feature",
+      "priority": "P1",
+      "summary": "Design and implement the capability for: Audit-Trail für alle relevanten Aktionen.",
+      "problem": "The product cannot satisfy its initial scope until Audit-Trail für alle relevanten Aktionen exists as a reviewable, testable capability.",
+      "solution": "Add a focused module for Audit-Trail für alle relevanten Aktionen that matches the recommended modular monolith and keeps integration boundaries explicit.",
+      "files": [
+        "lib/audit/types.ts — AuditEntry, AuditAction interfaces",
+        "lib/audit/service.ts — Log audit events, query audit trail",
+        "lib/audit/middleware.ts — Automatic audit logging for mutations",
+        "app/api/audit/route.ts — GET audit trail with filters",
+        "app/admin/audit/page.tsx — Audit log viewer page",
+        "prisma/schema.prisma — AuditLog model with actor, action, resource, timestamp",
+        "tests/audit/service.test.ts — Audit logging tests"
+      ],
+      "acceptanceCriteria": [
+        "The Audit-Trail für alle relevanten Aktionen capability is available through the intended application surface.",
+        "Core validation, error handling, and persistence for Audit-Trail für alle relevanten Aktionen are covered by tests.",
+        "Audit records capture actor, action, and timestamp without silent mutation."
+      ],
+      "implementationNotes": [
+        "Start from domain rules and access constraints before UI or transport details.",
+        "Keep module boundaries explicit so later extraction remains possible if the system grows.",
+        "Update docs and tests in the same change instead of leaving them for cleanup."
+      ],
+      "wave": "wave-3",
+      "dependsOn": [
+        "001",
+        "002"
+      ],
+      "blocks": [
+        "015"
+      ],
+      "deliveryPhase": "implementation"
+    },
+    {
+      "id": "012",
+      "title": "Implement Board-Ansicht für Tasks (Kanban-style)",
+      "category": "feature",
+      "priority": "P1",
+      "summary": "Design and implement the capability for: Board-Ansicht für Tasks (Kanban-style).",
+      "problem": "The product cannot satisfy its initial scope until Board-Ansicht für Tasks (Kanban-style) exists as a reviewable, testable capability.",
+      "solution": "Add a focused module for Board-Ansicht für Tasks (Kanban-style) that matches the recommended modular monolith and keeps integration boundaries explicit.",
+      "files": [
+        "src/modules/board-ansicht-f-r-tasks-kanban-style/index.ts",
+        "src/modules/board-ansicht-f-r-tasks-kanban-style/board-ansicht-f-r-tasks-kanban-style.service.ts",
+        "src/modules/board-ansicht-f-r-tasks-kanban-style/board-ansicht-f-r-tasks-kanban-style.repository.ts",
+        "tests/integration/board-ansicht-f-r-tasks-kanban-style.test.js"
+      ],
+      "acceptanceCriteria": [
+        "The Board-Ansicht für Tasks (Kanban-style) capability is available through the intended application surface.",
+        "Core validation, error handling, and persistence for Board-Ansicht für Tasks (Kanban-style) are covered by tests."
+      ],
+      "implementationNotes": [
+        "Start from domain rules and access constraints before UI or transport details.",
+        "Keep module boundaries explicit so later extraction remains possible if the system grows.",
+        "Update docs and tests in the same change instead of leaving them for cleanup."
+      ],
+      "wave": "wave-3",
+      "dependsOn": [
+        "001",
+        "002"
+      ],
+      "blocks": [
+        "015"
+      ],
+      "deliveryPhase": "implementation"
+    },
+    {
+      "id": "013",
+      "title": "Implement Review-Handoff zwischen Agenten und Menschen",
+      "category": "feature",
+      "priority": "P1",
+      "summary": "Design and implement the capability for: Review-Handoff zwischen Agenten und Menschen.",
+      "problem": "The product cannot satisfy its initial scope until Review-Handoff zwischen Agenten und Menschen exists as a reviewable, testable capability.",
+      "solution": "Add a focused module for Review-Handoff zwischen Agenten und Menschen that matches the recommended modular monolith and keeps integration boundaries explicit.",
+      "files": [
+        "src/modules/review-handoff-zwischen-agenten-und-mens/index.ts",
+        "src/modules/review-handoff-zwischen-agenten-und-mens/review-handoff-zwischen-agenten-und-mens.service.ts",
+        "src/modules/review-handoff-zwischen-agenten-und-mens/review-handoff-zwischen-agenten-und-mens.repository.ts",
+        "tests/integration/review-handoff-zwischen-agenten-und-mens.test.js",
+        "src/modules/audit/audit-log.ts"
+      ],
+      "acceptanceCriteria": [
+        "The Review-Handoff zwischen Agenten und Menschen capability is available through the intended application surface.",
+        "Core validation, error handling, and persistence for Review-Handoff zwischen Agenten und Menschen are covered by tests."
+      ],
+      "implementationNotes": [
+        "Start from domain rules and access constraints before UI or transport details.",
+        "Keep module boundaries explicit so later extraction remains possible if the system grows.",
+        "Update docs and tests in the same change instead of leaving them for cleanup."
+      ],
+      "wave": "wave-3",
+      "dependsOn": [
+        "001",
+        "002"
+      ],
+      "blocks": [
+        "015"
+      ],
+      "deliveryPhase": "implementation"
+    },
+    {
+      "id": "014",
+      "title": "Implement Policy-gesteuerte Zugriffsrechte: was dürfen Agenten tun?",
+      "category": "feature",
+      "priority": "P1",
+      "summary": "Design and implement the capability for: Policy-gesteuerte Zugriffsrechte: was dürfen Agenten tun?.",
+      "problem": "The product cannot satisfy its initial scope until Policy-gesteuerte Zugriffsrechte: was dürfen Agenten tun? exists as a reviewable, testable capability.",
+      "solution": "Add a focused module for Policy-gesteuerte Zugriffsrechte: was dürfen Agenten tun? that matches the recommended modular monolith and keeps integration boundaries explicit.",
+      "files": [
+        "src/modules/policy-gesteuerte-zugriffsrechte-was-d-r/index.ts",
+        "src/modules/policy-gesteuerte-zugriffsrechte-was-d-r/policy-gesteuerte-zugriffsrechte-was-d-r.service.ts",
+        "src/modules/policy-gesteuerte-zugriffsrechte-was-d-r/policy-gesteuerte-zugriffsrechte-was-d-r.repository.ts",
+        "tests/integration/policy-gesteuerte-zugriffsrechte-was-d-r.test.js"
+      ],
+      "acceptanceCriteria": [
+        "The Policy-gesteuerte Zugriffsrechte: was dürfen Agenten tun? capability is available through the intended application surface.",
+        "Core validation, error handling, and persistence for Policy-gesteuerte Zugriffsrechte: was dürfen Agenten tun? are covered by tests."
+      ],
+      "implementationNotes": [
+        "Start from domain rules and access constraints before UI or transport details.",
+        "Keep module boundaries explicit so later extraction remains possible if the system grows.",
+        "Update docs and tests in the same change instead of leaving them for cleanup."
+      ],
+      "wave": "wave-3",
+      "dependsOn": [
+        "001",
+        "002"
+      ],
+      "blocks": [
+        "015"
+      ],
+      "deliveryPhase": "implementation"
+    },
+    {
+      "id": "015",
+      "title": "Add integration and error-handling coverage",
+      "category": "quality",
+      "priority": "P1",
+      "summary": "Verify the critical path, failure handling, and integration boundaries with tests.",
+      "problem": "The initial implementation backlog leaves room for silent regressions unless critical-path and error-path coverage are added deliberately.",
+      "solution": "Add end-to-end and integration-focused verification around the user path, external boundaries, and failure handling assumptions.",
+      "files": [
+        "tests/integration/critical-path.test.js",
+        "tests/integration/error-handling.test.js",
+        "tests/contract/integrations.test.js"
+      ],
+      "acceptanceCriteria": [
+        "Critical path behavior is exercised through automated tests.",
+        "Integration and error paths fail loudly instead of degrading silently.",
+        "Known edge cases from the first release plan are captured in test coverage."
+      ],
+      "implementationNotes": [
+        "Bias toward tests that exercise contracts and failure semantics, not only happy-path rendering.",
+        "Keep fixtures readable so future backlog work can extend them safely."
+      ],
+      "wave": "wave-4",
+      "dependsOn": [
+        "003",
+        "004",
+        "005",
+        "006",
+        "007",
+        "008",
+        "009",
+        "010",
+        "011",
+        "012",
+        "013",
+        "014"
+      ],
+      "blocks": [],
+      "deliveryPhase": "hardening"
+    }
+  ],
+  "executionWaves": [
+    {
+      "id": "wave-1",
+      "goal": "Lock scope, assumptions, and engineering baseline.",
+      "taskIds": [
+        "001",
+        "002"
+      ]
+    },
+    {
+      "id": "wave-2",
+      "goal": "Deliver the first critical capabilities and required controls.",
+      "taskIds": [
+        "003",
+        "004"
+      ]
+    },
+    {
+      "id": "wave-3",
+      "goal": "Expand feature coverage once the core path is in place.",
+      "taskIds": [
+        "005",
+        "006",
+        "007",
+        "008",
+        "009",
+        "010",
+        "011",
+        "012",
+        "013",
+        "014"
+      ]
+    },
+    {
+      "id": "wave-4",
+      "goal": "Harden, verify, and prepare the system for release.",
+      "taskIds": [
+        "015"
+      ]
+    }
+  ],
+  "dependencyGraph": {
+    "edges": [
+      {
+        "from": "001",
+        "to": "002",
+        "reason": "002 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "001",
+        "to": "003",
+        "reason": "003 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "002",
+        "to": "003",
+        "reason": "003 depends on 002 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "001",
+        "to": "004",
+        "reason": "004 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "002",
+        "to": "004",
+        "reason": "004 depends on 002 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "001",
+        "to": "005",
+        "reason": "005 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "002",
+        "to": "005",
+        "reason": "005 depends on 002 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "001",
+        "to": "006",
+        "reason": "006 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "002",
+        "to": "006",
+        "reason": "006 depends on 002 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "001",
+        "to": "007",
+        "reason": "007 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "002",
+        "to": "007",
+        "reason": "007 depends on 002 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "001",
+        "to": "008",
+        "reason": "008 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "002",
+        "to": "008",
+        "reason": "008 depends on 002 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "001",
+        "to": "009",
+        "reason": "009 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "002",
+        "to": "009",
+        "reason": "009 depends on 002 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "001",
+        "to": "010",
+        "reason": "010 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "002",
+        "to": "010",
+        "reason": "010 depends on 002 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "001",
+        "to": "011",
+        "reason": "011 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "002",
+        "to": "011",
+        "reason": "011 depends on 002 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "001",
+        "to": "012",
+        "reason": "012 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "002",
+        "to": "012",
+        "reason": "012 depends on 002 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "001",
+        "to": "013",
+        "reason": "013 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "002",
+        "to": "013",
+        "reason": "013 depends on 002 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "001",
+        "to": "014",
+        "reason": "014 depends on 001 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "002",
+        "to": "014",
+        "reason": "014 depends on 002 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "003",
+        "to": "015",
+        "reason": "015 depends on 003 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "004",
+        "to": "015",
+        "reason": "015 depends on 004 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "005",
+        "to": "015",
+        "reason": "015 depends on 005 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "006",
+        "to": "015",
+        "reason": "015 depends on 006 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "007",
+        "to": "015",
+        "reason": "015 depends on 007 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "008",
+        "to": "015",
+        "reason": "015 depends on 008 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "009",
+        "to": "015",
+        "reason": "015 depends on 009 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "010",
+        "to": "015",
+        "reason": "015 depends on 010 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "011",
+        "to": "015",
+        "reason": "015 depends on 011 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "012",
+        "to": "015",
+        "reason": "015 depends on 012 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "013",
+        "to": "015",
+        "reason": "015 depends on 013 for prerequisite scope, code, or control readiness."
+      },
+      {
+        "from": "014",
+        "to": "015",
+        "reason": "015 depends on 014 for prerequisite scope, code, or control readiness."
+      }
+    ],
+    "criticalPathTaskIds": [
+      "001",
+      "002",
+      "003",
+      "015"
+    ]
+  },
+  "promptExports": [
+    {
+      "id": "architecture-analysis",
+      "title": "Architecture Analysis",
+      "purpose": "Refine or challenge the recommended architecture using the generated options and risks.",
+      "path": "prompts/architecture-analysis.md"
+    },
+    {
+      "id": "execution-next-wave",
+      "title": "Execution Next Wave",
+      "purpose": "Guide an implementation agent through the next delivery wave and its dependencies.",
+      "path": "prompts/execution-next-wave.md"
+    }
+  ],
+  "handoffManifest": {
+    "version": "1.0",
+    "summary": "Coordinate downstream planning, governance, and execution agents from a single generated manifest.",
+    "policySummary": "Use platform profile policies for concurrency, blocker escalation, and approval gating.",
+    "runnerContractPath": "handoff/runner-contract.json",
+    "coordinationStrategy": "Use planning review steps in parallel where possible, then move into execution on the first delivery wave.",
+    "recommendedArchitectureOptionId": "option-a",
+    "recommendedArchitectureShape": "modular monolith",
+    "sharedContext": {
+      "phase": "phase_1",
+      "path": "core",
+      "plannerProfile": "platform",
+      "intakeCompleteness": "complete"
+    },
+    "sharedArtifacts": [
+      "AGENTS.md",
+      "planforge-index.json",
+      "planning/plan-output.json",
+      "planning/structured-input.json",
+      "PROJECT.md",
+      "project-charter.md",
+      "architecture-overview.md",
+      "delivery-plan.md",
+      "handoff/runner-contract.json",
+      "exports/devreview.json",
+      "exports/scaffoldkit-input.json",
+      ".ai/AGENTS.md",
+      ".ai/ARCHITECTURE.md",
+      ".ai/TASKS.md",
+      ".ai/DECISIONS.md",
+      "/root/.openclaw/workspace/git/agent-planforge/playbooks/planning-and-scoping.md",
+      "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/01-project-setup.md",
+      "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/02-architecture.md",
+      "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/03-team-roles.md",
+      "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/04-design-principles.md",
+      "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/05-development-workflow.md",
+      "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/06-testing-strategy.md",
+      "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/07-quality-assurance.md",
+      "/root/.openclaw/workspace/git/agent-engineering-playbook/playbooks/08-documentation.md",
+      "adrs/001-initial-architecture-shape.md",
+      "adrs/002-primary-data-store.md",
+      "adrs/003-integration-strategy.md"
+    ],
+    "steps": [
+      {
+        "id": "step-2-architecture-review",
+        "name": "Review Architecture Direction",
+        "objective": "Challenge the default architecture and confirm whether the recommended option still fits the clarified scope.",
+        "executionMode": "parallel",
+        "dependsOn": [],
+        "parallelGroup": "planning-review",
+        "agentAssignments": [
+          {
+            "id": "agent-architecture-reviewer",
+            "role": "architecture-reviewer",
+            "promptExportId": "architecture-analysis",
+            "promptPath": "prompts/architecture-analysis.md",
+            "reads": [
+              "planforge-index.json",
+              "planning/plan-output.json",
+              "PROJECT.md",
+              "architecture-overview.md",
+              ".ai/ARCHITECTURE.md",
+              "delivery-plan.md",
+              "prompts/architecture-analysis.md"
+            ],
+            "writes": [
+              "architecture review notes",
+              "ADR update proposals",
+              "recommended architecture adjustments"
+            ],
+            "successCriteria": [
+              "The recommended option is either confirmed or replaced with an explicit rationale.",
+              "Key tradeoffs and module boundaries are clear enough to guide the first implementation wave."
+            ]
+          }
+        ],
+        "dependencyPolicy": {
+          "hard": [],
+          "soft": []
+        },
+        "blockerPolicy": {
+          "onBlocked": "review-before-continue",
+          "escalationTarget": "human owner",
+          "maxAutoRetries": 0
+        },
+        "approvalGate": {
+          "required": false,
+          "approvers": [
+            "human owner"
+          ],
+          "reason": "No explicit approval gate required beyond normal review."
+        },
+        "profilePolicy": {
+          "plannerProfile": "platform",
+          "maxParallelAgents": 3,
+          "autoContinue": true,
+          "reviewRequired": false
+        },
+        "statusFiles": {
+          "input": "handoff/runner/step-2-architecture-review/input.json",
+          "status": "handoff/runner/step-2-architecture-review/status.json",
+          "result": "handoff/runner/step-2-architecture-review/result.json",
+          "blockers": "handoff/runner/step-2-architecture-review/blockers.json"
+        }
+      },
+      {
+        "id": "step-4-wave-1-execution",
+        "name": "Execute First Delivery Wave",
+        "objective": "Implement the initial foundation tasks with the current architecture and control assumptions.",
+        "executionMode": "sequential",
+        "dependsOn": [
+          "step-2-architecture-review"
+        ],
+        "parallelGroup": "delivery",
+        "agentAssignments": [
+          {
+            "id": "agent-delivery-lead",
+            "role": "implementation-lead",
+            "promptExportId": "execution-next-wave",
+            "promptPath": "prompts/execution-next-wave.md",
+            "reads": [
+              "planforge-index.json",
+              "planning/plan-output.json",
+              "PROJECT.md",
+              "delivery-plan.md",
+              ".ai/TASKS.md",
+              "prompts/execution-next-wave.md",
+              "tasks/001-write-project-charter-and-architecture-baseline.md",
+              "tasks/002-set-up-repository-and-delivery-baseline.md"
+            ],
+            "writes": [
+              "implemented wave-1 scope",
+              "updated tests and docs",
+              "next-wave handoff notes"
+            ],
+            "successCriteria": [
+              "All tasks in wave-1 are either completed or explicitly re-scoped with reasons.",
+              "Dependency-sensitive work lands in a reviewable sequence without skipping tests or documentation."
+            ]
+          }
+        ],
+        "dependencyPolicy": {
+          "hard": [
+            "step-2-architecture-review"
+          ],
+          "soft": []
+        },
+        "blockerPolicy": {
+          "onBlocked": "review-before-continue",
+          "escalationTarget": "human owner",
+          "maxAutoRetries": 0
+        },
+        "approvalGate": {
+          "required": false,
+          "approvers": [
+            "human owner"
+          ],
+          "reason": "No explicit approval gate required beyond normal review."
+        },
+        "profilePolicy": {
+          "plannerProfile": "platform",
+          "maxParallelAgents": 3,
+          "autoContinue": true,
+          "reviewRequired": false
+        },
+        "statusFiles": {
+          "input": "handoff/runner/step-4-wave-1-execution/input.json",
+          "status": "handoff/runner/step-4-wave-1-execution/status.json",
+          "result": "handoff/runner/step-4-wave-1-execution/result.json",
+          "blockers": "handoff/runner/step-4-wave-1-execution/blockers.json"
+        }
+      }
+    ]
+  },
+  "risks": [
+    "Important open questions remain unresolved and may shift architecture or task scope.",
+    "Third-party integrations may slow delivery or require more explicit failure handling than expected."
+  ],
+  "openQuestions": [
+    "TypeScript/Node.js oder Python als Backend-Stack?",
+    "Welche Workflow-Engine für State-Machines (hardkodiert vs. konfigurierbar)?",
+    "Monolith oder Service-Trennung für Auth/Webhook-Handling?"
+  ],
+  "defaultBranch": "main"
+}

@@ -1,0 +1,50 @@
+.PHONY: install hooks dev dev-docker docker-up docker-down build test lint format ci clean help
+
+# Default target
+.DEFAULT_GOAL := help
+
+help: ## Show this help message
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Available targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+install: ## Install dependencies
+	npm ci
+
+hooks: ## Set up Git pre-commit hooks (Husky + lint-staged)
+	npx husky init
+	cp .husky-pre-commit .husky/pre-commit
+	chmod +x .husky/pre-commit
+
+dev: ## Start development server (local)
+	npm run dev
+
+dev-docker: docker-up ## Start development server (Docker)
+
+docker-up: ## Start Docker development environment
+	docker compose -f docker-compose.dev.yml up --build
+
+docker-down: ## Stop Docker development environment
+	docker compose -f docker-compose.dev.yml down
+
+build: ## Build for production
+	npm run build
+
+test: ## Run tests
+	npm test
+
+lint: ## Run linting and type-checking
+	npm run lint
+	npm run type-check
+
+format: ## Format code
+	npm run format
+
+format-check: ## Check code formatting
+	npm run format:check
+
+ci: format-check lint test build ## Run all CI checks (format, lint, test, build)
+
+clean: ## Remove build artifacts and dependencies
+	rm -rf node_modules .next dist build coverage

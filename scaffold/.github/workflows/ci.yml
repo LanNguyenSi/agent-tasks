@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "release/*"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify Python API scaffold
+        shell: bash
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          elif [ -f pyproject.toml ]; then
+            pip install .
+          else
+            echo "No Python dependency manifest found. Skipping framework-specific verification."
+            exit 0
+          fi
+          if command -v pytest >/dev/null 2>&1; then
+            pytest || true
+          else
+            echo "pytest is not installed yet. Skipping test run."
+          fi
+

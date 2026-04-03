@@ -1,0 +1,52 @@
+{
+  "version": "1.0",
+  "generatedBy": "agent-planforge",
+  "summary": "Machine-readable index of the generated planforge artifact layout.",
+  "context": {
+    "plannerProfile": "platform",
+    "phase": "phase_1",
+    "path": "core"
+  },
+  "rootFiles": {
+    "agents": "AGENTS.md",
+    "claude": "CLAUDE.md",
+    "project": "PROJECT.md",
+    "charter": "project-charter.md",
+    "architecture": "architecture-overview.md",
+    "deliveryPlan": "delivery-plan.md",
+    "intakeQuestionnaire": "intake-questionnaire.md"
+  },
+  "directories": {
+    "ai": ".ai",
+    "planning": "planning",
+    "handoff": "handoff",
+    "exports": "exports",
+    "prompts": "prompts",
+    "specs": "specs",
+    "adrs": "adrs",
+    "tasks": "tasks",
+    "governance": "governance",
+    "runbooks": "runbooks"
+  },
+  "planning": {
+    "planOutput": "planning/plan-output.json",
+    "structuredInput": "planning/structured-input.json",
+    "rerunReport": "planning/rerun-report.json",
+    "rerunSummary": "planning/rerun-summary.md"
+  },
+  "handoff": {
+    "manifest": "handoff/manifest.json",
+    "runnerContract": "handoff/runner-contract.json",
+    "runnerDirectory": "handoff/runner"
+  },
+  "exports": {
+    "scaffoldkit": "exports/scaffoldkit-input.json",
+    "devreview": "exports/devreview.json"
+  },
+  "ai": {
+    "agents": ".ai/AGENTS.md",
+    "architecture": ".ai/ARCHITECTURE.md",
+    "tasks": ".ai/TASKS.md",
+    "decisions": ".ai/DECISIONS.md"
+  }
+}

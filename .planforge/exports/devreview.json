@@ -1,0 +1,24 @@
+{
+  "version": "1.0",
+  "profile": "platform",
+  "phase": "phase_1",
+  "minimumScore": 8,
+  "weights": {
+    "correctness": 20,
+    "testing": 25,
+    "maintainability": 20,
+    "architecture": 20,
+    "security": 10,
+    "documentation": 5
+  },
+  "ignorePatterns": [
+    "out/**",
+    "coverage/**",
+    "node_modules/**"
+  ],
+  "customRules": [
+    "require tests when API or workflow behavior changes",
+    "require ADR updates when architecture assumptions shift",
+    "require API stability review for shared platform interfaces"
+  ]
+}

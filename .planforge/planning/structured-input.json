@@ -1,0 +1,51 @@
+{
+  "projectName": "agent-tasks",
+  "summary": "agent-tasks ist eine kollaborative Task-Plattform für Menschen und Agenten. Sie ermöglicht strukturierte Zusammenarbeit rund um Softwareprojekte, inklusive Aufgabenerstellung, Claiming, Review-Handoffs, konfigurierbaren Boards und klaren Verantwortlichkeiten. Agenten arbeiten mit dedizierten API-Tokens, Menschen mit GitHub OAuth. Alle Aktionen sind auditierbar und policy-gesteuert.",
+  "targetUsers": [
+    "Software-Teams die AI-Agenten in ihren Workflow einbinden",
+    "AI-Agenten (Ice, Lava) die Tasks autonom übernehmen und implementieren",
+    "Tech Leads die Workflows und Policies konfigurieren"
+  ],
+  "coreFeatures": [
+    "GitHub OAuth Login für Menschen",
+    "Dedizierte API-Tokens für Agenten (kein Session-basierter Zugriff)",
+    "Projektsynchronisation aus GitHub (Repos, Issues, PRs)",
+    "Manuelle Projekterstellung möglich",
+    "Task-Erstellung durch Menschen und Agenten",
+    "Task-Claiming durch Menschen und Agenten",
+    "Konfigurierbare Workflow-Regeln (Statusübergänge, Review-Pflicht, Deployment-Verantwortung)",
+    "Teams und Projekte als zentrale Mandanten-/Struktureinheit",
+    "Audit-Trail für alle relevanten Aktionen",
+    "Board-Ansicht für Tasks (Kanban-style)",
+    "Review-Handoff zwischen Agenten und Menschen",
+    "Policy-gesteuerte Zugriffsrechte: was dürfen Agenten tun?"
+  ],
+  "constraints": [
+    "Kein unkontrollierter Vollzugriff für Agenten",
+    "Kein rein informelles Task-Tracking ohne Workflow-Regeln",
+    "Kein Deployment ohne klar definierte Verantwortlichkeit",
+    "Workflow-Regeln konfigurierbar, nicht hartkodiert"
+  ],
+  "nonFunctionalRequirements": [
+    "Audit-Trail: alle relevanten Aktionen nachvollziehbar",
+    "Policy-basierte Zugriffskontrolle",
+    "GitHub Webhook-Verarbeitung zuverlässig",
+    "API-First: alle Funktionen via REST API verfügbar",
+    "Docker-basiertes Deployment"
+  ],
+  "integrations": [
+    "GitHub OAuth",
+    "GitHub REST API (Repo-Sync, Issue-Sync, PR-Handling)",
+    "GitHub Webhooks"
+  ],
+  "dataSensitivity": "moderate",
+  "plannerProfile": "platform",
+  "teamSize": "small",
+  "productionExpectedSoon": false,
+  "liveUsers": false,
+  "openQuestions": [
+    "TypeScript/Node.js oder Python als Backend-Stack?",
+    "Welche Workflow-Engine für State-Machines (hardkodiert vs. konfigurierbar)?",
+    "Monolith oder Service-Trennung für Auth/Webhook-Handling?"
+  ]
+}
