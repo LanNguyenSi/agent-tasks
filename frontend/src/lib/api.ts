@@ -36,6 +36,16 @@ export interface Task {
   updatedAt: string;
 }
 
+export interface Team {
+  id: string;
+  name: string;
+  slug: string;
+  role?: string;
+  memberCount?: number;
+  projectCount?: number;
+  createdAt: string;
+}
+
 export interface AuditLog {
   id: string;
   action: string;
@@ -66,6 +76,38 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return res.json() as Promise<T>;
+}
+
+// ── Teams ───────────────────────────────────────────────────────────────────
+
+export async function getTeams(): Promise<Team[]> {
+  const data = await request<{ teams: Team[] }>("/api/teams");
+  return data.teams;
+}
+
+export async function createTeam(body: { name: string; slug: string }): Promise<Team> {
+  const data = await request<{ team: Team }>("/api/teams", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return data.team;
+}
+
+export async function createAgentToken(body: {
+  teamId: string;
+  name: string;
+  scopes: string[];
+}): Promise<{ token: { id: string; name: string; scopes: string[] }; rawToken: string }> {
+  return request("/api/agent-tokens", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function revokeAgentToken(tokenId: string): Promise<void> {
+  await request(`/api/agent-tokens/${tokenId}/revoke`, { method: "POST" });
+}
+
+export async function getAgentTokens(teamId: string): Promise<{ id: string; name: string; scopes: string[]; lastUsedAt: string | null; createdAt: string }[]> {
+  const data = await request<{ tokens: { id: string; name: string; scopes: string[]; lastUsedAt: string | null; createdAt: string }[] }>(`/api/agent-tokens?teamId=${teamId}`);
+  return data.tokens;
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────

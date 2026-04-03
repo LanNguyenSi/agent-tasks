@@ -1,3 +1,4 @@
+// Note: redirect logic for logged-in users handled in middleware or client-side
 export default function HomePage() {
   return (
     <main
