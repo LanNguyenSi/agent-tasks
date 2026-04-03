@@ -966,13 +966,23 @@ export default function DashboardPage() {
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.7rem" }}>
               <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>Task Details</h3>
-              <button
-                type="button"
-                onClick={() => setActiveTaskId(null)}
-                style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: "6px", padding: "0.2rem 0.5rem" }}
-              >
-                Close
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteTaskConfirm(true)}
+                  disabled={savingTask || deletingTask}
+                  style={{ background: "transparent", color: "var(--danger)", border: "1px solid color-mix(in srgb, var(--danger) 60%, var(--border) 40%)", borderRadius: "6px", padding: "0.2rem 0.45rem", fontSize: "0.76rem" }}
+                >
+                  {deletingTask ? "Deleting…" : "Delete"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTaskId(null)}
+                  style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: "6px", padding: "0.2rem 0.5rem" }}
+                >
+                  Close
+                </button>
+              </div>
             </div>
 
             <div>
@@ -1047,7 +1057,7 @@ export default function DashboardPage() {
                 </div>
               </section>
 
-              <div className="task-detail-actions" style={{ display: "flex", gap: "0.5rem", marginBottom: "0.4rem", flexWrap: "wrap" }}>
+              <div className="task-detail-actions" style={{ display: "flex", justifyContent: "flex-end", marginTop: "0.2rem" }}>
                 <button
                   type="button"
                   onClick={() => void handleSaveTask()}
@@ -1056,24 +1066,7 @@ export default function DashboardPage() {
                 >
                   {savingTask ? "Saving…" : "Save changes"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTaskId(null)}
-                  disabled={savingTask || deletingTask}
-                  style={{ background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.45rem 0.7rem" }}
-                >
-                  Close
-                </button>
               </div>
-
-              <button
-                type="button"
-                onClick={() => setShowDeleteTaskConfirm(true)}
-                disabled={savingTask || deletingTask}
-                style={{ background: "transparent", color: "var(--danger)", border: "1px solid var(--danger)", borderRadius: "8px", padding: "0.35rem 0.65rem", fontSize: "0.78rem" }}
-              >
-                {deletingTask ? "Deleting…" : "Delete task"}
-              </button>
             </div>
           </div>
         </div>

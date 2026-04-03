@@ -192,6 +192,27 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
   return c.json({ project: updated });
 });
 
+// ── Delete project ────────────────────────────────────────────────────────────
+
+projectRouter.delete("/projects/:id", async (c) => {
+  const actor = c.get("actor");
+
+  if (actor.type === "agent") {
+    return forbidden(c, "Agents cannot delete projects");
+  }
+
+  const project = await prisma.project.findUnique({ where: { id: c.req.param("id") } });
+  if (!project) return notFound(c);
+
+  if (!(await assertMembership(actor, project.teamId))) {
+    return forbidden(c, "Access denied");
+  }
+
+  await prisma.project.delete({ where: { id: project.id } });
+
+  return c.json({ success: true });
+});
+
 // ── GitHub sync trigger (placeholder for Wave 3) ─────────────────────────────
 
 projectRouter.post("/projects/:id/sync", async (c) => {

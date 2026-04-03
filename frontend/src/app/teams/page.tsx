@@ -8,6 +8,7 @@ import {
   getTeams,
   getProjects,
   createProject,
+  deleteProject,
   syncTeamFromGitHub,
   type User,
   type Team,
@@ -15,6 +16,7 @@ import {
 } from "../../lib/api";
 import AppHeader from "../../components/AppHeader";
 import AlertBanner from "../../components/ui/AlertBanner";
+import ConfirmDialog from "../../components/ui/ConfirmDialog";
 
 type ProjectSort = "name_asc" | "name_desc" | "newest" | "recent_sync";
 const PROJECT_PAGE_SIZE = 9;
@@ -28,7 +30,7 @@ export default function TeamsPage() {
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [syncTone, setSyncTone] = useState<"success" | "danger">("success");
+  const [syncTone, setSyncTone] = useState<"success" | "warning" | "danger">("success");
 
   const [showNewProject, setShowNewProject] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -36,6 +38,8 @@ export default function TeamsPage() {
   const [githubRepo, setGithubRepo] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deletingProject, setDeletingProject] = useState(false);
 
   const [projectQuery, setProjectQuery] = useState("");
   const [projectSort, setProjectSort] = useState<ProjectSort>("name_asc");
@@ -109,6 +113,23 @@ export default function TeamsPage() {
       setError((err as Error).message);
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleConfirmDeleteProject() {
+    if (!deleteTarget) return;
+    setDeletingProject(true);
+    setError(null);
+    try {
+      await deleteProject(deleteTarget.id);
+      setProjects((prev) => prev.filter((project) => project.id !== deleteTarget.id));
+      setSyncTone("success");
+      setSyncMessage(`Project "${deleteTarget.name}" deleted.`);
+      setDeleteTarget(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDeletingProject(false);
     }
   }
 
@@ -198,8 +219,15 @@ export default function TeamsPage() {
                       try {
                         const result = await syncTeamFromGitHub(selectedTeam.id);
                         await loadProjects(selectedTeam.id);
-                        setSyncMessage(`GitHub sync complete: ${result.created} created, ${result.updated} updated.`);
-                        setSyncTone("success");
+                        if (result.skippedPrune) {
+                          setSyncMessage(result.message);
+                          setSyncTone("warning");
+                        } else {
+                          setSyncMessage(
+                            `GitHub sync complete: ${result.created} created, ${result.updated} updated, ${result.pruned} pruned.`,
+                          );
+                          setSyncTone("success");
+                        }
                       } catch (err) {
                         setSyncMessage((err as Error).message);
                         setSyncTone("danger");
@@ -345,16 +373,39 @@ export default function TeamsPage() {
             <>
               <div className="projects-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
                 {pagedProjects.map((project) => (
-                  <Link key={project.id} href={`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`} style={{ textDecoration: "none", display: "block" }}>
-                    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1.25rem", transition: "border-color 0.15s", cursor: "pointer" }}>
-                      <h3 style={{ fontWeight: 600, marginBottom: "0.25rem", color: "var(--text)" }}>{project.name}</h3>
-                      {project.githubRepo && <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.5rem" }}>⚡ {project.githubRepo}</p>}
-                      {project.description && <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{project.description}</p>}
-                      <div style={{ marginTop: "0.7rem", color: "var(--primary)", fontSize: "0.82rem", fontWeight: 600 }}>
-                        Open board →
-                      </div>
+                  <div
+                    key={project.id}
+                    style={{
+                      background: "var(--surface)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "10px",
+                      padding: "1rem",
+                    }}
+                  >
+                    <h3 style={{ fontWeight: 600, marginBottom: "0.25rem", color: "var(--text)" }}>{project.name}</h3>
+                    {project.githubRepo ? (
+                      <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.5rem" }}>GitHub: {project.githubRepo}</p>
+                    ) : (
+                      <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.5rem" }}>Manual project</p>
+                    )}
+                    {project.description && <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{project.description}</p>}
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginTop: "0.85rem", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`)}
+                        style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: "6px", padding: "0.38rem 0.62rem", fontWeight: 600 }}
+                      >
+                        Open board
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteTarget({ id: project.id, name: project.name })}
+                        style={{ border: "1px solid color-mix(in srgb, var(--danger) 60%, var(--border) 40%)", background: "transparent", color: "var(--danger)", borderRadius: "6px", padding: "0.38rem 0.62rem", fontWeight: 600 }}
+                      >
+                        Delete
+                      </button>
                     </div>
-                  </Link>
+                  </div>
                 ))}
               </div>
               {totalProjectPages > 1 && (
@@ -384,6 +435,25 @@ export default function TeamsPage() {
           )}
         </>
       )}
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Delete project?"
+        message={
+          deleteTarget
+            ? `Project "${deleteTarget.name}" including boards and tasks will be permanently removed.`
+            : ""
+        }
+        confirmLabel="Delete project"
+        cancelLabel="Keep project"
+        tone="danger"
+        busy={deletingProject}
+        onConfirm={() => void handleConfirmDeleteProject()}
+        onCancel={() => {
+          if (deletingProject) return;
+          setDeleteTarget(null);
+        }}
+      />
     </main>
   );
 }
