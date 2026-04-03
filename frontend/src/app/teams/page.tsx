@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -14,6 +14,10 @@ import {
   type Project,
 } from "../../lib/api";
 import AppHeader from "../../components/AppHeader";
+
+type TeamSort = "name_asc" | "projects_desc" | "members_desc";
+type ProjectSort = "name_asc" | "name_desc" | "newest" | "recent_sync";
+const PROJECT_PAGE_SIZE = 9;
 
 export default function TeamsPage() {
   const router = useRouter();
@@ -33,6 +37,12 @@ export default function TeamsPage() {
   const [githubRepo, setGithubRepo] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [teamQuery, setTeamQuery] = useState("");
+  const [teamSort, setTeamSort] = useState<TeamSort>("name_asc");
+  const [projectQuery, setProjectQuery] = useState("");
+  const [projectSort, setProjectSort] = useState<ProjectSort>("name_asc");
+  const [githubOnly, setGithubOnly] = useState(false);
+  const [projectPage, setProjectPage] = useState(1);
 
   useEffect(() => {
     void (async () => {
@@ -64,6 +74,58 @@ export default function TeamsPage() {
       setProjectsLoading(false);
     }
   }
+
+  const visibleTeams = useMemo(() => {
+    const normalizedQuery = teamQuery.trim().toLowerCase();
+    const filtered = teams.filter((team) => {
+      if (!normalizedQuery) return true;
+      return `${team.name} ${team.slug}`.toLowerCase().includes(normalizedQuery);
+    });
+
+    return filtered.sort((a, b) => {
+      if (teamSort === "projects_desc") {
+        return (b.projectCount ?? 0) - (a.projectCount ?? 0) || a.name.localeCompare(b.name);
+      }
+      if (teamSort === "members_desc") {
+        return (b.memberCount ?? 0) - (a.memberCount ?? 0) || a.name.localeCompare(b.name);
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }, [teams, teamQuery, teamSort]);
+
+  const filteredProjects = useMemo(() => {
+    const normalizedQuery = projectQuery.trim().toLowerCase();
+    const filtered = projects.filter((project) => {
+      if (githubOnly && !project.githubRepo) return false;
+      if (!normalizedQuery) return true;
+      return `${project.name} ${project.slug} ${project.githubRepo ?? ""} ${project.description ?? ""}`
+        .toLowerCase()
+        .includes(normalizedQuery);
+    });
+
+    return filtered.sort((a, b) => {
+      if (projectSort === "name_asc") return a.name.localeCompare(b.name);
+      if (projectSort === "name_desc") return b.name.localeCompare(a.name);
+      if (projectSort === "recent_sync") {
+        return (
+          new Date(b.githubSyncAt ?? 0).getTime() - new Date(a.githubSyncAt ?? 0).getTime() ||
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      }
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [projects, projectQuery, projectSort, githubOnly]);
+
+  useEffect(() => {
+    setProjectPage(1);
+  }, [selectedTeam?.id, projectQuery, projectSort, githubOnly]);
+
+  const totalProjectPages = Math.max(1, Math.ceil(filteredProjects.length / PROJECT_PAGE_SIZE));
+  const currentProjectPage = Math.min(projectPage, totalProjectPages);
+  const pagedProjects = filteredProjects.slice(
+    (currentProjectPage - 1) * PROJECT_PAGE_SIZE,
+    currentProjectPage * PROJECT_PAGE_SIZE,
+  );
 
   function handleProjectNameChange(name: string) {
     setProjectName(name);
@@ -99,7 +161,7 @@ export default function TeamsPage() {
   }
 
   return (
-    <main style={{ padding: "1.25rem", maxWidth: "1200px", margin: "0 auto", minHeight: "100vh" }}>
+    <main className="page-shell">
       <AppHeader
         user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null}
         boardHref={selectedTeam && projects[0] ? `/dashboard?teamId=${selectedTeam.id}&projectId=${projects[0].id}` : "/dashboard"}
@@ -113,7 +175,24 @@ export default function TeamsPage() {
         {/* Sidebar */}
         <aside>
           <p style={{ color: "var(--muted)", fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.5rem" }}>Teams</p>
-          {teams.map((team) => (
+          <div className="teams-side-tools">
+            <input
+              value={teamQuery}
+              onChange={(e) => setTeamQuery(e.target.value)}
+              placeholder="Team suchen…"
+              style={{ width: "100%" }}
+            />
+            <select
+              value={teamSort}
+              onChange={(e) => setTeamSort(e.target.value as TeamSort)}
+              style={{ width: "100%" }}
+            >
+              <option value="name_asc">Sort: Name A-Z</option>
+              <option value="projects_desc">Sort: Most Projects</option>
+              <option value="members_desc">Sort: Most Members</option>
+            </select>
+          </div>
+          {visibleTeams.map((team) => (
             <button
               key={team.id}
               onClick={() => {
@@ -136,8 +215,16 @@ export default function TeamsPage() {
               }}
             >
               {team.name}
+              <span className="team-option-meta">
+                {(team.projectCount ?? 0)} P · {(team.memberCount ?? 0)} M
+              </span>
             </button>
           ))}
+          {visibleTeams.length === 0 && (
+            <p style={{ color: "var(--muted)", fontSize: "0.78rem", marginTop: "0.5rem" }}>
+              Kein Team passt zum Filter.
+            </p>
+          )}
         </aside>
 
         {/* Main */}
@@ -269,16 +356,51 @@ export default function TeamsPage() {
                 </div>
               )}
 
+              <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.75rem", marginBottom: "0.9rem" }}>
+                <div className="teams-filter-bar">
+                  <input
+                    value={projectQuery}
+                    onChange={(e) => setProjectQuery(e.target.value)}
+                    placeholder="Projekte suchen (Name, Slug, Repo)…"
+                    style={{ width: "100%" }}
+                  />
+                  <select
+                    value={projectSort}
+                    onChange={(e) => setProjectSort(e.target.value as ProjectSort)}
+                    style={{ width: "100%" }}
+                  >
+                    <option value="name_asc">Sort: Name A-Z</option>
+                    <option value="name_desc">Sort: Name Z-A</option>
+                    <option value="newest">Sort: Neueste zuerst</option>
+                    <option value="recent_sync">Sort: Kürzlich synchronisiert</option>
+                  </select>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", color: "var(--muted)", fontSize: "0.82rem", paddingLeft: "0.25rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={githubOnly}
+                      onChange={(e) => setGithubOnly(e.target.checked)}
+                    />
+                    Nur GitHub-Projekte
+                  </label>
+                </div>
+                <p style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
+                  {filteredProjects.length} Ergebnisse
+                </p>
+              </div>
+
               {projectsLoading ? (
                 <p style={{ color: "var(--muted)" }}>Loading projects…</p>
-              ) : projects.length === 0 ? (
+              ) : filteredProjects.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "3rem", border: "1px dashed var(--border)", borderRadius: "10px", color: "var(--muted)" }}>
-                  <p style={{ marginBottom: "0.5rem" }}>No projects yet.</p>
-                  <button onClick={() => setShowNewProject(true)} style={{ color: "var(--primary)", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: "inherit" }}>Create your first project →</button>
+                  <p style={{ marginBottom: "0.5rem" }}>{projects.length === 0 ? "No projects yet." : "Keine Projekte für diesen Filter."}</p>
+                  {projects.length === 0 && (
+                    <button onClick={() => setShowNewProject(true)} style={{ color: "var(--primary)", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: "inherit" }}>Create your first project →</button>
+                  )}
                 </div>
               ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
-                  {projects.map((project) => (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
+                    {pagedProjects.map((project) => (
                     <Link key={project.id} href={`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`} style={{ textDecoration: "none", display: "block" }}>
                       <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1.25rem", transition: "border-color 0.15s", cursor: "pointer" }}>
                         <h3 style={{ fontWeight: 600, marginBottom: "0.25rem", color: "var(--text)" }}>{project.name}</h3>
@@ -289,8 +411,32 @@ export default function TeamsPage() {
                         </div>
                       </div>
                     </Link>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                  {totalProjectPages > 1 && (
+                    <div className="teams-pagination">
+                      <span>Seite {currentProjectPage} von {totalProjectPages}</span>
+                      <div style={{ display: "flex", gap: "0.4rem" }}>
+                        <button
+                          type="button"
+                          disabled={currentProjectPage <= 1}
+                          onClick={() => setProjectPage((page) => Math.max(1, page - 1))}
+                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: "6px", padding: "0.3rem 0.6rem", opacity: currentProjectPage <= 1 ? 0.5 : 1 }}
+                        >
+                          Zurück
+                        </button>
+                        <button
+                          type="button"
+                          disabled={currentProjectPage >= totalProjectPages}
+                          onClick={() => setProjectPage((page) => Math.min(totalProjectPages, page + 1))}
+                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: "6px", padding: "0.3rem 0.6rem", opacity: currentProjectPage >= totalProjectPages ? 0.5 : 1 }}
+                        >
+                          Weiter
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}

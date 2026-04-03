@@ -56,6 +56,14 @@ input:focus, textarea:focus {
   outline-offset: -1px;
 }
 
+.page-shell {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 1.25rem;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
@@ -76,6 +84,80 @@ input:focus, textarea:focus {
   gap: 1.5rem;
 }
 
+.teams-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.3fr) minmax(180px, 0.8fr) auto;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.teams-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.teams-side-tools {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.35rem;
+  margin-bottom: 0.65rem;
+}
+
+.team-option-meta {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+
+.board-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(2, minmax(150px, 0.9fr));
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+}
+
+.board-scope-inline {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.status-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.7rem;
+}
+
+.status-chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.task-detail-panel {
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+
 @media (max-width: 1100px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
@@ -84,9 +166,19 @@ input:focus, textarea:focus {
   .dashboard-select-grid {
     grid-template-columns: 1fr !important;
   }
+
+  .task-detail-panel {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
 }
 
 @media (max-width: 900px) {
+  .page-shell {
+    padding: 1rem;
+  }
+
   .app-header {
     align-items: flex-start !important;
     gap: 0.75rem !important;
@@ -117,6 +209,19 @@ input:focus, textarea:focus {
 
   .project-form-grid {
     grid-template-columns: 1fr !important;
+  }
+
+  .teams-filter-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .teams-pagination {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .board-toolbar {
+    grid-template-columns: 1fr;
   }
 
   .new-task-grid {
