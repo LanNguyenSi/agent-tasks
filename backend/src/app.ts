@@ -6,6 +6,9 @@ import { authRouter } from "./routes/auth.js";
 import { agentTokenRouter } from "./routes/agent-tokens.js";
 import { taskRouter } from "./routes/tasks.js";
 import { projectRouter } from "./routes/projects.js";
+import { workflowRouter } from "./routes/workflows.js";
+import { boardRouter } from "./routes/boards.js";
+import { auditRouter } from "./routes/audit.js";
 import { authMiddleware } from "./middleware/auth.js";
 import type { AppVariables } from "./types/hono.js";
 
@@ -36,6 +39,9 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.route("/api/agent-tokens", agentTokenRouter);
   app.route("/api", projectRouter);
   app.route("/api", taskRouter);
+  app.route("/api", workflowRouter);
+  app.route("/api", boardRouter);
+  app.route("/api", auditRouter);
 
   // 404
   app.notFound((c) => c.json({ error: "not_found", message: "Route not found" }, 404));
