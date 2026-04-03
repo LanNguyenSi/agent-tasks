@@ -205,6 +205,10 @@ export async function getProject(id: string): Promise<Project> {
   return data.project;
 }
 
+export async function deleteProject(id: string): Promise<void> {
+  await request(`/api/projects/${id}`, { method: "DELETE" });
+}
+
 export async function syncProject(id: string): Promise<Project> {
   const data = await request<{ project: Project }>(`/api/projects/${id}/sync`, { method: "POST" });
   return data.project;
@@ -214,6 +218,7 @@ export async function syncTeamFromGitHub(teamId: string): Promise<{
   synced: number;
   created: number;
   updated: number;
+  pruned: number;
   message: string;
 }> {
   return request(`/api/teams/${teamId}/sync`, { method: "POST" });

@@ -288,6 +288,52 @@ const openApiSpec = {
           },
         },
       },
+      delete: {
+        tags: ["Projects"],
+        summary: "Delete project",
+        description: "Deletes the project and all related boards/tasks/workflows. Human users only.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Project deleted",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", example: true },
+                  },
+                  required: ["success"],
+                },
+              },
+            },
+          },
+          "403": {
+            description: "No project access",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "404": {
+            description: "Project not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
     },
     "/api/projects/{projectId}/tasks": {
       get: {

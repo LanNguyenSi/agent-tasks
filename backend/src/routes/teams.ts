@@ -201,9 +201,11 @@ teamRouter.post("/teams/:id/sync", async (c) => {
   }
 
   const repos = await listUserRepos(user.githubAccessToken);
+  const repoFullNames = repos.map((repo) => repo.full_name);
   const now = new Date();
   let created = 0;
   let updated = 0;
+  let pruned = 0;
 
   for (const repo of repos) {
     const existingProject = await prisma.project.findFirst({
@@ -240,10 +242,32 @@ teamRouter.post("/teams/:id/sync", async (c) => {
     created += 1;
   }
 
+  if (repoFullNames.length === 0) {
+    const deleted = await prisma.project.deleteMany({
+      where: {
+        teamId,
+        githubRepo: { not: null },
+      },
+    });
+    pruned = deleted.count;
+  } else {
+    const deleted = await prisma.project.deleteMany({
+      where: {
+        teamId,
+        githubRepo: {
+          not: null,
+          notIn: repoFullNames,
+        },
+      },
+    });
+    pruned = deleted.count;
+  }
+
   return c.json({
     synced: repos.length,
     created,
     updated,
-    message: `Synced ${repos.length} repositories`,
+    pruned,
+    message: `Synced ${repos.length} repositories (${created} created, ${updated} updated, ${pruned} pruned)`,
   });
 });
