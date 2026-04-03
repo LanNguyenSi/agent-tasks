@@ -1,0 +1,16 @@
+:root {
+  --background: #0f172a;
+  --foreground: #f1f5f9;
+  --primary: #6366f1;
+  --border: #1e293b;
+  --muted: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+}

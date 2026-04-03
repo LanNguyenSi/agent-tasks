@@ -1,0 +1,223 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Identity ─────────────────────────────────────────────────────────────────
+
+model User {
+  id            String   @id @default(uuid())
+  githubId      String   @unique
+  login         String   @unique
+  name          String?
+  avatarUrl     String?
+  email         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships   TeamMember[]
+  agentTokens   AgentToken[]
+  tasks         Task[]       @relation("TaskCreator")
+  claims        Task[]       @relation("TaskClaimant")
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+// ── Teams ────────────────────────────────────────────────────────────────────
+
+model Team {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members   TeamMember[]
+  projects  Project[]
+  tokens    AgentToken[]
+
+  @@map("teams")
+}
+
+model TeamMember {
+  id        String     @id @default(uuid())
+  teamId    String
+  userId    String
+  role      MemberRole @default(HUMAN_MEMBER)
+  createdAt DateTime   @default(now())
+
+  team      Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@map("team_members")
+}
+
+enum MemberRole {
+  ADMIN
+  HUMAN_MEMBER
+  REVIEWER
+}
+
+// ── Agent Tokens ─────────────────────────────────────────────────────────────
+
+model AgentToken {
+  id          String    @id @default(uuid())
+  teamId      String
+  createdById String
+  name        String
+  tokenHash   String    @unique
+  scopes      String[]  @default([])
+  revokedAt   DateTime?
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  team        Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdBy   User      @relation(fields: [createdById], references: [id])
+  tasks       Task[]    @relation("TaskAgentCreator")
+  claims      Task[]    @relation("TaskAgentClaimant")
+
+  @@map("agent_tokens")
+}
+
+// ── Projects ─────────────────────────────────────────────────────────────────
+
+model Project {
+  id           String        @id @default(uuid())
+  teamId       String
+  name         String
+  slug         String
+  description  String?
+  githubRepo   String?       // "owner/repo" if synced from GitHub
+  githubSyncAt DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  team         Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  tasks        Task[]
+  workflows    Workflow[]
+  boards       Board[]
+  auditLogs    AuditLog[]
+
+  @@unique([teamId, slug])
+  @@map("projects")
+}
+
+// ── Workflows ────────────────────────────────────────────────────────────────
+
+model Workflow {
+  id          String   @id @default(uuid())
+  projectId   String
+  name        String
+  definition  Json     // { states: [...], transitions: [...], policies: [...] }
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks       Task[]
+
+  @@map("workflows")
+}
+
+// ── Tasks ────────────────────────────────────────────────────────────────────
+
+model Task {
+  id               String      @id @default(uuid())
+  projectId        String
+  workflowId       String?
+  title            String
+  description      String?
+  status           String      @default("open")
+  priority         TaskPriority @default(MEDIUM)
+
+  // Human creator
+  createdByUserId  String?
+  // Agent creator
+  createdByAgentId String?
+
+  // Human claimant
+  claimedByUserId  String?
+  // Agent claimant
+  claimedByAgentId String?
+
+  claimedAt        DateTime?
+  dueAt            DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  project          Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  workflow         Workflow?   @relation(fields: [workflowId], references: [id])
+  createdByUser    User?       @relation("TaskCreator", fields: [createdByUserId], references: [id])
+  createdByAgent   AgentToken? @relation("TaskAgentCreator", fields: [createdByAgentId], references: [id])
+  claimedByUser    User?       @relation("TaskClaimant", fields: [claimedByUserId], references: [id])
+  claimedByAgent   AgentToken? @relation("TaskAgentClaimant", fields: [claimedByAgentId], references: [id])
+
+  comments         Comment[]
+  auditLogs        AuditLog[]
+
+  @@map("tasks")
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// ── Comments ─────────────────────────────────────────────────────────────────
+
+model Comment {
+  id        String   @id @default(uuid())
+  taskId    String
+  authorId  String
+  content   String
+  createdAt DateTime @default(now())
+
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("comments")
+}
+
+// ── Boards ───────────────────────────────────────────────────────────────────
+
+model Board {
+  id          String   @id @default(uuid())
+  projectId   String
+  name        String
+  config      Json     // { columns: [...], groupBy: ..., filters: [...] }
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("boards")
+}
+
+// ── Audit Log ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  projectId String?
+  taskId    String?
+  actorId   String?  // userId
+  action    String
+  payload   Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  project   Project? @relation(fields: [projectId], references: [id])
+  task      Task?    @relation(fields: [taskId], references: [id])
+  actor     User?    @relation(fields: [actorId], references: [id])
+
+  @@index([projectId])
+  @@index([taskId])
+  @@index([actorId])
+  @@map("audit_logs")
+}
