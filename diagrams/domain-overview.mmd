@@ -1,0 +1,40 @@
+flowchart LR
+    GitHub[GitHub]
+    User[User]
+    Team[Team]
+    AgentIdentity[Agent Identity]
+    AgentToken[Agent Token]
+
+    Repo[Repository]
+    Project[Project]
+    Task[Task]
+    Claim[Claim]
+    Board[Board]
+    Workflow[Workflow Rules]
+    ReviewRule[Review Rule]
+    DeployRule[Deploy Rule]
+    Audit[Audit Log]
+
+    GitHub --> User
+    GitHub --> Team
+    GitHub --> Repo
+
+    Repo -->|syncs into| Project
+    Team --> Project
+
+    AgentIdentity --> AgentToken
+    Team --> User
+    Team --> AgentIdentity
+
+    Project --> Task
+    Board --> Task
+    Workflow --> Task
+    Workflow --> ReviewRule
+    Workflow --> DeployRule
+    Task --> Claim
+    Task --> Audit
+
+    User -->|create / claim| Task
+    AgentIdentity -->|create / claim via API| Task
+    Claim --> User
+    Claim --> AgentIdentity

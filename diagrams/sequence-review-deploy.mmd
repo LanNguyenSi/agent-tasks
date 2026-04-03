@@ -1,0 +1,29 @@
+sequenceDiagram
+    actor Agent
+    actor HumanReviewer as Human Reviewer
+    participant API
+    participant Workflow
+    participant Task
+    participant Policy as Deploy Policy
+    participant Audit
+    participant Notify as Notification Service
+    participant DB
+
+    Agent->>API: Move task to review
+    API->>Workflow: Validate transition
+    Workflow-->>API: Allowed
+    API->>Task: Update status = in_review
+    Task->>DB: Save status
+    Task->>Audit: Record handoff
+    Audit->>DB: Save event
+    Task->>Notify: Notify reviewer
+
+    HumanReviewer->>API: Approve review
+    API->>Workflow: Validate approval transition
+    Workflow-->>API: Allowed
+    API->>Policy: Check deployment responsibility
+    Policy-->>API: Only human may deploy production
+    API->>Task: Update status = ready_to_deploy
+    Task->>DB: Save status
+    API->>Audit: Record approval + deploy restriction
+    Audit->>DB: Save event

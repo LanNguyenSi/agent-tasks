@@ -1,0 +1,23 @@
+sequenceDiagram
+    actor Human
+    participant WebUI
+    participant Auth as Auth Service
+    participant GitHub
+    participant Sync as Repo Sync Service
+    participant Project as Project Service
+    participant DB
+
+    Human->>WebUI: Login with GitHub
+    WebUI->>Auth: Start OAuth flow
+    Auth->>GitHub: Redirect / authorize
+    GitHub-->>Auth: OAuth callback with code
+    Auth->>GitHub: Exchange code for token
+    GitHub-->>Auth: Access token + user/org data
+    Auth->>DB: Create/update user
+    Auth->>Sync: Trigger initial repo/org sync
+    Sync->>GitHub: Fetch orgs/repos
+    GitHub-->>Sync: Repo list
+    Sync->>Project: Provision/update projects
+    Project->>DB: Save projects
+    Auth-->>WebUI: Authenticated session
+    WebUI-->>Human: Dashboard with synced projects

@@ -1,0 +1,97 @@
+flowchart TD
+    Human[Human User]
+    Agent[Agent]
+
+    subgraph Clients["Clients"]
+        WebUI[Web UI]
+        AgentClient[Agent API Client]
+    end
+
+    subgraph Platform["agent-tasks platform"]
+        subgraph Identity["Identity & Access"]
+            GitHubOAuth[GitHub OAuth Login]
+            UserAccount[User Account]
+            TeamService[Team / Org Mapping]
+            AgentToken[Agent Token Service]
+            RBAC[Roles & Permissions]
+        end
+
+        subgraph Sync["GitHub Sync"]
+            RepoSync[Repository Sync]
+            OrgSync[Org / Team Sync]
+            ProjectProvisioning[Project Provisioning]
+        end
+
+        subgraph Core["Core Application"]
+            ProjectService[Project Service]
+            TaskService[Task Service]
+            ClaimService[Claim / Assignment]
+            BoardService[Configurable Board]
+            WorkflowService[Workflow Rules Engine]
+            HandoffService[Review / Handoff Rules]
+            DeployPolicy[Deployment Responsibility Rules]
+            CommentService[Comments]
+            ActivityLog[Audit Log]
+        end
+
+        subgraph Data["Persistence"]
+            DB[(App Database)]
+        end
+    end
+
+    GitHub[GitHub]
+    Repo[GitHub Repository]
+    PR[Pull Requests / Issues]
+    CI[CI/CD]
+    Deploy[Deployment Target]
+
+    Human --> WebUI
+    Agent --> AgentClient
+
+    WebUI --> GitHubOAuth
+    GitHubOAuth --> GitHub
+    GitHubOAuth --> UserAccount
+    GitHubOAuth --> TeamService
+    TeamService --> RBAC
+    AgentClient -->|agent token| AgentToken
+
+    GitHub --> RepoSync
+    GitHub --> OrgSync
+    RepoSync --> ProjectProvisioning
+    OrgSync --> ProjectProvisioning
+    ProjectProvisioning --> ProjectService
+
+    ProjectService --> DB
+    TaskService --> DB
+    ClaimService --> DB
+    BoardService --> DB
+    WorkflowService --> DB
+    HandoffService --> DB
+    DeployPolicy --> DB
+    CommentService --> DB
+    ActivityLog --> DB
+    UserAccount --> DB
+    TeamService --> DB
+    AgentToken --> DB
+
+    WebUI --> ProjectService
+    WebUI --> TaskService
+    WebUI --> BoardService
+    WebUI --> WorkflowService
+
+    AgentClient --> TaskService
+    AgentClient --> ClaimService
+    AgentClient --> ProjectService
+
+    ProjectService --> Repo
+    Repo --> PR
+
+    TaskService --> ClaimService
+    TaskService --> CommentService
+    TaskService --> ActivityLog
+    WorkflowService --> HandoffService
+    WorkflowService --> DeployPolicy
+
+    HandoffService -->|handoff to review| PR
+    DeployPolicy -->|who may deploy| CI
+    CI --> Deploy

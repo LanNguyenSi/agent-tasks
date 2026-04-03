@@ -1,0 +1,28 @@
+sequenceDiagram
+    actor Agent
+    participant API
+    participant Auth as Token Auth
+    participant Task as Task Service
+    participant Claim as Claim Service
+    participant Workflow as Workflow Engine
+    participant Audit as Audit Log
+    participant DB
+
+    Agent->>API: POST /tasks
+    API->>Auth: Validate agent token
+    Auth-->>API: Token valid, scopes OK
+    API->>Task: Create task
+    Task->>DB: Save task
+    Task->>Audit: Record task created
+    Audit->>DB: Save event
+
+    Agent->>API: POST /tasks/{id}/claim
+    API->>Auth: Validate token + claim scope
+    Auth-->>API: Allowed
+    API->>Claim: Claim task
+    Claim->>Workflow: Check claim rules
+    Workflow-->>Claim: Claim allowed
+    Claim->>DB: Save claim
+    Claim->>Audit: Record claim event
+    Audit->>DB: Save event
+    API-->>Agent: Task claimed
