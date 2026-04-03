@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getCurrentUser, getTeams, createTeam, type User, type Team } from "../../lib/api";
+import AlertBanner from "../../components/ui/AlertBanner";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -144,19 +145,9 @@ export default function OnboardingPage() {
             </div>
 
             {error && (
-              <div
-                style={{
-                  background: "#2a1a1a",
-                  border: "1px solid var(--danger)",
-                  borderRadius: "6px",
-                  padding: "0.625rem 0.75rem",
-                  color: "var(--danger)",
-                  fontSize: "0.875rem",
-                  marginBottom: "1rem",
-                }}
-              >
+              <AlertBanner tone="danger" title="Team konnte nicht erstellt werden">
                 {error}
-              </div>
+              </AlertBanner>
             )}
 
             <button

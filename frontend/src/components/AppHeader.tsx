@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { logout } from "../lib/api";
+import DropdownMenu from "./ui/DropdownMenu";
 
 interface AppHeaderProps {
   user?: {
@@ -16,33 +17,11 @@ interface AppHeaderProps {
 export default function AppHeader({ user, boardHref = "/dashboard" }: AppHeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const menuRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
   const isTeams = pathname.startsWith("/teams");
   const isDashboard = pathname.startsWith("/dashboard");
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setMenuOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleEscape);
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, []);
 
   return (
     <header
@@ -70,8 +49,9 @@ export default function AppHeader({ user, boardHref = "/dashboard" }: AppHeaderP
       </div>
 
       {user && (
-        <div ref={menuRef} style={{ position: "relative" }}>
+        <div>
           <button
+            ref={triggerRef}
             type="button"
             className="app-user-trigger"
             onClick={() => setMenuOpen((value) => !value)}
@@ -112,34 +92,19 @@ export default function AppHeader({ user, boardHref = "/dashboard" }: AppHeaderP
             <span style={{ color: "var(--muted)", fontSize: "0.7rem" }}>{menuOpen ? "▲" : "▼"}</span>
           </button>
 
-          {menuOpen && (
-            <div
-              role="menu"
-              style={{
-                position: "absolute",
-                right: 0,
-                top: "calc(100% + 0.4rem)",
-                minWidth: "180px",
-                border: "1px solid var(--border)",
-                borderRadius: "10px",
-                background: "var(--surface)",
-                boxShadow: "0 10px 24px rgba(0,0,0,0.35)",
-                padding: "0.35rem",
-                zIndex: 20,
-              }}
-            >
+          <DropdownMenu
+            anchorRef={triggerRef}
+            open={menuOpen}
+            onClose={() => setMenuOpen(false)}
+            align="end"
+            minWidth={190}
+          >
+            <div role="menu">
               <Link
                 href="/settings"
                 role="menuitem"
                 onClick={() => setMenuOpen(false)}
-                style={{
-                  display: "block",
-                  color: "var(--text)",
-                  borderRadius: "7px",
-                  padding: "0.45rem 0.6rem",
-                  fontSize: "0.85rem",
-                  textDecoration: "none",
-                }}
+                className="app-dropdown-item"
               >
                 Settings
               </Link>
@@ -152,22 +117,12 @@ export default function AppHeader({ user, boardHref = "/dashboard" }: AppHeaderP
                     router.replace("/");
                   });
                 }}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  border: "none",
-                  background: "transparent",
-                  color: "var(--danger)",
-                  borderRadius: "7px",
-                  padding: "0.45rem 0.6rem",
-                  fontSize: "0.85rem",
-                }}
+                className="app-dropdown-item app-dropdown-item-danger"
               >
                 Logout
               </button>
             </div>
-          )}
+          </DropdownMenu>
         </div>
       )}
     </header>

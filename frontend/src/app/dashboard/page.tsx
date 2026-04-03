@@ -17,6 +17,7 @@ import {
   type Task,
 } from "../../lib/api";
 import AppHeader from "../../components/AppHeader";
+import AlertBanner from "../../components/ui/AlertBanner";
 
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
@@ -665,9 +666,9 @@ export default function DashboardPage() {
       {loading ? (
         <div style={{ color: "var(--muted)", padding: "2rem", textAlign: "center" }}>Loading…</div>
       ) : error ? (
-        <div style={{ background: "#2a1a1a", color: "var(--danger)", border: "1px solid var(--danger)", borderRadius: "10px", padding: "0.9rem", marginBottom: "0.9rem" }}>
+        <AlertBanner tone="danger" title="Fehler">
           {error}
-        </div>
+        </AlertBanner>
       ) : !selectedProjectId ? (
         <div style={{ border: "1px dashed var(--border)", borderRadius: "10px", padding: "2rem", textAlign: "center", color: "var(--muted)" }}>
           Dieses Team hat noch kein Projekt. Erstelle ein Projekt auf der Teams-Seite.

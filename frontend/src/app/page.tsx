@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getCurrentUser, getTeams, login, register } from "../lib/api";
+import AlertBanner from "../components/ui/AlertBanner";
 
 type Mode = "login" | "register";
 
@@ -163,19 +164,9 @@ export default function HomePage() {
             </div>
 
             {error && (
-              <div
-                style={{
-                  border: "1px solid var(--danger)",
-                  color: "var(--danger)",
-                  background: "#2a1a1a",
-                  borderRadius: "8px",
-                  padding: "0.625rem",
-                  fontSize: "0.875rem",
-                  marginBottom: "0.75rem",
-                }}
-              >
+              <AlertBanner tone="danger" title="Fehler">
                 {error}
-              </div>
+              </AlertBanner>
             )}
 
             <button
