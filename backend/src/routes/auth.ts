@@ -1,7 +1,15 @@
 import { Hono } from "hono";
 import type { AppVariables } from "../types/hono.js";
+import { randomBytes } from "node:crypto";
+import { buildGitHubAuthorizeUrl } from "../services/auth-service.js";
 
 export const authRouter = new Hono<{ Variables: AppVariables }>();
+
+authRouter.get("/github", async (c) => {
+  const state = randomBytes(16).toString("hex");
+  const authorizeUrl = buildGitHubAuthorizeUrl(state);
+  return c.redirect(authorizeUrl, 302);
+});
 
 /**
  * GitHub OAuth callback — Wave 2 implementation.

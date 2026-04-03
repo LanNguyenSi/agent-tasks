@@ -22,13 +22,15 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
 
   // Public
   app.route("/api/health", healthRouter);
-  app.route("/api/auth", authRouter);
 
   // Protected
+  app.use("/api/auth/me", authMiddleware);
+  app.use("/api/auth/logout", authMiddleware);
   app.use("/api/agent-tokens/*", authMiddleware);
   app.use("/api/tasks/*", authMiddleware);
   app.use("/api/projects/*", authMiddleware);
 
+  app.route("/api/auth", authRouter);
   app.route("/api/agent-tokens", agentTokenRouter);
   app.route("/api", taskRouter);
 
