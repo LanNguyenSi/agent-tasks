@@ -1,11 +1,28 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import { forbidden, notFound, conflict } from "../middleware/error.js";
 
-const prisma = new PrismaClient();
+/** Verify actor has access to the project's team */
+async function assertTeamAccess(actor: Actor, projectId: string): Promise<boolean> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { teamId: true },
+  });
+  if (!project) return false;
+
+  if (actor.type === "agent") {
+    return actor.teamId === project.teamId;
+  }
+
+  // Human: check team membership
+  const membership = await prisma.teamMember.findUnique({
+    where: { teamId_userId: { teamId: project.teamId, userId: actor.userId } },
+  });
+  return !!membership;
+}
 
 export const taskRouter = new Hono();
 
@@ -24,8 +41,15 @@ const transitionSchema = z.object({
 // ── List tasks for a project ─────────────────────────────────────────────────
 
 taskRouter.get("/projects/:projectId/tasks", async (c) => {
+  const actor = c.get("actor") as Actor;
+  const projectId = c.req.param("projectId");
+
+  if (!(await assertTeamAccess(actor, projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
   const tasks = await prisma.task.findMany({
-    where: { projectId: c.req.param("projectId") },
+    where: { projectId },
     orderBy: { createdAt: "desc" },
   });
   return c.json({ tasks });
@@ -65,11 +89,17 @@ taskRouter.post(
 // ── Get task ─────────────────────────────────────────────────────────────────
 
 taskRouter.get("/tasks/:id", async (c) => {
+  const actor = c.get("actor") as Actor;
   const task = await prisma.task.findUnique({
     where: { id: c.req.param("id") },
     include: { comments: true },
   });
   if (!task) return notFound(c);
+
+  if (!(await assertTeamAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
   return c.json({ task });
 });
 

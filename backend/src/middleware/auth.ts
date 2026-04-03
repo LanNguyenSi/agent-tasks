@@ -1,9 +1,7 @@
 import type { Context, Next } from "hono";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import { createHash } from "node:crypto";
 import type { Actor } from "../types/auth.js";
-
-const prisma = new PrismaClient();
 
 /**
  * Extracts and validates the actor from the request.
@@ -43,11 +41,15 @@ export async function authMiddleware(c: Context, next: Next): Promise<Response |
   }
 
   // Session auth (cookie-based — placeholder for Wave 2 OAuth)
-  const sessionUserId = c.req.header("X-Session-User-Id"); // temp for dev
-  if (sessionUserId) {
-    const actor: Actor = { type: "human", userId: sessionUserId };
-    c.set("actor", actor);
-    return next();
+  // TODO (Wave 2): Replace with proper session cookie / JWT validation
+  // SECURITY: X-Session-User-Id header is ONLY enabled in development mode
+  if (process.env.NODE_ENV === "development") {
+    const sessionUserId = c.req.header("X-Session-User-Id");
+    if (sessionUserId) {
+      const actor: Actor = { type: "human", userId: sessionUserId };
+      c.set("actor", actor);
+      return next();
+    }
   }
 
   return c.json({ error: "unauthorized", message: "Authentication required" }, 401);

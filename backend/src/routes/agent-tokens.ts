@@ -1,12 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
-import { PrismaClient } from "@prisma/client";
 import { randomBytes, createHash } from "node:crypto";
+import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import { forbidden, notFound } from "../middleware/error.js";
-
-const prisma = new PrismaClient();
 
 export const agentTokenRouter = new Hono();
 
