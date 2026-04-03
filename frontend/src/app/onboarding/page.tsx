@@ -56,7 +56,7 @@ export default function OnboardingPage() {
     setError(null);
     try {
       const team = await createTeam({ name: teamName.trim(), slug: teamSlug.trim() });
-      window.location.href = `/teams/${team.id}`;
+      window.location.href = '/teams';
     } catch (err) {
       setError((err as Error).message);
       setCreating(false);
