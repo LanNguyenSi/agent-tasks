@@ -9,7 +9,7 @@ import { authMiddleware } from "./middleware/auth.js";
 import type { AppVariables } from "./types/hono.js";
 
 export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }> {
-  const app = new Hono();
+  const app = new Hono<{ Variables: AppVariables }>();
 
   app.use("*", logger());
   app.use(
