@@ -8,7 +8,7 @@ export interface ApiError {
 
 export function errorResponse(c: Context, status: 400 | 401 | 403 | 404 | 409 | 422 | 500, code: string, message: string, details?: unknown): Response {
   const body: ApiError = { error: code, message };
-  if (details !== undefined) (body as Record<string, unknown>).details = details;
+  if (details !== undefined) (body as unknown as Record<string, unknown>).details = details;
   return c.json(body, status);
 }
 

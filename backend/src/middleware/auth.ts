@@ -1,4 +1,5 @@
 import type { Context, Next } from "hono";
+import type { AppVariables } from "../types/hono.js";
 import { prisma } from "../lib/prisma.js";
 import { createHash } from "node:crypto";
 import type { Actor } from "../types/auth.js";
@@ -8,7 +9,7 @@ import type { Actor } from "../types/auth.js";
  * - Bearer token → AgentActor (API token)
  * - Session cookie → HumanActor (GitHub OAuth session)
  */
-export async function authMiddleware(c: Context, next: Next): Promise<Response | void> {
+export async function authMiddleware(c: Context<{ Variables: AppVariables }>, next: Next): Promise<Response | void> {
   const authorization = c.req.header("Authorization");
 
   // Agent token auth (Bearer)
@@ -56,7 +57,7 @@ export async function authMiddleware(c: Context, next: Next): Promise<Response |
 }
 
 /** Optional auth — sets actor if present but doesn't block */
-export async function optionalAuth(c: Context, next: Next): Promise<Response | void> {
+export async function optionalAuth(c: Context<{ Variables: AppVariables }>, next: Next): Promise<Response | void> {
   try {
     await authMiddleware(c, async () => {});
   } catch {

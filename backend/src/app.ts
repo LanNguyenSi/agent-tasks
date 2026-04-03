@@ -6,8 +6,9 @@ import { authRouter } from "./routes/auth.js";
 import { agentTokenRouter } from "./routes/agent-tokens.js";
 import { taskRouter } from "./routes/tasks.js";
 import { authMiddleware } from "./middleware/auth.js";
+import type { AppVariables } from "./types/hono.js";
 
-export function createApp(corsOrigins: string): Hono {
+export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }> {
   const app = new Hono();
 
   app.use("*", logger());

@@ -4,9 +4,10 @@ import { zValidator } from "@hono/zod-validator";
 import { randomBytes, createHash } from "node:crypto";
 import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
+import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 
-export const agentTokenRouter = new Hono();
+export const agentTokenRouter = new Hono<{ Variables: AppVariables }>();
 
 const createTokenSchema = z.object({
   teamId: z.string().uuid(),

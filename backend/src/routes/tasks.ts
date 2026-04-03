@@ -3,6 +3,7 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
+import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound, conflict } from "../middleware/error.js";
 
 /** Verify actor has access to the project's team */
@@ -24,7 +25,7 @@ async function assertTeamAccess(actor: Actor, projectId: string): Promise<boolea
   return !!membership;
 }
 
-export const taskRouter = new Hono();
+export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
 const createTaskSchema = z.object({
   title: z.string().min(1).max(255),

@@ -1,8 +1,7 @@
 import { Hono } from "hono";
-import { z } from "zod";
-import { zValidator } from "@hono/zod-validator";
+import type { AppVariables } from "../types/hono.js";
 
-export const authRouter = new Hono();
+export const authRouter = new Hono<{ Variables: AppVariables }>();
 
 /**
  * GitHub OAuth callback — Wave 2 implementation.
