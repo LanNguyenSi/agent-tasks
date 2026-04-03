@@ -90,6 +90,9 @@ make docker-down
 
 ## API Highlights
 
+- Swagger UI: `GET /docs` (alias: `/api/docs`)
+- OpenAPI JSON: `GET /api/openapi.json`
+
 ```bash
 # Health
 GET  /api/health
