@@ -81,6 +81,14 @@ export default function TeamsPage() {
     setProjectSlug(name.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").slice(0, 50));
   }
 
+  function closeNewProjectModal() {
+    setShowNewProject(false);
+    setProjectName("");
+    setProjectSlug("");
+    setGithubRepo("");
+    setError(null);
+  }
+
   async function handleCreateProject(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedTeam) return;
@@ -94,10 +102,7 @@ export default function TeamsPage() {
         githubRepo: githubRepo.trim() || undefined,
       });
       setProjects((prev) => [...prev, project]);
-      setShowNewProject(false);
-      setProjectName("");
-      setProjectSlug("");
-      setGithubRepo("");
+      closeNewProjectModal();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -215,7 +220,10 @@ export default function TeamsPage() {
                 </button>
               )}
               <button
-                onClick={() => setShowNewProject(true)}
+                onClick={() => {
+                  setError(null);
+                  setShowNewProject(true);
+                }}
                 style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.5rem 1.25rem", fontWeight: 600, cursor: "pointer", fontSize: "0.875rem", fontFamily: "inherit" }}
               >
                 + New Project
@@ -258,29 +266,40 @@ export default function TeamsPage() {
           )}
 
           {showNewProject && (
-            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1.25rem", marginBottom: "1rem" }}>
-              <h3 style={{ fontSize: "0.9375rem", fontWeight: 600, marginBottom: "1rem" }}>New Project</h3>
-              <form onSubmit={(e) => void handleCreateProject(e)}>
-                <div className="project-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "0.75rem" }}>
-                  <div>
-                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Name</label>
-                    <input value={projectName} onChange={(e) => handleProjectNameChange(e.target.value)} placeholder="My Project" required style={{ width: "100%", display: "block" }} />
+            <div className="modal-overlay" onClick={closeNewProjectModal}>
+              <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.7rem" }}>
+                  <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>New Project</h3>
+                  <button
+                    type="button"
+                    onClick={closeNewProjectModal}
+                    style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: "6px", padding: "0.2rem 0.5rem" }}
+                  >
+                    Schließen
+                  </button>
+                </div>
+                <form onSubmit={(e) => void handleCreateProject(e)}>
+                  <div className="project-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "0.75rem" }}>
+                    <div>
+                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Name</label>
+                      <input value={projectName} onChange={(e) => handleProjectNameChange(e.target.value)} placeholder="My Project" required style={{ width: "100%", display: "block" }} />
+                    </div>
+                    <div>
+                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Slug</label>
+                      <input value={projectSlug} onChange={(e) => setProjectSlug(e.target.value)} placeholder="my-project" pattern="[a-z0-9-]+" required style={{ width: "100%", display: "block", fontFamily: "monospace" }} />
+                    </div>
                   </div>
-                  <div>
-                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Slug</label>
-                    <input value={projectSlug} onChange={(e) => setProjectSlug(e.target.value)} placeholder="my-project" pattern="[a-z0-9-]+" required style={{ width: "100%", display: "block", fontFamily: "monospace" }} />
+                  <div style={{ marginBottom: "0.75rem" }}>
+                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>GitHub Repo (optional)</label>
+                    <input value={githubRepo} onChange={(e) => setGithubRepo(e.target.value)} placeholder="owner/repo" style={{ width: "100%", display: "block" }} />
                   </div>
-                </div>
-                <div style={{ marginBottom: "0.75rem" }}>
-                  <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>GitHub Repo (optional)</label>
-                  <input value={githubRepo} onChange={(e) => setGithubRepo(e.target.value)} placeholder="owner/repo" style={{ width: "100%", display: "block" }} />
-                </div>
-                {error && <p style={{ color: "var(--danger)", fontSize: "0.8125rem", marginBottom: "0.75rem" }}>{error}</p>}
-                <div style={{ display: "flex", gap: "0.5rem" }}>
-                  <button type="submit" disabled={creating} style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "6px", padding: "0.5rem 1rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{creating ? "Creating…" : "Create"}</button>
-                  <button type="button" onClick={() => setShowNewProject(false)} style={{ background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.5rem 1rem", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-                </div>
-              </form>
+                  {error && <p style={{ color: "var(--danger)", fontSize: "0.8125rem", marginBottom: "0.75rem" }}>{error}</p>}
+                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    <button type="submit" disabled={creating} style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "6px", padding: "0.5rem 1rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{creating ? "Creating…" : "Create"}</button>
+                    <button type="button" onClick={closeNewProjectModal} style={{ background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.5rem 1rem", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
 
@@ -322,7 +341,15 @@ export default function TeamsPage() {
             <div style={{ textAlign: "center", padding: "3rem", border: "1px dashed var(--border)", borderRadius: "10px", color: "var(--muted)" }}>
               <p style={{ marginBottom: "0.5rem" }}>{projects.length === 0 ? "No projects yet." : "Keine Projekte für diesen Filter."}</p>
               {projects.length === 0 && (
-                <button onClick={() => setShowNewProject(true)} style={{ color: "var(--primary)", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: "inherit" }}>Create your first project →</button>
+                <button
+                  onClick={() => {
+                    setError(null);
+                    setShowNewProject(true);
+                  }}
+                  style={{ color: "var(--primary)", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: "inherit" }}
+                >
+                  Create your first project →
+                </button>
               )}
             </div>
           ) : (
