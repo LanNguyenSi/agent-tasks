@@ -157,9 +157,18 @@ workflowRouter.put(
 
 // ── Validate a transition ─────────────────────────────────────────────────────
 
-workflowRouter.post("/workflows/:id/validate-transition", async (c) => {
+const validateTransitionSchema = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+  actorRole: z.string().optional(),
+});
+
+workflowRouter.post(
+  "/workflows/:id/validate-transition",
+  zValidator("json", validateTransitionSchema),
+  async (c) => {
   const actor = c.get("actor");
-  const body = await c.req.json<{ from: string; to: string; actorRole?: string }>();
+  const body = c.req.valid("json");
 
   const workflow = await prisma.workflow.findUnique({ where: { id: c.req.param("id") } });
   if (!workflow) return notFound(c);
@@ -186,4 +195,5 @@ workflowRouter.post("/workflows/:id/validate-transition", async (c) => {
   }
 
   return c.json({ valid: true });
-});
+  },
+);

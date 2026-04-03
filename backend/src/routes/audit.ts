@@ -1,8 +1,9 @@
 import { Hono } from "hono";
+import { prisma } from "../lib/prisma.js";
 import { hasProjectAccess } from "../services/team-access.js";
 import { getAuditLogs } from "../services/audit.js";
 import type { AppVariables } from "../types/hono.js";
-import { forbidden } from "../middleware/error.js";
+import { forbidden, notFound } from "../middleware/error.js";
 
 export const auditRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -25,14 +26,18 @@ auditRouter.get("/tasks/:taskId/audit", async (c) => {
   const actor = c.get("actor");
   const taskId = c.req.param("taskId");
 
-  const logs = await getAuditLogs({ taskId, limit: 100 });
+  // Always verify task exists and actor has access — never skip based on log presence
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { projectId: true },
+  });
 
-  // Access check via first log's projectId (or just return if no logs)
-  if (logs.length > 0 && logs[0]!.projectId) {
-    if (!(await hasProjectAccess(actor, logs[0]!.projectId))) {
-      return forbidden(c, "Access denied");
-    }
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied");
   }
 
+  const logs = await getAuditLogs({ taskId, limit: 100 });
   return c.json({ logs });
 });
