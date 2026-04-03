@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getCurrentUser, getTasks, createTask, claimTask, transitionTask, logout, type User, type Task } from "../../lib/api";
+import { getCurrentUser, getTeams, getTasks, createTask, claimTask, transitionTask, logout, type User, type Task } from "../../lib/api";
 
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
@@ -132,7 +132,12 @@ export default function DashboardPage() {
   useEffect(() => {
     void (async () => {
       const me = await getCurrentUser();
+      if (!me) { window.location.href = "/"; return; }
       setUser(me);
+
+      // Check if user has teams — redirect to onboarding if not
+      const teams = await getTeams();
+      if (teams.length === 0) { window.location.href = "/onboarding"; return; }
 
       // Load tasks if projectId is set via URL params
       const params = new URLSearchParams(window.location.search);
@@ -361,3 +366,4 @@ export default function DashboardPage() {
     </main>
   );
 }
+
