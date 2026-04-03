@@ -1,0 +1,63 @@
+/**
+ * Audit Log Service
+ *
+ * Records all significant actions in the system.
+ * Every task creation, claim, transition, token creation, etc. is logged here.
+ * Audit logs are immutable — never deleted, never edited.
+ */
+import { prisma } from "../lib/prisma.js";
+
+export type AuditAction =
+  | "task.created"
+  | "task.claimed"
+  | "task.released"
+  | "task.transitioned"
+  | "task.commented"
+  | "project.created"
+  | "project.updated"
+  | "project.synced"
+  | "token.created"
+  | "token.revoked"
+  | "user.login"
+  | "user.logout";
+
+export interface AuditPayload {
+  [key: string]: unknown;
+}
+
+export async function logAuditEvent(opts: {
+  action: AuditAction;
+  actorId?: string;
+  projectId?: string;
+  taskId?: string;
+  payload?: AuditPayload;
+}): Promise<void> {
+  await prisma.auditLog.create({
+    data: {
+      action: opts.action,
+      actorId: opts.actorId ?? null,
+      projectId: opts.projectId ?? null,
+      taskId: opts.taskId ?? null,
+      payload: (opts.payload ?? {}) as object,
+    },
+  });
+}
+
+export async function getAuditLogs(opts: {
+  projectId?: string;
+  taskId?: string;
+  actorId?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  return prisma.auditLog.findMany({
+    where: {
+      ...(opts.projectId ? { projectId: opts.projectId } : {}),
+      ...(opts.taskId ? { taskId: opts.taskId } : {}),
+      ...(opts.actorId ? { actorId: opts.actorId } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: opts.limit ?? 50,
+    skip: opts.offset ?? 0,
+  });
+}
