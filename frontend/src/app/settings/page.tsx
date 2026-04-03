@@ -15,6 +15,7 @@ import {
 } from "../../lib/api";
 import AppHeader from "../../components/AppHeader";
 import AlertBanner from "../../components/ui/AlertBanner";
+import ConfirmDialog from "../../components/ui/ConfirmDialog";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 const ALL_SCOPES = [
@@ -44,6 +45,8 @@ export default function SettingsPage() {
   const [selectedScopes, setSelectedScopes] = useState<string[]>(["tasks:read", "tasks:create", "tasks:claim"]);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
+  const [revoking, setRevoking] = useState(false);
 
   const githubConnectedNow = useMemo(() => {
     if (typeof window === "undefined") return false;
@@ -105,10 +108,19 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleRevoke(tokenId: string) {
-    if (!confirm("Revoke this token? This cannot be undone.")) return;
-    await revokeAgentToken(tokenId);
-    setTokens((prev) => prev.filter((t) => t.id !== tokenId));
+  async function handleConfirmRevoke() {
+    if (!revokeTarget) return;
+    setRevoking(true);
+    setError(null);
+    try {
+      await revokeAgentToken(revokeTarget.id);
+      setTokens((prev) => prev.filter((t) => t.id !== revokeTarget.id));
+      setRevokeTarget(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRevoking(false);
+    }
   }
 
   async function copyToClipboard(value: string, message: string) {
@@ -141,24 +153,24 @@ export default function SettingsPage() {
         <h2 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "0.5rem" }}>Account</h2>
         <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginBottom: "0.25rem" }}>Login: {user?.login}</p>
         <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginBottom: "0.25rem" }}>Name: {user?.name ?? "-"}</p>
-        <p style={{ color: "var(--muted)", fontSize: "0.875rem" }}>E-Mail: {user?.email ?? "-"}</p>
+        <p style={{ color: "var(--muted)", fontSize: "0.875rem" }}>Email: {user?.email ?? "-"}</p>
       </section>
 
       <section id="github" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
         <h2 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "0.5rem" }}>GitHub Integration</h2>
         {githubConnectedNow && (
-          <AlertBanner tone="success" title="Verbindung aktualisiert">
-            GitHub erfolgreich verbunden.
+          <AlertBanner tone="success" title="Connection updated">
+            GitHub connected successfully.
           </AlertBanner>
         )}
         {user?.githubConnected ? (
           <AlertBanner tone="success">
-            GitHub ist verbunden. Sync ist verfügbar.
+            GitHub is connected. Sync is available.
           </AlertBanner>
         ) : (
           <div>
-            <AlertBanner tone="warning" title="GitHub nicht verbunden">
-              Noch keine GitHub-Verbindung. Ohne Verbindung ist kein Repository-Sync möglich.
+            <AlertBanner tone="warning" title="GitHub not connected">
+              No GitHub connection yet. Repository sync is disabled until you connect GitHub.
             </AlertBanner>
             <Link
               href="/api/auth/github/connect"
@@ -173,7 +185,7 @@ export default function SettingsPage() {
                 fontSize: "0.875rem",
               }}
             >
-              GitHub verbinden
+              Connect GitHub
             </Link>
           </div>
         )}
@@ -184,7 +196,7 @@ export default function SettingsPage() {
           <div>
             <h2 style={{ fontSize: "1rem", fontWeight: 700 }}>API Tokens</h2>
             <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>
-              Tokens sind teamgebunden. Erstelle sie hier in deinen User Settings.
+              Tokens are team-scoped. Create and manage them here in user settings.
             </p>
           </div>
           {teams.length > 0 && (
@@ -199,7 +211,7 @@ export default function SettingsPage() {
 
         {teams.length === 0 ? (
           <p style={{ color: "var(--muted)", fontSize: "0.875rem" }}>
-            Noch kein Team vorhanden. Erstelle zuerst ein Team, um API-Tokens zu erzeugen.
+            No team found yet. Create a team first to generate API tokens.
           </p>
         ) : (
           <div style={{ marginBottom: "1rem" }}>
@@ -218,15 +230,15 @@ export default function SettingsPage() {
               ))}
             </select>
             <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginTop: "0.25rem" }}>
-              Aktives Team: {selectedTeam?.name}
+              Active team: {selectedTeam?.name}
             </p>
           </div>
         )}
 
-        <AlertBanner tone="info" title="Agent Setup (2 Schritte)">
+        <AlertBanner tone="info" title="Agent setup (2 steps)">
           <ol style={{ margin: "0 0 0.625rem 1.1rem", padding: 0 }}>
-            <li>Token erzeugen und dem Agenten als Bearer Token geben.</li>
-            <li>Swagger-Link teilen, damit der Agent alle Endpunkte sieht.</li>
+            <li>Create a token and pass it to the agent as a Bearer token.</li>
+            <li>Share the Swagger docs link so the agent can discover all endpoints.</li>
           </ol>
           <div style={{ display: "grid", gap: "0.5rem", marginBottom: "0.4rem" }}>
             <label style={{ display: "grid", gap: "0.25rem" }}>
@@ -237,7 +249,7 @@ export default function SettingsPage() {
                 </code>
                 <button
                   type="button"
-                  onClick={() => void copyToClipboard(docsUrl, "Swagger-Link kopiert.")}
+                  onClick={() => void copyToClipboard(docsUrl, "Swagger link copied.")}
                   style={{ background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.75rem", fontSize: "0.78rem", fontFamily: "inherit" }}
                 >
                   Copy
@@ -252,7 +264,7 @@ export default function SettingsPage() {
                 </code>
                 <button
                   type="button"
-                  onClick={() => void copyToClipboard(openApiUrl, "OpenAPI-Link kopiert.")}
+                  onClick={() => void copyToClipboard(openApiUrl, "OpenAPI link copied.")}
                   style={{ background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.75rem", fontSize: "0.78rem", fontFamily: "inherit" }}
                 >
                   Copy
@@ -261,11 +273,11 @@ export default function SettingsPage() {
             </label>
           </div>
           <p style={{ color: "var(--muted)", fontSize: "0.75rem", margin: 0 }}>
-            Auth im Agent via HTTP Header: <code>Authorization: Bearer &lt;TOKEN&gt;</code>
+            Agent auth header: <code>Authorization: Bearer &lt;TOKEN&gt;</code>
           </p>
           <button
             type="button"
-            onClick={() => void copyToClipboard(setupSnippet, "Setup-Infos kopiert.")}
+            onClick={() => void copyToClipboard(setupSnippet, "Setup info copied.")}
             style={{ marginTop: "0.55rem", background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.75rem", fontSize: "0.78rem", fontFamily: "inherit" }}
           >
             Copy all setup info
@@ -277,13 +289,19 @@ export default function SettingsPage() {
           )}
         </AlertBanner>
 
+        {error && !showCreate && (
+          <AlertBanner tone="danger" title="Action failed">
+            {error}
+          </AlertBanner>
+        )}
+
         {newToken && (
-          <AlertBanner tone="success" title="Token erstellt — einmalig sichtbar">
+          <AlertBanner tone="success" title="Token created - visible once">
             <code style={{ display: "block", background: "var(--surface)", padding: "0.625rem 0.75rem", borderRadius: "6px", fontFamily: "monospace", fontSize: "0.875rem", wordBreak: "break-all", color: "var(--text)" }}>
               {newToken}
             </code>
             <button
-              onClick={() => void copyToClipboard(newToken, "Token kopiert.")}
+              onClick={() => void copyToClipboard(newToken, "Token copied.")}
               style={{ marginTop: "0.625rem", background: "var(--success)", color: "white", border: "none", borderRadius: "6px", padding: "0.375rem 0.875rem", cursor: "pointer", fontSize: "0.8125rem", fontFamily: "inherit" }}
             >
               Copy
@@ -319,7 +337,7 @@ export default function SettingsPage() {
                 </div>
               </div>
               {error && (
-                <AlertBanner tone="danger" title="Token konnte nicht erstellt werden">
+                <AlertBanner tone="danger" title="Failed to create token">
                   {error}
                 </AlertBanner>
               )}
@@ -347,12 +365,32 @@ export default function SettingsPage() {
                     ))}
                   </div>
                 </div>
-                <button onClick={() => void handleRevoke(token.id)} style={{ background: "transparent", color: "var(--danger)", border: "1px solid var(--danger)", borderRadius: "6px", padding: "0.25rem 0.75rem", cursor: "pointer", fontSize: "0.8125rem", fontFamily: "inherit" }}>Revoke</button>
+                <button
+                  onClick={() => setRevokeTarget({ id: token.id, name: token.name })}
+                  style={{ background: "transparent", color: "var(--danger)", border: "1px solid var(--danger)", borderRadius: "6px", padding: "0.25rem 0.75rem", cursor: "pointer", fontSize: "0.8125rem", fontFamily: "inherit" }}
+                >
+                  Revoke
+                </button>
               </div>
             ))}
           </div>
         ))}
       </section>
+
+      <ConfirmDialog
+        open={Boolean(revokeTarget)}
+        title="Revoke API token?"
+        message={revokeTarget ? `The token "${revokeTarget.name}" will stop working immediately.` : ""}
+        confirmLabel="Revoke token"
+        cancelLabel="Keep token"
+        tone="danger"
+        busy={revoking}
+        onConfirm={() => void handleConfirmRevoke()}
+        onCancel={() => {
+          if (revoking) return;
+          setRevokeTarget(null);
+        }}
+      />
     </main>
   );
 }

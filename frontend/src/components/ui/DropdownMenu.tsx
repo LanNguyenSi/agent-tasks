@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -33,7 +34,14 @@ export default function DropdownMenu({
 }: DropdownMenuProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);
-  const [style, setStyle] = useState<CSSProperties>({});
+  const [positionReady, setPositionReady] = useState(false);
+  const [style, setStyle] = useState<CSSProperties>({
+    position: "fixed",
+    top: -9999,
+    left: -9999,
+    minWidth,
+    zIndex: 120,
+  });
 
   useEffect(() => {
     setMounted(true);
@@ -50,21 +58,24 @@ export default function DropdownMenu({
       const maxLeft = window.innerWidth - panelWidth - viewportPadding;
       const idealLeft = align === "end" ? rect.right - panelWidth : rect.left;
       const left = Math.min(Math.max(viewportPadding, idealLeft), maxLeft);
+      const top = Math.min(rect.bottom + offset, window.innerHeight - viewportPadding);
 
       setStyle({
         position: "fixed",
-        top: rect.bottom + offset,
+        top,
         left,
         minWidth,
         zIndex: 120,
       });
+      setPositionReady(true);
     },
     [align, anchorRef, minWidth, offset],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
 
+    setPositionReady(false);
     computePosition();
     const rafId = window.requestAnimationFrame(computePosition);
 
@@ -81,6 +92,10 @@ export default function DropdownMenu({
       window.removeEventListener("scroll", handleResizeOrScroll, true);
     };
   }, [computePosition, open]);
+
+  useEffect(() => {
+    if (!open) setPositionReady(false);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -107,10 +122,13 @@ export default function DropdownMenu({
   if (!open || !mounted) return null;
 
   return createPortal(
-    <div ref={panelRef} className={["app-dropdown-menu", className].filter(Boolean).join(" ")} style={style}>
+    <div
+      ref={panelRef}
+      className={["app-dropdown-menu", className].filter(Boolean).join(" ")}
+      style={{ ...style, visibility: positionReady ? "visible" : "hidden" }}
+    >
       {children}
     </div>,
     document.body,
   );
 }
-

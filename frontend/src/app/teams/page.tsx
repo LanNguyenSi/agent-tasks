@@ -162,7 +162,7 @@ export default function TeamsPage() {
       />
 
       <div style={{ border: "1px solid var(--border)", background: "var(--surface)", borderRadius: "10px", padding: "0.75rem 0.9rem", marginBottom: "1rem", color: "var(--muted)", fontSize: "0.84rem" }}>
-        Dein Team-Workspace: Projekt anlegen oder synchronisieren und direkt ins Board wechseln.
+        Your team workspace: create or sync projects, then jump straight into the board.
       </div>
 
       {selectedTeam && (
@@ -186,7 +186,7 @@ export default function TeamsPage() {
                     textDecoration: "none",
                   }}
                 >
-                  GitHub verbinden
+                  Connect GitHub
                 </Link>
               ) : (
                 <button
@@ -198,7 +198,7 @@ export default function TeamsPage() {
                       try {
                         const result = await syncTeamFromGitHub(selectedTeam.id);
                         await loadProjects(selectedTeam.id);
-                        setSyncMessage(`GitHub-Sync fertig: ${result.created} erstellt, ${result.updated} aktualisiert.`);
+                        setSyncMessage(`GitHub sync complete: ${result.created} created, ${result.updated} updated.`);
                         setSyncTone("success");
                       } catch (err) {
                         setSyncMessage((err as Error).message);
@@ -221,7 +221,7 @@ export default function TeamsPage() {
                     fontFamily: "inherit",
                   }}
                 >
-                  {syncing ? "Sync läuft…" : "Sync GitHub"}
+                  {syncing ? "Syncing…" : "Sync GitHub"}
                 </button>
               )}
               <button
@@ -237,15 +237,15 @@ export default function TeamsPage() {
           </div>
 
           {!user?.githubConnected && (
-            <AlertBanner tone="warning" title="GitHub ist noch nicht verbunden">
-              GitHub ist noch nicht verbunden. Ohne Verbindung ist kein Sync möglich.
+            <AlertBanner tone="warning" title="GitHub is not connected yet">
+              Sync is unavailable until GitHub is connected.
               {" "}
-              <Link href="/settings" style={{ color: "var(--primary)", textDecoration: "none" }}>Jetzt verbinden</Link>
+              <Link href="/settings" style={{ color: "var(--primary)", textDecoration: "none" }}>Connect now</Link>
             </AlertBanner>
           )}
 
           {syncMessage && (
-            <AlertBanner tone={syncTone} title={syncTone === "success" ? "Synchronisierung erfolgreich" : "Synchronisierung fehlgeschlagen"}>
+            <AlertBanner tone={syncTone} title={syncTone === "success" ? "Sync completed" : "Sync failed"}>
               {syncMessage}
             </AlertBanner>
           )}
@@ -260,7 +260,7 @@ export default function TeamsPage() {
                     onClick={closeNewProjectModal}
                     style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: "6px", padding: "0.2rem 0.5rem" }}
                   >
-                    Schließen
+                    Close
                   </button>
                 </div>
                 <form onSubmit={(e) => void handleCreateProject(e)}>
@@ -279,7 +279,7 @@ export default function TeamsPage() {
                     <input value={githubRepo} onChange={(e) => setGithubRepo(e.target.value)} placeholder="owner/repo" style={{ width: "100%", display: "block" }} />
                   </div>
                   {error && (
-                    <AlertBanner tone="danger" title="Projekt konnte nicht erstellt werden">
+                    <AlertBanner tone="danger" title="Failed to create project">
                       {error}
                     </AlertBanner>
                   )}
@@ -297,7 +297,7 @@ export default function TeamsPage() {
               <input
                 value={projectQuery}
                 onChange={(e) => setProjectQuery(e.target.value)}
-                placeholder="Projekte suchen (Name, Slug, Repo)…"
+                placeholder="Search projects (name, slug, repo)..."
                 style={{ width: "100%" }}
               />
               <select
@@ -307,8 +307,8 @@ export default function TeamsPage() {
               >
                 <option value="name_asc">Sort: Name A-Z</option>
                 <option value="name_desc">Sort: Name Z-A</option>
-                <option value="newest">Sort: Neueste zuerst</option>
-                <option value="recent_sync">Sort: Kürzlich synchronisiert</option>
+                <option value="newest">Sort: Newest first</option>
+                <option value="recent_sync">Sort: Recently synced</option>
               </select>
               <label style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", color: "var(--muted)", fontSize: "0.82rem", paddingLeft: "0.25rem" }}>
                 <input
@@ -316,11 +316,11 @@ export default function TeamsPage() {
                   checked={githubOnly}
                   onChange={(e) => setGithubOnly(e.target.checked)}
                 />
-                Nur GitHub-Projekte
+                GitHub projects only
               </label>
             </div>
             <p style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
-              {filteredProjects.length} Ergebnisse
+              {filteredProjects.length} results
             </p>
           </div>
 
@@ -328,7 +328,7 @@ export default function TeamsPage() {
             <p style={{ color: "var(--muted)" }}>Loading projects…</p>
           ) : filteredProjects.length === 0 ? (
             <div style={{ textAlign: "center", padding: "3rem", border: "1px dashed var(--border)", borderRadius: "10px", color: "var(--muted)" }}>
-              <p style={{ marginBottom: "0.5rem" }}>{projects.length === 0 ? "No projects yet." : "Keine Projekte für diesen Filter."}</p>
+              <p style={{ marginBottom: "0.5rem" }}>{projects.length === 0 ? "No projects yet." : "No projects match this filter."}</p>
               {projects.length === 0 && (
                 <button
                   onClick={() => {
@@ -351,7 +351,7 @@ export default function TeamsPage() {
                       {project.githubRepo && <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.5rem" }}>⚡ {project.githubRepo}</p>}
                       {project.description && <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{project.description}</p>}
                       <div style={{ marginTop: "0.7rem", color: "var(--primary)", fontSize: "0.82rem", fontWeight: 600 }}>
-                        Board öffnen →
+                        Open board →
                       </div>
                     </div>
                   </Link>
@@ -359,7 +359,7 @@ export default function TeamsPage() {
               </div>
               {totalProjectPages > 1 && (
                 <div className="teams-pagination">
-                  <span>Seite {currentProjectPage} von {totalProjectPages}</span>
+                  <span>Page {currentProjectPage} of {totalProjectPages}</span>
                   <div style={{ display: "flex", gap: "0.4rem" }}>
                     <button
                       type="button"
@@ -367,7 +367,7 @@ export default function TeamsPage() {
                       onClick={() => setProjectPage((page) => Math.max(1, page - 1))}
                       style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: "6px", padding: "0.3rem 0.6rem", opacity: currentProjectPage <= 1 ? 0.5 : 1 }}
                     >
-                      Zurück
+                      Back
                     </button>
                     <button
                       type="button"
@@ -375,7 +375,7 @@ export default function TeamsPage() {
                       onClick={() => setProjectPage((page) => Math.min(totalProjectPages, page + 1))}
                       style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: "6px", padding: "0.3rem 0.6rem", opacity: currentProjectPage >= totalProjectPages ? 0.5 : 1 }}
                     >
-                      Weiter
+                      Next
                     </button>
                   </div>
                 </div>
