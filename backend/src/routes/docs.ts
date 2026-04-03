@@ -135,6 +135,7 @@ const openApiSpec = {
         properties: {
           title: { type: "string", minLength: 1, maxLength: 255 },
           description: { type: "string" },
+          status: { type: "string", enum: ["open", "in_progress", "review", "done"] },
           priority: { type: "string", enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
           workflowId: { type: "string", format: "uuid" },
           dueAt: { type: "string", format: "date-time" },

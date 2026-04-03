@@ -214,8 +214,11 @@ export default function DashboardPage() {
   const [creatingTask, setCreatingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
+  const [newTaskStatus, setNewTaskStatus] = useState<Status>("open");
   const [newTaskPriority, setNewTaskPriority] = useState<Priority>("MEDIUM");
   const [newTaskDueAt, setNewTaskDueAt] = useState("");
+  const [newTaskAttachmentName, setNewTaskAttachmentName] = useState("");
+  const [newTaskAttachmentUrl, setNewTaskAttachmentUrl] = useState("");
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
   const [hideDone, setHideDone] = useState(false);
@@ -258,6 +261,17 @@ export default function DashboardPage() {
   const [attachmentName, setAttachmentName] = useState("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
 
+  function closeNewTaskModal() {
+    setShowNewTask(false);
+    setNewTaskTitle("");
+    setNewTaskDescription("");
+    setNewTaskStatus("open");
+    setNewTaskPriority("MEDIUM");
+    setNewTaskDueAt("");
+    setNewTaskAttachmentName("");
+    setNewTaskAttachmentUrl("");
+  }
+
   useEffect(() => {
     void (async () => {
       try {
@@ -298,7 +312,7 @@ export default function DashboardPage() {
 
         const projectTasks = await getTasks(resolvedProject.id);
         setTasks(projectTasks);
-        setActiveTaskId(projectTasks[0]?.id ?? null);
+        setActiveTaskId(null);
 
         updateUrl(resolvedTeam.id, resolvedProject.id);
       } catch (err) {
@@ -326,7 +340,7 @@ export default function DashboardPage() {
     try {
       const projectTasks = await getTasks(projectId);
       setTasks(projectTasks);
-      setActiveTaskId(projectTasks[0]?.id ?? null);
+      setActiveTaskId(null);
       updateUrl(selectedTeamId, projectId);
     } catch (err) {
       setError((err as Error).message);
@@ -338,22 +352,39 @@ export default function DashboardPage() {
   async function handleCreateTask(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedProjectId || !newTaskTitle.trim()) return;
+    const hasAttachmentName = newTaskAttachmentName.trim().length > 0;
+    const hasAttachmentUrl = newTaskAttachmentUrl.trim().length > 0;
+    if (hasAttachmentName !== hasAttachmentUrl) {
+      setError("Für ein Start-Attachment bitte Name und URL vollständig ausfüllen.");
+      return;
+    }
+
     setCreatingTask(true);
     setError(null);
     try {
-      const task = await createTask(selectedProjectId, {
+      let task = await createTask(selectedProjectId, {
         title: newTaskTitle.trim(),
         description: newTaskDescription.trim() || undefined,
+        status: newTaskStatus,
         priority: newTaskPriority,
         dueAt: toIsoDateOrNull(newTaskDueAt) ?? undefined,
       });
+
+      if (hasAttachmentName && hasAttachmentUrl) {
+        try {
+          const attachment = await addTaskAttachment(task.id, {
+            name: newTaskAttachmentName.trim(),
+            url: newTaskAttachmentUrl.trim(),
+          });
+          task = { ...task, attachments: [attachment, ...task.attachments] };
+        } catch (attachmentError) {
+          setError(`Task erstellt, Attachment konnte nicht hinzugefügt werden: ${(attachmentError as Error).message}`);
+        }
+      }
+
       setTasks((prev) => [task, ...prev]);
-      setActiveTaskId(task.id);
-      setShowNewTask(false);
-      setNewTaskTitle("");
-      setNewTaskDescription("");
-      setNewTaskDueAt("");
-      setNewTaskPriority("MEDIUM");
+      setActiveTaskId(null);
+      closeNewTaskModal();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -486,7 +517,10 @@ export default function DashboardPage() {
         <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end", gap: "0.5rem", flexWrap: "wrap" }}>
           <button
             type="button"
-            onClick={() => setShowNewTask(true)}
+            onClick={() => {
+              setError(null);
+              setShowNewTask(true);
+            }}
             disabled={!selectedProjectId}
             style={{
               background: "var(--primary)",
@@ -504,42 +538,75 @@ export default function DashboardPage() {
       </section>
 
       {showNewTask && (
-        <div className="modal-overlay" onClick={() => setShowNewTask(false)}>
+        <div className="modal-overlay" onClick={closeNewTaskModal}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.7rem" }}>
               <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>Neue Task</h3>
               <button
                 type="button"
-                onClick={() => setShowNewTask(false)}
+                onClick={closeNewTaskModal}
                 style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: "6px", padding: "0.2rem 0.5rem" }}
               >
                 Schließen
               </button>
             </div>
             <form onSubmit={(e) => void handleCreateTask(e)}>
-              <div className="new-task-grid" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: "0.5rem", marginBottom: "0.5rem" }}>
+              <div className="task-detail-grid" style={{ marginBottom: "0.75rem" }}>
                 <div>
-                  <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Titel</label>
-                  <input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} required style={{ width: "100%" }} />
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Titel</label>
+                    <input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} required style={{ width: "100%" }} />
+                  </div>
+
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Beschreibung</label>
+                    <textarea value={newTaskDescription} onChange={(e) => setNewTaskDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
+                  </div>
+
+                  <div className="new-task-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "0.5rem" }}>
+                    <div>
+                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Status</label>
+                      <select value={newTaskStatus} onChange={(e) => setNewTaskStatus(e.target.value as Status)} style={{ width: "100%" }}>
+                        {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Priorität</label>
+                      <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value as Priority)} style={{ width: "100%" }}>
+                        <option value="LOW">LOW</option>
+                        <option value="MEDIUM">MEDIUM</option>
+                        <option value="HIGH">HIGH</option>
+                        <option value="CRITICAL">CRITICAL</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Due Date</label>
+                      <input type="date" value={newTaskDueAt} onChange={(e) => setNewTaskDueAt(e.target.value)} style={{ width: "100%" }} />
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Priorität</label>
-                  <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value as Priority)} style={{ width: "100%" }}>
-                    <option value="LOW">LOW</option>
-                    <option value="MEDIUM">MEDIUM</option>
-                    <option value="HIGH">HIGH</option>
-                    <option value="CRITICAL">CRITICAL</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Due Date</label>
-                  <input type="date" value={newTaskDueAt} onChange={(e) => setNewTaskDueAt(e.target.value)} style={{ width: "100%" }} />
+
+                <div style={{ border: "1px solid var(--border)", borderRadius: "10px", padding: "0.75rem" }}>
+                  <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.45rem" }}>Start-Attachment (optional)</p>
+                  <input
+                    value={newTaskAttachmentName}
+                    onChange={(e) => setNewTaskAttachmentName(e.target.value)}
+                    placeholder="Name"
+                    style={{ width: "100%", marginBottom: "0.35rem" }}
+                  />
+                  <input
+                    value={newTaskAttachmentUrl}
+                    onChange={(e) => setNewTaskAttachmentUrl(e.target.value)}
+                    placeholder="https://..."
+                    type="url"
+                    style={{ width: "100%" }}
+                  />
+                  <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginTop: "0.45rem" }}>
+                    Attachment wird direkt nach Task-Erstellung angelegt.
+                  </p>
                 </div>
               </div>
-              <div style={{ marginBottom: "0.75rem" }}>
-                <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Beschreibung</label>
-                <textarea value={newTaskDescription} onChange={(e) => setNewTaskDescription(e.target.value)} rows={4} style={{ width: "100%", resize: "vertical" }} />
-              </div>
+
               <button
                 type="submit"
                 disabled={creatingTask}

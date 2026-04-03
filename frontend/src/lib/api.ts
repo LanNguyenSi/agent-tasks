@@ -218,7 +218,13 @@ export async function getTasks(projectId: string): Promise<Task[]> {
 
 export async function createTask(
   projectId: string,
-  body: { title: string; description?: string; priority?: string; dueAt?: string },
+  body: {
+    title: string;
+    description?: string;
+    status?: "open" | "in_progress" | "review" | "done";
+    priority?: string;
+    dueAt?: string;
+  },
 ): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/projects/${projectId}/tasks`, {
     method: "POST",

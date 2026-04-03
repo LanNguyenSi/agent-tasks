@@ -12,6 +12,7 @@ export const taskRouter = new Hono<{ Variables: AppVariables }>();
 const createTaskSchema = z.object({
   title: z.string().min(1).max(255),
   description: z.string().optional(),
+  status: z.enum(["open", "in_progress", "review", "done"]).optional(),
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).default("MEDIUM"),
   workflowId: z.string().uuid().optional(),
   dueAt: z.string().datetime().optional(),
@@ -76,6 +77,7 @@ taskRouter.post(
         projectId,
         title: body.title,
         description: body.description,
+        ...(body.status !== undefined ? { status: body.status } : {}),
         priority: body.priority,
         workflowId: body.workflowId,
         dueAt: body.dueAt ? new Date(body.dueAt) : null,
