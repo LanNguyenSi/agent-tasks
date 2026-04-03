@@ -13,7 +13,6 @@ import {
   addTaskAttachment,
   deleteTaskAttachment,
   type User,
-  type Team,
   type Project,
   type Task,
 } from "../../lib/api";
@@ -85,6 +84,12 @@ function updateUrl(teamId: string, projectId: string): void {
   window.history.replaceState({}, "", url.toString());
 }
 
+function getClaimLabel(task: Task): string {
+  if (task.claimedByUserId) return "Claimed by user";
+  if (task.claimedByAgentId) return "Claimed by agent";
+  return "Unclaimed";
+}
+
 function TaskCard({
   task,
   active,
@@ -96,6 +101,7 @@ function TaskCard({
 }) {
   return (
     <button
+      className="task-card"
       type="button"
       onClick={() => onSelect(task.id)}
       style={{
@@ -157,11 +163,9 @@ function BoardColumns({
 }) {
   return (
     <div
+      className="board-columns"
       style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(4, minmax(220px, 1fr))",
-        gap: "0.9rem",
-        overflowX: "auto",
+        alignItems: "start",
       }}
     >
       {STATUSES.map((status) => {
@@ -198,7 +202,6 @@ function BoardColumns({
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string>("");
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
@@ -270,7 +273,6 @@ export default function DashboardPage() {
           router.replace("/onboarding");
           return;
         }
-        setTeams(userTeams);
 
         const params = new URLSearchParams(window.location.search);
         const requestedTeamId = params.get("teamId");
@@ -452,16 +454,17 @@ export default function DashboardPage() {
       />
 
       <div style={{ border: "1px solid var(--border)", background: "var(--surface)", borderRadius: "10px", padding: "0.75rem 0.9rem", marginBottom: "1rem", color: "var(--muted)", fontSize: "0.84rem" }}>
-        Flow: Team wählen, Projekt wählen, Task anklicken und rechts bearbeiten.
+        Flow: Projekt wählen, Task anklicken, im Modal bearbeiten.
       </div>
 
       <section
         className="dashboard-select-grid"
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(220px, 360px) 1fr",
+          gridTemplateColumns: "minmax(220px, 360px) auto",
           gap: "0.6rem",
           marginBottom: "1rem",
+          alignItems: "end",
         }}
       >
         <div>
@@ -480,10 +483,7 @@ export default function DashboardPage() {
           </select>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: "0.5rem", flexWrap: "wrap" }}>
-          <p style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
-            Team: {teams.find((team) => team.id === selectedTeamId)?.name ?? "-"}
-          </p>
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end", gap: "0.5rem", flexWrap: "wrap" }}>
           <button
             type="button"
             onClick={() => setShowNewTask(true)}
@@ -635,107 +635,117 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            <div style={{ marginBottom: "0.5rem" }}>
-              <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Titel</label>
-              <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ width: "100%" }} />
-            </div>
-
-            <div style={{ marginBottom: "0.5rem" }}>
-              <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Beschreibung</label>
-              <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={4} style={{ width: "100%", resize: "vertical" }} />
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", marginBottom: "0.5rem" }}>
+            <div className="task-detail-grid">
               <div>
-                <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Status</label>
-                <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as Status)} style={{ width: "100%" }}>
-                  {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Priorität</label>
-                <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as Priority)} style={{ width: "100%" }}>
-                  <option value="LOW">LOW</option>
-                  <option value="MEDIUM">MEDIUM</option>
-                  <option value="HIGH">HIGH</option>
-                  <option value="CRITICAL">CRITICAL</option>
-                </select>
-              </div>
-            </div>
-
-            <div style={{ marginBottom: "0.8rem" }}>
-              <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Due Date</label>
-              <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)} style={{ width: "100%" }} />
-            </div>
-
-            <div className="task-detail-actions" style={{ display: "flex", gap: "0.5rem", marginBottom: "0.9rem", flexWrap: "wrap" }}>
-              <button
-                type="button"
-                onClick={() => void handleSaveTask()}
-                disabled={savingTask || deletingTask}
-                style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.45rem 0.7rem", fontWeight: 600 }}
-              >
-                {savingTask ? "Saving…" : "Speichern"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleDeleteTask()}
-                disabled={savingTask || deletingTask}
-                style={{ background: "transparent", color: "var(--danger)", border: "1px solid var(--danger)", borderRadius: "8px", padding: "0.45rem 0.7rem" }}
-              >
-                {deletingTask ? "Deleting…" : "Löschen"}
-              </button>
-            </div>
-
-            <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.7rem" }}>
-              <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.45rem" }}>Attachments</p>
-
-              <form onSubmit={(e) => void handleAddAttachment(e)} style={{ marginBottom: "0.65rem" }}>
-                <input
-                  value={attachmentName}
-                  onChange={(e) => setAttachmentName(e.target.value)}
-                  placeholder="Name"
-                  style={{ width: "100%", marginBottom: "0.35rem" }}
-                />
-                <input
-                  value={attachmentUrl}
-                  onChange={(e) => setAttachmentUrl(e.target.value)}
-                  placeholder="https://..."
-                  type="url"
-                  style={{ width: "100%", marginBottom: "0.35rem" }}
-                />
-                <button
-                  type="submit"
-                  disabled={attachmentBusy}
-                  style={{ background: "var(--border)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "7px", padding: "0.35rem 0.6rem" }}
-                >
-                  Add attachment
-                </button>
-              </form>
-
-              {activeTask.attachments.length === 0 ? (
-                <p style={{ color: "var(--muted)", fontSize: "0.78rem" }}>Keine Attachments.</p>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-                  {activeTask.attachments.map((attachment) => (
-                    <div key={attachment.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.4rem 0.5rem" }}>
-                      <a href={attachment.url} target="_blank" rel="noreferrer" style={{ color: "var(--text)", fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {attachment.name}
-                      </a>
-                      <button
-                        type="button"
-                        disabled={attachmentBusy}
-                        onClick={() => {
-                          void handleDeleteAttachment(attachment.id);
-                        }}
-                        style={{ background: "transparent", border: "1px solid var(--danger)", color: "var(--danger)", borderRadius: "6px", padding: "0.2rem 0.45rem", fontSize: "0.72rem" }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginBottom: "0.7rem" }}>
+                  <span className="status-chip">{STATUS_LABELS[activeTask.status as Status]}</span>
+                  <span className="status-chip">{activeTask.priority}</span>
+                  <span className="status-chip">{getClaimLabel(activeTask)}</span>
                 </div>
-              )}
+
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Titel</label>
+                  <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ width: "100%" }} />
+                </div>
+
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Beschreibung</label>
+                  <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", marginBottom: "0.5rem" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Status</label>
+                    <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as Status)} style={{ width: "100%" }}>
+                      {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Priorität</label>
+                    <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as Priority)} style={{ width: "100%" }}>
+                      <option value="LOW">LOW</option>
+                      <option value="MEDIUM">MEDIUM</option>
+                      <option value="HIGH">HIGH</option>
+                      <option value="CRITICAL">CRITICAL</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: "0.8rem" }}>
+                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Due Date</label>
+                  <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)} style={{ width: "100%" }} />
+                </div>
+
+                <div className="task-detail-actions" style={{ display: "flex", gap: "0.5rem", marginBottom: "0.2rem", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveTask()}
+                    disabled={savingTask || deletingTask}
+                    style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.45rem 0.7rem", fontWeight: 600 }}
+                  >
+                    {savingTask ? "Saving…" : "Speichern"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDeleteTask()}
+                    disabled={savingTask || deletingTask}
+                    style={{ background: "transparent", color: "var(--danger)", border: "1px solid var(--danger)", borderRadius: "8px", padding: "0.45rem 0.7rem" }}
+                  >
+                    {deletingTask ? "Deleting…" : "Löschen"}
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ border: "1px solid var(--border)", borderRadius: "10px", padding: "0.75rem" }}>
+                <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.45rem" }}>Attachments</p>
+
+                <form onSubmit={(e) => void handleAddAttachment(e)} style={{ marginBottom: "0.65rem" }}>
+                  <input
+                    value={attachmentName}
+                    onChange={(e) => setAttachmentName(e.target.value)}
+                    placeholder="Name"
+                    style={{ width: "100%", marginBottom: "0.35rem" }}
+                  />
+                  <input
+                    value={attachmentUrl}
+                    onChange={(e) => setAttachmentUrl(e.target.value)}
+                    placeholder="https://..."
+                    type="url"
+                    style={{ width: "100%", marginBottom: "0.35rem" }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={attachmentBusy}
+                    style={{ background: "var(--border)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "7px", padding: "0.35rem 0.6rem" }}
+                  >
+                    Add attachment
+                  </button>
+                </form>
+
+                {activeTask.attachments.length === 0 ? (
+                  <p style={{ color: "var(--muted)", fontSize: "0.78rem" }}>Keine Attachments.</p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                    {activeTask.attachments.map((attachment) => (
+                      <div key={attachment.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.4rem 0.5rem" }}>
+                        <a href={attachment.url} target="_blank" rel="noreferrer" style={{ color: "var(--text)", fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {attachment.name}
+                        </a>
+                        <button
+                          type="button"
+                          disabled={attachmentBusy}
+                          onClick={() => {
+                            void handleDeleteAttachment(attachment.id);
+                          }}
+                          style={{ background: "transparent", border: "1px solid var(--danger)", color: "var(--danger)", borderRadius: "6px", padding: "0.2rem 0.45rem", fontSize: "0.72rem" }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

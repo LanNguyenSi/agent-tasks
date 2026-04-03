@@ -21,7 +21,6 @@ const PROJECT_PAGE_SIZE = 9;
 export default function TeamsPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,7 +55,6 @@ export default function TeamsPage() {
         return;
       }
 
-      setTeams(userTeams);
       const initialTeam = userTeams[0]!;
       setSelectedTeam(initialTeam);
       setLoading(false);
@@ -157,7 +155,7 @@ export default function TeamsPage() {
       />
 
       <div style={{ border: "1px solid var(--border)", background: "var(--surface)", borderRadius: "10px", padding: "0.75rem 0.9rem", marginBottom: "1rem", color: "var(--muted)", fontSize: "0.84rem" }}>
-        Startpunkt: Team auswählen, danach Projekt öffnen. Ohne GitHub-Verbindung kannst du Projekte manuell anlegen, mit Verbindung kannst du synchronisieren.
+        Dein Team-Workspace: Projekt anlegen oder synchronisieren und direkt ins Board wechseln.
       </div>
 
       {selectedTeam && (
@@ -168,24 +166,6 @@ export default function TeamsPage() {
               <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{selectedTeam.projectCount ?? projects.length} projects</p>
             </div>
             <div className="teams-actions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-              {teams.length > 1 && (
-                <select
-                  value={selectedTeam.id}
-                  onChange={(e) => {
-                    const next = teams.find((team) => team.id === e.target.value);
-                    if (!next) return;
-                    setSelectedTeam(next);
-                    void loadProjects(next.id);
-                  }}
-                  style={{ minWidth: "200px" }}
-                >
-                  {teams.map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {team.name} ({team.projectCount ?? 0})
-                    </option>
-                  ))}
-                </select>
-              )}
               {!user?.githubConnected ? (
                 <Link
                   href="/api/auth/github/connect"
@@ -347,7 +327,7 @@ export default function TeamsPage() {
             </div>
           ) : (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
+              <div className="projects-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
                 {pagedProjects.map((project) => (
                   <Link key={project.id} href={`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`} style={{ textDecoration: "none", display: "block" }}>
                     <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1.25rem", transition: "border-color 0.15s", cursor: "pointer" }}>
