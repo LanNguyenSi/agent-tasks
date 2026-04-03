@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getCurrentUser, getTeams, getAgentTokens, createAgentToken, revokeAgentToken, type User, type Team } from "../../../lib/api";
+import { getCurrentUser, getTeams, getAgentTokens, createAgentToken, revokeAgentToken, type User, type Team, type AgentToken } from "../../../lib/api";
 
 const ALL_SCOPES = [
   { id: "tasks:read", label: "Read tasks" },
@@ -13,13 +13,7 @@ const ALL_SCOPES = [
   { id: "boards:read", label: "Read boards" },
 ];
 
-interface TokenRecord {
-  id: string;
-  name: string;
-  scopes: string[];
-  lastUsedAt: string | null;
-  createdAt: string;
-}
+type TokenRecord = AgentToken;
 
 export default function TokensPage() {
   const [user, setUser] = useState<User | null>(null);
@@ -65,7 +59,7 @@ export default function TokensPage() {
     try {
       const result = await createAgentToken({ teamId: selectedTeamId, name: tokenName.trim(), scopes: selectedScopes });
       setNewToken(result.rawToken);
-      setTokens((prev) => [...prev, result.token as TokenRecord]);
+      setTokens((prev) => [...prev, result.token]);
       setShowCreate(false);
       setTokenName("");
     } catch (err) {
