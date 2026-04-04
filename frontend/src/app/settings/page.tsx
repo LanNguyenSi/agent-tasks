@@ -15,7 +15,10 @@ import {
 } from "../../lib/api";
 import AppHeader from "../../components/AppHeader";
 import AlertBanner from "../../components/ui/AlertBanner";
+import { Button } from "../../components/ui/Button";
+import Card from "../../components/ui/Card";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
+import FormField from "../../components/ui/FormField";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 const ALL_SCOPES = [
@@ -143,93 +146,90 @@ export default function SettingsPage() {
     <main className="page-shell">
       <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
 
-      <nav style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", fontSize: "0.82rem" }}>
+      <nav style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", fontSize: "var(--text-sm)" }}>
         <a href="#account" style={{ color: "var(--muted)" }}>Account</a>
         <a href="#github" style={{ color: "var(--muted)" }}>GitHub</a>
         <a href="#api-tokens" style={{ color: "var(--muted)" }}>API Tokens</a>
       </nav>
 
-      <section id="account" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
-        <h2 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "0.5rem" }}>Account</h2>
-        <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginBottom: "0.25rem" }}>Login: {user?.login}</p>
-        <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginBottom: "0.25rem" }}>Name: {user?.name ?? "-"}</p>
-        <p style={{ color: "var(--muted)", fontSize: "0.875rem" }}>Email: {user?.email ?? "-"}</p>
-      </section>
+      <Card style={{ marginBottom: "var(--space-4)" }}>
+        <section id="account">
+          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "0.5rem" }}>Account</h2>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.25rem" }}>Login: {user?.login}</p>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.25rem" }}>Name: {user?.name ?? "-"}</p>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>Email: {user?.email ?? "-"}</p>
+        </section>
+      </Card>
 
-      <section id="github" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
-        <h2 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "0.5rem" }}>GitHub Integration</h2>
-        {githubConnectedNow && (
-          <AlertBanner tone="success" title="Connection updated">
-            GitHub connected successfully.
-          </AlertBanner>
-        )}
-        {user?.githubConnected ? (
-          <AlertBanner tone="success">
-            GitHub is connected. Sync is available.
-          </AlertBanner>
-        ) : (
-          <div>
-            <AlertBanner tone="warning" title="GitHub not connected">
-              No GitHub connection yet. Repository sync is disabled until you connect GitHub.
+      <Card style={{ marginBottom: "var(--space-4)" }}>
+        <section id="github">
+          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "0.5rem" }}>GitHub Integration</h2>
+          {githubConnectedNow && (
+            <AlertBanner tone="success" title="Connection updated">
+              GitHub connected successfully.
             </AlertBanner>
-            <Link
-              href="/api/auth/github/connect"
-              style={{
-                display: "inline-block",
-                background: "#0f172a",
-                color: "white",
-                borderRadius: "8px",
-                padding: "0.5rem 0.875rem",
-                textDecoration: "none",
-                fontWeight: 600,
-                fontSize: "0.875rem",
-              }}
-            >
-              Connect GitHub
-            </Link>
-          </div>
-        )}
-      </section>
+          )}
+          {user?.githubConnected ? (
+            <AlertBanner tone="success">
+              GitHub is connected. Sync is available.
+            </AlertBanner>
+          ) : (
+            <div>
+              <AlertBanner tone="warning" title="GitHub not connected">
+                No GitHub connection yet. Repository sync is disabled until you connect GitHub.
+              </AlertBanner>
+              <Link
+                href="/api/auth/github/connect"
+                className="btn-secondary"
+                style={{
+                  display: "inline-block",
+                  padding: "0.5rem 0.875rem",
+                  textDecoration: "none",
+                }}
+              >
+                Connect GitHub
+              </Link>
+            </div>
+          )}
+        </section>
+      </Card>
 
-      <section id="api-tokens" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem" }}>
+      <Card>
+        <section id="api-tokens">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
           <div>
-            <h2 style={{ fontSize: "1rem", fontWeight: 700 }}>API Tokens</h2>
-            <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>
+            <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700 }}>API Tokens</h2>
+            <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
               Tokens are team-scoped. Create and manage them here in user settings.
             </p>
           </div>
           {teams.length > 0 && (
-            <button
-              onClick={() => setShowCreate(true)}
-              style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.5rem 1.25rem", fontWeight: 600, cursor: "pointer", fontSize: "0.875rem", fontFamily: "inherit" }}
-            >
-              + New Token
-            </button>
+            <Button onClick={() => setShowCreate(true)} size="sm">+ New Token</Button>
           )}
         </div>
 
         {teams.length === 0 ? (
-          <p style={{ color: "var(--muted)", fontSize: "0.875rem" }}>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
             No team found yet. Create a team first to generate API tokens.
           </p>
         ) : (
           <div style={{ marginBottom: "1rem" }}>
-            <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Team</label>
-            <select
-              value={selectedTeamId}
-              onChange={(e) => {
-                const next = e.target.value;
-                setSelectedTeamId(next);
-                void loadTokens(next);
-              }}
-              style={{ width: "100%", maxWidth: "320px" }}
-            >
-              {teams.map((team) => (
-                <option key={team.id} value={team.id}>{team.name}</option>
-              ))}
-            </select>
-            <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginTop: "0.25rem" }}>
+            <FormField label="Team">
+              <select
+                value={selectedTeamId}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setSelectedTeamId(next);
+                  void loadTokens(next);
+                }}
+                style={{ width: "100%", maxWidth: "320px" }}
+              >
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>{team.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.25rem" }}>
               Active team: {selectedTeam?.name}
             </p>
           </div>
@@ -242,48 +242,30 @@ export default function SettingsPage() {
           </ol>
           <div style={{ display: "grid", gap: "0.5rem", marginBottom: "0.4rem" }}>
             <label style={{ display: "grid", gap: "0.25rem" }}>
-              <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>Swagger Docs</span>
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Swagger Docs</span>
               <span style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "0.78rem", wordBreak: "break-all", flex: "1 1 380px" }}>
+                <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "var(--text-xs)", wordBreak: "break-all", flex: "1 1 380px" }}>
                   {docsUrl}
                 </code>
-                <button
-                  type="button"
-                  onClick={() => void copyToClipboard(docsUrl, "Swagger link copied.")}
-                  style={{ background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.75rem", fontSize: "0.78rem", fontFamily: "inherit" }}
-                >
-                  Copy
-                </button>
+                <Button variant="ghost" size="sm" onClick={() => void copyToClipboard(docsUrl, "Swagger link copied.")}>Copy</Button>
               </span>
             </label>
             <label style={{ display: "grid", gap: "0.25rem" }}>
-              <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>OpenAPI JSON</span>
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>OpenAPI JSON</span>
               <span style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "0.78rem", wordBreak: "break-all", flex: "1 1 380px" }}>
+                <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "var(--text-xs)", wordBreak: "break-all", flex: "1 1 380px" }}>
                   {openApiUrl}
                 </code>
-                <button
-                  type="button"
-                  onClick={() => void copyToClipboard(openApiUrl, "OpenAPI link copied.")}
-                  style={{ background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.75rem", fontSize: "0.78rem", fontFamily: "inherit" }}
-                >
-                  Copy
-                </button>
+                <Button variant="ghost" size="sm" onClick={() => void copyToClipboard(openApiUrl, "OpenAPI link copied.")}>Copy</Button>
               </span>
             </label>
           </div>
-          <p style={{ color: "var(--muted)", fontSize: "0.75rem", margin: 0 }}>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", margin: 0 }}>
             Agent auth header: <code>Authorization: Bearer &lt;TOKEN&gt;</code>
           </p>
-          <button
-            type="button"
-            onClick={() => void copyToClipboard(setupSnippet, "Setup info copied.")}
-            style={{ marginTop: "0.55rem", background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.75rem", fontSize: "0.78rem", fontFamily: "inherit" }}
-          >
-            Copy all setup info
-          </button>
+          <Button variant="ghost" size="sm" style={{ marginTop: "0.55rem" }} onClick={() => void copyToClipboard(setupSnippet, "Setup info copied.")}>Copy all setup info</Button>
           {copyMessage && (
-            <p style={{ color: "var(--text)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+            <p style={{ color: "var(--text)", fontSize: "var(--text-xs)", marginTop: "0.4rem" }}>
               {copyMessage}
             </p>
           )}
@@ -297,44 +279,41 @@ export default function SettingsPage() {
 
         {newToken && (
           <AlertBanner tone="success" title="Token created - visible once">
-            <code style={{ display: "block", background: "var(--surface)", padding: "0.625rem 0.75rem", borderRadius: "6px", fontFamily: "monospace", fontSize: "0.875rem", wordBreak: "break-all", color: "var(--text)" }}>
+            <code style={{ display: "block", background: "var(--surface)", padding: "0.625rem 0.75rem", borderRadius: "6px", fontFamily: "monospace", fontSize: "var(--text-sm)", wordBreak: "break-all", color: "var(--text)" }}>
               {newToken}
             </code>
-            <button
-              onClick={() => void copyToClipboard(newToken, "Token copied.")}
-              style={{ marginTop: "0.625rem", background: "var(--success)", color: "white", border: "none", borderRadius: "6px", padding: "0.375rem 0.875rem", cursor: "pointer", fontSize: "0.8125rem", fontFamily: "inherit" }}
-            >
-              Copy
-            </button>
-            <button onClick={() => setNewToken(null)} style={{ marginTop: "0.625rem", marginLeft: "0.5rem", background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.375rem 0.875rem", cursor: "pointer", fontSize: "0.8125rem", fontFamily: "inherit" }}>Dismiss</button>
+            <Button variant="secondary" size="sm" style={{ marginTop: "0.625rem" }} onClick={() => void copyToClipboard(newToken, "Token copied.")}>Copy</Button>
+            <Button variant="ghost" size="sm" style={{ marginTop: "0.625rem", marginLeft: "0.5rem" }} onClick={() => setNewToken(null)}>Dismiss</Button>
           </AlertBanner>
         )}
 
         {showCreate && teams.length > 0 && (
           <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
-            <h3 style={{ fontSize: "0.9375rem", fontWeight: 600, marginBottom: "1rem" }}>Create Agent Token</h3>
+            <h3 style={{ fontSize: "var(--text-base)", fontWeight: 600, marginBottom: "1rem" }}>Create Agent Token</h3>
             <form onSubmit={(e) => void handleCreate(e)}>
               <div style={{ marginBottom: "0.875rem" }}>
-                <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Token name</label>
-                <input value={tokenName} onChange={(e) => setTokenName(e.target.value)} placeholder="e.g. ci-bot" required style={{ width: "100%", display: "block" }} />
+                <FormField label="Token name">
+                  <input value={tokenName} onChange={(e) => setTokenName(e.target.value)} placeholder="e.g. ci-bot" required style={{ width: "100%", display: "block" }} />
+                </FormField>
               </div>
               <div style={{ marginBottom: "1rem" }}>
-                <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.5rem" }}>Scopes</label>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-                  {ALL_SCOPES.map((scope) => (
-                    <label key={scope.id} style={{ display: "flex", alignItems: "center", gap: "0.375rem", cursor: "pointer", fontSize: "0.8125rem" }}>
-                      <input
-                        type="checkbox"
-                        checked={selectedScopes.includes(scope.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) setSelectedScopes((s) => [...s, scope.id]);
-                          else setSelectedScopes((s) => s.filter((x) => x !== scope.id));
-                        }}
-                      />
-                      <span style={{ background: "var(--border)", padding: "0.125rem 0.5rem", borderRadius: "4px", fontFamily: "monospace", fontSize: "0.75rem" }}>{scope.id}</span>
-                    </label>
-                  ))}
-                </div>
+                <FormField label="Scopes">
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                    {ALL_SCOPES.map((scope) => (
+                      <label key={scope.id} style={{ display: "flex", alignItems: "center", gap: "0.375rem", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedScopes.includes(scope.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedScopes((s) => [...s, scope.id]);
+                            else setSelectedScopes((s) => s.filter((x) => x !== scope.id));
+                          }}
+                        />
+                        <span style={{ background: "var(--border)", padding: "0.125rem 0.5rem", borderRadius: "4px", fontFamily: "monospace", fontSize: "var(--text-xs)" }}>{scope.id}</span>
+                      </label>
+                    ))}
+                  </div>
+                </FormField>
               </div>
               {error && (
                 <AlertBanner tone="danger" title="Failed to create token">
@@ -342,8 +321,8 @@ export default function SettingsPage() {
                 </AlertBanner>
               )}
               <div style={{ display: "flex", gap: "0.5rem" }}>
-                <button type="submit" disabled={creating} style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "6px", padding: "0.5rem 1rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{creating ? "Creating…" : "Create"}</button>
-                <button type="button" onClick={() => setShowCreate(false)} style={{ background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.5rem 1rem", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                <Button type="submit" disabled={creating} loading={creating} size="sm">Create</Button>
+                <Button variant="ghost" size="sm" type="button" onClick={() => setShowCreate(false)}>Cancel</Button>
               </div>
             </form>
           </div>
@@ -358,24 +337,20 @@ export default function SettingsPage() {
             {tokens.map((token, i) => (
               <div key={token.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.875rem 1rem", borderBottom: i < tokens.length - 1 ? "1px solid var(--border)" : "none" }}>
                 <div>
-                  <p style={{ fontWeight: 600, fontSize: "0.875rem", marginBottom: "0.25rem" }}>{token.name}</p>
+                  <p style={{ fontWeight: 600, fontSize: "var(--text-sm)", marginBottom: "0.25rem" }}>{token.name}</p>
                   <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap" }}>
                     {token.scopes.map((s) => (
-                      <span key={s} style={{ background: "var(--border)", padding: "0 0.375rem", borderRadius: "4px", fontFamily: "monospace", fontSize: "0.7rem", color: "var(--muted)" }}>{s}</span>
+                      <span key={s} style={{ background: "var(--border)", padding: "0 0.375rem", borderRadius: "4px", fontFamily: "monospace", fontSize: "var(--text-xs)", color: "var(--muted)" }}>{s}</span>
                     ))}
                   </div>
                 </div>
-                <button
-                  onClick={() => setRevokeTarget({ id: token.id, name: token.name })}
-                  style={{ background: "transparent", color: "var(--danger)", border: "1px solid var(--danger)", borderRadius: "6px", padding: "0.25rem 0.75rem", cursor: "pointer", fontSize: "0.8125rem", fontFamily: "inherit" }}
-                >
-                  Revoke
-                </button>
+                <Button variant="outline-danger" size="sm" onClick={() => setRevokeTarget({ id: token.id, name: token.name })}>Revoke</Button>
               </div>
             ))}
           </div>
         ))}
-      </section>
+        </section>
+      </Card>
 
       <ConfirmDialog
         open={Boolean(revokeTarget)}

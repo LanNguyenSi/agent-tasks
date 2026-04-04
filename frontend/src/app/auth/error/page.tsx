@@ -1,30 +1,36 @@
+import Link from "next/link";
+
 export default function AuthErrorPage() {
   return (
     <main
       style={{
         minHeight: "100vh",
         display: "flex",
+        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         padding: "2rem",
       }}
     >
+      <Link href="/" style={{ display: "block", textAlign: "center", marginBottom: "var(--space-4)", color: "var(--muted)", fontSize: "var(--text-sm)", textDecoration: "none" }}>
+        ← agent-tasks
+      </Link>
       <div style={{ textAlign: "center", maxWidth: "400px" }}>
-        <h1 style={{ fontSize: "1.5rem", marginBottom: "1rem", color: "var(--danger)" }}>
+        <h1 style={{ fontSize: "1.5rem", marginBottom: "var(--space-4)", color: "var(--danger)" }}>
           Authentication Failed
         </h1>
-        <p style={{ color: "var(--muted)", marginBottom: "1.5rem" }}>
+        <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "var(--space-6, 1.5rem)" }}>
           Something went wrong during GitHub login. Please try again.
         </p>
         <a
           href="/auth"
+          className="btn-primary"
           style={{
-            background: "var(--primary)",
-            color: "white",
-            padding: "0.75rem 1.5rem",
-            borderRadius: "8px",
-            fontWeight: 600,
             display: "inline-block",
+            padding: "0.75rem 1.5rem",
+            borderRadius: "var(--radius-lg)",
+            fontWeight: 600,
+            textDecoration: "none",
           }}
         >
           Try Again

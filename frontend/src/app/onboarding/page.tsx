@@ -2,13 +2,16 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getCurrentUser, getTeams, createTeam, type User, type Team } from "../../lib/api";
+import Link from "next/link";
+import { getCurrentUser, getTeams, createTeam, type User } from "../../lib/api";
 import AlertBanner from "../../components/ui/AlertBanner";
+import { Button } from "../../components/ui/Button";
+import Card from "../../components/ui/Card";
+import FormField from "../../components/ui/FormField";
 
 export default function OnboardingPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState<"loading" | "create-team" | "redirect">("loading");
 
@@ -27,7 +30,6 @@ export default function OnboardingPage() {
       }
       setUser(me);
       const existingTeams = await getTeams();
-      setTeams(existingTeams);
       setLoading(false);
 
       if (existingTeams.length > 0) {
@@ -85,37 +87,36 @@ export default function OnboardingPage() {
       }}
     >
       <div style={{ maxWidth: "480px", width: "100%" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-4)" }}>
+          <Link href="/" style={{ color: "var(--muted)", fontSize: "var(--text-sm)", textDecoration: "none" }}>
+            ← agent-tasks
+          </Link>
+          <a href="/api/auth/logout" style={{ color: "var(--muted)", fontSize: "var(--text-sm)", textDecoration: "none" }}>
+            Sign out
+          </a>
+        </div>
+
         {user && (
-          <div style={{ textAlign: "center", marginBottom: "2rem" }}>
+          <div style={{ textAlign: "center", marginBottom: "var(--space-6, 1.5rem)" }}>
             {user.avatarUrl && (
               <img
                 src={user.avatarUrl}
                 alt={user.login}
-                style={{ width: "56px", height: "56px", borderRadius: "50%", marginBottom: "0.75rem" }}
+                style={{ width: "56px", height: "56px", borderRadius: "50%", marginBottom: "var(--space-3)" }}
               />
             )}
-            <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: "0.25rem" }}>
+            <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: "var(--space-1)" }}>
               Welcome, {user.name ?? user.login}!
             </h1>
-            <p style={{ color: "var(--muted)" }}>Create your first team to get started.</p>
+            <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>Create your first team to get started.</p>
           </div>
         )}
 
-        <div
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: "12px",
-            padding: "1.5rem",
-          }}
-        >
-          <h2 style={{ fontSize: "1rem", fontWeight: 600, marginBottom: "1.25rem" }}>Create a team</h2>
+        <Card>
+          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 600, marginBottom: "var(--space-4)" }}>Create a team</h2>
 
           <form onSubmit={(e) => void handleCreate(e)}>
-            <div style={{ marginBottom: "1rem" }}>
-              <label style={{ display: "block", color: "var(--muted)", fontSize: "0.8125rem", marginBottom: "0.375rem" }}>
-                Team name
-              </label>
+            <FormField label="Team name">
               <input
                 type="text"
                 value={teamName}
@@ -124,12 +125,9 @@ export default function OnboardingPage() {
                 required
                 style={{ width: "100%", display: "block" }}
               />
-            </div>
+            </FormField>
 
-            <div style={{ marginBottom: "1.25rem" }}>
-              <label style={{ display: "block", color: "var(--muted)", fontSize: "0.8125rem", marginBottom: "0.375rem" }}>
-                Slug
-              </label>
+            <FormField label="Slug">
               <input
                 type="text"
                 value={teamSlug}
@@ -139,10 +137,10 @@ export default function OnboardingPage() {
                 required
                 style={{ width: "100%", display: "block", fontFamily: "monospace" }}
               />
-              <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginTop: "0.25rem" }}>
+              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "var(--space-1)" }}>
                 Used in URLs. Lowercase, hyphens only.
               </p>
-            </div>
+            </FormField>
 
             {error && (
               <AlertBanner tone="danger" title="Failed to create team">
@@ -150,27 +148,16 @@ export default function OnboardingPage() {
               </AlertBanner>
             )}
 
-            <button
+            <Button
               type="submit"
               disabled={creating || !teamName || !teamSlug}
-              style={{
-                width: "100%",
-                background: "var(--primary)",
-                color: "white",
-                border: "none",
-                borderRadius: "8px",
-                padding: "0.75rem",
-                fontWeight: 600,
-                fontSize: "0.9375rem",
-                cursor: creating || !teamName || !teamSlug ? "not-allowed" : "pointer",
-                opacity: creating || !teamName || !teamSlug ? 0.7 : 1,
-                fontFamily: "inherit",
-              }}
+              loading={creating}
+              style={{ width: "100%" }}
             >
-              {creating ? "Creating…" : "Create Team"}
-            </button>
+              Create Team
+            </Button>
           </form>
-        </div>
+        </Card>
       </div>
     </main>
   );

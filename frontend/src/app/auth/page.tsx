@@ -2,8 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { getCurrentUser, getTeams, login, register } from "../../lib/api";
 import AlertBanner from "../../components/ui/AlertBanner";
+import { Button } from "../../components/ui/Button";
+import FormField from "../../components/ui/FormField";
+import Card from "../../components/ui/Card";
 
 type Mode = "login" | "register";
 
@@ -66,48 +70,30 @@ export default function AuthPage() {
       }}
     >
       <div style={{ width: "100%", maxWidth: "460px" }}>
-        <div style={{ textAlign: "center", marginBottom: "1.5rem" }}>
-          <h1 style={{ fontSize: "2rem", fontWeight: 700, marginBottom: "0.5rem" }}>Sign in to agent-tasks</h1>
-          <p style={{ color: "var(--muted)" }}>
+        <Link href="/" style={{ display: "block", textAlign: "center", marginBottom: "var(--space-4)", color: "var(--muted)", fontSize: "var(--text-sm)", textDecoration: "none" }}>
+          ← agent-tasks
+        </Link>
+
+        <div style={{ textAlign: "center", marginBottom: "var(--space-4)" }}>
+          <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: "var(--space-2)" }}>Sign in to agent-tasks</h1>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
             Use email/password or continue with GitHub.
           </p>
         </div>
 
-        <div
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: "12px",
-            padding: "1.25rem",
-            marginBottom: "1rem",
-          }}
-        >
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", marginBottom: "1rem" }}>
+        <Card style={{ marginBottom: "var(--space-4)" }}>
+          <div className="auth-tab-bar" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
             <button
+              className={`auth-tab${mode === "login" ? " auth-tab-active" : ""}`}
               onClick={() => setMode("login")}
               type="button"
-              style={{
-                border: "1px solid var(--border)",
-                background: mode === "login" ? "var(--border)" : "transparent",
-                color: "var(--text)",
-                borderRadius: "8px",
-                padding: "0.5rem",
-                fontWeight: 600,
-              }}
             >
               Login
             </button>
             <button
+              className={`auth-tab${mode === "register" ? " auth-tab-active" : ""}`}
               onClick={() => setMode("register")}
               type="button"
-              style={{
-                border: "1px solid var(--border)",
-                background: mode === "register" ? "var(--border)" : "transparent",
-                color: "var(--text)",
-                borderRadius: "8px",
-                padding: "0.5rem",
-                fontWeight: 600,
-              }}
             >
               Register
             </button>
@@ -115,23 +101,17 @@ export default function AuthPage() {
 
           <form onSubmit={(event) => void handleSubmit(event)}>
             {mode === "register" && (
-              <div style={{ marginBottom: "0.75rem" }}>
-                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
-                  Name (optional)
-                </label>
+              <FormField label="Name (optional)">
                 <input
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="Jane Doe"
                   style={{ width: "100%", display: "block" }}
                 />
-              </div>
+              </FormField>
             )}
 
-            <div style={{ marginBottom: "0.75rem" }}>
-              <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
-                Email
-              </label>
+            <FormField label="Email">
               <input
                 type="email"
                 value={email}
@@ -140,12 +120,9 @@ export default function AuthPage() {
                 required
                 style={{ width: "100%", display: "block" }}
               />
-            </div>
+            </FormField>
 
-            <div style={{ marginBottom: "1rem" }}>
-              <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
-                Password
-              </label>
+            <FormField label="Password">
               <input
                 type="password"
                 value={password}
@@ -154,7 +131,7 @@ export default function AuthPage() {
                 required
                 style={{ width: "100%", display: "block" }}
               />
-            </div>
+            </FormField>
 
             {error && (
               <AlertBanner tone="danger" title="Error">
@@ -162,55 +139,33 @@ export default function AuthPage() {
               </AlertBanner>
             )}
 
-            <button
-              type="submit"
-              disabled={submitting}
-              style={{
-                width: "100%",
-                border: "none",
-                borderRadius: "8px",
-                padding: "0.75rem",
-                background: "var(--primary)",
-                color: "white",
-                fontWeight: 600,
-                opacity: submitting ? 0.7 : 1,
-              }}
-            >
-              {submitting ? "Please wait…" : mode === "register" ? "Create account" : "Sign in"}
-            </button>
+            <Button type="submit" disabled={submitting} loading={submitting} style={{ width: "100%", marginTop: "var(--space-2)" }}>
+              {mode === "register" ? "Create account" : "Sign in"}
+            </Button>
           </form>
-        </div>
+        </Card>
 
-        <div
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: "12px",
-            padding: "1rem",
-            textAlign: "center",
-          }}
-        >
-          <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginBottom: "0.625rem" }}>
+        <Card style={{ textAlign: "center" }}>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "var(--space-3)" }}>
             Prefer GitHub auth?
           </p>
           <a
             href="/api/auth/github"
+            className="btn-secondary"
             style={{
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              gap: "0.5rem",
-              borderRadius: "8px",
+              gap: "var(--space-2)",
+              borderRadius: "var(--radius-lg)",
               padding: "0.625rem 1rem",
-              background: "#0f172a",
-              color: "white",
               textDecoration: "none",
               fontWeight: 600,
             }}
           >
             Continue with GitHub
           </a>
-        </div>
+        </Card>
       </div>
     </main>
   );
