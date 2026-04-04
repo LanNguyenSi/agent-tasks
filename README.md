@@ -73,19 +73,26 @@ make docker-down
 - `make ci` runs typecheck, tests, and build.
 - `make hooks` installs pre-commit hooks.
 
-## Planning Artifacts
+## Pages
 
-- `.planforge/` and `scaffold/` are currently preserved as migration sources.
-- Canonical operational docs are being consolidated into `docs/` and `adr/`.
+| Route | Purpose |
+|-------|---------|
+| `/` | Landing page |
+| `/auth` | Login / Register |
+| `/onboarding` | First team creation |
+| `/teams` | Project management, GitHub sync |
+| `/dashboard` | Board + list view, task CRUD |
+| `/settings` | Account, GitHub connection, API tokens |
+| `/docs` | Interactive Swagger UI (served by backend) |
 
 ## Wave Status
 
 | Wave | Scope | Status |
 |------|-------|--------|
 | 1 | Monorepo, schema, auth shell, CI | ✅ Done |
-| 1.5 | Authz hardening + route/service/repository split for Wave 2 | ✅ Done |
-| 2 | GitHub OAuth, session management | ⏳ Next |
-| 3 | Full task/project/board features | ⏳ Planned |
+| 1.5 | Authz hardening + route/service/repository split | ✅ Done |
+| 2 | GitHub OAuth, session management | ✅ Done |
+| 3 | Full task/project/board features, UI design system | ✅ Done |
 | 4 | Integration hardening, policies | ⏳ Planned |
 
 ## API Highlights
@@ -97,31 +104,53 @@ make docker-down
 # Health
 GET  /api/health
 
-# Auth
+# Auth (humans)
 POST /api/auth/register
 POST /api/auth/login
+GET  /api/auth/me
+POST /api/auth/logout
 GET  /api/auth/github
 GET  /api/auth/github/connect
 GET  /api/auth/github/callback
 
-# Agent Tokens (managed in user settings, scoped per team)
-POST /api/agent-tokens        # Create token (admin only)
-GET  /api/agent-tokens?teamId= # List tokens
+# Teams (humans)
+GET  /api/teams
+POST /api/teams
+GET  /api/teams/:id
+POST /api/teams/:id/members
+POST /api/teams/:id/sync          # GitHub repo sync
+
+# Agent Tokens (team admins)
+GET  /api/agent-tokens?teamId=
+POST /api/agent-tokens
 POST /api/agent-tokens/:id/revoke
 
-# Team GitHub sync (each repo -> project)
-POST /api/teams/:id/sync
+# Projects
+GET  /api/projects/available       # Agent discovery (recommended)
+GET  /api/projects?teamId=         # Full project list
+GET  /api/projects/:id
+DELETE /api/projects/:id           # Humans only
 
 # Tasks
 GET  /api/projects/:id/tasks
 POST /api/projects/:id/tasks
-GET  /api/tasks/claimable
+GET  /api/tasks/claimable          # Open + unclaimed
+GET  /api/tasks/:id
+PATCH /api/tasks/:id               # Humans only
+DELETE /api/tasks/:id              # Humans only
 POST /api/tasks/:id/claim
 POST /api/tasks/:id/release
 POST /api/tasks/:id/transition
 
-# Agent discovery
-GET  /api/projects/available
+# Boards & Workflows (humans)
+GET  /api/projects/:id/boards
+POST /api/projects/:id/boards
+GET  /api/projects/:id/workflows
+POST /api/projects/:id/workflows
+
+# Audit
+GET  /api/projects/:id/audit
+GET  /api/tasks/:id/audit
 ```
 
 ## Agent Auth

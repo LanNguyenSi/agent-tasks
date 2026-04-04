@@ -304,6 +304,32 @@ input[type="checkbox"] {
   font-size: var(--text-sm);
 }
 
+/* ── Auth tab toggle ──────────────────────────────────────────── */
+
+.auth-tab {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: var(--radius-base);
+  padding: 0.5rem;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  min-height: 44px;
+  font-family: inherit;
+}
+
+.auth-tab:hover {
+  border-color: var(--border-hover);
+  background: var(--primary-muted);
+}
+
+.auth-tab-active {
+  background: var(--border);
+  border-color: var(--border-hover);
+}
+
 .landing-shell {
   min-height: auto;
   display: flex;
