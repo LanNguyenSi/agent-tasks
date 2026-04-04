@@ -253,8 +253,59 @@ input[type="checkbox"] {
   padding: var(--space-5);
 }
 
+.landing-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-6, 1.5rem);
+  border-bottom: 1px solid var(--border);
+}
+
+.landing-logo {
+  font-weight: 700;
+  font-size: var(--text-base);
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.landing-header-link {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.landing-header-link:hover {
+  color: var(--text);
+}
+
+.landing-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6, 1.5rem);
+  border-top: 1px solid var(--border);
+}
+
+.landing-footer-link {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.landing-footer-link:hover {
+  color: var(--text);
+}
+
+.landing-footer-sep {
+  color: var(--border);
+  font-size: var(--text-sm);
+}
+
 .landing-shell {
-  min-height: 100vh;
+  min-height: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -396,6 +447,31 @@ input[type="checkbox"] {
   border-color: color-mix(in srgb, var(--primary) 30%, #3a4f70 70%) !important;
   box-shadow: 0 4px 12px rgba(79, 131, 255, 0.1);
   transform: translateY(-2px);
+}
+
+/* ── Project card menu ────────────────────────────────────────── */
+
+.project-card-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-base);
+  font-weight: 700;
+  letter-spacing: 1px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.project-card-menu-btn:hover {
+  background: var(--primary-muted);
+  color: var(--text);
 }
 
 .task-detail-grid {
