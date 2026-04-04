@@ -1,7 +1,7 @@
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "secondary" | "danger" | "ghost";
+  variant?: "primary" | "secondary" | "danger" | "outline-danger" | "ghost";
   size?: "sm" | "md" | "lg";
   loading?: boolean;
   children: ReactNode;
@@ -11,6 +11,7 @@ const variantStyles: Record<string, CSSProperties> = {
   primary: { background: "var(--primary)", color: "white", border: "none" },
   secondary: { background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)" },
   danger: { background: "var(--danger)", color: "white", border: "none" },
+  "outline-danger": { background: "transparent", color: "var(--danger)", border: "1px solid color-mix(in srgb, var(--danger) 60%, var(--border) 40%)" },
   ghost: { background: "transparent", color: "var(--muted)", border: "1px solid var(--border)" },
 };
 
