@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
@@ -670,6 +671,18 @@ export default function DashboardPage() {
                 );
               })}
             </div>
+            {selectedProjectId && (
+              <div style={{ borderTop: "1px solid var(--border)", padding: "var(--space-1)" }}>
+                <Link
+                  href={`/projects/workflows?projectId=${selectedProjectId}`}
+                  className="app-dropdown-item"
+                  onClick={() => setProjectMenuOpen(false)}
+                  style={{ fontSize: "var(--text-xs)" }}
+                >
+                  Workflow settings
+                </Link>
+              </div>
+            )}
           </DropdownMenu>
         </div>
 
