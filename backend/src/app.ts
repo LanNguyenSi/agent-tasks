@@ -13,12 +13,24 @@ import { teamRouter } from "./routes/teams.js";
 import { webhookRouter } from "./routes/webhooks.js";
 import { docsRouter } from "./routes/docs.js";
 import { authMiddleware } from "./middleware/auth.js";
+import { rateLimit } from "./middleware/rate-limit.js";
 import type { AppVariables } from "./types/hono.js";
 
 export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }> {
   const app = new Hono<{ Variables: AppVariables }>();
 
   app.use("*", logger());
+
+  // Security headers
+  app.use("*", async (c, next) => {
+    await next();
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("X-Frame-Options", "DENY");
+    c.header("X-XSS-Protection", "1; mode=block");
+    c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+    c.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  });
+
   app.use(
     "*",
     cors({
@@ -26,6 +38,11 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
       credentials: true,
     }),
   );
+
+  // Rate limiting on auth endpoints
+  app.use("/api/auth/register", rateLimit({ windowMs: 60_000, max: 5 }));
+  app.use("/api/auth/login", rateLimit({ windowMs: 60_000, max: 10 }));
+  app.use("/api/auth/github/*", rateLimit({ windowMs: 60_000, max: 10 }));
 
   // Public
   app.route("/api/health", healthRouter);
@@ -52,6 +69,15 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
 
   // 404
   app.notFound((c) => c.json({ error: "not_found", message: "Route not found" }, 404));
+
+  // Global error handler — prevents uncaught exceptions from crashing the server
+  app.onError((err, c) => {
+    console.error(`[${c.req.method}] ${c.req.path} — unhandled error:`, err.message);
+    return c.json(
+      { error: "internal_error", message: "An unexpected error occurred" },
+      500,
+    );
+  });
 
   return app;
 }
