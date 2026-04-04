@@ -12,7 +12,7 @@ export default function Pagination({ page, totalPages, onPageChange }: Paginatio
   return (
     <div className="teams-pagination">
       <span>Page {page} of {totalPages}</span>
-      <div style={{ display: "flex", gap: "0.4rem" }}>
+      <div style={{ display: "flex", gap: "var(--space-2, 0.5rem)" }}>
         <Button
           variant="ghost"
           size="sm"

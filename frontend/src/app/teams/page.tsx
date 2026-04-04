@@ -188,7 +188,7 @@ export default function TeamsPage() {
         boardHref={selectedTeam && projects[0] ? `/dashboard?teamId=${selectedTeam.id}&projectId=${projects[0].id}` : "/dashboard"}
       />
 
-      <Card padding="sm" style={{ marginBottom: "1rem", color: "var(--muted)", fontSize: "0.84rem" }}>
+      <Card padding="sm" style={{ marginBottom: "var(--space-4)", color: "var(--muted)", fontSize: "var(--text-sm)" }}>
         Your team workspace: create or sync projects, then jump straight into the board.
       </Card>
 
@@ -196,8 +196,8 @@ export default function TeamsPage() {
         <>
           <div className="teams-header-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", gap: "0.75rem", flexWrap: "wrap" }}>
             <div>
-              <h1 style={{ fontSize: "1.25rem", fontWeight: 700 }}>{selectedTeam.name}</h1>
-              <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{selectedTeam.projectCount ?? projects.length} projects</p>
+              <h1 style={{ fontSize: "var(--text-xl)", fontWeight: 700 }}>{selectedTeam.name}</h1>
+              <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>{selectedTeam.projectCount ?? projects.length} projects</p>
             </div>
             <div className="teams-actions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
               {!user?.githubConnected ? (
@@ -212,7 +212,7 @@ export default function TeamsPage() {
                     borderRadius: "8px",
                     padding: "0.5rem 1rem",
                     fontWeight: 600,
-                    fontSize: "0.875rem",
+                    fontSize: "var(--text-base)",
                     textDecoration: "none",
                   }}
                 >
@@ -248,7 +248,6 @@ export default function TeamsPage() {
                   }}
                   disabled={syncing}
                   loading={syncing}
-                  style={{ background: "#0f172a", color: "white", border: "none" }}
                 >
                   {syncing ? "Syncing…" : "Sync GitHub"}
                 </Button>
@@ -327,7 +326,7 @@ export default function TeamsPage() {
                 <option value="newest">Sort: Newest first</option>
                 <option value="recent_sync">Sort: Recently synced</option>
               </select>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", color: "var(--muted)", fontSize: "0.82rem", paddingLeft: "0.25rem" }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", color: "var(--muted)", fontSize: "var(--text-sm)", paddingLeft: "0.25rem" }}>
                 <input
                   type="checkbox"
                   checked={githubOnly}
@@ -336,7 +335,7 @@ export default function TeamsPage() {
                 GitHub projects only
               </label>
             </div>
-            <p style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
+            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>
               {filteredProjects.length} results
             </p>
           </Card>
@@ -349,13 +348,12 @@ export default function TeamsPage() {
               action={
                 projects.length === 0 ? (
                   <Button
-                    variant="ghost"
+                    variant="primary"
                     size="sm"
                     onClick={() => {
                       setError(null);
                       setShowNewProject(true);
                     }}
-                    style={{ border: "none", color: "var(--primary)" }}
                   >
                     Create your first project →
                   </Button>
@@ -369,17 +367,16 @@ export default function TeamsPage() {
                   <Card key={project.id}>
                     <h3 style={{ fontWeight: 600, marginBottom: "0.25rem", color: "var(--text)" }}>{project.name}</h3>
                     {project.githubRepo ? (
-                      <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.5rem" }}>GitHub: {project.githubRepo}</p>
+                      <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>GitHub: {project.githubRepo}</p>
                     ) : (
-                      <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.5rem" }}>Manual project</p>
+                      <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>Manual project</p>
                     )}
-                    {project.description && <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{project.description}</p>}
+                    {project.description && <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>{project.description}</p>}
                     <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginTop: "0.85rem", flexWrap: "wrap" }}>
                       <Button
-                        variant="ghost"
+                        variant="secondary"
                         size="sm"
                         onClick={() => router.push(`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`)}
-                        style={{ color: "var(--text)" }}
                       >
                         Open board
                       </Button>

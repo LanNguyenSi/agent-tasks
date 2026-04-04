@@ -17,22 +17,15 @@ export default function Modal({ open, onClose, title, children, actions }: Modal
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "0.7rem",
-          }}
-        >
-          <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>{title}</h3>
+        <div className="modal-header">
+          <h3 className="modal-title">{title}</h3>
           <Button variant="ghost" size="sm" onClick={onClose}>
             Close
           </Button>
         </div>
         {children}
         {actions && (
-          <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", marginTop: "0.75rem" }}>
+          <div className="modal-actions">
             {actions}
           </div>
         )}

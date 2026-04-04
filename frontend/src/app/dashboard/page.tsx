@@ -158,7 +158,7 @@ function TaskCard({
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.25rem" }}>
-        <p style={{ fontWeight: 600, fontSize: "0.875rem", lineHeight: 1.35 }}>{task.title}</p>
+        <p style={{ fontWeight: 600, fontSize: "var(--text-base)", lineHeight: 1.35 }}>{task.title}</p>
         <span
           style={{
             width: "9px",
@@ -175,7 +175,7 @@ function TaskCard({
         <p
           style={{
             color: "var(--muted)",
-            fontSize: "0.75rem",
+            fontSize: "var(--text-xs)",
             lineHeight: 1.35,
             marginBottom: "0.35rem",
             display: "-webkit-box",
@@ -196,7 +196,7 @@ function TaskCard({
             </span>
           )}
         </div>
-        <div style={{ textAlign: "right", fontSize: "0.72rem", color: "var(--muted)" }}>
+        <div style={{ textAlign: "right", fontSize: "var(--text-xs)", color: "var(--muted)" }}>
           <div>{getAssigneeName(task)}</div>
           <div>{task.dueAt ? `Due ${toDateInputValue(task.dueAt)}` : "No due date"}</div>
         </div>
@@ -221,13 +221,13 @@ function BoardColumns({
         return (
           <section key={status}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
-              <h3 style={{ fontSize: "0.78rem", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--muted)" }}>
+              <h3 style={{ fontSize: "var(--text-xs)", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--muted)" }}>
                 {STATUS_LABELS[status]}
               </h3>
-              <span style={{ color: "var(--muted)", fontSize: "0.75rem" }}>{columnTasks.length}</span>
+              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{columnTasks.length}</span>
             </div>
             {columnTasks.length === 0 ? (
-              <div style={{ border: "1px dashed var(--border)", borderRadius: "10px", padding: "1rem", color: "var(--muted)", textAlign: "center", fontSize: "0.75rem" }}>
+              <div style={{ border: "1px dashed var(--border)", borderRadius: "10px", padding: "1rem", color: "var(--muted)", textAlign: "center", fontSize: "var(--text-xs)" }}>
                 No tasks
               </div>
             ) : (
@@ -637,7 +637,7 @@ export default function DashboardPage() {
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {projects.find((project) => project.id === selectedProjectId)?.name ?? "Select a project"}
               </span>
-              <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>{projectMenuOpen ? "▲" : "▼"}</span>
+              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{projectMenuOpen ? "▲" : "▼"}</span>
             </button>
           </FormField>
           <DropdownMenu
@@ -675,7 +675,7 @@ export default function DashboardPage() {
 
         <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end", gap: "0.5rem", flexWrap: "wrap" }}>
           <div>
-            <p style={{ color: "var(--muted)", fontSize: "0.7rem", marginBottom: "0.25rem" }}>View</p>
+            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.25rem" }}>View</p>
             <div className="view-toggle" aria-label="Task view mode">
               <button
                 type="button"
@@ -838,10 +838,10 @@ export default function DashboardPage() {
         <div className="dashboard-grid">
           <section style={{ minWidth: 0 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem", gap: "0.5rem", flexWrap: "wrap" }}>
-              <p style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
+              <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
                 {filteredTasks.length} / {tasks.length} Tasks
               </p>
-              <p style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
+              <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
                 {projects.find((project) => project.id === selectedProjectId)?.name}
               </p>
             </div>
@@ -875,10 +875,10 @@ export default function DashboardPage() {
                       }}
                     >
                       <span className="task-list-cell-main">
-                        <span style={{ display: "block", fontSize: "0.86rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ display: "block", fontSize: "var(--text-sm)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {task.title}
                         </span>
-                        <span style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)" }}>
+                        <span style={{ display: "block", fontSize: "var(--text-xs)", color: "var(--muted)" }}>
                           {STATUS_LABELS[task.status as Status]}
                         </span>
                       </span>
@@ -925,7 +925,7 @@ export default function DashboardPage() {
             </Button>
           }
         >
-          <div style={{ position: "absolute", top: "1rem", right: "3.5rem" }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "var(--space-3)" }}>
             <Button
               variant="outline-danger"
               size="sm"
@@ -977,30 +977,28 @@ export default function DashboardPage() {
 
           <section style={{ marginBottom: "0.8rem" }}>
             <p className="section-kicker">Ownership</p>
-            <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.45rem 0.55rem", color: "var(--text)", fontSize: "0.84rem", background: "color-mix(in srgb, var(--surface) 88%, #0b111d 12%)" }}>
+            <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.45rem 0.55rem", color: "var(--text)", fontSize: "var(--text-sm)", background: "color-mix(in srgb, var(--surface) 88%, #0b111d 12%)" }}>
               {getClaimLabel(activeTask)}
             </div>
             <div style={{ display: "flex", gap: "0.45rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
               {!activeTask.claimedByUserId && !activeTask.claimedByAgentId && (
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   onClick={() => void handleClaimActiveTask()}
                   disabled={claimBusy || savingTask || deletingTask}
                   loading={claimBusy}
-                  style={{ color: "var(--text)" }}
                 >
                   {claimBusy ? "Claiming…" : "Claim for me"}
                 </Button>
               )}
               {activeTask.claimedByUserId === user?.id && (
                 <Button
-                  variant="ghost"
+                  variant="outline-danger"
                   size="sm"
                   onClick={() => void handleReleaseActiveTask()}
                   disabled={claimBusy || savingTask || deletingTask}
                   loading={claimBusy}
-                  style={{ color: "var(--warning)", borderColor: "var(--warning)" }}
                 >
                   {claimBusy ? "Releasing…" : "Release"}
                 </Button>

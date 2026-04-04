@@ -1,24 +1,26 @@
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 
+type Variant = "primary" | "secondary" | "danger" | "outline-danger" | "ghost";
+
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "secondary" | "danger" | "outline-danger" | "ghost";
+  variant?: Variant;
   size?: "sm" | "md" | "lg";
   loading?: boolean;
   children: ReactNode;
 }
 
-const variantStyles: Record<string, CSSProperties> = {
-  primary: { background: "var(--primary)", color: "white", border: "none" },
-  secondary: { background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)" },
-  danger: { background: "var(--danger)", color: "white", border: "none" },
-  "outline-danger": { background: "transparent", color: "var(--danger)", border: "1px solid color-mix(in srgb, var(--danger) 60%, var(--border) 40%)" },
-  ghost: { background: "transparent", color: "var(--muted)", border: "1px solid var(--border)" },
+const variantClass: Record<Variant, string> = {
+  primary: "btn-primary",
+  secondary: "btn-secondary",
+  danger: "btn-danger",
+  "outline-danger": "btn-outline-danger",
+  ghost: "btn-ghost",
 };
 
 const sizeStyles: Record<string, CSSProperties> = {
-  sm: { padding: "0.25rem 0.75rem", fontSize: "0.8125rem" },
-  md: { padding: "0.5rem 1.25rem", fontSize: "0.875rem" },
-  lg: { padding: "0.75rem 1.75rem", fontSize: "1rem" },
+  sm: { padding: "0.35rem 0.75rem", fontSize: "var(--text-sm, 0.8125rem)" },
+  md: { padding: "0.5rem 1.25rem", fontSize: "var(--text-base, 0.875rem)" },
+  lg: { padding: "0.75rem 1.75rem", fontSize: "var(--text-md, 1rem)" },
 };
 
 export function Button({
@@ -28,19 +30,19 @@ export function Button({
   children,
   disabled,
   style,
+  className,
   ...props
 }: ButtonProps) {
   return (
     <button
       disabled={disabled || loading}
+      className={[variantClass[variant], className].filter(Boolean).join(" ")}
       style={{
-        borderRadius: "8px",
+        borderRadius: "var(--radius-base, 6px)",
         fontWeight: 600,
         cursor: disabled || loading ? "not-allowed" : "pointer",
-        opacity: disabled || loading ? 0.6 : 1,
-        transition: "opacity 0.15s",
+        opacity: disabled || loading ? 0.4 : 1,
         fontFamily: "inherit",
-        ...variantStyles[variant],
         ...sizeStyles[size],
         ...style,
       }}
