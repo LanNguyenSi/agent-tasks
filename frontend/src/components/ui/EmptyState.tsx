@@ -8,8 +8,8 @@ interface EmptyStateProps {
 
 export default function EmptyState({ message, action }: EmptyStateProps) {
   return (
-    <Card dashed style={{ textAlign: "center", padding: "3rem", color: "var(--muted)" }}>
-      <p style={{ marginBottom: action ? "0.5rem" : 0 }}>{message}</p>
+    <Card dashed style={{ textAlign: "center", padding: "var(--space-8, 2rem)", color: "var(--muted)" }}>
+      <p style={{ marginBottom: action ? "var(--space-2, 0.5rem)" : 0 }}>{message}</p>
       {action}
     </Card>
   );

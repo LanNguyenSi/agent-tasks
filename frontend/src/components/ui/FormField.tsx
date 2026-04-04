@@ -11,9 +11,10 @@ export default function FormField({ label, children }: FormFieldProps) {
       <label
         style={{
           display: "block",
-          color: "var(--muted)",
-          fontSize: "0.75rem",
-          marginBottom: "0.25rem",
+          color: "var(--text-secondary, #b0bac7)",
+          fontSize: "var(--text-xs, 0.75rem)",
+          fontWeight: 500,
+          marginBottom: "var(--space-1, 0.25rem)",
         }}
       >
         {label}
