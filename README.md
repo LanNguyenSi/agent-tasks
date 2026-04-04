@@ -205,6 +205,15 @@ GET /api/tasks/{id}/instructions  →  { agentInstructions, allowedTransitions, 
 
 Typical flow: discover tasks via `/api/tasks/claimable`, claim with `/api/tasks/{id}/claim`, get instructions via `/api/tasks/{id}/instructions`, work on the task, update `branchName`/`prUrl`/`result` via `PATCH /api/tasks/{id}`, then transition via `/api/tasks/{id}/transition`.
 
+## Roadmap
+
+- [ ] Webhooks (task.claimed, task.reviewed, etc.) for Slack/Discord/CI integration
+- [ ] Task dependencies (block/blocked-by)
+- [ ] PR status sync (auto-transition on merge/approve)
+- [ ] Structured logging (JSON, correlation IDs)
+- [ ] E2E and integration tests
+- [ ] Email notifications
+
 ## Contributing
 
 1. Fork the repo
