@@ -16,6 +16,7 @@ import {
   updateProject,
   createComment,
   deleteComment,
+  reviewTask,
   type User,
   type Team,
   type Project,
@@ -383,6 +384,8 @@ export default function DashboardPage() {
   const [deletingTask, setDeletingTask] = useState(false);
   const [showDeleteTaskConfirm, setShowDeleteTaskConfirm] = useState(false);
   const [claimBusy, setClaimBusy] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewComment, setReviewComment] = useState("");
 
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -1214,6 +1217,64 @@ export default function DashboardPage() {
                     </p>
                   </div>
                 )}
+              </div>
+            </section>
+          )}
+
+          {activeTask.status === "review" && activeTask.claimedByUserId !== user?.id && (
+            <section style={{ marginBottom: "0.8rem" }}>
+              <p className="section-kicker">Review</p>
+              <div style={{ marginBottom: "0.4rem" }}>
+                <textarea
+                  value={reviewComment}
+                  onChange={(e) => setReviewComment(e.target.value)}
+                  placeholder="Review feedback (optional)"
+                  rows={2}
+                  style={{ width: "100%", resize: "vertical", fontSize: "var(--text-sm)" }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                <Button
+                  size="sm"
+                  disabled={reviewBusy}
+                  loading={reviewBusy}
+                  onClick={async () => {
+                    setReviewBusy(true);
+                    setError(null);
+                    try {
+                      const updated = await reviewTask(activeTask.id, "approve", reviewComment);
+                      setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+                      setReviewComment("");
+                    } catch (err) {
+                      setError((err as Error).message);
+                    } finally {
+                      setReviewBusy(false);
+                    }
+                  }}
+                >
+                  Approve
+                </Button>
+                <Button
+                  variant="outline-danger"
+                  size="sm"
+                  disabled={reviewBusy}
+                  loading={reviewBusy}
+                  onClick={async () => {
+                    setReviewBusy(true);
+                    setError(null);
+                    try {
+                      const updated = await reviewTask(activeTask.id, "request_changes", reviewComment);
+                      setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+                      setReviewComment("");
+                    } catch (err) {
+                      setError((err as Error).message);
+                    } finally {
+                      setReviewBusy(false);
+                    }
+                  }}
+                >
+                  Request Changes
+                </Button>
               </div>
             </section>
           )}

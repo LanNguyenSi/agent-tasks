@@ -390,6 +390,14 @@ export async function transitionTask(taskId: string, status: string): Promise<Ta
   return data.task;
 }
 
+export async function reviewTask(taskId: string, action: "approve" | "request_changes", comment?: string): Promise<Task> {
+  const data = await request<{ task: Task }>(`/api/tasks/${taskId}/review`, {
+    method: "POST",
+    body: JSON.stringify({ action, ...(comment?.trim() ? { comment: comment.trim() } : {}) }),
+  });
+  return data.task;
+}
+
 // ── Audit ─────────────────────────────────────────────────────────────────────
 
 // ── Workflows ────────────────────────────────────────────────────────────────
