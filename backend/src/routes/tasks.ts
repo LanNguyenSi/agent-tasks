@@ -28,6 +28,12 @@ const taskInclude = {
       name: true,
     },
   },
+  blockedBy: {
+    select: { id: true, title: true, status: true },
+  },
+  blocks: {
+    select: { id: true, title: true, status: true },
+  },
 };
 
 const createTaskSchema = z.object({
@@ -489,7 +495,6 @@ taskRouter.delete("/tasks/:id/comments/:commentId", async (c) => {
   const comment = await prisma.comment.findUnique({ where: { id: c.req.param("commentId") } });
   if (!comment || comment.taskId !== task.id) return notFound(c);
 
-  // Only the author can delete their own comment
   const isAuthor =
     (actor.type === "human" && comment.authorUserId === actor.userId) ||
     (actor.type === "agent" && comment.authorAgentId === actor.tokenId);
@@ -499,6 +504,64 @@ taskRouter.delete("/tasks/:id/comments/:commentId", async (c) => {
   }
 
   await prisma.comment.delete({ where: { id: comment.id } });
+  return c.json({ success: true });
+});
+
+// ── Dependencies ─────────────────────────────────────────────────────────────
+
+const dependencySchema = z.object({
+  blockedByTaskId: z.string().uuid(),
+});
+
+taskRouter.post("/tasks/:id/dependencies", zValidator("json", dependencySchema), async (c) => {
+  const actor = c.get("actor") as Actor;
+  if (actor.type !== "human") {
+    return forbidden(c, "Only humans can manage dependencies");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const { blockedByTaskId } = c.req.valid("json");
+  if (blockedByTaskId === task.id) {
+    return c.json({ error: "bad_request", message: "A task cannot block itself" }, 400);
+  }
+
+  const blocker = await prisma.task.findUnique({ where: { id: blockedByTaskId } });
+  if (!blocker || blocker.projectId !== task.projectId) {
+    return c.json({ error: "bad_request", message: "Blocking task not found in this project" }, 400);
+  }
+
+  await prisma.task.update({
+    where: { id: task.id },
+    data: { blockedBy: { connect: { id: blockedByTaskId } } },
+  });
+
+  return c.json({ success: true }, 201);
+});
+
+taskRouter.delete("/tasks/:id/dependencies/:blockerTaskId", async (c) => {
+  const actor = c.get("actor") as Actor;
+  if (actor.type !== "human") {
+    return forbidden(c, "Only humans can manage dependencies");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  await prisma.task.update({
+    where: { id: task.id },
+    data: { blockedBy: { disconnect: { id: c.req.param("blockerTaskId") } } },
+  });
+
   return c.json({ success: true });
 });
 
@@ -513,7 +576,9 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
 
   const task = await prisma.task.findUnique({
     where: { id: c.req.param("id") },
-    include: { project: { select: { confidenceThreshold: true, taskTemplate: true } } },
+    include: {
+      project: { select: { confidenceThreshold: true, taskTemplate: true } },
+    },
   });
   if (!task) return notFound(c);
 
@@ -524,6 +589,20 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
   // Already claimed
   if (task.claimedByUserId || task.claimedByAgentId) {
     return conflict(c, "Task is already claimed");
+  }
+
+  // Dependency gate — all blocking tasks must be done
+  const blockers = await prisma.task.findMany({
+    where: { blocks: { some: { id: task.id } } },
+    select: { id: true, title: true, status: true },
+  });
+  const unresolved = blockers.filter((dep) => dep.status !== "done");
+  if (unresolved.length > 0) {
+    return c.json({
+      error: "blocked",
+      message: "Task is blocked by unresolved dependencies",
+      blockedBy: unresolved,
+    }, 409);
   }
 
   // Confidence gate — only blocks agents (humans get a UI warning instead)

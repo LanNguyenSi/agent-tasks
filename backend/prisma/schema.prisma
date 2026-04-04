@@ -177,6 +177,10 @@ model Task {
   claimedByUser    User?       @relation("TaskClaimant", fields: [claimedByUserId], references: [id])
   claimedByAgent   AgentToken? @relation("TaskAgentClaimant", fields: [claimedByAgentId], references: [id])
 
+  // Dependencies: this task blocks others / is blocked by others
+  blocks           Task[]    @relation("TaskDependency")
+  blockedBy        Task[]    @relation("TaskDependency")
+
   comments         Comment[]
   attachments      TaskAttachment[]
   auditLogs        AuditLog[]

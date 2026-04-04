@@ -80,6 +80,8 @@ export interface Task {
     id: string;
     name: string;
   } | null;
+  blockedBy?: { id: string; title: string; status: string }[];
+  blocks?: { id: string; title: string; status: string }[];
 }
 
 export interface Comment {
@@ -369,6 +371,17 @@ export async function createComment(taskId: string, content: string): Promise<Co
 
 export async function deleteComment(taskId: string, commentId: string): Promise<void> {
   await request(`/api/tasks/${taskId}/comments/${commentId}`, { method: "DELETE" });
+}
+
+export async function addDependency(taskId: string, blockedByTaskId: string): Promise<void> {
+  await request(`/api/tasks/${taskId}/dependencies`, {
+    method: "POST",
+    body: JSON.stringify({ blockedByTaskId }),
+  });
+}
+
+export async function removeDependency(taskId: string, blockerTaskId: string): Promise<void> {
+  await request(`/api/tasks/${taskId}/dependencies/${blockerTaskId}`, { method: "DELETE" });
 }
 
 export async function claimTask(taskId: string, force = false): Promise<Task> {
