@@ -168,6 +168,15 @@ export default function WorkflowEditorPage() {
     <main className="page-shell">
       <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
 
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => router.push(projectId ? `/dashboard?projectId=${projectId}` : "/dashboard")}
+        style={{ marginBottom: "var(--space-3)" }}
+      >
+        ← Back to board
+      </Button>
+
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-4)", flexWrap: "wrap", gap: "var(--space-2)" }}>
         <div>
           <h1 style={{ fontSize: "var(--text-xl)", fontWeight: 700 }}>Workflow Editor</h1>
