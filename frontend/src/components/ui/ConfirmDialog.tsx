@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "./Button";
+
 interface ConfirmDialogProps {
   open: boolean;
   title: string;
@@ -31,36 +33,18 @@ export default function ConfirmDialog({
         <h3 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "0.45rem" }}>{title}</h3>
         <p style={{ color: "var(--muted)", fontSize: "0.86rem", marginBottom: "0.9rem" }}>{message}</p>
         <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", flexWrap: "wrap" }}>
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={busy}
-            style={{
-              background: "transparent",
-              color: "var(--muted)",
-              border: "1px solid var(--border)",
-              borderRadius: "8px",
-              padding: "0.45rem 0.9rem",
-            }}
-          >
+          <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
             {cancelLabel}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant={tone === "danger" ? "danger" : "primary"}
+            size="sm"
             onClick={onConfirm}
             disabled={busy}
-            style={{
-              background: tone === "danger" ? "var(--danger)" : "var(--primary)",
-              color: "white",
-              border: "none",
-              borderRadius: "8px",
-              padding: "0.45rem 0.9rem",
-              opacity: busy ? 0.75 : 1,
-              fontWeight: 600,
-            }}
+            loading={busy}
           >
             {busy ? "Please wait…" : confirmLabel}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

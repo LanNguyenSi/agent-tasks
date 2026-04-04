@@ -16,7 +16,13 @@ import {
 } from "../../lib/api";
 import AppHeader from "../../components/AppHeader";
 import AlertBanner from "../../components/ui/AlertBanner";
+import { Button } from "../../components/ui/Button";
+import Card from "../../components/ui/Card";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
+import EmptyState from "../../components/ui/EmptyState";
+import FormField from "../../components/ui/FormField";
+import Modal from "../../components/ui/Modal";
+import Pagination from "../../components/ui/Pagination";
 
 type ProjectSort = "name_asc" | "name_desc" | "newest" | "recent_sync";
 const PROJECT_PAGE_SIZE = 9;
@@ -182,9 +188,9 @@ export default function TeamsPage() {
         boardHref={selectedTeam && projects[0] ? `/dashboard?teamId=${selectedTeam.id}&projectId=${projects[0].id}` : "/dashboard"}
       />
 
-      <div style={{ border: "1px solid var(--border)", background: "var(--surface)", borderRadius: "10px", padding: "0.75rem 0.9rem", marginBottom: "1rem", color: "var(--muted)", fontSize: "0.84rem" }}>
+      <Card padding="sm" style={{ marginBottom: "1rem", color: "var(--muted)", fontSize: "0.84rem" }}>
         Your team workspace: create or sync projects, then jump straight into the board.
-      </div>
+      </Card>
 
       {selectedTeam && (
         <>
@@ -198,6 +204,9 @@ export default function TeamsPage() {
                 <Link
                   href="/api/auth/github/connect"
                   style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                     background: "#0f172a",
                     color: "white",
                     borderRadius: "8px",
@@ -210,7 +219,8 @@ export default function TeamsPage() {
                   Connect GitHub
                 </Link>
               ) : (
-                <button
+                <Button
+                  variant="secondary"
                   onClick={() => {
                     void (async () => {
                       setSyncMessage(null);
@@ -237,30 +247,20 @@ export default function TeamsPage() {
                     })();
                   }}
                   disabled={syncing}
-                  style={{
-                    background: "#0f172a",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "8px",
-                    padding: "0.5rem 1rem",
-                    fontWeight: 600,
-                    cursor: syncing ? "not-allowed" : "pointer",
-                    fontSize: "0.875rem",
-                    fontFamily: "inherit",
-                  }}
+                  loading={syncing}
+                  style={{ background: "#0f172a", color: "white", border: "none" }}
                 >
                   {syncing ? "Syncing…" : "Sync GitHub"}
-                </button>
+                </Button>
               )}
-              <button
+              <Button
                 onClick={() => {
                   setError(null);
                   setShowNewProject(true);
                 }}
-                style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.5rem 1.25rem", fontWeight: 600, cursor: "pointer", fontSize: "0.875rem", fontFamily: "inherit" }}
               >
                 + New Project
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -278,49 +278,38 @@ export default function TeamsPage() {
             </AlertBanner>
           )}
 
-          {showNewProject && (
-            <div className="modal-overlay" onClick={closeNewProjectModal}>
-              <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.7rem" }}>
-                  <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>New Project</h3>
-                  <button
-                    type="button"
-                    onClick={closeNewProjectModal}
-                    style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: "6px", padding: "0.2rem 0.5rem" }}
-                  >
-                    Close
-                  </button>
-                </div>
-                <form onSubmit={(e) => void handleCreateProject(e)}>
-                  <div className="project-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "0.75rem" }}>
-                    <div>
-                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Name</label>
-                      <input value={projectName} onChange={(e) => handleProjectNameChange(e.target.value)} placeholder="My Project" required style={{ width: "100%", display: "block" }} />
-                    </div>
-                    <div>
-                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Slug</label>
-                      <input value={projectSlug} onChange={(e) => setProjectSlug(e.target.value)} placeholder="my-project" pattern="[a-z0-9-]+" required style={{ width: "100%", display: "block", fontFamily: "monospace" }} />
-                    </div>
-                  </div>
-                  <div style={{ marginBottom: "0.75rem" }}>
-                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>GitHub Repo (optional)</label>
-                    <input value={githubRepo} onChange={(e) => setGithubRepo(e.target.value)} placeholder="owner/repo" style={{ width: "100%", display: "block" }} />
-                  </div>
-                  {error && (
-                    <AlertBanner tone="danger" title="Failed to create project">
-                      {error}
-                    </AlertBanner>
-                  )}
-                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                    <button type="submit" disabled={creating} style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "6px", padding: "0.5rem 1rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{creating ? "Creating…" : "Create"}</button>
-                    <button type="button" onClick={closeNewProjectModal} style={{ background: "transparent", color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.5rem 1rem", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-                  </div>
-                </form>
+          <Modal open={showNewProject} onClose={closeNewProjectModal} title="New Project">
+            <form onSubmit={(e) => void handleCreateProject(e)}>
+              <div className="project-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "0.75rem" }}>
+                <FormField label="Name">
+                  <input value={projectName} onChange={(e) => handleProjectNameChange(e.target.value)} placeholder="My Project" required style={{ width: "100%", display: "block" }} />
+                </FormField>
+                <FormField label="Slug">
+                  <input value={projectSlug} onChange={(e) => setProjectSlug(e.target.value)} placeholder="my-project" pattern="[a-z0-9-]+" required style={{ width: "100%", display: "block", fontFamily: "monospace" }} />
+                </FormField>
               </div>
-            </div>
-          )}
+              <div style={{ marginBottom: "0.75rem" }}>
+                <FormField label="GitHub Repo (optional)">
+                  <input value={githubRepo} onChange={(e) => setGithubRepo(e.target.value)} placeholder="owner/repo" style={{ width: "100%", display: "block" }} />
+                </FormField>
+              </div>
+              {error && (
+                <AlertBanner tone="danger" title="Failed to create project">
+                  {error}
+                </AlertBanner>
+              )}
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                <Button type="submit" disabled={creating} loading={creating} size="sm">
+                  {creating ? "Creating…" : "Create"}
+                </Button>
+                <Button variant="ghost" size="sm" type="button" onClick={closeNewProjectModal}>
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          </Modal>
 
-          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.75rem", marginBottom: "0.9rem" }}>
+          <Card style={{ marginBottom: "0.9rem" }} padding="sm">
             <div className="teams-filter-bar">
               <input
                 value={projectQuery}
@@ -350,38 +339,34 @@ export default function TeamsPage() {
             <p style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
               {filteredProjects.length} results
             </p>
-          </div>
+          </Card>
 
           {projectsLoading ? (
             <p style={{ color: "var(--muted)" }}>Loading projects…</p>
           ) : filteredProjects.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "3rem", border: "1px dashed var(--border)", borderRadius: "10px", color: "var(--muted)" }}>
-              <p style={{ marginBottom: "0.5rem" }}>{projects.length === 0 ? "No projects yet." : "No projects match this filter."}</p>
-              {projects.length === 0 && (
-                <button
-                  onClick={() => {
-                    setError(null);
-                    setShowNewProject(true);
-                  }}
-                  style={{ color: "var(--primary)", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: "inherit" }}
-                >
-                  Create your first project →
-                </button>
-              )}
-            </div>
+            <EmptyState
+              message={projects.length === 0 ? "No projects yet." : "No projects match this filter."}
+              action={
+                projects.length === 0 ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setError(null);
+                      setShowNewProject(true);
+                    }}
+                    style={{ border: "none", color: "var(--primary)" }}
+                  >
+                    Create your first project →
+                  </Button>
+                ) : undefined
+              }
+            />
           ) : (
             <>
               <div className="projects-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
                 {pagedProjects.map((project) => (
-                  <div
-                    key={project.id}
-                    style={{
-                      background: "var(--surface)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "10px",
-                      padding: "1rem",
-                    }}
-                  >
+                  <Card key={project.id}>
                     <h3 style={{ fontWeight: 600, marginBottom: "0.25rem", color: "var(--text)" }}>{project.name}</h3>
                     {project.githubRepo ? (
                       <p style={{ color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.5rem" }}>GitHub: {project.githubRepo}</p>
@@ -390,47 +375,32 @@ export default function TeamsPage() {
                     )}
                     {project.description && <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>{project.description}</p>}
                     <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginTop: "0.85rem", flexWrap: "wrap" }}>
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => router.push(`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`)}
-                        style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: "6px", padding: "0.38rem 0.62rem", fontWeight: 600 }}
+                        style={{ color: "var(--text)" }}
                       >
                         Open board
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteTarget({ id: project.id, name: project.name })}
-                        style={{ border: "1px solid color-mix(in srgb, var(--danger) 60%, var(--border) 40%)", background: "transparent", color: "var(--danger)", borderRadius: "6px", padding: "0.38rem 0.62rem", fontWeight: 600 }}
-                      >
-                        Delete
-                      </button>
+                      </Button>
+                      {!project.githubRepo && (
+                        <Button
+                          variant="outline-danger"
+                          size="sm"
+                          onClick={() => setDeleteTarget({ id: project.id, name: project.name })}
+                        >
+                          Delete
+                        </Button>
+                      )}
                     </div>
-                  </div>
+                  </Card>
                 ))}
               </div>
-              {totalProjectPages > 1 && (
-                <div className="teams-pagination">
-                  <span>Page {currentProjectPage} of {totalProjectPages}</span>
-                  <div style={{ display: "flex", gap: "0.4rem" }}>
-                    <button
-                      type="button"
-                      disabled={currentProjectPage <= 1}
-                      onClick={() => setProjectPage((page) => Math.max(1, page - 1))}
-                      style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: "6px", padding: "0.3rem 0.6rem", opacity: currentProjectPage <= 1 ? 0.5 : 1 }}
-                    >
-                      Back
-                    </button>
-                    <button
-                      type="button"
-                      disabled={currentProjectPage >= totalProjectPages}
-                      onClick={() => setProjectPage((page) => Math.min(totalProjectPages, page + 1))}
-                      style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: "6px", padding: "0.3rem 0.6rem", opacity: currentProjectPage >= totalProjectPages ? 0.5 : 1 }}
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              )}
+              <Pagination
+                page={currentProjectPage}
+                totalPages={totalProjectPages}
+                onPageChange={setProjectPage}
+              />
             </>
           )}
         </>

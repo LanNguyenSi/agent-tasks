@@ -19,8 +19,14 @@ import {
 } from "../../lib/api";
 import AppHeader from "../../components/AppHeader";
 import AlertBanner from "../../components/ui/AlertBanner";
+import { Button } from "../../components/ui/Button";
+import Card from "../../components/ui/Card";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import DropdownMenu from "../../components/ui/DropdownMenu";
+import EmptyState from "../../components/ui/EmptyState";
+import FormField from "../../components/ui/FormField";
+import Modal from "../../components/ui/Modal";
+import Pagination from "../../components/ui/Pagination";
 
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
@@ -209,12 +215,7 @@ function BoardColumns({
   onSelectTask: (taskId: string) => void;
 }) {
   return (
-    <div
-      className="board-columns"
-      style={{
-        alignItems: "start",
-      }}
-    >
+    <div className="board-columns" style={{ alignItems: "start" }}>
       {STATUSES.map((status) => {
         const columnTasks = sortTasksForBoardColumn(tasks.filter((task) => task.status === status));
         return (
@@ -592,8 +593,7 @@ export default function DashboardPage() {
           alignItems: "end",
         }}
       >
-        <div>
-          <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Team</label>
+        <FormField label="Team">
           <select
             value={selectedTeamId}
             onChange={(event) => {
@@ -608,37 +608,38 @@ export default function DashboardPage() {
               </option>
             ))}
           </select>
-        </div>
+        </FormField>
 
         <div className="project-select-wrap">
-          <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>Project</label>
-          <button
-            ref={projectTriggerRef}
-            type="button"
-            disabled={loading || !selectedTeamId || projects.length === 0}
-            onClick={() => setProjectMenuOpen((value) => !value)}
-            style={{
-              width: "100%",
-              background: "var(--surface)",
-              color: "var(--text)",
-              border: "1px solid var(--border)",
-              borderRadius: "8px",
-              padding: "0.5rem 0.75rem",
-              textAlign: "left",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: "0.5rem",
-              opacity: loading || !selectedTeamId || projects.length === 0 ? 0.7 : 1,
-            }}
-            aria-haspopup="menu"
-            aria-expanded={projectMenuOpen}
-          >
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {projects.find((project) => project.id === selectedProjectId)?.name ?? "Select a project"}
-            </span>
-            <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>{projectMenuOpen ? "▲" : "▼"}</span>
-          </button>
+          <FormField label="Project">
+            <button
+              ref={projectTriggerRef}
+              type="button"
+              disabled={loading || !selectedTeamId || projects.length === 0}
+              onClick={() => setProjectMenuOpen((value) => !value)}
+              style={{
+                width: "100%",
+                background: "var(--surface)",
+                color: "var(--text)",
+                border: "1px solid var(--border)",
+                borderRadius: "8px",
+                padding: "0.5rem 0.75rem",
+                textAlign: "left",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "0.5rem",
+                opacity: loading || !selectedTeamId || projects.length === 0 ? 0.7 : 1,
+              }}
+              aria-haspopup="menu"
+              aria-expanded={projectMenuOpen}
+            >
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {projects.find((project) => project.id === selectedProjectId)?.name ?? "Select a project"}
+              </span>
+              <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>{projectMenuOpen ? "▲" : "▼"}</span>
+            </button>
+          </FormField>
           <DropdownMenu
             anchorRef={projectTriggerRef}
             open={projectMenuOpen}
@@ -694,107 +695,72 @@ export default function DashboardPage() {
               </button>
             </div>
           </div>
-          <button
-            type="button"
+          <Button
             onClick={() => {
               setError(null);
               setShowNewTask(true);
             }}
             disabled={!selectedProjectId}
-            style={{
-              background: "var(--primary)",
-              color: "white",
-              border: "none",
-              borderRadius: "8px",
-              padding: "0.5rem 0.85rem",
-              fontWeight: 600,
-              opacity: selectedProjectId ? 1 : 0.7,
-            }}
           >
             + New Task
-          </button>
+          </Button>
         </div>
       </section>
 
-      {showNewTask && (
-        <div className="modal-overlay" onClick={closeNewTaskModal}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.7rem" }}>
-              <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>New Task</h3>
-              <button
-                type="button"
-                onClick={closeNewTaskModal}
-                style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: "6px", padding: "0.2rem 0.5rem" }}
-              >
-                Close
-              </button>
+      <Modal open={showNewTask} onClose={closeNewTaskModal} title="New Task">
+        <form onSubmit={(e) => void handleCreateTask(e)}>
+          <div style={{ marginBottom: "0.75rem" }}>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <FormField label="Title">
+                <input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} required style={{ width: "100%" }} />
+              </FormField>
             </div>
-            <form onSubmit={(e) => void handleCreateTask(e)}>
-              <div style={{ marginBottom: "0.75rem" }}>
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Title</label>
-                    <input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} required style={{ width: "100%" }} />
-                  </div>
 
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Description</label>
-                    <textarea value={newTaskDescription} onChange={(e) => setNewTaskDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
-                  </div>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <FormField label="Description">
+                <textarea value={newTaskDescription} onChange={(e) => setNewTaskDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
+              </FormField>
+            </div>
 
-                  <div className="new-task-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "0.5rem" }}>
-                    <div>
-                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Status</label>
-                      <select value={newTaskStatus} onChange={(e) => setNewTaskStatus(e.target.value as Status)} style={{ width: "100%" }}>
-                        {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Priority</label>
-                      <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value as Priority)} style={{ width: "100%" }}>
-                        <option value="LOW">LOW</option>
-                        <option value="MEDIUM">MEDIUM</option>
-                        <option value="HIGH">HIGH</option>
-                        <option value="CRITICAL">CRITICAL</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Due Date</label>
-                      <input type="date" value={newTaskDueAt} onChange={(e) => setNewTaskDueAt(e.target.value)} style={{ width: "100%" }} />
-                    </div>
-                  </div>
-                  <div style={{ marginTop: "0.5rem" }}>
-                    <label style={{ display: "block", color: "var(--muted)", fontSize: "0.75rem", marginBottom: "0.2rem" }}>Assignee</label>
-                    <select
-                      value={newTaskAssignee}
-                      onChange={(e) => setNewTaskAssignee(e.target.value as "unassigned" | "me")}
-                      style={{ width: "100%" }}
-                    >
-                      <option value="unassigned">Unassigned</option>
-                      <option value="me">Assign to me</option>
-                    </select>
-                  </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={creatingTask}
-                style={{
-                  background: "var(--primary)",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "8px",
-                  padding: "0.45rem 0.85rem",
-                  fontWeight: 600,
-                }}
-              >
-                {creatingTask ? "Creating…" : "Create task"}
-              </button>
-            </form>
+            <div className="new-task-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "0.5rem" }}>
+              <FormField label="Status">
+                <select value={newTaskStatus} onChange={(e) => setNewTaskStatus(e.target.value as Status)} style={{ width: "100%" }}>
+                  {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
+                </select>
+              </FormField>
+              <FormField label="Priority">
+                <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value as Priority)} style={{ width: "100%" }}>
+                  <option value="LOW">LOW</option>
+                  <option value="MEDIUM">MEDIUM</option>
+                  <option value="HIGH">HIGH</option>
+                  <option value="CRITICAL">CRITICAL</option>
+                </select>
+              </FormField>
+              <FormField label="Due Date">
+                <input type="date" value={newTaskDueAt} onChange={(e) => setNewTaskDueAt(e.target.value)} style={{ width: "100%" }} />
+              </FormField>
+            </div>
+            <div style={{ marginTop: "0.5rem" }}>
+              <FormField label="Assignee">
+                <select
+                  value={newTaskAssignee}
+                  onChange={(e) => setNewTaskAssignee(e.target.value as "unassigned" | "me")}
+                  style={{ width: "100%" }}
+                >
+                  <option value="unassigned">Unassigned</option>
+                  <option value="me">Assign to me</option>
+                </select>
+              </FormField>
+            </div>
           </div>
-        </div>
-      )}
 
-      <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.75rem", marginBottom: "0.9rem" }}>
+          <Button type="submit" disabled={creatingTask} loading={creatingTask} size="sm">
+            {creatingTask ? "Creating…" : "Create task"}
+          </Button>
+        </form>
+      </Modal>
+
+      <Card padding="sm" style={{ marginBottom: "0.9rem" }}>
         {viewMode === "list" && (
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.65rem" }}>
             <select
@@ -847,14 +813,16 @@ export default function DashboardPage() {
             </button>
           )}
         </div>
-        <div className="status-summary">
-          {STATUSES.map((status) => (
-            <span key={status} className="status-chip">
-              {STATUS_LABELS[status]}: {statusSummary[status]}
-            </span>
-          ))}
-        </div>
-      </section>
+        {viewMode === "list" && (
+          <div className="status-summary">
+            {STATUSES.map((status) => (
+              <span key={status} className="status-chip">
+                {STATUS_LABELS[status]}: {statusSummary[status]}
+              </span>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {loading ? (
         <div style={{ color: "var(--muted)", padding: "2rem", textAlign: "center" }}>Loading…</div>
@@ -863,13 +831,9 @@ export default function DashboardPage() {
           {error}
         </AlertBanner>
       ) : !selectedTeamId ? (
-        <div style={{ border: "1px dashed var(--border)", borderRadius: "10px", padding: "2rem", textAlign: "center", color: "var(--muted)" }}>
-          Select a team to continue.
-        </div>
+        <EmptyState message="Select a team to continue." />
       ) : !selectedProjectId ? (
-        <div style={{ border: "1px dashed var(--border)", borderRadius: "10px", padding: "2rem", textAlign: "center", color: "var(--muted)" }}>
-          Select a project to view tasks for {selectedTeam?.name ?? "this team"}.
-        </div>
+        <EmptyState message={`Select a project to view tasks for ${selectedTeam?.name ?? "this team"}.`} />
       ) : (
         <div className="dashboard-grid">
           <section style={{ minWidth: 0 }}>
@@ -934,142 +898,116 @@ export default function DashboardPage() {
                 )}
               </div>
             )}
-            {viewMode === "list" && listTotalPages > 1 && (
-              <div className="teams-pagination">
-                <span>Page {currentListPage} of {listTotalPages}</span>
-                <div style={{ display: "flex", gap: "0.4rem" }}>
-                  <button
-                    type="button"
-                    disabled={currentListPage <= 1}
-                    onClick={() => setListPage((page) => Math.max(1, page - 1))}
-                    style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: "6px", padding: "0.3rem 0.6rem", opacity: currentListPage <= 1 ? 0.5 : 1 }}
-                  >
-                    Back
-                  </button>
-                  <button
-                    type="button"
-                    disabled={currentListPage >= listTotalPages}
-                    onClick={() => setListPage((page) => Math.min(listTotalPages, page + 1))}
-                    style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: "6px", padding: "0.3rem 0.6rem", opacity: currentListPage >= listTotalPages ? 0.5 : 1 }}
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
+            {viewMode === "list" && (
+              <Pagination
+                page={currentListPage}
+                totalPages={listTotalPages}
+                onPageChange={setListPage}
+              />
             )}
           </section>
         </div>
       )}
 
       {activeTask && (
-        <div className="modal-overlay" onClick={() => setActiveTaskId(null)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.7rem" }}>
-              <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>Task Details</h3>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
-                <button
-                  type="button"
-                  onClick={() => setShowDeleteTaskConfirm(true)}
-                  disabled={savingTask || deletingTask}
-                  style={{ background: "transparent", color: "var(--danger)", border: "1px solid color-mix(in srgb, var(--danger) 60%, var(--border) 40%)", borderRadius: "6px", padding: "0.2rem 0.45rem", fontSize: "0.76rem" }}
-                >
-                  {deletingTask ? "Deleting…" : "Delete"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTaskId(null)}
-                  style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: "6px", padding: "0.2rem 0.5rem" }}
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <section style={{ marginBottom: "0.8rem" }}>
-                <p className="section-kicker">Overview</p>
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Title</label>
-                  <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ width: "100%" }} />
-                </div>
-                <div style={{ marginBottom: "0.3rem" }}>
-                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Description</label>
-                  <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
-                </div>
-              </section>
-
-              <section style={{ marginBottom: "0.8rem" }}>
-                <p className="section-kicker">Workflow</p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginBottom: "0.55rem" }}>
-                  <span className="status-chip">{STATUS_LABELS[activeTask.status as Status]}</span>
-                  <span className="status-chip">{activeTask.priority}</span>
-                  <span className="status-chip">{isOverdue(activeTask) ? "Overdue" : "On track"}</span>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", marginBottom: "0.5rem" }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Status</label>
-                    <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as Status)} style={{ width: "100%" }}>
-                      {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Priority</label>
-                    <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as Priority)} style={{ width: "100%" }}>
-                      <option value="LOW">LOW</option>
-                      <option value="MEDIUM">MEDIUM</option>
-                      <option value="HIGH">HIGH</option>
-                      <option value="CRITICAL">CRITICAL</option>
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.74rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Due Date</label>
-                  <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)} style={{ width: "100%" }} />
-                </div>
-              </section>
-
-              <section style={{ marginBottom: "0.8rem" }}>
-                <p className="section-kicker">Ownership</p>
-                <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.45rem 0.55rem", color: "var(--text)", fontSize: "0.84rem", background: "color-mix(in srgb, var(--surface) 88%, #0b111d 12%)" }}>
-                  {getClaimLabel(activeTask)}
-                </div>
-                <div style={{ display: "flex", gap: "0.45rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
-                  {!activeTask.claimedByUserId && !activeTask.claimedByAgentId && (
-                    <button
-                      type="button"
-                      onClick={() => void handleClaimActiveTask()}
-                      disabled={claimBusy || savingTask || deletingTask}
-                      style={{ background: "transparent", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.35rem 0.6rem" }}
-                    >
-                      {claimBusy ? "Claiming…" : "Claim for me"}
-                    </button>
-                  )}
-                  {activeTask.claimedByUserId === user?.id && (
-                    <button
-                      type="button"
-                      onClick={() => void handleReleaseActiveTask()}
-                      disabled={claimBusy || savingTask || deletingTask}
-                      style={{ background: "transparent", color: "var(--warning)", border: "1px solid var(--warning)", borderRadius: "8px", padding: "0.35rem 0.6rem" }}
-                    >
-                      {claimBusy ? "Releasing…" : "Release"}
-                    </button>
-                  )}
-                </div>
-              </section>
-
-              <div className="task-detail-actions" style={{ display: "flex", justifyContent: "flex-end", marginTop: "0.2rem" }}>
-                <button
-                  type="button"
-                  onClick={() => void handleSaveTask()}
-                  disabled={savingTask || deletingTask}
-                  style={{ background: "var(--primary)", color: "white", border: "none", borderRadius: "8px", padding: "0.45rem 0.7rem", fontWeight: 600 }}
-                >
-                  {savingTask ? "Saving…" : "Save changes"}
-                </button>
-              </div>
-            </div>
+        <Modal
+          open={Boolean(activeTask)}
+          onClose={() => setActiveTaskId(null)}
+          title="Task Details"
+          actions={
+            <Button
+              onClick={() => void handleSaveTask()}
+              disabled={savingTask || deletingTask}
+              loading={savingTask}
+              size="sm"
+            >
+              {savingTask ? "Saving…" : "Save changes"}
+            </Button>
+          }
+        >
+          <div style={{ position: "absolute", top: "1rem", right: "3.5rem" }}>
+            <Button
+              variant="outline-danger"
+              size="sm"
+              onClick={() => setShowDeleteTaskConfirm(true)}
+              disabled={savingTask || deletingTask}
+            >
+              {deletingTask ? "Deleting…" : "Delete"}
+            </Button>
           </div>
-        </div>
+
+          <section style={{ marginBottom: "0.8rem" }}>
+            <p className="section-kicker">Overview</p>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <FormField label="Title">
+                <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ width: "100%" }} />
+              </FormField>
+            </div>
+            <FormField label="Description">
+              <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
+            </FormField>
+          </section>
+
+          <section style={{ marginBottom: "0.8rem" }}>
+            <p className="section-kicker">Workflow</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginBottom: "0.55rem" }}>
+              <span className="status-chip">{STATUS_LABELS[activeTask.status as Status]}</span>
+              <span className="status-chip">{activeTask.priority}</span>
+              <span className="status-chip">{isOverdue(activeTask) ? "Overdue" : "On track"}</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", marginBottom: "0.5rem" }}>
+              <FormField label="Status">
+                <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as Status)} style={{ width: "100%" }}>
+                  {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
+                </select>
+              </FormField>
+              <FormField label="Priority">
+                <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as Priority)} style={{ width: "100%" }}>
+                  <option value="LOW">LOW</option>
+                  <option value="MEDIUM">MEDIUM</option>
+                  <option value="HIGH">HIGH</option>
+                  <option value="CRITICAL">CRITICAL</option>
+                </select>
+              </FormField>
+            </div>
+            <FormField label="Due Date">
+              <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)} style={{ width: "100%" }} />
+            </FormField>
+          </section>
+
+          <section style={{ marginBottom: "0.8rem" }}>
+            <p className="section-kicker">Ownership</p>
+            <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.45rem 0.55rem", color: "var(--text)", fontSize: "0.84rem", background: "color-mix(in srgb, var(--surface) 88%, #0b111d 12%)" }}>
+              {getClaimLabel(activeTask)}
+            </div>
+            <div style={{ display: "flex", gap: "0.45rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
+              {!activeTask.claimedByUserId && !activeTask.claimedByAgentId && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleClaimActiveTask()}
+                  disabled={claimBusy || savingTask || deletingTask}
+                  loading={claimBusy}
+                  style={{ color: "var(--text)" }}
+                >
+                  {claimBusy ? "Claiming…" : "Claim for me"}
+                </Button>
+              )}
+              {activeTask.claimedByUserId === user?.id && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleReleaseActiveTask()}
+                  disabled={claimBusy || savingTask || deletingTask}
+                  loading={claimBusy}
+                  style={{ color: "var(--warning)", borderColor: "var(--warning)" }}
+                >
+                  {claimBusy ? "Releasing…" : "Release"}
+                </Button>
+              )}
+            </div>
+          </section>
+        </Modal>
       )}
 
       <ConfirmDialog
