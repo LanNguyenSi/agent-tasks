@@ -282,7 +282,12 @@ taskRouter.patch("/tasks/:id", async (c) => {
     return forbidden(c, "Access denied to this project");
   }
 
-  const rawBody = await c.req.json();
+  let rawBody: Record<string, unknown>;
+  try {
+    rawBody = await c.req.json();
+  } catch {
+    return c.json({ error: "bad_request", message: "Invalid JSON body" }, 400);
+  }
 
   if (actor.type === "agent") {
     if (!actor.scopes.includes("tasks:update")) {
