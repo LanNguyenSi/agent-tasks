@@ -33,6 +33,10 @@ export interface Task {
   claimedByAgentId: string | null;
   claimedAt: string | null;
   dueAt: string | null;
+  branchName: string | null;
+  prUrl: string | null;
+  prNumber: number | null;
+  result: string | null;
   createdAt: string;
   updatedAt: string;
   attachments: TaskAttachment[];
@@ -257,6 +261,10 @@ export async function updateTask(
     priority?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
     status?: "open" | "in_progress" | "review" | "done";
     dueAt?: string | null;
+    branchName?: string | null;
+    prUrl?: string | null;
+    prNumber?: number | null;
+    result?: string | null;
   },
 ): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/tasks/${taskId}`, {

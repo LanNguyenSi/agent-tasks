@@ -92,6 +92,10 @@ const openApiSpec = {
           claimedByAgentId: { type: "string", format: "uuid", nullable: true },
           claimedAt: { type: "string", format: "date-time", nullable: true },
           dueAt: { type: "string", format: "date-time", nullable: true },
+          branchName: { type: "string", nullable: true, example: "fix/issue-42" },
+          prUrl: { type: "string", format: "uri", nullable: true, example: "https://github.com/owner/repo/pull/123" },
+          prNumber: { type: "integer", nullable: true, example: 123 },
+          result: { type: "string", nullable: true, description: "Agent output/summary after task completion" },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" },
           attachments: {
@@ -108,6 +112,49 @@ const openApiSpec = {
           "createdAt",
           "updatedAt",
         ],
+      },
+      AgentUpdateTaskRequest: {
+        type: "object",
+        properties: {
+          branchName: { type: "string", nullable: true, example: "fix/issue-42" },
+          prUrl: { type: "string", format: "uri", nullable: true },
+          prNumber: { type: "integer", nullable: true },
+          result: { type: "string", nullable: true },
+        },
+      },
+      TaskInstructions: {
+        type: "object",
+        properties: {
+          task: { $ref: "#/components/schemas/Task" },
+          currentState: {
+            type: "object",
+            nullable: true,
+            properties: {
+              name: { type: "string" },
+              label: { type: "string" },
+              terminal: { type: "boolean" },
+              agentInstructions: { type: "string", nullable: true },
+            },
+          },
+          agentInstructions: { type: "string", nullable: true, description: "What the agent should do right now" },
+          allowedTransitions: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                to: { type: "string" },
+                label: { type: "string" },
+              },
+              required: ["to"],
+            },
+          },
+          updatableFields: {
+            type: "array",
+            items: { type: "string" },
+            example: ["branchName", "prUrl", "prNumber", "result"],
+          },
+        },
+        required: ["task", "agentInstructions", "allowedTransitions", "updatableFields"],
       },
       ProjectRef: {
         type: "object",
@@ -415,6 +462,88 @@ const openApiSpec = {
           },
           "404": {
             description: "Task not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/tasks/{id}/instructions": {
+      get: {
+        tags: ["Tasks"],
+        summary: "Get task instructions for agent",
+        description:
+          "Returns the task with workflow context: current state, agent instructions, allowed transitions, and updatable fields. Requires scope: tasks:read.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Task instructions",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/TaskInstructions" },
+              },
+            },
+          },
+          "404": {
+            description: "Task not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/tasks/{id}/update": {
+      patch: {
+        tags: ["Tasks"],
+        summary: "Update task (agent-safe fields)",
+        description:
+          "Agents can update: branchName, prUrl, prNumber, result. Requires scope: tasks:update. Humans can update all fields.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/AgentUpdateTaskRequest" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Task updated",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { task: { $ref: "#/components/schemas/Task" } },
+                  required: ["task"],
+                },
+              },
+            },
+          },
+          "403": {
+            description: "Missing scope or forbidden fields",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorResponse" },

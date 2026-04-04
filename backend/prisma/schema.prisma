@@ -153,6 +153,13 @@ model Task {
 
   claimedAt        DateTime?
   dueAt            DateTime?
+
+  // Agent-populated fields
+  branchName       String?
+  prUrl            String?
+  prNumber         Int?
+  result           String?
+
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
