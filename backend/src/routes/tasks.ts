@@ -6,6 +6,7 @@ import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound, conflict } from "../middleware/error.js";
 import { hasProjectAccess } from "../services/team-access.js";
+import { logAuditEvent } from "../services/audit.js";
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -42,6 +43,17 @@ const updateTaskSchema = z.object({
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(),
   status: z.enum(["open", "in_progress", "review", "done"]).optional(),
   dueAt: z.string().datetime().nullable().optional(),
+  branchName: z.string().max(255).nullable().optional(),
+  prUrl: z.string().url().nullable().optional(),
+  prNumber: z.number().int().positive().nullable().optional(),
+  result: z.string().nullable().optional(),
+});
+
+const agentUpdateTaskSchema = z.object({
+  branchName: z.string().max(255).nullable().optional(),
+  prUrl: z.string().url().nullable().optional(),
+  prNumber: z.number().int().positive().nullable().optional(),
+  result: z.string().nullable().optional(),
 });
 
 const transitionSchema = z.object({
@@ -190,14 +202,57 @@ taskRouter.get("/tasks/:id", async (c) => {
   return c.json({ task });
 });
 
-// ── Update task ───────────────────────────────────────────────────────────────
+// ── Task instructions (agent context) ────────────────────────────────────────
 
-taskRouter.patch("/tasks/:id", zValidator("json", updateTaskSchema), async (c) => {
+taskRouter.get("/tasks/:id/instructions", async (c) => {
   const actor = c.get("actor") as Actor;
-  if (actor.type !== "human") {
-    return forbidden(c, "Agents cannot edit tasks");
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:read")) {
+    return forbidden(c, "Missing scope: tasks:read");
   }
 
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    include: { workflow: true, ...taskInclude },
+  });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  type WorkflowState = { name: string; label: string; terminal: boolean; agentInstructions?: string };
+  type WorkflowTransition = { from: string; to: string; label?: string; requiredRole?: string };
+
+  let currentState: WorkflowState | null = null;
+  let allowedTransitions: { to: string; label?: string }[] = [];
+
+  if (task.workflow) {
+    const def = task.workflow.definition as {
+      states: WorkflowState[];
+      transitions: WorkflowTransition[];
+      initialState: string;
+    };
+
+    currentState = def.states.find((s) => s.name === task.status) ?? null;
+    allowedTransitions = def.transitions
+      .filter((t) => t.from === task.status)
+      .map((t) => ({ to: t.to, label: t.label }));
+  }
+
+  return c.json({
+    task,
+    currentState,
+    agentInstructions: currentState?.agentInstructions ?? null,
+    allowedTransitions,
+    updatableFields: ["branchName", "prUrl", "prNumber", "result"],
+  });
+});
+
+// ── Update task ───────────────────────────────────────────────────────────────
+
+taskRouter.patch("/tasks/:id", async (c) => {
+  const actor = c.get("actor") as Actor;
   const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
   if (!task) return notFound(c);
 
@@ -205,7 +260,47 @@ taskRouter.patch("/tasks/:id", zValidator("json", updateTaskSchema), async (c) =
     return forbidden(c, "Access denied to this project");
   }
 
-  const body = c.req.valid("json");
+  const rawBody = await c.req.json();
+
+  if (actor.type === "agent") {
+    if (!actor.scopes.includes("tasks:update")) {
+      return forbidden(c, "Missing scope: tasks:update");
+    }
+
+    const forbiddenFields = ["title", "description", "priority", "status", "dueAt"];
+    const attempted = Object.keys(rawBody).filter((k) => forbiddenFields.includes(k));
+    if (attempted.length > 0) {
+      return c.json({ error: "forbidden", message: `Agents cannot update: ${attempted.join(", ")}` }, 403);
+    }
+
+    const parsed = agentUpdateTaskSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return c.json({ error: "bad_request", message: "Validation failed", details: parsed.error.flatten() }, 400);
+    }
+
+    const body = parsed.data;
+    const updated = await prisma.task.update({
+      where: { id: task.id },
+      data: {
+        ...(body.branchName !== undefined ? { branchName: body.branchName } : {}),
+        ...(body.prUrl !== undefined ? { prUrl: body.prUrl } : {}),
+        ...(body.prNumber !== undefined ? { prNumber: body.prNumber } : {}),
+        ...(body.result !== undefined ? { result: body.result } : {}),
+        updatedAt: new Date(),
+      },
+      include: taskInclude,
+    });
+
+    return c.json({ task: updated });
+  }
+
+  // Human path — full update
+  const parsed = updateTaskSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return c.json({ error: "bad_request", message: "Validation failed", details: parsed.error.flatten() }, 400);
+  }
+
+  const body = parsed.data;
   const updated = await prisma.task.update({
     where: { id: task.id },
     data: {
@@ -214,6 +309,10 @@ taskRouter.patch("/tasks/:id", zValidator("json", updateTaskSchema), async (c) =
       ...(body.priority !== undefined ? { priority: body.priority } : {}),
       ...(body.status !== undefined ? { status: body.status } : {}),
       ...(body.dueAt !== undefined ? { dueAt: body.dueAt ? new Date(body.dueAt) : null } : {}),
+      ...(body.branchName !== undefined ? { branchName: body.branchName } : {}),
+      ...(body.prUrl !== undefined ? { prUrl: body.prUrl } : {}),
+      ...(body.prNumber !== undefined ? { prNumber: body.prNumber } : {}),
+      ...(body.result !== undefined ? { result: body.result } : {}),
       updatedAt: new Date(),
     },
     include: taskInclude,
@@ -326,6 +425,14 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     include: taskInclude,
   });
 
+  void logAuditEvent({
+    action: "task.claimed",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: { actorType: actor.type, actorId: actor.type === "agent" ? actor.tokenId : actor.userId },
+  });
+
   return c.json({ task: updated });
 });
 
@@ -360,6 +467,14 @@ taskRouter.post("/tasks/:id/release", async (c) => {
     include: taskInclude,
   });
 
+  void logAuditEvent({
+    action: "task.released",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: { actorType: actor.type },
+  });
+
   return c.json({ task: updated });
 });
 
@@ -375,7 +490,10 @@ taskRouter.post(
       return forbidden(c, "Missing scope: tasks:transition");
     }
 
-    const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+    const task = await prisma.task.findUnique({
+      where: { id: c.req.param("id") },
+      include: { workflow: true },
+    });
     if (!task) return notFound(c);
 
     if (!(await hasProjectAccess(actor, task.projectId))) {
@@ -383,11 +501,52 @@ taskRouter.post(
     }
 
     const { status } = c.req.valid("json");
+    const previousStatus = task.status;
+
+    // Validate transition against workflow definition if task has a workflow
+    if (task.workflow) {
+      const def = task.workflow.definition as {
+        states: { name: string }[];
+        transitions: { from: string; to: string; requiredRole?: string }[];
+      };
+
+      const transition = def.transitions.find(
+        (t) => t.from === task.status && t.to === status,
+      );
+
+      if (!transition) {
+        return c.json(
+          { error: "bad_request", message: `Transition from '${task.status}' to '${status}' is not allowed by workflow` },
+          400,
+        );
+      }
+
+      if (transition.requiredRole && transition.requiredRole !== "any") {
+        if (actor.type === "agent") {
+          return forbidden(c, `This transition requires role: ${transition.requiredRole}`);
+        }
+        // For humans, check team membership role
+        const membership = await prisma.teamMember.findFirst({
+          where: { userId: actor.userId, team: { projects: { some: { id: task.projectId } } } },
+        });
+        if (membership?.role !== transition.requiredRole) {
+          return forbidden(c, `Requires role: ${transition.requiredRole}`);
+        }
+      }
+    }
 
     const updated = await prisma.task.update({
       where: { id: task.id },
       data: { status, updatedAt: new Date() },
       include: taskInclude,
+    });
+
+    void logAuditEvent({
+      action: "task.transitioned",
+      actorId: actor.type === "human" ? actor.userId : undefined,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: { from: previousStatus, to: status, actorType: actor.type },
     });
 
     return c.json({ task: updated });

@@ -13,6 +13,7 @@ const workflowStateSchema = z.object({
   name: z.string().min(1),
   label: z.string().min(1),
   terminal: z.boolean().default(false),
+  agentInstructions: z.string().optional(),
 });
 
 const workflowTransitionSchema = z.object({

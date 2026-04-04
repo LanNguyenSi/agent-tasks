@@ -27,6 +27,7 @@ const ALL_SCOPES = [
   { id: "tasks:claim", label: "Claim tasks" },
   { id: "tasks:comment", label: "Comment on tasks" },
   { id: "tasks:transition", label: "Transition tasks" },
+  { id: "tasks:update", label: "Update task fields (branch, PR, result)" },
   { id: "projects:read", label: "Read projects" },
   { id: "boards:read", label: "Read boards" },
 ];
