@@ -69,6 +69,7 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   attachments: TaskAttachment[];
+  comments?: Comment[];
   claimedByUser?: {
     id: string;
     login: string;
@@ -76,6 +77,23 @@ export interface Task {
     avatarUrl: string | null;
   } | null;
   claimedByAgent?: {
+    id: string;
+    name: string;
+  } | null;
+}
+
+export interface Comment {
+  id: string;
+  taskId: string;
+  content: string;
+  createdAt: string;
+  authorUser?: {
+    id: string;
+    login: string;
+    name: string | null;
+    avatarUrl: string | null;
+  } | null;
+  authorAgent?: {
     id: string;
     name: string;
   } | null;
@@ -339,6 +357,18 @@ export async function addTaskAttachment(
 
 export async function deleteTaskAttachment(taskId: string, attachmentId: string): Promise<void> {
   await request(`/api/tasks/${taskId}/attachments/${attachmentId}`, { method: "DELETE" });
+}
+
+export async function createComment(taskId: string, content: string): Promise<Comment> {
+  const data = await request<{ comment: Comment }>(`/api/tasks/${taskId}/comments`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+  return data.comment;
+}
+
+export async function deleteComment(taskId: string, commentId: string): Promise<void> {
+  await request(`/api/tasks/${taskId}/comments/${commentId}`, { method: "DELETE" });
 }
 
 export async function claimTask(taskId: string, force = false): Promise<Task> {

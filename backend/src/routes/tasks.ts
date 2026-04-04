@@ -196,7 +196,16 @@ taskRouter.get("/tasks/:id", async (c) => {
   const actor = c.get("actor") as Actor;
   const task = await prisma.task.findUnique({
     where: { id: c.req.param("id") },
-    include: { comments: true, ...taskInclude },
+    include: {
+      comments: {
+        orderBy: { createdAt: "asc" as const },
+        include: {
+          authorUser: { select: { id: true, login: true, name: true, avatarUrl: true } },
+          authorAgent: { select: { id: true, name: true } },
+        },
+      },
+      ...taskInclude,
+    },
   });
   if (!task) return notFound(c);
 
@@ -415,6 +424,76 @@ taskRouter.delete("/tasks/:id/attachments/:attachmentId", async (c) => {
   }
 
   await prisma.taskAttachment.delete({ where: { id: attachment.id } });
+  return c.json({ success: true });
+});
+
+// ── Comments ─────────────────────────────────────────────────────────────────
+
+const createCommentSchema = z.object({
+  content: z.string().min(1).max(5000),
+});
+
+taskRouter.post("/tasks/:id/comments", zValidator("json", createCommentSchema), async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:comment")) {
+    return forbidden(c, "Missing scope: tasks:comment");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const { content } = c.req.valid("json");
+  const comment = await prisma.comment.create({
+    data: {
+      taskId: task.id,
+      content,
+      authorUserId: actor.type === "human" ? actor.userId : null,
+      authorAgentId: actor.type === "agent" ? actor.tokenId : null,
+    },
+    include: {
+      authorUser: { select: { id: true, login: true, name: true, avatarUrl: true } },
+      authorAgent: { select: { id: true, name: true } },
+    },
+  });
+
+  void logAuditEvent({
+    action: "task.commented",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: { actorType: actor.type, commentId: comment.id },
+  });
+
+  return c.json({ comment }, 201);
+});
+
+taskRouter.delete("/tasks/:id/comments/:commentId", async (c) => {
+  const actor = c.get("actor") as Actor;
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const comment = await prisma.comment.findUnique({ where: { id: c.req.param("commentId") } });
+  if (!comment || comment.taskId !== task.id) return notFound(c);
+
+  // Only the author can delete their own comment
+  const isAuthor =
+    (actor.type === "human" && comment.authorUserId === actor.userId) ||
+    (actor.type === "agent" && comment.authorAgentId === actor.tokenId);
+
+  if (!isAuthor) {
+    return forbidden(c, "Only the comment author can delete this comment");
+  }
+
+  await prisma.comment.delete({ where: { id: comment.id } });
   return c.json({ success: true });
 });
 
