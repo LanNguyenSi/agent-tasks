@@ -975,6 +975,44 @@ export default function DashboardPage() {
             </FormField>
           </section>
 
+          {(activeTask.branchName || activeTask.prUrl || activeTask.result) && (
+            <section style={{ marginBottom: "0.8rem" }}>
+              <p className="section-kicker">Agent Output</p>
+              <div style={{ display: "grid", gap: "var(--space-2)" }}>
+                {activeTask.branchName && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-sm)" }}>
+                    <span style={{ color: "var(--muted)", minWidth: "4rem" }}>Branch</span>
+                    <code style={{ background: "var(--surface-secondary)", padding: "0.2rem 0.5rem", borderRadius: "var(--radius-sm)", fontSize: "var(--text-xs)", wordBreak: "break-all" }}>
+                      {activeTask.branchName}
+                    </code>
+                  </div>
+                )}
+                {activeTask.prUrl && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-sm)" }}>
+                    <span style={{ color: "var(--muted)", minWidth: "4rem" }}>PR</span>
+                    <a
+                      href={activeTask.prUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: "var(--text-sm)" }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {activeTask.prNumber ? `#${activeTask.prNumber}` : activeTask.prUrl}
+                    </a>
+                  </div>
+                )}
+                {activeTask.result && (
+                  <div style={{ fontSize: "var(--text-sm)" }}>
+                    <span style={{ color: "var(--muted)", display: "block", marginBottom: "var(--space-1)" }}>Result</span>
+                    <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                      {activeTask.result}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
           <section style={{ marginBottom: "0.8rem" }}>
             <p className="section-kicker">Ownership</p>
             <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.45rem 0.55rem", color: "var(--text)", fontSize: "var(--text-sm)", background: "color-mix(in srgb, var(--surface) 88%, #0b111d 12%)" }}>
