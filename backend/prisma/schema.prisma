@@ -27,6 +27,7 @@ model User {
   agentTokens   AgentToken[]
   tasks         Task[]       @relation("TaskCreator")
   claims        Task[]       @relation("TaskClaimant")
+  comments      Comment[]    @relation("CommentAuthor")
   auditLogs     AuditLog[]
 
   @@map("users")
@@ -86,6 +87,7 @@ model AgentToken {
   createdBy   User      @relation(fields: [createdById], references: [id])
   tasks       Task[]    @relation("TaskAgentCreator")
   claims      Task[]    @relation("TaskAgentClaimant")
+  comments    Comment[] @relation("CommentAgentAuthor")
 
   @@map("agent_tokens")
 }
@@ -211,13 +213,16 @@ enum TaskPriority {
 // ── Comments ─────────────────────────────────────────────────────────────────
 
 model Comment {
-  id        String   @id @default(uuid())
-  taskId    String
-  authorId  String
-  content   String
-  createdAt DateTime @default(now())
+  id             String      @id @default(uuid())
+  taskId         String
+  authorUserId   String?
+  authorAgentId  String?
+  content        String
+  createdAt      DateTime    @default(now())
 
-  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task           Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorUser     User?       @relation("CommentAuthor", fields: [authorUserId], references: [id])
+  authorAgent    AgentToken? @relation("CommentAgentAuthor", fields: [authorAgentId], references: [id])
 
   @@index([taskId])
   @@map("comments")

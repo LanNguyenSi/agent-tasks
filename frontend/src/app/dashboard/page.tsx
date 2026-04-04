@@ -14,10 +14,13 @@ import {
   claimTask,
   releaseTask,
   updateProject,
+  createComment,
+  deleteComment,
   type User,
   type Team,
   type Project,
   type Task,
+  type Comment,
   type TaskTemplate,
   type TemplateData,
   type TemplatePreset,
@@ -392,6 +395,8 @@ export default function DashboardPage() {
   const [editConstraints, setEditConstraints] = useState("");
 
   // Project settings modal
+  const [commentText, setCommentText] = useState("");
+  const [submittingComment, setSubmittingComment] = useState(false);
   const [showProjectSettings, setShowProjectSettings] = useState(false);
   const [settingsTemplateEnabled, setSettingsTemplateEnabled] = useState(false);
   const [settingsThreshold, setSettingsThreshold] = useState(60);
@@ -486,6 +491,7 @@ export default function DashboardPage() {
     setEditAcceptanceCriteria(activeTask.templateData?.acceptanceCriteria ?? "");
     setEditContext(activeTask.templateData?.context ?? "");
     setEditConstraints(activeTask.templateData?.constraints ?? "");
+    setCommentText("");
   }, [activeTask]);
 
   useEffect(() => {
@@ -1240,6 +1246,89 @@ export default function DashboardPage() {
                   {claimBusy ? "Releasing…" : "Release"}
                 </Button>
               )}
+            </div>
+          </section>
+
+          <section>
+            <p className="section-kicker">Comments</p>
+            {(activeTask.comments?.length ?? 0) === 0 ? (
+              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>No comments yet.</p>
+            ) : (
+              <div style={{ display: "grid", gap: "0.4rem", marginBottom: "0.5rem" }}>
+                {activeTask.comments!.map((comment: Comment) => {
+                  const authorName = comment.authorUser?.name ?? comment.authorUser?.login ?? (comment.authorAgent ? `Agent ${comment.authorAgent.name}` : "Unknown");
+                  const isOwn = comment.authorUser?.id === user?.id;
+                  return (
+                    <div key={comment.id} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem", fontSize: "var(--text-sm)", background: "var(--surface)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
+                        <span style={{ fontWeight: 600, fontSize: "var(--text-xs)", color: comment.authorAgent ? "var(--primary, #3b82f6)" : "var(--text)" }}>
+                          {authorName}
+                        </span>
+                        <span style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                          <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
+                            {new Date(comment.createdAt).toLocaleString()}
+                          </span>
+                          {isOwn && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await deleteComment(activeTask.id, comment.id);
+                                  setTasks((prev) => prev.map((t) =>
+                                    t.id === activeTask.id
+                                      ? { ...t, comments: t.comments?.filter((co) => co.id !== comment.id) }
+                                      : t,
+                                  ));
+                                } catch (err) {
+                                  setError((err as Error).message);
+                                }
+                              }}
+                              style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", fontSize: "var(--text-xs)", padding: "0" }}
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                      <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.4, color: "var(--text)" }}>{comment.content}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: "0.4rem" }}>
+              <textarea
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                placeholder="Write a comment..."
+                rows={2}
+                style={{ flex: 1, resize: "vertical", fontSize: "var(--text-sm)" }}
+              />
+              <Button
+                size="sm"
+                disabled={!commentText.trim() || submittingComment}
+                loading={submittingComment}
+                onClick={async () => {
+                  if (!commentText.trim()) return;
+                  setSubmittingComment(true);
+                  setError(null);
+                  try {
+                    const comment = await createComment(activeTask.id, commentText.trim());
+                    setTasks((prev) => prev.map((t) =>
+                      t.id === activeTask.id
+                        ? { ...t, comments: [...(t.comments ?? []), comment] }
+                        : t,
+                    ));
+                    setCommentText("");
+                  } catch (err) {
+                    setError((err as Error).message);
+                  } finally {
+                    setSubmittingComment(false);
+                  }
+                }}
+              >
+                Send
+              </Button>
             </div>
           </section>
         </Modal>
