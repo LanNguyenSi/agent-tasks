@@ -7,6 +7,7 @@ import {
   getCurrentUser,
   getTeams,
   getProjects,
+  getTasks,
   createProject,
   deleteProject,
   syncTeamFromGitHub,
@@ -28,7 +29,7 @@ import Pagination from "../../components/ui/Pagination";
 type ProjectSort = "name_asc" | "name_desc" | "newest" | "recent_sync";
 const PROJECT_PAGE_SIZE = 9;
 
-function ProjectCard({ project, href, onDelete }: { project: Project; href: string; onDelete?: () => void }) {
+function ProjectCard({ project, href, onDelete, activeTaskCount }: { project: Project; href: string; onDelete?: () => void; activeTaskCount?: number }) {
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -51,7 +52,19 @@ function ProjectCard({ project, href, onDelete }: { project: Project; href: stri
         ) : (
           <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>Manual project</p>
         )}
-        {project.description && <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>{project.description}</p>}
+        {project.description && <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.5rem" }}>{project.description}</p>}
+        {activeTaskCount !== undefined && activeTaskCount > 0 && (
+          <span
+            className="status-chip"
+            style={{
+              color: "var(--primary, #3b82f6)",
+              borderColor: "color-mix(in srgb, var(--primary, #3b82f6) 55%, var(--border) 45%)",
+              fontSize: "var(--text-xs)",
+            }}
+          >
+            {activeTaskCount} active {activeTaskCount === 1 ? "task" : "tasks"}
+          </span>
+        )}
         <DropdownMenu anchorRef={menuBtnRef} open={menuOpen} onClose={() => setMenuOpen(false)} minWidth={160}>
           <Link
             href={`/projects/workflows?projectId=${project.id}`}
@@ -94,6 +107,7 @@ export default function TeamsPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [deletingProject, setDeletingProject] = useState(false);
 
+  const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
   const [projectQuery, setProjectQuery] = useState("");
   const [projectSort, setProjectSort] = useState<ProjectSort>("name_asc");
   const [githubOnly, setGithubOnly] = useState(false);
@@ -208,6 +222,21 @@ export default function TeamsPage() {
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
   }, [projects, projectQuery, projectSort, githubOnly]);
+
+  useEffect(() => {
+    if (projects.length === 0) return;
+    let cancelled = false;
+    void Promise.all(
+      projects.map(async (p) => {
+        const tasks = await getTasks(p.id);
+        return [p.id, tasks.filter((t) => t.status !== "done").length] as const;
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      setTaskCounts(Object.fromEntries(results));
+    });
+    return () => { cancelled = true; };
+  }, [projects]);
 
   useEffect(() => {
     setProjectPage(1);
@@ -416,6 +445,7 @@ export default function TeamsPage() {
                     project={project}
                     href={`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`}
                     onDelete={!project.githubRepo ? () => setDeleteTarget({ id: project.id, name: project.name }) : undefined}
+                    activeTaskCount={taskCounts[project.id]}
                   />
                 ))}
               </div>
