@@ -34,6 +34,67 @@ export const templateDataSchema = z.object({
 
 export type TemplateData = z.infer<typeof templateDataSchema>;
 
+// ── Description Quality (no LLM, pure heuristics) ──────────────────────────
+
+// Common stop words (EN + DE) — high ratio = low information
+const STOP_WORDS = new Set([
+  "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+  "have", "has", "had", "do", "does", "did", "will", "would", "shall",
+  "should", "may", "might", "can", "could", "must", "and", "but", "or",
+  "nor", "not", "so", "yet", "for", "at", "by", "to", "in", "on", "of",
+  "with", "from", "as", "into", "it", "its", "this", "that", "these",
+  "those", "i", "we", "you", "he", "she", "they", "me", "us", "him",
+  "her", "them", "my", "our", "your", "his", "their",
+  "der", "die", "das", "ein", "eine", "und", "oder", "aber", "nicht",
+  "ist", "sind", "war", "wird", "hat", "haben", "sein", "werden",
+  "mit", "von", "für", "auf", "aus", "bei", "nach", "über", "unter",
+  "vor", "zu", "als", "auch", "noch", "nur", "dann", "wenn", "weil",
+  "ich", "du", "er", "sie", "es", "wir", "ihr", "man", "sich",
+]);
+
+/**
+ * Scores description quality 0.0–1.0 using pure text heuristics:
+ * - Length (diminishing returns)
+ * - Information density (unique non-stop words / total words)
+ * - Structure markers (lists, headings, code refs)
+ * - Concreteness (file paths, URLs, numbers, technical terms)
+ */
+export function descriptionQuality(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+
+  // ── Length score (0–0.25) — diminishing returns, caps at ~300 chars
+  const lenScore = Math.min(trimmed.length / 300, 1) * 0.25;
+
+  // ── Information density (0–0.30)
+  const words = trimmed.toLowerCase().split(/\s+/).filter((w) => w.length > 0);
+  const totalWords = words.length;
+  if (totalWords === 0) return lenScore;
+
+  const contentWords = words.filter((w) => !STOP_WORDS.has(w.replace(/[^a-zäöüß]/g, "")));
+  const uniqueContent = new Set(contentWords).size;
+  const densityRatio = totalWords > 0 ? uniqueContent / totalWords : 0;
+  const densityScore = Math.min(densityRatio / 0.5, 1) * 0.30;
+
+  // ── Structure (0–0.25) — lists, line breaks, sections
+  let structScore = 0;
+  const lines = trimmed.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length >= 2) structScore += 0.08;
+  if (lines.length >= 4) structScore += 0.07;
+  if (/^[\s]*[-*•]\s/m.test(trimmed)) structScore += 0.05;  // bullet lists
+  if (/^[\s]*\d+[.)]\s/m.test(trimmed)) structScore += 0.05; // numbered lists
+
+  // ── Concreteness (0–0.20) — file paths, URLs, code, numbers
+  let concreteScore = 0;
+  if (/[a-zA-Z_][a-zA-Z0-9_]*\.[a-z]{1,4}\b/.test(trimmed)) concreteScore += 0.05;  // file refs
+  if (/\/[a-zA-Z_]/.test(trimmed)) concreteScore += 0.05;    // paths
+  if (/`[^`]+`/.test(trimmed)) concreteScore += 0.04;         // inline code
+  if (/https?:\/\//.test(trimmed)) concreteScore += 0.03;     // URLs
+  if (/\d{2,}/.test(trimmed)) concreteScore += 0.03;          // numbers
+
+  return Math.min(lenScore + densityScore + structScore + concreteScore, 1);
+}
+
 // ── Confidence Scoring ──────────────────────────────────────────────────────
 
 export interface TemplateFields {
@@ -71,7 +132,7 @@ const RULES: Rule[] = [
   {
     field: "description",
     points: 15,
-    check: (input) => (input.description?.trim().length ?? 0) > 50,
+    check: (input) => descriptionQuality(input.description ?? "") >= 0.4,
   },
   {
     field: "goal",
@@ -111,7 +172,13 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
 
   for (const rule of activeRules) {
     maxPossible += rule.points;
-    if (rule.check(input)) {
+    if (rule.field === "description") {
+      // Description earns proportional points based on quality
+      const quality = descriptionQuality(input.description ?? "");
+      const descPoints = Math.round(rule.points * quality);
+      earned += descPoints;
+      if (quality < 0.4) missing.push(rule.field);
+    } else if (rule.check(input)) {
       earned += rule.points;
     } else {
       missing.push(rule.field);
