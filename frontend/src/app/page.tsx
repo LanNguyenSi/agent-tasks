@@ -56,6 +56,14 @@ export default function HomePage() {
 
           <div className="landing-feature-grid">
             <article className="landing-feature">
+              <h2>Confidence Scoring</h2>
+              <p>Every task gets a quality score — no AI, pure heuristics. Agents are blocked from claiming vague tasks. Humans get warnings, not blockers.</p>
+            </article>
+            <article className="landing-feature">
+              <h2>Task Templates</h2>
+              <p>Define structured fields per project. Ship reusable presets so your team writes complete specs in one click.</p>
+            </article>
+            <article className="landing-feature">
               <h2>Project Sync</h2>
               <p>Connect GitHub and sync repositories directly into projects.</p>
             </article>
@@ -67,6 +75,10 @@ export default function HomePage() {
               <h2>Agent API</h2>
               <p>Generate team-scoped tokens and use Swagger docs to automate task operations.</p>
             </article>
+            <article className="landing-feature">
+              <h2>Description Quality</h2>
+              <p>Built-in bullshit meter: measures information density, structure, and concreteness. Not character count — actual signal.</p>
+            </article>
           </div>
         </section>
       </main>
@@ -77,6 +89,8 @@ export default function HomePage() {
         </a>
         <span className="landing-footer-sep">/</span>
         <a href="/docs" className="landing-footer-link">API Docs</a>
+        <span className="landing-footer-sep">/</span>
+        <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>MIT License</span>
       </footer>
     </div>
   );
