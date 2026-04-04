@@ -313,6 +313,65 @@ export async function transitionTask(taskId: string, status: string): Promise<Ta
 
 // ── Audit ─────────────────────────────────────────────────────────────────────
 
+// ── Workflows ────────────────────────────────────────────────────────────────
+
+export interface WorkflowState {
+  name: string;
+  label: string;
+  terminal: boolean;
+  agentInstructions?: string;
+}
+
+export interface WorkflowTransition {
+  from: string;
+  to: string;
+  label?: string;
+  requiredRole?: string;
+}
+
+export interface WorkflowDefinition {
+  states: WorkflowState[];
+  transitions: WorkflowTransition[];
+  initialState: string;
+}
+
+export interface Workflow {
+  id: string;
+  projectId: string;
+  name: string;
+  isDefault: boolean;
+  definition: WorkflowDefinition;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getWorkflows(projectId: string): Promise<Workflow[]> {
+  const data = await request<{ workflows: Workflow[] }>(`/api/projects/${projectId}/workflows`);
+  return data.workflows;
+}
+
+export async function createWorkflow(
+  projectId: string,
+  body: { name: string; isDefault?: boolean; definition: WorkflowDefinition },
+): Promise<Workflow> {
+  const data = await request<{ workflow: Workflow }>(`/api/projects/${projectId}/workflows`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return data.workflow;
+}
+
+export async function updateWorkflow(
+  workflowId: string,
+  body: { name?: string; isDefault?: boolean; definition?: WorkflowDefinition },
+): Promise<Workflow> {
+  const data = await request<{ workflow: Workflow }>(`/api/workflows/${workflowId}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+  return data.workflow;
+}
+
 export async function getProjectAuditLogs(projectId: string, limit = 50): Promise<AuditLog[]> {
   const data = await request<{ logs: AuditLog[] }>(
     `/api/projects/${projectId}/audit?limit=${limit}`,

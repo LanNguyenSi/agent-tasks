@@ -37,16 +37,14 @@ function ProjectCard({ project, href, onDelete }: { project: Project; href: stri
       <Card interactive style={{ height: "100%", position: "relative" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.25rem" }}>
           <h3 style={{ fontWeight: 600, color: "var(--text)" }}>{project.name}</h3>
-          {onDelete && (
-            <button
-              ref={menuBtnRef}
-              className="project-card-menu-btn"
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpen((v) => !v); }}
-              aria-label={`Actions for ${project.name}`}
-            >
-              ···
-            </button>
-          )}
+          <button
+            ref={menuBtnRef}
+            className="project-card-menu-btn"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpen((v) => !v); }}
+            aria-label={`Actions for ${project.name}`}
+          >
+            ···
+          </button>
         </div>
         {project.githubRepo ? (
           <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>GitHub: {project.githubRepo}</p>
@@ -54,16 +52,23 @@ function ProjectCard({ project, href, onDelete }: { project: Project; href: stri
           <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>Manual project</p>
         )}
         {project.description && <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>{project.description}</p>}
-        {onDelete && (
-          <DropdownMenu anchorRef={menuBtnRef} open={menuOpen} onClose={() => setMenuOpen(false)} minWidth={140}>
+        <DropdownMenu anchorRef={menuBtnRef} open={menuOpen} onClose={() => setMenuOpen(false)} minWidth={160}>
+          <Link
+            href={`/projects/workflows?projectId=${project.id}`}
+            className="app-dropdown-item"
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(false); }}
+          >
+            Workflow
+          </Link>
+          {onDelete && (
             <button
               className="app-dropdown-item app-dropdown-item-danger"
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpen(false); onDelete(); }}
             >
               Delete project
             </button>
-          </DropdownMenu>
-        )}
+          )}
+        </DropdownMenu>
       </Card>
     </Link>
   );
