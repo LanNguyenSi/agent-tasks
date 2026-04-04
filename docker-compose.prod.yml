@@ -1,0 +1,90 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agent_tasks
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: agent_tasks
+    volumes:
+      - agent_tasks_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent_tasks -d agent_tasks"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - internal
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    environment:
+      DATABASE_URL: postgresql://agent_tasks:${POSTGRES_PASSWORD}@db:5432/agent_tasks
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: prod
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://agent_tasks:${POSTGRES_PASSWORD}@db:5432/agent_tasks
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET}
+      FRONTEND_URL: https://agent-tasks.opentriologue.ai
+      CORS_ORIGINS: https://agent-tasks.opentriologue.ai
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - internal
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.agent-tasks-api.rule: Host(`agent-tasks.opentriologue.ai`) && (PathPrefix(`/api`) || PathPrefix(`/docs`))
+      traefik.http.routers.agent-tasks-api.entrypoints: websecure
+      traefik.http.routers.agent-tasks-api.tls.certresolver: letsencrypt
+      traefik.http.services.agent-tasks-api.loadbalancer.server.port: "3001"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: prod
+      args:
+        NEXT_PUBLIC_API_URL: https://agent-tasks.opentriologue.ai
+    environment:
+      NODE_ENV: production
+      API_URL: http://backend:3001
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - internal
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.agent-tasks.rule: Host(`agent-tasks.opentriologue.ai`)
+      traefik.http.routers.agent-tasks.entrypoints: websecure
+      traefik.http.routers.agent-tasks.tls.certresolver: letsencrypt
+      traefik.http.services.agent-tasks.loadbalancer.server.port: "3000"
+
+volumes:
+  agent_tasks_postgres:
+
+networks:
+  internal:
+  traefik:
+    external: true

@@ -8,6 +8,7 @@ COPY frontend/package.json frontend/package.json
 RUN npm ci
 
 FROM base AS dev
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
 EXPOSE 3001
@@ -20,6 +21,7 @@ RUN npm run db:generate --workspace=backend
 RUN npm run build --workspace=backend
 
 FROM node:22-slim AS prod
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NODE_ENV=production
 
