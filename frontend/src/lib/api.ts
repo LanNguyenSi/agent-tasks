@@ -11,6 +11,15 @@ export interface User {
   githubConnected: boolean;
 }
 
+export interface TaskTemplate {
+  fields: {
+    goal: boolean;
+    acceptanceCriteria: boolean;
+    context: boolean;
+    constraints: boolean;
+  };
+}
+
 export interface Project {
   id: string;
   teamId: string;
@@ -19,7 +28,16 @@ export interface Project {
   description: string | null;
   githubRepo: string | null;
   githubSyncAt: string | null;
+  taskTemplate: TaskTemplate | null;
+  confidenceThreshold: number;
   createdAt: string;
+}
+
+export interface TemplateData {
+  goal?: string;
+  acceptanceCriteria?: string;
+  context?: string;
+  constraints?: string;
 }
 
 export interface Task {
@@ -29,6 +47,7 @@ export interface Task {
   description: string | null;
   status: string;
   priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  templateData: TemplateData | null;
   claimedByUserId: string | null;
   claimedByAgentId: string | null;
   claimedAt: string | null;
@@ -209,6 +228,23 @@ export async function getProject(id: string): Promise<Project> {
   return data.project;
 }
 
+export async function updateProject(
+  id: string,
+  body: {
+    name?: string;
+    description?: string;
+    githubRepo?: string;
+    taskTemplate?: TaskTemplate | null;
+    confidenceThreshold?: number;
+  },
+): Promise<Project> {
+  const data = await request<{ project: Project }>(`/api/projects/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  return data.project;
+}
+
 export async function deleteProject(id: string): Promise<void> {
   await request(`/api/projects/${id}`, { method: "DELETE" });
 }
@@ -244,6 +280,7 @@ export async function createTask(
     status?: "open" | "in_progress" | "review" | "done";
     priority?: string;
     dueAt?: string;
+    templateData?: TemplateData;
   },
 ): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/projects/${projectId}/tasks`, {
@@ -265,6 +302,7 @@ export async function updateTask(
     prUrl?: string | null;
     prNumber?: number | null;
     result?: string | null;
+    templateData?: TemplateData | null;
   },
 ): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/tasks/${taskId}`, {
@@ -293,8 +331,9 @@ export async function deleteTaskAttachment(taskId: string, attachmentId: string)
   await request(`/api/tasks/${taskId}/attachments/${attachmentId}`, { method: "DELETE" });
 }
 
-export async function claimTask(taskId: string): Promise<Task> {
-  const data = await request<{ task: Task }>(`/api/tasks/${taskId}/claim`, { method: "POST" });
+export async function claimTask(taskId: string, force = false): Promise<Task> {
+  const qs = force ? "?force=true" : "";
+  const data = await request<{ task: Task }>(`/api/tasks/${taskId}/claim${qs}`, { method: "POST" });
   return data.task;
 }
 

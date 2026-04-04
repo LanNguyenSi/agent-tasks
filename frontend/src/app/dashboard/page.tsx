@@ -13,12 +13,17 @@ import {
   deleteTask,
   claimTask,
   releaseTask,
+  updateProject,
   type User,
   type Team,
   type Project,
   type Task,
+  type TaskTemplate,
+  type TemplateData,
 } from "../../lib/api";
+import { calculateConfidence } from "../../lib/confidence";
 import AppHeader from "../../components/AppHeader";
+import ConfidenceBadge from "../../components/ConfidenceBadge";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
@@ -159,7 +164,7 @@ function TaskCard({
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.25rem" }}>
-        <p style={{ fontWeight: 600, fontSize: "var(--text-base)", lineHeight: 1.35 }}>{task.title}</p>
+        <p style={{ fontWeight: 600, fontSize: "var(--text-base)", lineHeight: 1.35, color: "var(--text)" }}>{task.title}</p>
         <span
           style={{
             width: "9px",
@@ -191,6 +196,7 @@ function TaskCard({
       <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", alignItems: "flex-end" }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
           <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>{task.priority}</span>
+          <ConfidenceBadge score={calculateConfidence({ title: task.title, description: task.description, templateData: task.templateData }).score} />
           {isOverdue(task) && (
             <span className="status-chip" style={{ color: "var(--danger)", borderColor: "color-mix(in srgb, var(--danger) 55%, var(--border) 45%)" }}>
               Overdue
@@ -268,6 +274,10 @@ export default function DashboardPage() {
   const [newTaskPriority, setNewTaskPriority] = useState<Priority>("MEDIUM");
   const [newTaskDueAt, setNewTaskDueAt] = useState("");
   const [newTaskAssignee, setNewTaskAssignee] = useState<"unassigned" | "me">("unassigned");
+  const [newTaskGoal, setNewTaskGoal] = useState("");
+  const [newTaskAcceptanceCriteria, setNewTaskAcceptanceCriteria] = useState("");
+  const [newTaskContext, setNewTaskContext] = useState("");
+  const [newTaskConstraints, setNewTaskConstraints] = useState("");
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
   const [hideDone, setHideDone] = useState(false);
@@ -343,6 +353,20 @@ export default function DashboardPage() {
   const [editPriority, setEditPriority] = useState<Priority>("MEDIUM");
   const [editStatus, setEditStatus] = useState<Status>("open");
   const [editDueAt, setEditDueAt] = useState("");
+  const [editGoal, setEditGoal] = useState("");
+  const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState("");
+  const [editContext, setEditContext] = useState("");
+  const [editConstraints, setEditConstraints] = useState("");
+
+  // Project settings modal
+  const [showProjectSettings, setShowProjectSettings] = useState(false);
+  const [settingsTemplateEnabled, setSettingsTemplateEnabled] = useState(false);
+  const [settingsThreshold, setSettingsThreshold] = useState(60);
+  const [settingsFieldGoal, setSettingsFieldGoal] = useState(true);
+  const [settingsFieldAC, setSettingsFieldAC] = useState(true);
+  const [settingsFieldContext, setSettingsFieldContext] = useState(true);
+  const [settingsFieldConstraints, setSettingsFieldConstraints] = useState(true);
+  const [savingSettings, setSavingSettings] = useState(false);
 
   function closeNewTaskModal() {
     setShowNewTask(false);
@@ -352,7 +376,14 @@ export default function DashboardPage() {
     setNewTaskPriority("MEDIUM");
     setNewTaskDueAt("");
     setNewTaskAssignee("unassigned");
+    setNewTaskGoal("");
+    setNewTaskAcceptanceCriteria("");
+    setNewTaskContext("");
+    setNewTaskConstraints("");
   }
+
+  const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
+  const templateFields = selectedProject?.taskTemplate?.fields ?? null;
 
   useEffect(() => {
     void (async () => {
@@ -417,6 +448,10 @@ export default function DashboardPage() {
     setEditPriority(activeTask.priority);
     setEditStatus(activeTask.status as Status);
     setEditDueAt(toDateInputValue(activeTask.dueAt));
+    setEditGoal(activeTask.templateData?.goal ?? "");
+    setEditAcceptanceCriteria(activeTask.templateData?.acceptanceCriteria ?? "");
+    setEditContext(activeTask.templateData?.context ?? "");
+    setEditConstraints(activeTask.templateData?.constraints ?? "");
   }, [activeTask]);
 
   useEffect(() => {
@@ -452,12 +487,20 @@ export default function DashboardPage() {
     setCreatingTask(true);
     setError(null);
     try {
+      const tplData: TemplateData = {};
+      if (newTaskGoal.trim()) tplData.goal = newTaskGoal.trim();
+      if (newTaskAcceptanceCriteria.trim()) tplData.acceptanceCriteria = newTaskAcceptanceCriteria.trim();
+      if (newTaskContext.trim()) tplData.context = newTaskContext.trim();
+      if (newTaskConstraints.trim()) tplData.constraints = newTaskConstraints.trim();
+      const hasTemplateData = Object.keys(tplData).length > 0;
+
       let task = await createTask(selectedProjectId, {
         title: newTaskTitle.trim(),
         description: newTaskDescription.trim() || undefined,
         status: newTaskStatus,
         priority: newTaskPriority,
         dueAt: toIsoDateOrNull(newTaskDueAt) ?? undefined,
+        ...(hasTemplateData ? { templateData: tplData } : {}),
       });
 
       if (newTaskAssignee === "me") {
@@ -483,12 +526,19 @@ export default function DashboardPage() {
     setSavingTask(true);
     setError(null);
     try {
+      const editTplData: TemplateData = {};
+      if (editGoal.trim()) editTplData.goal = editGoal.trim();
+      if (editAcceptanceCriteria.trim()) editTplData.acceptanceCriteria = editAcceptanceCriteria.trim();
+      if (editContext.trim()) editTplData.context = editContext.trim();
+      if (editConstraints.trim()) editTplData.constraints = editConstraints.trim();
+
       const updated = await updateTask(activeTask.id, {
         title: editTitle.trim(),
         description: editDescription.trim() || null,
         priority: editPriority,
         status: editStatus,
         dueAt: toIsoDateOrNull(editDueAt),
+        templateData: Object.keys(editTplData).length > 0 ? editTplData : null,
       });
       setTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
       setActiveTaskId(null);
@@ -591,6 +641,7 @@ export default function DashboardPage() {
               <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{projectMenuOpen ? "▲" : "▼"}</span>
             </button>
             {selectedProjectId && (
+              <>
               <Link
                 href={`/projects/workflows?projectId=${selectedProjectId}`}
                 className="project-settings-icon"
@@ -602,6 +653,29 @@ export default function DashboardPage() {
                   <path d="M6.83 2.17a.5.5 0 0 1 .49-.4h1.36a.5.5 0 0 1 .49.4l.2 1.1a4.5 4.5 0 0 1 1.09.63l1.05-.35a.5.5 0 0 1 .58.2l.68 1.18a.5.5 0 0 1-.1.6l-.84.75a4.5 4.5 0 0 1 0 1.26l.84.75a.5.5 0 0 1 .1.6l-.68 1.18a.5.5 0 0 1-.58.2l-1.05-.35a4.5 4.5 0 0 1-1.09.63l-.2 1.1a.5.5 0 0 1-.49.4H7.32a.5.5 0 0 1-.49-.4l-.2-1.1a4.5 4.5 0 0 1-1.09-.63l-1.05.35a.5.5 0 0 1-.58-.2l-.68-1.18a.5.5 0 0 1 .1-.6l.84-.75a4.5 4.5 0 0 1 0-1.26l-.84-.75a.5.5 0 0 1-.1-.6l.68-1.18a.5.5 0 0 1 .58-.2l1.05.35a4.5 4.5 0 0 1 1.09-.63l.2-1.1z" />
                 </svg>
               </Link>
+              <button
+                type="button"
+                className="project-settings-icon"
+                aria-label="Template settings"
+                title="Agent template & confidence settings"
+                onClick={() => {
+                  const proj = projects.find((p) => p.id === selectedProjectId);
+                  const tpl = proj?.taskTemplate;
+                  setSettingsTemplateEnabled(!!tpl);
+                  setSettingsThreshold(proj?.confidenceThreshold ?? 60);
+                  setSettingsFieldGoal(tpl?.fields?.goal ?? true);
+                  setSettingsFieldAC(tpl?.fields?.acceptanceCriteria ?? true);
+                  setSettingsFieldContext(tpl?.fields?.context ?? true);
+                  setSettingsFieldConstraints(tpl?.fields?.constraints ?? true);
+                  setShowProjectSettings(true);
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="2" width="12" height="12" rx="2" />
+                  <path d="M5 6h6M5 8h4M5 10h5" />
+                </svg>
+              </button>
+              </>
             )}
             </div>
           </FormField>
@@ -717,6 +791,50 @@ export default function DashboardPage() {
                 </select>
               </FormField>
             </div>
+
+            {templateFields && (
+              <div style={{ marginTop: "0.75rem", borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
+                <p style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: "0.5rem", color: "var(--text)" }}>Agent Template</p>
+                {templateFields.goal && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Goal">
+                      <textarea value={newTaskGoal} onChange={(e) => setNewTaskGoal(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="What should be achieved?" />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.acceptanceCriteria && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Acceptance Criteria">
+                      <textarea value={newTaskAcceptanceCriteria} onChange={(e) => setNewTaskAcceptanceCriteria(e.target.value)} rows={3} style={{ width: "100%", resize: "vertical" }} placeholder="When is this task done?" />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.context && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Context">
+                      <textarea value={newTaskContext} onChange={(e) => setNewTaskContext(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="Relevant files, links, dependencies…" />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.constraints && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Constraints">
+                      <textarea value={newTaskConstraints} onChange={(e) => setNewTaskConstraints(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="What must not happen?" />
+                    </FormField>
+                  </div>
+                )}
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
+                  Confidence:{" "}
+                  <ConfidenceBadge
+                    score={calculateConfidence({
+                      title: newTaskTitle,
+                      description: newTaskDescription || null,
+                      templateData: { goal: newTaskGoal || undefined, acceptanceCriteria: newTaskAcceptanceCriteria || undefined, context: newTaskContext || undefined, constraints: newTaskConstraints || undefined },
+                    }).score}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           <Button type="submit" disabled={creatingTask} loading={creatingTask} size="sm">
@@ -940,6 +1058,65 @@ export default function DashboardPage() {
             </FormField>
           </section>
 
+          {templateFields && (
+            <section style={{ marginBottom: "0.8rem" }}>
+              <p className="section-kicker">Agent Template</p>
+              {(() => {
+                const conf = calculateConfidence({
+                  title: editTitle,
+                  description: editDescription || null,
+                  templateData: { goal: editGoal || undefined, acceptanceCriteria: editAcceptanceCriteria || undefined, context: editContext || undefined, constraints: editConstraints || undefined },
+                });
+                const threshold = selectedProject?.confidenceThreshold ?? 60;
+                return (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem" }}>
+                      <ConfidenceBadge score={conf.score} size="md" />
+                      {conf.score < threshold && (
+                        <span style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}>
+                          Below threshold ({threshold}) — agents cannot claim this task
+                        </span>
+                      )}
+                    </div>
+                    {conf.missing.length > 0 && (
+                      <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginBottom: "0.5rem" }}>
+                        Missing: {conf.missing.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+              {templateFields.goal && (
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <FormField label="Goal">
+                    <textarea value={editGoal} onChange={(e) => setEditGoal(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
+                  </FormField>
+                </div>
+              )}
+              {templateFields.acceptanceCriteria && (
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <FormField label="Acceptance Criteria">
+                    <textarea value={editAcceptanceCriteria} onChange={(e) => setEditAcceptanceCriteria(e.target.value)} rows={3} style={{ width: "100%", resize: "vertical" }} />
+                  </FormField>
+                </div>
+              )}
+              {templateFields.context && (
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <FormField label="Context">
+                    <textarea value={editContext} onChange={(e) => setEditContext(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
+                  </FormField>
+                </div>
+              )}
+              {templateFields.constraints && (
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <FormField label="Constraints">
+                    <textarea value={editConstraints} onChange={(e) => setEditConstraints(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
+                  </FormField>
+                </div>
+              )}
+            </section>
+          )}
+
           {(activeTask.branchName || activeTask.prUrl || activeTask.result) && (
             <section style={{ marginBottom: "0.8rem" }}>
               <p className="section-kicker">Agent Output</p>
@@ -1025,6 +1202,85 @@ export default function DashboardPage() {
           setShowDeleteTaskConfirm(false);
         }}
       />
+
+      <Modal open={showProjectSettings} onClose={() => setShowProjectSettings(false)} title="Agent Template Settings">
+        <div style={{ marginBottom: "0.75rem" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "var(--text-sm)", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={settingsTemplateEnabled}
+              onChange={(e) => setSettingsTemplateEnabled(e.target.checked)}
+            />
+            Enable task template for this project
+          </label>
+        </div>
+
+        {settingsTemplateEnabled && (
+          <>
+            <div style={{ marginBottom: "0.75rem" }}>
+              <p style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: "0.4rem" }}>Template Fields</p>
+              <div style={{ display: "grid", gap: "0.3rem" }}>
+                {([
+                  ["goal", "Goal", settingsFieldGoal, setSettingsFieldGoal],
+                  ["acceptanceCriteria", "Acceptance Criteria", settingsFieldAC, setSettingsFieldAC],
+                  ["context", "Context", settingsFieldContext, setSettingsFieldContext],
+                  ["constraints", "Constraints", settingsFieldConstraints, setSettingsFieldConstraints],
+                ] as [string, string, boolean, (v: boolean) => void][]).map(([, label, checked, setter]) => (
+                  <label key={label} style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "var(--text-sm)", cursor: "pointer" }}>
+                    <input type="checkbox" checked={checked} onChange={(e) => setter(e.target.checked)} />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: "0.75rem" }}>
+              <FormField label={`Confidence Threshold: ${settingsThreshold}`}>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={settingsThreshold}
+                  onChange={(e) => setSettingsThreshold(Number(e.target.value))}
+                  style={{ width: "100%" }}
+                />
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--text-xs)", color: "var(--muted)" }}>
+                  <span>0 (no gate)</span>
+                  <span>100 (all fields required)</span>
+                </div>
+              </FormField>
+            </div>
+          </>
+        )}
+
+        <Button
+          size="sm"
+          disabled={savingSettings}
+          loading={savingSettings}
+          onClick={async () => {
+            if (!selectedProjectId) return;
+            setSavingSettings(true);
+            setError(null);
+            try {
+              const tpl: TaskTemplate | null = settingsTemplateEnabled
+                ? { fields: { goal: settingsFieldGoal, acceptanceCriteria: settingsFieldAC, context: settingsFieldContext, constraints: settingsFieldConstraints } }
+                : null;
+              const updated = await updateProject(selectedProjectId, {
+                taskTemplate: tpl,
+                confidenceThreshold: settingsThreshold,
+              });
+              setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+              setShowProjectSettings(false);
+            } catch (err) {
+              setError((err as Error).message);
+            } finally {
+              setSavingSettings(false);
+            }
+          }}
+        >
+          {savingSettings ? "Saving…" : "Save settings"}
+        </Button>
+      </Modal>
     </main>
   );
 }
