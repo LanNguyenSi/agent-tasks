@@ -35,6 +35,30 @@ import FormField from "../../components/ui/FormField";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
 
+const DEFAULT_PRESETS: TemplatePreset[] = [
+  {
+    name: "Bug Fix",
+    goal: "Fix [describe the bug] in [component/file].\nExpected behavior: [what should happen]\nActual behavior: [what happens instead]",
+    acceptanceCriteria: "- Bug is no longer reproducible\n- Root cause is identified and fixed (not just symptoms)\n- Regression test added that covers the exact failure case\n- No unrelated changes",
+    context: "- Affected file(s): [path/to/file.ts]\n- How to reproduce: [steps]\n- Related issue/ticket: [link]",
+    constraints: "- No breaking changes to public API\n- Keep backwards compatibility\n- Do not refactor surrounding code",
+  },
+  {
+    name: "Feature",
+    goal: "Implement [feature name].\n\n[Describe what the feature does, who it's for, and why it's needed]",
+    acceptanceCriteria: "- [Core behavior works as specified]\n- [Edge cases handled: empty state, errors, loading]\n- Tests written (unit + integration where applicable)\n- Types/interfaces updated",
+    context: "- Relevant existing code: [path/to/related.ts]\n- Design/spec: [link or description]\n- Dependencies: [libraries, APIs, other features]",
+    constraints: "- Follow existing code patterns and conventions\n- No new dependencies without justification\n- Must work with [browser/runtime requirements]",
+  },
+  {
+    name: "Refactoring",
+    goal: "Refactor [component/module] to [improve what exactly].\n\nMotivation: [why this refactoring is needed now]",
+    acceptanceCriteria: "- All existing tests still pass\n- No behavior changes (pure refactor)\n- Code is measurably [simpler/faster/more readable]\n- No new tech debt introduced",
+    context: "- Files to touch: [list of files]\n- Current pain points: [what makes the current code problematic]\n- Related refactoring: [other planned changes that depend on this]",
+    constraints: "- Pure refactor — zero behavior changes\n- Keep the PR focused, no scope creep\n- If a file isn't broken, don't touch it",
+  },
+];
+
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
 
@@ -669,7 +693,7 @@ export default function DashboardPage() {
                   setSettingsFieldAC(tpl?.fields?.acceptanceCriteria ?? true);
                   setSettingsFieldContext(tpl?.fields?.context ?? true);
                   setSettingsFieldConstraints(tpl?.fields?.constraints ?? true);
-                  setSettingsPresets(tpl?.presets ? [...tpl.presets] : []);
+                  setSettingsPresets(tpl?.presets?.length ? [...tpl.presets] : DEFAULT_PRESETS.map((p) => ({ ...p })));
                   setShowProjectSettings(true);
                 }}
               >
