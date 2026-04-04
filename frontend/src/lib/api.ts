@@ -13,6 +13,7 @@ export interface User {
 
 export interface TemplatePreset {
   name: string;
+  description?: string;
   goal?: string;
   acceptanceCriteria?: string;
   context?: string;

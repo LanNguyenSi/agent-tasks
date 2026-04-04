@@ -2,6 +2,19 @@
 
 Collaborative task platform for humans and AI agents. Manage projects, run kanban boards, and let agents claim, work, and transition tasks through configurable workflows — all with team-scoped API tokens and per-state instructions.
 
+**Live:** [agent-tasks.opentriologue.ai](https://agent-tasks.opentriologue.ai/)
+
+## Features
+
+- **Confidence scoring** — every task gets a deterministic quality score (no LLM). Agents are blocked from claiming vague tasks, humans see warnings.
+- **Description quality analysis** — heuristic bullshit meter: measures information density, structure markers, and concreteness instead of character count.
+- **Task templates** — structured fields (goal, acceptance criteria, context, constraints) configurable per project with reusable presets.
+- **Configurable workflows** — define states, transitions, required roles, and per-state agent instructions.
+- **Agent API** — team-scoped Bearer tokens with granular scopes. Full OpenAPI/Swagger docs.
+- **GitHub sync** — connect repos, sync projects, link branches and PRs to tasks.
+- **Board + list views** — kanban columns, filters, search, pagination, priority sorting.
+- **Audit trail** — every claim, transition, and update is logged with actor and timestamp.
+
 ## Stack
 
 - **Frontend:** Next.js 15 (React 19, App Router)
@@ -86,15 +99,26 @@ make docker-down
 | `/settings` | Account, GitHub connection, API tokens |
 | `/docs` | Interactive Swagger UI (served by backend) |
 
-## Wave Status
+## Confidence Scoring
 
-| Wave | Scope | Status |
-|------|-------|--------|
-| 1 | Monorepo, schema, auth shell, CI | ✅ Done |
-| 1.5 | Authz hardening + route/service/repository split | ✅ Done |
-| 2 | GitHub OAuth, session management | ✅ Done |
-| 3 | Full task/project/board features, UI design system | ✅ Done |
-| 4 | Integration hardening, policies | ⏳ Planned |
+Every task gets a deterministic confidence score (0–100%) that measures whether a task has enough information for an agent to work on it. Agents are blocked from claiming low-confidence tasks via the API (422), humans see a warning in the UI.
+
+**How it works — no LLM, pure heuristics:**
+
+| Signal | What it measures |
+|--------|-----------------|
+| Title | Is there a title at all? |
+| Description quality | Length (diminishing returns), information density (unique content words vs stop words, EN+DE), structure (lists, sections, line breaks), concreteness (file paths, URLs, code refs, numbers) |
+| Template fields | Goal, acceptance criteria, context, constraints — only counted when enabled per project |
+
+The score normalizes against what's configured: a project without templates can still reach 100% with a well-written description. A project with all template fields enabled requires more structured input.
+
+**Template presets** let teams define reusable starting points (Bug Fix, Feature, Refactoring) that pre-fill description and template fields with actionable placeholder text. One click, then replace the `[brackets]`.
+
+```
+GET /api/tasks/{id}/instructions → { ..., confidence: { score, missing, threshold } }
+POST /api/tasks/{id}/claim       → 422 if score < threshold (agents only, bypass with ?force=true)
+```
 
 ## API Highlights
 
@@ -180,3 +204,14 @@ GET /api/tasks/{id}/instructions  →  { agentInstructions, allowedTransitions, 
 ```
 
 Typical flow: discover tasks via `/api/tasks/claimable`, claim with `/api/tasks/{id}/claim`, get instructions via `/api/tasks/{id}/instructions`, work on the task, update `branchName`/`prUrl`/`result` via `PATCH /api/tasks/{id}`, then transition via `/api/tasks/{id}/transition`.
+
+## Contributing
+
+1. Fork the repo
+2. Create a feature branch (`git checkout -b feat/my-feature`)
+3. Make your changes and ensure `make ci` passes
+4. Open a pull request
+
+## License
+
+MIT

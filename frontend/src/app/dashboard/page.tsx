@@ -38,6 +38,7 @@ import Pagination from "../../components/ui/Pagination";
 const DEFAULT_PRESETS: TemplatePreset[] = [
   {
     name: "Bug Fix",
+    description: "[Bug-Titel]: [Komponente/Datei]\n\nErwartet: [was sollte passieren]\nTatsächlich: [was passiert stattdessen]\nSchritte: [wie reproduzierbar]",
     goal: "Fix [describe the bug] in [component/file].\nExpected behavior: [what should happen]\nActual behavior: [what happens instead]",
     acceptanceCriteria: "- Bug is no longer reproducible\n- Root cause is identified and fixed (not just symptoms)\n- Regression test added that covers the exact failure case\n- No unrelated changes",
     context: "- Affected file(s): [path/to/file.ts]\n- How to reproduce: [steps]\n- Related issue/ticket: [link]",
@@ -45,6 +46,7 @@ const DEFAULT_PRESETS: TemplatePreset[] = [
   },
   {
     name: "Feature",
+    description: "[Feature-Name]\n\nWas: [was soll gebaut werden]\nWarum: [welches Problem wird gelöst]\nWie: [grober Ansatz / betroffene Dateien]",
     goal: "Implement [feature name].\n\n[Describe what the feature does, who it's for, and why it's needed]",
     acceptanceCriteria: "- [Core behavior works as specified]\n- [Edge cases handled: empty state, errors, loading]\n- Tests written (unit + integration where applicable)\n- Types/interfaces updated",
     context: "- Relevant existing code: [path/to/related.ts]\n- Design/spec: [link or description]\n- Dependencies: [libraries, APIs, other features]",
@@ -52,6 +54,7 @@ const DEFAULT_PRESETS: TemplatePreset[] = [
   },
   {
     name: "Refactoring",
+    description: "[Modul/Komponente] refactoren\n\nMotivation: [warum jetzt]\nZiel: [was wird besser — Lesbarkeit, Performance, Testbarkeit]",
     goal: "Refactor [component/module] to [improve what exactly].\n\nMotivation: [why this refactoring is needed now]",
     acceptanceCriteria: "- All existing tests still pass\n- No behavior changes (pure refactor)\n- Code is measurably [simpler/faster/more readable]\n- No new tech debt introduced",
     context: "- Files to touch: [list of files]\n- Current pain points: [what makes the current code problematic]\n- Related refactoring: [other planned changes that depend on this]",
@@ -168,10 +171,12 @@ function TaskCard({
   task,
   active,
   onSelect,
+  templateFields,
 }: {
   task: Task;
   active: boolean;
   onSelect: (taskId: string) => void;
+  templateFields?: { goal?: boolean; acceptanceCriteria?: boolean; context?: boolean; constraints?: boolean } | null;
 }) {
   return (
     <button
@@ -221,7 +226,7 @@ function TaskCard({
       <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", alignItems: "flex-end" }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
           <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>{task.priority}</span>
-          <ConfidenceBadge score={calculateConfidence({ title: task.title, description: task.description, templateData: task.templateData }).score} />
+          <ConfidenceBadge score={calculateConfidence({ title: task.title, description: task.description, templateData: task.templateData, templateFields }).score} />
           {isOverdue(task) && (
             <span className="status-chip" style={{ color: "var(--danger)", borderColor: "color-mix(in srgb, var(--danger) 55%, var(--border) 45%)" }}>
               Overdue
@@ -241,10 +246,12 @@ function BoardColumns({
   tasks,
   activeTaskId,
   onSelectTask,
+  templateFields,
 }: {
   tasks: Task[];
   activeTaskId: string | null;
   onSelectTask: (taskId: string) => void;
+  templateFields?: { goal?: boolean; acceptanceCriteria?: boolean; context?: boolean; constraints?: boolean } | null;
 }) {
   return (
     <div className="board-columns" style={{ alignItems: "start" }}>
@@ -269,6 +276,7 @@ function BoardColumns({
                   task={task}
                   active={task.id === activeTaskId}
                   onSelect={onSelectTask}
+                  templateFields={templateFields}
                 />
               ))
             )}
@@ -830,6 +838,7 @@ export default function DashboardPage() {
                         type="button"
                         className="filter-chip"
                         onClick={() => {
+                          if (preset.description !== undefined) setNewTaskDescription(preset.description);
                           if (preset.goal !== undefined) setNewTaskGoal(preset.goal);
                           if (preset.acceptanceCriteria !== undefined) setNewTaskAcceptanceCriteria(preset.acceptanceCriteria);
                           if (preset.context !== undefined) setNewTaskContext(preset.context);
@@ -876,6 +885,7 @@ export default function DashboardPage() {
                       title: newTaskTitle,
                       description: newTaskDescription || null,
                       templateData: { goal: newTaskGoal || undefined, acceptanceCriteria: newTaskAcceptanceCriteria || undefined, context: newTaskContext || undefined, constraints: newTaskConstraints || undefined },
+                      templateFields,
                     }).score}
                   />
                 </div>
@@ -975,7 +985,7 @@ export default function DashboardPage() {
               </p>
             </div>
             {viewMode === "board" ? (
-              <BoardColumns tasks={filteredTasks} activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} />
+              <BoardColumns tasks={filteredTasks} activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} templateFields={templateFields} />
             ) : (
               <div className="task-list-shell">
                 <div className="task-list-head">
@@ -1112,6 +1122,7 @@ export default function DashboardPage() {
                   title: editTitle,
                   description: editDescription || null,
                   templateData: { goal: editGoal || undefined, acceptanceCriteria: editAcceptanceCriteria || undefined, context: editContext || undefined, constraints: editConstraints || undefined },
+                  templateFields,
                 });
                 const threshold = selectedProject?.confidenceThreshold ?? 60;
                 return (
@@ -1324,6 +1335,13 @@ export default function DashboardPage() {
                     </button>
                   </div>
                   <div style={{ display: "grid", gap: "0.3rem" }}>
+                    <textarea
+                      value={preset.description ?? ""}
+                      onChange={(e) => { const next = [...settingsPresets]; next[idx] = { ...next[idx], description: e.target.value }; setSettingsPresets(next); }}
+                      placeholder="Description"
+                      rows={2}
+                      style={{ width: "100%", resize: "vertical", fontSize: "var(--text-xs)" }}
+                    />
                     {settingsFieldGoal && (
                       <textarea
                         value={preset.goal ?? ""}
