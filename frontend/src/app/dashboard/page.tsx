@@ -427,40 +427,6 @@ export default function DashboardPage() {
     setListPage(1);
   }, [selectedProjectId, taskQuery, taskScope, hideDone, listSort, viewMode]);
 
-  async function handleTeamChange(teamId: string) {
-    if (!teamId) return;
-    setSelectedTeamId(teamId);
-    setError(null);
-    setProjectMenuOpen(false);
-    setLoading(true);
-    try {
-      const teamProjects = await getProjects(teamId);
-      setProjects(teamProjects);
-      if (teamProjects.length === 0) {
-        setSelectedProjectId("");
-        setTasks([]);
-        setActiveTaskId(null);
-        updateUrl(teamId);
-        return;
-      }
-
-      const storedProjectId = readStoredProjectId(teamId);
-      const resolvedProject =
-        teamProjects.find((project) => project.id === storedProjectId) ?? teamProjects[0]!;
-      setSelectedProjectId(resolvedProject.id);
-      storeProjectId(teamId, resolvedProject.id);
-
-      const projectTasks = await getTasks(resolvedProject.id);
-      setTasks(projectTasks);
-      setActiveTaskId(null);
-      updateUrl(teamId, resolvedProject.id);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function handleProjectChange(projectId: string) {
     if (!selectedTeamId) return;
     setSelectedProjectId(projectId);
@@ -588,31 +554,15 @@ export default function DashboardPage() {
         className="dashboard-select-grid"
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(190px, 260px) minmax(220px, 360px) auto",
+          gridTemplateColumns: "minmax(220px, 360px) auto",
           gap: "0.6rem",
           marginBottom: "1rem",
           alignItems: "end",
         }}
       >
-        <FormField label="Team">
-          <select
-            value={selectedTeamId}
-            onChange={(event) => {
-              void handleTeamChange(event.target.value);
-            }}
-            style={{ width: "100%" }}
-            disabled={loading || teams.length === 0}
-          >
-            {teams.map((team) => (
-              <option key={team.id} value={team.id}>
-                {team.name}
-              </option>
-            ))}
-          </select>
-        </FormField>
-
         <div className="project-select-wrap">
           <FormField label="Project">
+            <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
             <button
               ref={projectTriggerRef}
               type="button"
@@ -640,6 +590,20 @@ export default function DashboardPage() {
               </span>
               <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{projectMenuOpen ? "▲" : "▼"}</span>
             </button>
+            {selectedProjectId && (
+              <Link
+                href={`/projects/workflows?projectId=${selectedProjectId}`}
+                className="project-settings-icon"
+                aria-label="Workflow settings"
+                title="Workflow settings"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="8" cy="8" r="2.5" />
+                  <path d="M6.83 2.17a.5.5 0 0 1 .49-.4h1.36a.5.5 0 0 1 .49.4l.2 1.1a4.5 4.5 0 0 1 1.09.63l1.05-.35a.5.5 0 0 1 .58.2l.68 1.18a.5.5 0 0 1-.1.6l-.84.75a4.5 4.5 0 0 1 0 1.26l.84.75a.5.5 0 0 1 .1.6l-.68 1.18a.5.5 0 0 1-.58.2l-1.05-.35a4.5 4.5 0 0 1-1.09.63l-.2 1.1a.5.5 0 0 1-.49.4H7.32a.5.5 0 0 1-.49-.4l-.2-1.1a4.5 4.5 0 0 1-1.09-.63l-1.05.35a.5.5 0 0 1-.58-.2l-.68-1.18a.5.5 0 0 1 .1-.6l.84-.75a4.5 4.5 0 0 1 0-1.26l-.84-.75a.5.5 0 0 1-.1-.6l.68-1.18a.5.5 0 0 1 .58-.2l1.05.35a4.5 4.5 0 0 1 1.09-.63l.2-1.1z" />
+                </svg>
+              </Link>
+            )}
+            </div>
           </FormField>
           <DropdownMenu
             anchorRef={projectTriggerRef}
@@ -671,18 +635,6 @@ export default function DashboardPage() {
                 );
               })}
             </div>
-            {selectedProjectId && (
-              <div style={{ borderTop: "1px solid var(--border)", padding: "var(--space-1)" }}>
-                <Link
-                  href={`/projects/workflows?projectId=${selectedProjectId}`}
-                  className="app-dropdown-item"
-                  onClick={() => setProjectMenuOpen(false)}
-                  style={{ fontSize: "var(--text-xs)" }}
-                >
-                  Workflow settings
-                </Link>
-              </div>
-            )}
           </DropdownMenu>
         </div>
 
