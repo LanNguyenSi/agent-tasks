@@ -35,6 +35,73 @@ const openApiSpec = {
         },
         required: ["error", "message"],
       },
+      TemplateData: {
+        type: "object",
+        description: "Structured task information for agents. Fields match the project's task template configuration.",
+        properties: {
+          goal: { type: "string", description: "What should be achieved" },
+          acceptanceCriteria: { type: "string", description: "When is the task done" },
+          context: { type: "string", description: "Relevant files, links, dependencies" },
+          constraints: { type: "string", description: "What must not happen" },
+        },
+      },
+      TemplatePreset: {
+        type: "object",
+        description: "A reusable preset that pre-fills template fields when creating a task.",
+        properties: {
+          name: { type: "string", example: "Bug Fix" },
+          goal: { type: "string" },
+          acceptanceCriteria: { type: "string" },
+          context: { type: "string" },
+          constraints: { type: "string" },
+        },
+        required: ["name"],
+      },
+      TaskTemplate: {
+        type: "object",
+        description: "Project-level template configuration for structured task data.",
+        properties: {
+          fields: {
+            type: "object",
+            properties: {
+              goal: { type: "boolean" },
+              acceptanceCriteria: { type: "boolean" },
+              context: { type: "boolean" },
+              constraints: { type: "boolean" },
+            },
+          },
+          presets: {
+            type: "array",
+            items: { $ref: "#/components/schemas/TemplatePreset" },
+            description: "Reusable presets that pre-fill template fields",
+          },
+        },
+        required: ["fields"],
+      },
+      Confidence: {
+        type: "object",
+        description: "Deterministic confidence score based on task completeness. Score below threshold blocks agent claims.",
+        properties: {
+          score: { type: "integer", minimum: 0, maximum: 100, example: 75 },
+          missing: {
+            type: "array",
+            items: { type: "string" },
+            example: ["constraints"],
+            description: "Template fields that are empty or missing",
+          },
+          threshold: { type: "integer", minimum: 0, maximum: 100, example: 60, description: "Project-configured minimum score for agent claims" },
+        },
+        required: ["score", "missing", "threshold"],
+      },
+      LowConfidenceError: {
+        type: "object",
+        properties: {
+          error: { type: "string", example: "low_confidence" },
+          message: { type: "string", example: "Task does not meet confidence threshold for agent claiming" },
+          details: { $ref: "#/components/schemas/Confidence" },
+        },
+        required: ["error", "message", "details"],
+      },
       Project: {
         type: "object",
         properties: {
@@ -45,6 +112,12 @@ const openApiSpec = {
           description: { type: "string", nullable: true },
           githubRepo: { type: "string", nullable: true, example: "owner/repo" },
           githubSyncAt: { type: "string", format: "date-time", nullable: true },
+          taskTemplate: {
+            nullable: true,
+            allOf: [{ $ref: "#/components/schemas/TaskTemplate" }],
+            description: "Template configuration with field toggles and reusable presets",
+          },
+          confidenceThreshold: { type: "integer", minimum: 0, maximum: 100, default: 60, description: "Minimum confidence score for agent claims" },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" },
         },
@@ -95,6 +168,11 @@ const openApiSpec = {
           branchName: { type: "string", nullable: true, example: "fix/issue-42" },
           prUrl: { type: "string", format: "uri", nullable: true, example: "https://github.com/owner/repo/pull/123" },
           prNumber: { type: "integer", nullable: true, example: 123 },
+          templateData: {
+            nullable: true,
+            allOf: [{ $ref: "#/components/schemas/TemplateData" }],
+            description: "Structured task data filled from template fields or presets",
+          },
           result: { type: "string", nullable: true, description: "Agent output/summary after task completion" },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" },
@@ -153,8 +231,9 @@ const openApiSpec = {
             items: { type: "string" },
             example: ["branchName", "prUrl", "prNumber", "result"],
           },
+          confidence: { $ref: "#/components/schemas/Confidence" },
         },
-        required: ["task", "agentInstructions", "allowedTransitions", "updatableFields"],
+        required: ["task", "agentInstructions", "allowedTransitions", "updatableFields", "confidence"],
       },
       ProjectRef: {
         type: "object",
@@ -186,6 +265,7 @@ const openApiSpec = {
           priority: { type: "string", enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
           workflowId: { type: "string", format: "uuid" },
           dueAt: { type: "string", format: "date-time" },
+          templateData: { $ref: "#/components/schemas/TemplateData" },
         },
         required: ["title"],
       },
@@ -557,7 +637,7 @@ const openApiSpec = {
       post: {
         tags: ["Tasks"],
         summary: "Claim task",
-        description: "Agent tokens require scope: tasks:claim. Claimed task is moved to in_progress.",
+        description: "Agent tokens require scope: tasks:claim. Claimed task is moved to in_progress. For agents, the task must meet the project's confidence threshold — otherwise a 422 is returned with the score, missing fields, and threshold. Use ?force=true to bypass the confidence check.",
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -565,6 +645,13 @@ const openApiSpec = {
             in: "path",
             required: true,
             schema: { type: "string", format: "uuid" },
+          },
+          {
+            name: "force",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["true"] },
+            description: "Set to 'true' to bypass the confidence threshold check (for agents that can self-research missing context).",
           },
         ],
         responses: {
@@ -593,6 +680,14 @@ const openApiSpec = {
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "422": {
+            description: "Task confidence score is below the project threshold. Only returned for agent callers (humans are not blocked). The response includes the current score, missing fields, and the threshold so the agent knows what to fill in.",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/LowConfidenceError" },
               },
             },
           },

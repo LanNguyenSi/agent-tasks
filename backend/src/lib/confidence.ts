@@ -2,6 +2,16 @@ import { z } from "zod";
 
 // ── Zod Schemas ─────────────────────────────────────────────────────────────
 
+export const templatePresetSchema = z.object({
+  name: z.string().min(1).max(100),
+  goal: z.string().optional(),
+  acceptanceCriteria: z.string().optional(),
+  context: z.string().optional(),
+  constraints: z.string().optional(),
+});
+
+export type TemplatePreset = z.infer<typeof templatePresetSchema>;
+
 export const taskTemplateSchema = z.object({
   fields: z.object({
     goal: z.boolean().default(false),
@@ -9,6 +19,7 @@ export const taskTemplateSchema = z.object({
     context: z.boolean().default(false),
     constraints: z.boolean().default(false),
   }),
+  presets: z.array(templatePresetSchema).max(20).default([]),
 });
 
 export type TaskTemplate = z.infer<typeof taskTemplateSchema>;

@@ -11,6 +11,14 @@ export interface User {
   githubConnected: boolean;
 }
 
+export interface TemplatePreset {
+  name: string;
+  goal?: string;
+  acceptanceCriteria?: string;
+  context?: string;
+  constraints?: string;
+}
+
 export interface TaskTemplate {
   fields: {
     goal: boolean;
@@ -18,6 +26,7 @@ export interface TaskTemplate {
     context: boolean;
     constraints: boolean;
   };
+  presets?: TemplatePreset[];
 }
 
 export interface Project {

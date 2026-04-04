@@ -20,6 +20,7 @@ import {
   type Task,
   type TaskTemplate,
   type TemplateData,
+  type TemplatePreset,
 } from "../../lib/api";
 import { calculateConfidence } from "../../lib/confidence";
 import AppHeader from "../../components/AppHeader";
@@ -367,6 +368,7 @@ export default function DashboardPage() {
   const [settingsFieldContext, setSettingsFieldContext] = useState(true);
   const [settingsFieldConstraints, setSettingsFieldConstraints] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsPresets, setSettingsPresets] = useState<TemplatePreset[]>([]);
 
   function closeNewTaskModal() {
     setShowNewTask(false);
@@ -667,6 +669,7 @@ export default function DashboardPage() {
                   setSettingsFieldAC(tpl?.fields?.acceptanceCriteria ?? true);
                   setSettingsFieldContext(tpl?.fields?.context ?? true);
                   setSettingsFieldConstraints(tpl?.fields?.constraints ?? true);
+                  setSettingsPresets(tpl?.presets ? [...tpl.presets] : []);
                   setShowProjectSettings(true);
                 }}
               >
@@ -795,6 +798,25 @@ export default function DashboardPage() {
             {templateFields && (
               <div style={{ marginTop: "0.75rem", borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
                 <p style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: "0.5rem", color: "var(--text)" }}>Agent Template</p>
+                {(selectedProject?.taskTemplate?.presets?.length ?? 0) > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginBottom: "0.5rem" }}>
+                    {selectedProject!.taskTemplate!.presets!.map((preset) => (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        className="filter-chip"
+                        onClick={() => {
+                          if (preset.goal !== undefined) setNewTaskGoal(preset.goal);
+                          if (preset.acceptanceCriteria !== undefined) setNewTaskAcceptanceCriteria(preset.acceptanceCriteria);
+                          if (preset.context !== undefined) setNewTaskContext(preset.context);
+                          if (preset.constraints !== undefined) setNewTaskConstraints(preset.constraints);
+                        }}
+                      >
+                        {preset.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {templateFields.goal && (
                   <div style={{ marginBottom: "0.5rem" }}>
                     <FormField label="Goal">
@@ -1250,6 +1272,82 @@ export default function DashboardPage() {
                 </div>
               </FormField>
             </div>
+
+            <div style={{ marginBottom: "0.75rem" }}>
+              <p style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: "0.4rem" }}>Presets</p>
+              <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginBottom: "0.4rem" }}>
+                Reusable starting points that pre-fill template fields when creating a task.
+              </p>
+              {settingsPresets.map((preset, idx) => (
+                <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem", marginBottom: "0.4rem", background: "var(--surface)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
+                    <input
+                      value={preset.name}
+                      onChange={(e) => {
+                        const next = [...settingsPresets];
+                        next[idx] = { ...next[idx], name: e.target.value };
+                        setSettingsPresets(next);
+                      }}
+                      placeholder="Preset name"
+                      style={{ fontWeight: 600, fontSize: "var(--text-sm)", flex: 1 }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setSettingsPresets(settingsPresets.filter((_, i) => i !== idx))}
+                      style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", fontSize: "var(--text-sm)", padding: "0 0.3rem" }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div style={{ display: "grid", gap: "0.3rem" }}>
+                    {settingsFieldGoal && (
+                      <textarea
+                        value={preset.goal ?? ""}
+                        onChange={(e) => { const next = [...settingsPresets]; next[idx] = { ...next[idx], goal: e.target.value }; setSettingsPresets(next); }}
+                        placeholder="Goal"
+                        rows={1}
+                        style={{ width: "100%", resize: "vertical", fontSize: "var(--text-xs)" }}
+                      />
+                    )}
+                    {settingsFieldAC && (
+                      <textarea
+                        value={preset.acceptanceCriteria ?? ""}
+                        onChange={(e) => { const next = [...settingsPresets]; next[idx] = { ...next[idx], acceptanceCriteria: e.target.value }; setSettingsPresets(next); }}
+                        placeholder="Acceptance Criteria"
+                        rows={1}
+                        style={{ width: "100%", resize: "vertical", fontSize: "var(--text-xs)" }}
+                      />
+                    )}
+                    {settingsFieldContext && (
+                      <textarea
+                        value={preset.context ?? ""}
+                        onChange={(e) => { const next = [...settingsPresets]; next[idx] = { ...next[idx], context: e.target.value }; setSettingsPresets(next); }}
+                        placeholder="Context"
+                        rows={1}
+                        style={{ width: "100%", resize: "vertical", fontSize: "var(--text-xs)" }}
+                      />
+                    )}
+                    {settingsFieldConstraints && (
+                      <textarea
+                        value={preset.constraints ?? ""}
+                        onChange={(e) => { const next = [...settingsPresets]; next[idx] = { ...next[idx], constraints: e.target.value }; setSettingsPresets(next); }}
+                        placeholder="Constraints"
+                        rows={1}
+                        style={{ width: "100%", resize: "vertical", fontSize: "var(--text-xs)" }}
+                      />
+                    )}
+                  </div>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="filter-chip"
+                onClick={() => setSettingsPresets([...settingsPresets, { name: "" }])}
+                style={{ marginTop: "0.2rem" }}
+              >
+                + Add preset
+              </button>
+            </div>
           </>
         )}
 
@@ -1262,8 +1360,9 @@ export default function DashboardPage() {
             setSavingSettings(true);
             setError(null);
             try {
+              const validPresets = settingsPresets.filter((p) => p.name.trim());
               const tpl: TaskTemplate | null = settingsTemplateEnabled
-                ? { fields: { goal: settingsFieldGoal, acceptanceCriteria: settingsFieldAC, context: settingsFieldContext, constraints: settingsFieldConstraints } }
+                ? { fields: { goal: settingsFieldGoal, acceptanceCriteria: settingsFieldAC, context: settingsFieldContext, constraints: settingsFieldConstraints }, presets: validPresets }
                 : null;
               const updated = await updateProject(selectedProjectId, {
                 taskTemplate: tpl,
