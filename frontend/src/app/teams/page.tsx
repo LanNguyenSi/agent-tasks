@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -19,6 +19,7 @@ import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
+import DropdownMenu from "../../components/ui/DropdownMenu";
 import EmptyState from "../../components/ui/EmptyState";
 import FormField from "../../components/ui/FormField";
 import Modal from "../../components/ui/Modal";
@@ -26,6 +27,47 @@ import Pagination from "../../components/ui/Pagination";
 
 type ProjectSort = "name_asc" | "name_desc" | "newest" | "recent_sync";
 const PROJECT_PAGE_SIZE = 9;
+
+function ProjectCard({ project, href, onDelete }: { project: Project; href: string; onDelete?: () => void }) {
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  return (
+    <Link href={href} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
+      <Card interactive style={{ height: "100%", position: "relative" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.25rem" }}>
+          <h3 style={{ fontWeight: 600, color: "var(--text)" }}>{project.name}</h3>
+          {onDelete && (
+            <button
+              ref={menuBtnRef}
+              className="project-card-menu-btn"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpen((v) => !v); }}
+              aria-label={`Actions for ${project.name}`}
+            >
+              ···
+            </button>
+          )}
+        </div>
+        {project.githubRepo ? (
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>GitHub: {project.githubRepo}</p>
+        ) : (
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>Manual project</p>
+        )}
+        {project.description && <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>{project.description}</p>}
+        {onDelete && (
+          <DropdownMenu anchorRef={menuBtnRef} open={menuOpen} onClose={() => setMenuOpen(false)} minWidth={140}>
+            <button
+              className="app-dropdown-item app-dropdown-item-danger"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpen(false); onDelete(); }}
+            >
+              Delete project
+            </button>
+          </DropdownMenu>
+        )}
+      </Card>
+    </Link>
+  );
+}
 
 export default function TeamsPage() {
   const router = useRouter();
@@ -364,33 +406,12 @@ export default function TeamsPage() {
             <>
               <div className="projects-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
                 {pagedProjects.map((project) => (
-                  <Card key={project.id}>
-                    <h3 style={{ fontWeight: 600, marginBottom: "0.25rem", color: "var(--text)" }}>{project.name}</h3>
-                    {project.githubRepo ? (
-                      <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>GitHub: {project.githubRepo}</p>
-                    ) : (
-                      <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>Manual project</p>
-                    )}
-                    {project.description && <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>{project.description}</p>}
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginTop: "0.85rem", flexWrap: "wrap" }}>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => router.push(`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`)}
-                      >
-                        Open board
-                      </Button>
-                      {!project.githubRepo && (
-                        <Button
-                          variant="outline-danger"
-                          size="sm"
-                          onClick={() => setDeleteTarget({ id: project.id, name: project.name })}
-                        >
-                          Delete
-                        </Button>
-                      )}
-                    </div>
-                  </Card>
+                  <ProjectCard
+                    key={project.id}
+                    project={project}
+                    href={`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`}
+                    onDelete={!project.githubRepo ? () => setDeleteTarget({ id: project.id, name: project.name }) : undefined}
+                  />
                 ))}
               </div>
               <Pagination

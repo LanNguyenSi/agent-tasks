@@ -152,59 +152,6 @@ const openApiSpec = {
     },
   },
   paths: {
-    "/api/projects": {
-      get: {
-        tags: ["Projects"],
-        summary: "List projects",
-        description:
-          "For human sessions, provide teamId. For agent tokens, teamId is inferred from the token.",
-        security: [{ bearerAuth: [] }],
-        parameters: [
-          {
-            name: "teamId",
-            in: "query",
-            required: false,
-            schema: { type: "string", format: "uuid" },
-            description: "Required for humans, optional/ignored for agent tokens.",
-          },
-        ],
-        responses: {
-          "200": {
-            description: "Project list",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: {
-                    projects: {
-                      type: "array",
-                      items: { $ref: "#/components/schemas/Project" },
-                    },
-                  },
-                  required: ["projects"],
-                },
-              },
-            },
-          },
-          "401": {
-            description: "Authentication required",
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/ErrorResponse" },
-              },
-            },
-          },
-          "403": {
-            description: "No team access",
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/ErrorResponse" },
-              },
-            },
-          },
-        },
-      },
-    },
     "/api/projects/available": {
       get: {
         tags: ["Projects"],
@@ -275,52 +222,6 @@ const openApiSpec = {
                   },
                   required: ["project"],
                 },
-              },
-            },
-          },
-          "404": {
-            description: "Project not found",
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/ErrorResponse" },
-              },
-            },
-          },
-        },
-      },
-      delete: {
-        tags: ["Projects"],
-        summary: "Delete project",
-        description: "Deletes the project and all related boards/tasks/workflows. Human users only.",
-        security: [{ bearerAuth: [] }],
-        parameters: [
-          {
-            name: "id",
-            in: "path",
-            required: true,
-            schema: { type: "string", format: "uuid" },
-          },
-        ],
-        responses: {
-          "200": {
-            description: "Project deleted",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: {
-                    success: { type: "boolean", example: true },
-                  },
-                  required: ["success"],
-                },
-              },
-            },
-          },
-          "403": {
-            description: "No project access",
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/ErrorResponse" },
               },
             },
           },
@@ -680,6 +581,63 @@ docsRouter.get("/docs", (c) => {
       .intro p { margin: 0; color: #b0b0b0; font-size: 14px; }
       .intro code { color: #7dd3fc; }
       #swagger-ui { max-width: 1200px; margin: 0 auto; }
+
+      /* ── Swagger UI dark overrides ─────────────────────────── */
+      .swagger-ui { color: #e0e0e0; }
+      .swagger-ui .topbar { display: none; }
+      .swagger-ui .info .title,
+      .swagger-ui .info h1,
+      .swagger-ui .info h2,
+      .swagger-ui .info h3,
+      .swagger-ui .opblock-tag { color: #f0f0f0; }
+      .swagger-ui .info .base-url,
+      .swagger-ui .info p,
+      .swagger-ui .info li,
+      .swagger-ui .opblock-description-wrapper p,
+      .swagger-ui .opblock-external-docs-wrapper p,
+      .swagger-ui table thead tr td,
+      .swagger-ui table thead tr th,
+      .swagger-ui .parameter__name,
+      .swagger-ui .parameter__type,
+      .swagger-ui .parameter__in,
+      .swagger-ui .response-col_status,
+      .swagger-ui .response-col_description,
+      .swagger-ui .response-col_links,
+      .swagger-ui label,
+      .swagger-ui .model-title,
+      .swagger-ui .model { color: #c8c8c8; }
+      .swagger-ui .scheme-container,
+      .swagger-ui .opblock .opblock-section-header { background: #1a1a1a; }
+      .swagger-ui section.models,
+      .swagger-ui section.models .model-container { background: #141414; }
+      .swagger-ui .opblock .opblock-summary { border-color: #2a2a2a; }
+      .swagger-ui .opblock { background: #141414; border-color: #2a2a2a; }
+      .swagger-ui .opblock .opblock-section-header h4 { color: #e0e0e0; }
+      .swagger-ui .opblock-body pre.microlight,
+      .swagger-ui .highlight-code { background: #0d0d0d !important; color: #e0e0e0; }
+      .swagger-ui .opblock-body pre span { color: #7dd3fc !important; }
+      .swagger-ui input[type=text],
+      .swagger-ui textarea,
+      .swagger-ui select { background: #1a1a1a; color: #e0e0e0; border-color: #333; }
+      .swagger-ui .btn { border-color: #444; color: #e0e0e0; }
+      .swagger-ui .btn.execute { background: #2563eb; border-color: #2563eb; }
+      .swagger-ui .model-box { background: #141414; }
+      .swagger-ui .prop-type { color: #7dd3fc; }
+      .swagger-ui .prop-format { color: #888; }
+      .swagger-ui section.models h4 { color: #e0e0e0; border-color: #2a2a2a; }
+      .swagger-ui .response-control-media-type__accept-message { color: #7dd3fc; }
+      .swagger-ui .markdown p,
+      .swagger-ui .markdown li,
+      .swagger-ui .renderedMarkdown p { color: #c8c8c8; }
+      .swagger-ui .opblock-tag:hover { background: rgba(255,255,255,0.03); }
+      .swagger-ui .expand-operation svg { fill: #999; }
+      .swagger-ui table tbody tr td { border-color: #2a2a2a; color: #c8c8c8; }
+      .swagger-ui .copy-to-clipboard { bottom: 5px; right: 5px; }
+      .swagger-ui .copy-to-clipboard button { background: #1a1a1a; border-color: #333; }
+      .swagger-ui .auth-wrapper .authorize { border-color: #22c55e; color: #22c55e; }
+      .swagger-ui .dialog-ux .modal-ux { background: #1a1a1a; border-color: #333; color: #e0e0e0; }
+      .swagger-ui .dialog-ux .modal-ux-header h3 { color: #f0f0f0; }
+      .swagger-ui .loading-container .loading::after { color: #999; }
     </style>
   </head>
   <body>

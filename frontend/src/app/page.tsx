@@ -30,39 +30,54 @@ export default function HomePage() {
   }
 
   return (
-    <main className="landing-shell">
-      <section className="landing-card">
-        <p className="landing-eyebrow">agent-tasks</p>
-        <h1 className="landing-title">Plan and ship work without workflow chaos.</h1>
-        <p className="landing-copy">
-          Keep every repository as a project, run a board and list for execution, and let humans plus agents
-          collaborate with team-scoped API tokens.
-        </p>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      <header className="landing-header">
+        <span className="landing-logo">agent-tasks</span>
+        <Link href="/auth" className="landing-header-link">Sign in</Link>
+      </header>
 
-        <div className="landing-cta-row">
-          <Link href="/auth" className="landing-cta-primary">
-            Sign in with email
-          </Link>
-          <a href="/api/auth/github" className="landing-cta-secondary">
-            Continue with GitHub
-          </a>
-        </div>
+      <main className="landing-shell" style={{ flex: 1 }}>
+        <section className="landing-card">
+          <p className="landing-eyebrow">agent-tasks</p>
+          <h1 className="landing-title">Plan and ship work without workflow chaos.</h1>
+          <p className="landing-copy">
+            Keep every repository as a project, run a board and list for execution, and let humans plus agents
+            collaborate with team-scoped API tokens.
+          </p>
 
-        <div className="landing-feature-grid">
-          <article className="landing-feature">
-            <h2>Project Sync</h2>
-            <p>Connect GitHub and sync repositories directly into projects.</p>
-          </article>
-          <article className="landing-feature">
-            <h2>Focused Boards</h2>
-            <p>Each project gets a default board plus a list view with filters and pagination.</p>
-          </article>
-          <article className="landing-feature">
-            <h2>Agent API</h2>
-            <p>Generate team-scoped tokens and use Swagger docs to automate task operations.</p>
-          </article>
-        </div>
-      </section>
-    </main>
+          <div className="landing-cta-row">
+            <Link href="/auth" className="landing-cta-primary">
+              Sign in with email
+            </Link>
+            <a href="/api/auth/github" className="landing-cta-secondary">
+              Continue with GitHub
+            </a>
+          </div>
+
+          <div className="landing-feature-grid">
+            <article className="landing-feature">
+              <h2>Project Sync</h2>
+              <p>Connect GitHub and sync repositories directly into projects.</p>
+            </article>
+            <article className="landing-feature">
+              <h2>Focused Boards</h2>
+              <p>Each project gets a default board plus a list view with filters and pagination.</p>
+            </article>
+            <article className="landing-feature">
+              <h2>Agent API</h2>
+              <p>Generate team-scoped tokens and use Swagger docs to automate task operations.</p>
+            </article>
+          </div>
+        </section>
+      </main>
+
+      <footer className="landing-footer">
+        <a href="https://github.com/LanNguyenSi/agent-tasks" target="_blank" rel="noopener noreferrer" className="landing-footer-link">
+          GitHub
+        </a>
+        <span className="landing-footer-sep">/</span>
+        <a href="/docs" className="landing-footer-link">API Docs</a>
+      </footer>
+    </div>
   );
 }
