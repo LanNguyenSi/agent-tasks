@@ -57,7 +57,7 @@ export default function HomePage() {
           <div className="landing-feature-grid">
             <article className="landing-feature">
               <h2>Confidence Scoring</h2>
-              <p>Every task gets a quality score — no AI, pure heuristics. Agents are blocked from claiming vague tasks. Humans get warnings, not blockers.</p>
+              <p>Every task gets a quality score - no AI, pure heuristics. Agents are blocked from claiming vague tasks. Humans get warnings, not blockers.</p>
             </article>
             <article className="landing-feature">
               <h2>Task Templates</h2>
@@ -77,7 +77,7 @@ export default function HomePage() {
             </article>
             <article className="landing-feature">
               <h2>Description Quality</h2>
-              <p>Built-in bullshit meter: measures information density, structure, and concreteness. Not character count — actual signal.</p>
+              <p>Built-in bullshit meter: measures information density, structure, and concreteness. Not character count - actual signal.</p>
             </article>
           </div>
         </section>
