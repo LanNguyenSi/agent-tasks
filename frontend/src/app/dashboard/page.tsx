@@ -16,6 +16,8 @@ import {
   updateProject,
   createComment,
   deleteComment,
+  addDependency,
+  removeDependency,
   type User,
   type Team,
   type Project,
@@ -1118,6 +1120,88 @@ export default function DashboardPage() {
             <FormField label="Due Date">
               <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)} style={{ width: "100%" }} />
             </FormField>
+          </section>
+
+          <section style={{ marginBottom: "0.8rem" }}>
+            <p className="section-kicker">Dependencies</p>
+            {(activeTask.blockedBy?.length ?? 0) === 0 && (activeTask.blocks?.length ?? 0) === 0 ? (
+              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>No dependencies.</p>
+            ) : (
+              <div style={{ display: "grid", gap: "0.3rem", marginBottom: "0.4rem" }}>
+                {activeTask.blockedBy?.map((dep) => (
+                  <div key={dep.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "var(--text-sm)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem" }}>
+                    <span>
+                      <span style={{ color: dep.status === "done" ? "var(--success, #22c55e)" : "var(--danger)" }}>
+                        {dep.status === "done" ? "done" : "blocks this"}
+                      </span>
+                      {" "}{dep.title}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await removeDependency(activeTask.id, dep.id);
+                          setTasks((prev) => prev.map((t) =>
+                            t.id === activeTask.id
+                              ? { ...t, blockedBy: t.blockedBy?.filter((d) => d.id !== dep.id) }
+                              : t,
+                          ));
+                        } catch (err) {
+                          setError((err as Error).message);
+                        }
+                      }}
+                      style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: "var(--text-xs)" }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                {activeTask.blocks?.map((dep) => (
+                  <div key={dep.id} style={{ fontSize: "var(--text-xs)", color: "var(--muted)", padding: "0.2rem 0.5rem" }}>
+                    blocks: {dep.title} ({dep.status})
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: "0.3rem" }}>
+              <select
+                id="dep-picker"
+                style={{ flex: 1, fontSize: "var(--text-sm)" }}
+                defaultValue=""
+              >
+                <option value="" disabled>Add blocker...</option>
+                {tasks
+                  .filter((t) => t.id !== activeTask.id && t.projectId === activeTask.projectId && !activeTask.blockedBy?.some((d) => d.id === t.id))
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>{t.title}</option>
+                  ))}
+              </select>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={async () => {
+                  const select = document.getElementById("dep-picker") as HTMLSelectElement;
+                  const blockerId = select.value;
+                  if (!blockerId) return;
+                  try {
+                    await addDependency(activeTask.id, blockerId);
+                    const blockerTask = tasks.find((t) => t.id === blockerId);
+                    if (blockerTask) {
+                      setTasks((prev) => prev.map((t) =>
+                        t.id === activeTask.id
+                          ? { ...t, blockedBy: [...(t.blockedBy ?? []), { id: blockerTask.id, title: blockerTask.title, status: blockerTask.status }] }
+                          : t,
+                      ));
+                    }
+                    select.value = "";
+                  } catch (err) {
+                    setError((err as Error).message);
+                  }
+                }}
+              >
+                Add
+              </Button>
+            </div>
           </section>
 
           {templateFields && (
