@@ -35,10 +35,18 @@ export type TemplateData = z.infer<typeof templateDataSchema>;
 
 // ── Confidence Scoring ──────────────────────────────────────────────────────
 
+export interface TemplateFields {
+  goal?: boolean;
+  acceptanceCriteria?: boolean;
+  context?: boolean;
+  constraints?: boolean;
+}
+
 interface ConfidenceInput {
   title: string;
   description: string | null;
   templateData: TemplateData | null;
+  templateFields?: TemplateFields | null;
 }
 
 interface ConfidenceResult {
@@ -46,7 +54,14 @@ interface ConfidenceResult {
   missing: string[];
 }
 
-const RULES: { field: string; points: number; check: (input: ConfidenceInput) => boolean }[] = [
+interface Rule {
+  field: string;
+  points: number;
+  templateField?: keyof TemplateFields;
+  check: (input: ConfidenceInput) => boolean;
+}
+
+const RULES: Rule[] = [
   {
     field: "title",
     points: 20,
@@ -60,36 +75,49 @@ const RULES: { field: string; points: number; check: (input: ConfidenceInput) =>
   {
     field: "goal",
     points: 20,
+    templateField: "goal",
     check: (input) => (input.templateData?.goal?.trim().length ?? 0) > 0,
   },
   {
     field: "acceptanceCriteria",
     points: 25,
+    templateField: "acceptanceCriteria",
     check: (input) => (input.templateData?.acceptanceCriteria?.trim().length ?? 0) > 0,
   },
   {
     field: "context",
     points: 10,
+    templateField: "context",
     check: (input) => (input.templateData?.context?.trim().length ?? 0) > 0,
   },
   {
     field: "constraints",
     points: 10,
+    templateField: "constraints",
     check: (input) => (input.templateData?.constraints?.trim().length ?? 0) > 0,
   },
 ];
 
 export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
-  let score = 0;
+  const activeRules = RULES.filter((rule) => {
+    if (!rule.templateField) return true;
+    return input.templateFields?.[rule.templateField] === true;
+  });
+
+  let earned = 0;
+  let maxPossible = 0;
   const missing: string[] = [];
 
-  for (const rule of RULES) {
+  for (const rule of activeRules) {
+    maxPossible += rule.points;
     if (rule.check(input)) {
-      score += rule.points;
+      earned += rule.points;
     } else {
       missing.push(rule.field);
     }
   }
+
+  const score = maxPossible > 0 ? Math.round((earned / maxPossible) * 100) : 100;
 
   return { score, missing };
 }

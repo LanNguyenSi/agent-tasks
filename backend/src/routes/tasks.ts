@@ -8,7 +8,7 @@ import { Prisma } from "@prisma/client";
 import { forbidden, notFound, conflict, lowConfidence } from "../middleware/error.js";
 import { hasProjectAccess } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
-import { templateDataSchema, calculateConfidence, type TemplateData } from "../lib/confidence.js";
+import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -220,7 +220,7 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     where: { id: c.req.param("id") },
     include: {
       workflow: true,
-      project: { select: { confidenceThreshold: true } },
+      project: { select: { confidenceThreshold: true, taskTemplate: true } },
       ...taskInclude,
     },
   });
@@ -249,10 +249,12 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
       .map((t) => ({ to: t.to, label: t.label }));
   }
 
+  const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
   const { score, missing } = calculateConfidence({
     title: task.title,
     description: task.description,
     templateData: task.templateData as TemplateData | null,
+    templateFields: tpl?.fields ?? null,
   });
 
   return c.json({
@@ -427,7 +429,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
 
   const task = await prisma.task.findUnique({
     where: { id: c.req.param("id") },
-    include: { project: { select: { confidenceThreshold: true } } },
+    include: { project: { select: { confidenceThreshold: true, taskTemplate: true } } },
   });
   if (!task) return notFound(c);
 
@@ -443,10 +445,12 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
   // Confidence gate — only blocks agents (humans get a UI warning instead)
   if (actor.type === "agent" && c.req.query("force") !== "true") {
     const threshold = task.project.confidenceThreshold;
+    const claimTpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
     const confidence = calculateConfidence({
       title: task.title,
       description: task.description,
       templateData: task.templateData as TemplateData | null,
+      templateFields: claimTpl?.fields ?? null,
     });
     if (confidence.score < threshold) {
       return lowConfidence(c, { ...confidence, threshold });

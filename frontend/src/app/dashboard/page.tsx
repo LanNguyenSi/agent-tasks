@@ -168,10 +168,12 @@ function TaskCard({
   task,
   active,
   onSelect,
+  templateFields,
 }: {
   task: Task;
   active: boolean;
   onSelect: (taskId: string) => void;
+  templateFields?: { goal?: boolean; acceptanceCriteria?: boolean; context?: boolean; constraints?: boolean } | null;
 }) {
   return (
     <button
@@ -221,7 +223,7 @@ function TaskCard({
       <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", alignItems: "flex-end" }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
           <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>{task.priority}</span>
-          <ConfidenceBadge score={calculateConfidence({ title: task.title, description: task.description, templateData: task.templateData }).score} />
+          <ConfidenceBadge score={calculateConfidence({ title: task.title, description: task.description, templateData: task.templateData, templateFields }).score} />
           {isOverdue(task) && (
             <span className="status-chip" style={{ color: "var(--danger)", borderColor: "color-mix(in srgb, var(--danger) 55%, var(--border) 45%)" }}>
               Overdue
@@ -241,10 +243,12 @@ function BoardColumns({
   tasks,
   activeTaskId,
   onSelectTask,
+  templateFields,
 }: {
   tasks: Task[];
   activeTaskId: string | null;
   onSelectTask: (taskId: string) => void;
+  templateFields?: { goal?: boolean; acceptanceCriteria?: boolean; context?: boolean; constraints?: boolean } | null;
 }) {
   return (
     <div className="board-columns" style={{ alignItems: "start" }}>
@@ -269,6 +273,7 @@ function BoardColumns({
                   task={task}
                   active={task.id === activeTaskId}
                   onSelect={onSelectTask}
+                  templateFields={templateFields}
                 />
               ))
             )}
@@ -876,6 +881,7 @@ export default function DashboardPage() {
                       title: newTaskTitle,
                       description: newTaskDescription || null,
                       templateData: { goal: newTaskGoal || undefined, acceptanceCriteria: newTaskAcceptanceCriteria || undefined, context: newTaskContext || undefined, constraints: newTaskConstraints || undefined },
+                      templateFields,
                     }).score}
                   />
                 </div>
@@ -975,7 +981,7 @@ export default function DashboardPage() {
               </p>
             </div>
             {viewMode === "board" ? (
-              <BoardColumns tasks={filteredTasks} activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} />
+              <BoardColumns tasks={filteredTasks} activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} templateFields={templateFields} />
             ) : (
               <div className="task-list-shell">
                 <div className="task-list-head">
@@ -1112,6 +1118,7 @@ export default function DashboardPage() {
                   title: editTitle,
                   description: editDescription || null,
                   templateData: { goal: editGoal || undefined, acceptanceCriteria: editAcceptanceCriteria || undefined, context: editContext || undefined, constraints: editConstraints || undefined },
+                  templateFields,
                 });
                 const threshold = selectedProject?.confidenceThreshold ?? 60;
                 return (
