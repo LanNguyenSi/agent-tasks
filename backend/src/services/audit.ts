@@ -13,6 +13,7 @@ export type AuditAction =
   | "task.released"
   | "task.transitioned"
   | "task.commented"
+  | "task.reviewed"
   | "project.created"
   | "project.updated"
   | "project.synced"

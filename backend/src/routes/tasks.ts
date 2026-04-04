@@ -796,3 +796,82 @@ taskRouter.post(
     return c.json({ task: updated });
   },
 );
+
+// ── Review task (approve / request changes) ──────────────────────────────────
+
+const reviewSchema = z.object({
+  action: z.enum(["approve", "request_changes"]),
+  comment: z.string().max(5000).optional(),
+});
+
+taskRouter.post(
+  "/tasks/:id/review",
+  zValidator("json", reviewSchema),
+  async (c) => {
+    const actor = c.get("actor") as Actor;
+
+    if (actor.type === "agent" && !actor.scopes.includes("tasks:transition")) {
+      return forbidden(c, "Missing scope: tasks:transition");
+    }
+
+    const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+    if (!task) return notFound(c);
+
+    if (!(await hasProjectAccess(actor, task.projectId))) {
+      return forbidden(c, "Access denied to this project");
+    }
+
+    if (task.status !== "review") {
+      return c.json({ error: "bad_request", message: "Task must be in review status" }, 400);
+    }
+
+    // Reviewer must not be the same as the claimant
+    const isSelfReview =
+      (actor.type === "human" && task.claimedByUserId === actor.userId) ||
+      (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
+    if (isSelfReview) {
+      return forbidden(c, "Cannot review your own task");
+    }
+
+    const { action, comment: reviewComment } = c.req.valid("json");
+    const newStatus = action === "approve" ? "done" : "in_progress";
+
+    // Create review comment first so it's included in the response
+    if (reviewComment?.trim()) {
+      const prefix = action === "approve" ? "Approved" : "Changes requested";
+      await prisma.comment.create({
+        data: {
+          taskId: task.id,
+          content: `[${prefix}] ${reviewComment.trim()}`,
+          authorUserId: actor.type === "human" ? actor.userId : null,
+          authorAgentId: actor.type === "agent" ? actor.tokenId : null,
+        },
+      });
+    }
+
+    const updated = await prisma.task.update({
+      where: { id: task.id },
+      data: { status: newStatus, updatedAt: new Date() },
+      include: {
+        comments: {
+          orderBy: { createdAt: "asc" as const },
+          include: {
+            authorUser: { select: { id: true, login: true, name: true, avatarUrl: true } },
+            authorAgent: { select: { id: true, name: true } },
+          },
+        },
+        ...taskInclude,
+      },
+    });
+
+    void logAuditEvent({
+      action: "task.reviewed",
+      actorId: actor.type === "human" ? actor.userId : undefined,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: { reviewAction: action, from: "review", to: newStatus, actorType: actor.type },
+    });
+
+    return c.json({ task: updated });
+  },
+);
