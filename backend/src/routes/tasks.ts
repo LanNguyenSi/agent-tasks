@@ -4,9 +4,11 @@ import { zValidator } from "@hono/zod-validator";
 import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
-import { forbidden, notFound, conflict } from "../middleware/error.js";
+import { Prisma } from "@prisma/client";
+import { forbidden, notFound, conflict, lowConfidence } from "../middleware/error.js";
 import { hasProjectAccess } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
+import { templateDataSchema, calculateConfidence, type TemplateData } from "../lib/confidence.js";
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -35,6 +37,7 @@ const createTaskSchema = z.object({
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).default("MEDIUM"),
   workflowId: z.string().uuid().optional(),
   dueAt: z.string().datetime().optional(),
+  templateData: templateDataSchema.optional(),
 });
 
 const updateTaskSchema = z.object({
@@ -47,6 +50,7 @@ const updateTaskSchema = z.object({
   prUrl: z.string().url().nullable().optional(),
   prNumber: z.number().int().positive().nullable().optional(),
   result: z.string().nullable().optional(),
+  templateData: templateDataSchema.nullable().optional(),
 });
 
 const agentUpdateTaskSchema = z.object({
@@ -111,6 +115,7 @@ taskRouter.post(
         priority: body.priority,
         workflowId: body.workflowId,
         dueAt: body.dueAt ? new Date(body.dueAt) : null,
+        ...(body.templateData !== undefined ? { templateData: body.templateData } : {}),
         createdByUserId: actor.type === "human" ? actor.userId : null,
         createdByAgentId: actor.type === "agent" ? actor.tokenId : null,
       },
@@ -213,7 +218,11 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
 
   const task = await prisma.task.findUnique({
     where: { id: c.req.param("id") },
-    include: { workflow: true, ...taskInclude },
+    include: {
+      workflow: true,
+      project: { select: { confidenceThreshold: true } },
+      ...taskInclude,
+    },
   });
   if (!task) return notFound(c);
 
@@ -240,12 +249,23 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
       .map((t) => ({ to: t.to, label: t.label }));
   }
 
+  const { score, missing } = calculateConfidence({
+    title: task.title,
+    description: task.description,
+    templateData: task.templateData as TemplateData | null,
+  });
+
   return c.json({
     task,
     currentState,
     agentInstructions: currentState?.agentInstructions ?? null,
     allowedTransitions,
     updatableFields: ["branchName", "prUrl", "prNumber", "result"],
+    confidence: {
+      score,
+      missing,
+      threshold: task.project.confidenceThreshold,
+    },
   });
 });
 
@@ -267,7 +287,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
       return forbidden(c, "Missing scope: tasks:update");
     }
 
-    const forbiddenFields = ["title", "description", "priority", "status", "dueAt"];
+    const forbiddenFields = ["title", "description", "priority", "status", "dueAt", "templateData"];
     const attempted = Object.keys(rawBody).filter((k) => forbiddenFields.includes(k));
     if (attempted.length > 0) {
       return c.json({ error: "forbidden", message: `Agents cannot update: ${attempted.join(", ")}` }, 403);
@@ -313,6 +333,9 @@ taskRouter.patch("/tasks/:id", async (c) => {
       ...(body.prUrl !== undefined ? { prUrl: body.prUrl } : {}),
       ...(body.prNumber !== undefined ? { prNumber: body.prNumber } : {}),
       ...(body.result !== undefined ? { result: body.result } : {}),
+      ...(body.templateData !== undefined
+        ? { templateData: body.templateData === null ? Prisma.JsonNull : body.templateData }
+        : {}),
       updatedAt: new Date(),
     },
     include: taskInclude,
@@ -402,7 +425,10 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     return forbidden(c, "Missing scope: tasks:claim");
   }
 
-  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    include: { project: { select: { confidenceThreshold: true } } },
+  });
   if (!task) return notFound(c);
 
   if (!(await hasProjectAccess(actor, task.projectId))) {
@@ -412,6 +438,19 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
   // Already claimed
   if (task.claimedByUserId || task.claimedByAgentId) {
     return conflict(c, "Task is already claimed");
+  }
+
+  // Confidence gate — only blocks agents (humans get a UI warning instead)
+  if (actor.type === "agent" && c.req.query("force") !== "true") {
+    const threshold = task.project.confidenceThreshold;
+    const confidence = calculateConfidence({
+      title: task.title,
+      description: task.description,
+      templateData: task.templateData as TemplateData | null,
+    });
+    if (confidence.score < threshold) {
+      return lowConfidence(c, { ...confidence, threshold });
+    }
   }
 
   const updated = await prisma.task.update({

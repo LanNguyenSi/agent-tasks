@@ -1,11 +1,13 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import { ensureDefaultBoardForProject } from "../services/board-default.js";
+import { taskTemplateSchema } from "../lib/confidence.js";
 
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -24,7 +26,10 @@ const createProjectSchema = z.object({
     .optional(),
 });
 
-const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, slug: true });
+const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, slug: true }).extend({
+  taskTemplate: taskTemplateSchema.nullable().optional(),
+  confidenceThreshold: z.number().int().min(0).max(100).optional(),
+});
 
 async function assertMembership(actor: Actor, teamId: string): Promise<boolean> {
   if (actor.type === "agent") {
@@ -183,10 +188,14 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
     return forbidden(c, "Access denied");
   }
 
-  const body = c.req.valid("json");
+  const { taskTemplate, ...rest } = c.req.valid("json");
+  const data: Prisma.ProjectUpdateInput = { ...rest };
+  if (taskTemplate !== undefined) {
+    data.taskTemplate = taskTemplate === null ? Prisma.JsonNull : taskTemplate;
+  }
   const updated = await prisma.project.update({
     where: { id: project.id },
-    data: body,
+    data,
   });
 
   return c.json({ project: updated });
