@@ -4,6 +4,7 @@ import { z } from "zod";
 
 export const templatePresetSchema = z.object({
   name: z.string().min(1).max(100),
+  description: z.string().optional(),
   goal: z.string().optional(),
   acceptanceCriteria: z.string().optional(),
   context: z.string().optional(),

@@ -47,9 +47,10 @@ const openApiSpec = {
       },
       TemplatePreset: {
         type: "object",
-        description: "A reusable preset that pre-fills template fields when creating a task.",
+        description: "A reusable preset that pre-fills description and template fields when creating a task.",
         properties: {
           name: { type: "string", example: "Bug Fix" },
+          description: { type: "string", description: "Pre-filled task description" },
           goal: { type: "string" },
           acceptanceCriteria: { type: "string" },
           context: { type: "string" },
