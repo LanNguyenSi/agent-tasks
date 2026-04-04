@@ -1,6 +1,6 @@
 # agent-tasks
 
-Collaborative task platform for humans and agents.
+Collaborative task platform for humans and AI agents. Manage projects, run kanban boards, and let agents claim, work, and transition tasks through configurable workflows — all with team-scoped API tokens and per-state instructions.
 
 ## Stack
 
@@ -82,6 +82,7 @@ make docker-down
 | `/onboarding` | First team creation |
 | `/teams` | Project management, GitHub sync |
 | `/dashboard` | Board + list view, task CRUD |
+| `/projects/workflows` | Workflow editor (states, transitions, agent instructions) |
 | `/settings` | Account, GitHub connection, API tokens |
 | `/docs` | Interactive Swagger UI (served by backend) |
 
@@ -136,17 +137,21 @@ GET  /api/projects/:id/tasks
 POST /api/projects/:id/tasks
 GET  /api/tasks/claimable          # Open + unclaimed
 GET  /api/tasks/:id
-PATCH /api/tasks/:id               # Humans only
+PATCH /api/tasks/:id               # Agents: branchName/prUrl/prNumber/result only
 DELETE /api/tasks/:id              # Humans only
 POST /api/tasks/:id/claim
 POST /api/tasks/:id/release
-POST /api/tasks/:id/transition
+POST /api/tasks/:id/transition     # Validated against workflow if assigned
+GET  /api/tasks/:id/instructions   # Agent context: state, instructions, allowed transitions
 
-# Boards & Workflows (humans)
+# Workflows
+GET  /api/projects/:id/workflows
+POST /api/projects/:id/workflows   # Humans only
+PUT  /api/workflows/:id            # Humans only
+
+# Boards (humans)
 GET  /api/projects/:id/boards
 POST /api/projects/:id/boards
-GET  /api/projects/:id/workflows
-POST /api/projects/:id/workflows
 
 # Audit
 GET  /api/projects/:id/audit
@@ -164,4 +169,14 @@ curl -H "Authorization: Bearer at_..." \
      http://localhost:3001/api/projects/{id}/tasks
 ```
 
-Available scopes: `tasks:read` `tasks:create` `tasks:claim` `tasks:comment` `tasks:transition` `projects:read` `boards:read`
+Available scopes: `tasks:read` `tasks:create` `tasks:claim` `tasks:comment` `tasks:transition` `tasks:update` `projects:read` `boards:read`
+
+### Agent Workflow
+
+Agents follow configurable per-project workflows. Each task can be assigned a workflow that defines valid status transitions and per-state instructions.
+
+```
+GET /api/tasks/{id}/instructions  →  { agentInstructions, allowedTransitions, updatableFields }
+```
+
+Typical flow: discover tasks via `/api/tasks/claimable`, claim with `/api/tasks/{id}/claim`, get instructions via `/api/tasks/{id}/instructions`, work on the task, update `branchName`/`prUrl`/`result` via `PATCH /api/tasks/{id}`, then transition via `/api/tasks/{id}/transition`.
