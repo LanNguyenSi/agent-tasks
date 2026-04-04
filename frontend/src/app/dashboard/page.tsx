@@ -385,6 +385,7 @@ export default function DashboardPage() {
   const [deletingTask, setDeletingTask] = useState(false);
   const [showDeleteTaskConfirm, setShowDeleteTaskConfirm] = useState(false);
   const [claimBusy, setClaimBusy] = useState(false);
+  const [depPickerValue, setDepPickerValue] = useState("");
 
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -494,6 +495,7 @@ export default function DashboardPage() {
     setEditContext(activeTask.templateData?.context ?? "");
     setEditConstraints(activeTask.templateData?.constraints ?? "");
     setCommentText("");
+    setDepPickerValue("");
   }, [activeTask]);
 
   useEffect(() => {
@@ -1165,9 +1167,9 @@ export default function DashboardPage() {
             )}
             <div style={{ display: "flex", gap: "0.3rem" }}>
               <select
-                id="dep-picker"
+                value={depPickerValue}
+                onChange={(e) => setDepPickerValue(e.target.value)}
                 style={{ flex: 1, fontSize: "var(--text-sm)" }}
-                defaultValue=""
               >
                 <option value="" disabled>Add blocker...</option>
                 {tasks
@@ -1179,13 +1181,12 @@ export default function DashboardPage() {
               <Button
                 size="sm"
                 variant="secondary"
+                disabled={!depPickerValue}
                 onClick={async () => {
-                  const select = document.getElementById("dep-picker") as HTMLSelectElement;
-                  const blockerId = select.value;
-                  if (!blockerId) return;
+                  if (!depPickerValue) return;
                   try {
-                    await addDependency(activeTask.id, blockerId);
-                    const blockerTask = tasks.find((t) => t.id === blockerId);
+                    await addDependency(activeTask.id, depPickerValue);
+                    const blockerTask = tasks.find((t) => t.id === depPickerValue);
                     if (blockerTask) {
                       setTasks((prev) => prev.map((t) =>
                         t.id === activeTask.id
@@ -1193,7 +1194,7 @@ export default function DashboardPage() {
                           : t,
                       ));
                     }
-                    select.value = "";
+                    setDepPickerValue("");
                   } catch (err) {
                     setError((err as Error).message);
                   }

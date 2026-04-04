@@ -509,6 +509,31 @@ taskRouter.delete("/tasks/:id/comments/:commentId", async (c) => {
 
 // ── Dependencies ─────────────────────────────────────────────────────────────
 
+/** BFS cycle detection: would adding blocker → task create a cycle? */
+async function wouldCreateCycle(taskId: string, blockerTaskId: string): Promise<boolean> {
+  // If adding blockerTaskId as a dependency of taskId, check whether
+  // taskId is already (transitively) blocking blockerTaskId.
+  const visited = new Set<string>();
+  const queue = [taskId];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current === blockerTaskId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    const downstream = await prisma.task.findMany({
+      where: { blockedBy: { some: { id: current } } },
+      select: { id: true },
+    });
+    for (const d of downstream) {
+      queue.push(d.id);
+    }
+  }
+
+  return false;
+}
+
 const dependencySchema = z.object({
   blockedByTaskId: z.string().uuid(),
 });
@@ -519,7 +544,10 @@ taskRouter.post("/tasks/:id/dependencies", zValidator("json", dependencySchema),
     return forbidden(c, "Only humans can manage dependencies");
   }
 
-  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    include: { blockedBy: { select: { id: true } } },
+  });
   if (!task) return notFound(c);
 
   if (!(await hasProjectAccess(actor, task.projectId))) {
@@ -531,9 +559,19 @@ taskRouter.post("/tasks/:id/dependencies", zValidator("json", dependencySchema),
     return c.json({ error: "bad_request", message: "A task cannot block itself" }, 400);
   }
 
+  // Check duplicate
+  if (task.blockedBy.some((d) => d.id === blockedByTaskId)) {
+    return c.json({ error: "bad_request", message: "Dependency already exists" }, 400);
+  }
+
   const blocker = await prisma.task.findUnique({ where: { id: blockedByTaskId } });
   if (!blocker || blocker.projectId !== task.projectId) {
     return c.json({ error: "bad_request", message: "Blocking task not found in this project" }, 400);
+  }
+
+  // Cycle detection
+  if (await wouldCreateCycle(task.id, blockedByTaskId)) {
+    return c.json({ error: "bad_request", message: "Adding this dependency would create a cycle" }, 400);
   }
 
   await prisma.task.update({
