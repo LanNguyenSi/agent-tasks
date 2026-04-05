@@ -26,7 +26,7 @@ const DEFAULT_DEFINITION: WorkflowDefinition = {
   states: [
     { name: "open", label: "Open", terminal: false, agentInstructions: "Claim this task, create a branch, then transition to in_progress." },
     { name: "in_progress", label: "In Progress", terminal: false, agentInstructions: "Implement the changes. When done, push the branch, create a PR, update prUrl and branchName, then transition to review." },
-    { name: "review", label: "In Review", terminal: false, agentInstructions: "Wait for human review. If changes are requested, address them and stay in review. When approved and merged, transition to done." },
+    { name: "review", label: "In Review", terminal: false, agentInstructions: "Review is code review only in the default model. Approve or request changes here. Merge, deploy, and production verification are external follow-up actions unless you create explicit workflow states for them." },
     { name: "done", label: "Done", terminal: true },
   ],
   transitions: [
@@ -288,7 +288,7 @@ export default function WorkflowEditorPage() {
       </div>
 
       <Card padding="sm" style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>
-        Workflows define valid status transitions and per-state instructions for agents. Tasks assigned to this workflow will have their transitions validated. The <code>GET /api/tasks/:id/instructions</code> endpoint returns the current state&apos;s agentInstructions to guide automation.
+        Workflows define valid status transitions and per-state instructions for agents. Tasks assigned to this workflow will have their transitions validated. The <code>GET /api/tasks/:id/instructions</code> endpoint returns the current state&apos;s agentInstructions plus allowed actions. In the default workflow model, <code>review</code> means code review only — merge, deploy, and production verification are external follow-up steps unless you model them as explicit custom workflow states.
       </Card>
     </main>
   );
