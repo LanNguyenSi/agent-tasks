@@ -140,13 +140,32 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
         payload: { source: "github_webhook", pr_number: payload.pull_request.number },
       });
     } else if (payload.action === "closed" && payload.pull_request.merged) {
-      // PR merged → mark as done
-      const tasks = await prisma.task.findMany({
-        where: {
-          projectId: project.id,
-          title: { contains: `[PR #${payload.pull_request.number}]` },
-          status: { not: "done" },
-        },
+      // PR merged → mark matching tasks as done
+      // Match by title pattern [PR #N] OR by prNumber field
+      const prNumber = payload.pull_request.number;
+      const [byTitle, byField] = await Promise.all([
+        prisma.task.findMany({
+          where: {
+            projectId: project.id,
+            title: { contains: `[PR #${prNumber}]` },
+            status: { not: "done" },
+          },
+        }),
+        prisma.task.findMany({
+          where: {
+            projectId: project.id,
+            prNumber,
+            status: { not: "done" },
+          },
+        }),
+      ]);
+
+      // Deduplicate by task ID
+      const seen = new Set<string>();
+      const tasks = [...byTitle, ...byField].filter((t) => {
+        if (seen.has(t.id)) return false;
+        seen.add(t.id);
+        return true;
       });
 
       for (const task of tasks) {
@@ -155,7 +174,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
           action: "task.transitioned",
           projectId: project.id,
           taskId: task.id,
-          payload: { source: "github_webhook", pr_merged: true },
+          payload: { source: "github_webhook", pr_merged: true, pr_number: prNumber },
         });
       }
     }
