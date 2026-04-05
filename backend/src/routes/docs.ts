@@ -227,14 +227,35 @@ const openApiSpec = {
               required: ["to"],
             },
           },
+          reviewActions: {
+            type: "array",
+            items: { type: "string", enum: ["approve", "request_changes"] },
+            description: "Available review actions for the current actor (empty if not in review or actor is the claimant)",
+          },
+          recommendedAction: {
+            type: "string",
+            nullable: true,
+            description: "Human-readable hint for the recommended next step",
+          },
           updatableFields: {
             type: "array",
             items: { type: "string" },
             example: ["branchName", "prUrl", "prNumber", "result"],
           },
+          actorPermissions: {
+            type: "object",
+            description: "What the current actor is allowed to do",
+            properties: {
+              canTransition: { type: "boolean" },
+              canUpdate: { type: "boolean" },
+              canComment: { type: "boolean" },
+              canClaim: { type: "boolean" },
+            },
+            required: ["canTransition", "canUpdate", "canComment", "canClaim"],
+          },
           confidence: { $ref: "#/components/schemas/Confidence" },
         },
-        required: ["task", "agentInstructions", "allowedTransitions", "updatableFields", "confidence"],
+        required: ["task", "agentInstructions", "allowedTransitions", "reviewActions", "recommendedAction", "updatableFields", "actorPermissions", "confidence"],
       },
       ProjectRef: {
         type: "object",

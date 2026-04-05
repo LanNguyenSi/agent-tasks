@@ -286,12 +286,47 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     templateFields: tpl?.fields ?? null,
   });
 
+  // Determine actor permissions
+  const scopes = actor.type === "agent" ? actor.scopes : null;
+  const canTransition = actor.type === "human" || (scopes?.includes("tasks:transition") ?? false);
+  const canUpdate = actor.type === "human" || (scopes?.includes("tasks:update") ?? false);
+  const canComment = actor.type === "human" || (scopes?.includes("tasks:comment") ?? false);
+  const canClaim = actor.type === "human" || (scopes?.includes("tasks:claim") ?? false);
+
+  // Review actions: available when task is in review and actor is not the claimant
+  const isSelfReview =
+    (actor.type === "human" && task.claimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
+  const reviewActions =
+    task.status === "review" && !isSelfReview && canTransition
+      ? ["approve", "request_changes"]
+      : [];
+
+  // Recommended next action based on status and context
+  let recommendedAction: string | null = null;
+  if (task.status === "open" && !task.claimedByUserId && !task.claimedByAgentId) {
+    recommendedAction = "Claim this task to start working on it.";
+  } else if (task.status === "in_progress" && !task.branchName) {
+    recommendedAction = "Create a branch and update branchName.";
+  } else if (task.status === "in_progress" && task.branchName && !task.prUrl) {
+    recommendedAction = "Open a PR and update prUrl/prNumber.";
+  } else if (task.status === "in_progress" && task.prUrl) {
+    recommendedAction = "Submit for review when ready.";
+  } else if (task.status === "review" && !isSelfReview) {
+    recommendedAction = "Review the PR and approve or request changes.";
+  } else if (task.status === "review" && isSelfReview) {
+    recommendedAction = "Wait for review, or mark done if externally approved.";
+  }
+
   return c.json({
     task,
     currentState,
     agentInstructions: currentState?.agentInstructions ?? null,
     allowedTransitions,
+    reviewActions,
+    recommendedAction,
     updatableFields: ["branchName", "prUrl", "prNumber", "result"],
+    actorPermissions: { canTransition, canUpdate, canComment, canClaim },
     confidence: {
       score,
       missing,
