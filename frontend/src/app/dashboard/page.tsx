@@ -486,6 +486,21 @@ export default function DashboardPage() {
     })();
   }, [router]);
 
+  // Poll for task updates every 5 seconds
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    const interval = setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const freshTasks = await getTasks(selectedProjectId);
+        setTasks(freshTasks);
+      } catch {
+        // silent – avoid error banner for background polls
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [selectedProjectId]);
+
   useEffect(() => {
     if (!activeTask) return;
     setEditTitle(activeTask.title);
