@@ -1321,6 +1321,32 @@ export default function DashboardPage() {
             </section>
           )}
 
+          {activeTask.status === "review" && activeTask.claimedByUserId === user?.id && (
+            <section style={{ marginBottom: "0.8rem" }}>
+              <p className="section-kicker">Review</p>
+              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>This is your task. Once review is complete, mark it done.</p>
+              <Button
+                size="sm"
+                disabled={reviewBusy}
+                loading={reviewBusy}
+                onClick={async () => {
+                  setReviewBusy(true);
+                  setError(null);
+                  try {
+                    const updated = await updateTask(activeTask.id, { status: "done" });
+                    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+                  } catch (err) {
+                    setError((err as Error).message);
+                  } finally {
+                    setReviewBusy(false);
+                  }
+                }}
+              >
+                Mark Done
+              </Button>
+            </section>
+          )}
+
           {activeTask.status === "review" && activeTask.claimedByUserId !== user?.id && (
             <section style={{ marginBottom: "0.8rem" }}>
               <p className="section-kicker">Review</p>
