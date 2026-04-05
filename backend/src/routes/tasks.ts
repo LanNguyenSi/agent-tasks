@@ -262,6 +262,22 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     allowedTransitions = def.transitions
       .filter((t) => t.from === task.status)
       .map((t) => ({ to: t.to, label: t.label }));
+  } else {
+    // No workflow: return default transitions based on current status
+    const defaultTransitions: Record<string, { to: string; label: string }[]> = {
+      open: [{ to: "in_progress", label: "Start" }],
+      in_progress: [
+        { to: "review", label: "Submit for review" },
+        { to: "done", label: "Mark done" },
+        { to: "open", label: "Release" },
+      ],
+      review: [
+        { to: "done", label: "Approve" },
+        { to: "in_progress", label: "Request changes" },
+      ],
+      done: [],
+    };
+    allowedTransitions = defaultTransitions[task.status] ?? [];
   }
 
   const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;

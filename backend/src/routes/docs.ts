@@ -516,6 +516,51 @@ const openApiSpec = {
       },
     },
     "/api/tasks/{id}": {
+      patch: {
+        tags: ["Tasks"],
+        summary: "Update task (agent-safe fields)",
+        description:
+          "Agents can update: branchName, prUrl, prNumber, result. Requires scope: tasks:update. Humans can update all fields.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/AgentUpdateTaskRequest" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Task updated",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { task: { $ref: "#/components/schemas/Task" } },
+                  required: ["task"],
+                },
+              },
+            },
+          },
+          "403": {
+            description: "Missing scope or forbidden fields",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
       get: {
         tags: ["Tasks"],
         summary: "Get task by ID",
@@ -578,53 +623,6 @@ const openApiSpec = {
           },
           "404": {
             description: "Task not found",
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/ErrorResponse" },
-              },
-            },
-          },
-        },
-      },
-    },
-    "/api/tasks/{id}/update": {
-      patch: {
-        tags: ["Tasks"],
-        summary: "Update task (agent-safe fields)",
-        description:
-          "Agents can update: branchName, prUrl, prNumber, result. Requires scope: tasks:update. Humans can update all fields.",
-        security: [{ bearerAuth: [] }],
-        parameters: [
-          {
-            name: "id",
-            in: "path",
-            required: true,
-            schema: { type: "string", format: "uuid" },
-          },
-        ],
-        requestBody: {
-          required: true,
-          content: {
-            "application/json": {
-              schema: { $ref: "#/components/schemas/AgentUpdateTaskRequest" },
-            },
-          },
-        },
-        responses: {
-          "200": {
-            description: "Task updated",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: { task: { $ref: "#/components/schemas/Task" } },
-                  required: ["task"],
-                },
-              },
-            },
-          },
-          "403": {
-            description: "Missing scope or forbidden fields",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorResponse" },
