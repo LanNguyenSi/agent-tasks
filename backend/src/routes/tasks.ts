@@ -302,6 +302,16 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
       ? ["approve", "request_changes"]
       : [];
 
+  // Product decision: review is code review only.
+  // Merge, deploy, and production verification may happen in the real world,
+  // but they are not separate first-class task states in the default workflow model.
+  const workflowModel = {
+    reviewScope: "code_review_only",
+    externalFollowUps: ["merge", "deploy", "verify"],
+    notes:
+      "Default task workflow ends at done. Merge, deploy, and production verification are operational follow-ups outside the modeled task states unless a custom workflow models them explicitly.",
+  };
+
   // Recommended next action based on status and context
   let recommendedAction: string | null = null;
   if (task.status === "open" && !task.claimedByUserId && !task.claimedByAgentId) {
@@ -313,18 +323,24 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
   } else if (task.status === "in_progress" && task.prUrl) {
     recommendedAction = "Submit for review when ready.";
   } else if (task.status === "review" && !isSelfReview) {
-    recommendedAction = "Review the PR and approve or request changes.";
+    recommendedAction = "Review the PR and approve or request changes. Merge/deploy/verify are separate operational follow-ups, not default task states.";
   } else if (task.status === "review" && isSelfReview) {
-    recommendedAction = "Wait for review, or mark done if externally approved.";
+    recommendedAction = "Wait for review. Once review is complete, the task may be marked done; merge/deploy/verify are tracked operationally outside the default task states.";
   }
+
+  const effectiveAgentInstructions = currentState?.agentInstructions
+    ?? (task.status === "review"
+      ? "Review is a code-review state. Approve or request changes here. Merge, deploy, and production verification are external follow-up actions unless your project defines a custom workflow for them."
+      : null);
 
   return c.json({
     task,
     currentState,
-    agentInstructions: currentState?.agentInstructions ?? null,
+    agentInstructions: effectiveAgentInstructions,
     allowedTransitions,
     reviewActions,
     recommendedAction,
+    workflowModel,
     updatableFields: ["branchName", "prUrl", "prNumber", "result"],
     actorPermissions: { canTransition, canUpdate, canComment, canClaim },
     confidence: {

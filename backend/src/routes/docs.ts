@@ -237,6 +237,24 @@ const openApiSpec = {
             nullable: true,
             description: "Human-readable hint for the recommended next step",
           },
+          workflowModel: {
+            type: "object",
+            description: "Explains how the default task workflow relates to operational steps like merge, deploy, and verification.",
+            properties: {
+              reviewScope: {
+                type: "string",
+                enum: ["code_review_only"],
+              },
+              externalFollowUps: {
+                type: "array",
+                items: { type: "string", enum: ["merge", "deploy", "verify"] },
+              },
+              notes: {
+                type: "string",
+              },
+            },
+            required: ["reviewScope", "externalFollowUps", "notes"],
+          },
           updatableFields: {
             type: "array",
             items: { type: "string" },
@@ -255,7 +273,7 @@ const openApiSpec = {
           },
           confidence: { $ref: "#/components/schemas/Confidence" },
         },
-        required: ["task", "agentInstructions", "allowedTransitions", "reviewActions", "recommendedAction", "updatableFields", "actorPermissions", "confidence"],
+        required: ["task", "agentInstructions", "allowedTransitions", "reviewActions", "recommendedAction", "workflowModel", "updatableFields", "actorPermissions", "confidence"],
       },
       ProjectRef: {
         type: "object",
@@ -671,7 +689,7 @@ const openApiSpec = {
         tags: ["Tasks"],
         summary: "Get task instructions for agent",
         description:
-          "Returns the task with workflow context: current state, agent instructions, allowed transitions, and updatable fields. Requires scope: tasks:read.",
+          "Returns the task with workflow context: current state, agent instructions, allowed transitions, review actions, permissions, and the default workflow model. In the default model, review is code-review only; merge, deploy, and verification are operational follow-ups unless a custom workflow models them explicitly. Requires scope: tasks:read.",
         security: [{ bearerAuth: [] }],
         parameters: [
           {
