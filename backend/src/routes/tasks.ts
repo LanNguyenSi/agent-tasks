@@ -6,6 +6,7 @@ import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound, conflict } from "../middleware/error.js";
 import { hasProjectAccess } from "../services/team-access.js";
+import { buildWorkflowlessTaskInstructions } from "../services/task-instructions.js";
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -89,6 +90,49 @@ taskRouter.get("/tasks/:id", async (c) => {
   }
 
   return c.json({ task });
+});
+
+// ── Get task instructions for agent ──────────────────────────────────────────
+
+taskRouter.get("/tasks/:id/instructions", async (c) => {
+  const actor = c.get("actor") as Actor;
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    include: { workflow: true, project: true },
+  });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  if (!task.workflow) {
+    const instructions = buildWorkflowlessTaskInstructions(task.status);
+    return c.json({
+      task,
+      ...instructions,
+      confidence: {
+        score: 100,
+        missing: [],
+        threshold: 60,
+      },
+    });
+  }
+
+  const currentState = task.status;
+
+  return c.json({
+    task,
+    currentState,
+    agentInstructions: `Task is currently '${currentState}'. Follow the configured workflow transitions.`,
+    allowedTransitions: [],
+    updatableFields: ["branchName", "prUrl", "prNumber", "result"],
+    confidence: {
+      score: 100,
+      missing: [],
+      threshold: task.project?.confidenceThreshold ?? 60,
+    },
+  });
 });
 
 // ── Claim task ────────────────────────────────────────────────────────────────
