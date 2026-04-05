@@ -14,6 +14,13 @@ export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
 const taskInclude = {
   attachments: { orderBy: { createdAt: "desc" as const } },
+  comments: {
+    orderBy: { createdAt: "asc" as const },
+    include: {
+      authorUser: { select: { id: true, login: true, name: true, avatarUrl: true } },
+      authorAgent: { select: { id: true, name: true } },
+    },
+  },
   claimedByUser: {
     select: {
       id: true,
@@ -202,16 +209,7 @@ taskRouter.get("/tasks/:id", async (c) => {
   const actor = c.get("actor") as Actor;
   const task = await prisma.task.findUnique({
     where: { id: c.req.param("id") },
-    include: {
-      comments: {
-        orderBy: { createdAt: "asc" as const },
-        include: {
-          authorUser: { select: { id: true, login: true, name: true, avatarUrl: true } },
-          authorAgent: { select: { id: true, name: true } },
-        },
-      },
-      ...taskInclude,
-    },
+    include: taskInclude,
   });
   if (!task) return notFound(c);
 
@@ -868,16 +866,7 @@ taskRouter.post(
     const updated = await prisma.task.update({
       where: { id: task.id },
       data: { status: newStatus, updatedAt: new Date() },
-      include: {
-        comments: {
-          orderBy: { createdAt: "asc" as const },
-          include: {
-            authorUser: { select: { id: true, login: true, name: true, avatarUrl: true } },
-            authorAgent: { select: { id: true, name: true } },
-          },
-        },
-        ...taskInclude,
-      },
+      include: taskInclude,
     });
 
     void logAuditEvent({
