@@ -117,6 +117,30 @@ projectRouter.get("/projects/available", async (c) => {
   });
 });
 
+// ── Get project by slug ──────────────────────────────────────────────────────
+
+projectRouter.get("/projects/by-slug/:slug", async (c) => {
+  const actor = c.get("actor");
+  const slug = c.req.param("slug");
+
+  const teamId = actor.type === "agent" ? actor.teamId : c.req.query("teamId");
+  if (!teamId) {
+    return c.json({ error: "bad_request", message: "teamId required" }, 400);
+  }
+
+  if (!(await assertMembership(actor, teamId))) {
+    return forbidden(c, "Access denied to this team");
+  }
+
+  const project = await prisma.project.findUnique({
+    where: { teamId_slug: { teamId, slug } },
+  });
+
+  if (!project) return notFound(c);
+
+  return c.json({ project });
+});
+
 // ── Create project ────────────────────────────────────────────────────────────
 
 projectRouter.post("/projects", zValidator("json", createProjectSchema), async (c) => {

@@ -325,6 +325,54 @@ const openApiSpec = {
         },
       },
     },
+    "/api/projects/by-slug/{slug}": {
+      get: {
+        tags: ["Projects"],
+        summary: "Get project by slug",
+        description: "Lookup a project by its human-readable slug instead of UUID. For agents, teamId is inferred from the token. Humans must pass teamId as query parameter.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "slug",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+            description: "Project slug (e.g. agent-tasks)",
+          },
+          {
+            name: "teamId",
+            in: "query",
+            required: false,
+            schema: { type: "string", format: "uuid" },
+            description: "Required for human users, inferred for agents",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Project",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    project: { $ref: "#/components/schemas/Project" },
+                  },
+                  required: ["project"],
+                },
+              },
+            },
+          },
+          "404": {
+            description: "Project not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/projects/{id}": {
       get: {
         tags: ["Projects"],
