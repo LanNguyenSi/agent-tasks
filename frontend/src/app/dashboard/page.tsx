@@ -9,21 +9,12 @@ import {
   getProjects,
   getTasks,
   createTask,
-  updateTask,
-  deleteTask,
   claimTask,
-  releaseTask,
   updateProject,
-  createComment,
-  deleteComment,
-  addDependency,
-  removeDependency,
-  reviewTask,
   type User,
   type Team,
   type Project,
   type Task,
-  type Comment,
   type TaskTemplate,
   type TemplateData,
   type TemplatePreset,
@@ -34,12 +25,12 @@ import ConfidenceBadge from "../../components/ConfidenceBadge";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
-import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import DropdownMenu from "../../components/ui/DropdownMenu";
 import EmptyState from "../../components/ui/EmptyState";
 import FormField from "../../components/ui/FormField";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
+import TaskDetailModal from "../../components/TaskDetailModal";
 
 const DEFAULT_PRESETS: TemplatePreset[] = [
   {
@@ -166,11 +157,6 @@ function getAssigneeName(task: Task): string {
   if (task.claimedByUser) return task.claimedByUser.name ?? task.claimedByUser.login;
   if (task.claimedByAgent) return `Agent ${task.claimedByAgent.name}`;
   return "Unassigned";
-}
-
-function getClaimLabel(task: Task): string {
-  if (!task.claimedByUserId && !task.claimedByAgentId) return "Unassigned";
-  return `Assignee: ${getAssigneeName(task)}`;
 }
 
 function TaskCard({
@@ -382,27 +368,7 @@ export default function DashboardPage() {
     return listSortedTasks.slice(start, start + LIST_PAGE_SIZE);
   }, [currentListPage, listSortedTasks]);
 
-  const [savingTask, setSavingTask] = useState(false);
-  const [deletingTask, setDeletingTask] = useState(false);
-  const [showDeleteTaskConfirm, setShowDeleteTaskConfirm] = useState(false);
-  const [claimBusy, setClaimBusy] = useState(false);
-  const [depPickerValue, setDepPickerValue] = useState("");
-  const [reviewBusy, setReviewBusy] = useState(false);
-  const [reviewComment, setReviewComment] = useState("");
-
-  const [editTitle, setEditTitle] = useState("");
-  const [editDescription, setEditDescription] = useState("");
-  const [editPriority, setEditPriority] = useState<Priority>("MEDIUM");
-  const [editStatus, setEditStatus] = useState<Status>("open");
-  const [editDueAt, setEditDueAt] = useState("");
-  const [editGoal, setEditGoal] = useState("");
-  const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState("");
-  const [editContext, setEditContext] = useState("");
-  const [editConstraints, setEditConstraints] = useState("");
-
   // Project settings modal
-  const [commentText, setCommentText] = useState("");
-  const [submittingComment, setSubmittingComment] = useState(false);
   const [showProjectSettings, setShowProjectSettings] = useState(false);
   const [settingsTemplateEnabled, setSettingsTemplateEnabled] = useState(false);
   const [settingsThreshold, setSettingsThreshold] = useState(60);
@@ -502,25 +468,6 @@ export default function DashboardPage() {
   }, [selectedProjectId]);
 
   useEffect(() => {
-    if (!activeTask) return;
-    setEditTitle(activeTask.title);
-    setEditDescription(activeTask.description ?? "");
-    setEditPriority(activeTask.priority);
-    setEditStatus(activeTask.status as Status);
-    setEditDueAt(toDateInputValue(activeTask.dueAt));
-    setEditGoal(activeTask.templateData?.goal ?? "");
-    setEditAcceptanceCriteria(activeTask.templateData?.acceptanceCriteria ?? "");
-    setEditContext(activeTask.templateData?.context ?? "");
-    setEditConstraints(activeTask.templateData?.constraints ?? "");
-    setCommentText("");
-    setDepPickerValue("");
-  }, [activeTask]);
-
-  useEffect(() => {
-    if (!activeTask) setShowDeleteTaskConfirm(false);
-  }, [activeTask]);
-
-  useEffect(() => {
     setListPage(1);
   }, [selectedProjectId, taskQuery, taskScope, hideDone, listSort, viewMode]);
 
@@ -583,76 +530,13 @@ export default function DashboardPage() {
     }
   }
 
-  async function handleSaveTask() {
-    if (!activeTask) return;
-    setSavingTask(true);
-    setError(null);
-    try {
-      const editTplData: TemplateData = {};
-      if (editGoal.trim()) editTplData.goal = editGoal.trim();
-      if (editAcceptanceCriteria.trim()) editTplData.acceptanceCriteria = editAcceptanceCriteria.trim();
-      if (editContext.trim()) editTplData.context = editContext.trim();
-      if (editConstraints.trim()) editTplData.constraints = editConstraints.trim();
-
-      const updated = await updateTask(activeTask.id, {
-        title: editTitle.trim(),
-        description: editDescription.trim() || null,
-        priority: editPriority,
-        status: editStatus,
-        dueAt: toIsoDateOrNull(editDueAt),
-        templateData: Object.keys(editTplData).length > 0 ? editTplData : null,
-      });
-      setTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
-      setActiveTaskId(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setSavingTask(false);
-    }
+  function handleTaskUpdate(updated: Task) {
+    setTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
   }
 
-  async function handleDeleteTask() {
-    if (!activeTask) return;
-    setDeletingTask(true);
-    setError(null);
-    try {
-      await deleteTask(activeTask.id);
-      setTasks((prev) => prev.filter((task) => task.id !== activeTask.id));
-      setActiveTaskId(null);
-      setShowDeleteTaskConfirm(false);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setDeletingTask(false);
-    }
-  }
-
-  async function handleClaimActiveTask() {
-    if (!activeTask) return;
-    setClaimBusy(true);
-    setError(null);
-    try {
-      const updated = await claimTask(activeTask.id);
-      setTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setClaimBusy(false);
-    }
-  }
-
-  async function handleReleaseActiveTask() {
-    if (!activeTask) return;
-    setClaimBusy(true);
-    setError(null);
-    try {
-      const updated = await releaseTask(activeTask.id);
-      setTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setClaimBusy(false);
-    }
+  function handleTaskDelete(taskId: string) {
+    setTasks((prev) => prev.filter((task) => task.id !== taskId));
+    setActiveTaskId(null);
   }
 
   return (
@@ -1077,495 +961,18 @@ export default function DashboardPage() {
       )}
 
       {activeTask && (
-        <Modal
-          open={Boolean(activeTask)}
+        <TaskDetailModal
+          task={activeTask}
+          tasks={tasks}
+          user={user}
+          templateFields={templateFields}
+          confidenceThreshold={selectedProject?.confidenceThreshold ?? 60}
+          onUpdate={handleTaskUpdate}
+          onDelete={handleTaskDelete}
           onClose={() => setActiveTaskId(null)}
-          title="Task Details"
-          actions={
-            <Button
-              onClick={() => void handleSaveTask()}
-              disabled={savingTask || deletingTask}
-              loading={savingTask}
-              size="sm"
-            >
-              {savingTask ? "Saving…" : "Save changes"}
-            </Button>
-          }
-        >
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "var(--space-3)" }}>
-            <Button
-              variant="outline-danger"
-              size="sm"
-              onClick={() => setShowDeleteTaskConfirm(true)}
-              disabled={savingTask || deletingTask}
-            >
-              {deletingTask ? "Deleting…" : "Delete"}
-            </Button>
-          </div>
-
-          <section style={{ marginBottom: "0.8rem" }}>
-            <p className="section-kicker">Overview</p>
-            <div style={{ marginBottom: "0.5rem" }}>
-              <FormField label="Title">
-                <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ width: "100%" }} />
-              </FormField>
-            </div>
-            <FormField label="Description">
-              <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
-            </FormField>
-          </section>
-
-          <section style={{ marginBottom: "0.8rem" }}>
-            <p className="section-kicker">Workflow</p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginBottom: "0.55rem" }}>
-              <span className="status-chip">{STATUS_LABELS[activeTask.status as Status]}</span>
-              <span className="status-chip">{activeTask.priority}</span>
-              <span className="status-chip">{isOverdue(activeTask) ? "Overdue" : "On track"}</span>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", marginBottom: "0.5rem" }}>
-              <FormField label="Status">
-                <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as Status)} style={{ width: "100%" }}>
-                  {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
-                </select>
-              </FormField>
-              <FormField label="Priority">
-                <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as Priority)} style={{ width: "100%" }}>
-                  <option value="LOW">LOW</option>
-                  <option value="MEDIUM">MEDIUM</option>
-                  <option value="HIGH">HIGH</option>
-                  <option value="CRITICAL">CRITICAL</option>
-                </select>
-              </FormField>
-            </div>
-            <FormField label="Due Date">
-              <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)} style={{ width: "100%" }} />
-            </FormField>
-          </section>
-
-          <section style={{ marginBottom: "0.8rem" }}>
-            <p className="section-kicker">Dependencies</p>
-            {(activeTask.blockedBy?.length ?? 0) === 0 && (activeTask.blocks?.length ?? 0) === 0 ? (
-              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>No dependencies.</p>
-            ) : (
-              <div style={{ display: "grid", gap: "0.3rem", marginBottom: "0.4rem" }}>
-                {activeTask.blockedBy?.map((dep) => (
-                  <div key={dep.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "var(--text-sm)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem" }}>
-                    <span>
-                      <span style={{ color: dep.status === "done" ? "var(--success, #22c55e)" : "var(--danger)" }}>
-                        {dep.status === "done" ? "done" : "blocks this"}
-                      </span>
-                      {" "}{dep.title}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          await removeDependency(activeTask.id, dep.id);
-                          setTasks((prev) => prev.map((t) =>
-                            t.id === activeTask.id
-                              ? { ...t, blockedBy: t.blockedBy?.filter((d) => d.id !== dep.id) }
-                              : t,
-                          ));
-                        } catch (err) {
-                          setError((err as Error).message);
-                        }
-                      }}
-                      style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: "var(--text-xs)" }}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-                {activeTask.blocks?.map((dep) => (
-                  <div key={dep.id} style={{ fontSize: "var(--text-xs)", color: "var(--muted)", padding: "0.2rem 0.5rem" }}>
-                    blocks: {dep.title} ({dep.status})
-                  </div>
-                ))}
-              </div>
-            )}
-            <div style={{ display: "flex", gap: "0.3rem" }}>
-              <select
-                value={depPickerValue}
-                onChange={(e) => setDepPickerValue(e.target.value)}
-                style={{ flex: 1, fontSize: "var(--text-sm)" }}
-              >
-                <option value="" disabled>Add blocker...</option>
-                {tasks
-                  .filter((t) => t.id !== activeTask.id && t.projectId === activeTask.projectId && !activeTask.blockedBy?.some((d) => d.id === t.id))
-                  .map((t) => (
-                    <option key={t.id} value={t.id}>{t.title}</option>
-                  ))}
-              </select>
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={!depPickerValue}
-                onClick={async () => {
-                  if (!depPickerValue) return;
-                  try {
-                    await addDependency(activeTask.id, depPickerValue);
-                    const blockerTask = tasks.find((t) => t.id === depPickerValue);
-                    if (blockerTask) {
-                      setTasks((prev) => prev.map((t) =>
-                        t.id === activeTask.id
-                          ? { ...t, blockedBy: [...(t.blockedBy ?? []), { id: blockerTask.id, title: blockerTask.title, status: blockerTask.status }] }
-                          : t,
-                      ));
-                    }
-                    setDepPickerValue("");
-                  } catch (err) {
-                    setError((err as Error).message);
-                  }
-                }}
-              >
-                Add
-              </Button>
-            </div>
-          </section>
-
-          {templateFields && (
-            <section style={{ marginBottom: "0.8rem" }}>
-              <p className="section-kicker">Agent Template</p>
-              {(() => {
-                const conf = calculateConfidence({
-                  title: editTitle,
-                  description: editDescription || null,
-                  templateData: { goal: editGoal || undefined, acceptanceCriteria: editAcceptanceCriteria || undefined, context: editContext || undefined, constraints: editConstraints || undefined },
-                  templateFields,
-                });
-                const threshold = selectedProject?.confidenceThreshold ?? 60;
-                return (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem" }}>
-                      <ConfidenceBadge score={conf.score} size="md" />
-                      {conf.score < threshold && (
-                        <span style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}>
-                          Below threshold ({threshold}) — agents cannot claim this task
-                        </span>
-                      )}
-                    </div>
-                    {conf.missing.length > 0 && (
-                      <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginBottom: "0.5rem" }}>
-                        Missing: {conf.missing.join(", ")}
-                      </p>
-                    )}
-                  </div>
-                );
-              })()}
-              {templateFields.goal && (
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <FormField label="Goal">
-                    <textarea value={editGoal} onChange={(e) => setEditGoal(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                  </FormField>
-                </div>
-              )}
-              {templateFields.acceptanceCriteria && (
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <FormField label="Acceptance Criteria">
-                    <textarea value={editAcceptanceCriteria} onChange={(e) => setEditAcceptanceCriteria(e.target.value)} rows={3} style={{ width: "100%", resize: "vertical" }} />
-                  </FormField>
-                </div>
-              )}
-              {templateFields.context && (
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <FormField label="Context">
-                    <textarea value={editContext} onChange={(e) => setEditContext(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                  </FormField>
-                </div>
-              )}
-              {templateFields.constraints && (
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <FormField label="Constraints">
-                    <textarea value={editConstraints} onChange={(e) => setEditConstraints(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                  </FormField>
-                </div>
-              )}
-            </section>
-          )}
-
-          {(activeTask.branchName || activeTask.prUrl || activeTask.result) && (
-            <section style={{ marginBottom: "0.8rem" }}>
-              <p className="section-kicker">Agent Output</p>
-              <div style={{ display: "grid", gap: "var(--space-2)" }}>
-                {activeTask.branchName && (
-                  <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-sm)" }}>
-                    <span style={{ color: "var(--muted)", minWidth: "4rem" }}>Branch</span>
-                    <code style={{ background: "var(--surface-secondary)", padding: "0.2rem 0.5rem", borderRadius: "var(--radius-sm)", fontSize: "var(--text-xs)", wordBreak: "break-all" }}>
-                      {activeTask.branchName}
-                    </code>
-                  </div>
-                )}
-                {activeTask.prUrl && (
-                  <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-sm)" }}>
-                    <span style={{ color: "var(--muted)", minWidth: "4rem" }}>PR</span>
-                    <a
-                      href={activeTask.prUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ fontSize: "var(--text-sm)" }}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {activeTask.prNumber ? `#${activeTask.prNumber}` : activeTask.prUrl}
-                    </a>
-                  </div>
-                )}
-                {activeTask.result && (
-                  <div style={{ fontSize: "var(--text-sm)" }}>
-                    <span style={{ color: "var(--muted)", display: "block", marginBottom: "var(--space-1)" }}>Result</span>
-                    <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-                      {activeTask.result}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
-
-          {activeTask.status === "review" && activeTask.claimedByUserId === user?.id && (
-            <section style={{ marginBottom: "0.8rem" }}>
-              <p className="section-kicker">Review</p>
-              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>This is your task. Once review is complete, mark it done.</p>
-              <Button
-                size="sm"
-                disabled={reviewBusy}
-                loading={reviewBusy}
-                onClick={async () => {
-                  setReviewBusy(true);
-                  setError(null);
-                  try {
-                    const updated = await updateTask(activeTask.id, { status: "done" });
-                    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-                  } catch (err) {
-                    setError((err as Error).message);
-                  } finally {
-                    setReviewBusy(false);
-                  }
-                }}
-              >
-                Mark Done
-              </Button>
-            </section>
-          )}
-
-          {activeTask.status === "review" && activeTask.claimedByUserId !== user?.id && (
-            <section style={{ marginBottom: "0.8rem" }}>
-              <p className="section-kicker">Review</p>
-              <div style={{ marginBottom: "0.4rem" }}>
-                <textarea
-                  value={reviewComment}
-                  onChange={(e) => setReviewComment(e.target.value)}
-                  placeholder="Review feedback (optional)"
-                  rows={2}
-                  style={{ width: "100%", resize: "vertical", fontSize: "var(--text-sm)" }}
-                />
-              </div>
-              <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                <Button
-                  size="sm"
-                  disabled={reviewBusy}
-                  loading={reviewBusy}
-                  onClick={async () => {
-                    setReviewBusy(true);
-                    setError(null);
-                    try {
-                      const updated = await reviewTask(activeTask.id, "approve", reviewComment);
-                      setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-                      setReviewComment("");
-                    } catch (err) {
-                      setError((err as Error).message);
-                    } finally {
-                      setReviewBusy(false);
-                    }
-                  }}
-                >
-                  Approve
-                </Button>
-                <Button
-                  variant="outline-danger"
-                  size="sm"
-                  disabled={reviewBusy}
-                  loading={reviewBusy}
-                  onClick={async () => {
-                    setReviewBusy(true);
-                    setError(null);
-                    try {
-                      const updated = await reviewTask(activeTask.id, "request_changes", reviewComment);
-                      setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-                      setReviewComment("");
-                    } catch (err) {
-                      setError((err as Error).message);
-                    } finally {
-                      setReviewBusy(false);
-                    }
-                  }}
-                >
-                  Request Changes
-                </Button>
-              </div>
-            </section>
-          )}
-
-          <section style={{ marginBottom: "0.8rem" }}>
-            <p className="section-kicker">Ownership</p>
-            <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.45rem 0.55rem", color: "var(--text)", fontSize: "var(--text-sm)", background: "color-mix(in srgb, var(--surface) 88%, #0b111d 12%)" }}>
-              {getClaimLabel(activeTask)}
-            </div>
-            <div style={{ display: "flex", gap: "0.45rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
-              {!activeTask.claimedByUserId && !activeTask.claimedByAgentId && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void handleClaimActiveTask()}
-                  disabled={claimBusy || savingTask || deletingTask}
-                  loading={claimBusy}
-                >
-                  {claimBusy ? "Claiming…" : "Claim for me"}
-                </Button>
-              )}
-              {activeTask.claimedByUserId === user?.id && (
-                <Button
-                  variant="outline-danger"
-                  size="sm"
-                  onClick={() => void handleReleaseActiveTask()}
-                  disabled={claimBusy || savingTask || deletingTask}
-                  loading={claimBusy}
-                >
-                  {claimBusy ? "Releasing…" : "Release"}
-                </Button>
-              )}
-            </div>
-          </section>
-
-          {/* Webhook event timeline — separated from free-form comments */}
-          {(() => {
-            const webhookEvents = (activeTask.comments ?? []).filter((c: Comment) => c.content.startsWith("[webhook]"));
-            const userComments = (activeTask.comments ?? []).filter((c: Comment) => !c.content.startsWith("[webhook]"));
-            return (
-              <>
-                {webhookEvents.length > 0 && (
-                  <section>
-                    <p className="section-kicker">Activity</p>
-                    <div style={{ display: "grid", gap: "0.25rem", marginBottom: "0.5rem" }}>
-                      {webhookEvents.map((event: Comment) => {
-                        const message = event.content.replace(/^\[webhook]\s*/, "");
-                        const isTransition = message.includes("merged") || message.includes("in_progress") || message.includes("→");
-                        const isReview = message.includes("approved") || message.includes("Changes requested") || message.includes("dismissed");
-                        const dotColor = isTransition ? "var(--success, #22c55e)" : isReview ? "var(--warning, #eab308)" : "var(--muted)";
-                        return (
-                          <div key={event.id} style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", padding: "0.35rem 0.5rem", fontSize: "var(--text-xs)", color: "var(--text-secondary)", borderLeft: `2px solid ${dotColor}`, background: "var(--surface)", borderRadius: "0 6px 6px 0" }}>
-                            <span style={{ flex: 1, lineHeight: 1.4 }}>{message}</span>
-                            <span style={{ color: "var(--muted)", whiteSpace: "nowrap", flexShrink: 0 }}>
-                              {new Date(event.createdAt).toLocaleString()}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </section>
-                )}
-
-                <section>
-                  <p className="section-kicker">Comments</p>
-                  {userComments.length === 0 ? (
-                    <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>No comments yet.</p>
-                  ) : (
-                    <div style={{ display: "grid", gap: "0.4rem", marginBottom: "0.5rem" }}>
-                      {userComments.map((comment: Comment) => {
-                        const authorName = comment.authorUser?.name ?? comment.authorUser?.login ?? (comment.authorAgent ? `Agent ${comment.authorAgent.name}` : "Unknown");
-                        const isOwn = comment.authorUser?.id === user?.id;
-                        return (
-                          <div key={comment.id} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem", fontSize: "var(--text-sm)", background: "var(--surface)" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
-                              <span style={{ fontWeight: 600, fontSize: "var(--text-xs)", color: comment.authorAgent ? "var(--primary, #3b82f6)" : "var(--text)" }}>
-                                {authorName}
-                              </span>
-                              <span style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                                <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
-                                  {new Date(comment.createdAt).toLocaleString()}
-                                </span>
-                                {isOwn && (
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      try {
-                                        await deleteComment(activeTask.id, comment.id);
-                                        setTasks((prev) => prev.map((t) =>
-                                          t.id === activeTask.id
-                                            ? { ...t, comments: t.comments?.filter((co) => co.id !== comment.id) }
-                                            : t,
-                                        ));
-                                      } catch (err) {
-                                        setError((err as Error).message);
-                                      }
-                                    }}
-                                    style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", fontSize: "var(--text-xs)", padding: "0" }}
-                                  >
-                                    Delete
-                                  </button>
-                                )}
-                              </span>
-                            </div>
-                            <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.4, color: "var(--text)" }}>{comment.content}</p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-            <div style={{ display: "flex", gap: "0.4rem" }}>
-              <textarea
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                placeholder="Write a comment..."
-                rows={2}
-                style={{ flex: 1, resize: "vertical", fontSize: "var(--text-sm)" }}
-              />
-              <Button
-                size="sm"
-                disabled={!commentText.trim() || submittingComment}
-                loading={submittingComment}
-                onClick={async () => {
-                  if (!commentText.trim()) return;
-                  setSubmittingComment(true);
-                  setError(null);
-                  try {
-                    const comment = await createComment(activeTask.id, commentText.trim());
-                    setTasks((prev) => prev.map((t) =>
-                      t.id === activeTask.id
-                        ? { ...t, comments: [...(t.comments ?? []), comment] }
-                        : t,
-                    ));
-                    setCommentText("");
-                  } catch (err) {
-                    setError((err as Error).message);
-                  } finally {
-                    setSubmittingComment(false);
-                  }
-                }}
-              >
-                Send
-              </Button>
-            </div>
-          </section>
-              </>
-            );
-          })()}
-        </Modal>
+          onError={(msg) => setError(msg)}
+        />
       )}
-
-      <ConfirmDialog
-        open={showDeleteTaskConfirm && Boolean(activeTask)}
-        title="Delete task?"
-        message={activeTask ? `Task "${activeTask.title}" will be permanently removed.` : ""}
-        confirmLabel="Delete task"
-        cancelLabel="Keep task"
-        tone="danger"
-        busy={deletingTask}
-        onConfirm={() => void handleDeleteTask()}
-        onCancel={() => {
-          if (deletingTask) return;
-          setShowDeleteTaskConfirm(false);
-        }}
-      />
 
       <Modal open={showProjectSettings} onClose={() => setShowProjectSettings(false)} title="Agent Template Settings">
         <div style={{ marginBottom: "0.75rem" }}>
