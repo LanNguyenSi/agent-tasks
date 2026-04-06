@@ -28,6 +28,7 @@ model User {
   tasks         Task[]       @relation("TaskCreator")
   claims        Task[]       @relation("TaskClaimant")
   reviews       Task[]       @relation("TaskReviewer")
+  signals       Signal[]     @relation("SignalRecipientUser")
   comments      Comment[]    @relation("CommentAuthor")
   auditLogs     AuditLog[]
 
@@ -89,6 +90,7 @@ model AgentToken {
   tasks       Task[]    @relation("TaskAgentCreator")
   claims      Task[]    @relation("TaskAgentClaimant")
   reviews     Task[]    @relation("TaskAgentReviewer")
+  signals     Signal[]  @relation("SignalRecipientAgent")
   comments    Comment[] @relation("CommentAgentAuthor")
 
   @@map("agent_tokens")
@@ -113,6 +115,7 @@ model Project {
   tasks        Task[]
   workflows    Workflow[]
   boards       Board[]
+  signals      Signal[]
   auditLogs    AuditLog[]
 
   @@unique([teamId, slug])
@@ -192,6 +195,7 @@ model Task {
 
   comments         Comment[]
   attachments      TaskAttachment[]
+  signals          Signal[]
   auditLogs        AuditLog[]
 
   @@index([projectId])
@@ -255,6 +259,30 @@ model Board {
 
   @@index([projectId])
   @@map("boards")
+}
+
+// ── Agent Signals ───────────────────────────────────────────────────────────
+
+model Signal {
+  id                   String    @id @default(uuid())
+  type                 String    // "review_needed" | "changes_requested" | "task_approved" | "task_assigned"
+  taskId               String
+  projectId            String
+  recipientAgentId     String?   // Target agent token (null for human)
+  recipientUserId      String?   // Target human user (null for agent)
+  context              Json      // Inline context per signal-payload-design.md
+  acknowledgedAt       DateTime?
+  createdAt            DateTime  @default(now())
+
+  task                 Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project              Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  recipientAgent       AgentToken? @relation("SignalRecipientAgent", fields: [recipientAgentId], references: [id])
+  recipientUser        User?     @relation("SignalRecipientUser", fields: [recipientUserId], references: [id])
+
+  @@index([recipientAgentId, acknowledgedAt])
+  @@index([recipientUserId, acknowledgedAt])
+  @@index([taskId])
+  @@map("signals")
 }
 
 // ── Audit Log ────────────────────────────────────────────────────────────────
