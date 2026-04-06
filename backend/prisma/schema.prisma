@@ -20,6 +20,12 @@ model User {
   passwordHash  String?
   githubAccessToken String?
   githubConnectedAt DateTime?
+
+  // Agent delegation consent (opt-in, default false)
+  allowAgentPrCreate  Boolean @default(false)
+  allowAgentPrMerge   Boolean @default(false)
+  allowAgentPrComment Boolean @default(false)
+
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
