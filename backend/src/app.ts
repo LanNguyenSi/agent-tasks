@@ -11,6 +11,7 @@ import { boardRouter } from "./routes/boards.js";
 import { auditRouter } from "./routes/audit.js";
 import { teamRouter } from "./routes/teams.js";
 import { webhookRouter } from "./routes/webhooks.js";
+import { signalRouter } from "./routes/signals.js";
 import { docsRouter } from "./routes/docs.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { rateLimit } from "./middleware/rate-limit.js";
@@ -56,6 +57,8 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.use("/api/teams/*", authMiddleware);
   app.use("/api/agent-tokens/*", authMiddleware);
   app.use("/api/tasks/*", authMiddleware);
+  app.use("/api/agent/signals/*", authMiddleware);
+  app.use("/api/agent/signals", authMiddleware);
   app.use("/api/projects/*", authMiddleware);
 
   app.route("/api/auth", authRouter);
@@ -66,6 +69,7 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.route("/api", workflowRouter);
   app.route("/api", boardRouter);
   app.route("/api", auditRouter);
+  app.route("/api", signalRouter);
 
   // 404
   app.notFound((c) => c.json({ error: "not_found", message: "Route not found" }, 404));
