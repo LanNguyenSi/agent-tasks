@@ -9,6 +9,7 @@ import {
   getAgentTokens,
   createAgentToken,
   revokeAgentToken,
+  updateDelegationSettings,
   type User,
   type Team,
   type AgentToken,
@@ -52,6 +53,14 @@ export default function SettingsPage() {
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
   const [revoking, setRevoking] = useState(false);
 
+  const [delegation, setDelegation] = useState({
+    allowAgentPrCreate: false,
+    allowAgentPrMerge: false,
+    allowAgentPrComment: false,
+  });
+  const [delegationSaving, setDelegationSaving] = useState(false);
+  const [delegationSuccess, setDelegationSuccess] = useState(false);
+
   const githubConnectedNow = useMemo(() => {
     if (typeof window === "undefined") return false;
     return new URLSearchParams(window.location.search).get("github_connected") === "1";
@@ -73,6 +82,11 @@ export default function SettingsPage() {
         return;
       }
       setUser(me);
+      setDelegation({
+        allowAgentPrCreate: me.allowAgentPrCreate,
+        allowAgentPrMerge: me.allowAgentPrMerge,
+        allowAgentPrComment: me.allowAgentPrComment,
+      });
 
       const t = await getTeams();
       setTeams(t);
@@ -127,6 +141,22 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleDelegationSave() {
+    setDelegationSaving(true);
+    setDelegationSuccess(false);
+    setError(null);
+    try {
+      const updated = await updateDelegationSettings(delegation);
+      setUser(updated);
+      setDelegationSuccess(true);
+      setTimeout(() => setDelegationSuccess(false), 3000);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDelegationSaving(false);
+    }
+  }
+
   async function copyToClipboard(value: string, message: string) {
     await navigator.clipboard.writeText(value);
     setCopyMessage(message);
@@ -150,6 +180,7 @@ export default function SettingsPage() {
       <nav style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", fontSize: "var(--text-sm)" }}>
         <a href="#account" style={{ color: "var(--muted)" }}>Account</a>
         <a href="#github" style={{ color: "var(--muted)" }}>GitHub</a>
+        <a href="#delegation" style={{ color: "var(--muted)" }}>Agent Permissions</a>
         <a href="#api-tokens" style={{ color: "var(--muted)" }}>API Tokens</a>
       </nav>
 
@@ -192,6 +223,51 @@ export default function SettingsPage() {
               </Link>
             </div>
           )}
+        </section>
+      </Card>
+
+      <Card style={{ marginBottom: "var(--space-4)" }}>
+        <section id="delegation">
+          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "0.5rem" }}>Agent Permissions</h2>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.75rem" }}>
+            Allow agents to perform GitHub actions on your behalf. Without explicit consent, delegation endpoints will reject requests.
+          </p>
+          {!user?.githubConnected && (
+            <div style={{ marginBottom: "0.75rem" }}>
+              <AlertBanner tone="warning">
+                Connect GitHub first to enable agent delegation.
+              </AlertBanner>
+            </div>
+          )}
+          <div style={{ display: "grid", gap: "0.5rem", marginBottom: "1rem", opacity: user?.githubConnected ? 1 : 0.5, pointerEvents: user?.githubConnected ? "auto" : "none" }}>
+            {([
+              { key: "allowAgentPrCreate" as const, label: "Allow agents to create PRs on my behalf" },
+              { key: "allowAgentPrMerge" as const, label: "Allow agents to merge PRs on my behalf" },
+              { key: "allowAgentPrComment" as const, label: "Allow agents to comment on PRs on my behalf" },
+            ]).map(({ key, label }) => (
+              <label key={key} style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+                <input
+                  type="checkbox"
+                  checked={delegation[key]}
+                  onChange={(e) => setDelegation((prev) => ({ ...prev, [key]: e.target.checked }))}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <Button
+              size="sm"
+              disabled={!user?.githubConnected || delegationSaving}
+              loading={delegationSaving}
+              onClick={() => void handleDelegationSave()}
+            >
+              Save
+            </Button>
+            {delegationSuccess && (
+              <span style={{ color: "var(--success)", fontSize: "var(--text-sm)" }}>Saved</span>
+            )}
+          </div>
         </section>
       </Card>
 

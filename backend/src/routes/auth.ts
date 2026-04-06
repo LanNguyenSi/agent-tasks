@@ -22,6 +22,7 @@ import {
   getUserByEmail,
   createLocalUser,
   connectGitHubToExistingUser,
+  updateUserDelegation,
 } from "../services/user.js";
 import { verifyPassword } from "../services/password.js";
 
@@ -94,6 +95,9 @@ function buildUserResponse(user: {
   email: string | null;
   githubConnectedAt: Date | null;
   githubAccessToken: string | null;
+  allowAgentPrCreate: boolean;
+  allowAgentPrMerge: boolean;
+  allowAgentPrComment: boolean;
 }) {
   return {
     id: user.id,
@@ -102,6 +106,9 @@ function buildUserResponse(user: {
     avatarUrl: user.avatarUrl,
     email: user.email,
     githubConnected: Boolean(user.githubConnectedAt && user.githubAccessToken),
+    allowAgentPrCreate: user.allowAgentPrCreate,
+    allowAgentPrMerge: user.allowAgentPrMerge,
+    allowAgentPrComment: user.allowAgentPrComment,
   };
 }
 
@@ -253,6 +260,29 @@ authRouter.get("/me", async (c) => {
   const user = await getUserById(session.userId);
   if (!user) {
     return c.json({ user: null });
+  }
+
+  return c.json({ user: buildUserResponse(user) });
+});
+
+// ── Agent Delegation Settings ────────────────────────────────────────────────
+
+const delegationSchema = z.object({
+  allowAgentPrCreate: z.boolean(),
+  allowAgentPrMerge: z.boolean(),
+  allowAgentPrComment: z.boolean(),
+});
+
+authRouter.put("/delegation", zValidator("json", delegationSchema), async (c) => {
+  const actor = c.get("actor");
+  if (!actor || actor.type !== "human") {
+    return c.json({ error: "unauthorized", message: "Authentication required" }, 401);
+  }
+
+  const body = c.req.valid("json");
+  const user = await updateUserDelegation(actor.userId, body);
+  if (!user) {
+    return c.json({ error: "not_found", message: "User not found" }, 404);
   }
 
   return c.json({ user: buildUserResponse(user) });

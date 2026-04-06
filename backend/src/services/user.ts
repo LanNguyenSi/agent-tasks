@@ -107,6 +107,24 @@ export async function upsertUserFromGitHub(
   });
 }
 
+export async function updateUserDelegation(
+  userId: string,
+  settings: {
+    allowAgentPrCreate: boolean;
+    allowAgentPrMerge: boolean;
+    allowAgentPrComment: boolean;
+  },
+) {
+  return prisma.user.update({
+    where: { id: userId },
+    data: {
+      allowAgentPrCreate: settings.allowAgentPrCreate,
+      allowAgentPrMerge: settings.allowAgentPrMerge,
+      allowAgentPrComment: settings.allowAgentPrComment,
+    },
+  });
+}
+
 export async function connectGitHubToExistingUser(
   userId: string,
   githubUser: GitHubUser,

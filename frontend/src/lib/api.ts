@@ -9,6 +9,9 @@ export interface User {
   avatarUrl: string | null;
   email: string | null;
   githubConnected: boolean;
+  allowAgentPrCreate: boolean;
+  allowAgentPrMerge: boolean;
+  allowAgentPrComment: boolean;
 }
 
 export interface TemplatePreset {
@@ -206,6 +209,18 @@ export async function getCurrentUser(): Promise<User | null> {
   } catch {
     return null;
   }
+}
+
+export async function updateDelegationSettings(body: {
+  allowAgentPrCreate: boolean;
+  allowAgentPrMerge: boolean;
+  allowAgentPrComment: boolean;
+}): Promise<User> {
+  const data = await request<{ user: User }>("/api/auth/delegation", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+  return data.user;
 }
 
 export async function logout(): Promise<void> {
