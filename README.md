@@ -197,22 +197,28 @@ Available scopes: `tasks:read` `tasks:create` `tasks:claim` `tasks:comment` `tas
 
 ### Agent Workflow
 
-Agents follow configurable per-project workflows. Each task can be assigned a workflow that defines valid status transitions and per-state instructions.
+See the **[full agent workflow guide](docs/agent-workflow.md)** for end-to-end examples with curl commands.
 
-```
-GET /api/tasks/{id}/instructions  →  { agentInstructions, allowedTransitions, updatableFields }
-```
+## GitHub Webhooks (optional)
 
-Typical flow: discover tasks via `/api/tasks/claimable`, claim with `/api/tasks/{id}/claim`, get instructions via `/api/tasks/{id}/instructions`, work on the task, update `branchName`/`prUrl`/`result` via `PATCH /api/tasks/{id}`, then transition via `/api/tasks/{id}/transition`.
+Webhooks sync GitHub PR lifecycle events into agent-tasks — automated timeline entries, auto-transitions on review/merge, and PR binding. Entirely optional; without webhooks everything works manually.
+
+**[Full setup guide →](docs/webhook-setup.md)** · [Automation policy →](docs/review-automation-policy.md) · [Deploy/verify strategy →](docs/deploy-verify-strategy.md)
+
+## Agent Workflow
+
+Agents discover tasks via `/api/tasks/claimable`, claim them, work on a branch, create a PR, update the task with PR metadata, and submit for review. If webhooks are configured, merging the PR auto-transitions the task to `done`.
+
+**[Full agent workflow guide →](docs/agent-workflow.md)**
 
 ## Roadmap
 
-- [ ] Webhooks (task.claimed, task.reviewed, etc.) for Slack/Discord/CI integration
+- [ ] Notification system (email, Slack, browser push)
 - [ ] Task dependencies (block/blocked-by)
-- [ ] PR status sync (auto-transition on merge/approve)
 - [ ] Structured logging (JSON, correlation IDs)
 - [ ] E2E and integration tests
-- [ ] Email notifications
+- [ ] Deploy webhook integration (GitHub Deployments API)
+- [ ] Workflow templates (pre-built custom workflows for common patterns)
 
 ## Contributing
 
