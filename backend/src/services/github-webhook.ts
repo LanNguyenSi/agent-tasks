@@ -35,6 +35,7 @@ export interface GitHubPullRequestPayload {
     state: "open" | "closed";
     merged: boolean;
     merged_by?: { login: string } | null;
+    head?: { ref?: string };
   };
   repository: { full_name: string };
 }
@@ -50,16 +51,51 @@ export interface GitHubPullRequestReviewPayload {
     number: number;
     title: string;
     html_url: string;
+    head?: { ref?: string };
   };
   repository: { full_name: string };
 }
 
-/** Find tasks bound to a PR number within a project (by prNumber field or title pattern) */
-async function findTasksByPr(projectId: string, prNumber: number) {
-  const [byField, byTitle] = await Promise.all([
+/**
+ * Find tasks bound to a PR within a project.
+ *
+ * Matching strategy (priority order per ADR 0001):
+ *   1. prNumber field  — strongest, set by agents or webhook
+ *   2. prUrl field     — set by agents or webhook
+ *   3. branchName      — matches head branch from PR payload
+ *   4. title pattern   — legacy fallback ([PR #N])
+ *
+ * Results are deduplicated and ordered by match strength.
+ * Only non-done tasks are returned (idempotency).
+ */
+export interface PrBindingHint {
+  prNumber: number;
+  prUrl?: string;
+  headBranch?: string;
+}
+
+export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
+  const { prNumber, prUrl, headBranch } = hint;
+
+  // Run all matching strategies in parallel
+  const queries = [
+    // 1. prNumber (strongest)
     prisma.task.findMany({
       where: { projectId, prNumber, status: { not: "done" } },
     }),
+    // 2. prUrl
+    prUrl
+      ? prisma.task.findMany({
+          where: { projectId, prUrl, status: { not: "done" } },
+        })
+      : Promise.resolve([]),
+    // 3. branchName
+    headBranch
+      ? prisma.task.findMany({
+          where: { projectId, branchName: headBranch, status: { not: "done" } },
+        })
+      : Promise.resolve([]),
+    // 4. title pattern (legacy fallback)
     prisma.task.findMany({
       where: {
         projectId,
@@ -67,10 +103,13 @@ async function findTasksByPr(projectId: string, prNumber: number) {
         status: { not: "done" },
       },
     }),
-  ]);
+  ];
 
+  const [byNumber, byUrl, byBranch, byTitle] = await Promise.all(queries);
+
+  // Deduplicate, preserving priority order
   const seen = new Set<string>();
-  return [...byField, ...byTitle].filter((t) => {
+  return [...byNumber, ...byUrl, ...byBranch, ...byTitle].filter((t) => {
     if (seen.has(t.id)) return false;
     seen.add(t.id);
     return true;
@@ -169,22 +208,25 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
   if (projects.length === 0) return;
 
   const prNumber = payload.pull_request.number;
+  const hint: PrBindingHint = {
+    prNumber,
+    prUrl: payload.pull_request.html_url,
+    headBranch: payload.pull_request.head?.ref,
+  };
 
   for (const project of projects) {
     if (payload.action === "opened") {
       // Check if a task already exists for this PR (idempotency)
-      const existing = await findTasksByPr(project.id, prNumber);
+      const existing = await findTasksByPr(project.id, hint);
       if (existing.length > 0) {
-        // Update prUrl/prNumber on existing tasks if not set
+        // Update prUrl/prNumber/branchName on existing tasks if not set
         for (const task of existing) {
-          if (!task.prNumber || !task.prUrl) {
-            await prisma.task.update({
-              where: { id: task.id },
-              data: {
-                ...(task.prNumber ? {} : { prNumber }),
-                ...(task.prUrl ? {} : { prUrl: payload.pull_request.html_url }),
-              },
-            });
+          const updates: Record<string, unknown> = {};
+          if (!task.prNumber) updates.prNumber = prNumber;
+          if (!task.prUrl) updates.prUrl = payload.pull_request.html_url;
+          if (!task.branchName && hint.headBranch) updates.branchName = hint.headBranch;
+          if (Object.keys(updates).length > 0) {
+            await prisma.task.update({ where: { id: task.id }, data: updates });
           }
           await addTimelineComment(task.id, `PR #${prNumber} opened: ${payload.pull_request.html_url}`);
         }
@@ -199,6 +241,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
           status: "review",
           prNumber,
           prUrl: payload.pull_request.html_url,
+          branchName: payload.pull_request.head?.ref ?? null,
         },
       });
 
@@ -209,7 +252,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
         payload: { source: "github_webhook", pr_number: prNumber },
       });
     } else if (payload.action === "closed") {
-      const tasks = await findTasksByPr(project.id, prNumber);
+      const tasks = await findTasksByPr(project.id, hint);
 
       if (payload.pull_request.merged) {
         // Policy: PR merged → done
@@ -259,9 +302,14 @@ export async function handlePullRequestReviewEvent(payload: GitHubPullRequestRev
   const prNumber = payload.pull_request.number;
   const reviewer = payload.review.user.login;
   const reviewState = payload.action === "dismissed" ? "dismissed" : payload.review.state;
+  const hint: PrBindingHint = {
+    prNumber,
+    prUrl: payload.pull_request.html_url,
+    headBranch: payload.pull_request.head?.ref,
+  };
 
   for (const project of projects) {
-    const tasks = await findTasksByPr(project.id, prNumber);
+    const tasks = await findTasksByPr(project.id, hint);
 
     for (const task of tasks) {
       switch (reviewState) {
