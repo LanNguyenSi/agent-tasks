@@ -22,6 +22,27 @@ auditRouter.get("/projects/:projectId/audit", async (c) => {
   return c.json({ logs, limit, offset });
 });
 
+auditRouter.get("/projects/:projectId/audit/github-delegation", async (c) => {
+  const actor = c.get("actor");
+  const projectId = c.req.param("projectId");
+
+  if (!(await hasProjectAccess(actor, projectId))) {
+    return forbidden(c, "Access denied");
+  }
+
+  const limit = Math.min(Number(c.req.query("limit") ?? "50"), 200);
+  const offset = Number(c.req.query("offset") ?? "0");
+  const action = c.req.query("action"); // e.g. "github.pr_created"
+
+  const logs = await getAuditLogs({
+    projectId,
+    ...(action ? { action } : { actionPrefix: "github." }),
+    limit,
+    offset,
+  });
+  return c.json({ logs, limit, offset });
+});
+
 auditRouter.get("/tasks/:taskId/audit", async (c) => {
   const actor = c.get("actor");
   const taskId = c.req.param("taskId");
