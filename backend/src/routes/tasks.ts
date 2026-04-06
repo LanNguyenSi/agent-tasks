@@ -9,6 +9,7 @@ import { forbidden, notFound, conflict, lowConfidence } from "../middleware/erro
 import { hasProjectAccess } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
 import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } from "../services/review-signal.js";
+import { emitTaskAvailableSignal } from "../services/task-signal.js";
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -135,6 +136,15 @@ taskRouter.post(
       },
       include: taskInclude,
     });
+
+    // Emit task_available signal when task is open (claimable)
+    const effectiveStatus = body.status ?? "open";
+    if (effectiveStatus === "open") {
+      const actorName = actor.type === "agent"
+        ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
+        : (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Human";
+      void emitTaskAvailableSignal(task.id, projectId, actor.type, actorName);
+    }
 
     return c.json({ task }, 201);
   },
@@ -867,6 +877,14 @@ taskRouter.post(
         task.claimedByUserId,
         task.claimedByAgentId,
       );
+    }
+
+    // Emit task_available signal when transitioning to open (e.g., reopened)
+    if (status === "open" && previousStatus !== "open") {
+      const actorName = actor.type === "agent"
+        ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
+        : (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Human";
+      void emitTaskAvailableSignal(task.id, task.projectId, actor.type, actorName);
     }
 
     return c.json({ task: updated });

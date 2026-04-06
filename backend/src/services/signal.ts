@@ -7,7 +7,7 @@
  */
 import { prisma } from "../lib/prisma.js";
 
-export type SignalType = "review_needed" | "changes_requested" | "task_approved" | "task_assigned";
+export type SignalType = "review_needed" | "changes_requested" | "task_approved" | "task_assigned" | "task_available";
 
 export interface SignalContext {
   taskTitle: string;
