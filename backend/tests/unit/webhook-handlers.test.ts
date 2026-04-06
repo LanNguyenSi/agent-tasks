@@ -210,7 +210,7 @@ describe("handlePullRequestEvent", () => {
     });
   });
 
-  it("creates task on PR opened when no existing task", async () => {
+  it("does not create task on PR opened when no existing task", async () => {
     mockTaskFindMany.mockResolvedValue([]);
 
     await handlePullRequestEvent({
@@ -219,14 +219,14 @@ describe("handlePullRequestEvent", () => {
       pull_request: { ...basePrPayload.pull_request, state: "open", merged: false },
     });
 
-    expect(mockTaskCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        title: "[PR #42] Fix bug",
-        status: "review",
-        prNumber: 42,
-        prUrl: "https://github.com/test/repo/pull/42",
+    // No task creation — task creation is a deliberate agent/human action
+    expect(mockTaskCreate).not.toHaveBeenCalled();
+    // But audit event is logged for the unmatched PR
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ event: "pr_opened_unmatched" }),
       }),
-    });
+    );
   });
 
   it("updates existing task metadata on PR opened instead of creating duplicate", async () => {
