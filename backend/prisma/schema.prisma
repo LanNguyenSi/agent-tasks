@@ -27,6 +27,7 @@ model User {
   agentTokens   AgentToken[]
   tasks         Task[]       @relation("TaskCreator")
   claims        Task[]       @relation("TaskClaimant")
+  reviews       Task[]       @relation("TaskReviewer")
   comments      Comment[]    @relation("CommentAuthor")
   auditLogs     AuditLog[]
 
@@ -87,6 +88,7 @@ model AgentToken {
   createdBy   User      @relation(fields: [createdById], references: [id])
   tasks       Task[]    @relation("TaskAgentCreator")
   claims      Task[]    @relation("TaskAgentClaimant")
+  reviews     Task[]    @relation("TaskAgentReviewer")
   comments    Comment[] @relation("CommentAgentAuthor")
 
   @@map("agent_tokens")
@@ -158,6 +160,11 @@ model Task {
   claimedAt        DateTime?
   dueAt            DateTime?
 
+  // Review lock — only one reviewer at a time
+  reviewClaimedByUserId  String?
+  reviewClaimedByAgentId String?
+  reviewClaimedAt        DateTime?
+
   // Template data (structured task info for agents)
   templateData     Json?     // { goal?, acceptanceCriteria?, context?, constraints? }
 
@@ -176,6 +183,8 @@ model Task {
   createdByAgent   AgentToken? @relation("TaskAgentCreator", fields: [createdByAgentId], references: [id])
   claimedByUser    User?       @relation("TaskClaimant", fields: [claimedByUserId], references: [id])
   claimedByAgent   AgentToken? @relation("TaskAgentClaimant", fields: [claimedByAgentId], references: [id])
+  reviewClaimedByUser  User?       @relation("TaskReviewer", fields: [reviewClaimedByUserId], references: [id])
+  reviewClaimedByAgent AgentToken? @relation("TaskAgentReviewer", fields: [reviewClaimedByAgentId], references: [id])
 
   // Dependencies: this task blocks others / is blocked by others
   blocks           Task[]    @relation("TaskDependency")
