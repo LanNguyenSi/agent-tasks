@@ -8,6 +8,7 @@ import { Prisma } from "@prisma/client";
 import { forbidden, notFound, conflict, lowConfidence } from "../middleware/error.js";
 import { hasProjectAccess } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
+import { emitReviewSignal } from "../services/review-signal.js";
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -857,6 +858,16 @@ taskRouter.post(
       taskId: task.id,
       payload: { from: previousStatus, to: status, actorType: actor.type },
     });
+
+    // Emit review signal when entering review state
+    if (status === "review" && previousStatus !== "review") {
+      void emitReviewSignal(
+        task.id,
+        task.projectId,
+        task.claimedByUserId,
+        task.claimedByAgentId,
+      );
+    }
 
     return c.json({ task: updated });
   },
