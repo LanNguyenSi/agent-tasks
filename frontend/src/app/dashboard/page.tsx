@@ -63,7 +63,9 @@ const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
 
 type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-type ListSort = "updated_desc" | "priority_desc" | "due_asc" | "title_asc";
+type SortColumn = "title" | "status" | "assignee" | "due" | "updated" | "priority";
+type SortDirection = "asc" | "desc";
+interface SortState { column: SortColumn; direction: SortDirection; }
 
 const STATUS_LABELS: Record<Status, string> = {
   open: "Open",
@@ -85,6 +87,22 @@ const PRIORITY_RANK: Record<Priority, number> = {
   MEDIUM: 2,
   LOW: 3,
 };
+const STATUS_RANK: Record<string, number> = {
+  open: 0,
+  in_progress: 1,
+  review: 2,
+  done: 3,
+};
+
+const NATURAL_SORT_DIR: Record<SortColumn, SortDirection> = {
+  title: "asc",
+  status: "asc",
+  assignee: "asc",
+  due: "asc",
+  updated: "desc",
+  priority: "desc",
+};
+
 const LIST_PAGE_SIZE = 12;
 
 function isOverdue(task: Task): boolean {
@@ -308,7 +326,7 @@ export default function DashboardPage() {
   const [hideDone, setHideDone] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"board" | "list">("board");
-  const [listSort, setListSort] = useState<ListSort>("updated_desc");
+  const [sortState, setSortState] = useState<SortState>({ column: "updated", direction: "desc" });
   const [listPage, setListPage] = useState(1);
   const projectTriggerRef = useRef<HTMLButtonElement | null>(null);
   const selectedTeam = useMemo(
@@ -342,24 +360,45 @@ export default function DashboardPage() {
   }, [filteredTasks]);
   const hasActiveFilters = taskQuery.trim().length > 0 || taskScope !== "all" || hideDone;
 
-  const listSortedTasks = useMemo(() => {
-    return [...filteredTasks].sort((a, b) => {
-      if (listSort === "title_asc") return a.title.localeCompare(b.title);
-
-      if (listSort === "priority_desc") {
-        const priorityDiff = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
-        if (priorityDiff !== 0) return priorityDiff;
+  function toggleSort(column: SortColumn) {
+    setSortState((prev) => {
+      if (prev.column === column) {
+        return { column, direction: prev.direction === "asc" ? "desc" : "asc" };
       }
-
-      if (listSort === "due_asc") {
-        const aDue = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
-        const bDue = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
-        if (aDue !== bDue) return aDue - bDue;
-      }
-
-      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      return { column, direction: NATURAL_SORT_DIR[column] };
     });
-  }, [filteredTasks, listSort]);
+  }
+
+  const listSortedTasks = useMemo(() => {
+    const dir = sortState.direction === "asc" ? 1 : -1;
+    return [...filteredTasks].sort((a, b) => {
+      let cmp = 0;
+      switch (sortState.column) {
+        case "title":
+          cmp = a.title.localeCompare(b.title);
+          break;
+        case "status":
+          cmp = (STATUS_RANK[a.status] ?? 0) - (STATUS_RANK[b.status] ?? 0);
+          break;
+        case "assignee":
+          cmp = getAssigneeName(a).localeCompare(getAssigneeName(b));
+          break;
+        case "due": {
+          const aDue = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
+          const bDue = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
+          cmp = aDue - bDue;
+          break;
+        }
+        case "updated":
+          cmp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+          break;
+        case "priority":
+          cmp = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
+          break;
+      }
+      return cmp * dir;
+    });
+  }, [filteredTasks, sortState]);
 
   const listTotalPages = Math.max(1, Math.ceil(listSortedTasks.length / LIST_PAGE_SIZE));
   const currentListPage = Math.min(listPage, listTotalPages);
@@ -469,7 +508,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setListPage(1);
-  }, [selectedProjectId, taskQuery, taskScope, hideDone, listSort, viewMode]);
+  }, [selectedProjectId, taskQuery, taskScope, hideDone, sortState, viewMode]);
 
   async function handleProjectChange(projectId: string) {
     if (!selectedTeamId) return;
@@ -812,20 +851,6 @@ export default function DashboardPage() {
       </Modal>
 
       <Card padding="sm" style={{ marginBottom: "0.9rem" }}>
-        {viewMode === "list" && (
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.65rem" }}>
-            <select
-              value={listSort}
-              onChange={(e) => setListSort(e.target.value as ListSort)}
-              style={{ minWidth: "210px" }}
-            >
-              <option value="updated_desc">Sort: Recently updated</option>
-              <option value="priority_desc">Sort: Priority</option>
-              <option value="due_asc">Sort: Due date</option>
-              <option value="title_asc">Sort: Title A-Z</option>
-            </select>
-          </div>
-        )}
         <div className="board-toolbar">
           <input
             value={taskQuery}
