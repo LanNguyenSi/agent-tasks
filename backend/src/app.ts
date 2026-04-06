@@ -12,6 +12,7 @@ import { auditRouter } from "./routes/audit.js";
 import { teamRouter } from "./routes/teams.js";
 import { webhookRouter } from "./routes/webhooks.js";
 import { signalRouter } from "./routes/signals.js";
+import { githubRouter } from "./routes/github.js";
 import { docsRouter } from "./routes/docs.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { rateLimit } from "./middleware/rate-limit.js";
@@ -60,6 +61,7 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.use("/api/agent/signals/*", authMiddleware);
   app.use("/api/agent/signals", authMiddleware);
   app.use("/api/projects/*", authMiddleware);
+  app.use("/api/github/*", authMiddleware);
 
   app.route("/api/auth", authRouter);
   app.route("/api", teamRouter);
@@ -70,6 +72,7 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.route("/api", boardRouter);
   app.route("/api", auditRouter);
   app.route("/api", signalRouter);
+  app.route("/api/github", githubRouter);
 
   // 404
   app.notFound((c) => c.json({ error: "not_found", message: "Route not found" }, 404));
