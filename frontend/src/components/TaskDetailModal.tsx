@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import {
   updateTask,
   deleteTask,
@@ -317,9 +318,9 @@ export default function TaskDetailModal({
               </div>
               {/* Description */}
               {task.description ? (
-                <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.55, color: "var(--text)", fontSize: "var(--text-sm)" }}>
-                  {task.description}
-                </p>
+                <div className="prose-markdown">
+                  <ReactMarkdown>{task.description}</ReactMarkdown>
+                </div>
               ) : (
                 <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", fontStyle: "italic" }}>No description</p>
               )}
@@ -514,25 +515,25 @@ export default function TaskDetailModal({
                 {templateFields.goal && task.templateData?.goal && (
                   <div>
                     <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Goal</span>
-                    <p style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-sm)", lineHeight: 1.5, color: "var(--text)", marginTop: "0.15rem" }}>{task.templateData.goal}</p>
+                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.goal}</ReactMarkdown></div>
                   </div>
                 )}
                 {templateFields.acceptanceCriteria && task.templateData?.acceptanceCriteria && (
                   <div>
                     <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Acceptance Criteria</span>
-                    <p style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-sm)", lineHeight: 1.5, color: "var(--text)", marginTop: "0.15rem" }}>{task.templateData.acceptanceCriteria}</p>
+                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.acceptanceCriteria}</ReactMarkdown></div>
                   </div>
                 )}
                 {templateFields.context && task.templateData?.context && (
                   <div>
                     <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Context</span>
-                    <p style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-sm)", lineHeight: 1.5, color: "var(--text)", marginTop: "0.15rem" }}>{task.templateData.context}</p>
+                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.context}</ReactMarkdown></div>
                   </div>
                 )}
                 {templateFields.constraints && task.templateData?.constraints && (
                   <div>
                     <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Constraints</span>
-                    <p style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-sm)", lineHeight: 1.5, color: "var(--text)", marginTop: "0.15rem" }}>{task.templateData.constraints}</p>
+                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.constraints}</ReactMarkdown></div>
                   </div>
                 )}
               </div>

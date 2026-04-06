@@ -1049,3 +1049,92 @@ input[type="checkbox"] {
     padding: var(--space-4);
   }
 }
+
+/* ── Markdown Prose (dark theme) ──────────────────────────────── */
+
+.prose-markdown {
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.prose-markdown > *:first-child { margin-top: 0; }
+.prose-markdown > *:last-child { margin-bottom: 0; }
+
+.prose-markdown h1,
+.prose-markdown h2,
+.prose-markdown h3,
+.prose-markdown h4 {
+  color: var(--text);
+  font-weight: 600;
+  margin: 0.75em 0 0.35em;
+}
+.prose-markdown h1 { font-size: var(--text-md); }
+.prose-markdown h2 { font-size: var(--text-base); }
+.prose-markdown h3 { font-size: var(--text-sm); }
+
+.prose-markdown p {
+  margin: 0.4em 0;
+}
+
+.prose-markdown a {
+  color: var(--primary);
+  text-decoration: none;
+}
+.prose-markdown a:hover {
+  text-decoration: underline;
+}
+
+.prose-markdown ul,
+.prose-markdown ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.prose-markdown li {
+  margin: 0.15em 0;
+}
+.prose-markdown li::marker {
+  color: var(--muted);
+}
+
+.prose-markdown code {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: "SF Mono", "Fira Code", monospace;
+}
+
+.prose-markdown pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.65rem 0.75rem;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.prose-markdown pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: var(--text-xs);
+}
+
+.prose-markdown blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.75rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin: 0.5em 0;
+}
+
+.prose-markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.75em 0;
+}
+
+.prose-markdown strong { color: var(--text); }
+.prose-markdown em { color: var(--text-secondary); }
+
