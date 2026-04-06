@@ -926,10 +926,26 @@ export default function DashboardPage() {
             ) : (
               <div className="task-list-shell">
                 <div className="task-list-head">
-                  <span>Task</span>
-                  <span>Assignee</span>
-                  <span>Due</span>
-                  <span>Priority</span>
+                  {([
+                    ["title", "Task"],
+                    ["assignee", "Assignee"],
+                    ["due", "Due"],
+                    ["priority", "Priority"],
+                  ] as [SortColumn, string][]).map(([col, label]) => (
+                    <button
+                      key={col}
+                      type="button"
+                      className={sortState.column === col ? "sort-active" : ""}
+                      onClick={() => toggleSort(col)}
+                    >
+                      {label}
+                      {sortState.column === col && (
+                        <span style={{ color: "var(--primary)", marginLeft: "0.25rem" }}>
+                          {sortState.direction === "asc" ? "▲" : "▼"}
+                        </span>
+                      )}
+                    </button>
+                  ))}
                 </div>
                 {listPageTasks.length === 0 ? (
                   <div style={{ padding: "1rem", color: "var(--muted)", textAlign: "center" }}>No tasks in this list view.</div>
