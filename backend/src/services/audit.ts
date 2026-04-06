@@ -20,7 +20,10 @@ export type AuditAction =
   | "token.created"
   | "token.revoked"
   | "user.login"
-  | "user.logout";
+  | "user.logout"
+  | "github.pr_created"
+  | "github.pr_merged"
+  | "github.pr_commented";
 
 export interface AuditPayload {
   [key: string]: unknown;
