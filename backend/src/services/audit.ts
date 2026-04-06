@@ -51,6 +51,8 @@ export async function getAuditLogs(opts: {
   projectId?: string;
   taskId?: string;
   actorId?: string;
+  action?: string;
+  actionPrefix?: string;
   limit?: number;
   offset?: number;
 }) {
@@ -59,6 +61,8 @@ export async function getAuditLogs(opts: {
       ...(opts.projectId ? { projectId: opts.projectId } : {}),
       ...(opts.taskId ? { taskId: opts.taskId } : {}),
       ...(opts.actorId ? { actorId: opts.actorId } : {}),
+      ...(opts.action ? { action: opts.action } : {}),
+      ...(opts.actionPrefix ? { action: { startsWith: opts.actionPrefix } } : {}),
     },
     orderBy: { createdAt: "desc" },
     take: opts.limit ?? 50,

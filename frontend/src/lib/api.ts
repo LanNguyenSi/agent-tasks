@@ -493,3 +493,14 @@ export async function getProjectAuditLogs(projectId: string, limit = 50): Promis
   );
   return data.logs;
 }
+
+export async function getGitHubDelegationLogs(projectId: string, opts?: { action?: string; limit?: number }): Promise<AuditLog[]> {
+  const params = new URLSearchParams();
+  if (opts?.action) params.set("action", opts.action);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const data = await request<{ logs: AuditLog[] }>(
+    `/api/projects/${projectId}/audit/github-delegation${qs}`,
+  );
+  return data.logs;
+}
