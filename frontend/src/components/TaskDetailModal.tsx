@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   updateTask,
   deleteTask,
@@ -33,6 +33,14 @@ const STATUS_LABELS: Record<Status, string> = {
   review: "In Review",
   done: "Done",
 };
+
+const PRIORITY_COLORS: Record<Priority, string> = {
+  LOW: "#6b7280",
+  MEDIUM: "#f59e0b",
+  HIGH: "#ef4444",
+  CRITICAL: "#be123c",
+};
+
 function isOverdue(task: Task): boolean {
   if (!task.dueAt || task.status === "done") return false;
   return new Date(task.dueAt).getTime() < Date.now();
@@ -50,8 +58,8 @@ function toIsoDateOrNull(value: string): string | null {
 
 function getClaimLabel(task: Task): string {
   if (!task.claimedByUserId && !task.claimedByAgentId) return "Unassigned";
-  if (task.claimedByUser) return `Assignee: ${task.claimedByUser.name ?? task.claimedByUser.login}`;
-  if (task.claimedByAgent) return `Assignee: Agent ${task.claimedByAgent.name}`;
+  if (task.claimedByUser) return task.claimedByUser.name ?? task.claimedByUser.login;
+  if (task.claimedByAgent) return `Agent ${task.claimedByAgent.name}`;
   return "Assigned";
 }
 
@@ -78,6 +86,7 @@ export default function TaskDetailModal({
   onClose,
   onError,
 }: TaskDetailModalProps) {
+  const [isEditing, setIsEditing] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
   const [deletingTask, setDeletingTask] = useState(false);
   const [showDeleteTaskConfirm, setShowDeleteTaskConfirm] = useState(false);
@@ -98,7 +107,7 @@ export default function TaskDetailModal({
   const [editContext, setEditContext] = useState("");
   const [editConstraints, setEditConstraints] = useState("");
 
-  useEffect(() => {
+  const initEditState = useCallback(() => {
     setEditTitle(task.title);
     setEditDescription(task.description ?? "");
     setEditPriority(task.priority);
@@ -108,13 +117,24 @@ export default function TaskDetailModal({
     setEditAcceptanceCriteria(task.templateData?.acceptanceCriteria ?? "");
     setEditContext(task.templateData?.context ?? "");
     setEditConstraints(task.templateData?.constraints ?? "");
-    setCommentText("");
-    setDepPickerValue("");
   }, [task]);
 
+  // Reset modal state when task changes
   useEffect(() => {
+    setIsEditing(false);
+    setCommentText("");
+    setDepPickerValue("");
     setShowDeleteTaskConfirm(false);
   }, [task]);
+
+  function startEditing() {
+    initEditState();
+    setIsEditing(true);
+  }
+
+  function cancelEditing() {
+    setIsEditing(false);
+  }
 
   async function handleSaveTask() {
     setSavingTask(true);
@@ -134,7 +154,7 @@ export default function TaskDetailModal({
         templateData: Object.keys(editTplData).length > 0 ? editTplData : null,
       });
       onUpdate(updated);
-      onClose();
+      setIsEditing(false);
     } catch (err) {
       onError((err as Error).message);
     } finally {
@@ -189,67 +209,96 @@ export default function TaskDetailModal({
         open
         onClose={onClose}
         title="Task Details"
-        actions={
-          <Button
-            onClick={() => void handleSaveTask()}
-            disabled={savingTask || deletingTask}
-            loading={savingTask}
-            size="sm"
-          >
-            {savingTask ? "Saving…" : "Save changes"}
-          </Button>
-        }
+        actions={isEditing ? (
+          <div style={{ display: "flex", gap: "0.45rem" }}>
+            <Button variant="ghost" size="sm" onClick={cancelEditing} disabled={savingTask}>Cancel</Button>
+            <Button onClick={() => void handleSaveTask()} disabled={savingTask} loading={savingTask} size="sm">
+              {savingTask ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        ) : undefined}
       >
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "var(--space-3)" }}>
+        {/* Header actions */}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.45rem", marginBottom: "var(--space-3)" }}>
+          {!isEditing && (
+            <Button variant="secondary" size="sm" onClick={startEditing}>Edit</Button>
+          )}
           <Button
-            variant="outline-danger"
+            variant="ghost"
             size="sm"
             onClick={() => setShowDeleteTaskConfirm(true)}
             disabled={savingTask || deletingTask}
+            style={{ color: "var(--danger)" }}
           >
             {deletingTask ? "Deleting…" : "Delete"}
           </Button>
         </div>
 
+        {/* ── Overview ──────────────────────────────────────────────── */}
         <section style={{ marginBottom: "0.8rem" }}>
-          <p className="section-kicker">Overview</p>
-          <div style={{ marginBottom: "0.5rem" }}>
-            <FormField label="Title">
-              <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ width: "100%" }} />
-            </FormField>
-          </div>
-          <FormField label="Description">
-            <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
-          </FormField>
+          {isEditing ? (
+            <>
+              <p className="section-kicker">Overview</p>
+              <div style={{ marginBottom: "0.5rem" }}>
+                <FormField label="Title">
+                  <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ width: "100%" }} />
+                </FormField>
+              </div>
+              <FormField label="Description">
+                <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
+              </FormField>
+            </>
+          ) : (
+            <>
+              <h2 style={{ fontSize: "var(--text-md)", fontWeight: 700, color: "var(--text)", marginBottom: "0.5rem", lineHeight: 1.3 }}>
+                {task.title}
+              </h2>
+              {/* Metadata chip row */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.65rem" }}>
+                <span className="status-chip">{STATUS_LABELS[task.status as Status]}</span>
+                <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>{task.priority}</span>
+                <span className="status-chip">{task.dueAt ? `Due ${toDateInputValue(task.dueAt)}` : "No due date"}</span>
+                <span className="status-chip">{isOverdue(task) ? "Overdue" : "On track"}</span>
+                <span className="status-chip">{getClaimLabel(task)}</span>
+              </div>
+              {/* Description */}
+              {task.description ? (
+                <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.55, color: "var(--text)", fontSize: "var(--text-sm)" }}>
+                  {task.description}
+                </p>
+              ) : (
+                <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", fontStyle: "italic" }}>No description</p>
+              )}
+            </>
+          )}
         </section>
 
-        <section style={{ marginBottom: "0.8rem" }}>
-          <p className="section-kicker">Workflow</p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginBottom: "0.55rem" }}>
-            <span className="status-chip">{STATUS_LABELS[task.status as Status]}</span>
-            <span className="status-chip">{task.priority}</span>
-            <span className="status-chip">{isOverdue(task) ? "Overdue" : "On track"}</span>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", marginBottom: "0.5rem" }}>
-            <FormField label="Status">
-              <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as Status)} style={{ width: "100%" }}>
-                {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
-              </select>
+        {/* ── Workflow (edit mode only) ──────────────────────────────── */}
+        {isEditing && (
+          <section style={{ marginBottom: "0.8rem" }}>
+            <p className="section-kicker">Workflow</p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", marginBottom: "0.5rem" }}>
+              <FormField label="Status">
+                <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as Status)} style={{ width: "100%" }}>
+                  {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
+                </select>
+              </FormField>
+              <FormField label="Priority">
+                <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as Priority)} style={{ width: "100%" }}>
+                  <option value="LOW">LOW</option>
+                  <option value="MEDIUM">MEDIUM</option>
+                  <option value="HIGH">HIGH</option>
+                  <option value="CRITICAL">CRITICAL</option>
+                </select>
+              </FormField>
+            </div>
+            <FormField label="Due Date">
+              <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)} style={{ width: "100%" }} />
             </FormField>
-            <FormField label="Priority">
-              <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as Priority)} style={{ width: "100%" }}>
-                <option value="LOW">LOW</option>
-                <option value="MEDIUM">MEDIUM</option>
-                <option value="HIGH">HIGH</option>
-                <option value="CRITICAL">CRITICAL</option>
-              </select>
-            </FormField>
-          </div>
-          <FormField label="Due Date">
-            <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)} style={{ width: "100%" }} />
-          </FormField>
-        </section>
+          </section>
+        )}
 
+        {/* ── Dependencies ──────────────────────────────────────────── */}
         <section style={{ marginBottom: "0.8rem" }}>
           <p className="section-kicker">Dependencies</p>
           {(task.blockedBy?.length ?? 0) === 0 && (task.blocks?.length ?? 0) === 0 ? (
@@ -323,14 +372,17 @@ export default function TaskDetailModal({
           </div>
         </section>
 
+        {/* ── Agent Template ──────────────────────────────────────────── */}
         {templateFields && (
           <section style={{ marginBottom: "0.8rem" }}>
             <p className="section-kicker">Agent Template</p>
             {(() => {
               const conf = calculateConfidence({
-                title: editTitle,
-                description: editDescription || null,
-                templateData: { goal: editGoal || undefined, acceptanceCriteria: editAcceptanceCriteria || undefined, context: editContext || undefined, constraints: editConstraints || undefined },
+                title: isEditing ? editTitle : task.title,
+                description: isEditing ? (editDescription || null) : (task.description ?? null),
+                templateData: isEditing
+                  ? { goal: editGoal || undefined, acceptanceCriteria: editAcceptanceCriteria || undefined, context: editContext || undefined, constraints: editConstraints || undefined }
+                  : task.templateData,
                 templateFields,
               });
               return (
@@ -351,37 +403,69 @@ export default function TaskDetailModal({
                 </div>
               );
             })()}
-            {templateFields.goal && (
-              <div style={{ marginBottom: "0.5rem" }}>
-                <FormField label="Goal">
-                  <textarea value={editGoal} onChange={(e) => setEditGoal(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                </FormField>
-              </div>
-            )}
-            {templateFields.acceptanceCriteria && (
-              <div style={{ marginBottom: "0.5rem" }}>
-                <FormField label="Acceptance Criteria">
-                  <textarea value={editAcceptanceCriteria} onChange={(e) => setEditAcceptanceCriteria(e.target.value)} rows={3} style={{ width: "100%", resize: "vertical" }} />
-                </FormField>
-              </div>
-            )}
-            {templateFields.context && (
-              <div style={{ marginBottom: "0.5rem" }}>
-                <FormField label="Context">
-                  <textarea value={editContext} onChange={(e) => setEditContext(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                </FormField>
-              </div>
-            )}
-            {templateFields.constraints && (
-              <div style={{ marginBottom: "0.5rem" }}>
-                <FormField label="Constraints">
-                  <textarea value={editConstraints} onChange={(e) => setEditConstraints(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                </FormField>
+            {isEditing ? (
+              <>
+                {templateFields.goal && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Goal">
+                      <textarea value={editGoal} onChange={(e) => setEditGoal(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.acceptanceCriteria && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Acceptance Criteria">
+                      <textarea value={editAcceptanceCriteria} onChange={(e) => setEditAcceptanceCriteria(e.target.value)} rows={3} style={{ width: "100%", resize: "vertical" }} />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.context && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Context">
+                      <textarea value={editContext} onChange={(e) => setEditContext(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.constraints && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Constraints">
+                      <textarea value={editConstraints} onChange={(e) => setEditConstraints(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
+                    </FormField>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ display: "grid", gap: "0.5rem" }}>
+                {templateFields.goal && task.templateData?.goal && (
+                  <div>
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Goal</span>
+                    <p style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-sm)", lineHeight: 1.5, color: "var(--text)", marginTop: "0.15rem" }}>{task.templateData.goal}</p>
+                  </div>
+                )}
+                {templateFields.acceptanceCriteria && task.templateData?.acceptanceCriteria && (
+                  <div>
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Acceptance Criteria</span>
+                    <p style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-sm)", lineHeight: 1.5, color: "var(--text)", marginTop: "0.15rem" }}>{task.templateData.acceptanceCriteria}</p>
+                  </div>
+                )}
+                {templateFields.context && task.templateData?.context && (
+                  <div>
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Context</span>
+                    <p style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-sm)", lineHeight: 1.5, color: "var(--text)", marginTop: "0.15rem" }}>{task.templateData.context}</p>
+                  </div>
+                )}
+                {templateFields.constraints && task.templateData?.constraints && (
+                  <div>
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Constraints</span>
+                    <p style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-sm)", lineHeight: 1.5, color: "var(--text)", marginTop: "0.15rem" }}>{task.templateData.constraints}</p>
+                  </div>
+                )}
               </div>
             )}
           </section>
         )}
 
+        {/* ── Agent Output ──────────────────────────────────────────── */}
         {(task.branchName || task.prUrl || task.result) && (
           <section style={{ marginBottom: "0.8rem" }}>
             <p className="section-kicker">Agent Output</p>
@@ -420,6 +504,10 @@ export default function TaskDetailModal({
           </section>
         )}
 
+        {/* ── Divider ──────────────────────────────────────────────── */}
+        <div style={{ borderTop: "1px solid var(--border)", margin: "0.6rem 0" }} />
+
+        {/* ── Review ──────────────────────────────────────────────── */}
         {task.status === "review" && task.claimedByUserId === user?.id && (
           <section style={{ marginBottom: "0.8rem" }}>
             <p className="section-kicker">Review</p>
@@ -501,37 +589,37 @@ export default function TaskDetailModal({
           </section>
         )}
 
-        <section style={{ marginBottom: "0.8rem" }}>
-          <p className="section-kicker">Ownership</p>
-          <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.45rem 0.55rem", color: "var(--text)", fontSize: "var(--text-sm)", background: "color-mix(in srgb, var(--surface) 88%, #0b111d 12%)" }}>
-            {getClaimLabel(task)}
-          </div>
-          <div style={{ display: "flex", gap: "0.45rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
-            {!task.claimedByUserId && !task.claimedByAgentId && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void handleClaim()}
-                disabled={claimBusy || savingTask || deletingTask}
-                loading={claimBusy}
-              >
-                {claimBusy ? "Claiming…" : "Claim for me"}
-              </Button>
-            )}
-            {task.claimedByUserId === user?.id && (
-              <Button
-                variant="outline-danger"
-                size="sm"
-                onClick={() => void handleRelease()}
-                disabled={claimBusy || savingTask || deletingTask}
-                loading={claimBusy}
-              >
-                {claimBusy ? "Releasing…" : "Release"}
-              </Button>
-            )}
-          </div>
-        </section>
+        {/* ── Ownership ──────────────────────────────────────────── */}
+        {!isEditing && (
+          <section style={{ marginBottom: "0.8rem" }}>
+            <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+              {!task.claimedByUserId && !task.claimedByAgentId && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void handleClaim()}
+                  disabled={claimBusy}
+                  loading={claimBusy}
+                >
+                  {claimBusy ? "Claiming…" : "Claim for me"}
+                </Button>
+              )}
+              {task.claimedByUserId === user?.id && (
+                <Button
+                  variant="outline-danger"
+                  size="sm"
+                  onClick={() => void handleRelease()}
+                  disabled={claimBusy}
+                  loading={claimBusy}
+                >
+                  {claimBusy ? "Releasing…" : "Release"}
+                </Button>
+              )}
+            </div>
+          </section>
+        )}
 
+        {/* ── Activity ──────────────────────────────────────────── */}
         {webhookEvents.length > 0 && (
           <section>
             <p className="section-kicker">Activity</p>
@@ -554,6 +642,7 @@ export default function TaskDetailModal({
           </section>
         )}
 
+        {/* ── Comments ──────────────────────────────────────────── */}
         <section>
           <p className="section-kicker">Comments</p>
           {userComments.length === 0 ? (
