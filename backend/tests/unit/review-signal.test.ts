@@ -3,23 +3,31 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const {
   mockProjectFindUnique,
   mockAgentTokenFindMany,
+  mockAgentTokenFindUnique,
   mockTeamMemberFindMany,
   mockCommentCreate,
+  mockSignalCreate,
+  mockTaskFindUnique,
   mockLogAuditEvent,
 } = vi.hoisted(() => ({
   mockProjectFindUnique: vi.fn(),
   mockAgentTokenFindMany: vi.fn(),
+  mockAgentTokenFindUnique: vi.fn(),
   mockTeamMemberFindMany: vi.fn(),
   mockCommentCreate: vi.fn().mockResolvedValue({}),
+  mockSignalCreate: vi.fn().mockResolvedValue({ id: "sig-1" }),
+  mockTaskFindUnique: vi.fn(),
   mockLogAuditEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
     project: { findUnique: mockProjectFindUnique },
-    agentToken: { findMany: mockAgentTokenFindMany },
+    agentToken: { findMany: mockAgentTokenFindMany, findUnique: mockAgentTokenFindUnique },
     teamMember: { findMany: mockTeamMemberFindMany },
+    task: { findUnique: mockTaskFindUnique },
     comment: { create: mockCommentCreate },
+    signal: { create: mockSignalCreate },
   },
 }));
 
@@ -27,13 +35,19 @@ vi.mock("../../src/services/audit.js", () => ({
   logAuditEvent: mockLogAuditEvent,
 }));
 
-import { findEligibleReviewers, emitReviewSignal } from "../../src/services/review-signal.js";
+import { findEligibleReviewers, emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } from "../../src/services/review-signal.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockProjectFindUnique.mockResolvedValue({ teamId: "team-1" });
   mockAgentTokenFindMany.mockResolvedValue([]);
+  mockAgentTokenFindUnique.mockResolvedValue({ name: "Worker Bot" });
   mockTeamMemberFindMany.mockResolvedValue([]);
+  mockTaskFindUnique.mockResolvedValue({
+    id: "task-1", title: "Fix bug", status: "review",
+    branchName: "feat/fix", prUrl: "https://github.com/test/pull/1", prNumber: 1,
+    project: { slug: "agent-tasks", name: "agent-tasks" },
+  });
 });
 
 describe("findEligibleReviewers", () => {
@@ -286,22 +300,108 @@ describe("review orchestration flow", () => {
   });
 
   it("request_changes preserves original assignee (claim fields untouched)", async () => {
-    // This tests the contract: emitReviewSignal does NOT modify claim fields.
-    // The /review endpoint only changes status, not claimedByUserId/claimedByAgentId.
-    // We verify by confirming emitReviewSignal has no side effect on task claim data.
     mockAgentTokenFindMany.mockResolvedValue([
       { id: "reviewer", name: "Reviewer" },
     ]);
 
     await emitReviewSignal("task-1", "proj-1", null, "agent-worker");
 
-    // emitReviewSignal should only create a comment and audit log
-    // It should NOT call any task update (no prisma.task.update)
-    // The comment and audit are the only DB writes
+    // emitReviewSignal creates comment, signal, and audit — but no task update
     expect(mockCommentCreate).toHaveBeenCalledTimes(1);
     expect(mockLogAuditEvent).toHaveBeenCalledTimes(1);
+  });
+});
 
-    // Verify no unexpected DB operations happened
-    // (mockCommentCreate and mockLogAuditEvent are the only write operations)
+// ── Durable signal emission tests ───────────────────────────────────────────
+
+describe("emitReviewSignal — durable signals", () => {
+  it("creates a durable signal per eligible reviewer", async () => {
+    mockAgentTokenFindMany.mockResolvedValue([
+      { id: "agent-r1", name: "Reviewer 1" },
+      { id: "agent-r2", name: "Reviewer 2" },
+    ]);
+
+    await emitReviewSignal("task-1", "proj-1", null, "agent-worker");
+
+    // One signal per reviewer
+    expect(mockSignalCreate).toHaveBeenCalledTimes(2);
+    expect(mockSignalCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: "review_needed",
+        taskId: "task-1",
+        recipientAgentId: "agent-r1",
+      }),
+    });
+    expect(mockSignalCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: "review_needed",
+        recipientAgentId: "agent-r2",
+      }),
+    });
+  });
+
+  it("includes inline context in signal payload", async () => {
+    mockAgentTokenFindMany.mockResolvedValue([
+      { id: "agent-r1", name: "Reviewer" },
+    ]);
+
+    await emitReviewSignal("task-1", "proj-1", null, "agent-worker");
+
+    expect(mockSignalCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        context: expect.objectContaining({
+          taskTitle: "Fix bug",
+          projectSlug: "agent-tasks",
+          branchName: "feat/fix",
+          prUrl: "https://github.com/test/pull/1",
+        }),
+      }),
+    });
+  });
+});
+
+describe("emitChangesRequestedSignal", () => {
+  it("creates a signal targeting the original assignee", async () => {
+    await emitChangesRequestedSignal(
+      "task-1", "proj-1",
+      null, "agent-worker",
+      "Reviewer Bot", "Please add tests",
+    );
+
+    expect(mockSignalCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: "changes_requested",
+        taskId: "task-1",
+        recipientAgentId: "agent-worker",
+        recipientUserId: null,
+        context: expect.objectContaining({
+          reviewComment: "Please add tests",
+          actor: expect.objectContaining({ name: "Reviewer Bot" }),
+        }),
+      }),
+    });
+  });
+
+  it("does nothing if no assignee", async () => {
+    await emitChangesRequestedSignal("task-1", "proj-1", null, null, "Reviewer");
+    expect(mockSignalCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("emitTaskApprovedSignal", () => {
+  it("creates an approved signal for the assignee", async () => {
+    await emitTaskApprovedSignal(
+      "task-1", "proj-1",
+      "user-worker", null,
+      "Reviewer Bot",
+    );
+
+    expect(mockSignalCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: "task_approved",
+        recipientUserId: "user-worker",
+        recipientAgentId: null,
+      }),
+    });
   });
 });

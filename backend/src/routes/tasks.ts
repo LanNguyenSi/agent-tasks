@@ -8,7 +8,7 @@ import { Prisma } from "@prisma/client";
 import { forbidden, notFound, conflict, lowConfidence } from "../middleware/error.js";
 import { hasProjectAccess } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
-import { emitReviewSignal } from "../services/review-signal.js";
+import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } from "../services/review-signal.js";
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -956,6 +956,25 @@ taskRouter.post(
       taskId: task.id,
       payload: { reviewAction: action, from: "review", to: newStatus, actorType: actor.type, reviewerId: actorId },
     });
+
+    // Emit durable signals to the original assignee
+    const reviewerName = actor.type === "agent"
+      ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
+      : (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Reviewer";
+
+    if (action === "request_changes") {
+      void emitChangesRequestedSignal(
+        task.id, task.projectId,
+        task.claimedByUserId, task.claimedByAgentId,
+        reviewerName, reviewComment,
+      );
+    } else if (action === "approve") {
+      void emitTaskApprovedSignal(
+        task.id, task.projectId,
+        task.claimedByUserId, task.claimedByAgentId,
+        reviewerName, reviewComment,
+      );
+    }
 
     return c.json({ task: updated });
   },

@@ -6,6 +6,7 @@
  */
 import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
+import { createSignal, type SignalContext } from "./signal.js";
 
 export interface ReviewRecipient {
   type: "agent" | "human";
@@ -72,11 +73,38 @@ export async function findEligibleReviewers(
   return recipients;
 }
 
+/** Build inline signal context from a task */
+async function buildSignalContext(
+  taskId: string,
+  actorType: "human" | "agent" | "webhook",
+  actorName: string,
+  extra?: Partial<SignalContext>,
+): Promise<SignalContext | null> {
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    include: { project: { select: { slug: true, name: true } } },
+  });
+  if (!task) return null;
+
+  return {
+    taskTitle: task.title,
+    taskStatus: task.status,
+    projectSlug: task.project.slug,
+    projectName: task.project.name,
+    branchName: task.branchName,
+    prUrl: task.prUrl,
+    prNumber: task.prNumber,
+    actor: { type: actorType, name: actorName },
+    ...extra,
+  };
+}
+
 /**
- * Emit a review-needed signal for a task.
+ * Emit review-needed signals for a task.
  * Called when a task transitions to "review".
  *
  * Side effects:
+ *   - Creates durable Signal per eligible reviewer
  *   - Adds a [system] timeline comment listing eligible reviewers
  *   - Logs a task.review_needed audit event with recipient list
  */
@@ -88,6 +116,27 @@ export async function emitReviewSignal(
 ): Promise<ReviewRecipient[]> {
   const recipients = await findEligibleReviewers(projectId, assigneeUserId, assigneeAgentId);
 
+  // Build signal context
+  const assigneeName = assigneeAgentId
+    ? (await prisma.agentToken.findUnique({ where: { id: assigneeAgentId }, select: { name: true } }))?.name ?? "Agent"
+    : "Human";
+  const context = await buildSignalContext(taskId, "agent", assigneeName, { assigneeName });
+
+  // Create durable signals for each recipient
+  if (context) {
+    for (const r of recipients) {
+      await createSignal({
+        type: "review_needed",
+        taskId,
+        projectId,
+        recipientAgentId: r.type === "agent" ? r.id : null,
+        recipientUserId: r.type === "human" ? r.id : null,
+        context,
+      });
+    }
+  }
+
+  // Timeline comment
   if (recipients.length > 0) {
     const names = recipients.map((r) => `${r.name} (${r.type})`).join(", ");
     await prisma.comment.create({
@@ -117,4 +166,74 @@ export async function emitReviewSignal(
   });
 
   return recipients;
+}
+
+/**
+ * Emit changes-requested signal to the original assignee.
+ * Called when a reviewer requests changes (review → in_progress).
+ *
+ * Side effects:
+ *   - Creates durable Signal for the original assignee
+ *   - Logs audit event
+ */
+export async function emitChangesRequestedSignal(
+  taskId: string,
+  projectId: string,
+  assigneeUserId: string | null,
+  assigneeAgentId: string | null,
+  reviewerName: string,
+  reviewComment?: string,
+): Promise<void> {
+  if (!assigneeUserId && !assigneeAgentId) return;
+
+  const context = await buildSignalContext(taskId, "agent", reviewerName, { reviewComment });
+  if (!context) return;
+
+  await createSignal({
+    type: "changes_requested",
+    taskId,
+    projectId,
+    recipientAgentId: assigneeAgentId,
+    recipientUserId: assigneeUserId,
+    context,
+  });
+
+  void logAuditEvent({
+    action: "task.reviewed",
+    projectId,
+    taskId,
+    payload: {
+      event: "changes_requested_signal",
+      recipientAgentId: assigneeAgentId,
+      recipientUserId: assigneeUserId,
+      reviewer: reviewerName,
+    },
+  });
+}
+
+/**
+ * Emit task-approved signal to the original assignee.
+ * Called when a reviewer approves (review → done).
+ */
+export async function emitTaskApprovedSignal(
+  taskId: string,
+  projectId: string,
+  assigneeUserId: string | null,
+  assigneeAgentId: string | null,
+  reviewerName: string,
+  reviewComment?: string,
+): Promise<void> {
+  if (!assigneeUserId && !assigneeAgentId) return;
+
+  const context = await buildSignalContext(taskId, "agent", reviewerName, { reviewComment });
+  if (!context) return;
+
+  await createSignal({
+    type: "task_approved",
+    taskId,
+    projectId,
+    recipientAgentId: assigneeAgentId,
+    recipientUserId: assigneeUserId,
+    context,
+  });
 }
