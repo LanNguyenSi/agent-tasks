@@ -62,24 +62,34 @@ export async function createSignals(inputs: CreateSignalInput[]) {
   });
 }
 
-/** Fetch unacknowledged signals for an agent token */
-export async function getAgentSignals(agentTokenId: string, opts?: { limit?: number }) {
+export type SignalStatusFilter = "unread" | "acknowledged" | "all";
+
+function ackFilter(status: SignalStatusFilter) {
+  if (status === "unread") return { acknowledgedAt: null };
+  if (status === "acknowledged") return { acknowledgedAt: { not: null } };
+  return {};
+}
+
+/** Fetch signals for an agent token */
+export async function getAgentSignals(agentTokenId: string, opts?: { limit?: number; status?: string }) {
+  const status = (opts?.status ?? "unread") as SignalStatusFilter;
   return prisma.signal.findMany({
     where: {
       recipientAgentId: agentTokenId,
-      acknowledgedAt: null,
+      ...ackFilter(status),
     },
     orderBy: { createdAt: "asc" },
     take: opts?.limit ?? 50,
   });
 }
 
-/** Fetch unacknowledged signals for a human user */
-export async function getUserSignals(userId: string, opts?: { limit?: number }) {
+/** Fetch signals for a human user */
+export async function getUserSignals(userId: string, opts?: { limit?: number; status?: string }) {
+  const status = (opts?.status ?? "unread") as SignalStatusFilter;
   return prisma.signal.findMany({
     where: {
       recipientUserId: userId,
-      acknowledgedAt: null,
+      ...ackFilter(status),
     },
     orderBy: { createdAt: "asc" },
     take: opts?.limit ?? 50,

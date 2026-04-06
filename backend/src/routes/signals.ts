@@ -19,14 +19,15 @@ export const signalRouter = new Hono<{ Variables: AppVariables }>();
 signalRouter.get("/agent/signals", async (c) => {
   const actor = c.get("actor") as Actor;
   const limit = Math.min(Number(c.req.query("limit") ?? 50), 200);
+  const status = c.req.query("status") ?? "unread"; // "unread" | "acknowledged" | "all"
 
   if (actor.type === "agent") {
-    const signals = await getAgentSignals(actor.tokenId, { limit });
+    const signals = await getAgentSignals(actor.tokenId, { limit, status });
     return c.json({ signals });
   }
 
   if (actor.type === "human") {
-    const signals = await getUserSignals(actor.userId, { limit });
+    const signals = await getUserSignals(actor.userId, { limit, status });
     return c.json({ signals });
   }
 
