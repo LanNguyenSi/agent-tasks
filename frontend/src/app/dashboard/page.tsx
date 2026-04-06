@@ -206,9 +206,10 @@ function TaskCard({
         textAlign: "left",
         background: active ? "#202b3d" : "var(--surface)",
         border: `1px solid ${active ? "#30435f" : "var(--border)"}`,
+        borderLeft: `3px solid ${STATUS_COLORS[task.status] ?? "var(--muted)"}`,
         borderRadius: "10px",
-        padding: "0.75rem",
-        marginBottom: "0.5rem",
+        padding: "0.6rem 0.7rem",
+        marginBottom: "0.4rem",
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.25rem" }}>
@@ -254,6 +255,7 @@ function TaskCard({
         <div style={{ textAlign: "right", fontSize: "var(--text-xs)", color: "var(--muted)" }}>
           <div>{getAssigneeName(task)}</div>
           <div>{task.dueAt ? `Due ${toDateInputValue(task.dueAt)}` : "No due date"}</div>
+          <div title={formatAbsoluteDate(task.updatedAt)}>{formatRelativeTime(task.updatedAt)}</div>
         </div>
       </div>
     </button>
@@ -281,7 +283,7 @@ function BoardColumns({
               <h3 style={{ fontSize: "var(--text-xs)", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--muted)" }}>
                 {STATUS_LABELS[status]}
               </h3>
-              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{columnTasks.length}</span>
+              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", background: "var(--primary-muted)", borderRadius: "999px", padding: "0.1rem 0.45rem", fontWeight: 600 }}>{columnTasks.length}</span>
             </div>
             {columnTasks.length === 0 ? (
               <div style={{ border: "1px dashed var(--border)", borderRadius: "10px", padding: "1rem", color: "var(--muted)", textAlign: "center", fontSize: "var(--text-xs)" }}>
