@@ -901,12 +901,23 @@ taskRouter.post(
       return c.json({ error: "bad_request", message: "Task must be in review status" }, 400);
     }
 
-    // Reviewer must not be the same as the claimant
+    // Reviewer must not be the same as the claimant (no self-review)
     const isSelfReview =
       (actor.type === "human" && task.claimedByUserId === actor.userId) ||
       (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
     if (isSelfReview) {
       return forbidden(c, "Cannot review your own task");
+    }
+
+    // Single-reviewer lock: only one reviewer at a time
+    const actorId = actor.type === "human" ? actor.userId : actor.tokenId;
+    const isCurrentReviewer =
+      (actor.type === "human" && task.reviewClaimedByUserId === actor.userId) ||
+      (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
+    const isReviewLocked = task.reviewClaimedByUserId || task.reviewClaimedByAgentId;
+
+    if (isReviewLocked && !isCurrentReviewer) {
+      return conflict(c, "Task is already being reviewed by another reviewer");
     }
 
     const { action, comment: reviewComment } = c.req.valid("json");
@@ -925,9 +936,16 @@ taskRouter.post(
       });
     }
 
+    // Complete review: transition status and clear review lock
     const updated = await prisma.task.update({
       where: { id: task.id },
-      data: { status: newStatus, updatedAt: new Date() },
+      data: {
+        status: newStatus,
+        reviewClaimedByUserId: null,
+        reviewClaimedByAgentId: null,
+        reviewClaimedAt: null,
+        updatedAt: new Date(),
+      },
       include: taskInclude,
     });
 
@@ -936,9 +954,116 @@ taskRouter.post(
       actorId: actor.type === "human" ? actor.userId : undefined,
       projectId: task.projectId,
       taskId: task.id,
-      payload: { reviewAction: action, from: "review", to: newStatus, actorType: actor.type },
+      payload: { reviewAction: action, from: "review", to: newStatus, actorType: actor.type, reviewerId: actorId },
     });
 
     return c.json({ task: updated });
   },
 );
+
+// ── Claim review (review lock) ──────────────────────────────────────────────
+
+taskRouter.post("/tasks/:id/review/claim", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:transition")) {
+    return forbidden(c, "Missing scope: tasks:transition");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  if (task.status !== "review") {
+    return c.json({ error: "bad_request", message: "Task must be in review status" }, 400);
+  }
+
+  // No self-review
+  const isSelfReview =
+    (actor.type === "human" && task.claimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
+  if (isSelfReview) {
+    return forbidden(c, "Cannot review your own task");
+  }
+
+  // Already locked by someone else
+  const isCurrentReviewer =
+    (actor.type === "human" && task.reviewClaimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
+  if ((task.reviewClaimedByUserId || task.reviewClaimedByAgentId) && !isCurrentReviewer) {
+    return conflict(c, "Task is already being reviewed by another reviewer");
+  }
+
+  // Already locked by this actor — idempotent
+  if (isCurrentReviewer) {
+    return c.json({ task }, 200);
+  }
+
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: {
+      reviewClaimedByUserId: actor.type === "human" ? actor.userId : null,
+      reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
+      reviewClaimedAt: new Date(),
+    },
+    include: taskInclude,
+  });
+
+  void logAuditEvent({
+    action: "task.reviewed",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: {
+      event: "review_claimed",
+      actorType: actor.type,
+      reviewerId: actor.type === "human" ? actor.userId : actor.tokenId,
+    },
+  });
+
+  return c.json({ task: updated });
+});
+
+// ── Release review (review lock) ────────────────────────────────────────────
+
+taskRouter.post("/tasks/:id/review/release", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const isCurrentReviewer =
+    (actor.type === "human" && task.reviewClaimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
+
+  if (!isCurrentReviewer) {
+    return forbidden(c, "Only the current reviewer can release the review lock");
+  }
+
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: {
+      reviewClaimedByUserId: null,
+      reviewClaimedByAgentId: null,
+      reviewClaimedAt: null,
+    },
+    include: taskInclude,
+  });
+
+  void logAuditEvent({
+    action: "task.reviewed",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: { event: "review_released", actorType: actor.type },
+  });
+
+  return c.json({ task: updated });
+});
