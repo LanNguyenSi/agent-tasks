@@ -216,10 +216,10 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
 
   for (const project of projects) {
     if (payload.action === "opened") {
-      // Check if a task already exists for this PR (idempotency)
+      // Backfill binding fields on existing tasks; do NOT create new tasks.
+      // Task creation is a deliberate agent/human action, not a webhook side effect.
       const existing = await findTasksByPr(project.id, hint);
       if (existing.length > 0) {
-        // Update prUrl/prNumber/branchName on existing tasks if not set
         for (const task of existing) {
           const updates: Record<string, unknown> = {};
           if (!task.prNumber) updates.prNumber = prNumber;
@@ -230,27 +230,14 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
           }
           await addTimelineComment(task.id, `PR #${prNumber} opened: ${payload.pull_request.html_url}`);
         }
-        return;
-      }
-
-      const task = await prisma.task.create({
-        data: {
+      } else {
+        // No matching task — log but do not create a task
+        await logAuditEvent({
+          action: "task.reviewed",
           projectId: project.id,
-          title: `[PR #${prNumber}] ${payload.pull_request.title}`,
-          description: payload.pull_request.body ?? undefined,
-          status: "review",
-          prNumber,
-          prUrl: payload.pull_request.html_url,
-          branchName: payload.pull_request.head?.ref ?? null,
-        },
-      });
-
-      await logAuditEvent({
-        action: "task.created",
-        projectId: project.id,
-        taskId: task.id,
-        payload: { source: "github_webhook", pr_number: prNumber },
-      });
+          payload: { source: "github_webhook", event: "pr_opened_unmatched", pr_number: prNumber },
+        });
+      }
     } else if (payload.action === "closed") {
       const tasks = await findTasksByPr(project.id, hint);
 
