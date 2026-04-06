@@ -31,7 +31,7 @@ export interface OAuthConfig {
 export function buildAuthorizationUrl(config: OAuthConfig, state: string): string {
   const params = new URLSearchParams({
     client_id: config.clientId,
-    scope: "read:user user:email read:org",
+    scope: "read:user user:email read:org repo",
     state,
     ...(config.redirectUri ? { redirect_uri: config.redirectUri } : {}),
   });
