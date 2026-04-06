@@ -226,16 +226,20 @@ export default function TeamsPage() {
   useEffect(() => {
     if (projects.length === 0) return;
     let cancelled = false;
-    void Promise.all(
-      projects.map(async (p) => {
-        const tasks = await getTasks(p.id);
-        return [p.id, tasks.filter((t) => t.status !== "done").length] as const;
-      }),
-    ).then((results) => {
-      if (cancelled) return;
-      setTaskCounts(Object.fromEntries(results));
-    });
-    return () => { cancelled = true; };
+
+    async function fetchTaskCounts() {
+      const results = await Promise.all(
+        projects.map(async (p) => {
+          const tasks = await getTasks(p.id);
+          return [p.id, tasks.filter((t) => t.status !== "done").length] as const;
+        }),
+      );
+      if (!cancelled) setTaskCounts(Object.fromEntries(results));
+    }
+
+    void fetchTaskCounts();
+    const interval = setInterval(() => void fetchTaskCounts(), 15_000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [projects]);
 
   useEffect(() => {
