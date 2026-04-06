@@ -20,6 +20,7 @@ import {
   type TemplatePreset,
 } from "../../lib/api";
 import { calculateConfidence } from "../../lib/confidence";
+import { formatRelativeTime, formatAbsoluteDate } from "../../lib/time";
 import AppHeader from "../../components/AppHeader";
 import ConfidenceBadge from "../../components/ConfidenceBadge";
 import AlertBanner from "../../components/ui/AlertBanner";
@@ -72,6 +73,13 @@ const STATUS_LABELS: Record<Status, string> = {
   in_progress: "In Progress",
   review: "In Review",
   done: "Done",
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  open: "var(--muted)",
+  in_progress: "var(--primary)",
+  review: "var(--warning)",
+  done: "var(--success)",
 };
 
 const PRIORITY_COLORS: Record<Priority, string> = {
@@ -928,8 +936,10 @@ export default function DashboardPage() {
                 <div className="task-list-head">
                   {([
                     ["title", "Task"],
+                    ["status", "Status"],
                     ["assignee", "Assignee"],
                     ["due", "Due"],
+                    ["updated", "Updated"],
                     ["priority", "Priority"],
                   ] as [SortColumn, string][]).map(([col, label]) => (
                     <button
@@ -967,10 +977,12 @@ export default function DashboardPage() {
                       }}
                     >
                       <span className="task-list-cell-main">
-                        <span style={{ display: "block", fontSize: "var(--text-sm)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ fontSize: "var(--text-sm)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {task.title}
                         </span>
-                        <span style={{ display: "block", fontSize: "var(--text-xs)", color: "var(--muted)" }}>
+                      </span>
+                      <span className="task-list-cell-status">
+                        <span className="status-chip" style={{ color: STATUS_COLORS[task.status] }}>
                           {STATUS_LABELS[task.status as Status]}
                         </span>
                       </span>
@@ -979,6 +991,9 @@ export default function DashboardPage() {
                       </span>
                       <span className="task-list-cell-muted">
                         {task.dueAt ? toDateInputValue(task.dueAt) : "No due date"}
+                      </span>
+                      <span className="task-list-cell-updated" title={formatAbsoluteDate(task.updatedAt)}>
+                        {formatRelativeTime(task.updatedAt)}
                       </span>
                       <span className="task-list-cell-priority">
                         <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>
