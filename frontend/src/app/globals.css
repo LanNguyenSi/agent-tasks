@@ -703,11 +703,27 @@ input[type="checkbox"] {
   gap: var(--space-2);
   padding: 0.58rem var(--space-3);
   border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 74%, #0b121f 26%);
+}
+
+.task-list-head button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
   font-size: var(--text-xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--surface) 74%, #0b121f 26%);
+  text-align: left;
+  padding: 0;
+  font-family: inherit;
+}
+.task-list-head button:hover {
+  color: var(--text-secondary);
+}
+.task-list-head button.sort-active {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .task-list-row {
