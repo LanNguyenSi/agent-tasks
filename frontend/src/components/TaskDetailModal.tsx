@@ -314,7 +314,29 @@ export default function TaskDetailModal({
                 <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>{task.priority}</span>
                 <span className="status-chip">{task.dueAt ? `Due ${toDateInputValue(task.dueAt)}` : "No due date"}</span>
                 <span className="status-chip">{isOverdue(task) ? "Overdue" : "On track"}</span>
-                <span className="status-chip">{getClaimLabel(task)}</span>
+                <span className="status-chip" style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+                  {getClaimLabel(task)}
+                  {!task.claimedByUserId && !task.claimedByAgentId && (
+                    <button
+                      type="button"
+                      onClick={() => void handleClaim()}
+                      disabled={claimBusy}
+                      style={{ background: "none", border: "none", color: "var(--primary)", cursor: "pointer", fontSize: "var(--text-xs)", padding: 0, fontWeight: 600 }}
+                    >
+                      {claimBusy ? "…" : "Claim"}
+                    </button>
+                  )}
+                  {task.claimedByUserId === user?.id && (
+                    <button
+                      type="button"
+                      onClick={() => void handleRelease()}
+                      disabled={claimBusy}
+                      style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", fontSize: "var(--text-xs)", padding: 0, fontWeight: 600 }}
+                    >
+                      {claimBusy ? "…" : "Release"}
+                    </button>
+                  )}
+                </span>
               </div>
               {/* Description */}
               {task.description ? (
@@ -661,36 +683,6 @@ export default function TaskDetailModal({
               >
                 Request Changes
               </Button>
-            </div>
-          </section>
-        )}
-
-        {/* ── Ownership ──────────────────────────────────────────── */}
-        {!isEditing && (
-          <section style={{ marginBottom: "0.8rem" }}>
-            <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-              {!task.claimedByUserId && !task.claimedByAgentId && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void handleClaim()}
-                  disabled={claimBusy}
-                  loading={claimBusy}
-                >
-                  {claimBusy ? "Claiming…" : "Claim for me"}
-                </Button>
-              )}
-              {task.claimedByUserId === user?.id && (
-                <Button
-                  variant="outline-danger"
-                  size="sm"
-                  onClick={() => void handleRelease()}
-                  disabled={claimBusy}
-                  loading={claimBusy}
-                >
-                  {claimBusy ? "Releasing…" : "Release"}
-                </Button>
-              )}
             </div>
           </section>
         )}
