@@ -100,13 +100,38 @@ describe("createSignals (batch)", () => {
 });
 
 describe("getAgentSignals", () => {
-  it("queries unacknowledged signals for agent token", async () => {
+  it("queries unacknowledged signals by default", async () => {
     await getAgentSignals("agent-1");
 
     expect(mockSignalFindMany).toHaveBeenCalledWith({
       where: {
         recipientAgentId: "agent-1",
         acknowledgedAt: null,
+      },
+      orderBy: { createdAt: "asc" },
+      take: 50,
+    });
+  });
+
+  it("queries acknowledged signals with status=acknowledged", async () => {
+    await getAgentSignals("agent-1", { status: "acknowledged" });
+
+    expect(mockSignalFindMany).toHaveBeenCalledWith({
+      where: {
+        recipientAgentId: "agent-1",
+        acknowledgedAt: { not: null },
+      },
+      orderBy: { createdAt: "asc" },
+      take: 50,
+    });
+  });
+
+  it("queries all signals with status=all", async () => {
+    await getAgentSignals("agent-1", { status: "all" });
+
+    expect(mockSignalFindMany).toHaveBeenCalledWith({
+      where: {
+        recipientAgentId: "agent-1",
       },
       orderBy: { createdAt: "asc" },
       take: 50,
