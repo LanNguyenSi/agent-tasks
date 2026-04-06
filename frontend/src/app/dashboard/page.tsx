@@ -1436,53 +1436,81 @@ export default function DashboardPage() {
             </div>
           </section>
 
-          <section>
-            <p className="section-kicker">Comments</p>
-            {(activeTask.comments?.length ?? 0) === 0 ? (
-              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>No comments yet.</p>
-            ) : (
-              <div style={{ display: "grid", gap: "0.4rem", marginBottom: "0.5rem" }}>
-                {activeTask.comments!.map((comment: Comment) => {
-                  const authorName = comment.authorUser?.name ?? comment.authorUser?.login ?? (comment.authorAgent ? `Agent ${comment.authorAgent.name}` : "Unknown");
-                  const isOwn = comment.authorUser?.id === user?.id;
-                  return (
-                    <div key={comment.id} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem", fontSize: "var(--text-sm)", background: "var(--surface)" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
-                        <span style={{ fontWeight: 600, fontSize: "var(--text-xs)", color: comment.authorAgent ? "var(--primary, #3b82f6)" : "var(--text)" }}>
-                          {authorName}
-                        </span>
-                        <span style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                          <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
-                            {new Date(comment.createdAt).toLocaleString()}
-                          </span>
-                          {isOwn && (
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                try {
-                                  await deleteComment(activeTask.id, comment.id);
-                                  setTasks((prev) => prev.map((t) =>
-                                    t.id === activeTask.id
-                                      ? { ...t, comments: t.comments?.filter((co) => co.id !== comment.id) }
-                                      : t,
-                                  ));
-                                } catch (err) {
-                                  setError((err as Error).message);
-                                }
-                              }}
-                              style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", fontSize: "var(--text-xs)", padding: "0" }}
-                            >
-                              Delete
-                            </button>
-                          )}
-                        </span>
-                      </div>
-                      <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.4, color: "var(--text)" }}>{comment.content}</p>
+          {/* Webhook event timeline — separated from free-form comments */}
+          {(() => {
+            const webhookEvents = (activeTask.comments ?? []).filter((c: Comment) => c.content.startsWith("[webhook]"));
+            const userComments = (activeTask.comments ?? []).filter((c: Comment) => !c.content.startsWith("[webhook]"));
+            return (
+              <>
+                {webhookEvents.length > 0 && (
+                  <section>
+                    <p className="section-kicker">Activity</p>
+                    <div style={{ display: "grid", gap: "0.25rem", marginBottom: "0.5rem" }}>
+                      {webhookEvents.map((event: Comment) => {
+                        const message = event.content.replace(/^\[webhook]\s*/, "");
+                        const isTransition = message.includes("merged") || message.includes("in_progress") || message.includes("→");
+                        const isReview = message.includes("approved") || message.includes("Changes requested") || message.includes("dismissed");
+                        const dotColor = isTransition ? "var(--success, #22c55e)" : isReview ? "var(--warning, #eab308)" : "var(--muted)";
+                        return (
+                          <div key={event.id} style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", padding: "0.35rem 0.5rem", fontSize: "var(--text-xs)", color: "var(--text-secondary)", borderLeft: `2px solid ${dotColor}`, background: "var(--surface)", borderRadius: "0 6px 6px 0" }}>
+                            <span style={{ flex: 1, lineHeight: 1.4 }}>{message}</span>
+                            <span style={{ color: "var(--muted)", whiteSpace: "nowrap", flexShrink: 0 }}>
+                              {new Date(event.createdAt).toLocaleString()}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                  </section>
+                )}
+
+                <section>
+                  <p className="section-kicker">Comments</p>
+                  {userComments.length === 0 ? (
+                    <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>No comments yet.</p>
+                  ) : (
+                    <div style={{ display: "grid", gap: "0.4rem", marginBottom: "0.5rem" }}>
+                      {userComments.map((comment: Comment) => {
+                        const authorName = comment.authorUser?.name ?? comment.authorUser?.login ?? (comment.authorAgent ? `Agent ${comment.authorAgent.name}` : "Unknown");
+                        const isOwn = comment.authorUser?.id === user?.id;
+                        return (
+                          <div key={comment.id} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem", fontSize: "var(--text-sm)", background: "var(--surface)" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
+                              <span style={{ fontWeight: 600, fontSize: "var(--text-xs)", color: comment.authorAgent ? "var(--primary, #3b82f6)" : "var(--text)" }}>
+                                {authorName}
+                              </span>
+                              <span style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                                <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
+                                  {new Date(comment.createdAt).toLocaleString()}
+                                </span>
+                                {isOwn && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      try {
+                                        await deleteComment(activeTask.id, comment.id);
+                                        setTasks((prev) => prev.map((t) =>
+                                          t.id === activeTask.id
+                                            ? { ...t, comments: t.comments?.filter((co) => co.id !== comment.id) }
+                                            : t,
+                                        ));
+                                      } catch (err) {
+                                        setError((err as Error).message);
+                                      }
+                                    }}
+                                    style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", fontSize: "var(--text-xs)", padding: "0" }}
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </span>
+                            </div>
+                            <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.4, color: "var(--text)" }}>{comment.content}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
             <div style={{ display: "flex", gap: "0.4rem" }}>
               <textarea
                 value={commentText}
@@ -1518,6 +1546,9 @@ export default function DashboardPage() {
               </Button>
             </div>
           </section>
+              </>
+            );
+          })()}
         </Modal>
       )}
 
