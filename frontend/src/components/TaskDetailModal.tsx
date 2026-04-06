@@ -299,78 +299,99 @@ export default function TaskDetailModal({
         )}
 
         {/* ── Dependencies ──────────────────────────────────────────── */}
-        <section style={{ marginBottom: "0.8rem" }}>
-          <p className="section-kicker">Dependencies</p>
-          {(task.blockedBy?.length ?? 0) === 0 && (task.blocks?.length ?? 0) === 0 ? (
-            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>No dependencies.</p>
-          ) : (
-            <div style={{ display: "grid", gap: "0.3rem", marginBottom: "0.4rem" }}>
-              {task.blockedBy?.map((dep) => (
-                <div key={dep.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "var(--text-sm)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem" }}>
-                  <span>
-                    <span style={{ color: dep.status === "done" ? "var(--success, #22c55e)" : "var(--danger)" }}>
-                      {dep.status === "done" ? "done" : "blocks this"}
-                    </span>
-                    {" "}{dep.title}
-                  </span>
-                  <button
-                    type="button"
+        {(isEditing || (task.blockedBy?.length ?? 0) > 0 || (task.blocks?.length ?? 0) > 0) && (
+          <section style={{ marginBottom: "0.8rem" }}>
+            <p className="section-kicker">Dependencies</p>
+            {isEditing ? (
+              <>
+                {(task.blockedBy?.length ?? 0) === 0 && (task.blocks?.length ?? 0) === 0 ? (
+                  <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>No dependencies.</p>
+                ) : (
+                  <div style={{ display: "grid", gap: "0.3rem", marginBottom: "0.4rem" }}>
+                    {task.blockedBy?.map((dep) => (
+                      <div key={dep.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "var(--text-sm)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem" }}>
+                        <span>
+                          <span style={{ color: dep.status === "done" ? "var(--success, #22c55e)" : "var(--danger)" }}>
+                            {dep.status === "done" ? "done" : "blocks this"}
+                          </span>
+                          {" "}{dep.title}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await removeDependency(task.id, dep.id);
+                              onUpdate({ ...task, blockedBy: task.blockedBy?.filter((d) => d.id !== dep.id) });
+                            } catch (err) {
+                              onError((err as Error).message);
+                            }
+                          }}
+                          style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: "var(--text-xs)" }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                    {task.blocks?.map((dep) => (
+                      <div key={dep.id} style={{ fontSize: "var(--text-xs)", color: "var(--muted)", padding: "0.2rem 0.5rem" }}>
+                        blocks: {dep.title} ({dep.status})
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: "0.3rem" }}>
+                  <select
+                    value={depPickerValue}
+                    onChange={(e) => setDepPickerValue(e.target.value)}
+                    style={{ flex: 1, fontSize: "var(--text-sm)" }}
+                  >
+                    <option value="" disabled>Add blocker...</option>
+                    {tasks
+                      .filter((t) => t.id !== task.id && t.projectId === task.projectId && !task.blockedBy?.some((d) => d.id === t.id))
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>{t.title}</option>
+                      ))}
+                  </select>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={!depPickerValue}
                     onClick={async () => {
+                      if (!depPickerValue) return;
                       try {
-                        await removeDependency(task.id, dep.id);
-                        onUpdate({ ...task, blockedBy: task.blockedBy?.filter((d) => d.id !== dep.id) });
+                        await addDependency(task.id, depPickerValue);
+                        const blockerTask = tasks.find((t) => t.id === depPickerValue);
+                        if (blockerTask) {
+                          onUpdate({ ...task, blockedBy: [...(task.blockedBy ?? []), { id: blockerTask.id, title: blockerTask.title, status: blockerTask.status }] });
+                        }
+                        setDepPickerValue("");
                       } catch (err) {
                         onError((err as Error).message);
                       }
                     }}
-                    style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: "var(--text-xs)" }}
                   >
-                    Remove
-                  </button>
+                    Add
+                  </Button>
                 </div>
-              ))}
-              {task.blocks?.map((dep) => (
-                <div key={dep.id} style={{ fontSize: "var(--text-xs)", color: "var(--muted)", padding: "0.2rem 0.5rem" }}>
-                  blocks: {dep.title} ({dep.status})
-                </div>
-              ))}
-            </div>
-          )}
-          <div style={{ display: "flex", gap: "0.3rem" }}>
-            <select
-              value={depPickerValue}
-              onChange={(e) => setDepPickerValue(e.target.value)}
-              style={{ flex: 1, fontSize: "var(--text-sm)" }}
-            >
-              <option value="" disabled>Add blocker...</option>
-              {tasks
-                .filter((t) => t.id !== task.id && t.projectId === task.projectId && !task.blockedBy?.some((d) => d.id === t.id))
-                .map((t) => (
-                  <option key={t.id} value={t.id}>{t.title}</option>
+              </>
+            ) : (
+              <div style={{ display: "grid", gap: "0.3rem" }}>
+                {task.blockedBy?.map((dep) => (
+                  <div key={dep.id} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "var(--text-sm)", padding: "0.25rem 0" }}>
+                    <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: dep.status === "done" ? "var(--success, #22c55e)" : "var(--danger)", flexShrink: 0 }} />
+                    <span style={{ color: "var(--text)" }}>{dep.title}</span>
+                    <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>({dep.status})</span>
+                  </div>
                 ))}
-            </select>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={!depPickerValue}
-              onClick={async () => {
-                if (!depPickerValue) return;
-                try {
-                  await addDependency(task.id, depPickerValue);
-                  const blockerTask = tasks.find((t) => t.id === depPickerValue);
-                  if (blockerTask) {
-                    onUpdate({ ...task, blockedBy: [...(task.blockedBy ?? []), { id: blockerTask.id, title: blockerTask.title, status: blockerTask.status }] });
-                  }
-                  setDepPickerValue("");
-                } catch (err) {
-                  onError((err as Error).message);
-                }
-              }}
-            >
-              Add
-            </Button>
-          </div>
-        </section>
+                {task.blocks?.map((dep) => (
+                  <div key={dep.id} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "var(--text-xs)", color: "var(--muted)", padding: "0.2rem 0" }}>
+                    <span>blocks: {dep.title} ({dep.status})</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* ── Agent Template ──────────────────────────────────────────── */}
         {templateFields && (
