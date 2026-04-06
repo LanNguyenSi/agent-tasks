@@ -234,3 +234,99 @@ githubRouter.post(
     });
   },
 );
+
+// ── Comment on PR ────────────────────────────────────────────────────────────
+
+const commentPrSchema = z.object({
+  taskId: z.string().uuid(),
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  body: z.string().min(1),
+});
+
+githubRouter.post(
+  "/pull-requests/:prNumber/comments",
+  requireScope("tasks:comment"),
+  zValidator("json", commentPrSchema),
+  async (c) => {
+    const actor = c.get("actor") as Actor;
+    if (actor.type !== "agent") {
+      return c.json({ error: "forbidden", message: "Agent token required" }, 403);
+    }
+
+    const prNumber = parseInt(c.req.param("prNumber"), 10);
+    if (isNaN(prNumber)) {
+      return c.json({ error: "bad_request", message: "Invalid PR number" }, 400);
+    }
+
+    const body = c.req.valid("json");
+
+    // 1. Find the task
+    const task = await prisma.task.findUnique({
+      where: { id: body.taskId },
+      include: { project: { select: { id: true, teamId: true } } },
+    });
+
+    if (!task) {
+      return c.json({ error: "not_found", message: "Task not found" }, 404);
+    }
+
+    // 2. Find a user with comment consent
+    const delegationUser = await findDelegationUser(task.project.teamId, "allowAgentPrComment");
+
+    if (!delegationUser) {
+      return c.json(
+        { error: "forbidden", message: "No authorized user for GitHub delegation. A team member must connect GitHub and enable 'Allow agents to comment on PRs' in Settings." },
+        403,
+      );
+    }
+
+    // 3. Call GitHub API to post comment (issues API works for PR comments)
+    const ghResponse = await fetch(`https://api.github.com/repos/${body.owner}/${body.repo}/issues/${prNumber}/comments`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${delegationUser.githubAccessToken}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "agent-tasks-bot",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ body: body.body }),
+    });
+
+    if (!ghResponse.ok) {
+      const ghError = await ghResponse.json().catch(() => ({ message: "Unknown GitHub error" })) as { message?: string };
+      return c.json(
+        { error: "github_error", message: `GitHub API error: ${ghError.message ?? ghResponse.statusText}` },
+        ghResponse.status as 400 | 403 | 404 | 422 | 500,
+      );
+    }
+
+    const comment = await ghResponse.json() as { id: number; html_url: string; body: string };
+
+    // 4. Audit log
+    await logAuditEvent({
+      action: "github.pr_commented",
+      actorId: delegationUser.userId,
+      projectId: task.project.id,
+      taskId: task.id,
+      payload: {
+        agentTokenId: actor.tokenId,
+        delegatedUserId: delegationUser.userId,
+        delegatedUserLogin: delegationUser.login,
+        owner: body.owner,
+        repo: body.repo,
+        prNumber,
+        commentId: comment.id,
+        commentUrl: comment.html_url,
+      },
+    });
+
+    return c.json({
+      comment: {
+        id: comment.id,
+        url: comment.html_url,
+        body: comment.body,
+      },
+    }, 201);
+  },
+);
