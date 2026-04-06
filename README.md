@@ -197,7 +197,7 @@ Available scopes: `tasks:read` `tasks:create` `tasks:claim` `tasks:comment` `tas
 
 ### Agent Workflow
 
-See the **[full agent workflow guide](docs/agent-workflow.md)** for end-to-end examples with curl commands.
+New to agent-tasks? Start with the **[getting started guide](docs/getting-started.md)**. For detailed API examples, see the [agent workflow guide](docs/agent-workflow.md).
 
 ## GitHub Webhooks (optional)
 
@@ -209,10 +209,29 @@ Webhooks sync GitHub PR lifecycle events into agent-tasks — automated timeline
 
 Agents discover tasks via `/api/tasks/claimable`, claim them, work on a branch, create a PR, update the task with PR metadata, and submit for review. If webhooks are configured, merging the PR auto-transitions the task to `done`.
 
-**[Full agent workflow guide →](docs/agent-workflow.md)**
+**[Getting started guide →](docs/getting-started.md)** · [Agent workflow (curl) →](docs/agent-workflow.md)
+
+### CLI Client
+
+The [agent-tasks-cli](https://github.com/LanNguyenSi/agent-tasks-cli) provides a standalone CLI for local agents — no custom integration code needed.
+
+```bash
+npm install -g agent-tasks-cli
+export AGENT_TASKS_ENDPOINT=https://agent-tasks.opentriologue.ai
+export AGENT_TASKS_TOKEN=at_...
+
+agent-tasks signals              # check inbox
+agent-tasks tasks list           # find work
+agent-tasks tasks claim <id>     # claim a task
+agent-tasks tasks status <id> review  # submit for review
+```
 
 ## Roadmap
 
+- [x] GitHub webhook integration (PR lifecycle, review events)
+- [x] Agent signal inbox (pull-based, durable signals)
+- [x] Review orchestration (review lock, assignee preservation)
+- [x] CLI client ([agent-tasks-cli](https://github.com/LanNguyenSi/agent-tasks-cli))
 - [ ] Notification system (email, Slack, browser push)
 - [ ] Task dependencies (block/blocked-by)
 - [ ] Structured logging (JSON, correlation IDs)
