@@ -3,9 +3,11 @@ import {
   verifyWebhookSignature,
   handleIssuesEvent,
   handlePullRequestEvent,
+  handlePullRequestReviewEvent,
   updateProjectSyncAt,
   type GitHubIssuePayload,
   type GitHubPullRequestPayload,
+  type GitHubPullRequestReviewPayload,
 } from "../services/github-webhook.js";
 
 const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET ?? "";
@@ -59,6 +61,10 @@ webhookRouter.post("/github", async (c) => {
 
         case "pull_request":
           await handlePullRequestEvent(payload as GitHubPullRequestPayload);
+          break;
+
+        case "pull_request_review":
+          await handlePullRequestReviewEvent(payload as GitHubPullRequestReviewPayload);
           break;
 
         default:

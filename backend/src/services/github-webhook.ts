@@ -11,7 +11,7 @@ import { createHmac } from "node:crypto";
 import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
 
-export type GitHubWebhookEvent = "push" | "issues" | "pull_request" | "ping";
+export type GitHubWebhookEvent = "push" | "issues" | "pull_request" | "pull_request_review" | "ping";
 
 export interface GitHubIssuePayload {
   action: "opened" | "closed" | "reopened" | "edited";
@@ -34,8 +34,54 @@ export interface GitHubPullRequestPayload {
     html_url: string;
     state: "open" | "closed";
     merged: boolean;
+    merged_by?: { login: string } | null;
   };
   repository: { full_name: string };
+}
+
+export interface GitHubPullRequestReviewPayload {
+  action: "submitted" | "edited" | "dismissed";
+  review: {
+    state: "approved" | "changes_requested" | "commented" | "dismissed";
+    user: { login: string };
+    html_url: string;
+  };
+  pull_request: {
+    number: number;
+    title: string;
+    html_url: string;
+  };
+  repository: { full_name: string };
+}
+
+/** Find tasks bound to a PR number within a project (by prNumber field or title pattern) */
+async function findTasksByPr(projectId: string, prNumber: number) {
+  const [byField, byTitle] = await Promise.all([
+    prisma.task.findMany({
+      where: { projectId, prNumber, status: { not: "done" } },
+    }),
+    prisma.task.findMany({
+      where: {
+        projectId,
+        title: { contains: `[PR #${prNumber}]` },
+        status: { not: "done" },
+      },
+    }),
+  ]);
+
+  const seen = new Set<string>();
+  return [...byField, ...byTitle].filter((t) => {
+    if (seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
+}
+
+/** Add a webhook timeline comment to a task */
+async function addTimelineComment(taskId: string, message: string) {
+  await prisma.comment.create({
+    data: { taskId, content: `[webhook] ${message}` },
+  });
 }
 
 /** Verify the GitHub webhook signature */
@@ -111,7 +157,7 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
   }
 }
 
-/** Process a GitHub pull_request event */
+/** Process a GitHub pull_request event — per review-automation-policy.md */
 export async function handlePullRequestEvent(payload: GitHubPullRequestPayload): Promise<void> {
   const repoFullName = payload.repository.full_name;
 
@@ -122,14 +168,37 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
 
   if (projects.length === 0) return;
 
+  const prNumber = payload.pull_request.number;
+
   for (const project of projects) {
     if (payload.action === "opened") {
+      // Check if a task already exists for this PR (idempotency)
+      const existing = await findTasksByPr(project.id, prNumber);
+      if (existing.length > 0) {
+        // Update prUrl/prNumber on existing tasks if not set
+        for (const task of existing) {
+          if (!task.prNumber || !task.prUrl) {
+            await prisma.task.update({
+              where: { id: task.id },
+              data: {
+                ...(task.prNumber ? {} : { prNumber }),
+                ...(task.prUrl ? {} : { prUrl: payload.pull_request.html_url }),
+              },
+            });
+          }
+          await addTimelineComment(task.id, `PR #${prNumber} opened: ${payload.pull_request.html_url}`);
+        }
+        return;
+      }
+
       const task = await prisma.task.create({
         data: {
           projectId: project.id,
-          title: `[PR #${payload.pull_request.number}] ${payload.pull_request.title}`,
+          title: `[PR #${prNumber}] ${payload.pull_request.title}`,
           description: payload.pull_request.body ?? undefined,
           status: "review",
+          prNumber,
+          prUrl: payload.pull_request.html_url,
         },
       });
 
@@ -137,45 +206,122 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
         action: "task.created",
         projectId: project.id,
         taskId: task.id,
-        payload: { source: "github_webhook", pr_number: payload.pull_request.number },
+        payload: { source: "github_webhook", pr_number: prNumber },
       });
-    } else if (payload.action === "closed" && payload.pull_request.merged) {
-      // PR merged → mark matching tasks as done
-      // Match by title pattern [PR #N] OR by prNumber field
-      const prNumber = payload.pull_request.number;
-      const [byTitle, byField] = await Promise.all([
-        prisma.task.findMany({
-          where: {
-            projectId: project.id,
-            title: { contains: `[PR #${prNumber}]` },
-            status: { not: "done" },
-          },
-        }),
-        prisma.task.findMany({
-          where: {
-            projectId: project.id,
-            prNumber,
-            status: { not: "done" },
-          },
-        }),
-      ]);
+    } else if (payload.action === "closed") {
+      const tasks = await findTasksByPr(project.id, prNumber);
 
-      // Deduplicate by task ID
-      const seen = new Set<string>();
-      const tasks = [...byTitle, ...byField].filter((t) => {
-        if (seen.has(t.id)) return false;
-        seen.add(t.id);
-        return true;
-      });
+      if (payload.pull_request.merged) {
+        // Policy: PR merged → done
+        const mergedBy = payload.pull_request.merged_by?.login ?? "unknown";
+        for (const task of tasks) {
+          if (task.status !== "done") {
+            await prisma.task.update({
+              where: { id: task.id },
+              data: { status: "done" },
+            });
+          }
+          await addTimelineComment(task.id, `PR #${prNumber} merged by ${mergedBy}`);
+          await logAuditEvent({
+            action: "task.transitioned",
+            projectId: project.id,
+            taskId: task.id,
+            payload: { source: "github_webhook", event: "pr_merged", pr_number: prNumber, merged_by: mergedBy, from: task.status, to: "done" },
+          });
+        }
+      } else {
+        // Policy: closed without merge → no transition, timeline entry only
+        for (const task of tasks) {
+          await addTimelineComment(task.id, `PR #${prNumber} closed without merge`);
+          await logAuditEvent({
+            action: "task.reviewed",
+            projectId: project.id,
+            taskId: task.id,
+            payload: { source: "github_webhook", event: "pr_closed", pr_number: prNumber },
+          });
+        }
+      }
+    }
+  }
+}
 
-      for (const task of tasks) {
-        await prisma.task.update({ where: { id: task.id }, data: { status: "done" } });
-        await logAuditEvent({
-          action: "task.transitioned",
-          projectId: project.id,
-          taskId: task.id,
-          payload: { source: "github_webhook", pr_merged: true, pr_number: prNumber },
-        });
+/** Process a GitHub pull_request_review event — per review-automation-policy.md */
+export async function handlePullRequestReviewEvent(payload: GitHubPullRequestReviewPayload): Promise<void> {
+  if (payload.action !== "submitted" && payload.action !== "dismissed") return;
+
+  const repoFullName = payload.repository.full_name;
+  const projects = await prisma.project.findMany({
+    where: { githubRepo: repoFullName },
+    select: { id: true },
+  });
+  if (projects.length === 0) return;
+
+  const prNumber = payload.pull_request.number;
+  const reviewer = payload.review.user.login;
+  const reviewState = payload.action === "dismissed" ? "dismissed" : payload.review.state;
+
+  for (const project of projects) {
+    const tasks = await findTasksByPr(project.id, prNumber);
+
+    for (const task of tasks) {
+      switch (reviewState) {
+        case "approved": {
+          // Policy: no auto-transition, timeline entry only
+          await addTimelineComment(task.id, `Review approved by ${reviewer}`);
+          await logAuditEvent({
+            action: "task.reviewed",
+            projectId: project.id,
+            taskId: task.id,
+            payload: { source: "github_webhook", event: "review_approved", reviewer, pr_number: prNumber },
+          });
+          break;
+        }
+
+        case "changes_requested": {
+          // Policy: review → in_progress
+          if (task.status === "review") {
+            await prisma.task.update({
+              where: { id: task.id },
+              data: { status: "in_progress" },
+            });
+          }
+          await addTimelineComment(task.id, `Changes requested by ${reviewer}`);
+          await logAuditEvent({
+            action: "task.reviewed",
+            projectId: project.id,
+            taskId: task.id,
+            payload: {
+              source: "github_webhook",
+              event: "changes_requested",
+              reviewer,
+              pr_number: prNumber,
+              ...(task.status === "review" ? { from: "review", to: "in_progress" } : {}),
+            },
+          });
+          break;
+        }
+
+        case "commented": {
+          await addTimelineComment(task.id, `Review comment by ${reviewer}`);
+          await logAuditEvent({
+            action: "task.reviewed",
+            projectId: project.id,
+            taskId: task.id,
+            payload: { source: "github_webhook", event: "review_commented", reviewer, pr_number: prNumber },
+          });
+          break;
+        }
+
+        case "dismissed": {
+          await addTimelineComment(task.id, `Review dismissed for ${reviewer}`);
+          await logAuditEvent({
+            action: "task.reviewed",
+            projectId: project.id,
+            taskId: task.id,
+            payload: { source: "github_webhook", event: "review_dismissed", reviewer, pr_number: prNumber },
+          });
+          break;
+        }
       }
     }
   }
