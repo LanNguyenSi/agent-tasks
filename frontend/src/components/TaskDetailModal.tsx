@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   updateTask,
   deleteTask,
@@ -127,14 +127,68 @@ export default function TaskDetailModal({
     setShowDeleteTaskConfirm(false);
   }, [task]);
 
+  const [showDiscardPrompt, setShowDiscardPrompt] = useState(false);
+
+  const isDirty = useMemo(() => {
+    if (!isEditing) return false;
+    return (
+      editTitle !== task.title ||
+      editDescription !== (task.description ?? "") ||
+      editPriority !== task.priority ||
+      editStatus !== (task.status as Status) ||
+      editDueAt !== toDateInputValue(task.dueAt) ||
+      editGoal !== (task.templateData?.goal ?? "") ||
+      editAcceptanceCriteria !== (task.templateData?.acceptanceCriteria ?? "") ||
+      editContext !== (task.templateData?.context ?? "") ||
+      editConstraints !== (task.templateData?.constraints ?? "")
+    );
+  }, [isEditing, editTitle, editDescription, editPriority, editStatus, editDueAt, editGoal, editAcceptanceCriteria, editContext, editConstraints, task]);
+
   function startEditing() {
     initEditState();
     setIsEditing(true);
   }
 
   function cancelEditing() {
+    if (isDirty) {
+      setShowDiscardPrompt(true);
+    } else {
+      setIsEditing(false);
+    }
+  }
+
+  function discardChanges() {
+    setShowDiscardPrompt(false);
     setIsEditing(false);
   }
+
+  function handleClose() {
+    if (isEditing && isDirty) {
+      setShowDiscardPrompt(true);
+    } else {
+      onClose();
+    }
+  }
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // 'e' to enter edit mode (only when no input/textarea focused)
+      if (e.key === "e" && !isEditing) {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        e.preventDefault();
+        startEditing();
+      }
+      // Escape to cancel editing
+      if (e.key === "Escape" && isEditing) {
+        e.preventDefault();
+        cancelEditing();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  });
 
   async function handleSaveTask() {
     setSavingTask(true);
@@ -207,7 +261,7 @@ export default function TaskDetailModal({
     <>
       <Modal
         open
-        onClose={onClose}
+        onClose={handleClose}
         title="Task Details"
         actions={isEditing ? (
           <div style={{ display: "flex", gap: "0.45rem" }}>
@@ -738,6 +792,17 @@ export default function TaskDetailModal({
           </div>
         </section>
       </Modal>
+
+      <ConfirmDialog
+        open={showDiscardPrompt}
+        title="Discard changes?"
+        message="You have unsaved changes. Do you want to discard them?"
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        tone="danger"
+        onConfirm={discardChanges}
+        onCancel={() => setShowDiscardPrompt(false)}
+      />
 
       <ConfirmDialog
         open={showDeleteTaskConfirm}
