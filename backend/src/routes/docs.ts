@@ -16,6 +16,7 @@ const openApiSpec = {
   tags: [
     { name: "Projects", description: "Project discovery and management" },
     { name: "Tasks", description: "Task read/write/claim/transition operations" },
+    { name: "GitHub", description: "GitHub PR operations via delegation (agent-only)" },
   ],
   components: {
     securitySchemes: {
@@ -865,6 +866,198 @@ const openApiSpec = {
                 schema: { $ref: "#/components/schemas/ErrorResponse" },
               },
             },
+          },
+        },
+      },
+    },
+    "/api/github/pull-requests": {
+      post: {
+        tags: ["GitHub"],
+        summary: "Create a pull request",
+        description: "Creates a GitHub PR via delegation. Requires agent token with scope: tasks:update. A team member must have GitHub connected and 'Allow agents to create PRs' enabled.",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  taskId: { type: "string", format: "uuid", description: "Task to associate with the PR" },
+                  owner: { type: "string", description: "GitHub repo owner", example: "LanNguyenSi" },
+                  repo: { type: "string", description: "GitHub repo name", example: "agent-relay" },
+                  head: { type: "string", description: "Source branch name", example: "feat/my-feature" },
+                  base: { type: "string", description: "Target branch (default: main)", example: "main" },
+                  title: { type: "string", description: "PR title" },
+                  body: { type: "string", description: "PR description (optional)" },
+                },
+                required: ["taskId", "owner", "repo", "head", "title"],
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "PR created and task updated",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    pullRequest: {
+                      type: "object",
+                      properties: {
+                        number: { type: "integer", example: 42 },
+                        url: { type: "string", format: "uri", example: "https://github.com/owner/repo/pull/42" },
+                        title: { type: "string" },
+                      },
+                      required: ["number", "url", "title"],
+                    },
+                    task: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", format: "uuid" },
+                        branchName: { type: "string" },
+                        prUrl: { type: "string", format: "uri" },
+                        prNumber: { type: "integer" },
+                      },
+                      required: ["id", "branchName", "prUrl", "prNumber"],
+                    },
+                  },
+                  required: ["pullRequest", "task"],
+                },
+              },
+            },
+          },
+          "403": {
+            description: "No authorized user for GitHub delegation",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          },
+          "404": {
+            description: "Task not found",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          },
+        },
+      },
+    },
+    "/api/github/pull-requests/{prNumber}/merge": {
+      post: {
+        tags: ["GitHub"],
+        summary: "Merge a pull request",
+        description: "Merges a GitHub PR and transitions the task to done. Requires agent token with scope: tasks:transition. A team member must have 'Allow agents to merge PRs' enabled.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: "prNumber", in: "path", required: true, schema: { type: "integer" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  taskId: { type: "string", format: "uuid" },
+                  owner: { type: "string", example: "LanNguyenSi" },
+                  repo: { type: "string", example: "agent-relay" },
+                  merge_method: { type: "string", enum: ["merge", "squash", "rebase"], default: "squash" },
+                },
+                required: ["taskId", "owner", "repo"],
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "PR merged and task set to done",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    merged: { type: "boolean" },
+                    sha: { type: "string", nullable: true },
+                    message: { type: "string" },
+                    task: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", format: "uuid" },
+                        status: { type: "string", example: "done" },
+                      },
+                      required: ["id", "status"],
+                    },
+                  },
+                  required: ["merged", "message", "task"],
+                },
+              },
+            },
+          },
+          "403": {
+            description: "No authorized user for GitHub delegation",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          },
+          "404": {
+            description: "Task not found",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          },
+        },
+      },
+    },
+    "/api/github/pull-requests/{prNumber}/comments": {
+      post: {
+        tags: ["GitHub"],
+        summary: "Comment on a pull request",
+        description: "Posts a comment on a GitHub PR. Requires agent token with scope: tasks:comment. A team member must have 'Allow agents to comment on PRs' enabled.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: "prNumber", in: "path", required: true, schema: { type: "integer" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  taskId: { type: "string", format: "uuid" },
+                  owner: { type: "string", example: "LanNguyenSi" },
+                  repo: { type: "string", example: "agent-relay" },
+                  body: { type: "string", minLength: 1, description: "Comment text" },
+                },
+                required: ["taskId", "owner", "repo", "body"],
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Comment posted",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    comment: {
+                      type: "object",
+                      properties: {
+                        id: { type: "integer" },
+                        url: { type: "string", format: "uri" },
+                        body: { type: "string" },
+                      },
+                      required: ["id", "url", "body"],
+                    },
+                  },
+                  required: ["comment"],
+                },
+              },
+            },
+          },
+          "403": {
+            description: "No authorized user for GitHub delegation",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          },
+          "404": {
+            description: "Task not found",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
           },
         },
       },
