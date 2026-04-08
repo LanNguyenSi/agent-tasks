@@ -120,13 +120,14 @@ export default function TaskDetailModal({
     setEditConstraints(task.templateData?.constraints ?? "");
   }, [task]);
 
-  // Reset modal state when task changes
+  // Reset modal state when switching to a different task (not on every poll refresh)
   useEffect(() => {
     setIsEditing(false);
     setCommentText("");
     setDepPickerValue("");
     setShowDeleteTaskConfirm(false);
-  }, [task]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task.id]);
 
   const [showDiscardPrompt, setShowDiscardPrompt] = useState(false);
 
@@ -189,7 +190,7 @@ export default function TaskDetailModal({
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  });
+  }, [isEditing]);
 
   async function handleSaveTask() {
     setSavingTask(true);
