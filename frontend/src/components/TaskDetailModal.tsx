@@ -146,18 +146,18 @@ export default function TaskDetailModal({
     );
   }, [isEditing, editTitle, editDescription, editPriority, editStatus, editDueAt, editGoal, editAcceptanceCriteria, editContext, editConstraints, task]);
 
-  function startEditing() {
+  const startEditing = useCallback(() => {
     initEditState();
     setIsEditing(true);
-  }
+  }, [initEditState]);
 
-  function cancelEditing() {
+  const cancelEditing = useCallback(() => {
     if (isDirty) {
       setShowDiscardPrompt(true);
     } else {
       setIsEditing(false);
     }
-  }
+  }, [isDirty]);
 
   function discardChanges() {
     setShowDiscardPrompt(false);
@@ -190,7 +190,7 @@ export default function TaskDetailModal({
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isEditing]);
+  }, [isEditing, startEditing, cancelEditing]);
 
   async function handleSaveTask() {
     setSavingTask(true);
