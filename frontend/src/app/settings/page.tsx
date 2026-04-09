@@ -20,6 +20,7 @@ import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import FormField from "../../components/ui/FormField";
+import Select from "@/components/ui/Select";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 const ALL_SCOPES = [
@@ -292,19 +293,15 @@ export default function SettingsPage() {
         ) : (
           <div style={{ marginBottom: "1rem" }}>
             <FormField label="Team">
-              <select
+              <Select
                 value={selectedTeamId}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setSelectedTeamId(next);
-                  void loadTokens(next);
+                onChange={(v) => {
+                  setSelectedTeamId(v);
+                  void loadTokens(v);
                 }}
+                options={teams.map((team) => ({ value: team.id, label: team.name }))}
                 style={{ width: "100%", maxWidth: "320px" }}
-              >
-                {teams.map((team) => (
-                  <option key={team.id} value={team.id}>{team.name}</option>
-                ))}
-              </select>
+              />
             </FormField>
             <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.25rem" }}>
               Active team: {selectedTeam?.name}

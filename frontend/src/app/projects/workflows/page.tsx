@@ -20,6 +20,7 @@ import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
 import FormField from "../../../components/ui/FormField";
+import Select from "@/components/ui/Select";
 
 const DEFAULT_DEFINITION: WorkflowDefinition = {
   initialState: "open",
@@ -201,9 +202,7 @@ export default function WorkflowEditorPage() {
             <input value={workflowName} onChange={(e) => setWorkflowName(e.target.value)} style={{ width: "100%" }} />
           </FormField>
           <FormField label="Initial State">
-            <select value={initialState} onChange={(e) => setInitialState(e.target.value)} style={{ width: "100%" }}>
-              {states.map((s) => <option key={s.name} value={s.name}>{s.label} ({s.name})</option>)}
-            </select>
+            <Select value={initialState} onChange={(v) => setInitialState(v)} options={states.map((s) => ({ value: s.name, label: `${s.label} (${s.name})` }))} style={{ width: "100%" }} />
           </FormField>
         </div>
       </Card>
@@ -271,15 +270,11 @@ export default function WorkflowEditorPage() {
           <Card key={i} padding="sm">
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr auto", gap: "var(--space-2)", alignItems: "end" }}>
               <FormField label="From">
-                <select value={t.from} onChange={(e) => updateTransition(i, { from: e.target.value })} style={{ width: "100%" }}>
-                  {states.map((s) => <option key={s.name} value={s.name}>{s.label}</option>)}
-                </select>
+                <Select value={t.from} onChange={(v) => updateTransition(i, { from: v })} options={states.map((s) => ({ value: s.name, label: s.label }))} style={{ width: "100%" }} />
               </FormField>
               <span style={{ color: "var(--muted)", fontSize: "var(--text-base)", paddingBottom: "6px" }}>→</span>
               <FormField label="To">
-                <select value={t.to} onChange={(e) => updateTransition(i, { to: e.target.value })} style={{ width: "100%" }}>
-                  {states.map((s) => <option key={s.name} value={s.name}>{s.label}</option>)}
-                </select>
+                <Select value={t.to} onChange={(v) => updateTransition(i, { to: v })} options={states.map((s) => ({ value: s.name, label: s.label }))} style={{ width: "100%" }} />
               </FormField>
               <Button variant="outline-danger" size="sm" onClick={() => removeTransition(i)} style={{ marginBottom: "2px" }}>Remove</Button>
             </div>

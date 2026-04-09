@@ -23,6 +23,7 @@ import { Button } from "./ui/Button";
 import ConfirmDialog from "./ui/ConfirmDialog";
 import FormField from "./ui/FormField";
 import Modal from "./ui/Modal";
+import Select from "@/components/ui/Select";
 
 type Status = "open" | "in_progress" | "review" | "done";
 type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
@@ -357,17 +358,10 @@ export default function TaskDetailModal({
             <p className="section-kicker">Workflow</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", marginBottom: "0.5rem" }}>
               <FormField label="Status">
-                <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as Status)} style={{ width: "100%" }}>
-                  {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
-                </select>
+                <Select value={editStatus} onChange={(v) => setEditStatus(v as Status)} options={STATUSES.map((status) => ({ value: status, label: STATUS_LABELS[status] }))} style={{ width: "100%" }} />
               </FormField>
               <FormField label="Priority">
-                <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as Priority)} style={{ width: "100%" }}>
-                  <option value="LOW">LOW</option>
-                  <option value="MEDIUM">MEDIUM</option>
-                  <option value="HIGH">HIGH</option>
-                  <option value="CRITICAL">CRITICAL</option>
-                </select>
+                <Select value={editPriority} onChange={(v) => setEditPriority(v as Priority)} options={[{value:"LOW",label:"LOW"},{value:"MEDIUM",label:"MEDIUM"},{value:"HIGH",label:"HIGH"},{value:"CRITICAL",label:"CRITICAL"}]} style={{ width: "100%" }} />
               </FormField>
             </div>
             <FormField label="Due Date">
@@ -418,18 +412,14 @@ export default function TaskDetailModal({
                   </div>
                 )}
                 <div style={{ display: "flex", gap: "0.3rem" }}>
-                  <select
+                  <Select
                     value={depPickerValue}
-                    onChange={(e) => setDepPickerValue(e.target.value)}
-                    style={{ flex: 1, fontSize: "var(--text-sm)" }}
-                  >
-                    <option value="" disabled>Add blocker...</option>
-                    {tasks
+                    onChange={(v) => setDepPickerValue(v)}
+                    options={[{value:"",label:"Add blocker..."},...tasks
                       .filter((t) => t.id !== task.id && t.projectId === task.projectId && !task.blockedBy?.some((d) => d.id === t.id))
-                      .map((t) => (
-                        <option key={t.id} value={t.id}>{t.title}</option>
-                      ))}
-                  </select>
+                      .map((t) => ({value: t.id, label: t.title}))]}
+                    style={{ flex: 1, fontSize: "var(--text-sm)" }}
+                  />
                   <Button
                     size="sm"
                     variant="secondary"
