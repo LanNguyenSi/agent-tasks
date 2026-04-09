@@ -36,7 +36,7 @@ const STATUS_LABELS: Record<Status, string> = {
 };
 
 const PRIORITY_COLORS: Record<Priority, string> = {
-  LOW: "#6b7280",
+  LOW: "#8d99ab",
   MEDIUM: "#f59e0b",
   HIGH: "#ef4444",
   CRITICAL: "#be123c",
