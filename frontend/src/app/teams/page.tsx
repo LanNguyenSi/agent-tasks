@@ -25,6 +25,7 @@ import EmptyState from "../../components/ui/EmptyState";
 import FormField from "../../components/ui/FormField";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
+import Select from "@/components/ui/Select";
 
 type ProjectSort = "name_asc" | "name_desc" | "newest" | "recent_sync";
 const PROJECT_PAGE_SIZE = 9;
@@ -396,16 +397,12 @@ export default function TeamsPage() {
                 placeholder="Search projects (name, slug, repo)..."
                 style={{ width: "100%" }}
               />
-              <select
+              <Select
                 value={projectSort}
-                onChange={(e) => setProjectSort(e.target.value as ProjectSort)}
+                onChange={(v) => setProjectSort(v as ProjectSort)}
+                options={[{value:"name_asc",label:"Sort: Name A-Z"},{value:"name_desc",label:"Sort: Name Z-A"},{value:"newest",label:"Sort: Newest first"},{value:"recent_sync",label:"Sort: Recently synced"}]}
                 style={{ width: "100%" }}
-              >
-                <option value="name_asc">Sort: Name A-Z</option>
-                <option value="name_desc">Sort: Name Z-A</option>
-                <option value="newest">Sort: Newest first</option>
-                <option value="recent_sync">Sort: Recently synced</option>
-              </select>
+              />
               <label style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", color: "var(--muted)", fontSize: "var(--text-sm)", paddingLeft: "0.25rem" }}>
                 <input
                   type="checkbox"

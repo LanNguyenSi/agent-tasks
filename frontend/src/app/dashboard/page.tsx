@@ -32,6 +32,7 @@ import FormField from "../../components/ui/FormField";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
 import TaskDetailModal from "../../components/TaskDetailModal";
+import Select from "@/components/ui/Select";
 
 const DEFAULT_PRESETS: TemplatePreset[] = [
   {
@@ -761,17 +762,10 @@ export default function DashboardPage() {
 
             <div className="new-task-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "0.5rem" }}>
               <FormField label="Status">
-                <select value={newTaskStatus} onChange={(e) => setNewTaskStatus(e.target.value as Status)} style={{ width: "100%" }}>
-                  {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
-                </select>
+                <Select value={newTaskStatus} onChange={(v) => setNewTaskStatus(v as Status)} options={STATUSES.map((status) => ({ value: status, label: STATUS_LABELS[status] }))} style={{ width: "100%" }} />
               </FormField>
               <FormField label="Priority">
-                <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value as Priority)} style={{ width: "100%" }}>
-                  <option value="LOW">LOW</option>
-                  <option value="MEDIUM">MEDIUM</option>
-                  <option value="HIGH">HIGH</option>
-                  <option value="CRITICAL">CRITICAL</option>
-                </select>
+                <Select value={newTaskPriority} onChange={(v) => setNewTaskPriority(v as Priority)} options={[{value:"LOW",label:"LOW"},{value:"MEDIUM",label:"MEDIUM"},{value:"HIGH",label:"HIGH"},{value:"CRITICAL",label:"CRITICAL"}]} style={{ width: "100%" }} />
               </FormField>
               <FormField label="Due Date">
                 <input type="date" value={newTaskDueAt} onChange={(e) => setNewTaskDueAt(e.target.value)} style={{ width: "100%" }} />
@@ -779,14 +773,12 @@ export default function DashboardPage() {
             </div>
             <div style={{ marginTop: "0.5rem" }}>
               <FormField label="Assignee">
-                <select
+                <Select
                   value={newTaskAssignee}
-                  onChange={(e) => setNewTaskAssignee(e.target.value as "unassigned" | "me")}
+                  onChange={(v) => setNewTaskAssignee(v as "unassigned" | "me")}
+                  options={[{value:"unassigned",label:"Unassigned"},{value:"me",label:"Assign to me"}]}
                   style={{ width: "100%" }}
-                >
-                  <option value="unassigned">Unassigned</option>
-                  <option value="me">Assign to me</option>
-                </select>
+                />
               </FormField>
             </div>
 
