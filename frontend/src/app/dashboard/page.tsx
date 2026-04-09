@@ -206,14 +206,16 @@ function TaskCard({
         textAlign: "left",
         background: active ? "#202b3d" : "var(--surface)",
         border: `1px solid ${active ? "#30435f" : "var(--border)"}`,
-        borderLeft: `3px solid ${STATUS_COLORS[task.status] ?? "var(--muted)"}`,
         borderRadius: "10px",
         padding: "0.6rem 0.7rem",
         marginBottom: "0.4rem",
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.25rem" }}>
-        <p style={{ fontWeight: 600, fontSize: "var(--text-base)", lineHeight: 1.35, color: "var(--text)" }}>{task.title}</p>
+        <p style={{ fontWeight: 600, fontSize: "var(--text-base)", lineHeight: 1.35, color: "var(--text)", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: STATUS_COLORS[task.status] ?? "var(--muted)", flexShrink: 0 }} />
+          {task.title}
+        </p>
         <span
           style={{
             width: "9px",

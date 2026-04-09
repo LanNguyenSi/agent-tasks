@@ -1154,8 +1154,9 @@ input[type="checkbox"] {
 }
 
 .prose-markdown blockquote {
-  border-left: 3px solid var(--border);
-  padding-left: 0.75rem;
+  background: color-mix(in srgb, var(--surface) 70%, var(--border) 30%);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
   color: var(--text-secondary);
   font-style: italic;
   margin: 0.5em 0;

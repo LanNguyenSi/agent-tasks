@@ -699,7 +699,8 @@ export default function TaskDetailModal({
                 const isReview = message.includes("approved") || message.includes("Changes requested") || message.includes("dismissed");
                 const dotColor = isTransition ? "var(--success, #22c55e)" : isReview ? "var(--warning, #eab308)" : "var(--muted)";
                 return (
-                  <div key={event.id} style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", padding: "0.35rem 0.5rem", fontSize: "var(--text-xs)", color: "var(--text-secondary)", borderLeft: `2px solid ${dotColor}`, background: "var(--surface)", borderRadius: "0 6px 6px 0" }}>
+                  <div key={event.id} style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", padding: "0.35rem 0.5rem", fontSize: "var(--text-xs)", color: "var(--text-secondary)", background: "var(--surface)", borderRadius: "6px" }}>
+                    <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: dotColor, flexShrink: 0, marginTop: "5px" }} />
                     <span style={{ flex: 1, lineHeight: 1.4 }}>{message}</span>
                     <span style={{ color: "var(--muted)", whiteSpace: "nowrap", flexShrink: 0 }}>
                       {new Date(event.createdAt).toLocaleString()}
