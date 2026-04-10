@@ -237,6 +237,7 @@ export default function TeamsPage() {
         projects.map(async (p) => {
           const tasks = await getTasks(p.id);
           for (const t of tasks) {
+            // Widget shows actionable tasks only; "review" tasks are tracked in project counts but excluded here
             if (t.status === "open" || t.status === "in_progress") {
               allOpen.push({ ...t, projectName: p.name });
             }
@@ -459,14 +460,9 @@ export default function TeamsPage() {
                 ))}
               </div>
               {openTasks.length > 10 && (
-                <div style={{ textAlign: "right", marginTop: "0.4rem" }}>
-                  <Link
-                    href={`/dashboard?teamId=${selectedTeam.id}&projectId=${projects[0]?.id ?? ""}`}
-                    style={{ color: "var(--primary)", fontSize: "var(--text-xs)", textDecoration: "none" }}
-                  >
-                    Show all {openTasks.length} tasks →
-                  </Link>
-                </div>
+                <p style={{ textAlign: "right", marginTop: "0.4rem", color: "var(--muted)", fontSize: "var(--text-xs)" }}>
+                  +{openTasks.length - 10} more tasks across your projects
+                </p>
               )}
             </Card>
           )}
