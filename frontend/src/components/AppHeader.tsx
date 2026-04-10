@@ -20,6 +20,7 @@ export default function AppHeader({ user, boardHref = "/dashboard" }: AppHeaderP
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
+  const isHome = pathname.startsWith("/home");
   const isTeams = pathname.startsWith("/teams");
   const isDashboard = pathname.startsWith("/dashboard");
 
@@ -37,8 +38,11 @@ export default function AppHeader({ user, boardHref = "/dashboard" }: AppHeaderP
       }}
     >
       <div className="app-header-nav" style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
-        <Link href="/teams" style={{ fontWeight: 700, color: "var(--primary)", textDecoration: "none" }}>
+        <Link href="/home" style={{ fontWeight: 700, color: "var(--primary)", textDecoration: "none" }}>
           agent-tasks
+        </Link>
+        <Link href="/home" style={{ color: isHome ? "var(--text)" : "var(--muted)", fontSize: "0.85rem", textDecoration: "none" }}>
+          Home
         </Link>
         <Link href="/teams" style={{ color: isTeams ? "var(--text)" : "var(--muted)", fontSize: "0.85rem", textDecoration: "none" }}>
           Teams
