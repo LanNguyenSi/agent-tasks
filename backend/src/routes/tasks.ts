@@ -178,6 +178,106 @@ taskRouter.post(
   },
 );
 
+// ── Batch import tasks ──────────────────────────────────────────────────────
+
+const importTaskSchema = z.object({
+  title: z.string().min(1).max(255),
+  description: z.string().optional(),
+  status: z.enum(["open", "in_progress", "review", "done"]).optional(),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).default("MEDIUM"),
+  dueAt: z.string().datetime().optional(),
+  externalRef: z.string().trim().min(1).max(255).optional(),
+  labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+  templateData: templateDataSchema.optional(),
+});
+
+const batchImportSchema = z.object({
+  tasks: z.array(importTaskSchema).min(1).max(200),
+});
+
+taskRouter.post(
+  "/projects/:projectId/tasks/import",
+  zValidator("json", batchImportSchema),
+  async (c) => {
+    const actor = c.get("actor") as Actor;
+    const projectId = c.req.param("projectId");
+    const body = c.req.valid("json");
+
+    if (!(await hasProjectAccess(actor, projectId))) {
+      return forbidden(c, "Access denied to this project");
+    }
+
+    if (actor.type === "agent" && !actor.scopes.includes("tasks:create")) {
+      return forbidden(c, "Missing scope: tasks:create");
+    }
+
+    // Load existing externalRefs for dedup
+    const existingRefs = new Set<string>();
+    const refsInBatch = body.tasks
+      .map((t) => t.externalRef)
+      .filter((r): r is string => r !== undefined);
+
+    if (refsInBatch.length > 0) {
+      const existing = await prisma.task.findMany({
+        where: { projectId, externalRef: { in: refsInBatch } },
+        select: { externalRef: true },
+      });
+      for (const t of existing) {
+        if (t.externalRef) existingRefs.add(t.externalRef);
+      }
+    }
+
+    const created: string[] = [];
+    const skipped: string[] = [];
+    const errors: Array<{ index: number; error: string }> = [];
+
+    for (let i = 0; i < body.tasks.length; i++) {
+      const item = body.tasks[i];
+
+      // Skip duplicates by externalRef
+      if (item.externalRef && existingRefs.has(item.externalRef)) {
+        skipped.push(item.externalRef);
+        continue;
+      }
+
+      try {
+        const task = await prisma.task.create({
+          data: {
+            projectId,
+            title: item.title,
+            description: item.description,
+            ...(item.status !== undefined ? { status: item.status } : {}),
+            priority: item.priority,
+            dueAt: item.dueAt ? new Date(item.dueAt) : null,
+            ...(item.externalRef !== undefined ? { externalRef: item.externalRef } : {}),
+            ...(item.labels !== undefined ? { labels: item.labels } : {}),
+            ...(item.templateData !== undefined ? { templateData: item.templateData } : {}),
+            createdByUserId: actor.type === "human" ? actor.userId : null,
+            createdByAgentId: actor.type === "agent" ? actor.tokenId : null,
+          },
+        });
+        created.push(task.id);
+        if (item.externalRef) existingRefs.add(item.externalRef);
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          skipped.push(item.externalRef ?? item.title);
+        } else {
+          errors.push({ index: i, error: (e as Error).message });
+        }
+      }
+    }
+
+    return c.json({
+      created: created.length,
+      skipped: skipped.length,
+      failed: errors.length,
+      ids: created,
+      skippedRefs: skipped,
+      errors,
+    }, 201);
+  },
+);
+
 // ── List claimable tasks ─────────────────────────────────────────────────────
 
 taskRouter.get("/tasks/claimable", async (c) => {
