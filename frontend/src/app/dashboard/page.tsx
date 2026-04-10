@@ -32,6 +32,7 @@ import FormField from "../../components/ui/FormField";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
 import TaskDetailModal from "../../components/TaskDetailModal";
+import ImportDialog from "../../components/ImportDialog";
 import Select from "@/components/ui/Select";
 
 const DEFAULT_PRESETS: TemplatePreset[] = [
@@ -337,6 +338,7 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [showNewTask, setShowNewTask] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
@@ -758,6 +760,13 @@ export default function DashboardPage() {
             </div>
           </div>
           <Button
+            variant="ghost"
+            onClick={() => setShowImport(true)}
+            disabled={!selectedProjectId}
+          >
+            Import
+          </Button>
+          <Button
             onClick={() => {
               setError(null);
               setShowNewTask(true);
@@ -1066,6 +1075,16 @@ export default function DashboardPage() {
           onDelete={handleTaskDelete}
           onClose={() => setActiveTaskId(null)}
           onError={(msg) => setError(msg)}
+        />
+      )}
+
+      {selectedProjectId && (
+        <ImportDialog
+          open={showImport}
+          onClose={() => setShowImport(false)}
+          projectId={selectedProjectId}
+          apiBase=""
+          onImported={() => { getTasks(selectedProjectId).then(setTasks).catch(() => {}); }}
         />
       )}
 
