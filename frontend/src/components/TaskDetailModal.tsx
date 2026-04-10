@@ -340,6 +340,21 @@ export default function TaskDetailModal({
                   )}
                 </span>
               </div>
+              {/* External Ref + Labels */}
+              {(task.externalRef || (task.labels && task.labels.length > 0)) && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginBottom: "0.65rem" }}>
+                  {task.externalRef && (
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--primary)", background: "var(--primary-muted)", borderRadius: "4px", padding: "0.15rem 0.4rem", fontWeight: 600, fontFamily: "monospace" }}>
+                      {task.externalRef}
+                    </span>
+                  )}
+                  {task.labels?.map((label) => (
+                    <span key={label} style={{ fontSize: "var(--text-xs)", color: "var(--text)", background: "color-mix(in srgb, var(--muted) 20%, transparent)", borderRadius: "4px", padding: "0.15rem 0.4rem" }}>
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              )}
               {/* Description */}
               {task.description ? (
                 <div className="prose-markdown">
