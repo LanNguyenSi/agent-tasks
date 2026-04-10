@@ -3,6 +3,8 @@
  * Supports German and English Jira exports.
  */
 
+import { wikiToMarkdown } from "./wiki-to-markdown";
+
 export interface ColumnMapping {
   title: number | null;
   externalRef: number | null;
@@ -133,7 +135,7 @@ export function mapRows(
 
     tasks.push({
       title: title.slice(0, 255),
-      description: get(mapping.description).slice(0, 49_990) || undefined,
+      description: wikiToMarkdown(get(mapping.description)).slice(0, 49_990) || undefined,
       priority: PRIORITY_MAP[priorityRaw] || "MEDIUM",
       status: STATUS_MAP[statusRaw] || "open",
       externalRef: get(mapping.externalRef) || undefined,
