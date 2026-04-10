@@ -177,6 +177,11 @@ model Task {
   // Template data (structured task info for agents)
   templateData     Json?     // { goal?, acceptanceCriteria?, context?, constraints? }
 
+  // External system reference (e.g. Jira key "PROJ-123", GitHub issue "#42")
+  externalRef      String?
+  // Free-form labels for categorization
+  labels           String[]    @default([])
+
   // Agent-populated fields
   branchName       String?
   prUrl            String?
@@ -204,11 +209,13 @@ model Task {
   signals          Signal[]
   auditLogs        AuditLog[]
 
+  @@unique([projectId, externalRef])
   @@index([projectId])
   @@index([status])
   @@index([claimedByUserId])
   @@index([claimedByAgentId])
   @@index([projectId, status])
+  @@index([labels], type: Gin)
   @@map("tasks")
 }
 
