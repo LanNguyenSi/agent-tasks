@@ -69,6 +69,8 @@ export interface Task {
   prUrl: string | null;
   prNumber: number | null;
   result: string | null;
+  externalRef: string | null;
+  labels: string[];
   createdAt: string;
   updatedAt: string;
   attachments: TaskAttachment[];

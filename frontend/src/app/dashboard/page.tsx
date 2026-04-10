@@ -245,6 +245,20 @@ function TaskCard({
           {task.description}
         </p>
       )}
+      {(task.externalRef || (task.labels && task.labels.length > 0)) && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem", marginBottom: "0.35rem" }}>
+          {task.externalRef && (
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--primary)", background: "var(--primary-muted)", borderRadius: "4px", padding: "0.1rem 0.35rem", fontWeight: 600, fontFamily: "monospace" }}>
+              {task.externalRef}
+            </span>
+          )}
+          {task.labels?.map((label) => (
+            <span key={label} style={{ fontSize: "var(--text-xs)", color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 15%, transparent)", borderRadius: "4px", padding: "0.1rem 0.35rem" }}>
+              {label}
+            </span>
+          ))}
+        </div>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", alignItems: "flex-end" }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
           <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>{task.priority}</span>
@@ -337,6 +351,7 @@ export default function DashboardPage() {
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
   const [hideDone, setHideDone] = useState(false);
+  const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"board" | "list">("board");
   const [sortState, setSortState] = useState<SortState>({ column: "updated", direction: "desc" });
@@ -360,10 +375,19 @@ export default function DashboardPage() {
       if (taskScope === "mine" && task.claimedByUserId !== user?.id) return false;
       if (taskScope === "unassigned" && (task.claimedByUserId || task.claimedByAgentId)) return false;
       if (taskScope === "overdue" && !isOverdue(task)) return false;
+      if (labelFilter && !(task.labels ?? []).includes(labelFilter)) return false;
       if (!normalizedQuery) return true;
-      return `${task.title} ${task.description ?? ""}`.toLowerCase().includes(normalizedQuery);
+      return `${task.title} ${task.description ?? ""} ${task.externalRef ?? ""} ${(task.labels ?? []).join(" ")}`.toLowerCase().includes(normalizedQuery);
     });
-  }, [tasks, taskQuery, taskScope, hideDone, user?.id]);
+  }, [tasks, taskQuery, taskScope, hideDone, labelFilter, user?.id]);
+
+  const allLabels = useMemo(() => {
+    const set = new Set<string>();
+    for (const task of tasks) {
+      for (const label of task.labels ?? []) set.add(label);
+    }
+    return [...set].sort();
+  }, [tasks]);
 
   const statusSummary = useMemo(() => {
     return STATUSES.reduce<Record<Status, number>>((acc, status) => {
@@ -371,7 +395,7 @@ export default function DashboardPage() {
       return acc;
     }, { open: 0, in_progress: 0, review: 0, done: 0 });
   }, [filteredTasks]);
-  const hasActiveFilters = taskQuery.trim().length > 0 || taskScope !== "all" || hideDone;
+  const hasActiveFilters = taskQuery.trim().length > 0 || taskScope !== "all" || hideDone || labelFilter !== null;
 
   function toggleSort(column: SortColumn) {
     setSortState((prev) => {
@@ -879,6 +903,24 @@ export default function DashboardPage() {
           <button type="button" className={`filter-chip ${hideDone ? "filter-chip-active" : ""}`} onClick={() => setHideDone((value) => !value)}>
             Hide done
           </button>
+          {allLabels.length > 0 && (
+            <>
+              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", padding: "0 0.2rem" }}>|</span>
+              {allLabels.slice(0, 10).map((label) => (
+                <button
+                  key={label}
+                  type="button"
+                  className={`filter-chip ${labelFilter === label ? "filter-chip-active" : ""}`}
+                  onClick={() => setLabelFilter((prev) => (prev === label ? null : label))}
+                >
+                  {label}
+                </button>
+              ))}
+              {allLabels.length > 10 && (
+                <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>+{allLabels.length - 10}</span>
+              )}
+            </>
+          )}
           {hasActiveFilters && (
             <button
               type="button"
@@ -887,6 +929,7 @@ export default function DashboardPage() {
                 setTaskQuery("");
                 setTaskScope("all");
                 setHideDone(false);
+                setLabelFilter(null);
               }}
             >
               Clear filters

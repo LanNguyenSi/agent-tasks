@@ -47,6 +47,11 @@ function TaskRow({ task, teamId }: { task: EnrichedTask; teamId: string }) {
         <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
           {task.projectName}
         </span>
+        {task.externalRef && (
+          <span style={{ fontSize: "var(--text-xs)", color: "var(--primary)", background: "var(--primary-muted)", borderRadius: "4px", padding: "0.05rem 0.3rem", fontWeight: 600, fontFamily: "monospace", flexShrink: 0 }}>
+            {task.externalRef}
+          </span>
+        )}
         <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] ?? "#6b7280", fontSize: "var(--text-xs)", flexShrink: 0 }}>
           {task.priority}
         </span>
