@@ -94,7 +94,7 @@ function TaskWidget({ title, tasks, teamId, emptyText }: WidgetProps) {
   );
 }
 
-export default function HomePage() {
+export default function HomeDashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
@@ -161,7 +161,7 @@ export default function HomePage() {
   );
 
   const recentlyDone = useMemo(
-    () => allTasks.filter((t) => t.status === "done").slice(0, WIDGET_LIMIT),
+    () => allTasks.filter((t) => t.status === "done"),
     [allTasks],
   );
 
