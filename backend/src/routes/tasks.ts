@@ -180,15 +180,8 @@ taskRouter.post(
 
 // ── Batch import tasks ──────────────────────────────────────────────────────
 
-const importTaskSchema = z.object({
-  title: z.string().min(1).max(255),
-  description: z.string().optional(),
-  status: z.enum(["open", "in_progress", "review", "done"]).optional(),
-  priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).default("MEDIUM"),
-  dueAt: z.string().datetime().optional(),
-  externalRef: z.string().trim().min(1).max(255).optional(),
-  labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
-  templateData: templateDataSchema.optional(),
+const importTaskSchema = createTaskSchema.omit({ workflowId: true }).extend({
+  description: z.string().max(50_000).optional(),
 });
 
 const batchImportSchema = z.object({
@@ -211,34 +204,32 @@ taskRouter.post(
       return forbidden(c, "Missing scope: tasks:create");
     }
 
-    // Load existing externalRefs for dedup
-    const existingRefs = new Set<string>();
-    const refsInBatch = body.tasks
-      .map((t) => t.externalRef)
-      .filter((r): r is string => r !== undefined);
+    // Deduplicate within the batch itself (keep first occurrence)
+    const seenRefs = new Set<string>();
+    const dedupedItems: typeof body.tasks = [];
+    const inBatchDupes: string[] = [];
 
-    if (refsInBatch.length > 0) {
-      const existing = await prisma.task.findMany({
-        where: { projectId, externalRef: { in: refsInBatch } },
-        select: { externalRef: true },
-      });
-      for (const t of existing) {
-        if (t.externalRef) existingRefs.add(t.externalRef);
+    for (const item of body.tasks) {
+      if (item.externalRef) {
+        if (seenRefs.has(item.externalRef)) {
+          inBatchDupes.push(item.externalRef);
+          continue;
+        }
+        seenRefs.add(item.externalRef);
       }
+      dedupedItems.push(item);
     }
 
-    const created: string[] = [];
-    const skipped: string[] = [];
+    const created: Array<{ index: number; id: string }> = [];
+    const skipped: string[] = [...inBatchDupes];
     const errors: Array<{ index: number; error: string }> = [];
 
-    for (let i = 0; i < body.tasks.length; i++) {
-      const item = body.tasks[i];
+    const actorName = actor.type === "agent"
+      ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
+      : (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Human";
 
-      // Skip duplicates by externalRef
-      if (item.externalRef && existingRefs.has(item.externalRef)) {
-        skipped.push(item.externalRef);
-        continue;
-      }
+    for (let i = 0; i < dedupedItems.length; i++) {
+      const item = dedupedItems[i];
 
       try {
         const task = await prisma.task.create({
@@ -256,16 +247,32 @@ taskRouter.post(
             createdByAgentId: actor.type === "agent" ? actor.tokenId : null,
           },
         });
-        created.push(task.id);
-        if (item.externalRef) existingRefs.add(item.externalRef);
+        created.push({ index: i, id: task.id });
+
+        // Emit signal so agents discover imported tasks
+        const effectiveStatus = item.status ?? "open";
+        if (effectiveStatus === "open") {
+          void emitTaskAvailableSignal(task.id, projectId, actor.type, actorName);
+        }
+
+        // Audit log
+        void logAuditEvent({
+          projectId,
+          taskId: task.id,
+          actorId: actor.type === "human" ? actor.userId : undefined,
+          action: "task.imported",
+          payload: { externalRef: item.externalRef ?? null, source: "batch_import" },
+        });
       } catch (e) {
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
           skipped.push(item.externalRef ?? item.title);
         } else {
-          errors.push({ index: i, error: (e as Error).message });
+          errors.push({ index: i, error: "Internal error" });
         }
       }
     }
+
+    const statusCode = created.length > 0 ? 201 : errors.length > 0 ? 422 : 200;
 
     return c.json({
       created: created.length,
@@ -274,7 +281,7 @@ taskRouter.post(
       ids: created,
       skippedRefs: skipped,
       errors,
-    }, 201);
+    }, statusCode);
   },
 );
 
