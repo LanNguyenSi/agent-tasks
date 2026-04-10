@@ -23,7 +23,8 @@ export type AuditAction =
   | "user.logout"
   | "github.pr_created"
   | "github.pr_merged"
-  | "github.pr_commented";
+  | "github.pr_commented"
+  | "task.imported";
 
 export interface AuditPayload {
   [key: string]: unknown;

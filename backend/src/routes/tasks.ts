@@ -178,6 +178,113 @@ taskRouter.post(
   },
 );
 
+// ── Batch import tasks ──────────────────────────────────────────────────────
+
+const importTaskSchema = createTaskSchema.omit({ workflowId: true }).extend({
+  description: z.string().max(50_000).optional(),
+});
+
+const batchImportSchema = z.object({
+  tasks: z.array(importTaskSchema).min(1).max(200),
+});
+
+taskRouter.post(
+  "/projects/:projectId/tasks/import",
+  zValidator("json", batchImportSchema),
+  async (c) => {
+    const actor = c.get("actor") as Actor;
+    const projectId = c.req.param("projectId");
+    const body = c.req.valid("json");
+
+    if (!(await hasProjectAccess(actor, projectId))) {
+      return forbidden(c, "Access denied to this project");
+    }
+
+    if (actor.type === "agent" && !actor.scopes.includes("tasks:create")) {
+      return forbidden(c, "Missing scope: tasks:create");
+    }
+
+    // Deduplicate within the batch itself (keep first occurrence)
+    const seenRefs = new Set<string>();
+    const dedupedItems: typeof body.tasks = [];
+    const inBatchDupes: string[] = [];
+
+    for (const item of body.tasks) {
+      if (item.externalRef) {
+        if (seenRefs.has(item.externalRef)) {
+          inBatchDupes.push(item.externalRef);
+          continue;
+        }
+        seenRefs.add(item.externalRef);
+      }
+      dedupedItems.push(item);
+    }
+
+    const created: Array<{ index: number; id: string }> = [];
+    const skipped: string[] = [...inBatchDupes];
+    const errors: Array<{ index: number; error: string }> = [];
+
+    const actorName = actor.type === "agent"
+      ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
+      : (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Human";
+
+    for (let i = 0; i < dedupedItems.length; i++) {
+      const item = dedupedItems[i];
+
+      try {
+        const task = await prisma.task.create({
+          data: {
+            projectId,
+            title: item.title,
+            description: item.description,
+            ...(item.status !== undefined ? { status: item.status } : {}),
+            priority: item.priority,
+            dueAt: item.dueAt ? new Date(item.dueAt) : null,
+            ...(item.externalRef !== undefined ? { externalRef: item.externalRef } : {}),
+            ...(item.labels !== undefined ? { labels: item.labels } : {}),
+            ...(item.templateData !== undefined ? { templateData: item.templateData } : {}),
+            createdByUserId: actor.type === "human" ? actor.userId : null,
+            createdByAgentId: actor.type === "agent" ? actor.tokenId : null,
+          },
+        });
+        created.push({ index: i, id: task.id });
+
+        // Emit signal so agents discover imported tasks
+        const effectiveStatus = item.status ?? "open";
+        if (effectiveStatus === "open") {
+          void emitTaskAvailableSignal(task.id, projectId, actor.type, actorName);
+        }
+
+        // Audit log
+        void logAuditEvent({
+          projectId,
+          taskId: task.id,
+          actorId: actor.type === "human" ? actor.userId : undefined,
+          action: "task.imported",
+          payload: { externalRef: item.externalRef ?? null, source: "batch_import" },
+        });
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          skipped.push(item.externalRef ?? item.title);
+        } else {
+          errors.push({ index: i, error: "Internal error" });
+        }
+      }
+    }
+
+    const statusCode = created.length > 0 ? 201 : errors.length > 0 ? 422 : 200;
+
+    return c.json({
+      created: created.length,
+      skipped: skipped.length,
+      failed: errors.length,
+      ids: created,
+      skippedRefs: skipped,
+      errors,
+    }, statusCode);
+  },
+);
+
 // ── List claimable tasks ─────────────────────────────────────────────────────
 
 taskRouter.get("/tasks/claimable", async (c) => {
