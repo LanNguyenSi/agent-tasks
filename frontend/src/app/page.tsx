@@ -14,7 +14,7 @@ export default function HomePage() {
       const me = await getCurrentUser();
       if (me) {
         const teams = await getTeams();
-        router.replace(teams.length === 0 ? "/onboarding" : "/teams");
+        router.replace(teams.length === 0 ? "/onboarding" : "/home");
         return;
       }
       setCheckingSession(false);

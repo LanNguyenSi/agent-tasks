@@ -504,6 +504,18 @@ input[type="checkbox"] {
   background: var(--primary-muted);
 }
 
+.home-widgets-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+@media (max-width: 768px) {
+  .home-widgets-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .task-detail-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr);
