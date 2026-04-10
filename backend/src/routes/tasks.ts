@@ -53,6 +53,8 @@ const createTaskSchema = z.object({
   workflowId: z.string().uuid().optional(),
   dueAt: z.string().datetime().optional(),
   templateData: templateDataSchema.optional(),
+  externalRef: z.string().trim().min(1).max(255).optional(),
+  labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
 });
 
 const updateTaskSchema = z.object({
@@ -66,6 +68,8 @@ const updateTaskSchema = z.object({
   prNumber: z.number().int().positive().nullable().optional(),
   result: z.string().nullable().optional(),
   templateData: templateDataSchema.nullable().optional(),
+  externalRef: z.string().trim().min(1).max(255).nullable().optional(),
+  labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
 });
 
 const agentUpdateTaskSchema = z.object({
@@ -94,8 +98,22 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
     return forbidden(c, "Access denied to this project");
   }
 
+  const labelFilter = c.req.query("labels");
+  const externalRefFilter = c.req.query("externalRef");
+
+  const where: Record<string, unknown> = { projectId };
+  if (labelFilter) {
+    const parsed = labelFilter.split(",").map((l) => l.trim()).filter(Boolean);
+    if (parsed.length > 0) {
+      where.labels = { hasSome: parsed };
+    }
+  }
+  if (externalRefFilter && externalRefFilter.length <= 255) {
+    where.externalRef = externalRefFilter;
+  }
+
   const tasks = await prisma.task.findMany({
-    where: { projectId },
+    where,
     include: taskInclude,
     orderBy: { createdAt: "desc" },
   });
@@ -121,21 +139,31 @@ taskRouter.post(
       return forbidden(c, "Missing scope: tasks:create");
     }
 
-    const task = await prisma.task.create({
-      data: {
-        projectId,
-        title: body.title,
-        description: body.description,
-        ...(body.status !== undefined ? { status: body.status } : {}),
-        priority: body.priority,
-        workflowId: body.workflowId,
-        dueAt: body.dueAt ? new Date(body.dueAt) : null,
-        ...(body.templateData !== undefined ? { templateData: body.templateData } : {}),
-        createdByUserId: actor.type === "human" ? actor.userId : null,
-        createdByAgentId: actor.type === "agent" ? actor.tokenId : null,
-      },
-      include: taskInclude,
-    });
+    let task;
+    try {
+      task = await prisma.task.create({
+        data: {
+          projectId,
+          title: body.title,
+          description: body.description,
+          ...(body.status !== undefined ? { status: body.status } : {}),
+          priority: body.priority,
+          workflowId: body.workflowId,
+          dueAt: body.dueAt ? new Date(body.dueAt) : null,
+          ...(body.templateData !== undefined ? { templateData: body.templateData } : {}),
+          ...(body.externalRef !== undefined ? { externalRef: body.externalRef } : {}),
+          ...(body.labels !== undefined ? { labels: body.labels } : {}),
+          createdByUserId: actor.type === "human" ? actor.userId : null,
+          createdByAgentId: actor.type === "agent" ? actor.tokenId : null,
+        },
+        include: taskInclude,
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        return conflict(c, `A task with externalRef "${body.externalRef}" already exists in this project`);
+      }
+      throw e;
+    }
 
     // Emit task_available signal when task is open (claimable)
     const effectiveStatus = body.status ?? "open";
@@ -419,25 +447,35 @@ taskRouter.patch("/tasks/:id", async (c) => {
   }
 
   const body = parsed.data;
-  const updated = await prisma.task.update({
-    where: { id: task.id },
-    data: {
-      ...(body.title !== undefined ? { title: body.title } : {}),
-      ...(body.description !== undefined ? { description: body.description } : {}),
-      ...(body.priority !== undefined ? { priority: body.priority } : {}),
-      ...(body.status !== undefined ? { status: body.status } : {}),
-      ...(body.dueAt !== undefined ? { dueAt: body.dueAt ? new Date(body.dueAt) : null } : {}),
-      ...(body.branchName !== undefined ? { branchName: body.branchName } : {}),
-      ...(body.prUrl !== undefined ? { prUrl: body.prUrl } : {}),
-      ...(body.prNumber !== undefined ? { prNumber: body.prNumber } : {}),
-      ...(body.result !== undefined ? { result: body.result } : {}),
-      ...(body.templateData !== undefined
-        ? { templateData: body.templateData === null ? Prisma.JsonNull : body.templateData }
-        : {}),
-      updatedAt: new Date(),
-    },
-    include: taskInclude,
-  });
+  let updated;
+  try {
+    updated = await prisma.task.update({
+      where: { id: task.id },
+      data: {
+        ...(body.title !== undefined ? { title: body.title } : {}),
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        ...(body.priority !== undefined ? { priority: body.priority } : {}),
+        ...(body.status !== undefined ? { status: body.status } : {}),
+        ...(body.dueAt !== undefined ? { dueAt: body.dueAt ? new Date(body.dueAt) : null } : {}),
+        ...(body.branchName !== undefined ? { branchName: body.branchName } : {}),
+        ...(body.prUrl !== undefined ? { prUrl: body.prUrl } : {}),
+        ...(body.prNumber !== undefined ? { prNumber: body.prNumber } : {}),
+        ...(body.result !== undefined ? { result: body.result } : {}),
+        ...(body.templateData !== undefined
+          ? { templateData: body.templateData === null ? Prisma.JsonNull : body.templateData }
+          : {}),
+        ...(body.externalRef !== undefined ? { externalRef: body.externalRef } : {}),
+        ...(body.labels !== undefined ? { labels: body.labels } : {}),
+        updatedAt: new Date(),
+      },
+      include: taskInclude,
+    });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      return conflict(c, `A task with externalRef "${body.externalRef}" already exists in this project`);
+    }
+    throw e;
+  }
 
   return c.json({ task: updated });
 });
