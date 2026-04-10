@@ -1,23 +1,20 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S npx tsx
 /**
- * Jira → agent-tasks Import CLI
+ * Jira -> agent-tasks Import CLI
  *
- * Fetches issues from Jira via REST API and imports them into agent-tasks
+ * Fetches issues from Jira via REST API v3 and imports them into agent-tasks
  * via the batch import endpoint.
  *
  * Usage:
- *   npx tsx tools/jira-import/jira-import.ts \
- *     --jira-url https://your-org.atlassian.net \
- *     --jira-email you@example.com \
- *     --jira-token ATATT... \
- *     --jql "project = PROJ AND status != Done" \
- *     --agent-tasks-url https://agent-tasks.opentriologue.ai \
- *     --agent-tasks-token at_... \
- *     --project-id <uuid> \
- *     [--dry-run]
+ *   # Set credentials via environment variables (recommended):
+ *   export JIRA_URL=https://your-org.atlassian.net
+ *   export JIRA_EMAIL=you@example.com
+ *   export JIRA_TOKEN=ATATT...
+ *   export AGENT_TASKS_URL=https://agent-tasks.opentriologue.ai
+ *   export AGENT_TASKS_TOKEN=at_...
+ *   export PROJECT_ID=<uuid>
  *
- * Environment variables (alternative to flags):
- *   JIRA_URL, JIRA_EMAIL, JIRA_TOKEN, AGENT_TASKS_URL, AGENT_TASKS_TOKEN, PROJECT_ID
+ *   npx tsx tools/jira-import/jira-import.ts --jql "project = PROJ AND status != Done" [--dry-run]
  */
 
 // -- Types --
@@ -26,7 +23,7 @@ interface JiraIssue {
   key: string;
   fields: {
     summary: string;
-    description: string | null;
+    description: Record<string, unknown> | null; // ADF (Atlassian Document Format) in API v3
     priority?: { name: string };
     status?: { name: string; statusCategory?: { key: string } };
     labels?: string[];
@@ -76,8 +73,38 @@ interface Config {
   dryRun: boolean;
 }
 
+function printHelp() {
+  console.log(`
+Jira -> agent-tasks Import CLI
+
+Usage:
+  npx tsx tools/jira-import/jira-import.ts [options]
+
+Options:
+  --jql <query>             JQL filter (default: "ORDER BY created DESC")
+  --jira-url <url>          Jira base URL (or JIRA_URL env)
+  --jira-email <email>      Jira email (or JIRA_EMAIL env)
+  --jira-token <token>      Jira API token (or JIRA_TOKEN env, preferred)
+  --agent-tasks-url <url>   agent-tasks base URL (or AGENT_TASKS_URL env)
+  --agent-tasks-token <t>   agent-tasks API token (or AGENT_TASKS_TOKEN env, preferred)
+  --project-id <uuid>       Target project ID (or PROJECT_ID env)
+  --dry-run                 Preview mapped tasks without importing
+  --help                    Show this help
+
+Environment variables (recommended for tokens):
+  JIRA_URL, JIRA_EMAIL, JIRA_TOKEN, JIRA_JQL,
+  AGENT_TASKS_URL, AGENT_TASKS_TOKEN, PROJECT_ID
+`.trim());
+}
+
 function parseArgs(): Config {
   const args = process.argv.slice(2);
+
+  if (args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    process.exit(0);
+  }
+
   const flags: Record<string, string> = {};
 
   for (let i = 0; i < args.length; i++) {
@@ -86,6 +113,12 @@ function parseArgs(): Config {
     } else if (args[i].startsWith("--") && i + 1 < args.length) {
       flags[args[i].slice(2)] = args[++i];
     }
+  }
+
+  // Warn if tokens are passed via CLI args (visible in process list)
+  if (flags["jira-token"] || flags["agent-tasks-token"]) {
+    console.warn("WARNING: Passing tokens via CLI args exposes them in the process list.");
+    console.warn("         Prefer environment variables: JIRA_TOKEN, AGENT_TASKS_TOKEN\n");
   }
 
   const config: Config = {
@@ -100,26 +133,60 @@ function parseArgs(): Config {
   };
 
   const missing: string[] = [];
-  if (!config.jiraUrl) missing.push("--jira-url / JIRA_URL");
-  if (!config.jiraEmail) missing.push("--jira-email / JIRA_EMAIL");
-  if (!config.jiraToken) missing.push("--jira-token / JIRA_TOKEN");
-  if (!config.agentTasksUrl) missing.push("--agent-tasks-url / AGENT_TASKS_URL");
-  if (!config.agentTasksToken) missing.push("--agent-tasks-token / AGENT_TASKS_TOKEN");
-  if (!config.projectId) missing.push("--project-id / PROJECT_ID");
+  if (!config.jiraUrl) missing.push("JIRA_URL");
+  if (!config.jiraEmail) missing.push("JIRA_EMAIL");
+  if (!config.jiraToken) missing.push("JIRA_TOKEN");
+  if (!config.agentTasksUrl) missing.push("AGENT_TASKS_URL");
+  if (!config.agentTasksToken) missing.push("AGENT_TASKS_TOKEN");
+  if (!config.projectId) missing.push("PROJECT_ID");
 
   if (missing.length > 0) {
     console.error(`Missing required config: ${missing.join(", ")}`);
+    console.error("Run with --help for usage.\n");
     process.exit(1);
   }
 
-  // Normalize URL (strip trailing slash)
   config.jiraUrl = config.jiraUrl.replace(/\/+$/, "");
   config.agentTasksUrl = config.agentTasksUrl.replace(/\/+$/, "");
+
+  // Warn if using default JQL (fetches everything)
+  if (!flags["jql"] && !process.env.JIRA_JQL) {
+    console.warn("WARNING: No --jql specified. Default fetches ALL issues. Consider adding a filter.\n");
+  }
 
   return config;
 }
 
 // -- Jira API --
+
+const FETCH_TIMEOUT = 30_000;
+const MAX_RETRIES = 2;
+
+async function fetchWithRetry(url: string, opts: RequestInit, retries = MAX_RETRIES): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        ...opts,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
+      });
+      if (res.status === 429 || (res.status >= 500 && attempt < retries)) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+        console.warn(`  Retrying after ${res.status} (attempt ${attempt + 1})...`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      if (attempt < retries) {
+        console.warn(`  Retrying after error (attempt ${attempt + 1}): ${(err as Error).message}`);
+        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Unreachable");
+}
 
 async function fetchJiraIssues(config: Config): Promise<JiraIssue[]> {
   const auth = Buffer.from(`${config.jiraEmail}:${config.jiraToken}`).toString("base64");
@@ -130,7 +197,7 @@ async function fetchJiraIssues(config: Config): Promise<JiraIssue[]> {
   while (true) {
     const url = `${config.jiraUrl}/rest/api/3/search?jql=${encodeURIComponent(config.jql)}&startAt=${startAt}&maxResults=${maxResults}&fields=summary,description,priority,status,labels,duedate,assignee,issuetype`;
 
-    const res = await fetch(url, {
+    const res = await fetchWithRetry(url, {
       headers: {
         Authorization: `Basic ${auth}`,
         Accept: "application/json",
@@ -154,6 +221,49 @@ async function fetchJiraIssues(config: Config): Promise<JiraIssue[]> {
   return allIssues;
 }
 
+// -- ADF Extraction --
+
+const BLOCK_TYPES = new Set(["doc", "paragraph", "heading", "blockquote", "codeBlock", "bulletList", "orderedList", "listItem", "table", "tableRow", "tableCell", "tableHeader", "mediaSingle", "mediaGroup", "rule"]);
+
+function extractAdfText(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const n = node as Record<string, unknown>;
+
+  // Leaf nodes
+  if (n.type === "text") return (n.text as string) || "";
+  if (n.type === "hardBreak") return "\n";
+  if (n.type === "mention") return `@${(n.attrs as Record<string, string>)?.text || "user"}`;
+  if (n.type === "emoji") return (n.attrs as Record<string, string>)?.shortName || "";
+  if (n.type === "inlineCard" || n.type === "blockCard") return (n.attrs as Record<string, string>)?.url || "";
+  if (n.type === "rule") return "\n---\n";
+
+  // Container nodes
+  if (!Array.isArray(n.content)) return "";
+  const children = (n.content as unknown[]).map(extractAdfText);
+
+  // Block-level containers: join children with newlines
+  if (BLOCK_TYPES.has(n.type as string)) {
+    if (n.type === "codeBlock") return "```\n" + children.join("") + "\n```";
+    if (n.type === "heading") return children.join("") + "\n";
+    if (n.type === "listItem") return "- " + children.join("");
+    if (n.type === "paragraph") return children.join("");
+    return children.join("\n");
+  }
+
+  // Inline containers (marks, etc.): join without separator
+  return children.join("");
+}
+
+function adfToText(doc: Record<string, unknown> | null): string {
+  if (!doc) return "";
+  if (!Array.isArray(doc.content)) return "";
+  return (doc.content as unknown[])
+    .map(extractAdfText)
+    .join("\n\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 // -- Mapping --
 
 const PRIORITY_MAP: Record<string, ImportTask["priority"]> = {
@@ -170,46 +280,42 @@ const STATUS_CATEGORY_MAP: Record<string, ImportTask["status"]> = {
   done: "done",
 };
 
-function mapJiraDescription(desc: unknown): string {
-  if (!desc) return "";
-  if (typeof desc === "string") return desc;
-  // Jira Cloud uses ADF (Atlassian Document Format) — extract text content
-  if (typeof desc === "object" && desc !== null) {
-    return extractAdfText(desc);
-  }
-  return String(desc);
-}
-
-function extractAdfText(node: unknown): string {
-  if (!node || typeof node !== "object") return "";
-  const n = node as Record<string, unknown>;
-  if (n.type === "text" && typeof n.text === "string") return n.text;
-  if (Array.isArray(n.content)) {
-    return n.content.map(extractAdfText).join("\n");
-  }
-  return "";
-}
+const MAX_LABELS = 20;
+const MAX_LABEL_LENGTH = 100;
 
 function mapIssue(issue: JiraIssue): ImportTask {
   const f = issue.fields;
   const priorityName = (f.priority?.name || "medium").toLowerCase();
   const statusCategory = f.status?.statusCategory?.key || "new";
 
-  const labels = [...(f.labels || [])];
+  let labels = [...(f.labels || [])];
   if (f.issuetype?.name) {
     labels.push(`type:${f.issuetype.name.toLowerCase()}`);
   }
+  // Truncate labels to fit API constraints
+  labels = labels
+    .map((l) => l.slice(0, MAX_LABEL_LENGTH))
+    .slice(0, MAX_LABELS);
 
-  const description = mapJiraDescription(f.description);
+  const description = adfToText(f.description);
+
+  let dueAt: string | undefined;
+  if (f.duedate) {
+    try {
+      dueAt = new Date(f.duedate).toISOString();
+    } catch {
+      // Invalid date — skip
+    }
+  }
 
   return {
     title: f.summary.slice(0, 255),
-    description: description.slice(0, 50_000) || undefined,
+    description: description.slice(0, 49_990) || undefined,
     priority: PRIORITY_MAP[priorityName] || "MEDIUM",
     status: STATUS_CATEGORY_MAP[statusCategory] || "open",
     externalRef: issue.key,
     labels,
-    dueAt: f.duedate ? new Date(f.duedate).toISOString() : undefined,
+    dueAt,
   };
 }
 
@@ -221,7 +327,7 @@ async function importTasks(
 ): Promise<ImportResponse> {
   const url = `${config.agentTasksUrl}/api/projects/${config.projectId}/tasks/import`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${config.agentTasksToken}`,
@@ -286,15 +392,22 @@ async function main() {
 
   for (let i = 0; i < tasks.length; i += 200) {
     const batch = tasks.slice(i, i + 200);
-    console.log(`  Batch ${Math.floor(i / 200) + 1}: ${batch.length} tasks...`);
+    const batchNum = Math.floor(i / 200) + 1;
+    console.log(`  Batch ${batchNum}: ${batch.length} tasks...`);
 
-    const result = await importTasks(batch, config);
-    totalCreated += result.created;
-    totalSkipped += result.skipped;
-    totalFailed += result.failed;
+    try {
+      const result = await importTasks(batch, config);
+      totalCreated += result.created;
+      totalSkipped += result.skipped;
+      totalFailed += result.failed;
 
-    if (result.errors.length > 0) {
-      console.error(`  Errors:`, result.errors);
+      if (result.errors.length > 0) {
+        console.error(`  Errors:`, result.errors);
+      }
+    } catch (err) {
+      console.error(`  Batch ${batchNum} failed: ${(err as Error).message}`);
+      totalFailed += batch.length;
+      // Continue with remaining batches
     }
   }
 
@@ -302,6 +415,10 @@ async function main() {
   console.log(`  Created: ${totalCreated}`);
   console.log(`  Skipped (duplicates): ${totalSkipped}`);
   console.log(`  Failed: ${totalFailed}`);
+
+  if (totalFailed > 0) {
+    process.exit(1);
+  }
 }
 
 main().catch((err) => {

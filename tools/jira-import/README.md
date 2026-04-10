@@ -2,21 +2,30 @@
 
 Import Jira issues into agent-tasks via the batch import endpoint.
 
+## Setup
+
+```bash
+# Set credentials via environment variables (tokens should NEVER be passed as CLI args):
+export JIRA_URL=https://your-org.atlassian.net
+export JIRA_EMAIL=you@example.com
+export JIRA_TOKEN=ATATT...
+export AGENT_TASKS_URL=https://agent-tasks.opentriologue.ai
+export AGENT_TASKS_TOKEN=at_...
+export PROJECT_ID=<uuid>
+```
+
 ## Usage
 
 ```bash
-npx tsx tools/jira-import/jira-import.ts \
-  --jira-url https://your-org.atlassian.net \
-  --jira-email you@example.com \
-  --jira-token ATATT... \
-  --jql "project = PROJ AND status != Done" \
-  --agent-tasks-url https://agent-tasks.opentriologue.ai \
-  --agent-tasks-token at_... \
-  --project-id <uuid> \
-  [--dry-run]
-```
+# Import all open issues from a Jira project
+npx tsx tools/jira-import/jira-import.ts --jql "project = PROJ AND status != Done"
 
-Or use environment variables: `JIRA_URL`, `JIRA_EMAIL`, `JIRA_TOKEN`, `AGENT_TASKS_URL`, `AGENT_TASKS_TOKEN`, `PROJECT_ID`.
+# Preview without importing
+npx tsx tools/jira-import/jira-import.ts --jql "project = PROJ" --dry-run
+
+# Show help
+npx tsx tools/jira-import/jira-import.ts --help
+```
 
 ## Field Mapping
 
@@ -24,9 +33,9 @@ Or use environment variables: `JIRA_URL`, `JIRA_EMAIL`, `JIRA_TOKEN`, `AGENT_TAS
 |------|-------------|
 | Key (PROJ-123) | `externalRef` |
 | Summary | `title` |
-| Description | `description` (ADF auto-extracted) |
-| Priority | `priority` (Highest→CRITICAL, High→HIGH, etc.) |
-| Status Category | `status` (new→open, indeterminate→in_progress, done→done) |
+| Description (ADF) | `description` (auto-extracted to plain text) |
+| Priority | `priority` (Highest->CRITICAL, High->HIGH, etc.) |
+| Status Category | `status` (new->open, indeterminate->in_progress, done->done) |
 | Labels | `labels` |
 | Issue Type | `labels` (as `type:bug`, `type:story`, etc.) |
 | Due Date | `dueAt` |
@@ -35,6 +44,14 @@ Or use environment variables: `JIRA_URL`, `JIRA_EMAIL`, `JIRA_TOKEN`, `AGENT_TAS
 
 Uses Jira issue key as `externalRef`. Re-running the same import skips already-imported issues.
 
-## Dry Run
+## Environment Variables
 
-Use `--dry-run` to preview what would be imported without making any changes.
+| Variable | Description |
+|----------|-------------|
+| `JIRA_URL` | Jira base URL (e.g. `https://your-org.atlassian.net`) |
+| `JIRA_EMAIL` | Email for Jira API authentication |
+| `JIRA_TOKEN` | Jira API token ([create one](https://id.atlassian.com/manage-profile/security/api-tokens)) |
+| `JIRA_JQL` | Default JQL query (overridden by `--jql` flag) |
+| `AGENT_TASKS_URL` | agent-tasks API base URL |
+| `AGENT_TASKS_TOKEN` | agent-tasks Bearer token |
+| `PROJECT_ID` | Target project UUID in agent-tasks |
