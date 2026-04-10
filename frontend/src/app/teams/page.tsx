@@ -14,7 +14,9 @@ import {
   type User,
   type Team,
   type Project,
+  type Task,
 } from "../../lib/api";
+import { formatRelativeTime } from "../../lib/time";
 import AppHeader from "../../components/AppHeader";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
@@ -109,6 +111,7 @@ export default function TeamsPage() {
   const [deletingProject, setDeletingProject] = useState(false);
 
   const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
+  const [openTasks, setOpenTasks] = useState<(Task & { projectName: string })[]>([]);
   const [projectQuery, setProjectQuery] = useState("");
   const [projectSort, setProjectSort] = useState<ProjectSort>("name_asc");
   const [githubOnly, setGithubOnly] = useState(false);
@@ -229,13 +232,24 @@ export default function TeamsPage() {
     let cancelled = false;
 
     async function fetchTaskCounts() {
+      const allOpen: (Task & { projectName: string })[] = [];
       const results = await Promise.all(
         projects.map(async (p) => {
           const tasks = await getTasks(p.id);
+          for (const t of tasks) {
+            // Widget shows actionable tasks only; "review" tasks are tracked in project counts but excluded here
+            if (t.status === "open" || t.status === "in_progress") {
+              allOpen.push({ ...t, projectName: p.name });
+            }
+          }
           return [p.id, tasks.filter((t) => t.status !== "done").length] as const;
         }),
       );
-      if (!cancelled) setTaskCounts(Object.fromEntries(results));
+      if (!cancelled) {
+        setTaskCounts(Object.fromEntries(results));
+        allOpen.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        setOpenTasks(allOpen);
+      }
     }
 
     void fetchTaskCounts();
@@ -388,6 +402,70 @@ export default function TeamsPage() {
               </div>
             </form>
           </Modal>
+
+          {openTasks.length > 0 && (
+            <Card style={{ marginBottom: "0.9rem" }} padding="sm">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                <h2 style={{ fontSize: "var(--text-base)", fontWeight: 600 }}>Open Tasks</h2>
+                <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{openTasks.length} total</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                {openTasks.slice(0, 10).map((task) => (
+                  <Link
+                    key={task.id}
+                    href={`/dashboard?teamId=${selectedTeam.id}&projectId=${task.projectId}&taskId=${task.id}`}
+                    style={{ textDecoration: "none", color: "inherit" }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                        padding: "0.4rem 0.5rem",
+                        borderRadius: "var(--radius-base)",
+                        transition: "background 0.12s ease",
+                      }}
+                      className="open-task-row"
+                    >
+                      <span
+                        style={{
+                          width: "7px",
+                          height: "7px",
+                          borderRadius: "50%",
+                          background: task.status === "in_progress" ? "var(--primary)" : "var(--muted)",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span style={{ flex: 1, fontSize: "var(--text-sm)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {task.title}
+                      </span>
+                      <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
+                        {task.projectName}
+                      </span>
+                      <span
+                        className="status-chip"
+                        style={{
+                          color: task.priority === "CRITICAL" ? "#be123c" : task.priority === "HIGH" ? "#ef4444" : task.priority === "MEDIUM" ? "#f59e0b" : "#6b7280",
+                          fontSize: "var(--text-xs)",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {task.priority}
+                      </span>
+                      <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
+                        {formatRelativeTime(task.updatedAt)}
+                      </span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+              {openTasks.length > 10 && (
+                <p style={{ textAlign: "right", marginTop: "0.4rem", color: "var(--muted)", fontSize: "var(--text-xs)" }}>
+                  +{openTasks.length - 10} more tasks across your projects
+                </p>
+              )}
+            </Card>
+          )}
 
           <Card style={{ marginBottom: "0.9rem" }} padding="sm">
             <div className="teams-filter-bar">
