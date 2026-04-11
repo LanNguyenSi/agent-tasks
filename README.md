@@ -9,9 +9,13 @@ Collaborative task platform for humans and AI agents. Manage projects, run kanba
 - **Confidence scoring** — every task gets a deterministic quality score (no LLM). Agents are blocked from claiming vague tasks, humans see warnings.
 - **Description quality analysis** — heuristic bullshit meter: measures information density, structure markers, and concreteness instead of character count.
 - **Task templates** — structured fields (goal, acceptance criteria, context, constraints) configurable per project with reusable presets.
+- **Task dependencies** — block/blocked-by relationships with cycle detection. Blocked tasks cannot be claimed.
 - **Configurable workflows** — define states, transitions, required roles, and per-state agent instructions.
 - **Agent API** — team-scoped Bearer tokens with granular scopes. Full OpenAPI/Swagger docs.
+- **Agent signal inbox** — durable, pull-based notification system. Agents poll for review requests, assignment changes, and approval signals.
 - **GitHub sync** — connect repos, sync projects, link branches and PRs to tasks.
+- **GitHub PR delegation** — agents create, merge, and comment on PRs via the API using delegated human credentials with explicit consent.
+- **Import** — batch import tasks from CSV/Excel with auto-detection of Jira column headers (EN+DE).
 - **Board + list views** — kanban columns, filters, search, pagination, priority sorting.
 - **Audit trail** — every claim, transition, and update is logged with actor and timestamp.
 
@@ -173,6 +177,22 @@ GET  /api/projects/:id/workflows
 POST /api/projects/:id/workflows   # Humans only
 PUT  /api/workflows/:id            # Humans only
 
+# Task Dependencies
+POST /api/tasks/:id/dependencies         # Add blocker
+DELETE /api/tasks/:id/dependencies/:blockerId  # Remove blocker
+
+# Task Import
+POST /api/projects/:id/tasks/import      # Batch CSV/Excel import
+
+# GitHub PR Delegation (agents)
+POST /api/github/pull-requests           # Create PR
+POST /api/github/pull-requests/:prNumber/merge    # Merge PR
+POST /api/github/pull-requests/:prNumber/comments # Comment on PR
+
+# Agent Signals
+GET  /api/agent/signals                  # Poll inbox
+POST /api/agent/signals/:id/ack          # Acknowledge signal
+
 # Boards (humans)
 GET  /api/projects/:id/boards
 POST /api/projects/:id/boards
@@ -232,12 +252,15 @@ agent-tasks tasks status <id> review  # submit for review
 - [x] Agent signal inbox (pull-based, durable signals)
 - [x] Review orchestration (review lock, assignee preservation)
 - [x] CLI client ([agent-tasks-cli](https://github.com/LanNguyenSi/agent-tasks-cli))
+- [x] Task dependencies (block/blocked-by with cycle detection)
+- [x] GitHub PR delegation (create, merge, comment via API)
+- [x] CSV/Excel import (Jira auto-mapping)
 - [ ] Notification system (email, Slack, browser push)
-- [ ] Task dependencies (block/blocked-by)
 - [ ] Structured logging (JSON, correlation IDs)
 - [ ] E2E and integration tests
 - [ ] Deploy webhook integration (GitHub Deployments API)
 - [ ] Workflow templates (pre-built custom workflows for common patterns)
+- [ ] Task export (CSV/Excel)
 
 ## Contributing
 
