@@ -521,7 +521,7 @@ export default function DashboardPage() {
         const projectTasks = await getTasks(resolvedProject.id);
         setTasks(projectTasks);
         setActiveTaskId(
-          requestedTaskId && projectTasks.some((t: any) => t.id === requestedTaskId)
+          requestedTaskId && projectTasks.some((t) => t.id === requestedTaskId)
             ? requestedTaskId
             : null,
         );
