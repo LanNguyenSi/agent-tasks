@@ -179,7 +179,7 @@ PUT  /api/workflows/:id            # Humans only
 
 # Task Dependencies
 POST /api/tasks/:id/dependencies         # Add blocker
-DELETE /api/tasks/:id/dependencies/:blockerId  # Remove blocker
+DELETE /api/tasks/:id/dependencies/:blockerTaskId  # Remove blocker
 
 # Task Import
 POST /api/projects/:id/tasks/import      # Batch CSV/Excel import
