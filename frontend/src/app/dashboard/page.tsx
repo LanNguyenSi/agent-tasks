@@ -494,6 +494,7 @@ export default function DashboardPage() {
         const params = new URLSearchParams(window.location.search);
         const requestedTeamId = params.get("teamId");
         const requestedProjectId = params.get("projectId");
+        const requestedTaskId = params.get("taskId");
 
         const resolvedTeam =
           userTeams.find((team) => team.id === requestedTeamId) ?? userTeams[0]!;
@@ -519,7 +520,11 @@ export default function DashboardPage() {
 
         const projectTasks = await getTasks(resolvedProject.id);
         setTasks(projectTasks);
-        setActiveTaskId(null);
+        setActiveTaskId(
+          requestedTaskId && projectTasks.some((t: any) => t.id === requestedTaskId)
+            ? requestedTaskId
+            : null,
+        );
 
         updateUrl(resolvedTeam.id, resolvedProject.id);
       } catch (err) {
