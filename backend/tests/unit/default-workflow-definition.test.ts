@@ -8,10 +8,22 @@ import {
 describe("defaultWorkflowDefinition()", () => {
   const def = defaultWorkflowDefinition();
 
-  it("exports every DEFAULT_STATES entry", () => {
+  it("exports every DEFAULT_STATES entry with its instructions", () => {
     expect(def.states).toHaveLength(DEFAULT_STATES.length);
     for (const s of DEFAULT_STATES) {
-      expect(def.states).toContainEqual({ name: s.name, label: s.label, terminal: s.terminal });
+      expect(def.states).toContainEqual({
+        name: s.name,
+        label: s.label,
+        terminal: s.terminal,
+        agentInstructions: s.agentInstructions,
+      });
+    }
+  });
+
+  it("every default state has non-empty agentInstructions", () => {
+    for (const s of def.states) {
+      expect(s.agentInstructions).toBeTruthy();
+      expect(s.agentInstructions!.length).toBeGreaterThan(10);
     }
   });
 
