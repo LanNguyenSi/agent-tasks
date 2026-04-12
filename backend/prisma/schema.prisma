@@ -20,6 +20,10 @@ model User {
   passwordHash  String?
   githubAccessToken String?
   githubConnectedAt DateTime?
+  // Token health probe state — set by lazy probe when the user or an
+  // ops dashboard asks. Null means "not yet checked".
+  githubTokenLastCheckedAt DateTime?
+  githubTokenHealthy       Boolean?
 
   // Agent delegation consent (opt-in, default false)
   allowAgentPrCreate  Boolean @default(false)

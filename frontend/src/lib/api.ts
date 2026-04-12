@@ -225,6 +225,17 @@ export async function updateDelegationSettings(body: {
   return data.user;
 }
 
+export type GithubTokenHealthState = "healthy" | "invalid" | "unknown" | "not_connected";
+
+export interface GithubTokenHealth {
+  state: GithubTokenHealthState;
+  lastCheckedAt: string | null;
+}
+
+export async function getGithubTokenHealth(): Promise<GithubTokenHealth> {
+  return request<GithubTokenHealth>("/api/auth/github/health");
+}
+
 export async function logout(): Promise<void> {
   await request("/api/auth/logout", { method: "POST" });
 }
