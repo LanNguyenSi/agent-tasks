@@ -27,8 +27,15 @@ async function isProjectAdmin(actor: Actor, projectId: string): Promise<boolean>
   return membership?.role === "ADMIN";
 }
 
+// State names must match the task.status storage format: lowercase letters,
+// digits, and underscores only. This mirrors the frontend editor's
+// `STATE_NAME_RE` — enforcing it server-side so a malicious or buggy client
+// cannot persist a corrupted workflow graph (e.g. names with shell
+// metacharacters, spaces, or null bytes).
+const STATE_NAME_RE = /^[a-z0-9_]+$/;
+
 const workflowStateSchema = z.object({
-  name: z.string().min(1),
+  name: z.string().min(1).regex(STATE_NAME_RE, "State name must match [a-z0-9_]+"),
   label: z.string().min(1),
   terminal: z.boolean().default(false),
   agentInstructions: z.string().optional(),
@@ -46,15 +53,62 @@ const workflowTransitionSchema = z.object({
   requires: z.array(z.string().min(1)).max(10).optional(),
 });
 
+// The frontend editor enforces these invariants client-side, but clients
+// cannot be trusted — this is the backend's only structural defense
+// against a corrupted workflow graph (duplicate state names, dangling
+// initialState, transitions pointing at states that don't exist). Task
+// router + transition handler assume these hold, so a bypass here would
+// manifest as runtime errors during task operations, not persistence
+// errors at PUT time.
+export const workflowDefinitionSchema = z
+  .object({
+    states: z.array(workflowStateSchema).min(1),
+    transitions: z.array(workflowTransitionSchema),
+    initialState: z.string().min(1),
+  })
+  .superRefine((def, ctx) => {
+    const names = new Set<string>();
+    for (const s of def.states) {
+      if (names.has(s.name)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate state name: "${s.name}"`,
+          path: ["states"],
+        });
+      }
+      names.add(s.name);
+    }
+    if (!names.has(def.initialState)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `initialState "${def.initialState}" is not in the states list`,
+        path: ["initialState"],
+      });
+    }
+    for (let i = 0; i < def.transitions.length; i++) {
+      const t = def.transitions[i]!;
+      if (!names.has(t.from)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Transition references missing "from" state: "${t.from}"`,
+          path: ["transitions", i, "from"],
+        });
+      }
+      if (!names.has(t.to)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Transition references missing "to" state: "${t.to}"`,
+          path: ["transitions", i, "to"],
+        });
+      }
+    }
+  });
+
 const createWorkflowSchema = z.object({
   name: z.string().min(1).max(100),
   projectId: z.string().uuid(),
   isDefault: z.boolean().default(false),
-  definition: z.object({
-    states: z.array(workflowStateSchema).min(1),
-    transitions: z.array(workflowTransitionSchema),
-    initialState: z.string().min(1),
-  }),
+  definition: workflowDefinitionSchema,
 });
 
 const updateWorkflowSchema = createWorkflowSchema

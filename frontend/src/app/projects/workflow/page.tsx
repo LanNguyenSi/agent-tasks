@@ -1,18 +1,19 @@
 "use client";
 
 /**
- * Workflow & Gates — viewer + transition-gate editor (Tasks 2 + 3/5).
+ * Workflow & Gates — viewer + state/gate editor (Tasks 2, 3, 4 of 5).
  *
- * Shows the effective workflow for a single project (custom Workflow row
- * or hardcoded system default). Admins on a default-workflow project see
- * a "Customize" button that forks the default into a custom row. Once a
- * custom row exists, admins additionally see a gates editor — checkboxes
- * per existing transition that toggle the `requires` array, saved via
- * PUT /api/workflows/:id. State / transition add-remove-rename is still
- * out of scope (tasks 4 + 5).
+ * Single-draft architecture: any edit (gate toggle, state add/rename/
+ * remove, initialState change, label/terminal/instructions edit) goes
+ * into `draft`, a shallow clone of the loaded `workflow.definition`.
+ * `activeDef` reads from the draft when dirty, else from the workflow.
+ * Save PUTs the draft; Cancel nulls it; Reset drops the entire custom
+ * Workflow row. State renames propagate into transitions and
+ * initialState in the same mutation.
  *
- * Route is query-param based (`/projects/workflow?projectId=…`) to match
- * the rest of the frontend which does not use Next.js dynamic segments.
+ * Transition add/remove/edit is still out of scope (task 5); the
+ * transitions table stays partially read-only — from/to come from
+ * whatever transitions already exist, only gates are editable.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -33,19 +34,125 @@ import {
   type User,
   type WorkflowDefinition,
   type WorkflowRule,
-  type WorkflowTransition,
+  type WorkflowState,
 } from "../../../lib/api";
 import AppHeader from "../../../components/AppHeader";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
 
-export default function WorkflowViewerPage() {
+// ── Pure helpers (extracted for testability + reuse) ────────────────────────
+
+const STATE_NAME_RE = /^[a-z0-9_]+$/;
+
+function cloneDefinition(def: WorkflowDefinition): WorkflowDefinition {
+  return {
+    initialState: def.initialState,
+    states: def.states.map((s) => ({ ...s })),
+    transitions: def.transitions.map((t) => ({
+      ...t,
+      ...(t.requires ? { requires: [...t.requires] } : {}),
+    })),
+  };
+}
+
+function sameRequires(a: string[] | undefined, b: string[] | undefined): boolean {
+  const aa = a ?? [];
+  const bb = b ?? [];
+  if (aa.length !== bb.length) return false;
+  const bs = new Set(bb);
+  return aa.every((x) => bs.has(x));
+}
+
+function definitionsEqual(a: WorkflowDefinition, b: WorkflowDefinition): boolean {
+  if (a.initialState !== b.initialState) return false;
+  if (a.states.length !== b.states.length) return false;
+  for (let i = 0; i < a.states.length; i++) {
+    const sa = a.states[i]!;
+    const sb = b.states[i]!;
+    if (
+      sa.name !== sb.name ||
+      sa.label !== sb.label ||
+      sa.terminal !== sb.terminal ||
+      (sa.agentInstructions ?? "") !== (sb.agentInstructions ?? "")
+    ) {
+      return false;
+    }
+  }
+  if (a.transitions.length !== b.transitions.length) return false;
+  for (let i = 0; i < a.transitions.length; i++) {
+    const ta = a.transitions[i]!;
+    const tb = b.transitions[i]!;
+    if (
+      ta.from !== tb.from ||
+      ta.to !== tb.to ||
+      (ta.label ?? "") !== (tb.label ?? "") ||
+      (ta.requiredRole ?? "any") !== (tb.requiredRole ?? "any") ||
+      !sameRequires(ta.requires, tb.requires)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+interface ValidationResult {
+  errors: string[];
+  warnings: string[];
+}
+
+function validateDefinition(def: WorkflowDefinition): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // Name uniqueness + format
+  const seen = new Set<string>();
+  for (const s of def.states) {
+    if (!s.name) {
+      errors.push("State name cannot be empty.");
+      continue;
+    }
+    if (!STATE_NAME_RE.test(s.name)) {
+      errors.push(`State name "${s.name}" must match [a-z0-9_]+ (lowercase, digits, underscore).`);
+    }
+    if (seen.has(s.name)) {
+      errors.push(`Duplicate state name: "${s.name}".`);
+    }
+    seen.add(s.name);
+    if (!s.label.trim()) {
+      errors.push(`State "${s.name}" has no label.`);
+    }
+  }
+
+  // initialState must reference an existing state
+  if (!seen.has(def.initialState)) {
+    errors.push(`Initial state "${def.initialState}" is not in the states list.`);
+  }
+
+  // Transitions must reference existing states (rename propagation makes
+  // this unreachable via the UI, but a sanity check guards against bugs).
+  for (const t of def.transitions) {
+    if (!seen.has(t.from)) {
+      errors.push(`Transition references missing "from" state: "${t.from}" → "${t.to}".`);
+    }
+    if (!seen.has(t.to)) {
+      errors.push(`Transition references missing "to" state: "${t.from}" → "${t.to}".`);
+    }
+  }
+
+  // At least one terminal state — warning only, not blocking
+  if (!def.states.some((s) => s.terminal)) {
+    warnings.push("No terminal state is marked. Tasks will never reach a 'done' state.");
+  }
+
+  return { errors, warnings };
+}
+
+// ── Page ────────────────────────────────────────────────────────────────────
+
+export default function WorkflowEditorPage() {
   const router = useRouter();
   // `undefined` = URL not read yet; `""` = read but missing.
-  // Using three states avoids a hang when the effect can't distinguish
-  // "still waiting for window.location" from "user opened the URL without
-  // a projectId query param".
   const [projectId, setProjectId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
@@ -62,26 +169,28 @@ export default function WorkflowViewerPage() {
   const [error, setError] = useState<string | null>(null);
   const [customizing, setCustomizing] = useState(false);
 
-  // Gates editor state — a per-transition `requires` override map keyed by
-  // the transition's from→to pair. A transition that has never been touched
-  // reads its gates from the loaded workflow; a touched transition reads
-  // from `gateOverrides`. This keeps "dirty" detection simple and allows a
-  // Cancel button to revert by clearing the map.
-  const [gateOverrides, setGateOverrides] = useState<Record<string, string[]>>({});
+  // Single draft of the workflow definition. Null means "not editing" and
+  // the page renders the canonical workflow.definition. Any mutation
+  // (gate toggle, state edit, rename, etc.) replaces this draft; a
+  // matched-original check clears it back to null automatically.
+  const [draft, setDraft] = useState<WorkflowDefinition | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedBanner, setSavedBanner] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
+  // Which state rows have their agent-instructions textarea expanded.
+  // Keyed by row index (not name) so that renaming a state doesn't silently
+  // collapse its open textarea.
+  const [expandedInstructions, setExpandedInstructions] = useState<Set<number>>(new Set());
 
   useEffect(() => {
-    if (projectId === undefined) return; // URL not read yet
+    if (projectId === undefined) return;
     if (projectId === "") {
       setError("Missing projectId query parameter. Link to this page with ?projectId=<uuid>.");
       setLoading(false);
       return;
     }
-    const id = projectId; // narrow for closure
-
+    const id = projectId;
     void (async () => {
       try {
         const [me, proj, teams, wf, catalog] = await Promise.all([
@@ -116,6 +225,161 @@ export default function WorkflowViewerPage() {
     return map;
   }, [rules]);
 
+  const activeDef = draft ?? workflow?.definition ?? null;
+  const isDirty = draft !== null;
+  const validation: ValidationResult = useMemo(
+    () => (activeDef ? validateDefinition(activeDef) : { errors: [], warnings: [] }),
+    [activeDef],
+  );
+
+  /** True only when a state in the draft has a different name than the
+   * same row in the canonical workflow, or the row count changed. The
+   * rename warning banner only fires in that case — not for every
+   * gate-toggle or label-edit dirty state. */
+  const hasRename = useMemo(() => {
+    if (!draft || !workflow) return false;
+    if (draft.states.length !== workflow.definition.states.length) return true;
+    return draft.states.some((s, i) => workflow.definition.states[i]?.name !== s.name);
+  }, [draft, workflow]);
+
+  // ── Draft mutation helpers ─────────────────────────────────────────────────
+
+  /** Apply a mutation to the draft. Clears the draft back to null if the
+   *  result is structurally equal to the server's canonical definition. */
+  function mutateDraft(mutator: (d: WorkflowDefinition) => WorkflowDefinition) {
+    if (!workflow) return;
+    const next = mutator(cloneDefinition(draft ?? workflow.definition));
+    setSavedBanner(false);
+    setError(null); // any successful mutation clears stale inline errors
+    if (definitionsEqual(next, workflow.definition)) {
+      setDraft(null);
+    } else {
+      setDraft(next);
+    }
+  }
+
+  function toggleRule(transitionIndex: number, ruleId: string, on: boolean) {
+    mutateDraft((d) => {
+      const t = d.transitions[transitionIndex];
+      if (!t) return d;
+      const current = new Set(t.requires ?? []);
+      if (on) current.add(ruleId);
+      else current.delete(ruleId);
+      const nextRequires = Array.from(current);
+      if (nextRequires.length === 0) {
+        delete t.requires;
+      } else {
+        t.requires = nextRequires;
+      }
+      return d;
+    });
+  }
+
+  function updateStateField<K extends keyof WorkflowState>(
+    index: number,
+    field: K,
+    value: WorkflowState[K],
+  ) {
+    mutateDraft((d) => {
+      const s = d.states[index];
+      if (!s) return d;
+
+      if (field === "name" && typeof value === "string" && value !== s.name) {
+        const oldName = s.name;
+        const newName = value;
+        // Propagate the rename into transitions + initialState ONLY when
+        // the new name is (a) structurally valid and (b) does not collide
+        // with another existing state. Otherwise — e.g. transient values
+        // during typing, empty strings, or attempts to merge with an
+        // existing name — we just write the name without rewiring
+        // references. `validateDefinition` will then flag the invalid
+        // or duplicate state, save is blocked, and the other transitions
+        // keep pointing at their original endpoints. This prevents a
+        // silent transition-hijack bug where a mid-keystroke value (e.g.
+        // first typing "Y" en route to "Y2") would merge transitions
+        // belonging to two different states.
+        const nameIsValid = STATE_NAME_RE.test(newName);
+        const nameCollides = d.states.some(
+          (other, j) => j !== index && other.name === newName,
+        );
+        if (nameIsValid && !nameCollides) {
+          for (const t of d.transitions) {
+            if (t.from === oldName) t.from = newName;
+            if (t.to === oldName) t.to = newName;
+          }
+          if (d.initialState === oldName) d.initialState = newName;
+        }
+      }
+
+      s[field] = value;
+      return d;
+    });
+  }
+
+  function addState() {
+    mutateDraft((d) => {
+      // Generate a unique placeholder name
+      let n = 1;
+      while (d.states.some((s) => s.name === `new_state_${n}`)) n += 1;
+      d.states.push({
+        name: `new_state_${n}`,
+        label: "New state",
+        terminal: false,
+      });
+      return d;
+    });
+  }
+
+  /**
+   * Remove a state. Blocked (error-only, no mutation) if the state is
+   * referenced by any transition or is the current initialState — the user
+   * must remove the transitions first (task 5 will add that editor) or
+   * reassign initialState.
+   */
+  function removeState(index: number) {
+    if (!activeDef) return;
+    const s = activeDef.states[index];
+    if (!s) return;
+
+    const refs = activeDef.transitions.filter((t) => t.from === s.name || t.to === s.name);
+    if (refs.length > 0) {
+      setError(
+        `Cannot remove state "${s.name}": ${refs.length} transition(s) still reference it. ` +
+          `Remove those transitions first (transition editing ships in the next iteration).`,
+      );
+      return;
+    }
+    if (activeDef.initialState === s.name) {
+      setError(
+        `Cannot remove state "${s.name}": it is the initial state. Change the initial state first.`,
+      );
+      return;
+    }
+    setError(null);
+    mutateDraft((d) => {
+      d.states.splice(index, 1);
+      return d;
+    });
+  }
+
+  function setInitialState(name: string) {
+    mutateDraft((d) => {
+      d.initialState = name;
+      return d;
+    });
+  }
+
+  function toggleInstructionsExpanded(index: number) {
+    setExpandedInstructions((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  // ── Network handlers ──────────────────────────────────────────────────────
+
   async function handleCustomize() {
     if (!projectId) return;
     setCustomizing(true);
@@ -123,7 +387,7 @@ export default function WorkflowViewerPage() {
     try {
       const next = await customizeProjectWorkflow(projectId);
       setWorkflow(next);
-      setGateOverrides({});
+      setDraft(null);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -131,82 +395,27 @@ export default function WorkflowViewerPage() {
     }
   }
 
-  // Stable key for a transition in the overrides map. from→to pairs are
-  // unique per workflow per the backend's zod validation, so this is safe.
-  function transitionKey(t: { from: string; to: string }): string {
-    return `${t.from}→${t.to}`;
-  }
-
-  // The effective requires array for a transition: override if present,
-  // otherwise the value loaded from the server.
-  function currentRequires(t: WorkflowTransition): string[] {
-    const key = transitionKey(t);
-    return gateOverrides[key] ?? t.requires ?? [];
-  }
-
-  function sameRequires(a: string[], b: string[]): boolean {
-    if (a.length !== b.length) return false;
-    const bs = new Set(b);
-    return a.every((x) => bs.has(x));
-  }
-
-  function toggleRule(t: WorkflowTransition, ruleId: string, on: boolean) {
-    const key = transitionKey(t);
-    // Seed from currentRequires() — NOT from t.requires directly — so any
-    // unknown rule names already stored on the transition survive into the
-    // override and are preserved on save. Dropping this seeding would
-    // silently wipe forward-compat rules the frontend doesn't know about.
-    const current = new Set(currentRequires(t));
-    if (on) current.add(ruleId);
-    else current.delete(ruleId);
-    const next = Array.from(current);
-    const original = t.requires ?? [];
-    setGateOverrides((prev) => {
-      // If the user toggled back to the server's original state, drop the
-      // override entry entirely — otherwise the dirty indicator and Save
-      // button would lie ("1 unsaved change" with no actual diff).
-      if (sameRequires(next, original)) {
-        const { [key]: _removed, ...rest } = prev;
-        void _removed;
-        return rest;
-      }
-      return { ...prev, [key]: next };
-    });
-    setSavedBanner(false);
-  }
-
-  const isDirty = Object.keys(gateOverrides).length > 0;
-
   function handleCancel() {
-    setGateOverrides({});
+    setDraft(null);
     setError(null);
     setSavedBanner(false);
+    setExpandedInstructions(new Set());
   }
 
   async function handleSave() {
-    if (!workflow || !workflow.workflowId) return;
+    if (!workflow || !workflow.workflowId || !draft) return;
+    if (validation.errors.length > 0) {
+      setError("Fix validation errors before saving.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const nextDef: WorkflowDefinition = {
-        ...workflow.definition,
-        transitions: workflow.definition.transitions.map((t) => {
-          const key = transitionKey(t);
-          if (!(key in gateOverrides)) return t;
-          const requires = gateOverrides[key] ?? [];
-          // Strip the field entirely when empty — keeps the stored shape
-          // clean and matches the no-requires convention.
-          const { requires: _drop, ...rest } = t;
-          void _drop;
-          return requires.length > 0 ? { ...rest, requires } : rest;
-        }),
-      };
-      await updateWorkflow(workflow.workflowId, { definition: nextDef });
-      // Reload to pick up the canonical shape and any server-side
-      // normalization (e.g. unknown rules being logged).
-      const refreshed = await getEffectiveWorkflow(projectId ?? "");
+      await updateWorkflow(workflow.workflowId, { definition: draft });
+      if (!projectId) return;
+      const refreshed = await getEffectiveWorkflow(projectId);
       setWorkflow(refreshed);
-      setGateOverrides({});
+      setDraft(null);
       setSavedBanner(true);
     } catch (err) {
       setError((err as Error).message);
@@ -222,7 +431,7 @@ export default function WorkflowViewerPage() {
     try {
       const next = await resetProjectWorkflow(projectId);
       setWorkflow(next);
-      setGateOverrides({});
+      setDraft(null);
       setConfirmingReset(false);
       setSavedBanner(false);
     } catch (err) {
@@ -231,6 +440,8 @@ export default function WorkflowViewerPage() {
       setResetting(false);
     }
   }
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -253,15 +464,15 @@ export default function WorkflowViewerPage() {
     );
   }
 
-  if (!workflow || !project) return null;
+  if (!workflow || !project || !activeDef) return null;
 
-  const def = workflow.definition;
   const isDefault = workflow.source === "default";
+  const canEdit = !isDefault && isAdmin;
 
   return (
     <>
       <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
-      <main style={{ maxWidth: "900px", margin: "0 auto", padding: "var(--space-6) var(--space-4)" }}>
+      <main style={{ maxWidth: "960px", margin: "0 auto", padding: "var(--space-6) var(--space-4)" }}>
         <div style={{ marginBottom: "var(--space-4)" }}>
           <Link
             href={`/home?projectId=${project.id}`}
@@ -287,43 +498,58 @@ export default function WorkflowViewerPage() {
           </p>
         </div>
 
-        <AlertBanner tone={isDefault ? "info" : "success"} title={
-          isDefault
-            ? "Using system default"
-            : isDirty
-              ? "Custom workflow — unsaved changes"
-              : "Custom workflow"
-        }>
+        <AlertBanner
+          tone={isDefault ? "info" : "success"}
+          title={
+            isDefault
+              ? "Using system default"
+              : isDirty
+                ? "Custom workflow — unsaved changes"
+                : "Custom workflow"
+          }
+        >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
             <span>
               {isDefault
                 ? "This project inherits the built-in default workflow. It applies to every project that hasn't defined its own."
-                : isAdmin
-                  ? "Toggle gates per transition below, then click Save. Use Reset to go back to the system default."
-                  : "This project has its own workflow. Only team admins can edit gates."}
+                : canEdit
+                  ? "Edit states and gates below, then click Save. Use Reset to drop the custom workflow entirely."
+                  : "This project has its own workflow. Only team admins can edit."}
             </span>
             {isDefault && isAdmin && (
-              <Button
-                type="button"
-                onClick={() => void handleCustomize()}
-                disabled={customizing}
-                loading={customizing}
-              >
+              <Button type="button" onClick={() => void handleCustomize()} disabled={customizing} loading={customizing}>
                 Customize this workflow
               </Button>
             )}
             {isDefault && !isAdmin && (
-              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>
-                Only team admins can customize.
-              </span>
+              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>Only team admins can customize.</span>
             )}
           </div>
         </AlertBanner>
 
         {savedBanner && (
           <AlertBanner tone="success" title="Saved">
-            Gate changes have been persisted. New task transitions will be evaluated
-            against the updated rules.
+            Workflow changes have been persisted.
+          </AlertBanner>
+        )}
+
+        {canEdit && isDirty && validation.errors.length > 0 && (
+          <AlertBanner tone="danger" title={`Validation errors (${validation.errors.length})`}>
+            <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
+              {validation.errors.map((e, i) => (
+                <li key={i}>{e}</li>
+              ))}
+            </ul>
+          </AlertBanner>
+        )}
+
+        {canEdit && isDirty && validation.warnings.length > 0 && (
+          <AlertBanner tone="warning" title={`Warnings (${validation.warnings.length})`}>
+            <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
+              {validation.warnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
           </AlertBanner>
         )}
 
@@ -333,11 +559,49 @@ export default function WorkflowViewerPage() {
           </AlertBanner>
         )}
 
+        {canEdit && hasRename && (
+          <AlertBanner tone="info" title="Rename warning">
+            You renamed or removed at least one state. Existing tasks currently in the
+            old state will have a status string that no longer matches any workflow
+            state. Transition attempts on those tasks will fail until an admin
+            force-transitions or the task is manually re-labeled. Migration is not
+            automatic.
+          </AlertBanner>
+        )}
+
+        {/* ── States ────────────────────────────────────────────────────── */}
         <Card style={{ marginTop: "var(--space-4)" }}>
-          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "var(--space-2)" }}>States</h2>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "var(--space-3)" }}>
-            Initial state: <code>{def.initialState}</code>
-          </p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "var(--space-3)" }}>
+            <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700 }}>States</h2>
+            {canEdit && (
+              <Button type="button" variant="secondary" onClick={addState} disabled={saving}>
+                + Add state
+              </Button>
+            )}
+          </div>
+
+          <div style={{ marginBottom: "var(--space-3)" }}>
+            <label style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginRight: "0.5rem" }}>
+              Initial state:
+            </label>
+            {canEdit ? (
+              <select
+                value={activeDef.initialState}
+                onChange={(e) => setInitialState(e.target.value)}
+                disabled={saving}
+                style={{ padding: "0.25rem 0.5rem", fontSize: "var(--text-sm)" }}
+              >
+                {activeDef.states.map((s) => (
+                  <option key={s.name} value={s.name}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <code>{activeDef.initialState}</code>
+            )}
+          </div>
+
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-sm)" }}>
               <thead>
@@ -346,35 +610,118 @@ export default function WorkflowViewerPage() {
                   <th style={th}>Label</th>
                   <th style={th}>Terminal</th>
                   <th style={th}>Agent instructions</th>
+                  {canEdit && <th style={th}></th>}
                 </tr>
               </thead>
               <tbody>
-                {def.states.map((s) => (
-                  <tr key={s.name} style={{ borderBottom: "1px solid var(--border)" }}>
-                    <td style={td}><code>{s.name}</code></td>
-                    <td style={td}>{s.label}</td>
-                    <td style={td}>{s.terminal ? "yes" : "—"}</td>
-                    <td style={{ ...td, color: "var(--muted)", maxWidth: "280px" }}>
-                      {s.agentInstructions
-                        ? s.agentInstructions.split("\n")[0]?.slice(0, 80) + (s.agentInstructions.length > 80 ? "…" : "")
-                        : "—"}
-                    </td>
-                  </tr>
-                ))}
+                {activeDef.states.map((s, i) => {
+                  const isExpanded = expandedInstructions.has(i);
+                  return (
+                    <tr key={`${i}-${s.name}`} style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td style={td}>
+                        {canEdit ? (
+                          <input
+                            type="text"
+                            value={s.name}
+                            onChange={(e) => updateStateField(i, "name", e.target.value)}
+                            disabled={saving}
+                            style={inlineInput}
+                          />
+                        ) : (
+                          <code>{s.name}</code>
+                        )}
+                      </td>
+                      <td style={td}>
+                        {canEdit ? (
+                          <input
+                            type="text"
+                            value={s.label}
+                            onChange={(e) => updateStateField(i, "label", e.target.value)}
+                            disabled={saving}
+                            style={inlineInput}
+                          />
+                        ) : (
+                          s.label
+                        )}
+                      </td>
+                      <td style={td}>
+                        {canEdit ? (
+                          <input
+                            type="checkbox"
+                            checked={s.terminal}
+                            onChange={(e) => updateStateField(i, "terminal", e.target.checked)}
+                            disabled={saving}
+                          />
+                        ) : s.terminal ? (
+                          "yes"
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td style={{ ...td, maxWidth: "360px" }}>
+                        {canEdit ? (
+                          isExpanded ? (
+                            <div>
+                              <textarea
+                                value={s.agentInstructions ?? ""}
+                                onChange={(e) => updateStateField(i, "agentInstructions", e.target.value)}
+                                disabled={saving}
+                                rows={4}
+                                style={{ width: "100%", fontSize: "var(--text-xs)", fontFamily: "inherit" }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => toggleInstructionsExpanded(i)}
+                                style={linkButton}
+                              >
+                                Collapse
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => toggleInstructionsExpanded(i)}
+                              style={{ ...linkButton, textAlign: "left", width: "100%" }}
+                            >
+                              {s.agentInstructions
+                                ? s.agentInstructions.split("\n")[0]?.slice(0, 80) +
+                                  (s.agentInstructions.length > 80 ? "…" : "")
+                                : "Add instructions…"}
+                            </button>
+                          )
+                        ) : (
+                          <span style={{ color: "var(--muted)" }}>
+                            {s.agentInstructions
+                              ? s.agentInstructions.split("\n")[0]?.slice(0, 80) +
+                                (s.agentInstructions.length > 80 ? "…" : "")
+                              : "—"}
+                          </span>
+                        )}
+                      </td>
+                      {canEdit && (
+                        <td style={{ ...td, width: "1%", whiteSpace: "nowrap" }}>
+                          <button
+                            type="button"
+                            onClick={() => removeState(i)}
+                            disabled={saving}
+                            style={{ ...linkButton, color: "#dc2626" }}
+                            title="Remove state"
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </Card>
 
+        {/* ── Transitions ──────────────────────────────────────────────── */}
         <Card style={{ marginTop: "var(--space-4)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "var(--space-3)" }}>
-            <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700 }}>Transitions</h2>
-            {isDirty && (
-              <span style={pillDirty}>
-                {Object.keys(gateOverrides).length} unsaved change{Object.keys(gateOverrides).length === 1 ? "" : "s"}
-              </span>
-            )}
-          </div>
+          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "var(--space-3)" }}>Transitions</h2>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-sm)" }}>
               <thead>
@@ -386,9 +733,8 @@ export default function WorkflowViewerPage() {
                 </tr>
               </thead>
               <tbody>
-                {def.transitions.map((t, i) => {
-                  const activeRequires = currentRequires(t);
-                  const canEdit = !isDefault && isAdmin;
+                {activeDef.transitions.map((t, i) => {
+                  const activeRequires = t.requires ?? [];
                   return (
                     <tr key={`${t.from}-${t.to}-${i}`} style={{ borderBottom: "1px solid var(--border)" }}>
                       <td style={td}>
@@ -407,20 +753,20 @@ export default function WorkflowViewerPage() {
                                 <input
                                   type="checkbox"
                                   checked={activeRequires.includes(r.id)}
-                                  onChange={(e) => toggleRule(t, r.id, e.target.checked)}
+                                  onChange={(e) => toggleRule(i, r.id, e.target.checked)}
                                   disabled={saving}
                                 />
                                 <span>{r.label}</span>
                                 <code style={{ color: "var(--muted)" }}>({r.id})</code>
                               </label>
                             ))}
-                            {/* Preserve any unknown rule names (forward-compat)
-                                so a save doesn't drop them even though we
-                                don't render a checkbox for them. */}
                             {activeRequires
                               .filter((r) => !rules.some((x) => x.id === r))
                               .map((r) => (
-                                <span key={r} style={{ ...pill, background: "rgba(239, 68, 68, 0.15)", color: "#dc2626" }}>
+                                <span
+                                  key={r}
+                                  style={{ ...pill, background: "rgba(239, 68, 68, 0.15)", color: "#dc2626" }}
+                                >
                                   {r} (unknown)
                                 </span>
                               ))}
@@ -443,53 +789,63 @@ export default function WorkflowViewerPage() {
               </tbody>
             </table>
           </div>
-
-          {!isDefault && isAdmin && (
-            <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-4)", flexWrap: "wrap", alignItems: "center" }}>
-              <Button type="button" onClick={() => void handleSave()} disabled={!isDirty || saving} loading={saving}>
-                Save changes
-              </Button>
-              <Button type="button" variant="secondary" onClick={handleCancel} disabled={!isDirty || saving}>
-                Cancel
-              </Button>
-              <div style={{ flex: 1 }} />
-              {!confirmingReset ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => setConfirmingReset(true)}
-                  disabled={saving || resetting}
-                >
-                  Reset to default
-                </Button>
-              ) : (
-                <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-                  <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
-                    Drop the custom workflow and revert to the system default?
-                    {isDirty && " Unsaved gate edits will be lost."}
-                  </span>
-                  <Button type="button" onClick={() => void handleReset()} disabled={resetting} loading={resetting}>
-                    Yes, reset
-                  </Button>
-                  <Button type="button" variant="secondary" onClick={() => setConfirmingReset(false)} disabled={resetting}>
-                    No
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
         </Card>
 
+        {/* ── Action bar ───────────────────────────────────────────────── */}
+        {canEdit && (
+          <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-4)", flexWrap: "wrap", alignItems: "center" }}>
+            <Button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={!isDirty || saving || validation.errors.length > 0}
+              loading={saving}
+            >
+              Save changes
+            </Button>
+            <Button type="button" variant="secondary" onClick={handleCancel} disabled={!isDirty || saving}>
+              Cancel
+            </Button>
+            <div style={{ flex: 1 }} />
+            {!confirmingReset ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setConfirmingReset(true)}
+                disabled={saving || resetting}
+              >
+                Reset to default
+              </Button>
+            ) : (
+              <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
+                <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
+                  Drop the custom workflow and revert to the system default?
+                  {isDirty && " Unsaved edits will be lost."}
+                </span>
+                <Button type="button" onClick={() => void handleReset()} disabled={resetting} loading={resetting}>
+                  Yes, reset
+                </Button>
+                <Button type="button" variant="secondary" onClick={() => setConfirmingReset(false)} disabled={resetting}>
+                  No
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Gate reference ───────────────────────────────────────────── */}
         <Card style={{ marginTop: "var(--space-4)" }}>
-          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "var(--space-2)" }}>Available gates</h2>
+          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "var(--space-2)" }}>
+            Available gates
+          </h2>
           <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "var(--space-3)" }}>
-            Built-in precondition rules the backend knows about. Toggle them per
-            transition in the table above (admin + custom workflow required).
+            Built-in precondition rules the backend knows about. Toggle them per transition
+            in the table above (admin + custom workflow required).
           </p>
           <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
             {rules.map((r) => (
               <li key={r.id} style={{ marginBottom: "var(--space-2)" }}>
-                <strong>{r.label}</strong> <code style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>({r.id})</code>
+                <strong>{r.label}</strong>{" "}
+                <code style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>({r.id})</code>
                 <div style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{r.description}</div>
               </li>
             ))}
@@ -499,6 +855,8 @@ export default function WorkflowViewerPage() {
     </>
   );
 }
+
+// ── Styles ──────────────────────────────────────────────────────────────────
 
 const th: React.CSSProperties = {
   textAlign: "left",
@@ -525,12 +883,22 @@ const pill: React.CSSProperties = {
   fontWeight: 600,
 };
 
-const pillDirty: React.CSSProperties = {
-  display: "inline-block",
-  padding: "0.125rem 0.5rem",
-  borderRadius: "999px",
-  background: "rgba(250, 204, 21, 0.2)",
-  color: "#a16207",
+const inlineInput: React.CSSProperties = {
+  width: "100%",
+  padding: "0.25rem 0.5rem",
+  fontSize: "var(--text-sm)",
+  fontFamily: "inherit",
+  background: "var(--input-bg, transparent)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-sm, 4px)",
+};
+
+const linkButton: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  padding: 0,
+  color: "var(--primary, #3b82f6)",
+  cursor: "pointer",
   fontSize: "var(--text-xs)",
-  fontWeight: 600,
+  textDecoration: "underline",
 };
