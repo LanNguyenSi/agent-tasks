@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getCurrentUser, getTeams, login, register } from "../../lib/api";
+import { discoverSso, getCurrentUser, getTeams, login, register, type SsoDiscoverResult } from "../../lib/api";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import FormField from "../../components/ui/FormField";
@@ -20,6 +20,28 @@ export default function AuthPage() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ssoMatch, setSsoMatch] = useState<SsoDiscoverResult | null>(null);
+
+  // Debounced SSO domain discovery. Runs whenever the user pauses typing in
+  // the email field — shows a "Sign in with <IdP>" button if their company
+  // has configured SSO for this domain.
+  useEffect(() => {
+    if (!email.includes("@") || email.length < 5) {
+      setSsoMatch(null);
+      return;
+    }
+    const handle = setTimeout(() => {
+      void (async () => {
+        try {
+          const match = await discoverSso(email);
+          setSsoMatch(match);
+        } catch {
+          setSsoMatch(null);
+        }
+      })();
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [email]);
 
   useEffect(() => {
     void (async () => {
@@ -132,6 +154,29 @@ export default function AuthPage() {
                 style={{ width: "100%", display: "block" }}
               />
             </FormField>
+
+            {ssoMatch && (
+              <AlertBanner tone="info" title={`${ssoMatch.teamName} uses single sign-on`}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+                  <span>Your company has configured SSO for this email domain.</span>
+                  <a
+                    href={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"}${ssoMatch.loginUrl}`}
+                    className="btn-primary"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderRadius: "var(--radius-lg)",
+                      padding: "0.5rem 1rem",
+                      textDecoration: "none",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Continue with {ssoMatch.displayName}
+                  </a>
+                </div>
+              </AlertBanner>
+            )}
 
             {error && (
               <AlertBanner tone="danger" title="Error">

@@ -249,6 +249,63 @@ export async function login(body: { email: string; password: string }): Promise<
   return data.user;
 }
 
+// ── SSO (OIDC) ────────────────────────────────────────────────────────────────
+
+export interface SsoDiscoverResult {
+  teamSlug: string;
+  teamName: string;
+  displayName: string;
+  loginUrl: string;
+}
+
+export async function discoverSso(email: string): Promise<SsoDiscoverResult | null> {
+  const data = await request<{ connection: SsoDiscoverResult | null }>(
+    `/api/auth/sso/discover?email=${encodeURIComponent(email)}`,
+  );
+  return data.connection;
+}
+
+export interface SsoConnection {
+  id: string;
+  teamId: string;
+  displayName: string;
+  issuer: string;
+  clientId: string;
+  emailDomains: string[];
+  autoProvision: boolean;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getTeamSsoConnection(teamId: string): Promise<SsoConnection | null> {
+  const data = await request<{ connection: SsoConnection | null }>(`/api/teams/${teamId}/sso`);
+  return data.connection;
+}
+
+export async function upsertTeamSsoConnection(
+  teamId: string,
+  body: {
+    displayName: string;
+    issuer: string;
+    clientId: string;
+    clientSecret: string;
+    emailDomains: string[];
+    autoProvision?: boolean;
+    enabled?: boolean;
+  },
+): Promise<SsoConnection> {
+  const data = await request<{ connection: SsoConnection }>(`/api/teams/${teamId}/sso`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+  return data.connection;
+}
+
+export async function deleteTeamSsoConnection(teamId: string): Promise<void> {
+  await request(`/api/teams/${teamId}/sso`, { method: "DELETE" });
+}
+
 // ── Projects ──────────────────────────────────────────────────────────────────
 
 export async function getProjects(teamId: string): Promise<Project[]> {

@@ -7,6 +7,10 @@ const configSchema = z.object({
   GITHUB_CLIENT_ID: z.string().default(""),
   GITHUB_CLIENT_SECRET: z.string().default(""),
   SESSION_SECRET: z.string().min(32),
+  // 32-byte key (hex or base64) used to encrypt OIDC client secrets at rest.
+  // Required as soon as any SsoConnection exists; optional otherwise.
+  SSO_ENCRYPTION_KEY: z.string().default(""),
+  BACKEND_URL: z.string().url().default("http://localhost:3001"),
   FRONTEND_URL: z.string().url().default("http://localhost:3000"),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
 });

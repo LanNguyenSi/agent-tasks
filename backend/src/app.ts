@@ -14,6 +14,7 @@ import { webhookRouter } from "./routes/webhooks.js";
 import { signalRouter } from "./routes/signals.js";
 import { githubRouter } from "./routes/github.js";
 import { docsRouter } from "./routes/docs.js";
+import { ssoLoginRouter, ssoAdminRouter } from "./routes/sso.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { rateLimit } from "./middleware/rate-limit.js";
 import type { AppVariables } from "./types/hono.js";
@@ -45,6 +46,7 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.use("/api/auth/register", rateLimit({ windowMs: 60_000, max: 5 }));
   app.use("/api/auth/login", rateLimit({ windowMs: 60_000, max: 10 }));
   app.use("/api/auth/github/*", rateLimit({ windowMs: 60_000, max: 10 }));
+  app.use("/api/auth/sso/*", rateLimit({ windowMs: 60_000, max: 20 }));
 
   // Public
   app.route("/api/health", healthRouter);
@@ -63,6 +65,11 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.use("/api/agent/signals", authMiddleware);
   app.use("/api/projects/*", authMiddleware);
   app.use("/api/github/*", authMiddleware);
+
+  // SSO login endpoints — public, under /api/auth/sso/*
+  app.route("/api/auth", ssoLoginRouter);
+  // SSO admin endpoints — auth-gated by the /api/teams/* middleware above
+  app.route("/api", ssoAdminRouter);
 
   app.route("/api/auth", authRouter);
   app.route("/api", teamRouter);
