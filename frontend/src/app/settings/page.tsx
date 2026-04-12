@@ -181,6 +181,7 @@ export default function SettingsPage() {
       <nav style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", fontSize: "var(--text-sm)" }}>
         <a href="#account" style={{ color: "var(--muted)" }}>Account</a>
         <a href="#github" style={{ color: "var(--muted)" }}>GitHub</a>
+        <a href="#sso" style={{ color: "var(--muted)" }}>Enterprise SSO</a>
         <a href="#delegation" style={{ color: "var(--muted)" }}>Agent Permissions</a>
         <a href="#api-tokens" style={{ color: "var(--muted)" }}>API Tokens</a>
       </nav>
@@ -224,6 +225,33 @@ export default function SettingsPage() {
               </Link>
             </div>
           )}
+        </section>
+      </Card>
+
+      <Card style={{ marginBottom: "var(--space-4)" }}>
+        <section id="sso">
+          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "0.5rem" }}>
+            Enterprise SSO
+          </h2>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.75rem" }}>
+            Configure OpenID Connect so members of your team can sign in with their company
+            identity provider (Okta, Azure AD, Google Workspace, Auth0, Keycloak, …). Team
+            admins only.
+          </p>
+          <Link
+            href="/settings/sso"
+            className="btn-secondary"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              padding: "0.5rem 1rem",
+              borderRadius: "var(--radius-lg)",
+              textDecoration: "none",
+              fontWeight: 600,
+            }}
+          >
+            Manage SSO connection
+          </Link>
         </section>
       </Card>
 
