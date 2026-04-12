@@ -226,6 +226,12 @@ Rules:
   `task.transitioned.forced`, payload containing the list of bypassed rules
   and the (optional) `forceReason`, so forced transitions are
   reconstructible from the audit log.
+- A `task_force_transitioned` signal is emitted to the task's current
+  claimant and reviewer (both human and agent, deduplicated, excluding
+  the forcing admin). Agents polling the inbox see the override on the
+  next poll so they can re-fetch the task instead of acting on stale
+  state. See [signal-payload-design.md](signal-payload-design.md) for
+  the payload shape.
 
 ## How agents see the rules
 
