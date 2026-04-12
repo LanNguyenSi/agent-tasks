@@ -10,7 +10,7 @@ Collaborative task platform for humans and AI agents. Manage projects, run kanba
 - **Description quality analysis** — heuristic bullshit meter: measures information density, structure markers, and concreteness instead of character count.
 - **Task templates** — structured fields (goal, acceptance criteria, context, constraints) configurable per project with reusable presets.
 - **Task dependencies** — block/blocked-by relationships with cycle detection. Blocked tasks cannot be claimed.
-- **Configurable workflows** — define states, transitions, required roles, per-state agent instructions, and declarative [transition preconditions](docs/workflow-preconditions.md) (`branchPresent`, `prPresent`, …) enforced server-side with admin override + audit.
+- **Configurable workflows** — full in-browser editor for states, transitions, required roles, per-state agent instructions, and declarative [transition preconditions](docs/workflow-preconditions.md) (`branchPresent`, `prPresent`, …) enforced server-side with admin override + audit. Reachability analysis, client + server validation, admin-gated with Cmd/Ctrl+S save.
 - **Agent API** — team-scoped Bearer tokens with granular scopes. Full OpenAPI/Swagger docs.
 - **Agent signal inbox** — durable, pull-based notification system. Agents poll for review requests, assignment changes, and approval signals.
 - **GitHub sync** — connect repos, sync projects, link branches and PRs to tasks.

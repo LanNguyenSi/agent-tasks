@@ -179,6 +179,49 @@ Once a custom workflow exists, the full edit surface is the existing
 `PUT /api/workflows/:id` endpoint — the UI writes the whole
 `definition` (states + transitions + initialState) back on every save.
 
+## Managing workflows in the UI
+
+Team admins can edit workflows in the browser at
+`/projects/workflow?projectId=<uuid>` — linked from the project dropdown
+and the dashboard gear icon. Non-admins see a read-only view.
+
+**Flow for a project using the default workflow:**
+
+1. Open the page. The banner shows "Using system default".
+2. Click **Customize this workflow** — this forks the hardcoded default
+   into a new custom `Workflow` row you can edit.
+3. Edit states: inline-edit name/label, toggle terminal, click
+   "Add instructions…" to open a textarea for the state's agent
+   instructions, use `+ Add state` / the `✕` button per row.
+   Renaming a state propagates the rename into every transition
+   endpoint and the initial state so the graph stays coherent —
+   mid-keystroke values that would duplicate or be invalid do **not**
+   propagate, they just write the name and let the validation banner
+   flag it.
+4. Edit transitions: `from` / `to` are state dropdowns, label is
+   inline, `required role` is a dropdown (`any`, `ADMIN`,
+   `HUMAN_MEMBER`, `REVIEWER`), and the gates column shows one
+   checkbox per built-in rule from `/api/workflow-rules`. `+ Add
+   transition` creates a new row defaulted to the initial state →
+   first other state.
+5. Validation errors (duplicate names, bad name format, dangling
+   `initialState`, missing transition endpoints, duplicate
+   transitions) block Save with an inline banner.
+6. Reachability warnings (unreachable states, dead-end non-terminal
+   states, orphan states with no incoming transition) show as a
+   warning banner but do **not** block Save.
+7. `Cmd/Ctrl+S` saves. Save PUTs the whole definition to the backend
+   schema, which re-validates with `.superRefine()` before persisting.
+8. **Reset to default** drops the custom row entirely and reverts the
+   project to the hardcoded default. Tasks that referenced the custom
+   workflow get `workflowId` unset and fall back to the default.
+
+**Renaming a state** does **not** migrate existing task rows whose
+`status` column matches the old name. A warning banner appears when a
+rename is pending, advising that affected tasks will need an admin
+force-transition or manual re-label. The backend will return `422` on
+transition attempts for those stuck tasks until they're moved.
+
 ## Configuring rules on a workflow
 
 Rules live in the workflow's `definition.transitions[].requires` array.

@@ -85,6 +85,7 @@ export const workflowDefinitionSchema = z
         path: ["initialState"],
       });
     }
+    const seenPairs = new Set<string>();
     for (let i = 0; i < def.transitions.length; i++) {
       const t = def.transitions[i]!;
       if (!names.has(t.from)) {
@@ -101,6 +102,20 @@ export const workflowDefinitionSchema = z
           path: ["transitions", i, "to"],
         });
       }
+      // Duplicate (from, to) pairs are client-blocked but we defend here
+      // too — a direct API caller could otherwise persist dead config that
+      // survives round-trips through the editor (runtime `find` picks the
+      // first match, the second is ignored but keeps re-firing validation
+      // errors when the user next opens the editor).
+      const key = `${t.from}→${t.to}`;
+      if (seenPairs.has(key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate transition: ${key}`,
+          path: ["transitions", i],
+        });
+      }
+      seenPairs.add(key);
     }
   });
 

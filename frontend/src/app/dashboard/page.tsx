@@ -672,10 +672,10 @@ export default function DashboardPage() {
             {selectedProjectId && (
               <>
               <Link
-                href={`/projects/workflows?projectId=${selectedProjectId}`}
+                href={`/projects/workflow?projectId=${selectedProjectId}`}
                 className="project-settings-icon"
                 aria-label="Workflow settings"
-                title="Workflow & agent instructions"
+                title="Workflow & gates"
               >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="8" cy="8" r="2.5" />
