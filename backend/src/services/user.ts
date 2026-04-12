@@ -64,6 +64,18 @@ export async function upsertUserFromGitHub(
     where: { githubId },
   });
 
+  // When a user stores a new token, clear any previous health-probe
+  // state — the previous `healthy=false` verdict is stale and would
+  // otherwise keep the UI's "reconnect" banner stuck until the probe
+  // TTL (1h) expired. Null forces a fresh probe on the next Settings
+  // visit.
+  const tokenFields = {
+    githubAccessToken: accessToken,
+    githubConnectedAt: new Date(),
+    githubTokenHealthy: null,
+    githubTokenLastCheckedAt: null,
+  };
+
   if (byGithubId) {
     return prisma.user.update({
       where: { id: byGithubId.id },
@@ -71,8 +83,7 @@ export async function upsertUserFromGitHub(
         name: githubUser.name ?? byGithubId.name,
         avatarUrl: githubUser.avatar_url,
         email: email ?? byGithubId.email,
-        githubAccessToken: accessToken,
-        githubConnectedAt: new Date(),
+        ...tokenFields,
       },
     });
   }
@@ -86,8 +97,7 @@ export async function upsertUserFromGitHub(
           githubId,
           avatarUrl: githubUser.avatar_url,
           name: githubUser.name ?? byEmail.name,
-          githubAccessToken: accessToken,
-          githubConnectedAt: new Date(),
+          ...tokenFields,
         },
       });
     }
@@ -101,8 +111,7 @@ export async function upsertUserFromGitHub(
       name: githubUser.name ?? undefined,
       avatarUrl: githubUser.avatar_url,
       email: email ?? undefined,
-      githubAccessToken: accessToken,
-      githubConnectedAt: new Date(),
+      ...tokenFields,
     },
   });
 }
@@ -145,6 +154,11 @@ export async function connectGitHubToExistingUser(
       name: githubUser.name ?? undefined,
       githubAccessToken: accessToken,
       githubConnectedAt: new Date(),
+      // See upsertUserFromGitHub — clear probe state so the next
+      // Settings visit re-probes with the new token instead of showing
+      // a stale "invalid" banner.
+      githubTokenHealthy: null,
+      githubTokenLastCheckedAt: null,
     },
   });
 }

@@ -25,6 +25,7 @@ import {
   updateUserDelegation,
 } from "../services/user.js";
 import { verifyPassword } from "../services/password.js";
+import { getTokenHealth } from "../services/github-health.js";
 
 export const authRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -263,6 +264,27 @@ authRouter.get("/me", async (c) => {
   }
 
   return c.json({ user: buildUserResponse(user) });
+});
+
+// ── GitHub token health probe ────────────────────────────────────────────────
+
+/**
+ * Returns the health of the current user's GitHub OAuth token. Lazy:
+ * re-probes GitHub when the cached state is older than 1h, otherwise
+ * returns the cached result. Used by the Settings page to show a
+ * "Reconnect GitHub" prompt when the token has been revoked, and by
+ * the ops dashboard to surface the count of affected users.
+ */
+authRouter.get("/github/health", async (c) => {
+  const actor = c.get("actor");
+  if (!actor || actor.type !== "human") {
+    return c.json({ error: "unauthorized", message: "Authentication required" }, 401);
+  }
+  const health = await getTokenHealth(actor.userId);
+  return c.json({
+    state: health.state,
+    lastCheckedAt: health.lastCheckedAt?.toISOString() ?? null,
+  });
 });
 
 // ── Agent Delegation Settings ────────────────────────────────────────────────

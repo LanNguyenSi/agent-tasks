@@ -10,9 +10,11 @@ import {
   createAgentToken,
   revokeAgentToken,
   updateDelegationSettings,
+  getGithubTokenHealth,
   type User,
   type Team,
   type AgentToken,
+  type GithubTokenHealth,
 } from "../../lib/api";
 import AppHeader from "../../components/AppHeader";
 import AlertBanner from "../../components/ui/AlertBanner";
@@ -23,6 +25,16 @@ import FormField from "../../components/ui/FormField";
 import Select from "@/components/ui/Select";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+
+function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60_000) return "just now";
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
 const ALL_SCOPES = [
   { id: "sso:admin", label: "Manage SSO connection (team-scoped, sensitive)" },
   { id: "tasks:read", label: "Read tasks" },
@@ -63,6 +75,8 @@ export default function SettingsPage() {
   const [delegationSaving, setDelegationSaving] = useState(false);
   const [delegationSuccess, setDelegationSuccess] = useState(false);
 
+  const [tokenHealth, setTokenHealth] = useState<GithubTokenHealth | null>(null);
+
   const githubConnectedNow = useMemo(() => {
     if (typeof window === "undefined") return false;
     return new URLSearchParams(window.location.search).get("github_connected") === "1";
@@ -98,6 +112,15 @@ export default function SettingsPage() {
         setSelectedTeamId(teamId);
         const tok = await getAgentTokens(teamId);
         setTokens(tok);
+      }
+
+      // Probe GitHub token health in the background — don't block the
+      // page on a GitHub round-trip. The endpoint is cheap on a cache
+      // hit; on a miss it's a single API call that takes <500ms.
+      if (me.githubConnected) {
+        void getGithubTokenHealth()
+          .then(setTokenHealth)
+          .catch(() => setTokenHealth({ state: "unknown", lastCheckedAt: null }));
       }
 
       setLoading(false);
@@ -205,9 +228,36 @@ export default function SettingsPage() {
             </AlertBanner>
           )}
           {user?.githubConnected ? (
-            <AlertBanner tone="success">
-              GitHub is connected. Sync is available.
-            </AlertBanner>
+            tokenHealth?.state === "invalid" ? (
+              <div>
+                <AlertBanner tone="danger" title="GitHub token invalid">
+                  Your GitHub token has been revoked or expired. Repo sync, PR
+                  create/merge/comment, and the <code>ciGreen</code> transition
+                  gate are currently failing for your account. Reconnect to
+                  restore them.
+                </AlertBanner>
+                <Link
+                  href="/api/auth/github/connect"
+                  className="btn-primary"
+                  style={{
+                    display: "inline-block",
+                    padding: "0.5rem 0.875rem",
+                    textDecoration: "none",
+                  }}
+                >
+                  Reconnect GitHub
+                </Link>
+              </div>
+            ) : (
+              <AlertBanner tone="success">
+                GitHub is connected. Sync is available.
+                {tokenHealth?.state === "healthy" && tokenHealth.lastCheckedAt && (
+                  <span style={{ display: "block", color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.25rem" }}>
+                    Token verified {formatRelativeTime(tokenHealth.lastCheckedAt)}.
+                  </span>
+                )}
+              </AlertBanner>
+            )
           ) : (
             <div>
               <AlertBanner tone="warning" title="GitHub not connected">
