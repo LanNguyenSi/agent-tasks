@@ -44,11 +44,12 @@ import Card from "../../../components/ui/Card";
 import {
   cloneDefinition,
   definitionsEqual,
-  ROLE_OPTIONS,
   STATE_NAME_RE,
   validateDefinition,
   type ValidationResult,
 } from "../../../lib/workflow-draft";
+import { StatesTable } from "./_components/StatesTable";
+import { TransitionsTable } from "./_components/TransitionsTable";
 
 // ── Page ────────────────────────────────────────────────────────────────────
 
@@ -547,324 +548,29 @@ export default function WorkflowEditorPage() {
           </AlertBanner>
         )}
 
-        {/* ── States ────────────────────────────────────────────────────── */}
-        <Card style={{ marginTop: "var(--space-4)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "var(--space-3)" }}>
-            <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700 }}>States</h2>
-            {canEdit && (
-              <Button type="button" variant="secondary" onClick={addState} disabled={saving}>
-                + Add state
-              </Button>
-            )}
-          </div>
+        <StatesTable
+          def={activeDef}
+          canEdit={canEdit}
+          saving={saving}
+          expandedInstructions={expandedInstructions}
+          onAddState={addState}
+          onRemoveState={removeState}
+          onUpdateStateField={updateStateField}
+          onSetInitialState={setInitialState}
+          onToggleInstructionsExpanded={toggleInstructionsExpanded}
+        />
 
-          <div style={{ marginBottom: "var(--space-3)" }}>
-            <label style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginRight: "0.5rem" }}>
-              Initial state:
-            </label>
-            {canEdit ? (
-              <select
-                value={activeDef.initialState}
-                onChange={(e) => setInitialState(e.target.value)}
-                disabled={saving}
-                style={{ padding: "0.25rem 0.5rem", fontSize: "var(--text-sm)" }}
-              >
-                {activeDef.states.map((s) => (
-                  <option key={s.name} value={s.name}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <code>{activeDef.initialState}</code>
-            )}
-          </div>
-
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-sm)" }}>
-              <thead>
-                <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                  <th style={th}>Name</th>
-                  <th style={th}>Label</th>
-                  <th style={th}>Terminal</th>
-                  <th style={th}>Agent instructions</th>
-                  {canEdit && <th style={th}></th>}
-                </tr>
-              </thead>
-              <tbody>
-                {activeDef.states.map((s, i) => {
-                  const isExpanded = expandedInstructions.has(i);
-                  return (
-                    <tr key={`${i}-${s.name}`} style={{ borderBottom: "1px solid var(--border)" }}>
-                      <td style={td}>
-                        {canEdit ? (
-                          <input
-                            type="text"
-                            value={s.name}
-                            onChange={(e) => updateStateField(i, "name", e.target.value)}
-                            disabled={saving}
-                            style={inlineInput}
-                          />
-                        ) : (
-                          <code>{s.name}</code>
-                        )}
-                      </td>
-                      <td style={td}>
-                        {canEdit ? (
-                          <input
-                            type="text"
-                            value={s.label}
-                            onChange={(e) => updateStateField(i, "label", e.target.value)}
-                            disabled={saving}
-                            style={inlineInput}
-                          />
-                        ) : (
-                          s.label
-                        )}
-                      </td>
-                      <td style={td}>
-                        {canEdit ? (
-                          <input
-                            type="checkbox"
-                            checked={s.terminal}
-                            onChange={(e) => updateStateField(i, "terminal", e.target.checked)}
-                            disabled={saving}
-                          />
-                        ) : s.terminal ? (
-                          "yes"
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td style={{ ...td, maxWidth: "360px" }}>
-                        {canEdit ? (
-                          isExpanded ? (
-                            <div>
-                              <textarea
-                                value={s.agentInstructions ?? ""}
-                                onChange={(e) => updateStateField(i, "agentInstructions", e.target.value)}
-                                disabled={saving}
-                                rows={4}
-                                style={{ width: "100%", fontSize: "var(--text-xs)", fontFamily: "inherit" }}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => toggleInstructionsExpanded(i)}
-                                style={linkButton}
-                              >
-                                Collapse
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => toggleInstructionsExpanded(i)}
-                              style={{ ...linkButton, textAlign: "left", width: "100%" }}
-                            >
-                              {s.agentInstructions
-                                ? s.agentInstructions.split("\n")[0]?.slice(0, 80) +
-                                  (s.agentInstructions.length > 80 ? "…" : "")
-                                : "Add instructions…"}
-                            </button>
-                          )
-                        ) : (
-                          <span style={{ color: "var(--muted)" }}>
-                            {s.agentInstructions
-                              ? s.agentInstructions.split("\n")[0]?.slice(0, 80) +
-                                (s.agentInstructions.length > 80 ? "…" : "")
-                              : "—"}
-                          </span>
-                        )}
-                      </td>
-                      {canEdit && (
-                        <td style={{ ...td, width: "1%", whiteSpace: "nowrap" }}>
-                          <button
-                            type="button"
-                            onClick={() => removeState(i)}
-                            disabled={saving}
-                            style={{ ...linkButton, color: "#dc2626" }}
-                            title="Remove state"
-                          >
-                            ✕
-                          </button>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-
-        {/* ── Transitions ──────────────────────────────────────────────── */}
-        <Card style={{ marginTop: "var(--space-4)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "var(--space-3)" }}>
-            <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700 }}>Transitions</h2>
-            {canEdit && (
-              <Button type="button" variant="secondary" onClick={addTransition} disabled={saving}>
-                + Add transition
-              </Button>
-            )}
-          </div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-sm)" }}>
-              <thead>
-                <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                  <th style={th}>From</th>
-                  <th style={th}>To</th>
-                  <th style={th}>Label</th>
-                  <th style={th}>Required role</th>
-                  <th style={th}>Gates (requires)</th>
-                  {canEdit && <th style={th}></th>}
-                </tr>
-              </thead>
-              <tbody>
-                {activeDef.transitions.map((t, i) => {
-                  const activeRequires = t.requires ?? [];
-                  return (
-                    <tr key={`transition-${i}`} style={{ borderBottom: "1px solid var(--border)" }}>
-                      <td style={td}>
-                        {canEdit ? (
-                          <select
-                            value={t.from}
-                            onChange={(e) => updateTransitionField(i, "from", e.target.value)}
-                            disabled={saving}
-                            style={inlineSelect}
-                          >
-                            {activeDef.states.map((s) => (
-                              <option key={s.name} value={s.name}>
-                                {s.name}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <code>{t.from}</code>
-                        )}
-                      </td>
-                      <td style={td}>
-                        {canEdit ? (
-                          <select
-                            value={t.to}
-                            onChange={(e) => updateTransitionField(i, "to", e.target.value)}
-                            disabled={saving}
-                            style={inlineSelect}
-                          >
-                            {activeDef.states.map((s) => (
-                              <option key={s.name} value={s.name}>
-                                {s.name}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <code>{t.to}</code>
-                        )}
-                      </td>
-                      <td style={td}>
-                        {canEdit ? (
-                          <input
-                            type="text"
-                            value={t.label ?? ""}
-                            onChange={(e) => updateTransitionField(i, "label", e.target.value)}
-                            disabled={saving}
-                            placeholder="(optional)"
-                            style={inlineInput}
-                          />
-                        ) : (
-                          t.label ?? "—"
-                        )}
-                      </td>
-                      <td style={td}>
-                        {canEdit ? (
-                          <select
-                            value={t.requiredRole ?? "any"}
-                            onChange={(e) => updateTransitionField(i, "requiredRole", e.target.value)}
-                            disabled={saving}
-                            style={inlineSelect}
-                          >
-                            {ROLE_OPTIONS.map((r) => (
-                              <option key={r} value={r}>
-                                {r}
-                              </option>
-                            ))}
-                          </select>
-                        ) : t.requiredRole && t.requiredRole !== "any" ? (
-                          t.requiredRole
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td style={td}>
-                        {canEdit ? (
-                          <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                            {rules.map((r) => (
-                              <label
-                                key={r.id}
-                                style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "var(--text-xs)" }}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={activeRequires.includes(r.id)}
-                                  onChange={(e) => toggleRule(i, r.id, e.target.checked)}
-                                  disabled={saving}
-                                />
-                                <span>{r.label}</span>
-                                <code style={{ color: "var(--muted)" }}>({r.id})</code>
-                              </label>
-                            ))}
-                            {activeRequires
-                              .filter((r) => !rules.some((x) => x.id === r))
-                              .map((r) => (
-                                <span
-                                  key={r}
-                                  style={{ ...pill, background: "rgba(239, 68, 68, 0.15)", color: "#dc2626" }}
-                                >
-                                  {r} (unknown)
-                                </span>
-                              ))}
-                          </div>
-                        ) : activeRequires.length > 0 ? (
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem" }}>
-                            {activeRequires.map((r) => (
-                              <span key={r} style={pill}>
-                                {ruleLabelById.get(r) ?? r}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span style={{ color: "var(--muted)" }}>none</span>
-                        )}
-                      </td>
-                      {canEdit && (
-                        <td style={{ ...td, width: "1%", whiteSpace: "nowrap" }}>
-                          <button
-                            type="button"
-                            onClick={() => removeTransition(i)}
-                            disabled={saving}
-                            style={{ ...linkButton, color: "#dc2626" }}
-                            title="Remove transition"
-                          >
-                            ✕
-                          </button>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-                {activeDef.transitions.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={canEdit ? 6 : 5}
-                      style={{ ...td, color: "var(--muted)", textAlign: "center", padding: "var(--space-3)" }}
-                    >
-                      No transitions defined. Tasks will not be able to change status.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        <TransitionsTable
+          def={activeDef}
+          rules={rules}
+          ruleLabelById={ruleLabelById}
+          canEdit={canEdit}
+          saving={saving}
+          onAddTransition={addTransition}
+          onRemoveTransition={removeTransition}
+          onUpdateTransitionField={updateTransitionField}
+          onToggleRule={toggleRule}
+        />
 
         {/* ── Action bar ───────────────────────────────────────────────── */}
         {canEdit && (
@@ -931,58 +637,5 @@ export default function WorkflowEditorPage() {
   );
 }
 
-// ── Styles ──────────────────────────────────────────────────────────────────
-
-const th: React.CSSProperties = {
-  textAlign: "left",
-  padding: "0.5rem 0.75rem",
-  fontWeight: 600,
-  color: "var(--muted)",
-  fontSize: "var(--text-xs)",
-  textTransform: "uppercase",
-  letterSpacing: "0.04em",
-};
-
-const td: React.CSSProperties = {
-  padding: "0.5rem 0.75rem",
-  verticalAlign: "top",
-};
-
-const pill: React.CSSProperties = {
-  display: "inline-block",
-  padding: "0.125rem 0.5rem",
-  borderRadius: "999px",
-  background: "color-mix(in srgb, var(--primary, #3b82f6) 15%, transparent)",
-  color: "var(--primary, #3b82f6)",
-  fontSize: "var(--text-xs)",
-  fontWeight: 600,
-};
-
-const inlineInput: React.CSSProperties = {
-  width: "100%",
-  padding: "0.25rem 0.5rem",
-  fontSize: "var(--text-sm)",
-  fontFamily: "inherit",
-  background: "var(--input-bg, transparent)",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--radius-sm, 4px)",
-};
-
-const inlineSelect: React.CSSProperties = {
-  padding: "0.25rem 0.5rem",
-  fontSize: "var(--text-sm)",
-  fontFamily: "inherit",
-  background: "var(--input-bg, transparent)",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--radius-sm, 4px)",
-};
-
-const linkButton: React.CSSProperties = {
-  background: "none",
-  border: "none",
-  padding: 0,
-  color: "var(--primary, #3b82f6)",
-  cursor: "pointer",
-  fontSize: "var(--text-xs)",
-  textDecoration: "underline",
-};
+// Styles now live in _components/styles.ts — shared by the page,
+// StatesTable, and TransitionsTable so nothing drifts between them.
