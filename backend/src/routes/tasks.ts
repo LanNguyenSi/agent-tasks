@@ -12,6 +12,8 @@ import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } 
 import { emitTaskAvailableSignal } from "../services/task-signal.js";
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
 import { DEFAULT_TRANSITIONS, findDefaultTransition } from "../services/default-workflow.js";
+import { findDelegationUser } from "../services/github-delegation.js";
+import { GITHUB_BACKED_RULES } from "../services/transition-rules.js";
 
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -966,7 +968,7 @@ taskRouter.post(
 
     const task = await prisma.task.findUnique({
       where: { id: c.req.param("id") },
-      include: { workflow: true },
+      include: { workflow: true, project: true },
     });
     if (!task) return notFound(c);
 
@@ -1024,14 +1026,39 @@ taskRouter.post(
       }
     }
 
-    // Precondition checks: branch present, PR present, etc. Unknown rules
-    // are reported but do NOT block — keeps workflows forward-compatible
-    // across backend versions if an operator mistyped a rule name.
-    const { failed, unknown } = evaluateTransitionRules(resolvedRequires, {
-      branchName: task.branchName,
-      prUrl: task.prUrl,
-      prNumber: task.prNumber,
-    });
+    // Precondition checks: branch present, PR present, CI green, etc.
+    // Unknown rules are reported but do NOT block — keeps workflows
+    // forward-compatible across backend versions if an operator mistyped
+    // a rule name. Async rules (ciGreen) are evaluated in parallel with
+    // sync ones; a network failure inside an async rule counts as "failed
+    // closed" with a friendly error message propagated to the client.
+    //
+    // Resolve a GitHub delegation token once for the rule context. Only
+    // looked up when the workflow actually references a rule that needs
+    // GitHub (per GITHUB_BACKED_RULES) — avoids a DB round-trip on the
+    // fast path for every transition that only has sync rules. The
+    // project record (including teamId) is already loaded on `task`, so
+    // no extra query is needed to resolve the team.
+    let githubToken: string | null = null;
+    const needsGithub =
+      resolvedRequires?.some((r) =>
+        GITHUB_BACKED_RULES.has(r as never),
+      ) ?? false;
+    if (needsGithub && task.project.githubRepo) {
+      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate");
+      githubToken = delegate?.githubAccessToken ?? null;
+    }
+
+    const { failed, unknown, errors: ruleErrors } = await evaluateTransitionRules(
+      resolvedRequires,
+      {
+        branchName: task.branchName,
+        prUrl: task.prUrl,
+        prNumber: task.prNumber,
+        projectGithubRepo: task.project.githubRepo,
+        githubToken,
+      },
+    );
 
     if (failed.length > 0) {
       const isAdmin =
@@ -1050,9 +1077,13 @@ taskRouter.post(
           {
             error: "precondition_failed",
             message: `Transition blocked — ${failed
-              .map((r) => RULE_MESSAGES[r])
+              .map((r) => ruleErrors[r] ? `${RULE_MESSAGES[r]} (${ruleErrors[r]})` : RULE_MESSAGES[r])
               .join(" ")}`,
-            failed: failed.map((r) => ({ rule: r, message: RULE_MESSAGES[r] })),
+            failed: failed.map((r) => ({
+              rule: r,
+              message: RULE_MESSAGES[r],
+              ...(ruleErrors[r] ? { error: ruleErrors[r] } : {}),
+            })),
             canForce: isAdmin,
           },
           422,

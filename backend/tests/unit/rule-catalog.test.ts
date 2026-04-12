@@ -29,6 +29,6 @@ describe("RULE_CATALOG", () => {
   it("ids are sorted / stable (not strictly required but nice for clients)", () => {
     // The catalog order is the render order in the UI — assert it explicitly
     // so reordering requires a conscious change.
-    expect(RULE_CATALOG.map((r) => r.id)).toEqual(["branchPresent", "prPresent"]);
+    expect(RULE_CATALOG.map((r) => r.id)).toEqual(["branchPresent", "prPresent", "ciGreen"]);
   });
 });
