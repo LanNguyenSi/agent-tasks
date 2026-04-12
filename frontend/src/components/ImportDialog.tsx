@@ -1,7 +1,18 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
+// Replaces the old `xlsx` (SheetJS) dep. `xlsx` was flagged by
+// Dependabot with two unfixed high CVEs (GHSA-5pgg-2g8v-p4x9 ReDoS
+// and GHSA-4r6h-8v6p-xvw6 prototype pollution), and SheetJS no longer
+// publishes fixed versions to npm. `read-excel-file` is a clean-room,
+// MIT, catamphetamine-maintained parser focused on exactly this
+// read-only browser-upload path — no SheetJS code in its lineage.
+// CSV is parsed inline below (read-excel-file is xlsx-only).
+// Import from the `/browser` subpath — this package ships no default
+// `.` export, only subpaths per environment. `readSheet` returns the
+// flat row array directly; the default `readXlsxFile` wraps it in
+// `{sheet, data}` which we don't need here.
+import { readSheet } from "read-excel-file/browser";
 import { autoDetectColumns, mapRows, getMappingCompleteness, type ColumnMapping, type ImportableTask } from "../lib/import-mapping";
 import Modal from "./ui/Modal";
 import { Button } from "./ui/Button";
@@ -43,33 +54,84 @@ export default function ImportDialog({ open, onClose, projectId, apiBase, onImpo
 
   const processFile = useCallback((file: File) => {
     setError(null);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer);
-        const wb = XLSX.read(data, { type: "array" });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 });
 
-        if (jsonData.length < 2) {
-          setError("File has no data rows.");
-          return;
-        }
-
-        const h = (jsonData[0] as string[]).map((v) => String(v ?? ""));
-        const r = jsonData.slice(1).filter((row) => (row as unknown[]).some((cell) => cell != null && cell !== ""));
-
-        setHeaders(h);
-        setRows(r);
-
-        const detected = autoDetectColumns(h);
-        setMapping(detected);
-        setStep("mapping");
-      } catch (err) {
-        setError(`Failed to parse file: ${(err as Error).message}`);
+    const applyRows = (jsonData: unknown[][]) => {
+      if (jsonData.length < 2) {
+        setError("File has no data rows.");
+        return;
       }
+      const h = (jsonData[0] as unknown[]).map((v) => String(v ?? ""));
+      const r = jsonData.slice(1).filter((row) => row.some((cell) => cell != null && cell !== ""));
+      setHeaders(h);
+      setRows(r);
+      setMapping(autoDetectColumns(h));
+      setStep("mapping");
     };
-    reader.readAsArrayBuffer(file);
+
+    const isCsv = /\.csv$/i.test(file.name);
+    if (isCsv) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          // Strip a leading UTF-8 BOM — Excel writes one on CSV exports
+          // and the old SheetJS path handled this transparently. Without
+          // this, the first header cell would be prefixed with \uFEFF
+          // and fail auto-detection.
+          const raw = (e.target?.result as string) ?? "";
+          const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+          // Minimal RFC-4180-ish CSV parser: handles quoted fields,
+          // escaped quotes (""), CR/LF line endings, multi-line cells
+          // inside quotes. Good enough for the hand-crafted exports
+          // people actually upload here.
+          const rows: string[][] = [];
+          let cur = "";
+          let row: string[] = [];
+          let inQuote = false;
+          for (let i = 0; i < text.length; i++) {
+            const ch = text[i];
+            if (inQuote) {
+              if (ch === '"') {
+                if (text[i + 1] === '"') { cur += '"'; i++; }
+                else inQuote = false;
+              } else {
+                cur += ch;
+              }
+            } else if (ch === '"') {
+              inQuote = true;
+            } else if (ch === ",") {
+              row.push(cur); cur = "";
+            } else if (ch === "\n" || ch === "\r") {
+              if (ch === "\r" && text[i + 1] === "\n") i++;
+              row.push(cur); cur = "";
+              if (row.some((c) => c !== "")) rows.push(row);
+              row = [];
+            } else {
+              cur += ch;
+            }
+          }
+          if (cur !== "" || row.length > 0) {
+            row.push(cur);
+            if (row.some((c) => c !== "")) rows.push(row);
+          }
+          applyRows(rows);
+        } catch (err) {
+          setError(`Failed to parse file: ${(err as Error).message}`);
+        }
+      };
+      reader.readAsText(file);
+      return;
+    }
+
+    // xlsx / xls path via read-excel-file. The library accepts a
+    // `File` directly and resolves with `Row[]` where each `Row` is
+    // an array of `Cell` values (string | number | boolean | Date | null).
+    readSheet(file)
+      .then((jsonData) => {
+        applyRows(jsonData as unknown[][]);
+      })
+      .catch((err: unknown) => {
+        setError(`Failed to parse file: ${(err as Error).message}`);
+      });
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
