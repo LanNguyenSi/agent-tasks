@@ -2,8 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { prisma } from "../lib/prisma.js";
-import { hasProjectAccess } from "../services/team-access.js";
-import type { Actor } from "../types/auth.js";
+import { hasProjectAccess, isProjectAdmin } from "../services/team-access.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import {
@@ -15,22 +14,6 @@ import { logAuditEvent } from "../services/audit.js";
 import { summarizeWorkflowDiff } from "../services/workflow-diff.js";
 
 export const workflowRouter = new Hono<{ Variables: AppVariables }>();
-
-/**
- * Check that the actor is a human team ADMIN on the team owning `projectId`.
- * Mirrors the pattern used by the transition force-check; extracted here
- * because the customize / reset endpoints need the same gate.
- */
-async function isProjectAdmin(actor: Actor, projectId: string): Promise<boolean> {
-  if (actor.type !== "human") return false;
-  const membership = await prisma.teamMember.findFirst({
-    where: {
-      userId: actor.userId,
-      team: { projects: { some: { id: projectId } } },
-    },
-  });
-  return membership?.role === "ADMIN";
-}
 
 // State names must match the task.status storage format: lowercase letters,
 // digits, and underscores only. This mirrors the frontend editor's
