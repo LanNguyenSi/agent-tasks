@@ -98,7 +98,7 @@ export default function AuthPage() {
         <div style={{ textAlign: "center", marginBottom: "var(--space-4)" }}>
           <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: "var(--space-2)" }}>Sign in to agent-tasks</h1>
           <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-            Use email/password or continue with GitHub.
+            Use email/password or GitHub — or enter your work email to sign in with your company SSO.
           </p>
         </div>
 
