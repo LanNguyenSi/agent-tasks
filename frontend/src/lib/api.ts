@@ -468,12 +468,51 @@ export interface WorkflowTransition {
   to: string;
   label?: string;
   requiredRole?: string;
+  requires?: string[];
 }
 
 export interface WorkflowDefinition {
   states: WorkflowState[];
   transitions: WorkflowTransition[];
   initialState: string;
+}
+
+// ── Workflow editor: effective-workflow + customize / reset / rules catalog ──
+
+export interface WorkflowRule {
+  id: string;
+  label: string;
+  description: string;
+  failureMessage: string;
+}
+
+export interface EffectiveWorkflow {
+  source: "custom" | "default";
+  workflowId: string | null;
+  definition: WorkflowDefinition;
+}
+
+export async function getWorkflowRules(): Promise<WorkflowRule[]> {
+  const data = await request<{ rules: WorkflowRule[] }>(`/api/workflow-rules`);
+  return data.rules;
+}
+
+export async function getEffectiveWorkflow(projectId: string): Promise<EffectiveWorkflow> {
+  return request<EffectiveWorkflow>(
+    `/api/projects/${projectId}/effective-workflow`,
+  );
+}
+
+export async function customizeProjectWorkflow(projectId: string): Promise<EffectiveWorkflow> {
+  return request<EffectiveWorkflow>(`/api/projects/${projectId}/workflow/customize`, {
+    method: "POST",
+  });
+}
+
+export async function resetProjectWorkflow(projectId: string): Promise<EffectiveWorkflow> {
+  return request<EffectiveWorkflow>(`/api/projects/${projectId}/workflow`, {
+    method: "DELETE",
+  });
 }
 
 export interface Workflow {

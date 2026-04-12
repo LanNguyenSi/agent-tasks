@@ -672,7 +672,7 @@ export default function DashboardPage() {
             {selectedProjectId && (
               <>
               <Link
-                href={`/projects/workflows?projectId=${selectedProjectId}`}
+                href={`/projects/workflow?projectId=${selectedProjectId}`}
                 className="project-settings-icon"
                 aria-label="Workflow settings"
                 title="Workflow settings"
