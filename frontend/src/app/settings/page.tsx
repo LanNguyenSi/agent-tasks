@@ -24,6 +24,7 @@ import Select from "@/components/ui/Select";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 const ALL_SCOPES = [
+  { id: "sso:admin", label: "Manage SSO connection (team-scoped, sensitive)" },
   { id: "tasks:read", label: "Read tasks" },
   { id: "tasks:create", label: "Create tasks" },
   { id: "tasks:claim", label: "Claim tasks" },
@@ -235,8 +236,11 @@ export default function SettingsPage() {
           </h2>
           <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.75rem" }}>
             Configure OpenID Connect so members of your team can sign in with their company
-            identity provider (Okta, Azure AD, Google Workspace, Auth0, Keycloak, …). Team
-            admins only.
+            identity provider (Okta, Azure AD, Google Workspace, Auth0, Keycloak, and others).
+            Gated by an AgentToken with the <code>sso:admin</code> scope — not by your normal
+            session — so stolen browser sessions cannot touch SSO config. Generate a token
+            under <a href="#api-tokens" style={{ color: "var(--link)" }}>API Tokens</a> and
+            hand it out-of-band to whoever owns IdP setup.
           </p>
           <Link
             href="/settings/sso"

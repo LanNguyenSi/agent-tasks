@@ -11,13 +11,15 @@
  *  DELETE /api/teams/:teamId/sso        — remove (admin)
  */
 
-import { Hono, type Context } from "hono";
+import { Hono, type Context, type Next } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { prisma } from "../lib/prisma.js";
 import { config } from "../config/index.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
+import { hashToken } from "../middleware/auth.js";
+import type { Actor } from "../types/auth.js";
 import {
   buildAuthorizeUrl,
   discover,
@@ -236,30 +238,91 @@ const upsertSchema = z.object({
   enabled: z.boolean().optional(),
 });
 
-async function requireTeamAdmin(
+/**
+ * SSO admin endpoints are deliberately NOT protected by the normal session
+ * middleware. Instead they require a team-scoped AgentToken carrying the
+ * `sso:admin` scope, passed as `Authorization: Bearer <token>`. This decouples
+ * SSO configuration from normal team administration:
+ *
+ *  - Session cookies alone cannot configure SSO. Stealing a browser session
+ *    of a team ADMIN does not give the attacker IdP-config access.
+ *  - The token is issued once (via /settings → agent tokens) and handed
+ *    out-of-band to whoever owns IdP setup.
+ *  - Rotation/revocation piggy-backs on existing AgentToken tooling.
+ *  - The token's `teamId` MUST match the URL param so a token issued for
+ *    team A can never configure team B.
+ */
+const SSO_ADMIN_SCOPE = "sso:admin";
+
+async function ssoAdminGuard(
   c: Context<{ Variables: AppVariables }>,
-  teamId: string,
-) {
-  const actor = c.get("actor");
-  if (!actor || actor.type !== "human") {
-    return { error: forbidden(c, "Authentication required") } as const;
+  next: Next,
+): Promise<Response | void> {
+  const authorization = c.req.header("Authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    return c.json(
+      { error: "unauthorized", message: "SSO admin endpoints require an AgentToken" },
+      401,
+    );
   }
-  const membership = await prisma.teamMember.findUnique({
-    where: { teamId_userId: { teamId, userId: actor.userId } },
+  const rawToken = authorization.slice(7).trim();
+  if (!rawToken) {
+    return c.json({ error: "unauthorized", message: "Empty token" }, 401);
+  }
+  const token = await prisma.agentToken.findUnique({ where: { tokenHash: hashToken(rawToken) } });
+  if (!token || token.revokedAt || (token.expiresAt && token.expiresAt < new Date())) {
+    return c.json({ error: "unauthorized", message: "Invalid or expired token" }, 401);
+  }
+  if (!token.scopes.includes(SSO_ADMIN_SCOPE)) {
+    return forbidden(c, `Token missing scope: ${SSO_ADMIN_SCOPE}`);
+  }
+
+  // Bind the token to the URL team — a token issued for team A cannot touch
+  // team B's SSO config, even if the scope is present.
+  const urlTeamId = c.req.param("teamId");
+  if (urlTeamId && token.teamId !== urlTeamId) {
+    return forbidden(c, "Token does not belong to this team");
+  }
+
+  await prisma.agentToken.update({
+    where: { id: token.id },
+    data: { lastUsedAt: new Date() },
   });
-  if (!membership || membership.role !== "ADMIN") {
-    return { error: forbidden(c, "Only team admins can manage SSO") } as const;
-  }
-  return { actor } as const;
+
+  const actor: Actor = {
+    type: "agent",
+    tokenId: token.id,
+    teamId: token.teamId,
+    scopes: token.scopes,
+  };
+  c.set("actor", actor);
+  return next();
 }
+
+ssoAdminRouter.use("/teams/:teamId/sso", ssoAdminGuard);
+ssoAdminRouter.use("/sso/whoami", ssoAdminGuard);
+
+// Resolve "which team does this token belong to" — the frontend SSO config
+// page calls this first so it doesn't need the admin to type the team UUID
+// out of band. Returns the team info + the existing connection (if any).
+ssoAdminRouter.get("/sso/whoami", async (c) => {
+  const actor = c.get("actor");
+  if (!actor || actor.type !== "agent") {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const team = await prisma.team.findUnique({ where: { id: actor.teamId } });
+  if (!team) return notFound(c);
+  const connection = await getSsoConnectionByTeamId(team.id);
+  return c.json({
+    team: { id: team.id, name: team.name, slug: team.slug },
+    connection: connection ? publicSsoConnection(connection) : null,
+  });
+});
 
 ssoAdminRouter.get("/teams/:teamId/sso", async (c) => {
   const teamId = c.req.param("teamId");
   const team = await prisma.team.findUnique({ where: { id: teamId } });
   if (!team) return notFound(c);
-
-  const gate = await requireTeamAdmin(c, teamId);
-  if ("error" in gate) return gate.error;
 
   const connection = await getSsoConnectionByTeamId(teamId);
   return c.json({ connection: connection ? publicSsoConnection(connection) : null });
@@ -269,9 +332,6 @@ ssoAdminRouter.put("/teams/:teamId/sso", zValidator("json", upsertSchema), async
   const teamId = c.req.param("teamId");
   const team = await prisma.team.findUnique({ where: { id: teamId } });
   if (!team) return notFound(c);
-
-  const gate = await requireTeamAdmin(c, teamId);
-  if ("error" in gate) return gate.error;
 
   if (!config.SSO_ENCRYPTION_KEY) {
     return c.json(
@@ -321,9 +381,6 @@ ssoAdminRouter.delete("/teams/:teamId/sso", async (c) => {
   const teamId = c.req.param("teamId");
   const team = await prisma.team.findUnique({ where: { id: teamId } });
   if (!team) return notFound(c);
-
-  const gate = await requireTeamAdmin(c, teamId);
-  if ("error" in gate) return gate.error;
 
   const prior = await getSsoConnectionByTeamId(teamId);
   await deleteSsoConnection(teamId);

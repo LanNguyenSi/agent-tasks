@@ -18,9 +18,12 @@
 | Change workflow | no | no | yes | no |
 | Approve review | no | yes | yes | limited |
 | Create agent token | no | no | yes | no |
+| Configure team SSO | no | no | no† | token‡ |
 | Deploy production | limited | limited | yes | no/default |
 
 `*` nur mit passenden Token-Scopes.
+`†` SSO-Konfiguration ist bewusst **nicht** an die ADMIN-Rolle gekoppelt — ein gestohlenes Session-Cookie eines Admins darf den IdP nicht umbiegen können.
+`‡` SSO-Konfiguration läuft ausschließlich per AgentToken mit Scope `sso:admin`. Das Token ist team-scoped und wird out-of-band an die IdP-verantwortliche Person weitergegeben. Siehe [enterprise-sso.md](enterprise-sso.md).
 
 ## Token Scopes
 - tasks:read
@@ -30,3 +33,4 @@
 - tasks:transition
 - projects:read
 - boards:read
+- sso:admin *(sensitive — grants create/update/delete on the team's SSO connection; hand out-of-band, revoke when done)*
