@@ -69,49 +69,80 @@ interface CheckRunsResponse {
   }>;
 }
 
-interface PullResponse {
+/** Shape of what we consume from GitHub's `GET /repos/:o/:r/pulls/:n`.
+ *  We only read the fields we actually use — `merged`, `state`, and
+ *  `head.sha` — but typed conservatively so a missing field throws
+ *  instead of silently producing nonsense. */
+export interface PullResponse {
   head: { sha: string };
+  state: "open" | "closed";
+  merged: boolean;
 }
 
-// ── Cache ───────────────────────────────────────────────────────────────────
+// ── Caches ──────────────────────────────────────────────────────────────────
+//
+// Two independent caches, both 60s TTL:
+//
+// - `_prCache`: keyed by (owner, repo, prNumber). Shared between
+//   fetchCheckRunStatus and fetchPullRequestStatus so a task with both
+//   `ciGreen` and `prMerged` gates only makes one PR fetch per 60s.
+// - `_checkCache`: keyed by (owner, repo, sha). Sha-keyed so a force-push
+//   invalidates naturally; a PR-number key would return stale check runs
+//   after a force push.
 
 const CACHE_TTL_MS = 60_000;
 const CACHE_MAX_ENTRIES = 1000;
 
-interface CacheEntry {
-  status: CheckRunStatus;
+interface GenericCacheEntry<T> {
+  value: T;
   insertedAt: number;
 }
 
-// Exported for tests only. Do not mutate from product code.
-export const _checkCache = new Map<string, CacheEntry>();
+function genericCacheGet<T>(
+  cache: Map<string, GenericCacheEntry<T>>,
+  key: string,
+  now: number,
+): T | undefined {
+  const hit = cache.get(key);
+  if (!hit) return undefined;
+  if (now - hit.insertedAt > CACHE_TTL_MS) {
+    cache.delete(key);
+    return undefined;
+  }
+  return hit.value;
+}
 
-function cacheKey(owner: string, repo: string, sha: string): string {
+function genericCachePut<T>(
+  cache: Map<string, GenericCacheEntry<T>>,
+  key: string,
+  value: T,
+  now: number,
+): void {
+  // Cheap FIFO: drop the oldest insertion when full. Map iteration order
+  // is insertion order in JS, so this is O(1) — acceptable for a 60s TTL
+  // and a 1000-entry budget.
+  if (cache.size >= CACHE_MAX_ENTRIES) {
+    const firstKey = cache.keys().next().value;
+    if (firstKey !== undefined) cache.delete(firstKey);
+  }
+  cache.set(key, { value, insertedAt: now });
+}
+
+// Exported for tests only. Do not mutate from product code.
+export const _checkCache = new Map<string, GenericCacheEntry<CheckRunStatus>>();
+export const _prCache = new Map<string, GenericCacheEntry<PullResponse>>();
+
+function checkCacheKey(owner: string, repo: string, sha: string): string {
   return `${owner}/${repo}@${sha}`;
 }
 
-function cacheGet(key: string, now: number): CheckRunStatus | undefined {
-  const hit = _checkCache.get(key);
-  if (!hit) return undefined;
-  if (now - hit.insertedAt > CACHE_TTL_MS) {
-    _checkCache.delete(key);
-    return undefined;
-  }
-  return hit.status;
-}
-
-function cachePut(key: string, status: CheckRunStatus, now: number): void {
-  // Cheap LRU: drop the oldest insertion when full. Map iteration order is
-  // insertion order in JS, so this is O(1).
-  if (_checkCache.size >= CACHE_MAX_ENTRIES) {
-    const firstKey = _checkCache.keys().next().value;
-    if (firstKey !== undefined) _checkCache.delete(firstKey);
-  }
-  _checkCache.set(key, { status, insertedAt: now });
+function prCacheKey(owner: string, repo: string, prNumber: number): string {
+  return `${owner}/${repo}#${prNumber}`;
 }
 
 export function _clearCheckCache(): void {
   _checkCache.clear();
+  _prCache.clear();
 }
 
 // ── Classifier ──────────────────────────────────────────────────────────────
@@ -199,13 +230,55 @@ async function githubGet<T>(path: string, token: string): Promise<T> {
 }
 
 /**
+ * Fetch a PR and cache the result for 60s. Used by both
+ * `fetchCheckRunStatus` (reads `head.sha`) and `fetchPullRequestStatus`
+ * (reads `merged` + `state`), so a task with both gates active only
+ * makes one network call per 60s.
+ *
+ * Validates the unchecked cross-network fields. Without these guards,
+ * a malformed GitHub response propagates `undefined` into downstream
+ * cache keys and URLs, producing stable-but-wrong cache entries.
+ *
+ * Throws `GithubChecksError` on any API failure.
+ */
+export async function fetchPullRequest(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  token: string,
+  now: number = Date.now(),
+): Promise<PullResponse> {
+  const key = prCacheKey(owner, repo, prNumber);
+  const cached = genericCacheGet(_prCache, key, now);
+  if (cached) return cached;
+
+  const pull = await githubGet<PullResponse>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}`,
+    token,
+  );
+
+  const sha = pull?.head?.sha;
+  if (typeof sha !== "string" || sha.length === 0) {
+    throw new GithubChecksError("Malformed PR response: missing head.sha");
+  }
+  if (pull.state !== "open" && pull.state !== "closed") {
+    throw new GithubChecksError(`Malformed PR response: unexpected state "${pull.state}"`);
+  }
+  if (typeof pull.merged !== "boolean") {
+    throw new GithubChecksError("Malformed PR response: missing merged flag");
+  }
+
+  genericCachePut(_prCache, key, pull, now);
+  return pull;
+}
+
+/**
  * Fetch the HEAD SHA of a PR and the check runs for that SHA. Returns a
  * classified status. Cache is keyed by (owner, repo, sha) — not by PR
- * number — so a force-push that moves the head gets a fresh lookup on the
- * next call even if the previous SHA was still warm in the cache.
+ * number — so a force-push that moves the head gets a fresh lookup on
+ * the next call even if the previous SHA was still warm.
  *
- * Throws `GithubChecksError` on any API failure. The caller is expected
- * to translate that into a blocked transition.
+ * Throws `GithubChecksError` on any API failure.
  */
 export async function fetchCheckRunStatus(
   owner: string,
@@ -214,22 +287,11 @@ export async function fetchCheckRunStatus(
   token: string,
   now: number = Date.now(),
 ): Promise<CheckRunStatus> {
-  const pull = await githubGet<PullResponse>(
-    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}`,
-    token,
-  );
-  // Validate the unchecked field access across the network boundary.
-  // Without this guard, a malformed response propagates an `undefined`
-  // SHA into the cache key and the check-runs URL, producing a stable
-  // `o/r@undefined` entry that sticks for 60s — a latent fail-open if
-  // anything downstream ever starts treating `empty` check runs as pass.
-  const sha = pull?.head?.sha;
-  if (typeof sha !== "string" || sha.length === 0) {
-    throw new GithubChecksError("Malformed PR response: missing head.sha");
-  }
-  const key = cacheKey(owner, repo, sha);
+  const pull = await fetchPullRequest(owner, repo, prNumber, token, now);
+  const sha = pull.head.sha;
+  const key = checkCacheKey(owner, repo, sha);
 
-  const cached = cacheGet(key, now);
+  const cached = genericCacheGet(_checkCache, key, now);
   if (cached) return cached;
 
   const checks = await githubGet<CheckRunsResponse>(
@@ -237,6 +299,55 @@ export async function fetchCheckRunStatus(
     token,
   );
   const status = classifyCheckRuns(checks.check_runs, sha);
-  cachePut(key, status, now);
+  genericCachePut(_checkCache, key, status, now);
   return status;
+}
+
+// ── Pull request merge status ───────────────────────────────────────────────
+
+export interface PullRequestStatus {
+  /** One of:
+   *  - `merged`: PR was merged into the base branch
+   *  - `open`: PR is still open
+   *  - `closed_unmerged`: PR was closed without merging (rejected)
+   *  - `unknown`: GitHub returned an unexpected combination of state/merged
+   */
+  state: "merged" | "open" | "closed_unmerged" | "unknown";
+  /** Head commit SHA — useful for log correlation with check-runs status. */
+  sha: string;
+}
+
+/**
+ * Classify a fetched PR object into a single merge state. Pure — exposed
+ * for testability. Separate from `fetchPullRequest` so tests can exercise
+ * the classification without mocking fetch.
+ */
+export function classifyPullRequest(pull: PullResponse): PullRequestStatus {
+  const sha = pull.head.sha;
+  if (pull.state === "open") {
+    if (pull.merged) {
+      // GitHub shouldn't produce this combination, but fail closed if it does.
+      return { state: "unknown", sha };
+    }
+    return { state: "open", sha };
+  }
+  // state === "closed"
+  if (pull.merged) return { state: "merged", sha };
+  return { state: "closed_unmerged", sha };
+}
+
+/**
+ * Fetch the PR and classify its merge state. Fail-closed on malformed
+ * response or API error — caller treats anything non-`merged` as a
+ * failed rule evaluation.
+ */
+export async function fetchPullRequestStatus(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  token: string,
+  now: number = Date.now(),
+): Promise<PullRequestStatus> {
+  const pull = await fetchPullRequest(owner, repo, prNumber, token, now);
+  return classifyPullRequest(pull);
 }

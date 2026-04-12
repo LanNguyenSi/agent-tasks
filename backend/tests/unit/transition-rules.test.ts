@@ -158,6 +158,39 @@ describe("transition rules", () => {
       }
     });
 
+    it("prMerged fails closed when prNumber is missing", async () => {
+      const result = await evaluateTransitionRules(["prMerged"], {
+        branchName: "feat/x",
+        prUrl: null,
+        prNumber: null,
+        projectGithubRepo: "owner/repo",
+        githubToken: "tok",
+      });
+      expect(result.failed).toEqual(["prMerged"]);
+    });
+
+    it("prMerged fails closed when githubToken is missing", async () => {
+      const result = await evaluateTransitionRules(["prMerged"], {
+        branchName: "feat/x",
+        prUrl: "x",
+        prNumber: 1,
+        projectGithubRepo: "owner/repo",
+        githubToken: null,
+      });
+      expect(result.failed).toEqual(["prMerged"]);
+    });
+
+    it("prMerged fails closed when projectGithubRepo is malformed", async () => {
+      const result = await evaluateTransitionRules(["prMerged"], {
+        branchName: "feat/x",
+        prUrl: "x",
+        prNumber: 1,
+        projectGithubRepo: "no-slash",
+        githubToken: "tok",
+      });
+      expect(result.failed).toEqual(["prMerged"]);
+    });
+
     it("ciGreen fails closed when projectGithubRepo is missing", async () => {
       const result = await evaluateTransitionRules(["ciGreen"], {
         branchName: "feat/x",
