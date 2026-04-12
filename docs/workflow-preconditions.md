@@ -104,6 +104,7 @@ transition independently.
 | `branchPresent` | `task.branchName` is a non-empty string | branch missing | `PATCH /api/tasks/:id` with `branchName` |
 | `prPresent` | `task.prUrl` **and** `task.prNumber` are set | PR missing | `POST /api/github/pull-requests` (or `PATCH` the fields manually) |
 | `ciGreen` | Every check run on the PR's head commit is `success` / `neutral` / `skipped` | Any check is `failure` / `cancelled` / `timed_out` / `action_required` / `stale` / still running | Wait for CI, re-run a failing job, or admin-force the transition |
+| `prMerged` | The PR is in the closed-merged state (`state=closed` and `merged=true`) | PR is still open, was closed without merging, or GitHub/delegation errors | Merge the PR, or admin-force |
 
 ### `ciGreen` details
 
@@ -121,11 +122,23 @@ the first team member with a valid `githubAccessToken` and
 - If any check run is still queued or in_progress → fails (pending)
 - If any check run is unrecognized → fails (unknown state)
 
-Results are cached in-memory for 60 seconds keyed by
-`(owner, repo, sha)` — long enough to avoid hammering the API on
-quick retries, short enough that a re-run of a flaky check is visible
-on the next attempt. Force-pushes invalidate automatically because
-the head SHA changes.
+Results are cached in-memory for 60 seconds. The PR object itself
+is cached by `(owner, repo, prNumber)` and shared with `prMerged`,
+so a task with both gates on the same transition makes only one
+`/pulls/:n` fetch per 60s. The check-runs classification is cached
+separately by `(owner, repo, sha)` so a force-push that moves the
+head will re-run check-runs against the new SHA as soon as the PR
+cache refreshes.
+
+**Recovery paths** when a rule fails:
+
+1. **Fix the underlying problem** (push a commit to fix CI, merge
+   the PR, re-run a flaky check) and retry the transition. The 60s
+   cache means the retry needs to wait up to a minute for the
+   state to refresh — it's not a real-time UI.
+2. **Admin force** with a `forceReason`, audited as
+   `task.transitioned.forced`. Use this for hot-fixes, rollbacks,
+   or when GitHub itself is down.
 
 If you legitimately need to complete a task whose CI is broken or
 GitHub is unreachable, a team admin can force the transition with
@@ -135,6 +148,40 @@ GitHub is unreachable, a team admin can force the transition with
 **Not supported in v1**: GitHub's older commit-status API (only check
 runs); self-hosted CI without GitHub integration; auto-retry on CI
 completion.
+
+### `prMerged` details
+
+`prMerged` closes the gap where a task can be marked `done` while
+the PR is still sitting open — the companion of `ciGreen`. Uses the
+same GitHub delegation path and shares the PR cache: when both
+`ciGreen` and `prMerged` are on the same transition, only one
+`/pulls/:n` fetch is made per 60s (not two).
+
+**Pass only when**: the PR is in the closed-merged state.
+
+**Fail closed when**:
+
+- Task has no `prNumber` → fails
+- Project has no `githubRepo` or it's malformed → fails
+- No team member has a valid delegation token → fails
+- GitHub API returns a non-2xx → fails, error surfaced in the 422
+  response as `{rule: "prMerged", error: "…"}`
+- PR is still `open` → fails (pending, not rejected)
+- PR is `closed && !merged` → fails (rejected / closed without merge)
+- Malformed response (missing `merged` or `state` fields) → fails
+
+**Interaction with the webhook path**: GitHub webhooks already set
+task status to `done` on PR merge via a raw `prisma.update` that
+bypasses the rule evaluator entirely (see "What bypasses these
+gates" above). The `prMerged` rule only matters for
+manual/agent-driven transitions where the webhook hasn't arrived
+yet, or when the task's `prNumber` is linked to a PR whose webhook
+events aren't subscribed.
+
+**Recommended pairing**: add both `prPresent` and `prMerged` to the
+same transition. `prPresent` gives a clean early error when the task
+has no PR linked at all; `prMerged` handles the "PR exists but not
+merged" case.
 
 More rules (PR merged, docs touched, CI green) are planned as follow-ups.
 Adding one is a ~10-line change in

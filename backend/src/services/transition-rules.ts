@@ -30,9 +30,13 @@
  *  6. Document it in `docs/workflow-preconditions.md`
  */
 
-import { fetchCheckRunStatus, GithubChecksError } from "./github-checks.js";
+import {
+  fetchCheckRunStatus,
+  fetchPullRequestStatus,
+  GithubChecksError,
+} from "./github-checks.js";
 
-export type TransitionRule = "branchPresent" | "prPresent" | "ciGreen";
+export type TransitionRule = "branchPresent" | "prPresent" | "ciGreen" | "prMerged";
 
 /**
  * Rules that need GitHub delegation credentials in their context. The
@@ -43,7 +47,10 @@ export type TransitionRule = "branchPresent" | "prPresent" | "ciGreen";
  * Adding a new GitHub-backed rule: add its name here AND add it to the
  * evaluator map below. The transition handler needs no changes.
  */
-export const GITHUB_BACKED_RULES: ReadonlySet<TransitionRule> = new Set(["ciGreen"]);
+export const GITHUB_BACKED_RULES: ReadonlySet<TransitionRule> = new Set([
+  "ciGreen",
+  "prMerged",
+]);
 
 export interface RuleContext {
   // Synchronous fields — available for every evaluator
@@ -61,22 +68,54 @@ type SyncEvaluator = (ctx: RuleContext) => boolean;
 type AsyncEvaluator = (ctx: RuleContext) => Promise<boolean>;
 type Evaluator = SyncEvaluator | AsyncEvaluator;
 
+/**
+ * Parse `owner/repo` into its pieces. Returns null on any malformed input
+ * — a missing slash, empty owner, or empty repo. The classifier pattern
+ * matches `ciGreen` and `prMerged` so both rules share the same guard.
+ */
+function parseOwnerRepo(
+  projectGithubRepo: string | null | undefined,
+): { owner: string; repo: string } | null {
+  if (!projectGithubRepo) return null;
+  const slash = projectGithubRepo.indexOf("/");
+  if (slash < 0) return null;
+  const owner = projectGithubRepo.slice(0, slash);
+  const repo = projectGithubRepo.slice(slash + 1);
+  if (!owner || !repo) return null;
+  return { owner, repo };
+}
+
 export const RULE_EVALUATORS: Record<TransitionRule, Evaluator> = {
   branchPresent: (ctx) => Boolean(ctx.branchName && ctx.branchName.trim().length > 0),
   prPresent: (ctx) => Boolean(ctx.prUrl && ctx.prNumber),
   ciGreen: async (ctx) => {
-    if (!ctx.prNumber || !ctx.projectGithubRepo || !ctx.githubToken) {
-      // No PR, no repo, or no delegation token → fail closed. The user
-      // sees the rule's failureMessage and can either fix the prereqs
-      // (set prNumber, connect GitHub) or force as admin.
-      return false;
-    }
-    const slash = ctx.projectGithubRepo.indexOf("/");
-    if (slash < 0) return false;
-    const owner = ctx.projectGithubRepo.slice(0, slash);
-    const repo = ctx.projectGithubRepo.slice(slash + 1);
-    const status = await fetchCheckRunStatus(owner, repo, ctx.prNumber, ctx.githubToken);
+    if (!ctx.prNumber || !ctx.githubToken) return false;
+    const parsed = parseOwnerRepo(ctx.projectGithubRepo);
+    if (!parsed) return false;
+    const status = await fetchCheckRunStatus(
+      parsed.owner,
+      parsed.repo,
+      ctx.prNumber,
+      ctx.githubToken,
+    );
     return status.state === "success";
+  },
+  prMerged: async (ctx) => {
+    // Passes ONLY when the PR is in the closed-merged state. Open PRs,
+    // closed-unmerged PRs (rejected), and any malformed/API-error
+    // response all fail closed. Pair with `prPresent` on the same
+    // transition to get clean error reporting when the task has no PR
+    // at all.
+    if (!ctx.prNumber || !ctx.githubToken) return false;
+    const parsed = parseOwnerRepo(ctx.projectGithubRepo);
+    if (!parsed) return false;
+    const status = await fetchPullRequestStatus(
+      parsed.owner,
+      parsed.repo,
+      ctx.prNumber,
+      ctx.githubToken,
+    );
+    return status.state === "merged";
   },
 };
 
@@ -87,6 +126,8 @@ export const RULE_MESSAGES: Record<TransitionRule, string> = {
     "No pull request recorded on this task. Create the PR (via /api/github/pull-requests or PATCH prUrl/prNumber) first.",
   ciGreen:
     "CI is not green on the PR. Every check run must end in success (or neutral/skipped). If GitHub is unreachable or no delegation user is available, this rule fails closed — retry or use admin force.",
+  prMerged:
+    "PR is not merged yet. The pull request on this task must be in the closed-merged state. Open PRs, rejected PRs, and API errors all block — merge the PR or use admin force.",
 };
 
 export interface RuleCatalogEntry {
@@ -117,6 +158,13 @@ export const RULE_CATALOG: RuleCatalogEntry[] = [
     description:
       "Queries the GitHub Check Runs API for the task's PR head SHA. Passes only when every check run is completed successfully (or neutral/skipped). Fails closed on network errors, missing PR, or missing GitHub delegation — admin force is the escape.",
     failureMessage: RULE_MESSAGES.ciGreen,
+  },
+  {
+    id: "prMerged",
+    label: "PR is merged",
+    description:
+      "Queries the GitHub Pull Request API for the task's PR. Passes only when the PR is in the closed-merged state. Open PRs (including drafts — a draft is just `state=open`) and closed-unmerged (rejected) PRs all block. Fails closed on network errors or missing delegation — admin force is the escape. Pairs naturally with prPresent on the same transition.",
+    failureMessage: RULE_MESSAGES.prMerged,
   },
 ];
 

@@ -3,8 +3,11 @@ import {
   _checkCache,
   _clearCheckCache,
   classifyCheckRuns,
+  classifyPullRequest,
   fetchCheckRunStatus,
+  fetchPullRequestStatus,
   GithubChecksError,
+  type PullResponse,
 } from "../../src/services/github-checks.js";
 
 const SHA = "deadbeef";
@@ -121,7 +124,10 @@ describe("fetchCheckRunStatus", () => {
   function mockPullAndChecks(sha: string, runs: Array<{ status: string; conclusion: string | null }>) {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.includes("/pulls/")) {
-        return new Response(JSON.stringify({ head: { sha } }), { status: 200 });
+        return new Response(
+          JSON.stringify({ head: { sha }, state: "open", merged: false }),
+          { status: 200 },
+        );
       }
       if (url.includes("/check-runs")) {
         return new Response(JSON.stringify({ total_count: runs.length, check_runs: runs }), {
@@ -142,18 +148,19 @@ describe("fetchCheckRunStatus", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("caches the result by (owner, repo, sha)", async () => {
+  it("caches both PR and check-runs lookups within TTL", async () => {
     mockPullAndChecks("sha1", [{ status: "completed", conclusion: "success" }]);
     const now = 1_000_000;
     const first = await fetchCheckRunStatus("o", "r", 1, "token", now);
     expect(first.state).toBe("success");
 
-    // Second call within TTL: PR lookup still runs (to get the current
-    // head sha), but the check-runs lookup should hit the cache.
+    // Second call within TTL: both the PR cache and the check-runs cache
+    // are warm, so no additional fetches are made. This is a change from
+    // the pre-PR-cache behavior where the PR was always re-fetched.
     const before = fetchMock.mock.calls.length;
     const second = await fetchCheckRunStatus("o", "r", 1, "token", now + 30_000);
     expect(second.state).toBe("success");
-    expect(fetchMock.mock.calls.length - before).toBe(1); // only the PR lookup
+    expect(fetchMock.mock.calls.length - before).toBe(0);
   });
 
   it("cache expires after 60 seconds", async () => {
@@ -166,11 +173,19 @@ describe("fetchCheckRunStatus", () => {
     expect(fetchMock.mock.calls.length - before).toBe(2);
   });
 
-  it("does not cache a different SHA (force-push scenario)", async () => {
+  it("force-push is picked up once the 60s PR cache expires", async () => {
+    // The shared PR cache means a force-push within 60s is NOT seen
+    // immediately — both ciGreen and prMerged trade a 60s staleness
+    // window for one API call per task per minute. After the TTL
+    // expires, the next call fetches the fresh PR and the fresh
+    // check-runs for the new SHA.
     let sha = "old";
     fetchMock.mockImplementation(async (url: string) => {
       if (url.includes("/pulls/")) {
-        return new Response(JSON.stringify({ head: { sha } }), { status: 200 });
+        return new Response(
+          JSON.stringify({ head: { sha }, state: "open", merged: false }),
+          { status: 200 },
+        );
       }
       if (url.includes("/check-runs")) {
         return new Response(
@@ -187,8 +202,12 @@ describe("fetchCheckRunStatus", () => {
     await fetchCheckRunStatus("o", "r", 1, "token", now);
     sha = "new"; // force push
     const before = fetchMock.mock.calls.length;
+    // Within TTL: no re-fetch.
     await fetchCheckRunStatus("o", "r", 1, "token", now + 30_000);
-    expect(fetchMock.mock.calls.length - before).toBe(2); // fresh check-runs lookup
+    expect(fetchMock.mock.calls.length - before).toBe(0);
+    // Past TTL: both caches expire, fresh PR + fresh check-runs.
+    await fetchCheckRunStatus("o", "r", 1, "token", now + 61_000);
+    expect(fetchMock.mock.calls.length - before).toBe(2);
   });
 
   it("throws GithubChecksError on non-2xx response", async () => {
@@ -203,7 +222,10 @@ describe("fetchCheckRunStatus", () => {
     // the cache key and the check-runs URL. Guard at the network boundary.
     fetchMock.mockImplementation(async (url: string) => {
       if (url.includes("/pulls/")) {
-        return new Response(JSON.stringify({ head: {} }), { status: 200 });
+        return new Response(
+          JSON.stringify({ head: {}, state: "open", merged: false }),
+          { status: 200 },
+        );
       }
       throw new Error("should not reach check-runs");
     });
@@ -212,6 +234,32 @@ describe("fetchCheckRunStatus", () => {
     );
     // And no poisoned cache entry under an `undefined` key.
     expect(_checkCache.size).toBe(0);
+  });
+
+  it("shares the PR cache between check-runs and pr-status lookups", async () => {
+    // A task with both ciGreen and prMerged gates should produce only one
+    // /pulls/:n fetch per 60s — both reads hit the shared PR cache.
+    let pullCalls = 0;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/pulls/")) {
+        pullCalls += 1;
+        return new Response(
+          JSON.stringify({ head: { sha: "abc" }, state: "open", merged: false }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/check-runs")) {
+        return new Response(
+          JSON.stringify({ total_count: 1, check_runs: [{ status: "completed", conclusion: "success" }] }),
+          { status: 200 },
+        );
+      }
+      throw new Error("unexpected");
+    });
+    const now = 42_000_000;
+    await fetchCheckRunStatus("o", "r", 1, "token", now);
+    await fetchPullRequestStatus("o", "r", 1, "token", now);
+    expect(pullCalls).toBe(1);
   });
 
   it("error message does not include the response body", async () => {
@@ -227,5 +275,100 @@ describe("fetchCheckRunStatus", () => {
       expect((err as Error).message).not.toContain("ghs_abc");
       expect((err as Error).message).not.toContain("secret");
     }
+  });
+});
+
+// ── classifyPullRequest ────────────────────────────────────────────────────
+
+function pr(overrides: Partial<PullResponse> = {}): PullResponse {
+  return {
+    head: { sha: "abc123" },
+    state: "open",
+    merged: false,
+    ...overrides,
+  };
+}
+
+describe("classifyPullRequest", () => {
+  it("open PR → open", () => {
+    expect(classifyPullRequest(pr({ state: "open", merged: false })).state).toBe("open");
+  });
+
+  it("closed + merged → merged", () => {
+    expect(classifyPullRequest(pr({ state: "closed", merged: true })).state).toBe("merged");
+  });
+
+  it("closed + unmerged → closed_unmerged (rejected)", () => {
+    expect(classifyPullRequest(pr({ state: "closed", merged: false })).state).toBe(
+      "closed_unmerged",
+    );
+  });
+
+  it("open + merged (impossible combo) → unknown (fail closed)", () => {
+    // GitHub shouldn't emit this, but if they do we treat it conservatively
+    // instead of passing the gate on contradictory data.
+    expect(classifyPullRequest(pr({ state: "open", merged: true })).state).toBe("unknown");
+  });
+
+  it("returns the head sha for correlation", () => {
+    expect(classifyPullRequest(pr({ head: { sha: "feedface" } })).sha).toBe("feedface");
+  });
+});
+
+// ── fetchPullRequestStatus + malformed response guards ────────────────────
+
+describe("fetchPullRequestStatus", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    _clearCheckCache();
+    fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns merged for a closed-merged PR", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ head: { sha: "x" }, state: "closed", merged: true }),
+        { status: 200 },
+      ),
+    );
+    const status = await fetchPullRequestStatus("o", "r", 1, "token");
+    expect(status.state).toBe("merged");
+  });
+
+  it("throws on malformed response missing merged flag", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ head: { sha: "x" }, state: "closed" }),
+        { status: 200 },
+      ),
+    );
+    await expect(fetchPullRequestStatus("o", "r", 1, "token")).rejects.toBeInstanceOf(
+      GithubChecksError,
+    );
+  });
+
+  it("throws on malformed response with unknown state value", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ head: { sha: "x" }, state: "draft", merged: false }),
+        { status: 200 },
+      ),
+    );
+    await expect(fetchPullRequestStatus("o", "r", 1, "token")).rejects.toBeInstanceOf(
+      GithubChecksError,
+    );
+  });
+
+  it("propagates GithubChecksError on API failure", async () => {
+    fetchMock.mockResolvedValue(new Response("nope", { status: 500 }));
+    await expect(fetchPullRequestStatus("o", "r", 1, "token")).rejects.toBeInstanceOf(
+      GithubChecksError,
+    );
   });
 });
