@@ -7,7 +7,13 @@
  */
 import { prisma } from "../lib/prisma.js";
 
-export type SignalType = "review_needed" | "changes_requested" | "task_approved" | "task_assigned" | "task_available";
+export type SignalType =
+  | "review_needed"
+  | "changes_requested"
+  | "task_approved"
+  | "task_assigned"
+  | "task_available"
+  | "task_force_transitioned";
 
 export interface SignalContext {
   taskTitle: string;
@@ -23,6 +29,16 @@ export interface SignalContext {
   };
   reviewComment?: string;
   assigneeName?: string;
+  // Populated on `task_force_transitioned` signals. A team admin forced a
+  // transition past one or more failed `requires` rules — recipients (task
+  // claimant + active reviewer) are notified so the override is visible
+  // without reading the audit log.
+  forceTransition?: {
+    from: string;
+    to: string;
+    forcedRules: string[];
+    forceReason?: string | null;
+  };
 }
 
 export interface CreateSignalInput {

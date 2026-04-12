@@ -14,6 +14,7 @@ import { templateDataSchema, calculateConfidence, type TemplateData, type Templa
 import { DEFAULT_TRANSITIONS, findDefaultTransition } from "../services/default-workflow.js";
 import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES } from "../services/transition-rules.js";
+import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
 
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -1122,6 +1123,23 @@ taskRouter.post(
           : {}),
       },
     });
+
+    // Notify the task's claimant and active reviewer when an admin has
+    // bypassed one or more gates. Sent even when `forceReason` is empty
+    // so the override is visible without reading the audit log. Safe to
+    // fire before review-signal emission below because signals are
+    // independent.
+    if (forcedRules.length > 0 && actor.type === "human") {
+      void emitForceTransitionedSignal({
+        taskId: task.id,
+        projectId: task.projectId,
+        from: previousStatus,
+        to: status,
+        forcedRules,
+        forceReason: forceReason ?? null,
+        forcedByUserId: actor.userId,
+      });
+    }
 
     // Emit review signal when entering review state
     if (status === "review" && previousStatus !== "review") {

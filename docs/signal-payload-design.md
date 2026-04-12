@@ -17,8 +17,40 @@ Defines the structure of signals that local Claude/Codex-style agents consume vi
 | `changes_requested` | Reviewer requests changes | Original assignee |
 | `task_approved` | Reviewer approves | Original assignee |
 | `task_assigned` | Task claimed/assigned to agent | The assigned agent |
+| `task_available` | Task transitions to `open` | Eligible agents in the team |
+| `task_force_transitioned` | Admin force-transitions past a failed gate | Current claimant + current reviewer (excluding the forcing admin) |
 
 Future candidates (not in MVP): `deploy_ready`, `mention`, `dependency_resolved`.
+
+### `task_force_transitioned`
+
+Fired when a team admin calls `POST /tasks/:id/transition {force: true}`
+and bypasses one or more `requires` rules (see
+[workflow-preconditions.md](workflow-preconditions.md)). The purpose
+is to make the override visible without reading the audit log — both
+the task's claimant and the current reviewer are notified so the
+decision isn't silent.
+
+The admin who pressed force is never notified about their own action,
+even if they're also the claimant or reviewer. Agents still receive
+the signal via the normal inbox polling — a well-behaved agent should
+re-fetch the task and act on the new state rather than continue its
+previous plan.
+
+Context payload additionally carries a `forceTransition` field:
+
+```typescript
+forceTransition: {
+  from: string;               // previous state name
+  to: string;                 // new state name
+  forcedRules: string[];      // e.g. ["ciGreen", "prMerged"]
+  forceReason: string | null; // admin-supplied rationale
+}
+```
+
+Signal emission is best-effort: a failure to write signals does NOT
+prevent the transition from persisting. The audit log
+(`task.transitioned.forced`) remains the authoritative record.
 
 ## Payload schema
 
