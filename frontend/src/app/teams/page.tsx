@@ -66,13 +66,20 @@ function ProjectCard({ project, href, onDelete, activeTaskCount }: { project: Pr
             {activeTaskCount} active {activeTaskCount === 1 ? "task" : "tasks"}
           </span>
         )}
-        <DropdownMenu anchorRef={menuBtnRef} open={menuOpen} onClose={() => setMenuOpen(false)} minWidth={160}>
+        <DropdownMenu anchorRef={menuBtnRef} open={menuOpen} onClose={() => setMenuOpen(false)} minWidth={200}>
+          <Link
+            href={`/projects/workflows?projectId=${project.id}`}
+            className="app-dropdown-item"
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(false); }}
+          >
+            Workflow &amp; instructions
+          </Link>
           <Link
             href={`/projects/workflow?projectId=${project.id}`}
             className="app-dropdown-item"
             onClick={(e) => { e.stopPropagation(); setMenuOpen(false); }}
           >
-            Workflow
+            Gates overview
           </Link>
           {onDelete && (
             <button
