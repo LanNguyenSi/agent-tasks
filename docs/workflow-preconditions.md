@@ -103,6 +103,38 @@ transition independently.
 | ---- | ----------- | ---------- | --- |
 | `branchPresent` | `task.branchName` is a non-empty string | branch missing | `PATCH /api/tasks/:id` with `branchName` |
 | `prPresent` | `task.prUrl` **and** `task.prNumber` are set | PR missing | `POST /api/github/pull-requests` (or `PATCH` the fields manually) |
+| `ciGreen` | Every check run on the PR's head commit is `success` / `neutral` / `skipped` | Any check is `failure` / `cancelled` / `timed_out` / `action_required` / `stale` / still running | Wait for CI, re-run a failing job, or admin-force the transition |
+
+### `ciGreen` details
+
+`ciGreen` is the first **async** rule — it queries the GitHub Check
+Runs API for the task's PR head commit. It uses the same GitHub
+delegation path as `POST /api/github/pull-requests`: the backend picks
+the first team member with a valid `githubAccessToken` and
+`allowAgentPrCreate` consent. Fail-closed behavior:
+
+- If the project has no `githubRepo` → fails (cannot query CI)
+- If no team member has a valid delegation token → fails
+- If the task has no `prNumber` → fails
+- If the GitHub API returns an error (network, 401, 404, 429) → fails,
+  error surfaced in the 422 response as `{rule: "ciGreen", error: "…"}`
+- If any check run is still queued or in_progress → fails (pending)
+- If any check run is unrecognized → fails (unknown state)
+
+Results are cached in-memory for 60 seconds keyed by
+`(owner, repo, sha)` — long enough to avoid hammering the API on
+quick retries, short enough that a re-run of a flaky check is visible
+on the next attempt. Force-pushes invalidate automatically because
+the head SHA changes.
+
+If you legitimately need to complete a task whose CI is broken or
+GitHub is unreachable, a team admin can force the transition with
+`{force: true, forceReason: "…"}` — audited as
+`task.transitioned.forced`.
+
+**Not supported in v1**: GitHub's older commit-status API (only check
+runs); self-hosted CI without GitHub integration; auto-retry on CI
+completion.
 
 More rules (PR merged, docs touched, CI green) are planned as follow-ups.
 Adding one is a ~10-line change in

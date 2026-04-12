@@ -62,13 +62,21 @@ describe("transition rules", () => {
   });
 
   describe("evaluateTransitionRules", () => {
-    it("returns empty results when rules list is empty", () => {
-      expect(evaluateTransitionRules([], emptyCtx)).toEqual({ failed: [], unknown: [] });
-      expect(evaluateTransitionRules(undefined, emptyCtx)).toEqual({ failed: [], unknown: [] });
+    it("returns empty results when rules list is empty", async () => {
+      await expect(evaluateTransitionRules([], emptyCtx)).resolves.toEqual({
+        failed: [],
+        unknown: [],
+        errors: {},
+      });
+      await expect(evaluateTransitionRules(undefined, emptyCtx)).resolves.toEqual({
+        failed: [],
+        unknown: [],
+        errors: {},
+      });
     });
 
-    it("collects failed rules but not passing ones", () => {
-      const result = evaluateTransitionRules(
+    it("collects failed rules but not passing ones", async () => {
+      const result = await evaluateTransitionRules(
         ["branchPresent", "prPresent"],
         { branchName: "feat/x", prUrl: null, prNumber: null },
       );
@@ -76,8 +84,8 @@ describe("transition rules", () => {
       expect(result.unknown).toEqual([]);
     });
 
-    it("reports unknown rules separately and does not fail on them", () => {
-      const result = evaluateTransitionRules(
+    it("reports unknown rules separately and does not fail on them", async () => {
+      const result = await evaluateTransitionRules(
         ["branchPresent", "docsTouched", "nonsense"],
         { branchName: "feat/x", prUrl: null, prNumber: null },
       );
@@ -85,13 +93,80 @@ describe("transition rules", () => {
       expect(result.unknown).toEqual(["docsTouched", "nonsense"]);
     });
 
-    it("passes cleanly when everything is satisfied", () => {
-      const result = evaluateTransitionRules(
+    it("passes cleanly when everything is satisfied", async () => {
+      const result = await evaluateTransitionRules(
         ["branchPresent", "prPresent"],
         { branchName: "feat/x", prUrl: "https://github.com/x/y/pull/1", prNumber: 1 },
       );
       expect(result.failed).toEqual([]);
       expect(result.unknown).toEqual([]);
+    });
+
+    it("ciGreen fails closed when prNumber is missing", async () => {
+      const result = await evaluateTransitionRules(["ciGreen"], {
+        branchName: "feat/x",
+        prUrl: null,
+        prNumber: null,
+        projectGithubRepo: "owner/repo",
+        githubToken: "tok",
+      });
+      expect(result.failed).toEqual(["ciGreen"]);
+    });
+
+    it("ciGreen fails closed when githubToken is missing", async () => {
+      const result = await evaluateTransitionRules(["ciGreen"], {
+        branchName: "feat/x",
+        prUrl: "x",
+        prNumber: 1,
+        projectGithubRepo: "owner/repo",
+        githubToken: null,
+      });
+      expect(result.failed).toEqual(["ciGreen"]);
+    });
+
+    it("failed array preserves the order of the input rules list", async () => {
+      // Async evaluation must not reorder results — the user-visible 422
+      // message string depends on iteration order.
+      const result = await evaluateTransitionRules(
+        ["prPresent", "branchPresent"],
+        { branchName: null, prUrl: null, prNumber: null },
+      );
+      expect(result.failed).toEqual(["prPresent", "branchPresent"]);
+    });
+
+    it("non-GithubChecksError errors collapse to a generic message", async () => {
+      // Any unexpected throw should not leak internal error text to the
+      // client. Only GithubChecksError gets its status surfaced.
+      const { RULE_EVALUATORS } = await import("../../src/services/transition-rules.js");
+      const original = RULE_EVALUATORS.ciGreen;
+      (RULE_EVALUATORS as { ciGreen: typeof original }).ciGreen = async () => {
+        throw new Error("secret token ghs_abc123");
+      };
+      try {
+        const result = await evaluateTransitionRules(["ciGreen"], {
+          branchName: "x",
+          prUrl: "x",
+          prNumber: 1,
+          projectGithubRepo: "o/r",
+          githubToken: "tok",
+        });
+        expect(result.failed).toEqual(["ciGreen"]);
+        expect(result.errors.ciGreen).toBe("Rule evaluation error");
+        expect(result.errors.ciGreen).not.toContain("ghs_abc123");
+      } finally {
+        (RULE_EVALUATORS as { ciGreen: typeof original }).ciGreen = original;
+      }
+    });
+
+    it("ciGreen fails closed when projectGithubRepo is missing", async () => {
+      const result = await evaluateTransitionRules(["ciGreen"], {
+        branchName: "feat/x",
+        prUrl: "x",
+        prNumber: 1,
+        projectGithubRepo: null,
+        githubToken: "tok",
+      });
+      expect(result.failed).toEqual(["ciGreen"]);
     });
   });
 
