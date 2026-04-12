@@ -25,7 +25,15 @@ export type AuditAction =
   | "github.pr_created"
   | "github.pr_merged"
   | "github.pr_commented"
-  | "task.imported";
+  | "task.imported"
+  // Workflow mutations — added so admins editing gates, renaming
+  // states, or dropping a custom workflow leave a reconstructible
+  // trail. Previously the only record was `updated_at` on the row,
+  // which made it impossible to see who disabled a gate or when.
+  | "workflow.created"
+  | "workflow.customized"
+  | "workflow.updated"
+  | "workflow.reset";
 
 export interface AuditPayload {
   [key: string]: unknown;
@@ -38,15 +46,29 @@ export async function logAuditEvent(opts: {
   taskId?: string;
   payload?: AuditPayload;
 }): Promise<void> {
-  await prisma.auditLog.create({
-    data: {
-      action: opts.action,
-      actorId: opts.actorId ?? null,
-      projectId: opts.projectId ?? null,
-      taskId: opts.taskId ?? null,
-      payload: (opts.payload ?? {}) as object,
-    },
-  });
+  // Audit writes are fire-and-forget (`void logAuditEvent(...)`) from
+  // every call site so the 200 response isn't blocked on audit latency.
+  // That means any rejection here becomes an unhandled promise rejection,
+  // which crashes the Node process under the default `throw` policy.
+  // Swallow the rejection with a structured log line so a DB hiccup or
+  // constraint violation can't take the backend down — audit is
+  // supplementary, not load-bearing.
+  try {
+    await prisma.auditLog.create({
+      data: {
+        action: opts.action,
+        actorId: opts.actorId ?? null,
+        projectId: opts.projectId ?? null,
+        taskId: opts.taskId ?? null,
+        payload: (opts.payload ?? {}) as object,
+      },
+    });
+  } catch (err) {
+    console.error(
+      `[audit] failed to write ${opts.action} for actor=${opts.actorId ?? "-"} project=${opts.projectId ?? "-"} task=${opts.taskId ?? "-"}:`,
+      (err as Error).message,
+    );
+  }
 }
 
 export async function getAuditLogs(opts: {

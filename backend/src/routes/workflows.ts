@@ -6,8 +6,13 @@ import { hasProjectAccess } from "../services/team-access.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
-import { defaultWorkflowDefinition } from "../services/default-workflow.js";
+import {
+  defaultWorkflowDefinition,
+  type WorkflowDefinitionShape,
+} from "../services/default-workflow.js";
 import { RULE_CATALOG } from "../services/transition-rules.js";
+import { logAuditEvent } from "../services/audit.js";
+import { summarizeWorkflowDiff } from "../services/workflow-diff.js";
 
 export const workflowRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -208,6 +213,13 @@ workflowRouter.post("/projects/:projectId/workflow/customize", async (c) => {
       });
     });
 
+    void logAuditEvent({
+      action: "workflow.customized",
+      actorId: actor.type === "human" ? actor.userId : undefined,
+      projectId,
+      payload: { workflowId: workflow.id },
+    });
+
     return c.json(
       {
         source: "custom" as const,
@@ -264,14 +276,25 @@ workflowRouter.delete("/projects/:projectId/workflow", async (c) => {
   // default (NoAction) would fail the FK constraint on delete. Unset the
   // workflowId on all referencing tasks first — atomically with the delete,
   // so a mid-flight error doesn't leave tasks detached from a still-present
-  // workflow row.
-  await prisma.$transaction([
+  // workflow row. `updateMany` returns the count, which we capture for the
+  // audit payload so auditors can see the blast radius of a reset.
+  const [updateResult] = await prisma.$transaction([
     prisma.task.updateMany({
       where: { workflowId: existing.id },
       data: { workflowId: null },
     }),
     prisma.workflow.delete({ where: { id: existing.id } }),
   ]);
+
+  void logAuditEvent({
+    action: "workflow.reset",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId,
+    payload: {
+      previousWorkflowId: existing.id,
+      affectedTaskCount: updateResult.count,
+    },
+  });
 
   return c.json({
     source: "default" as const,
@@ -331,6 +354,17 @@ workflowRouter.post(
         name: body.name,
         isDefault: body.isDefault ?? false,
         definition: body.definition as object,
+      },
+    });
+
+    void logAuditEvent({
+      action: "workflow.created",
+      actorId: actor.userId,
+      projectId,
+      payload: {
+        workflowId: workflow.id,
+        name: workflow.name,
+        isDefault: workflow.isDefault,
       },
     });
 
@@ -395,6 +429,33 @@ workflowRouter.put(
         ...(body.name ? { name: body.name } : {}),
         ...(body.isDefault !== undefined ? { isDefault: body.isDefault } : {}),
         ...(body.definition ? { definition: body.definition as object } : {}),
+      },
+    });
+
+    // Compute a small diff summary for the audit payload so auditors can
+    // reconstruct what changed without the backend storing every
+    // definition snapshot. Only include the diff when the definition
+    // actually changed — a name-only update writes a lighter payload.
+    const diff = body.definition
+      ? summarizeWorkflowDiff(
+          workflow.definition as unknown as WorkflowDefinitionShape,
+          body.definition as unknown as WorkflowDefinitionShape,
+        )
+      : null;
+
+    void logAuditEvent({
+      action: "workflow.updated",
+      actorId: actor.userId,
+      projectId: workflow.projectId,
+      payload: {
+        workflowId: workflow.id,
+        ...(body.name && body.name !== workflow.name
+          ? { nameChanged: { from: workflow.name, to: body.name } }
+          : {}),
+        ...(body.isDefault !== undefined && body.isDefault !== workflow.isDefault
+          ? { isDefaultChanged: { from: workflow.isDefault, to: body.isDefault } }
+          : {}),
+        ...(diff ? { definitionDiff: diff } : {}),
       },
     });
 
