@@ -432,10 +432,14 @@ export async function releaseTask(taskId: string): Promise<Task> {
   return data.task;
 }
 
-export async function transitionTask(taskId: string, status: string): Promise<Task> {
+export async function transitionTask(
+  taskId: string,
+  status: string,
+  options: { force?: boolean; forceReason?: string } = {},
+): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/tasks/${taskId}/transition`, {
     method: "POST",
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, ...options }),
   });
   return data.task;
 }

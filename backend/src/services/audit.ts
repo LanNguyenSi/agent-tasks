@@ -12,6 +12,7 @@ export type AuditAction =
   | "task.claimed"
   | "task.released"
   | "task.transitioned"
+  | "task.transitioned.forced"
   | "task.commented"
   | "task.reviewed"
   | "project.created"
