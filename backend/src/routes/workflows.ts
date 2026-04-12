@@ -303,8 +303,12 @@ workflowRouter.put(
     });
     if (!workflow) return notFound(c);
 
-    if (!(await hasProjectAccess(actor, workflow.projectId))) {
-      return forbidden(c, "Access denied");
+    // Gate workflow mutations on team ADMIN, not just project access. A
+    // team member who isn't an admin should not be able to silently swap
+    // out gates — otherwise the UI's admin-only editor branch can be
+    // trivially bypassed by a direct API call.
+    if (!(await isProjectAdmin(actor, workflow.projectId))) {
+      return forbidden(c, "Only team admins can modify workflows");
     }
 
     const body = c.req.valid("json");
