@@ -1,19 +1,19 @@
 "use client";
 
 /**
- * Workflow & Gates — viewer + state/gate editor (Tasks 2, 3, 4 of 5).
+ * Workflow & Gates — full editor (Tasks 2–5).
  *
- * Single-draft architecture: any edit (gate toggle, state add/rename/
- * remove, initialState change, label/terminal/instructions edit) goes
- * into `draft`, a shallow clone of the loaded `workflow.definition`.
- * `activeDef` reads from the draft when dirty, else from the workflow.
- * Save PUTs the draft; Cancel nulls it; Reset drops the entire custom
- * Workflow row. State renames propagate into transitions and
- * initialState in the same mutation.
+ * Single-draft architecture: any edit (gate toggle, state or transition
+ * add/edit/rename/remove, initialState change) goes into `draft`, a
+ * deep clone of the loaded `workflow.definition`. `activeDef` reads
+ * from the draft when dirty, else from the workflow. Save PUTs the
+ * full draft; Cancel nulls it; Reset drops the entire custom Workflow
+ * row. State renames propagate into transitions and initialState in
+ * the same mutation.
  *
- * Transition add/remove/edit is still out of scope (task 5); the
- * transitions table stays partially read-only — from/to come from
- * whatever transitions already exist, only gates are editable.
+ * Validation runs client-side (structural errors + reachability
+ * warnings) and is mirrored by the backend's `workflowDefinitionSchema`
+ * — the frontend is UX, the backend is the source of truth.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -35,6 +35,7 @@ import {
   type WorkflowDefinition,
   type WorkflowRule,
   type WorkflowState,
+  type WorkflowTransition,
 } from "../../../lib/api";
 import AppHeader from "../../../components/AppHeader";
 import AlertBanner from "../../../components/ui/AlertBanner";
@@ -101,7 +102,69 @@ interface ValidationResult {
   warnings: string[];
 }
 
-function validateDefinition(def: WorkflowDefinition): ValidationResult {
+/**
+ * BFS reachability from the initial state over the transition graph.
+ * Returns the set of states that CAN be reached. Used by both the
+ * reachability warning computation and the test suite.
+ */
+export function reachableStates(def: WorkflowDefinition): Set<string> {
+  const reachable = new Set<string>();
+  if (!def.states.some((s) => s.name === def.initialState)) return reachable;
+  const queue: string[] = [def.initialState];
+  reachable.add(def.initialState);
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const t of def.transitions) {
+      if (t.from === current && !reachable.has(t.to)) {
+        reachable.add(t.to);
+        queue.push(t.to);
+      }
+    }
+  }
+  return reachable;
+}
+
+export interface ReachabilityReport {
+  unreachable: string[];
+  deadEnds: string[];
+  orphans: string[];
+}
+
+/**
+ * Categorize states by reachability problems:
+ *  - unreachable: cannot be reached from the initial state
+ *  - deadEnds: non-terminal with no outgoing transition (task gets stuck)
+ *  - orphans: no incoming transition and not the initial state
+ * All three are informational — they're warnings, not errors. A user can
+ * save a workflow with warnings; the backend does not check reachability.
+ */
+export function computeReachability(def: WorkflowDefinition): ReachabilityReport {
+  const reachable = reachableStates(def);
+  const outgoing = new Map<string, number>();
+  const incoming = new Map<string, number>();
+  for (const s of def.states) {
+    outgoing.set(s.name, 0);
+    incoming.set(s.name, 0);
+  }
+  for (const t of def.transitions) {
+    outgoing.set(t.from, (outgoing.get(t.from) ?? 0) + 1);
+    incoming.set(t.to, (incoming.get(t.to) ?? 0) + 1);
+  }
+
+  const unreachable: string[] = [];
+  const deadEnds: string[] = [];
+  const orphans: string[] = [];
+  for (const s of def.states) {
+    if (!reachable.has(s.name)) unreachable.push(s.name);
+    if (!s.terminal && (outgoing.get(s.name) ?? 0) === 0) deadEnds.push(s.name);
+    if ((incoming.get(s.name) ?? 0) === 0 && s.name !== def.initialState) {
+      orphans.push(s.name);
+    }
+  }
+  return { unreachable, deadEnds, orphans };
+}
+
+export function validateDefinition(def: WorkflowDefinition): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -129,8 +192,8 @@ function validateDefinition(def: WorkflowDefinition): ValidationResult {
     errors.push(`Initial state "${def.initialState}" is not in the states list.`);
   }
 
-  // Transitions must reference existing states (rename propagation makes
-  // this unreachable via the UI, but a sanity check guards against bugs).
+  // Transitions must reference existing states
+  const seenPairs = new Set<string>();
   for (const t of def.transitions) {
     if (!seen.has(t.from)) {
       errors.push(`Transition references missing "from" state: "${t.from}" → "${t.to}".`);
@@ -138,6 +201,11 @@ function validateDefinition(def: WorkflowDefinition): ValidationResult {
     if (!seen.has(t.to)) {
       errors.push(`Transition references missing "to" state: "${t.from}" → "${t.to}".`);
     }
+    const key = `${t.from}→${t.to}`;
+    if (seenPairs.has(key)) {
+      errors.push(`Duplicate transition: ${key}.`);
+    }
+    seenPairs.add(key);
   }
 
   // At least one terminal state — warning only, not blocking
@@ -145,8 +213,25 @@ function validateDefinition(def: WorkflowDefinition): ValidationResult {
     warnings.push("No terminal state is marked. Tasks will never reach a 'done' state.");
   }
 
+  // Reachability warnings — only meaningful when the structural errors
+  // above don't already make the graph incoherent.
+  if (errors.length === 0) {
+    const { unreachable, deadEnds, orphans } = computeReachability(def);
+    for (const name of unreachable) {
+      warnings.push(`State "${name}" is unreachable from the initial state.`);
+    }
+    for (const name of deadEnds) {
+      warnings.push(`State "${name}" is a non-terminal dead end (no outgoing transitions).`);
+    }
+    for (const name of orphans) {
+      warnings.push(`State "${name}" has no incoming transition.`);
+    }
+  }
+
   return { errors, warnings };
 }
+
+const ROLE_OPTIONS = ["any", "ADMIN", "HUMAN_MEMBER", "REVIEWER"] as const;
 
 // ── Page ────────────────────────────────────────────────────────────────────
 
@@ -231,6 +316,26 @@ export default function WorkflowEditorPage() {
     () => (activeDef ? validateDefinition(activeDef) : { errors: [], warnings: [] }),
     [activeDef],
   );
+
+  // Cmd/Ctrl+S triggers Save when there's a dirty draft. Matches the
+  // standard "editor save" shortcut so admins don't have to reach for the
+  // mouse to commit. Always `preventDefault()` when we're the active
+  // editor — even on a no-op — so the browser's native "Save Page As"
+  // dialog doesn't pop up mid-edit.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!((e.metaKey || e.ctrlKey) && e.key === "s")) return;
+      e.preventDefault();
+      if (draft === null || saving || validation.errors.length > 0) return;
+      void handleSave();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // handleSave closes over the same state listed here; adding it to
+    // deps would cause re-registration on every render without changing
+    // behavior.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, saving, validation.errors.length, validation.warnings.length]);
 
   /** True only when a state in the draft has a different name than the
    * same row in the canonical workflow, or the row count changed. The
@@ -333,8 +438,7 @@ export default function WorkflowEditorPage() {
   /**
    * Remove a state. Blocked (error-only, no mutation) if the state is
    * referenced by any transition or is the current initialState — the user
-   * must remove the transitions first (task 5 will add that editor) or
-   * reassign initialState.
+   * must remove those transitions first or reassign initialState.
    */
   function removeState(index: number) {
     if (!activeDef) return;
@@ -345,7 +449,7 @@ export default function WorkflowEditorPage() {
     if (refs.length > 0) {
       setError(
         `Cannot remove state "${s.name}": ${refs.length} transition(s) still reference it. ` +
-          `Remove those transitions first (transition editing ships in the next iteration).`,
+          `Remove those transitions first (or rewire them to a different state).`,
       );
       return;
     }
@@ -355,7 +459,6 @@ export default function WorkflowEditorPage() {
       );
       return;
     }
-    setError(null);
     mutateDraft((d) => {
       d.states.splice(index, 1);
       return d;
@@ -365,6 +468,55 @@ export default function WorkflowEditorPage() {
   function setInitialState(name: string) {
     mutateDraft((d) => {
       d.initialState = name;
+      return d;
+    });
+  }
+
+  function addTransition() {
+    if (!activeDef || activeDef.states.length < 1) return;
+    mutateDraft((d) => {
+      // Try to pick a (from, to) pair that isn't already present, so the
+      // new row doesn't immediately block Save with a duplicate error.
+      // Fall back to a self-loop on the initial state when every pair is
+      // already taken.
+      const existing = new Set(d.transitions.map((t) => `${t.from}→${t.to}`));
+      let pickedFrom = d.initialState;
+      let pickedTo = pickedFrom;
+      outer: for (const fromState of d.states) {
+        for (const toState of d.states) {
+          if (!existing.has(`${fromState.name}→${toState.name}`)) {
+            pickedFrom = fromState.name;
+            pickedTo = toState.name;
+            break outer;
+          }
+        }
+      }
+      d.transitions.push({
+        from: pickedFrom,
+        to: pickedTo,
+        label: "",
+        requiredRole: "any",
+      });
+      return d;
+    });
+  }
+
+  function removeTransition(index: number) {
+    mutateDraft((d) => {
+      d.transitions.splice(index, 1);
+      return d;
+    });
+  }
+
+  function updateTransitionField<K extends keyof WorkflowTransition>(
+    index: number,
+    field: K,
+    value: WorkflowTransition[K],
+  ) {
+    mutateDraft((d) => {
+      const t = d.transitions[index];
+      if (!t) return d;
+      t[field] = value;
       return d;
     });
   }
@@ -407,6 +559,15 @@ export default function WorkflowEditorPage() {
     if (validation.errors.length > 0) {
       setError("Fix validation errors before saving.");
       return;
+    }
+    // Reachability + terminal-state warnings are non-blocking but
+    // user-visible for a reason — ask for explicit confirmation so a
+    // stray Cmd+S can't silently persist a broken graph.
+    if (validation.warnings.length > 0) {
+      const ok = window.confirm(
+        `This workflow has ${validation.warnings.length} warning(s) (unreachable states, dead ends, or missing terminal). Save anyway?`,
+      );
+      if (!ok) return;
     }
     setSaving(true);
     setError(null);
@@ -721,27 +882,101 @@ export default function WorkflowEditorPage() {
 
         {/* ── Transitions ──────────────────────────────────────────────── */}
         <Card style={{ marginTop: "var(--space-4)" }}>
-          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "var(--space-3)" }}>Transitions</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "var(--space-3)" }}>
+            <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700 }}>Transitions</h2>
+            {canEdit && (
+              <Button type="button" variant="secondary" onClick={addTransition} disabled={saving}>
+                + Add transition
+              </Button>
+            )}
+          </div>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-sm)" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                  <th style={th}>From → To</th>
+                  <th style={th}>From</th>
+                  <th style={th}>To</th>
                   <th style={th}>Label</th>
                   <th style={th}>Required role</th>
                   <th style={th}>Gates (requires)</th>
+                  {canEdit && <th style={th}></th>}
                 </tr>
               </thead>
               <tbody>
                 {activeDef.transitions.map((t, i) => {
                   const activeRequires = t.requires ?? [];
                   return (
-                    <tr key={`${t.from}-${t.to}-${i}`} style={{ borderBottom: "1px solid var(--border)" }}>
+                    <tr key={`transition-${i}`} style={{ borderBottom: "1px solid var(--border)" }}>
                       <td style={td}>
-                        <code>{t.from}</code> → <code>{t.to}</code>
+                        {canEdit ? (
+                          <select
+                            value={t.from}
+                            onChange={(e) => updateTransitionField(i, "from", e.target.value)}
+                            disabled={saving}
+                            style={inlineSelect}
+                          >
+                            {activeDef.states.map((s) => (
+                              <option key={s.name} value={s.name}>
+                                {s.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <code>{t.from}</code>
+                        )}
                       </td>
-                      <td style={td}>{t.label ?? "—"}</td>
-                      <td style={td}>{t.requiredRole && t.requiredRole !== "any" ? t.requiredRole : "—"}</td>
+                      <td style={td}>
+                        {canEdit ? (
+                          <select
+                            value={t.to}
+                            onChange={(e) => updateTransitionField(i, "to", e.target.value)}
+                            disabled={saving}
+                            style={inlineSelect}
+                          >
+                            {activeDef.states.map((s) => (
+                              <option key={s.name} value={s.name}>
+                                {s.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <code>{t.to}</code>
+                        )}
+                      </td>
+                      <td style={td}>
+                        {canEdit ? (
+                          <input
+                            type="text"
+                            value={t.label ?? ""}
+                            onChange={(e) => updateTransitionField(i, "label", e.target.value)}
+                            disabled={saving}
+                            placeholder="(optional)"
+                            style={inlineInput}
+                          />
+                        ) : (
+                          t.label ?? "—"
+                        )}
+                      </td>
+                      <td style={td}>
+                        {canEdit ? (
+                          <select
+                            value={t.requiredRole ?? "any"}
+                            onChange={(e) => updateTransitionField(i, "requiredRole", e.target.value)}
+                            disabled={saving}
+                            style={inlineSelect}
+                          >
+                            {ROLE_OPTIONS.map((r) => (
+                              <option key={r} value={r}>
+                                {r}
+                              </option>
+                            ))}
+                          </select>
+                        ) : t.requiredRole && t.requiredRole !== "any" ? (
+                          t.requiredRole
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                       <td style={td}>
                         {canEdit ? (
                           <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
@@ -783,9 +1018,32 @@ export default function WorkflowEditorPage() {
                           <span style={{ color: "var(--muted)" }}>none</span>
                         )}
                       </td>
+                      {canEdit && (
+                        <td style={{ ...td, width: "1%", whiteSpace: "nowrap" }}>
+                          <button
+                            type="button"
+                            onClick={() => removeTransition(i)}
+                            disabled={saving}
+                            style={{ ...linkButton, color: "#dc2626" }}
+                            title="Remove transition"
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
+                {activeDef.transitions.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={canEdit ? 6 : 5}
+                      style={{ ...td, color: "var(--muted)", textAlign: "center", padding: "var(--space-3)" }}
+                    >
+                      No transitions defined. Tasks will not be able to change status.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -885,6 +1143,15 @@ const pill: React.CSSProperties = {
 
 const inlineInput: React.CSSProperties = {
   width: "100%",
+  padding: "0.25rem 0.5rem",
+  fontSize: "var(--text-sm)",
+  fontFamily: "inherit",
+  background: "var(--input-bg, transparent)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-sm, 4px)",
+};
+
+const inlineSelect: React.CSSProperties = {
   padding: "0.25rem 0.5rem",
   fontSize: "var(--text-sm)",
   fontFamily: "inherit",

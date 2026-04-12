@@ -123,6 +123,16 @@ describe("workflowDefinitionSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects duplicate transition (from, to) pairs", () => {
+    const d = validDef();
+    d.transitions.push({ from: "open", to: "in_progress" });
+    const result = workflowDefinitionSchema.safeParse(d);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => /duplicate transition/i.test(i.message))).toBe(true);
+    }
+  });
+
   it("accepts transitions with requires arrays (gates)", () => {
     const d = validDef();
     d.transitions[0] = { from: "open", to: "in_progress", requires: ["branchPresent"] } as any;
