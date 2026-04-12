@@ -22,26 +22,25 @@ export default function AuthPage() {
   const [error, setError] = useState<string | null>(null);
   const [ssoMatch, setSsoMatch] = useState<SsoDiscoverResult | null>(null);
 
-  // Debounced SSO domain discovery. Runs whenever the user pauses typing in
-  // the email field — shows a "Sign in with <IdP>" button if their company
-  // has configured SSO for this domain.
-  useEffect(() => {
+  // SSO domain discovery is triggered on blur (below) rather than on every
+  // keystroke, to avoid sending partial emails to the backend. It only runs
+  // in login mode — in register mode there is no existing SSO to match.
+  async function checkSsoForEmail() {
+    if (mode !== "login") {
+      setSsoMatch(null);
+      return;
+    }
     if (!email.includes("@") || email.length < 5) {
       setSsoMatch(null);
       return;
     }
-    const handle = setTimeout(() => {
-      void (async () => {
-        try {
-          const match = await discoverSso(email);
-          setSsoMatch(match);
-        } catch {
-          setSsoMatch(null);
-        }
-      })();
-    }, 300);
-    return () => clearTimeout(handle);
-  }, [email]);
+    try {
+      const match = await discoverSso(email);
+      setSsoMatch(match);
+    } catch {
+      setSsoMatch(null);
+    }
+  }
 
   useEffect(() => {
     void (async () => {
@@ -138,6 +137,7 @@ export default function AuthPage() {
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
+                onBlur={() => void checkSsoForEmail()}
                 placeholder="you@example.com"
                 required
                 style={{ width: "100%", display: "block" }}

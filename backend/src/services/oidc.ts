@@ -119,6 +119,7 @@ export interface AuthorizeUrlParams {
   redirectUri: string;
   state: string;
   nonce: string;
+  codeChallenge: string;
   scope?: string;
 }
 
@@ -130,8 +131,19 @@ export function buildAuthorizeUrl(params: AuthorizeUrlParams): string {
     scope: params.scope ?? "openid email profile",
     state: params.state,
     nonce: params.nonce,
+    code_challenge: params.codeChallenge,
+    code_challenge_method: "S256",
   });
   return `${params.discovery.authorization_endpoint}?${qs.toString()}`;
+}
+
+/** Generate a PKCE verifier + S256 challenge pair. */
+export async function generatePkcePair(): Promise<{ verifier: string; challenge: string }> {
+  const verifierBytes = webcrypto.getRandomValues(new Uint8Array(32));
+  const verifier = Buffer.from(verifierBytes).toString("base64url");
+  const digest = await webcrypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const challenge = Buffer.from(new Uint8Array(digest)).toString("base64url");
+  return { verifier, challenge };
 }
 
 export interface ExchangeCodeParams {
@@ -140,6 +152,7 @@ export interface ExchangeCodeParams {
   clientSecret: string;
   code: string;
   redirectUri: string;
+  codeVerifier: string;
 }
 
 export async function exchangeCode(params: ExchangeCodeParams): Promise<OidcTokens> {
@@ -149,6 +162,7 @@ export async function exchangeCode(params: ExchangeCodeParams): Promise<OidcToke
     redirect_uri: params.redirectUri,
     client_id: params.clientId,
     client_secret: params.clientSecret,
+    code_verifier: params.codeVerifier,
   });
 
   const res = await fetch(params.discovery.token_endpoint, {
@@ -161,8 +175,10 @@ export async function exchangeCode(params: ExchangeCodeParams): Promise<OidcToke
   });
 
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`OIDC token exchange failed (${res.status}): ${text.slice(0, 200)}`);
+    // Body may contain sensitive IdP-provided data; don't include it in the
+    // thrown error message so it can't end up in logs or error pages.
+    await res.text().catch(() => "");
+    throw new Error(`OIDC token exchange failed with status ${res.status}`);
   }
 
   const json = (await res.json()) as OidcTokens & { error?: string };
@@ -187,14 +203,31 @@ function base64urlDecodeToString(input: string): string {
   return new TextDecoder().decode(base64urlDecode(input));
 }
 
+function jwkMatchesAlg(jwk: Jwk, alg: string): boolean {
+  // Refuse encryption-only keys outright.
+  if (jwk.use && jwk.use !== "sig") return false;
+  // kty must align with the declared alg.
+  if (alg === "RS256" && jwk.kty !== "RSA") return false;
+  if (alg === "ES256" && (jwk.kty !== "EC" || (jwk.crv && jwk.crv !== "P-256"))) return false;
+  // If the JWK advertises its own alg, it must match.
+  if (jwk.alg && jwk.alg !== alg) return false;
+  return true;
+}
+
 function findJwk(jwks: Jwk[], kid: string | undefined, alg: string): Jwk | undefined {
+  // Prefer exact kid match — this is the normal case for every real IdP.
   if (kid) {
-    const byKid = jwks.find((k) => k.kid === kid);
+    const byKid = jwks.find((k) => k.kid === kid && jwkMatchesAlg(k, alg));
     if (byKid) return byKid;
+    // kid was specified but didn't match any signing key — refuse to fall back,
+    // otherwise we risk key-confusion across rotations.
+    return undefined;
   }
-  // Fallback: single-key JWKS, or alg-match when kid is absent.
-  if (jwks.length === 1) return jwks[0];
-  return jwks.find((k) => k.alg === alg);
+  // No kid in the header: only allow the single-key JWKS case, and only if
+  // that key is compatible with the declared alg.
+  const eligible = jwks.filter((k) => jwkMatchesAlg(k, alg));
+  if (eligible.length === 1) return eligible[0];
+  return undefined;
 }
 
 async function importJwk(jwk: Jwk, alg: string): Promise<CryptoKey> {

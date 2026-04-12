@@ -22,6 +22,7 @@ import {
   buildAuthorizeUrl,
   discover,
   exchangeCode,
+  generatePkcePair,
   invalidateDiscovery,
   randomToken,
   verifyIdToken,
@@ -48,6 +49,7 @@ export const ssoAdminRouter = new Hono<{ Variables: AppVariables }>();
 const STATE_COOKIE = "sso_state";
 const NONCE_COOKIE = "sso_nonce";
 const TEAM_COOKIE = "sso_team";
+const PKCE_COOKIE = "sso_pkce";
 const COOKIE_TTL = 600; // 10 min — enough for the round-trip, short enough to limit replay.
 
 function buildCookie(name: string, value: string, maxAge: number, secure: boolean): string {
@@ -89,10 +91,10 @@ ssoLoginRouter.get("/sso/discover", async (c) => {
   }
   return c.json({
     connection: {
-      teamSlug: (match as unknown as { team: { slug: string } }).team.slug,
-      teamName: (match as unknown as { team: { name: string } }).team.name,
+      teamSlug: match.team.slug,
+      teamName: match.team.name,
       displayName: match.displayName,
-      loginUrl: `/api/auth/sso/${encodeURIComponent((match as unknown as { team: { slug: string } }).team.slug)}`,
+      loginUrl: `/api/auth/sso/${encodeURIComponent(match.team.slug)}`,
     },
   });
 });
@@ -101,15 +103,17 @@ ssoLoginRouter.get("/sso/discover", async (c) => {
 
 ssoLoginRouter.get("/sso/:teamSlug", async (c) => {
   const teamSlug = c.req.param("teamSlug");
-  const connection = await getSsoConnectionByTeamSlug(teamSlug);
-  if (!connection || !connection.enabled) {
+  const result = await getSsoConnectionByTeamSlug(teamSlug);
+  if (!result || !result.connection.enabled) {
     return c.json({ error: "not_found", message: "SSO not configured for this team" }, 404);
   }
+  const { connection } = result;
 
   try {
     const { discovery } = await discover(connection.issuer);
     const state = randomToken(16);
     const nonce = randomToken(16);
+    const pkce = await generatePkcePair();
     const redirectUri = buildRedirectUri(teamSlug);
     const url = buildAuthorizeUrl({
       discovery,
@@ -117,15 +121,17 @@ ssoLoginRouter.get("/sso/:teamSlug", async (c) => {
       redirectUri,
       state,
       nonce,
+      codeChallenge: pkce.challenge,
     });
 
     const isSecure = config.NODE_ENV === "production";
     c.header("Set-Cookie", buildCookie(STATE_COOKIE, state, COOKIE_TTL, isSecure), { append: true });
     c.header("Set-Cookie", buildCookie(NONCE_COOKIE, nonce, COOKIE_TTL, isSecure), { append: true });
     c.header("Set-Cookie", buildCookie(TEAM_COOKIE, teamSlug, COOKIE_TTL, isSecure), { append: true });
+    c.header("Set-Cookie", buildCookie(PKCE_COOKIE, pkce.verifier, COOKIE_TTL, isSecure), { append: true });
     return c.redirect(url);
   } catch (err) {
-    console.error("SSO authorize error:", err);
+    console.error("SSO authorize error:", (err as Error).message);
     return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=sso_unavailable`);
   }
 });
@@ -142,26 +148,32 @@ ssoLoginRouter.get("/sso/:teamSlug/callback", async (c) => {
   const storedState = readCookie(cookieHeader, STATE_COOKIE);
   const storedNonce = readCookie(cookieHeader, NONCE_COOKIE);
   const storedTeam = readCookie(cookieHeader, TEAM_COOKIE);
+  const storedVerifier = readCookie(cookieHeader, PKCE_COOKIE);
 
   // Always clear the transient cookies, regardless of outcome.
   c.header("Set-Cookie", clearCookie(STATE_COOKIE), { append: true });
   c.header("Set-Cookie", clearCookie(NONCE_COOKIE), { append: true });
   c.header("Set-Cookie", clearCookie(TEAM_COOKIE), { append: true });
+  c.header("Set-Cookie", clearCookie(PKCE_COOKIE), { append: true });
 
   if (idpError) {
-    return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=${encodeURIComponent(idpError)}`);
+    // idpError is echoed by the IdP; restrict to a safe charset before
+    // forwarding to the frontend error page.
+    const safe = idpError.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40);
+    return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=${safe}`);
   }
-  if (!code || !state || !storedState || !storedNonce) {
+  if (!code || !state || !storedState || !storedNonce || !storedVerifier) {
     return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=bad_request`);
   }
   if (state !== storedState || storedTeam !== teamSlug) {
     return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=state_mismatch`);
   }
 
-  const connection = await getSsoConnectionByTeamSlug(teamSlug);
-  if (!connection || !connection.enabled) {
+  const result = await getSsoConnectionByTeamSlug(teamSlug);
+  if (!result || !result.connection.enabled) {
     return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=sso_not_configured`);
   }
+  const { connection } = result;
 
   try {
     const { discovery, jwks } = await discover(connection.issuer);
@@ -173,6 +185,7 @@ ssoLoginRouter.get("/sso/:teamSlug/callback", async (c) => {
       clientSecret,
       code,
       redirectUri: buildRedirectUri(teamSlug),
+      codeVerifier: storedVerifier,
     });
 
     const claims = await verifyIdToken({
@@ -189,6 +202,7 @@ ssoLoginRouter.get("/sso/:teamSlug/callback", async (c) => {
         teamId: connection.teamId,
         issuer: connection.issuer,
         autoProvision: connection.autoProvision,
+        emailDomains: connection.emailDomains,
       },
       claims,
     );
@@ -203,7 +217,9 @@ ssoLoginRouter.get("/sso/:teamSlug/callback", async (c) => {
 
     return c.redirect(`${config.FRONTEND_URL}/teams`);
   } catch (err) {
-    console.error("SSO callback error:", err);
+    // Never include the raw error (may contain token-exchange response body) —
+    // log the message alone and fall through to a generic reason.
+    console.error("SSO callback error:", (err as Error).message);
     return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=sso_failed`);
   }
 });
@@ -283,7 +299,20 @@ ssoAdminRouter.put("/teams/:teamId/sso", zValidator("json", upsertSchema), async
     );
   }
 
-  const saved = await upsertSsoConnection(teamId, body);
+  // Invalidate discovery cache for both the prior issuer (if it's changing)
+  // and the new one, so a stale metadata document can't be used on the next
+  // login attempt.
+  const prior = await getSsoConnectionByTeamId(teamId);
+  if (prior && prior.issuer !== body.issuer) {
+    invalidateDiscovery(prior.issuer);
+  }
+
+  let saved;
+  try {
+    saved = await upsertSsoConnection(teamId, body);
+  } catch (err) {
+    return c.json({ error: "bad_request", message: (err as Error).message }, 400);
+  }
   invalidateDiscovery(body.issuer);
   return c.json({ connection: publicSsoConnection(saved) });
 });
@@ -296,6 +325,8 @@ ssoAdminRouter.delete("/teams/:teamId/sso", async (c) => {
   const gate = await requireTeamAdmin(c, teamId);
   if ("error" in gate) return gate.error;
 
+  const prior = await getSsoConnectionByTeamId(teamId);
   await deleteSsoConnection(teamId);
+  if (prior) invalidateDiscovery(prior.issuer);
   return c.json({ ok: true });
 });
