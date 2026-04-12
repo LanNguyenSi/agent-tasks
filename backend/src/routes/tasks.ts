@@ -11,6 +11,7 @@ import { logAuditEvent } from "../services/audit.js";
 import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } from "../services/review-signal.js";
 import { emitTaskAvailableSignal } from "../services/task-signal.js";
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
+import { DEFAULT_TRANSITIONS, findDefaultTransition } from "../services/default-workflow.js";
 
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -423,21 +424,13 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
       .filter((t) => t.from === task.status)
       .map((t) => ({ to: t.to, label: t.label, requires: t.requires }));
   } else {
-    // No workflow: return default transitions based on current status
-    const defaultTransitions: Record<string, { to: string; label: string }[]> = {
-      open: [{ to: "in_progress", label: "Start" }],
-      in_progress: [
-        { to: "review", label: "Submit for review" },
-        { to: "done", label: "Mark done" },
-        { to: "open", label: "Release" },
-      ],
-      review: [
-        { to: "done", label: "Approve" },
-        { to: "in_progress", label: "Request changes" },
-      ],
-      done: [],
-    };
-    allowedTransitions = defaultTransitions[task.status] ?? [];
+    // No workflow row — fall back to the built-in default workflow, which
+    // also carries `requires` gates (see services/default-workflow.ts).
+    allowedTransitions = (DEFAULT_TRANSITIONS[task.status] ?? []).map((t) => ({
+      to: t.to,
+      label: t.label,
+      requires: t.requires,
+    }));
   }
 
   const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
@@ -985,90 +978,97 @@ taskRouter.post(
     const previousStatus = task.status;
     let forcedRules: TransitionRule[] = [];
 
-    // Validate transition against workflow definition if task has a workflow
+    // Resolve the transition to evaluate — either from the task's explicit
+    // Workflow row, or from the built-in default workflow that applies to
+    // every project without a custom one. Both paths feed the same rule
+    // evaluator and force-override logic below.
+    let resolvedRequires: string[] | undefined;
+    let requiredRole: string | undefined;
+
     if (task.workflow) {
       const def = task.workflow.definition as {
         states: { name: string }[];
         transitions: { from: string; to: string; requiredRole?: string; requires?: string[] }[];
       };
-
       const transition = def.transitions.find(
         (t) => t.from === task.status && t.to === status,
       );
-
       if (!transition) {
         return c.json(
           { error: "bad_request", message: `Transition from '${task.status}' to '${status}' is not allowed by workflow` },
           400,
         );
       }
-
-      if (transition.requiredRole && transition.requiredRole !== "any") {
-        if (actor.type === "agent") {
-          return forbidden(c, `This transition requires role: ${transition.requiredRole}`);
-        }
-        // For humans, check team membership role
-        const membership = await prisma.teamMember.findFirst({
-          where: { userId: actor.userId, team: { projects: { some: { id: task.projectId } } } },
-        });
-        if (membership?.role !== transition.requiredRole) {
-          return forbidden(c, `Requires role: ${transition.requiredRole}`);
-        }
-      }
-
-      // Precondition checks: branch present, PR present, etc. These are
-      // declarative per-transition in the workflow definition. Unknown rules
-      // are reported but do NOT block — keeps older workflows forward-
-      // compatible if a newer backend ships with new rule names that an
-      // operator typed by mistake.
-      const { failed, unknown } = evaluateTransitionRules(transition.requires, {
-        branchName: task.branchName,
-        prUrl: task.prUrl,
-        prNumber: task.prNumber,
-      });
-
-      if (failed.length > 0) {
-        // Resolve admin entitlement once so canForce reports the truth
-        // instead of an optimistic "any human" hint.
-        const isAdmin =
-          actor.type === "human" &&
-          (
-            await prisma.teamMember.findFirst({
-              where: {
-                userId: actor.userId,
-                team: { projects: { some: { id: task.projectId } } },
-              },
-            })
-          )?.role === "ADMIN";
-
-        if (!force) {
-          return c.json(
-            {
-              error: "precondition_failed",
-              message: `Transition blocked — ${failed
-                .map((r) => RULE_MESSAGES[r])
-                .join(" ")}`,
-              failed: failed.map((r) => ({ rule: r, message: RULE_MESSAGES[r] })),
-              // True iff this actor can actually bypass — the UI can hide the
-              // "Force" button for non-admins instead of letting them retry
-              // into a second 403.
-              canForce: isAdmin,
-            },
-            422,
-          );
-        }
-
-        if (!isAdmin) {
-          return forbidden(c, "Only team admins can force a transition past preconditions");
-        }
-        forcedRules = failed;
-      }
-
-      if (unknown.length > 0) {
-        console.warn(
-          `[workflow] task ${task.id} transition ${task.status}→${status} references unknown rules: ${unknown.join(", ")}`,
+      resolvedRequires = transition.requires;
+      requiredRole = transition.requiredRole;
+    } else {
+      const defaultT = findDefaultTransition(task.status, status);
+      if (!defaultT) {
+        return c.json(
+          { error: "bad_request", message: `Transition from '${task.status}' to '${status}' is not allowed by the default workflow` },
+          400,
         );
       }
+      resolvedRequires = defaultT.requires;
+    }
+
+    if (requiredRole && requiredRole !== "any") {
+      if (actor.type === "agent") {
+        return forbidden(c, `This transition requires role: ${requiredRole}`);
+      }
+      const membership = await prisma.teamMember.findFirst({
+        where: { userId: actor.userId, team: { projects: { some: { id: task.projectId } } } },
+      });
+      if (membership?.role !== requiredRole) {
+        return forbidden(c, `Requires role: ${requiredRole}`);
+      }
+    }
+
+    // Precondition checks: branch present, PR present, etc. Unknown rules
+    // are reported but do NOT block — keeps workflows forward-compatible
+    // across backend versions if an operator mistyped a rule name.
+    const { failed, unknown } = evaluateTransitionRules(resolvedRequires, {
+      branchName: task.branchName,
+      prUrl: task.prUrl,
+      prNumber: task.prNumber,
+    });
+
+    if (failed.length > 0) {
+      const isAdmin =
+        actor.type === "human" &&
+        (
+          await prisma.teamMember.findFirst({
+            where: {
+              userId: actor.userId,
+              team: { projects: { some: { id: task.projectId } } },
+            },
+          })
+        )?.role === "ADMIN";
+
+      if (!force) {
+        return c.json(
+          {
+            error: "precondition_failed",
+            message: `Transition blocked — ${failed
+              .map((r) => RULE_MESSAGES[r])
+              .join(" ")}`,
+            failed: failed.map((r) => ({ rule: r, message: RULE_MESSAGES[r] })),
+            canForce: isAdmin,
+          },
+          422,
+        );
+      }
+
+      if (!isAdmin) {
+        return forbidden(c, "Only team admins can force a transition past preconditions");
+      }
+      forcedRules = failed;
+    }
+
+    if (unknown.length > 0) {
+      console.warn(
+        `[workflow] task ${task.id} transition ${task.status}→${status} references unknown rules: ${unknown.join(", ")}`,
+      );
     }
 
     const updated = await prisma.task.update({

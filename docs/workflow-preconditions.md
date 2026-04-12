@@ -61,6 +61,42 @@ Example failure response:
 }
 ```
 
+## Default workflow (applied when no custom Workflow row exists)
+
+Projects that haven't defined their own workflow inherit a built-in default
+that **now carries gates**. It lives in
+[`backend/src/services/default-workflow.ts`](../backend/src/services/default-workflow.ts)
+and matches the recommended config below:
+
+| From | To | Label | Requires |
+| ---- | -- | ----- | -------- |
+| `open` | `in_progress` | Start | `branchPresent` |
+| `in_progress` | `review` | Submit for review | `branchPresent`, `prPresent` |
+| `in_progress` | `done` | Mark done (skip review) | `branchPresent`, `prPresent` |
+| `in_progress` | `open` | Release | *(none)* |
+| `review` | `done` | Approve | *(none)* |
+| `review` | `in_progress` | Request changes | *(none)* |
+| `done` | — | *(terminal)* | — |
+
+Before this change the no-workflow path accepted any transition string
+without validation. It now rejects transitions that aren't listed with HTTP
+400, and blocks gated transitions with HTTP 422 — the same behaviour that
+custom workflows already enforce. Teams that need different rules should
+create a custom `Workflow` row; the gates in `requires` can then be set per
+transition independently.
+
+### What bypasses these gates
+
+- **GitHub webhook handlers** (`backend/src/services/github-webhook.ts`) write
+  task state directly via Prisma on PR merge/close events. These never go
+  through `/tasks/:id/transition`, so webhook-driven transitions are
+  deliberately ungated.
+- **The `/tasks/:id/review` endpoint** (approve / request changes) manages
+  its own state transitions without calling the transition handler, so the
+  review flow is also not affected.
+- **Admin force** (documented below) remains the explicit manual escape
+  hatch with full audit.
+
 ## Built-in rules
 
 | Rule | Passes when | Fails when | Fix |
