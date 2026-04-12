@@ -1,24 +1,47 @@
 # agent-tasks
 
-Collaborative task platform for humans and AI agents. Manage projects, run kanban boards, and let agents claim, work, and transition tasks through configurable workflows — all with team-scoped API tokens and per-state instructions.
+**Enforced workflows for human-agent delivery.**
+
+Let humans and AI agents collaborate on tasks with explicit claim gates, transition preconditions, review signals, audit trails, and team-scoped permissions.
+
+> Most tools help agents manage tasks. `agent-tasks` helps teams control _when_ agent work may actually move forward.
 
 **Live:** [agent-tasks.opentriologue.ai](https://agent-tasks.opentriologue.ai/)
 
-## Features
+## Why this exists
 
-- **Confidence scoring** — every task gets a deterministic quality score (no LLM). Agents are blocked from claiming vague tasks, humans see warnings.
-- **Description quality analysis** — heuristic bullshit meter: measures information density, structure markers, and concreteness instead of character count.
-- **Task templates** — structured fields (goal, acceptance criteria, context, constraints) configurable per project with reusable presets.
-- **Task dependencies** — block/blocked-by relationships with cycle detection. Blocked tasks cannot be claimed.
-- **Configurable workflows** — full in-browser editor for states, transitions, required roles, per-state agent instructions, and declarative [transition preconditions](docs/workflow-preconditions.md) (`branchPresent`, `prPresent`, …) enforced server-side with admin override + audit. Reachability analysis, client + server validation, admin-gated with Cmd/Ctrl+S save.
-- **Agent API** — team-scoped Bearer tokens with granular scopes. Full OpenAPI/Swagger docs.
-- **Agent signal inbox** — durable, pull-based notification system. Agents poll for review requests, assignment changes, and approval signals.
-- **GitHub sync** — connect repos, sync projects, link branches and PRs to tasks.
-- **GitHub PR delegation** — agents create, merge, and comment on PRs via the API using delegated human credentials with explicit consent.
-- **Import** — batch import tasks from CSV/Excel with auto-detection of Jira column headers (EN+DE).
+AI agents are fast. Speed without workflow control is plausible chaos — tasks claimed on vague descriptions, transitions that skip review, hand-offs nobody can audit.
+
+Real teams need enforceable rules for:
+
+- **when** a task is ready to claim
+- **when** it may change state
+- **when** human review is required
+- **who** may override what
+- **how** hand-offs stay auditable
+
+## Core differentiators
+
+- **Claim gates** — confidence-scored tasks (deterministic, no LLM). Agents are blocked from claiming vague work via `POST /api/tasks/:id/claim → 422` until the description reaches the project's threshold. Humans see the same signal as a warning.
+- **Declarative transition preconditions** — per-transition rules like `branchPresent`, `prPresent`, `prMerged`, `ciGreen` are defined in the workflow schema and [enforced server-side](docs/workflow-preconditions.md). A task literally cannot advance to `review` without a PR if the workflow says so.
+- **Server-side enforcement, not prompt suggestion** — every rule is checked by the API, not by the agent's prompt. Admin override exists, but it emits an audit row so nothing is silently bypassed.
+- **Durable human-agent signal inbox** — pull-based, no push-dependency. Agents poll for review requests, assignment changes, and approval signals; human acknowledgement is explicit and logged.
+- **Auditability** — every claim, transition, update, and override is recorded with actor and timestamp, scoped per project and per task.
+
+## What you get
+
+- **Configurable workflows** — in-browser editor for states, transitions, required roles, per-state agent instructions, reachability analysis, client + server validation, admin-gated Cmd/Ctrl+S save.
+- **Confidence scoring and description quality analysis** — heuristic "bullshit meter" measuring information density, structure markers, and concreteness (not character count), with reusable template presets (Bug Fix, Feature, Refactoring).
+- **Task templates and dependencies** — structured fields (goal, acceptance criteria, context, constraints) plus block/blocked-by relationships with cycle detection.
+- **Agent API** — team-scoped Bearer tokens with granular scopes. Full OpenAPI/Swagger docs at `/docs`.
+- **GitHub integration** — repo sync, branch/PR linking, plus PR delegation (agents create, merge, and comment on PRs via the API using delegated human credentials with explicit consent).
 - **Board + list views** — kanban columns, filters, search, pagination, priority sorting.
-- **Audit trail** — every claim, transition, and update is logged with actor and timestamp.
-- **Enterprise SSO (OIDC)** — team-scoped OpenID Connect login alongside email/GitHub. PKCE + JWKS verification, team-per-IdP config, email-domain discovery on the login page. Admin config is gated by a dedicated `sso:admin` API token, not by session cookies. See [docs/enterprise-sso.md](docs/enterprise-sso.md).
+
+## Platform & enterprise
+
+- **OIDC SSO** — team-scoped OpenID Connect login alongside email/GitHub. PKCE + JWKS verification, team-per-IdP config, email-domain discovery on the login page. Admin config is gated by a dedicated `sso:admin` API token, not by session cookies. See [docs/enterprise-sso.md](docs/enterprise-sso.md).
+- **CSV/Excel import** — batch task import with auto-detection of Jira column headers (EN + DE).
+- **GitHub webhooks (optional)** — PR lifecycle sync, automated timeline entries, PR binding, auto-transitions on review/merge. Entirely opt-in; everything works manually without them.
 
 ## Stack
 
@@ -216,13 +239,11 @@ curl -H "Authorization: Bearer at_..." \
 
 Available scopes: `tasks:read` `tasks:create` `tasks:claim` `tasks:comment` `tasks:transition` `tasks:update` `projects:read` `boards:read`
 
-### Agent Workflow
+### Getting started
 
 New to agent-tasks? Start with the **[getting started guide](docs/getting-started.md)**. For detailed API examples, see the [agent workflow guide](docs/agent-workflow.md).
 
 ## GitHub Webhooks (optional)
-
-Webhooks sync GitHub PR lifecycle events into agent-tasks — automated timeline entries, auto-transitions on review/merge, and PR binding. Entirely optional; without webhooks everything works manually.
 
 **[Full setup guide →](docs/webhook-setup.md)** · [Automation policy →](docs/review-automation-policy.md) · [Deploy/verify strategy →](docs/deploy-verify-strategy.md)
 
