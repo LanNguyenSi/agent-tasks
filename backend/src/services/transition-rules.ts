@@ -37,6 +37,36 @@ export const RULE_MESSAGES: Record<TransitionRule, string> = {
     "No pull request recorded on this task. Create the PR (via /api/github/pull-requests or PATCH prUrl/prNumber) first.",
 };
 
+/**
+ * Catalog shape served to the frontend so the workflow editor can render a
+ * checkbox per rule without hardcoding anything. Adding a new rule is a
+ * single-file change: add to TransitionRule, RULE_EVALUATORS, RULE_MESSAGES,
+ * and RULE_CATALOG.
+ */
+export interface RuleCatalogEntry {
+  id: TransitionRule;
+  label: string;
+  description: string;
+  failureMessage: string;
+}
+
+export const RULE_CATALOG: RuleCatalogEntry[] = [
+  {
+    id: "branchPresent",
+    label: "Branch recorded",
+    description:
+      "Requires that the task has a non-empty `branchName`. The agent or human must record the branch on the task (PATCH /api/tasks/:id) before this transition is allowed.",
+    failureMessage: RULE_MESSAGES.branchPresent,
+  },
+  {
+    id: "prPresent",
+    label: "Pull request recorded",
+    description:
+      "Requires that the task has both `prUrl` and `prNumber` set. Typically satisfied by creating the PR via /api/github/pull-requests, which patches both fields automatically.",
+    failureMessage: RULE_MESSAGES.prPresent,
+  },
+];
+
 export function isKnownRule(r: string): r is TransitionRule {
   return r in RULE_EVALUATORS;
 }

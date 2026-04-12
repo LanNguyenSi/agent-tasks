@@ -17,6 +17,17 @@ export interface DefaultTransition {
   requires?: string[];
 }
 
+/** States that ship with the default workflow. Kept in a single place so
+ * the customize endpoint can copy them verbatim into a new Workflow row. */
+export const DEFAULT_STATES = [
+  { name: "open", label: "Open", terminal: false },
+  { name: "in_progress", label: "In progress", terminal: false },
+  { name: "review", label: "In review", terminal: false },
+  { name: "done", label: "Done", terminal: true },
+] as const;
+
+export const DEFAULT_INITIAL_STATE = "open";
+
 export const DEFAULT_TRANSITIONS: Record<string, DefaultTransition[]> = {
   open: [
     // Claiming the task and starting work implies you have somewhere to put
@@ -51,4 +62,42 @@ export function findDefaultTransition(
   to: string,
 ): DefaultTransition | undefined {
   return DEFAULT_TRANSITIONS[from]?.find((t) => t.to === to);
+}
+
+export interface WorkflowDefinitionShape {
+  states: { name: string; label: string; terminal: boolean; agentInstructions?: string }[];
+  transitions: {
+    from: string;
+    to: string;
+    label?: string;
+    requiredRole?: string;
+    requires?: string[];
+  }[];
+  initialState: string;
+}
+
+/**
+ * Serialize the hardcoded default into the same shape as
+ * `Workflow.definition`. The customize endpoint uses this to seed a new
+ * Workflow row; the effective-workflow endpoint uses it to return a
+ * consistent shape whether a custom row exists or not.
+ */
+export function defaultWorkflowDefinition(): WorkflowDefinitionShape {
+  const transitions: WorkflowDefinitionShape["transitions"] = [];
+  for (const [from, list] of Object.entries(DEFAULT_TRANSITIONS)) {
+    for (const t of list) {
+      transitions.push({
+        from,
+        to: t.to,
+        label: t.label,
+        requiredRole: "any",
+        ...(t.requires ? { requires: t.requires } : {}),
+      });
+    }
+  }
+  return {
+    states: DEFAULT_STATES.map((s) => ({ ...s })),
+    transitions,
+    initialState: DEFAULT_INITIAL_STATE,
+  };
 }

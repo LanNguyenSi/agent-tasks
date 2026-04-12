@@ -166,6 +166,19 @@ the transition endpoint. Misbehaved agents get a 422 and a clear error
 message — which they can also act on, since the message names the missing
 rules.
 
+## Editor API (for UI and scripts)
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `GET` | `/api/workflow-rules` | Catalog of built-in rules: `{rules: [{id, label, description, failureMessage}]}`. Used by the UI to render rule checkboxes without hardcoding any IDs on the frontend. |
+| `GET` | `/api/projects/:projectId/effective-workflow` | Returns the workflow currently in force for the project: `{source: "custom"\|"default", workflowId, definition}`. The response shape is stable whether a custom `Workflow` row exists or not — the UI can render it identically. |
+| `POST` | `/api/projects/:projectId/workflow/customize` | Admin-only. Forks the hardcoded default into a new `Workflow` row marked `isDefault: true`. Returns `201` with the new workflow. Returns `409` if the project already has a custom workflow. |
+| `DELETE` | `/api/projects/:projectId/workflow` | Admin-only. Drops the custom `Workflow` row, unlinks any tasks that referenced it (`workflowId` set to `NULL`), and reverts the project to the hardcoded default. Returns `404` if there's nothing to delete. |
+
+Once a custom workflow exists, the full edit surface is the existing
+`PUT /api/workflows/:id` endpoint — the UI writes the whole
+`definition` (states + transitions + initialState) back on every save.
+
 ## Configuring rules on a workflow
 
 Rules live in the workflow's `definition.transitions[].requires` array.

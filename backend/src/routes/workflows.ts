@@ -6,8 +6,26 @@ import { hasProjectAccess } from "../services/team-access.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
+import { defaultWorkflowDefinition } from "../services/default-workflow.js";
+import { RULE_CATALOG } from "../services/transition-rules.js";
 
 export const workflowRouter = new Hono<{ Variables: AppVariables }>();
+
+/**
+ * Check that the actor is a human team ADMIN on the team owning `projectId`.
+ * Mirrors the pattern used by the transition force-check; extracted here
+ * because the customize / reset endpoints need the same gate.
+ */
+async function isProjectAdmin(actor: Actor, projectId: string): Promise<boolean> {
+  if (actor.type !== "human") return false;
+  const membership = await prisma.teamMember.findFirst({
+    where: {
+      userId: actor.userId,
+      team: { projects: { some: { id: projectId } } },
+    },
+  });
+  return membership?.role === "ADMIN";
+}
 
 const workflowStateSchema = z.object({
   name: z.string().min(1),
@@ -42,6 +60,156 @@ const createWorkflowSchema = z.object({
 const updateWorkflowSchema = createWorkflowSchema
   .omit({ projectId: true })
   .partial();
+
+// ── Rules catalog (public-ish: needs auth but no role) ──────────────────────
+
+workflowRouter.get("/workflow-rules", (c) => {
+  return c.json({ rules: RULE_CATALOG });
+});
+
+// ── Effective workflow for a project ────────────────────────────────────────
+
+/**
+ * Returns the workflow currently in force for the project — either the
+ * custom Workflow row (if any) or the built-in default. The response shape
+ * is stable in both cases so the UI can render it identically.
+ */
+workflowRouter.get("/projects/:projectId/effective-workflow", async (c) => {
+  const actor = c.get("actor");
+  const projectId = c.req.param("projectId");
+
+  if (!(await hasProjectAccess(actor, projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) return notFound(c);
+
+  const custom = await prisma.workflow.findFirst({
+    where: { projectId, isDefault: true },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (custom) {
+    return c.json({
+      source: "custom" as const,
+      workflowId: custom.id,
+      definition: custom.definition,
+    });
+  }
+
+  return c.json({
+    source: "default" as const,
+    workflowId: null,
+    definition: defaultWorkflowDefinition(),
+  });
+});
+
+// ── Customize (fork the default into a custom Workflow row) ─────────────────
+
+workflowRouter.post("/projects/:projectId/workflow/customize", async (c) => {
+  const actor = c.get("actor");
+  const projectId = c.req.param("projectId");
+
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) return notFound(c);
+
+  if (!(await isProjectAdmin(actor, projectId))) {
+    return forbidden(c, "Only team admins can customize a workflow");
+  }
+
+  // Wrap the check-then-create in a transaction so two concurrent POSTs
+  // cannot both pass the findFirst check and end up creating duplicate
+  // default workflow rows for the same project.
+  try {
+    const workflow = await prisma.$transaction(async (tx) => {
+      const existing = await tx.workflow.findFirst({
+        where: { projectId, isDefault: true },
+      });
+      if (existing) {
+        throw new WorkflowConflictError(existing.id);
+      }
+      return tx.workflow.create({
+        data: {
+          projectId,
+          name: "Custom workflow",
+          isDefault: true,
+          definition: defaultWorkflowDefinition() as object,
+        },
+      });
+    });
+
+    return c.json(
+      {
+        source: "custom" as const,
+        workflowId: workflow.id,
+        definition: workflow.definition,
+      },
+      201,
+    );
+  } catch (err) {
+    if (err instanceof WorkflowConflictError) {
+      return c.json(
+        {
+          error: "conflict",
+          message: "This project already has a custom workflow",
+          workflowId: err.workflowId,
+        },
+        409,
+      );
+    }
+    throw err;
+  }
+});
+
+class WorkflowConflictError extends Error {
+  constructor(public workflowId: string) {
+    super("Workflow already customized");
+  }
+}
+
+// ── Reset (drop the custom row, revert to default) ──────────────────────────
+
+workflowRouter.delete("/projects/:projectId/workflow", async (c) => {
+  const actor = c.get("actor");
+  const projectId = c.req.param("projectId");
+
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) return notFound(c);
+
+  if (!(await isProjectAdmin(actor, projectId))) {
+    return forbidden(c, "Only team admins can reset a workflow");
+  }
+
+  const existing = await prisma.workflow.findFirst({
+    where: { projectId, isDefault: true },
+  });
+  if (!existing) {
+    return c.json(
+      { error: "not_found", message: "This project has no custom workflow to reset" },
+      404,
+    );
+  }
+
+  // Task.workflow has no explicit `onDelete` in schema.prisma, so Prisma's
+  // default (NoAction) would fail the FK constraint on delete. Unset the
+  // workflowId on all referencing tasks first — atomically with the delete,
+  // so a mid-flight error doesn't leave tasks detached from a still-present
+  // workflow row.
+  await prisma.$transaction([
+    prisma.task.updateMany({
+      where: { workflowId: existing.id },
+      data: { workflowId: null },
+    }),
+    prisma.workflow.delete({ where: { id: existing.id } }),
+  ]);
+
+  return c.json({
+    source: "default" as const,
+    workflowId: null,
+    definition: defaultWorkflowDefinition(),
+  });
+});
 
 // ── List workflows for a project ──────────────────────────────────────────────
 
