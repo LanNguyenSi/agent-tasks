@@ -6,7 +6,7 @@ import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { Prisma } from "@prisma/client";
 import { forbidden, notFound, conflict, lowConfidence } from "../middleware/error.js";
-import { hasProjectAccess } from "../services/team-access.js";
+import { hasProjectAccess, isProjectAdmin } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
 import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } from "../services/review-signal.js";
 import { emitTaskAvailableSignal } from "../services/task-signal.js";
@@ -1062,16 +1062,7 @@ taskRouter.post(
     );
 
     if (failed.length > 0) {
-      const isAdmin =
-        actor.type === "human" &&
-        (
-          await prisma.teamMember.findFirst({
-            where: {
-              userId: actor.userId,
-              team: { projects: { some: { id: task.projectId } } },
-            },
-          })
-        )?.role === "ADMIN";
+      const isAdmin = await isProjectAdmin(actor, task.projectId);
 
       if (!force) {
         return c.json(
