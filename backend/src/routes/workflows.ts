@@ -21,6 +21,11 @@ const workflowTransitionSchema = z.object({
   to: z.string().min(1),
   label: z.string().optional(),
   requiredRole: z.enum(["ADMIN", "HUMAN_MEMBER", "REVIEWER", "any"]).default("any"),
+  // Built-in preconditions that must be satisfied before this transition is
+  // allowed. See backend/src/routes/tasks.ts for the list of known rule names.
+  // Unknown rules are ignored (not blocking) so forward compatibility across
+  // backend versions is safe.
+  requires: z.array(z.string().min(1)).max(10).optional(),
 });
 
 const createWorkflowSchema = z.object({

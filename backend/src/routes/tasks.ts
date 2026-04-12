@@ -12,6 +12,7 @@ import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } 
 import { emitTaskAvailableSignal } from "../services/task-signal.js";
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
 
+
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
 const taskInclude = {
@@ -81,7 +82,20 @@ const agentUpdateTaskSchema = z.object({
 
 const transitionSchema = z.object({
   status: z.string().min(1),
+  // When set, bypasses workflow precondition checks (branchPresent, prPresent,
+  // …) — but not the transition existence / required-role checks. Only team
+  // admins may set this, and every forced transition writes an audit event
+  // with the bypassed rules.
+  force: z.boolean().optional(),
+  // Optional justification surfaced in the audit payload when force=true.
+  forceReason: z.string().max(500).optional(),
 });
+
+import {
+  evaluateTransitionRules,
+  RULE_MESSAGES,
+  type TransitionRule,
+} from "../services/transition-rules.js";
 
 const createAttachmentSchema = z.object({
   name: z.string().min(1).max(255),
@@ -390,10 +404,10 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
   }
 
   type WorkflowState = { name: string; label: string; terminal: boolean; agentInstructions?: string };
-  type WorkflowTransition = { from: string; to: string; label?: string; requiredRole?: string };
+  type WorkflowTransition = { from: string; to: string; label?: string; requiredRole?: string; requires?: string[] };
 
   let currentState: WorkflowState | null = null;
-  let allowedTransitions: { to: string; label?: string }[] = [];
+  let allowedTransitions: { to: string; label?: string; requires?: string[] }[] = [];
 
   if (task.workflow) {
     const def = task.workflow.definition as {
@@ -403,9 +417,11 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     };
 
     currentState = def.states.find((s) => s.name === task.status) ?? null;
+    // Surface `requires` to agents so they know which preconditions to
+    // satisfy (set branch, create PR) before attempting the transition.
     allowedTransitions = def.transitions
       .filter((t) => t.from === task.status)
-      .map((t) => ({ to: t.to, label: t.label }));
+      .map((t) => ({ to: t.to, label: t.label, requires: t.requires }));
   } else {
     // No workflow: return default transitions based on current status
     const defaultTransitions: Record<string, { to: string; label: string }[]> = {
@@ -965,14 +981,15 @@ taskRouter.post(
       return forbidden(c, "Access denied to this project");
     }
 
-    const { status } = c.req.valid("json");
+    const { status, force, forceReason } = c.req.valid("json");
     const previousStatus = task.status;
+    let forcedRules: TransitionRule[] = [];
 
     // Validate transition against workflow definition if task has a workflow
     if (task.workflow) {
       const def = task.workflow.definition as {
         states: { name: string }[];
-        transitions: { from: string; to: string; requiredRole?: string }[];
+        transitions: { from: string; to: string; requiredRole?: string; requires?: string[] }[];
       };
 
       const transition = def.transitions.find(
@@ -998,6 +1015,60 @@ taskRouter.post(
           return forbidden(c, `Requires role: ${transition.requiredRole}`);
         }
       }
+
+      // Precondition checks: branch present, PR present, etc. These are
+      // declarative per-transition in the workflow definition. Unknown rules
+      // are reported but do NOT block — keeps older workflows forward-
+      // compatible if a newer backend ships with new rule names that an
+      // operator typed by mistake.
+      const { failed, unknown } = evaluateTransitionRules(transition.requires, {
+        branchName: task.branchName,
+        prUrl: task.prUrl,
+        prNumber: task.prNumber,
+      });
+
+      if (failed.length > 0) {
+        // Resolve admin entitlement once so canForce reports the truth
+        // instead of an optimistic "any human" hint.
+        const isAdmin =
+          actor.type === "human" &&
+          (
+            await prisma.teamMember.findFirst({
+              where: {
+                userId: actor.userId,
+                team: { projects: { some: { id: task.projectId } } },
+              },
+            })
+          )?.role === "ADMIN";
+
+        if (!force) {
+          return c.json(
+            {
+              error: "precondition_failed",
+              message: `Transition blocked — ${failed
+                .map((r) => RULE_MESSAGES[r])
+                .join(" ")}`,
+              failed: failed.map((r) => ({ rule: r, message: RULE_MESSAGES[r] })),
+              // True iff this actor can actually bypass — the UI can hide the
+              // "Force" button for non-admins instead of letting them retry
+              // into a second 403.
+              canForce: isAdmin,
+            },
+            422,
+          );
+        }
+
+        if (!isAdmin) {
+          return forbidden(c, "Only team admins can force a transition past preconditions");
+        }
+        forcedRules = failed;
+      }
+
+      if (unknown.length > 0) {
+        console.warn(
+          `[workflow] task ${task.id} transition ${task.status}→${status} references unknown rules: ${unknown.join(", ")}`,
+        );
+      }
     }
 
     const updated = await prisma.task.update({
@@ -1007,11 +1078,18 @@ taskRouter.post(
     });
 
     void logAuditEvent({
-      action: "task.transitioned",
+      action: forcedRules.length > 0 ? "task.transitioned.forced" : "task.transitioned",
       actorId: actor.type === "human" ? actor.userId : undefined,
       projectId: task.projectId,
       taskId: task.id,
-      payload: { from: previousStatus, to: status, actorType: actor.type },
+      payload: {
+        from: previousStatus,
+        to: status,
+        actorType: actor.type,
+        ...(forcedRules.length > 0
+          ? { forcedRules, forceReason: forceReason ?? null }
+          : {}),
+      },
     });
 
     // Emit review signal when entering review state
