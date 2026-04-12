@@ -18,13 +18,14 @@ Collaborative task platform for humans and AI agents. Manage projects, run kanba
 - **Import** — batch import tasks from CSV/Excel with auto-detection of Jira column headers (EN+DE).
 - **Board + list views** — kanban columns, filters, search, pagination, priority sorting.
 - **Audit trail** — every claim, transition, and update is logged with actor and timestamp.
+- **Enterprise SSO (OIDC)** — team-scoped OpenID Connect login alongside email/GitHub. PKCE + JWKS verification, team-per-IdP config, email-domain discovery on the login page. Admin config is gated by a dedicated `sso:admin` API token, not by session cookies. See [docs/enterprise-sso.md](docs/enterprise-sso.md).
 
 ## Stack
 
 - **Frontend:** Next.js 15 (React 19, App Router)
 - **Backend:** Hono + Node.js
 - **Database:** PostgreSQL + Prisma
-- **Auth:** Email/Password + optional GitHub connect (humans) + API tokens with scopes (agents)
+- **Auth:** Email/Password + optional GitHub connect + team-scoped OIDC SSO (humans) + API tokens with scopes (agents)
 
 ## Monorepo Structure
 

@@ -47,6 +47,7 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.use("/api/auth/login", rateLimit({ windowMs: 60_000, max: 10 }));
   app.use("/api/auth/github/*", rateLimit({ windowMs: 60_000, max: 10 }));
   app.use("/api/auth/sso/*", rateLimit({ windowMs: 60_000, max: 20 }));
+  app.use("/api/sso/whoami", rateLimit({ windowMs: 60_000, max: 20 }));
 
   // Public
   app.route("/api/health", healthRouter);
@@ -58,7 +59,14 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.use("/api/auth/logout", authMiddleware);
   app.use("/api/auth/delegation", authMiddleware);
   app.use("/api/auth/github/connect", authMiddleware);
-  app.use("/api/teams/*", authMiddleware);
+  // /api/teams/:teamId/sso has its OWN token+scope gate (ssoAdminGuard) and
+  // must not go through the session-based authMiddleware — otherwise a valid
+  // session alone would establish an actor on the request, weakening the
+  // defense-in-depth intent of the scope-gated endpoint.
+  app.use("/api/teams/*", async (c, next) => {
+    if (/^\/api\/teams\/[^/]+\/sso$/.test(c.req.path)) return next();
+    return authMiddleware(c, next);
+  });
   app.use("/api/agent-tokens/*", authMiddleware);
   app.use("/api/tasks/*", authMiddleware);
   app.use("/api/agent/signals/*", authMiddleware);

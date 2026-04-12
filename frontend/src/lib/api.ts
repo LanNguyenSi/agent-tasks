@@ -265,46 +265,9 @@ export async function discoverSso(email: string): Promise<SsoDiscoverResult | nu
   return data.connection;
 }
 
-export interface SsoConnection {
-  id: string;
-  teamId: string;
-  displayName: string;
-  issuer: string;
-  clientId: string;
-  emailDomains: string[];
-  autoProvision: boolean;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export async function getTeamSsoConnection(teamId: string): Promise<SsoConnection | null> {
-  const data = await request<{ connection: SsoConnection | null }>(`/api/teams/${teamId}/sso`);
-  return data.connection;
-}
-
-export async function upsertTeamSsoConnection(
-  teamId: string,
-  body: {
-    displayName: string;
-    issuer: string;
-    clientId: string;
-    clientSecret: string;
-    emailDomains: string[];
-    autoProvision?: boolean;
-    enabled?: boolean;
-  },
-): Promise<SsoConnection> {
-  const data = await request<{ connection: SsoConnection }>(`/api/teams/${teamId}/sso`, {
-    method: "PUT",
-    body: JSON.stringify(body),
-  });
-  return data.connection;
-}
-
-export async function deleteTeamSsoConnection(teamId: string): Promise<void> {
-  await request(`/api/teams/${teamId}/sso`, { method: "DELETE" });
-}
+// SSO admin endpoints are token-gated (AgentToken with sso:admin scope) and
+// called directly from /settings/sso with a user-supplied token — they are
+// intentionally NOT exposed through this session-authed api.ts client.
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
