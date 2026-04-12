@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getCurrentUser, getTeams, login, register } from "../../lib/api";
+import { discoverSso, getCurrentUser, getTeams, login, register, type SsoDiscoverResult } from "../../lib/api";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import FormField from "../../components/ui/FormField";
@@ -20,6 +20,27 @@ export default function AuthPage() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ssoMatch, setSsoMatch] = useState<SsoDiscoverResult | null>(null);
+
+  // SSO domain discovery is triggered on blur (below) rather than on every
+  // keystroke, to avoid sending partial emails to the backend. It only runs
+  // in login mode — in register mode there is no existing SSO to match.
+  async function checkSsoForEmail() {
+    if (mode !== "login") {
+      setSsoMatch(null);
+      return;
+    }
+    if (!email.includes("@") || email.length < 5) {
+      setSsoMatch(null);
+      return;
+    }
+    try {
+      const match = await discoverSso(email);
+      setSsoMatch(match);
+    } catch {
+      setSsoMatch(null);
+    }
+  }
 
   useEffect(() => {
     void (async () => {
@@ -116,6 +137,7 @@ export default function AuthPage() {
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
+                onBlur={() => void checkSsoForEmail()}
                 placeholder="you@example.com"
                 required
                 style={{ width: "100%", display: "block" }}
@@ -132,6 +154,29 @@ export default function AuthPage() {
                 style={{ width: "100%", display: "block" }}
               />
             </FormField>
+
+            {ssoMatch && (
+              <AlertBanner tone="info" title={`${ssoMatch.teamName} uses single sign-on`}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+                  <span>Your company has configured SSO for this email domain.</span>
+                  <a
+                    href={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"}${ssoMatch.loginUrl}`}
+                    className="btn-primary"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderRadius: "var(--radius-lg)",
+                      padding: "0.5rem 1rem",
+                      textDecoration: "none",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Continue with {ssoMatch.displayName}
+                  </a>
+                </div>
+              </AlertBanner>
+            )}
 
             {error && (
               <AlertBanner tone="danger" title="Error">

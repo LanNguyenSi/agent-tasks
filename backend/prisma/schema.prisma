@@ -30,6 +30,7 @@ model User {
   updatedAt     DateTime @updatedAt
 
   memberships   TeamMember[]
+  identities    UserIdentity[]
   agentTokens   AgentToken[]
   tasks         Task[]       @relation("TaskCreator")
   claims        Task[]       @relation("TaskClaimant")
@@ -50,11 +51,61 @@ model Team {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  members   TeamMember[]
-  projects  Project[]
-  tokens    AgentToken[]
+  members        TeamMember[]
+  projects       Project[]
+  tokens         AgentToken[]
+  ssoConnection  SsoConnection?
 
   @@map("teams")
+}
+
+// ── SSO (OIDC) ───────────────────────────────────────────────────────────────
+
+model SsoConnection {
+  id             String   @id @default(uuid())
+  teamId         String   @unique
+  // Display label shown to users ("Acme Okta")
+  displayName    String
+  // OIDC issuer URL — used for discovery (.well-known/openid-configuration)
+  issuer         String
+  clientId       String
+  // Encrypted at rest with SSO_ENCRYPTION_KEY (AES-256-GCM)
+  clientSecretEnc String
+  // Comma-separated list of email domains this IdP is authoritative for
+  // (used for domain-based discovery from the login page).
+  emailDomains   String[] @default([])
+  // Auto-provision new users on first login (default: true)
+  autoProvision  Boolean  @default(true)
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  team           Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([enabled])
+  @@map("sso_connections")
+}
+
+// ── Federated Identities ─────────────────────────────────────────────────────
+
+model UserIdentity {
+  id             String   @id @default(uuid())
+  userId         String
+  // "github" | "oidc"
+  provider       String
+  // Stable subject identifier from the IdP (GitHub id, OIDC "sub")
+  providerUserId String
+  // For OIDC: the SsoConnection that minted this identity (null for github)
+  ssoConnectionId String?
+  email          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("user_identities")
 }
 
 model TeamMember {
