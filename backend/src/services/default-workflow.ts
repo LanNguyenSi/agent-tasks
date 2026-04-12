@@ -18,12 +18,48 @@ export interface DefaultTransition {
 }
 
 /** States that ship with the default workflow. Kept in a single place so
- * the customize endpoint can copy them verbatim into a new Workflow row. */
-export const DEFAULT_STATES = [
-  { name: "open", label: "Open", terminal: false },
-  { name: "in_progress", label: "In progress", terminal: false },
-  { name: "review", label: "In review", terminal: false },
-  { name: "done", label: "Done", terminal: true },
+ * the customize endpoint can copy them verbatim into a new Workflow row.
+ *
+ * `agentInstructions` are the per-state prompts surfaced to agents via
+ * `GET /tasks/:id/instructions`. They match the prose from the previous
+ * legacy editor (pre-#110) so agents that relied on them keep working
+ * after customize. Customizing a workflow copies these verbatim — admins
+ * can then edit each state's instructions in the UI.
+ */
+export const DEFAULT_STATES: readonly {
+  name: string;
+  label: string;
+  terminal: boolean;
+  agentInstructions: string;
+}[] = [
+  {
+    name: "open",
+    label: "Open",
+    terminal: false,
+    agentInstructions:
+      "Claim this task, create a branch, then transition to in_progress.",
+  },
+  {
+    name: "in_progress",
+    label: "In progress",
+    terminal: false,
+    agentInstructions:
+      "Implement the changes. When done, push the branch, create a PR, update prUrl and branchName, then transition to review.",
+  },
+  {
+    name: "review",
+    label: "In review",
+    terminal: false,
+    agentInstructions:
+      "Review is a code-review state. Approve or request changes here. Merge, deploy, and production verification are external follow-up actions unless your project defines a custom workflow for them.",
+  },
+  {
+    name: "done",
+    label: "Done",
+    terminal: true,
+    agentInstructions:
+      "Task is complete. Merge, deploy, and production verification are operational follow-ups outside the modeled task states unless a custom workflow models them explicitly.",
+  },
 ] as const;
 
 export const DEFAULT_INITIAL_STATE = "open";
