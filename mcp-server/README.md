@@ -67,10 +67,36 @@ All tools return the raw JSON response from the backend as a text block.
 
 ## Transport
 
-Stdio only. A remote Streamable-HTTP variant that preserves the same
-governance semantics is tracked under the
-[Zero-Setup MCP Bridge task](https://agent-tasks.opentriologue.ai/) in the
-`agent-tasks` project.
+This package ships **stdio** only. It is the recommended path for
+local Claude Code / Cursor / Cline integrations — one `npx` command,
+no running server to maintain, no network hop.
+
+### Remote clients: use the backend's `/api/mcp` endpoint instead
+
+Remote MCP clients that speak HTTP + JSON-RPC (e.g. Triologue's
+`mcpBridge.ts`) cannot drive a stdio child process across a network
+boundary. For those, the agent-tasks backend exposes the **same 12
+tools** over HTTP at `POST /api/mcp`:
+
+```bash
+# Example: discover tools on a remote gateway
+curl -X POST https://agent-tasks.opentriologue.ai/api/mcp \
+  -H "Authorization: Bearer <agent_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+- Stateless Streamable HTTP (no session ID, one round-trip per
+  request)
+- Same Bearer auth as the rest of the agent-tasks REST API
+- Same tools, same schemas, same governance — the HTTP handler
+  dispatches every tool call back through the same Hono app stack
+  the REST routes live on, so the code paths stay in sync with zero
+  duplication
+- GET / DELETE on `/api/mcp` return 405 with `Allow: POST`
+
+Pick stdio (this package) for local agents; pick `/api/mcp` for
+remote / server-side consumers.
 
 ## Development
 

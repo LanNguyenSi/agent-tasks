@@ -13,6 +13,7 @@ import { teamRouter } from "./routes/teams.js";
 import { webhookRouter } from "./routes/webhooks.js";
 import { signalRouter } from "./routes/signals.js";
 import { githubRouter } from "./routes/github.js";
+import { mcpRouter, setApp as setMcpApp } from "./routes/mcp.js";
 import { docsRouter } from "./routes/docs.js";
 import { ssoLoginRouter, ssoAdminRouter } from "./routes/sso.js";
 import { authMiddleware } from "./middleware/auth.js";
@@ -73,6 +74,13 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.use("/api/agent/signals", authMiddleware);
   app.use("/api/projects/*", authMiddleware);
   app.use("/api/github/*", authMiddleware);
+  // `/api/mcp` is exact-match for POST, and the mcpRouter also has
+  // 405 handlers for GET/DELETE. Both need the outer authMiddleware
+  // — the POST path to validate the Bearer token before any MCP
+  // machinery runs, the 405 handlers to keep an unauthenticated GET
+  // from leaking the method info (they still 405, but only after
+  // auth, so an unauthed probe gets 401).
+  app.use("/api/mcp", authMiddleware);
 
   // SSO login endpoints — public, under /api/auth/sso/*
   app.route("/api/auth", ssoLoginRouter);
@@ -89,6 +97,12 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.route("/api", auditRouter);
   app.route("/api", signalRouter);
   app.route("/api/github", githubRouter);
+  app.route("/api/mcp", mcpRouter);
+
+  // Make the Hono app available to the MCP route's self-dispatch
+  // helper. Must happen after every `app.route(...)` call so the
+  // inner router sees a fully-wired stack.
+  setMcpApp(app);
 
   // 404
   app.notFound((c) => c.json({ error: "not_found", message: "Route not found" }, 404));
