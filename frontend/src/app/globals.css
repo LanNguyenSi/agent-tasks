@@ -506,13 +506,36 @@ input[type="checkbox"] {
 
 .home-widgets-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* `minmax(0, 1fr)` instead of plain `1fr` — the auto min-content
+     default would let a row whose children exceed the track width
+     push the track wider than the viewport, which is exactly the
+     mobile-overflow bug this grid had. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-4);
 }
 
 @media (max-width: 768px) {
   .home-widgets-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Narrow phone viewports: the TaskRow has six columns (status dot,
+   title, project name, optional externalRef pill, priority chip,
+   updated-at) all flex-shrink: 0 except the title. The sum of the
+   non-title columns alone can exceed a 375px viewport once any row
+   carries a real externalRef or a long project name, dragging the
+   Card wider than its grid cell and surfacing as a horizontal page
+   scroll. Letting the row wrap and forcing the title onto its own
+   full-width line keeps every column visible without ellipsizing
+   the metadata. */
+@media (max-width: 480px) {
+  .open-task-row {
+    flex-wrap: wrap;
+  }
+  .open-task-row-title {
+    flex-basis: 100%;
+    min-width: 0;
   }
 }
 
