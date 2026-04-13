@@ -122,13 +122,19 @@ the first team member with a valid `githubAccessToken` and
 - If any check run is still queued or in_progress → fails (pending)
 - If any check run is unrecognized → fails (unknown state)
 
-Results are cached in-memory for 60 seconds. The PR object itself
-is cached by `(owner, repo, prNumber)` and shared with `prMerged`,
-so a task with both gates on the same transition makes only one
-`/pulls/:n` fetch per 60s. The check-runs classification is cached
-separately by `(owner, repo, sha)` so a force-push that moves the
-head will re-run check-runs against the new SHA as soon as the PR
-cache refreshes.
+Results are cached for 60 seconds behind the `Cache<T>` abstraction
+in `services/cache.ts`. Single-instance deploys get an in-memory
+FIFO cache (default). Multi-instance deploys with `REDIS_URL`
+configured share a RedisCache so the GitHub API hit rate stays
+`1/N × request_rate` instead of fanning out linearly by pod count.
+The PR object is cached by `(owner, repo, prNumber)` and shared
+with `prMerged`, so a task with both gates on the same transition
+makes only one `/pulls/:n` fetch per 60s. The check-runs
+classification is cached separately by `(owner, repo, sha)` so a
+force-push that moves the head will re-run check-runs against the
+new SHA as soon as the PR cache refreshes. A Redis outage degrades
+gracefully to a cache miss — requests never fail on cache health,
+they just pay the underlying GitHub API cost.
 
 **Recovery paths** when a rule fails:
 

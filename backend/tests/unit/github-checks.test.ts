@@ -10,6 +10,13 @@ import {
   type PullResponse,
 } from "../../src/services/github-checks.js";
 
+/**
+ * TTL cases drive `Date.now` via `vi.useFakeTimers` / `setSystemTime`.
+ * The underlying `InMemoryCache` uses the real `Date.now` internally,
+ * so advancing the fake clock expires entries exactly the way the
+ * legacy tests did with their `now` parameter.
+ */
+
 const SHA = "deadbeef";
 
 describe("classifyCheckRuns", () => {
@@ -111,14 +118,15 @@ describe("classifyCheckRuns", () => {
 describe("fetchCheckRunStatus", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
-    _clearCheckCache();
+  beforeEach(async () => {
+    await _clearCheckCache();
     fetchMock = vi.fn();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   function mockPullAndChecks(sha: string, runs: Array<{ status: string; conclusion: string | null }>) {
@@ -149,27 +157,33 @@ describe("fetchCheckRunStatus", () => {
   });
 
   it("caches both PR and check-runs lookups within TTL", async () => {
-    mockPullAndChecks("sha1", [{ status: "completed", conclusion: "success" }]);
-    const now = 1_000_000;
-    const first = await fetchCheckRunStatus("o", "r", 1, "token", now);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_000_000));
+    mockPullAndChecks("sha1", [
+      { status: "completed", conclusion: "success" },
+    ]);
+    const first = await fetchCheckRunStatus("o", "r", 1, "token");
     expect(first.state).toBe("success");
 
     // Second call within TTL: both the PR cache and the check-runs cache
     // are warm, so no additional fetches are made. This is a change from
     // the pre-PR-cache behavior where the PR was always re-fetched.
     const before = fetchMock.mock.calls.length;
-    const second = await fetchCheckRunStatus("o", "r", 1, "token", now + 30_000);
+    vi.setSystemTime(new Date(1_000_000 + 30_000));
+    const second = await fetchCheckRunStatus("o", "r", 1, "token");
     expect(second.state).toBe("success");
     expect(fetchMock.mock.calls.length - before).toBe(0);
   });
 
   it("cache expires after 60 seconds", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(5_000_000));
     mockPullAndChecks("sha1", [{ status: "completed", conclusion: "success" }]);
-    const t0 = 5_000_000;
-    await fetchCheckRunStatus("o", "r", 1, "token", t0);
+    await fetchCheckRunStatus("o", "r", 1, "token");
     const before = fetchMock.mock.calls.length;
     // +61s → past TTL, expect both lookups to run again
-    await fetchCheckRunStatus("o", "r", 1, "token", t0 + 61_000);
+    vi.setSystemTime(new Date(5_000_000 + 61_000));
+    await fetchCheckRunStatus("o", "r", 1, "token");
     expect(fetchMock.mock.calls.length - before).toBe(2);
   });
 
@@ -179,6 +193,8 @@ describe("fetchCheckRunStatus", () => {
     // window for one API call per task per minute. After the TTL
     // expires, the next call fetches the fresh PR and the fresh
     // check-runs for the new SHA.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(10_000_000));
     let sha = "old";
     fetchMock.mockImplementation(async (url: string) => {
       if (url.includes("/pulls/")) {
@@ -198,15 +214,16 @@ describe("fetchCheckRunStatus", () => {
       }
       throw new Error("unexpected");
     });
-    const now = 10_000_000;
-    await fetchCheckRunStatus("o", "r", 1, "token", now);
+    await fetchCheckRunStatus("o", "r", 1, "token");
     sha = "new"; // force push
     const before = fetchMock.mock.calls.length;
     // Within TTL: no re-fetch.
-    await fetchCheckRunStatus("o", "r", 1, "token", now + 30_000);
+    vi.setSystemTime(new Date(10_000_000 + 30_000));
+    await fetchCheckRunStatus("o", "r", 1, "token");
     expect(fetchMock.mock.calls.length - before).toBe(0);
     // Past TTL: both caches expire, fresh PR + fresh check-runs.
-    await fetchCheckRunStatus("o", "r", 1, "token", now + 61_000);
+    vi.setSystemTime(new Date(10_000_000 + 61_000));
+    await fetchCheckRunStatus("o", "r", 1, "token");
     expect(fetchMock.mock.calls.length - before).toBe(2);
   });
 
@@ -232,8 +249,10 @@ describe("fetchCheckRunStatus", () => {
     await expect(fetchCheckRunStatus("o", "r", 1, "token")).rejects.toBeInstanceOf(
       GithubChecksError,
     );
-    // And no poisoned cache entry under an `undefined` key.
-    expect(_checkCache.size).toBe(0);
+    // And no poisoned cache entry under an `undefined` key. The cache
+    // instance is the InMemoryCache from the Cache<T> abstraction —
+    // `.size()` is cheap here and reads from the module-level instance.
+    expect(await (await _checkCache()).size()).toBe(0);
   });
 
   it("shares the PR cache between check-runs and pr-status lookups", async () => {
@@ -256,9 +275,10 @@ describe("fetchCheckRunStatus", () => {
       }
       throw new Error("unexpected");
     });
-    const now = 42_000_000;
-    await fetchCheckRunStatus("o", "r", 1, "token", now);
-    await fetchPullRequestStatus("o", "r", 1, "token", now);
+    // Real clock: both calls are well within 60s of each other, so the
+    // Cache<T> TTL stays warm without any vi.useFakeTimers plumbing.
+    await fetchCheckRunStatus("o", "r", 1, "token");
+    await fetchPullRequestStatus("o", "r", 1, "token");
     expect(pullCalls).toBe(1);
   });
 
@@ -320,8 +340,8 @@ describe("classifyPullRequest", () => {
 describe("fetchPullRequestStatus", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
-    _clearCheckCache();
+  beforeEach(async () => {
+    await _clearCheckCache();
     fetchMock = vi.fn();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
   });
