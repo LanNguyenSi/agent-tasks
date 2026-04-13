@@ -41,7 +41,11 @@ function TaskRow({ task, teamId }: { task: EnrichedTask; teamId: string }) {
     >
       <div className="open-task-row" style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.5rem", borderRadius: "var(--radius-base)", transition: "background 0.12s ease" }}>
         <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: STATUS_COLORS[task.status] ?? "var(--muted)", flexShrink: 0 }} />
-        <span style={{ flex: 1, fontSize: "var(--text-sm)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {/* `open-task-row-title` keeps the hook that the <480px
+           viewport rule in globals.css uses to promote the title
+           to its own full-width line. Don't rename without updating
+           the CSS. */}
+        <span className="open-task-row-title" style={{ flex: 1, fontSize: "var(--text-sm)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
           {task.title}
         </span>
         <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
