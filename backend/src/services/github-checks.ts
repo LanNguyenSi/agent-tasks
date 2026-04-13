@@ -17,13 +17,20 @@
  *
  * ## Caching
  *
- * Responses are cached in-memory for 60 seconds keyed by (repo, sha).
- * CI status changes frequently during PR iteration but rarely within
- * the window of a single transition attempt, and this keeps us clear of
- * GitHub's 5000-req/hr rate limit for interactive UIs. Max 1000 cached
- * SHAs — simple LRU-ish eviction (oldest insertion first). In-memory is
- * fine until we shard the backend; when we do, promote to Redis.
+ * Responses are cached for 60 seconds. Two independent caches (one for
+ * PR objects keyed by prNumber, one for classified check-run results
+ * keyed by sha) sit behind the Cache<T> abstraction from
+ * `services/cache.ts`. Single-instance deploys get the legacy
+ * InMemoryCache (FIFO eviction, 1000-entry budget); multi-instance
+ * deploys with REDIS_URL set share a RedisCache so the GitHub API hit
+ * rate stays 1/N × request rate instead of fanning out linearly by pod
+ * count. Backend selection is transparent to callers.
+ *
+ * Cache failures degrade gracefully to a cache miss — a Redis outage
+ * never blocks a request, it just pays the GitHub API cost.
  */
+
+import { getCache, type Cache } from "./cache.js";
 
 export interface CheckRunStatus {
   /** One of: success, failing, pending, empty, unknown.
@@ -83,54 +90,43 @@ export interface PullResponse {
 //
 // Two independent caches, both 60s TTL:
 //
-// - `_prCache`: keyed by (owner, repo, prNumber). Shared between
+// - `prCache`: keyed by (owner, repo, prNumber). Shared between
 //   fetchCheckRunStatus and fetchPullRequestStatus so a task with both
 //   `ciGreen` and `prMerged` gates only makes one PR fetch per 60s.
-// - `_checkCache`: keyed by (owner, repo, sha). Sha-keyed so a force-push
+// - `checkCache`: keyed by (owner, repo, sha). Sha-keyed so a force-push
 //   invalidates naturally; a PR-number key would return stale check runs
 //   after a force push.
+//
+// Backend is chosen by `getCache` — in-memory (default) or Redis (when
+// REDIS_URL is configured). See services/cache.ts.
 
 const CACHE_TTL_MS = 60_000;
+// Only honoured by the InMemoryCache backend — Redis evicts on TTL only.
 const CACHE_MAX_ENTRIES = 1000;
 
-interface GenericCacheEntry<T> {
-  value: T;
-  insertedAt: number;
-}
+// Lazily-initialized module-level caches. `getCache` is async because the
+// Redis backend dynamically imports ioredis only when configured — we
+// resolve the promise on first access and reuse the instance thereafter.
+let _checkCachePromise: Promise<Cache<CheckRunStatus>> | null = null;
+let _prCachePromise: Promise<Cache<PullResponse>> | null = null;
 
-function genericCacheGet<T>(
-  cache: Map<string, GenericCacheEntry<T>>,
-  key: string,
-  now: number,
-): T | undefined {
-  const hit = cache.get(key);
-  if (!hit) return undefined;
-  if (now - hit.insertedAt > CACHE_TTL_MS) {
-    cache.delete(key);
-    return undefined;
+function checkCache(): Promise<Cache<CheckRunStatus>> {
+  if (!_checkCachePromise) {
+    _checkCachePromise = getCache<CheckRunStatus>("gh:check", {
+      maxEntries: CACHE_MAX_ENTRIES,
+    });
   }
-  return hit.value;
+  return _checkCachePromise;
 }
 
-function genericCachePut<T>(
-  cache: Map<string, GenericCacheEntry<T>>,
-  key: string,
-  value: T,
-  now: number,
-): void {
-  // Cheap FIFO: drop the oldest insertion when full. Map iteration order
-  // is insertion order in JS, so this is O(1) — acceptable for a 60s TTL
-  // and a 1000-entry budget.
-  if (cache.size >= CACHE_MAX_ENTRIES) {
-    const firstKey = cache.keys().next().value;
-    if (firstKey !== undefined) cache.delete(firstKey);
+function prCache(): Promise<Cache<PullResponse>> {
+  if (!_prCachePromise) {
+    _prCachePromise = getCache<PullResponse>("gh:pr", {
+      maxEntries: CACHE_MAX_ENTRIES,
+    });
   }
-  cache.set(key, { value, insertedAt: now });
+  return _prCachePromise;
 }
-
-// Exported for tests only. Do not mutate from product code.
-export const _checkCache = new Map<string, GenericCacheEntry<CheckRunStatus>>();
-export const _prCache = new Map<string, GenericCacheEntry<PullResponse>>();
 
 function checkCacheKey(owner: string, repo: string, sha: string): string {
   return `${owner}/${repo}@${sha}`;
@@ -140,9 +136,35 @@ function prCacheKey(owner: string, repo: string, prNumber: number): string {
   return `${owner}/${repo}#${prNumber}`;
 }
 
-export function _clearCheckCache(): void {
-  _checkCache.clear();
-  _prCache.clear();
+/**
+ * Test-only: clear both caches and force the next access to allocate a
+ * fresh instance. Product code must not call this.
+ */
+export async function _clearCheckCache(): Promise<void> {
+  if (_checkCachePromise) {
+    const c = await _checkCachePromise;
+    await c.clear();
+  }
+  if (_prCachePromise) {
+    const c = await _prCachePromise;
+    await c.clear();
+  }
+  _checkCachePromise = null;
+  _prCachePromise = null;
+}
+
+/**
+ * Test-only accessors. Return the current cache instance (allocating
+ * one if needed) so tests can introspect state via the Cache interface
+ * — `await _checkCache().size()` replaces the legacy `_checkCache.size`
+ * direct-Map access. Returns `-1` for size on backends that don't count
+ * efficiently (Redis).
+ */
+export function _checkCache(): Promise<Cache<CheckRunStatus>> {
+  return checkCache();
+}
+export function _prCache(): Promise<Cache<PullResponse>> {
+  return prCache();
 }
 
 // ── Classifier ──────────────────────────────────────────────────────────────
@@ -246,10 +268,10 @@ export async function fetchPullRequest(
   repo: string,
   prNumber: number,
   token: string,
-  now: number = Date.now(),
 ): Promise<PullResponse> {
   const key = prCacheKey(owner, repo, prNumber);
-  const cached = genericCacheGet(_prCache, key, now);
+  const cache = await prCache();
+  const cached = await cache.get(key);
   if (cached) return cached;
 
   const pull = await githubGet<PullResponse>(
@@ -268,7 +290,7 @@ export async function fetchPullRequest(
     throw new GithubChecksError("Malformed PR response: missing merged flag");
   }
 
-  genericCachePut(_prCache, key, pull, now);
+  await cache.set(key, pull, CACHE_TTL_MS);
   return pull;
 }
 
@@ -285,13 +307,13 @@ export async function fetchCheckRunStatus(
   repo: string,
   prNumber: number,
   token: string,
-  now: number = Date.now(),
 ): Promise<CheckRunStatus> {
-  const pull = await fetchPullRequest(owner, repo, prNumber, token, now);
+  const pull = await fetchPullRequest(owner, repo, prNumber, token);
   const sha = pull.head.sha;
   const key = checkCacheKey(owner, repo, sha);
 
-  const cached = genericCacheGet(_checkCache, key, now);
+  const cache = await checkCache();
+  const cached = await cache.get(key);
   if (cached) return cached;
 
   const checks = await githubGet<CheckRunsResponse>(
@@ -299,7 +321,7 @@ export async function fetchCheckRunStatus(
     token,
   );
   const status = classifyCheckRuns(checks.check_runs, sha);
-  genericCachePut(_checkCache, key, status, now);
+  await cache.set(key, status, CACHE_TTL_MS);
   return status;
 }
 
@@ -346,8 +368,7 @@ export async function fetchPullRequestStatus(
   repo: string,
   prNumber: number,
   token: string,
-  now: number = Date.now(),
 ): Promise<PullRequestStatus> {
-  const pull = await fetchPullRequest(owner, repo, prNumber, token, now);
+  const pull = await fetchPullRequest(owner, repo, prNumber, token);
   return classifyPullRequest(pull);
 }

@@ -13,6 +13,15 @@ const configSchema = z.object({
   BACKEND_URL: z.string().url().default("http://localhost:3001"),
   FRONTEND_URL: z.string().url().default("http://localhost:3000"),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
+  // Optional Redis URL for shared caches. When unset, backing services
+  // fall back to in-memory — local dev and single-instance deploys keep
+  // working identically. Set this when running more than one backend
+  // pod behind a load balancer so GitHub API cache hits stay shared.
+  REDIS_URL: z.string().url().optional(),
+  // Key prefix for Redis-backed caches, so cross-environment deploys
+  // sharing a redis instance don't collide. Unused when REDIS_URL is
+  // absent.
+  REDIS_KEY_PREFIX: z.string().default("agent-tasks:"),
 });
 
 function loadConfig() {

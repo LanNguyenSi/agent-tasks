@@ -15,6 +15,20 @@ services:
       timeout: 3s
       retries: 10
 
+  # Optional: enables the RedisCache backend for services/cache.ts. When
+  # the backend is run without REDIS_URL set it transparently falls back
+  # to an in-memory cache, so local dev without this service keeps
+  # working. Set REDIS_URL=redis://redis:6379 in .env to opt in.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build:
       context: .
@@ -32,6 +46,13 @@ services:
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-dev-client-id}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-dev-client-secret}
       SESSION_SECRET: ${SESSION_SECRET:-change-me-to-a-random-32-char-string!!}
+      # Uncomment the block below (and the matching depends_on line
+      # further down) to share the GitHub-checks cache across multiple
+      # backend instances. The `redis` service above provides the
+      # endpoint. Without REDIS_URL, the backend silently falls back to
+      # its in-memory cache.
+      # REDIS_URL: redis://redis:6379
+      # REDIS_KEY_PREFIX: agent-tasks:
     command: >
       bash -lc "npm run db:generate --workspace=backend &&
       npm run db:push --workspace=backend &&
@@ -44,6 +65,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      # Uncomment together with REDIS_URL above:
+      # redis:
+      #   condition: service_healthy
 
   frontend:
     build:
