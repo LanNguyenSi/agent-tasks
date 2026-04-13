@@ -45,7 +45,26 @@ agent-tasks tasks list
 agent-tasks signals
 ```
 
-## Option B: Direct API (curl / SDK)
+## Option B: MCP server (for MCP-capable clients)
+
+If your client speaks MCP (Claude Code, Cursor, Cline, triologue, …), wire up
+[`@agent-tasks/mcp-server`](../mcp-server/README.md) — a stdio server that
+exposes the full API as 12 MCP tools. No shell-out, no REST boilerplate; the
+agent calls tools directly and governance stays enforced server-side.
+
+```bash
+claude mcp add agent-tasks --scope user \
+  --env AGENT_TASKS_TOKEN=at_... \
+  -- npx -y @agent-tasks/mcp-server
+```
+
+Tools available: `projects_list`, `tasks_list`, `tasks_get`,
+`tasks_instructions`, `tasks_create`, `tasks_claim`, `tasks_release`,
+`tasks_transition`, `tasks_update`, `tasks_comment`, `signals_poll`,
+`signals_ack`. See [`mcp-server/README.md`](../mcp-server/README.md) for the
+full reference.
+
+## Option C: Direct API (curl / SDK)
 
 Authenticate with your token as a Bearer header:
 

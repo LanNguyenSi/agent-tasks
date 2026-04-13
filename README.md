@@ -66,6 +66,10 @@ agent-tasks/
 │   └── src/
 │       ├── app/      # App Router pages
 │       ├── lib/      # API client
+├── mcp-server/       # @agent-tasks/mcp-server — stdio MCP wrapper for agents
+│   └── src/
+│       ├── client.ts # Bearer-auth HTTP client for the REST API
+│       └── tools.ts  # Tool definitions (projects, tasks, signals)
 ├── docs/             # Specs (from planforge)
 └── .github/          # CI workflows
 ```

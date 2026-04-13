@@ -1,13 +1,14 @@
 {
   "name": "agent-tasks",
   "private": true,
-  "workspaces": ["backend", "frontend"],
+  "workspaces": ["backend", "frontend", "mcp-server"],
   "scripts": {
     "dev:backend": "npm run dev --workspace=backend",
     "dev:frontend": "npm run dev --workspace=frontend",
-    "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
+    "dev:mcp": "npm run dev --workspace=mcp-server",
+    "build": "npm run build --workspace=backend && npm run build --workspace=frontend && npm run build --workspace=mcp-server",
     "test": "npm run test --workspace=backend",
-    "typecheck": "npm run typecheck --workspace=backend && npm run typecheck --workspace=frontend",
+    "typecheck": "npm run typecheck --workspace=backend && npm run typecheck --workspace=frontend && npm run typecheck --workspace=mcp-server",
     "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend"
   },
   "engines": {
