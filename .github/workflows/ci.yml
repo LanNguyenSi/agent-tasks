@@ -5,6 +5,7 @@ on:
     branches: [master, main, develop, "release/*"]
   pull_request:
     branches: [master, main, develop]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
