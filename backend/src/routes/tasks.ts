@@ -6,7 +6,12 @@ import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { Prisma } from "@prisma/client";
 import { forbidden, notFound, conflict, lowConfidence } from "../middleware/error.js";
-import { hasProjectAccess, isProjectAdmin } from "../services/team-access.js";
+import {
+  hasProjectAccess,
+  hasProjectRole,
+  isProjectAdmin,
+  type ProjectRole,
+} from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
 import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } from "../services/review-signal.js";
 import { emitTaskAvailableSignal } from "../services/task-signal.js";
@@ -1015,14 +1020,11 @@ taskRouter.post(
       resolvedRequires = defaultT.requires;
     }
 
+    // Hot-path optimization: skip the DB round-trip on the common "any"
+    // case — any actor that already cleared hasProjectAccess upstream is
+    // automatically allowed through the role gate for "any".
     if (requiredRole && requiredRole !== "any") {
-      if (actor.type === "agent") {
-        return forbidden(c, `This transition requires role: ${requiredRole}`);
-      }
-      const membership = await prisma.teamMember.findFirst({
-        where: { userId: actor.userId, team: { projects: { some: { id: task.projectId } } } },
-      });
-      if (membership?.role !== requiredRole) {
+      if (!(await hasProjectRole(actor, task.projectId, requiredRole as ProjectRole))) {
         return forbidden(c, `Requires role: ${requiredRole}`);
       }
     }
