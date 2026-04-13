@@ -454,7 +454,14 @@ export default function WorkflowEditorPage() {
       <main style={{ maxWidth: "960px", margin: "0 auto", padding: "var(--space-6) var(--space-4)" }}>
         <div style={{ marginBottom: "var(--space-4)" }}>
           <Link
-            href={`/home?projectId=${project.id}`}
+            // Back to the project board (i.e. /dashboard with both
+            // teamId and projectId), not to /home — the workflow
+            // editor sits "inside" a specific project so the back link
+            // should restore that context instead of dropping the user
+            // back to the global team picker. Mirrors the
+            // /dashboard?teamId&projectId pattern used by the home
+            // page's own board link.
+            href={`/dashboard?teamId=${project.teamId}&projectId=${project.id}`}
             style={{ color: "var(--muted)", fontSize: "var(--text-sm)", textDecoration: "none" }}
           >
             ← {project.name}
