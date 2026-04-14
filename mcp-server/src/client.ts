@@ -139,4 +139,53 @@ export class AgentTasksClient {
   ackSignal(signalId: string) {
     return this.request<unknown>("POST", `/api/agent/signals/${signalId}/ack`);
   }
+
+  // ── GitHub PR delegation ──────────────────────────────────────────────
+  //
+  // Thin wrappers around the three `/api/github/pull-requests*` endpoints.
+  // All three are AGENT-ONLY at the backend (humans get 403) because they
+  // depend on the GitHub delegation token of a user who has connected
+  // GitHub and opted in to PR actions — see backend/src/routes/github.ts.
+
+  createPullRequest(input: {
+    taskId: string;
+    owner: string;
+    repo: string;
+    head: string;
+    base?: string;
+    title: string;
+    body?: string;
+  }) {
+    return this.request<unknown>("POST", "/api/github/pull-requests", input);
+  }
+
+  mergePullRequest(input: {
+    taskId: string;
+    owner: string;
+    repo: string;
+    prNumber: number;
+    merge_method?: "merge" | "squash" | "rebase";
+  }) {
+    const { prNumber, ...body } = input;
+    return this.request<unknown>(
+      "POST",
+      `/api/github/pull-requests/${prNumber}/merge`,
+      body,
+    );
+  }
+
+  commentOnPullRequest(input: {
+    taskId: string;
+    owner: string;
+    repo: string;
+    prNumber: number;
+    body: string;
+  }) {
+    const { prNumber, ...rest } = input;
+    return this.request<unknown>(
+      "POST",
+      `/api/github/pull-requests/${prNumber}/comments`,
+      rest,
+    );
+  }
 }

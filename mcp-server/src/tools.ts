@@ -158,5 +158,57 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       inputShape: { signalId: uuid() },
       handler: async ({ signalId }) => wrap(() => client.ackSignal(signalId)),
     }),
+    def({
+      name: "pull_requests_create",
+      description:
+        "Create a GitHub pull request bound to a task via delegation. The backend dispatches the create call through a team member who has connected GitHub and enabled 'Allow agents to create PRs'; on success the task's branchName, prUrl, and prNumber are patched server-side. Requires token scope tasks:update. base defaults to 'main' — pass the repo's actual default branch (e.g. 'master') explicitly if it differs.",
+      inputShape: {
+        taskId: uuid(),
+        owner: z.string().min(1),
+        repo: z.string().min(1),
+        head: z.string().min(1),
+        base: z.string().min(1).optional(),
+        title: z.string().min(1),
+        body: z.string().optional(),
+      },
+      handler: async (input) => wrap(() => client.createPullRequest(input)),
+    }),
+    def({
+      name: "pull_requests_merge",
+      description:
+        "Merge a GitHub pull request via delegation and auto-transition the linked task to 'done'. Dispatched through a team member with 'Allow agents to merge PRs' consent. Idempotent on PRs that are already merged. Requires token scope tasks:transition. mergeMethod defaults to 'squash'.",
+      inputShape: {
+        taskId: uuid(),
+        owner: z.string().min(1),
+        repo: z.string().min(1),
+        prNumber: z.number().int().positive(),
+        mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
+      },
+      handler: async ({ mergeMethod, ...rest }) =>
+        wrap(() =>
+          client.mergePullRequest({
+            ...rest,
+            // The backend schema field is snake_case `merge_method`. The
+            // MCP tool surface uses camelCase `mergeMethod` to match the
+            // convention of the other MCP tools (branchName, prUrl, etc.)
+            // and translates here at the client boundary.
+            ...(mergeMethod !== undefined ? { merge_method: mergeMethod } : {}),
+          }),
+        ),
+    }),
+    def({
+      name: "pull_requests_comment",
+      description:
+        "Post a comment on a GitHub pull request via delegation. Dispatched through a team member with 'Allow agents to comment on PRs' consent. Requires token scope tasks:comment. Use for CI status notes, review follow-ups, or cross-referencing other tasks — agent-authored comments are audit-logged separately from human comments.",
+      inputShape: {
+        taskId: uuid(),
+        owner: z.string().min(1),
+        repo: z.string().min(1),
+        prNumber: z.number().int().positive(),
+        body: z.string().min(1),
+      },
+      handler: async (input) =>
+        wrap(() => client.commentOnPullRequest(input)),
+    }),
   ];
 }

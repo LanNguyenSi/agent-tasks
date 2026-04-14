@@ -1,6 +1,6 @@
 /**
  * HTTP-transport peer of the stdio `@agent-tasks/mcp-server` package.
- * Exposes the same 12 tools over JSON-RPC via the MCP SDK's
+ * Exposes the same 15 tools over JSON-RPC via the MCP SDK's
  * `WebStandardStreamableHTTPServerTransport`, which plugs directly
  * into Hono's fetch-native request/response.
  *
@@ -149,7 +149,7 @@ function errorResult(err: unknown) {
 }
 
 /**
- * Build a fresh `McpServer` with all 12 tools bound to the caller's
+ * Build a fresh `McpServer` with all 15 tools bound to the caller's
  * token. Called per request so there is no shared mutable state
  * between concurrent MCP requests.
  */
@@ -407,6 +407,107 @@ function buildServer(token: string): McpServer {
         const r = await callSelf(
           `/api/agent/signals/${signalId}/ack`,
           { method: "POST" },
+          token,
+        );
+        return textResult(r);
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  // ── GitHub PR delegation tools ──────────────────────────────────────
+  //
+  // Mirror of the three `pull_requests_*` tools registered in
+  // `mcp-server/src/tools.ts`. Kept in sync by hand because the HTTP MCP
+  // route cannot import the stdio package's tool table directly —
+  // re-declared here with matching schemas. The test that asserts the
+  // stdio package's registered tool list is the canonical check; any
+  // drift between the two surfaces shows up as a missing tool on one
+  // side. Back-end routes themselves (`/api/github/pull-requests*`) are
+  // the single source of truth for wire-format — see
+  // `backend/src/routes/github.ts`.
+
+  server.registerTool(
+    "pull_requests_create",
+    {
+      description:
+        "Create a GitHub pull request bound to a task via delegation. The backend dispatches the create call through a team member who has connected GitHub and enabled 'Allow agents to create PRs'; on success the task's branchName, prUrl, and prNumber are patched server-side. Requires token scope tasks:update. base defaults to 'main' — pass the repo's actual default branch (e.g. 'master') explicitly if it differs.",
+      inputSchema: {
+        taskId: uuid(),
+        owner: z.string().min(1),
+        repo: z.string().min(1),
+        head: z.string().min(1),
+        base: z.string().min(1).optional(),
+        title: z.string().min(1),
+        body: z.string().optional(),
+      },
+    },
+    async (args) => {
+      try {
+        const r = await callSelf(
+          "/api/github/pull-requests",
+          { method: "POST", body: args },
+          token,
+        );
+        return textResult(r);
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "pull_requests_merge",
+    {
+      description:
+        "Merge a GitHub pull request via delegation and auto-transition the linked task to 'done'. Dispatched through a team member with 'Allow agents to merge PRs' consent. Idempotent on PRs that are already merged. Requires token scope tasks:transition. mergeMethod defaults to 'squash'.",
+      inputSchema: {
+        taskId: uuid(),
+        owner: z.string().min(1),
+        repo: z.string().min(1),
+        prNumber: z.number().int().positive(),
+        mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
+      },
+    },
+    async ({ prNumber, mergeMethod, ...rest }) => {
+      try {
+        const body: Record<string, unknown> = { ...rest };
+        if (mergeMethod !== undefined) {
+          // Backend field is snake_case `merge_method`; MCP tool uses
+          // camelCase for wire-format consistency with the other tools.
+          body.merge_method = mergeMethod;
+        }
+        const r = await callSelf(
+          `/api/github/pull-requests/${prNumber}/merge`,
+          { method: "POST", body },
+          token,
+        );
+        return textResult(r);
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "pull_requests_comment",
+    {
+      description:
+        "Post a comment on a GitHub pull request via delegation. Dispatched through a team member with 'Allow agents to comment on PRs' consent. Requires token scope tasks:comment.",
+      inputSchema: {
+        taskId: uuid(),
+        owner: z.string().min(1),
+        repo: z.string().min(1),
+        prNumber: z.number().int().positive(),
+        body: z.string().min(1),
+      },
+    },
+    async ({ prNumber, ...rest }) => {
+      try {
+        const r = await callSelf(
+          `/api/github/pull-requests/${prNumber}/comments`,
+          { method: "POST", body: rest },
           token,
         );
         return textResult(r);

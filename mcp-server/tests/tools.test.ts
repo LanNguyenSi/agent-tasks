@@ -35,6 +35,9 @@ describe("buildTools", () => {
     expect(names).toEqual(
       [
         "projects_list",
+        "pull_requests_comment",
+        "pull_requests_create",
+        "pull_requests_merge",
         "signals_ack",
         "signals_poll",
         "tasks_claim",
@@ -138,5 +141,130 @@ describe("buildTools", () => {
   // Tell TypeScript the AgentTasksApiError symbol is used (for import side-effects).
   it("AgentTasksApiError is exported", () => {
     expect(AgentTasksApiError.name).toBe("AgentTasksApiError");
+  });
+
+  // ── GitHub PR tools ────────────────────────────────────────────────
+
+  it("pull_requests_create POSTs the full body shape the backend expects", async () => {
+    fetchMock.mockResolvedValue(
+      ok({ pullRequest: { number: 42, url: "https://github.com/o/r/pull/42", title: "t" } }),
+    );
+    await tool("pull_requests_create").handler({
+      taskId: "11111111-1111-1111-1111-111111111111",
+      owner: "LanNguyenSi",
+      repo: "agent-tasks",
+      head: "feat/foo",
+      base: "master",
+      title: "feat: foo",
+      body: "PR body",
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://example.test/api/github/pull-requests");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({
+      taskId: "11111111-1111-1111-1111-111111111111",
+      owner: "LanNguyenSi",
+      repo: "agent-tasks",
+      head: "feat/foo",
+      base: "master",
+      title: "feat: foo",
+      body: "PR body",
+    });
+  });
+
+  it("pull_requests_create omits base when unset so backend default (main) applies", async () => {
+    fetchMock.mockResolvedValue(ok({ pullRequest: { number: 1, url: "u", title: "t" } }));
+    await tool("pull_requests_create").handler({
+      taskId: "22222222-2222-2222-2222-222222222222",
+      owner: "o",
+      repo: "r",
+      head: "b",
+      title: "t",
+    });
+    const [, init] = fetchMock.mock.calls[0];
+    const parsed = JSON.parse(init.body);
+    expect(parsed).not.toHaveProperty("base");
+    expect(parsed).not.toHaveProperty("body");
+  });
+
+  it("pull_requests_merge routes to /pull-requests/{prNumber}/merge and translates mergeMethod → merge_method", async () => {
+    fetchMock.mockResolvedValue(ok({ merged: true, sha: "abc", message: "ok", task: { id: "t", status: "done" } }));
+    await tool("pull_requests_merge").handler({
+      taskId: "33333333-3333-3333-3333-333333333333",
+      owner: "LanNguyenSi",
+      repo: "agent-tasks",
+      prNumber: 136,
+      mergeMethod: "squash",
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://example.test/api/github/pull-requests/136/merge");
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(init.body);
+    expect(body.merge_method).toBe("squash");
+    // Must NOT leak the camelCase variant into the wire format — the
+    // backend's zod validator would silently drop it and fall back to
+    // the default, which is subtle and wrong if the caller picked
+    // "rebase".
+    expect(body).not.toHaveProperty("mergeMethod");
+    // prNumber goes in the URL, not the body.
+    expect(body).not.toHaveProperty("prNumber");
+    expect(body.taskId).toBe("33333333-3333-3333-3333-333333333333");
+  });
+
+  it("pull_requests_merge omits merge_method when mergeMethod unset so backend default (squash) applies", async () => {
+    fetchMock.mockResolvedValue(ok({ merged: true, sha: null, message: "ok", task: { id: "t", status: "done" } }));
+    await tool("pull_requests_merge").handler({
+      taskId: "44444444-4444-4444-4444-444444444444",
+      owner: "o",
+      repo: "r",
+      prNumber: 1,
+    });
+    const [, init] = fetchMock.mock.calls[0];
+    const parsed = JSON.parse(init.body);
+    expect(parsed).not.toHaveProperty("merge_method");
+    expect(parsed).not.toHaveProperty("mergeMethod");
+  });
+
+  it("pull_requests_comment routes to /pull-requests/{prNumber}/comments and keeps body field", async () => {
+    fetchMock.mockResolvedValue(ok({ comment: { id: "c1" } }));
+    await tool("pull_requests_comment").handler({
+      taskId: "55555555-5555-5555-5555-555555555555",
+      owner: "LanNguyenSi",
+      repo: "agent-tasks",
+      prNumber: 136,
+      body: "CI green, merging now.",
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://example.test/api/github/pull-requests/136/comments");
+    expect(init.method).toBe("POST");
+    const parsed = JSON.parse(init.body);
+    expect(parsed).toEqual({
+      taskId: "55555555-5555-5555-5555-555555555555",
+      owner: "LanNguyenSi",
+      repo: "agent-tasks",
+      body: "CI green, merging now.",
+    });
+    expect(parsed).not.toHaveProperty("prNumber");
+  });
+
+  it("pull_requests_merge propagates a 403 delegation-missing error through wrap", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "forbidden",
+          message:
+            "No authorized user for GitHub delegation. A team member must connect GitHub and enable 'Allow agents to merge PRs' in Settings.",
+        }),
+        { status: 403, headers: { "content-type": "application/json" } },
+      ),
+    );
+    await expect(
+      tool("pull_requests_merge").handler({
+        taskId: "66666666-6666-6666-6666-666666666666",
+        owner: "o",
+        repo: "r",
+        prNumber: 7,
+      }),
+    ).rejects.toThrow(/agent-tasks API 403.*delegation/);
   });
 });

@@ -48,22 +48,47 @@ Drop `--scope user` if you want it project-local instead. See
 
 ## Tools
 
-| Tool                 | Wraps                                        |
-| -------------------- | -------------------------------------------- |
-| `projects_list`      | `GET /api/projects/available`                |
-| `tasks_list`         | `GET /api/tasks/claimable`                   |
-| `tasks_get`          | `GET /api/tasks/:id`                         |
-| `tasks_instructions` | `GET /api/tasks/:id/instructions`            |
-| `tasks_create`       | `POST /api/projects/:projectId/tasks`        |
-| `tasks_claim`        | `POST /api/tasks/:id/claim`                  |
-| `tasks_release`      | `POST /api/tasks/:id/release`                |
-| `tasks_transition`   | `POST /api/tasks/:id/transition`             |
-| `tasks_update`       | `PATCH /api/tasks/:id`                       |
-| `tasks_comment`      | `POST /api/tasks/:id/comments`               |
-| `signals_poll`       | `GET /api/agent/signals`                     |
-| `signals_ack`        | `POST /api/agent/signals/:id/ack`            |
+| Tool                    | Wraps                                              |
+| ----------------------- | -------------------------------------------------- |
+| `projects_list`         | `GET /api/projects/available`                      |
+| `tasks_list`            | `GET /api/tasks/claimable`                         |
+| `tasks_get`             | `GET /api/tasks/:id`                               |
+| `tasks_instructions`    | `GET /api/tasks/:id/instructions`                  |
+| `tasks_create`          | `POST /api/projects/:projectId/tasks`              |
+| `tasks_claim`           | `POST /api/tasks/:id/claim`                        |
+| `tasks_release`         | `POST /api/tasks/:id/release`                      |
+| `tasks_transition`      | `POST /api/tasks/:id/transition`                   |
+| `tasks_update`          | `PATCH /api/tasks/:id`                             |
+| `tasks_comment`         | `POST /api/tasks/:id/comments`                     |
+| `pull_requests_create`  | `POST /api/github/pull-requests`                   |
+| `pull_requests_merge`   | `POST /api/github/pull-requests/:prNumber/merge`   |
+| `pull_requests_comment` | `POST /api/github/pull-requests/:prNumber/comments`|
+| `signals_poll`          | `GET /api/agent/signals`                           |
+| `signals_ack`           | `POST /api/agent/signals/:id/ack`                  |
 
 All tools return the raw JSON response from the backend as a text block.
+
+### GitHub PR tools — delegation required
+
+The three `pull_requests_*` tools dispatch through a team member's GitHub
+token (the "delegation user"), not through the agent token itself. Before
+these tools can succeed:
+
+1. A team member must connect their GitHub account (**Settings → GitHub**)
+2. The same member must enable the relevant consent flag(s) in
+   **Settings → Agent Permissions** (`allowAgentPrCreate`,
+   `allowAgentPrMerge`, `allowAgentPrComment`)
+
+Without consent, the backend returns `403` with a message naming which
+consent flag is missing. All three tools are **agent-only** — human
+sessions cannot call them; use the regular `gh` CLI or the GitHub web UI
+for human-authored PRs.
+
+On success, `pull_requests_create` patches the task's `branchName`,
+`prUrl`, and `prNumber` server-side, and `pull_requests_merge` transitions
+the task to `done`. No extra `tasks_update` / `tasks_transition` call
+needed — one tool call drives both the GitHub action and the task-state
+side effect.
 
 ## Transport
 
