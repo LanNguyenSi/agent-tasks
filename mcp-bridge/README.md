@@ -13,7 +13,7 @@ claude mcp add agent-tasks -- npx -y @agent-tasks/mcp-bridge    # register with 
 
 That's it — the agent now sees `tasks_*`, `signals_*`, and `projects_*` tools. All governance (claim gates, preconditions, review locks, audit trails) is enforced by the remote backend; the bridge is a thin stdio transport with a token cache.
 
-> **Note:** passing `--token` on the command line may end up in shell history. Prefer the interactive `login` prompt (input is masked) when possible, or pipe via `echo "$TOKEN" | agent-tasks-mcp-bridge login` on a non-TTY.
+> **Note:** passing `--token` on the command line may end up in shell history. Prefer the interactive `login` prompt (input is masked) when possible. For non-interactive use from a secret manager, pipe stdin — e.g. `pass show agent-tasks | agent-tasks-mcp-bridge login` — rather than putting the token on the command line.
 
 ## Commands
 

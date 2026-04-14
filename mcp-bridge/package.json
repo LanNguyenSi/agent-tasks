@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "dev": "tsx src/cli.ts",
+    "dev": "npm run build --workspace=mcp-server --prefix .. && tsx src/cli.ts",
     "start": "node dist/cli.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

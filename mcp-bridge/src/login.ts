@@ -19,18 +19,33 @@ function promptHiddenToken(): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!input.isTTY || typeof input.setRawMode !== "function") {
       stderr.write(
-        "warning: stdin is not a TTY — token will be visible as you paste. Pipe it via --token or use 'login --token <t>' instead.\n",
+        "warning: stdin is not a TTY — reading one line without masking.\n",
       );
       let buf = "";
+      let settled = false;
+      const detach = () => {
+        input.off("data", onData);
+        input.off("end", onEnd);
+        input.off("error", onErr);
+      };
+      const settle = (err: Error | null, value?: string) => {
+        if (settled) return;
+        settled = true;
+        detach();
+        if (err) reject(err);
+        else resolve((value ?? "").trim());
+      };
       const onData = (chunk: Buffer) => {
         buf += chunk.toString("utf8");
         const nl = buf.indexOf("\n");
-        if (nl >= 0) {
-          input.off("data", onData);
-          resolve(buf.slice(0, nl).trim());
-        }
+        if (nl >= 0) settle(null, buf.slice(0, nl));
       };
+      const onEnd = () => settle(null, buf);
+      const onErr = (err: Error) => settle(err);
       input.on("data", onData);
+      input.on("end", onEnd);
+      input.on("error", onErr);
+      input.resume();
       return;
     }
 
@@ -140,6 +155,16 @@ export async function runLogin(options: LoginOptions): Promise<void> {
       : await promptHiddenToken();
   if (!token) {
     throw new Error("No token provided.");
+  }
+  if (/\s/.test(token)) {
+    throw new Error(
+      "Token contains whitespace or newlines — pasted input may have been truncated. Re-run login and ensure the whole token is on a single line.",
+    );
+  }
+  if (token.length < 16) {
+    throw new Error(
+      "Token is suspiciously short (<16 chars) — refusing to store. Check that the whole token was captured.",
+    );
   }
 
   await validateToken(options.baseUrl, token);

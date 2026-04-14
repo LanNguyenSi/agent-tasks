@@ -29,11 +29,11 @@ describe("runLogin", () => {
     await runLogin({
       baseUrl: "https://fake.local",
       store,
-      tokenFromArg: "tok-abc",
+      tokenFromArg: "tok-abcdefghijklmnop",
     });
-    expect(await store.get()).toBe("tok-abc");
+    expect(await store.get()).toBe("tok-abcdefghijklmnop");
     const raw = await readFile(join(tmp, "bridge-token"), "utf8");
-    expect(raw).toBe("tok-abc");
+    expect(raw).toBe("tok-abcdefghijklmnop");
   });
 
   it("refuses to store when backend returns 401", async () => {
@@ -46,7 +46,7 @@ describe("runLogin", () => {
       runLogin({
         baseUrl: "https://fake.local",
         store,
-        tokenFromArg: "bad-token",
+        tokenFromArg: "bad-token-1234567890",
       }),
     ).rejects.toThrow(/HTTP 401/);
     expect(await store.get()).toBeNull();
@@ -62,7 +62,7 @@ describe("runLogin", () => {
       runLogin({
         baseUrl: "https://fake.local",
         store,
-        tokenFromArg: "tok-xyz",
+        tokenFromArg: "tok-xyz-0123456789ab",
       }),
     ).rejects.toThrow(/shape/);
     expect(await store.get()).toBeNull();
