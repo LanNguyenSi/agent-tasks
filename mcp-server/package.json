@@ -2,6 +2,16 @@
   "name": "@agent-tasks/mcp-server",
   "version": "0.1.0",
   "description": "MCP server exposing the agent-tasks API as tools for MCP-capable clients",
+  "homepage": "https://github.com/LanNguyenSi/agent-tasks/tree/master/mcp-server#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LanNguyenSi/agent-tasks.git",
+    "directory": "mcp-server"
+  },
+  "bugs": {
+    "url": "https://github.com/LanNguyenSi/agent-tasks/issues"
+  },
+  "license": "MIT",
   "type": "module",
   "bin": {
     "agent-tasks-mcp": "./dist/index.js"
