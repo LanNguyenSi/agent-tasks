@@ -79,3 +79,33 @@ jobs:
 
       - name: Build
         run: npm run build --workspace=frontend
+
+  mcp-server:
+    name: MCP Server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck --workspace=mcp-server
+      - run: npm run test --workspace=mcp-server
+      - run: npm run build --workspace=mcp-server
+
+  mcp-bridge:
+    name: MCP Bridge
+    runs-on: ubuntu-latest
+    needs: mcp-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build --workspace=mcp-server
+      - run: npm run typecheck --workspace=mcp-bridge
+      - run: npm run test --workspace=mcp-bridge
+      - run: npm run build --workspace=mcp-bridge

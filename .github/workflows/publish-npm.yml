@@ -1,0 +1,72 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - "mcp-server-v*"
+      - "mcp-bridge-v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Identify workspace from tag
+        id: target
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          case "$tag" in
+            mcp-server-v*)
+              echo "workspace=mcp-server" >> "$GITHUB_OUTPUT"
+              echo "expected=${tag#mcp-server-v}" >> "$GITHUB_OUTPUT"
+              ;;
+            mcp-bridge-v*)
+              echo "workspace=mcp-bridge" >> "$GITHUB_OUTPUT"
+              echo "expected=${tag#mcp-bridge-v}" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported tag: $tag" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Verify package.json version matches tag
+        run: |
+          pkg_version=$(node -p "require('./${{ steps.target.outputs.workspace }}/package.json').version")
+          if [ "$pkg_version" != "${{ steps.target.outputs.expected }}" ]; then
+            echo "Tag version (${{ steps.target.outputs.expected }}) does not match package.json ($pkg_version)" >&2
+            exit 1
+          fi
+
+      - name: Preflight — ensure pinned @agent-tasks/mcp-server is published (bridge only)
+        if: steps.target.outputs.workspace == 'mcp-bridge'
+        run: |
+          dep_version=$(node -p "require('./mcp-bridge/package.json').dependencies['@agent-tasks/mcp-server']")
+          echo "Bridge pins @agent-tasks/mcp-server@$dep_version"
+          if ! npm view "@agent-tasks/mcp-server@$dep_version" version >/dev/null 2>&1; then
+            echo "FATAL: @agent-tasks/mcp-server@$dep_version is not published on npm yet." >&2
+            echo "Publish mcp-server first (tag: mcp-server-v$dep_version)." >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: npm run build --workspace=mcp-server && npm run build --workspace=${{ steps.target.outputs.workspace }}
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --workspace=${{ steps.target.outputs.workspace }} --access public --provenance
