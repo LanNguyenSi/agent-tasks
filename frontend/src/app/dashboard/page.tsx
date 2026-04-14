@@ -33,6 +33,7 @@ import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
 import TaskDetailModal from "../../components/TaskDetailModal";
 import ImportDialog from "../../components/ImportDialog";
+import ConnectAgentModal from "../../components/ConnectAgentModal";
 import Select from "@/components/ui/Select";
 
 const DEFAULT_PRESETS: TemplatePreset[] = [
@@ -339,6 +340,7 @@ export default function DashboardPage() {
 
   const [showNewTask, setShowNewTask] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showConnectAgent, setShowConnectAgent] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
@@ -764,6 +766,24 @@ export default function DashboardPage() {
               </button>
             </div>
           </div>
+          {(() => {
+            const canConnect = selectedTeam?.role === "ADMIN";
+            const connectTitle = !selectedProjectId || !selectedTeamId
+              ? "Pick a project first"
+              : canConnect
+                ? "Generate an API token and get an install snippet for Claude Code, the CLI, or curl"
+                : "Only team admins can generate agent tokens";
+            return (
+              <Button
+                variant="secondary"
+                onClick={() => setShowConnectAgent(true)}
+                disabled={!selectedProjectId || !selectedTeamId || !canConnect}
+                title={connectTitle}
+              >
+                Connect agent
+              </Button>
+            );
+          })()}
           <Button
             variant="ghost"
             onClick={() => setShowImport(true)}
@@ -1090,6 +1110,15 @@ export default function DashboardPage() {
           projectId={selectedProjectId}
           apiBase=""
           onImported={() => { getTasks(selectedProjectId).then(setTasks).catch(() => {}); }}
+        />
+      )}
+
+      {selectedTeamId && selectedProject && (
+        <ConnectAgentModal
+          open={showConnectAgent}
+          onClose={() => setShowConnectAgent(false)}
+          teamId={selectedTeamId}
+          projectName={selectedProject.name}
         />
       )}
 
