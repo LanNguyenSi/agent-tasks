@@ -20,6 +20,7 @@ import { DEFAULT_TRANSITIONS, findDefaultTransition } from "../services/default-
 import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES } from "../services/transition-rules.js";
 import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
+import { checkDistinctReviewerGate, distinctReviewerRejectionMessage } from "../services/review-gate.js";
 
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -571,6 +572,41 @@ taskRouter.patch("/tasks/:id", async (c) => {
   }
 
   const body = parsed.data;
+
+  // Distinct-reviewer gate applies to ALL paths that can change status,
+  // not just /transition. Previously the frontend "Mark Done" button and
+  // any human calling PATCH with { status: "done" } bypassed the gate
+  // entirely, making the governance feature cosmetic. Apply the same
+  // check here. Status changes for the review→done transition through
+  // PATCH get the same structural backstop.
+  if (body.status === "done" && task.status === "review") {
+    const project = await prisma.project.findUnique({
+      where: { id: task.projectId },
+      select: { requireDistinctReviewer: true },
+    });
+    if (project?.requireDistinctReviewer) {
+      const gate = checkDistinctReviewerGate(task, actor, project);
+      if (!gate.allowed) {
+        void logAuditEvent({
+          action: "task.review_rejected_self_reviewer",
+          actorId: actor.userId,
+          projectId: task.projectId,
+          taskId: task.id,
+          payload: {
+            reason: gate.reason,
+            actorType: "human",
+            endpoint: "patch",
+            claimedByUserId: task.claimedByUserId,
+            claimedByAgentId: task.claimedByAgentId,
+            reviewClaimedByUserId: task.reviewClaimedByUserId,
+            reviewClaimedByAgentId: task.reviewClaimedByAgentId,
+          },
+        });
+        return forbidden(c, distinctReviewerRejectionMessage());
+      }
+    }
+  }
+
   let updated;
   try {
     updated = await prisma.task.update({
@@ -986,6 +1022,17 @@ taskRouter.post(
     const previousStatus = task.status;
     let forcedRules: TransitionRule[] = [];
 
+    // Force-transitions are admin-only, independent of whether the workflow
+    // preconditions would have tripped. Previously the admin check was
+    // nested inside `if (failed.length > 0)`, which meant any user with
+    // `tasks:transition` could self-approve by adding `force: true` whenever
+    // the task had no failing preconditions — bypassing the distinct-reviewer
+    // gate below. Lifting the check here makes force a true escape hatch
+    // that only project admins can reach.
+    if (force && !(await isProjectAdmin(actor, task.projectId))) {
+      return forbidden(c, "Only team admins can force a transition");
+    }
+
     // Resolve the transition to evaluate — either from the task's explicit
     // Workflow row, or from the built-in default workflow that applies to
     // every project without a custom one. Both paths feed the same rule
@@ -1029,6 +1076,34 @@ taskRouter.post(
       }
     }
 
+    // Distinct-reviewer gate. Opt-in per project (default off for backward
+    // compatibility). Evaluated BEFORE the precondition rules so that a
+    // rejected self-review does not trigger a GitHub round-trip (ciGreen /
+    // prMerged checks). force=true is an admin-only escape hatch and is
+    // already verified at the top of the handler.
+    if (previousStatus === "review" && status === "done" && !force) {
+      const gate = checkDistinctReviewerGate(task, actor, task.project);
+      if (!gate.allowed) {
+        void logAuditEvent({
+          action: "task.review_rejected_self_reviewer",
+          actorId: actor.type === "human" ? actor.userId : undefined,
+          projectId: task.projectId,
+          taskId: task.id,
+          payload: {
+            reason: gate.reason,
+            actorType: actor.type,
+            agentTokenId: actor.type === "agent" ? actor.tokenId : null,
+            endpoint: "transition",
+            claimedByUserId: task.claimedByUserId,
+            claimedByAgentId: task.claimedByAgentId,
+            reviewClaimedByUserId: task.reviewClaimedByUserId,
+            reviewClaimedByAgentId: task.reviewClaimedByAgentId,
+          },
+        });
+        return forbidden(c, distinctReviewerRejectionMessage());
+      }
+    }
+
     // Precondition checks: branch present, PR present, CI green, etc.
     // Unknown rules are reported but do NOT block — keeps workflows
     // forward-compatible across backend versions if an operator mistyped
@@ -1064,9 +1139,12 @@ taskRouter.post(
     );
 
     if (failed.length > 0) {
-      const isAdmin = await isProjectAdmin(actor, task.projectId);
-
       if (!force) {
+        // Admin-ness is inferred from the fact that the actor got past the
+        // top-of-handler force check — if they could send force=true they
+        // would be admin, so we can advertise the canForce hint without an
+        // extra DB round-trip here. Non-admins see canForce: false.
+        const isAdmin = await isProjectAdmin(actor, task.projectId);
         return c.json(
           {
             error: "precondition_failed",
@@ -1083,10 +1161,7 @@ taskRouter.post(
           422,
         );
       }
-
-      if (!isAdmin) {
-        return forbidden(c, "Only team admins can force a transition past preconditions");
-      }
+      // force=true + admin already verified at the top of the handler.
       forcedRules = failed;
     }
 

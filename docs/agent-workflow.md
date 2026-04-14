@@ -126,6 +126,43 @@ Full API reference: [Swagger UI](/docs) · [OpenAPI JSON](/api/openapi.json)
 
 Tasks below the project's confidence threshold cannot be claimed (422 error). Use `?force=true` to bypass, or check `GET /api/tasks/{id}/instructions` for the score and missing fields.
 
+## Distinct reviewer (opt-in)
+
+Projects can enable `requireDistinctReviewer` in the settings modal. When enabled, a `review → done` transition is rejected if the actor attempting it is the task's claimant, or if no review lock is held, or if the review lock is held by the claimant. This prevents a single agent from self-approving its own work by calling `POST /tasks/{id}/transition` directly and bypassing `POST /tasks/{id}/review`.
+
+**Happy path with the flag on:**
+
+```bash
+# Agent A (token A) claims and implements
+curl -X POST -H "Authorization: Bearer $TOKEN_A" "$BASE/tasks/{id}/claim"
+# ... do the work ...
+curl -X POST -H "Authorization: Bearer $TOKEN_A" -d '{"status":"review"}' \
+  "$BASE/tasks/{id}/transition"
+
+# Agent A tries to self-approve — rejected with 403
+curl -X POST -H "Authorization: Bearer $TOKEN_A" -d '{"status":"done"}' \
+  "$BASE/tasks/{id}/transition"
+# => 403 "This project requires a distinct reviewer…"
+
+# Agent B (token B) claims the review lock, then approves
+curl -X POST -H "Authorization: Bearer $TOKEN_B" "$BASE/tasks/{id}/review/claim"
+curl -X POST -H "Authorization: Bearer $TOKEN_B" -d '{"action":"approve"}' \
+  "$BASE/tasks/{id}/review"
+# => task.status == "done"
+```
+
+**Escape hatch:** team admins can still pass `force: true` with a `forceReason` on the transition endpoint. The bypass is admin-gated — `force: true` from a non-admin is rejected with `403 "Only team admins can force a transition"`, independent of whether the preconditions would have passed. The bypass is audit-logged as `task.transitioned.forced`.
+
+**Rejected transitions are audit-logged** as `task.review_rejected_self_reviewer` with a `reason` field (`self_review`, `no_review_lock`, or `review_lock_held_by_claimant`), an `endpoint` field (`transition` or `patch`), and — for agent actors — an `agentTokenId` so that attempts to bypass the gate are traceable back to the token.
+
+**The gate applies to every status-write path**, not just `/transition`. `PATCH /tasks/:id` with `{"status": "done"}` is also gated, so a human clicking "Mark Done" in the UI goes through the same check. The frontend's Mark Done button calls `/transition` by default.
+
+**Humans and agents are treated identically.** A human claimant cannot approve their own task any more than an agent can — the governance invariant does not hinge on credential type. If you need a human-only carve-out for your workflow, use force-transition from an admin account.
+
+**Toggling the flag while a review is in flight** does not affect the in-flight review lock: the lock stays as-is. The gate only fires on the next `review → done` attempt. If a lock gets stranded (e.g. flag flipped ON while the claimant held the lock from before), the claimant can call `POST /tasks/:id/review/release` to clear it, then another actor can call `POST /tasks/:id/review/claim`.
+
+**Only team admins can toggle `requireDistinctReviewer`**, consistent with other governance settings on the project (confidence threshold, task template). Changes to governance fields are audit-logged as `project.updated` with a `changes` payload showing from/to values.
+
 ## Comments and updates
 
 Agents can add comments to tasks:

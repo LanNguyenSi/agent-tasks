@@ -1,5 +1,5 @@
 /**
- * Tests for single-reviewer lock behavior.
+ * Tests for single-reviewer lock behavior and the distinct-reviewer gate.
  *
  * These test the review-signal and review-lock contracts:
  * - Only one reviewer at a time
@@ -7,8 +7,15 @@
  * - Self-review blocked
  * - Review lock cleared after approve/request_changes
  * - Review lock can be released manually
+ * - Distinct-reviewer gate on review→done (opt-in, per project)
+ *
+ * The distinct-reviewer gate is imported directly from
+ * `backend/src/services/review-gate.ts` so the test cannot drift from
+ * the production rule — any change to the gate is observed by the suite.
  */
 import { describe, expect, it } from "vitest";
+import { checkDistinctReviewerGate } from "../../src/services/review-gate.js";
+import type { Actor as BackendActor } from "../../src/types/auth.js";
 
 // Simulate the review lock logic as pure functions (extracted from route handler logic)
 // This avoids needing to spin up the full Hono app.
@@ -56,6 +63,26 @@ function canSubmitReview(task: TaskReviewState, actor: Actor): { allowed: boolea
   const claimCheck = canClaimReview(task, actor);
   if (!claimCheck.allowed) return claimCheck;
   return { allowed: true };
+}
+
+/**
+ * Thin adapter over the production gate to let the existing describe
+ * blocks in this file keep their current signature (legacy local `Actor`
+ * type from the top of the file, `force` flag that the production gate
+ * does NOT model). The adapter applies the `force` bypass and normalises
+ * the actor shape — the core rule is read from the shared service.
+ */
+function canTransitionReviewToDone(
+  task: TaskReviewState,
+  actor: Actor,
+  project: { requireDistinctReviewer: boolean },
+  force: boolean,
+): { allowed: boolean; reason?: string } {
+  if (force) return { allowed: true };
+  const productionActor: BackendActor = actor.type === "human"
+    ? { type: "human", userId: actor.userId! }
+    : { type: "agent", tokenId: actor.tokenId!, teamId: "team-test", scopes: [] };
+  return checkDistinctReviewerGate(task, productionActor, project);
 }
 
 const baseTask: TaskReviewState = {
@@ -176,6 +203,183 @@ describe("single-reviewer lock", () => {
       };
       const result = canClaimReview(reReview, { type: "agent", tokenId: "agent-new-reviewer" });
       expect(result.allowed).toBe(true);
+    });
+  });
+});
+
+describe("distinct-reviewer gate on review→done transition", () => {
+  const claimantAgent: Actor = { type: "agent", tokenId: "agent-worker" };
+  const otherAgent: Actor = { type: "agent", tokenId: "agent-reviewer" };
+  const claimantHuman: Actor = { type: "human", userId: "user-worker" };
+  const otherHuman: Actor = { type: "human", userId: "user-reviewer" };
+
+  describe("flag disabled (backwards compatible)", () => {
+    it("allows the claimant to self-transition when flag is off", () => {
+      // This is the TODAY behaviour — preserved so existing projects
+      // keep working when the migration lands and the field defaults to
+      // false on all rows.
+      const result = canTransitionReviewToDone(
+        baseTask,
+        claimantAgent,
+        { requireDistinctReviewer: false },
+        false,
+      );
+      expect(result.allowed).toBe(true);
+    });
+
+    it("ignores all other gate conditions when flag is off", () => {
+      const result = canTransitionReviewToDone(
+        { ...baseTask, reviewClaimedByAgentId: "agent-worker" },
+        claimantAgent,
+        { requireDistinctReviewer: false },
+        false,
+      );
+      expect(result.allowed).toBe(true);
+    });
+  });
+
+  describe("flag enabled", () => {
+    it("rejects the claimant transitioning their own task", () => {
+      const result = canTransitionReviewToDone(
+        baseTask,
+        claimantAgent,
+        { requireDistinctReviewer: true },
+        false,
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("self_review");
+    });
+
+    it("rejects a distinct actor when no review lock is set", () => {
+      // Even a different agent cannot short-circuit the review flow by
+      // hitting /transition directly — they must go through /review/claim
+      // first. This forces an audit trail.
+      const result = canTransitionReviewToDone(
+        baseTask,
+        otherAgent,
+        { requireDistinctReviewer: true },
+        false,
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("no_review_lock");
+    });
+
+    it("rejects when the review lock is held by the claimant (belt-and-suspenders)", () => {
+      // /review/claim already blocks self-claim, so this state should
+      // not arise normally. Guard against schema-level edits / admin UI
+      // / race conditions that could leave the lock held by the same
+      // actor who owns the task.
+      const result = canTransitionReviewToDone(
+        { ...baseTask, reviewClaimedByAgentId: "agent-worker" },
+        otherAgent,
+        { requireDistinctReviewer: true },
+        false,
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("review_lock_held_by_claimant");
+    });
+
+    it("allows a distinct reviewer who holds the lock to approve", () => {
+      // The happy path: agent A claimed the task, agent B claimed the
+      // review lock, agent B now transitions to done.
+      const result = canTransitionReviewToDone(
+        { ...baseTask, reviewClaimedByAgentId: "agent-reviewer" },
+        otherAgent,
+        { requireDistinctReviewer: true },
+        false,
+      );
+      expect(result.allowed).toBe(true);
+    });
+
+    it("allows a human reviewer approving an agent's task", () => {
+      const humanReviewed: TaskReviewState = {
+        ...baseTask,
+        reviewClaimedByUserId: "user-reviewer",
+        reviewClaimedByAgentId: null,
+      };
+      const result = canTransitionReviewToDone(
+        humanReviewed,
+        otherHuman,
+        { requireDistinctReviewer: true },
+        false,
+      );
+      expect(result.allowed).toBe(true);
+    });
+
+    it("rejects a human claimant transitioning their own task", () => {
+      const humanClaimed: TaskReviewState = {
+        ...baseTask,
+        claimedByAgentId: null,
+        claimedByUserId: "user-worker",
+      };
+      const result = canTransitionReviewToDone(
+        humanClaimed,
+        claimantHuman,
+        { requireDistinctReviewer: true },
+        false,
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("self_review");
+    });
+  });
+
+  describe("force bypass", () => {
+    it("admin force=true bypasses the gate even when flag is on", () => {
+      // The escape hatch for operational recovery. The existing admin
+      // check in routes/tasks.ts still gates who can pass force=true,
+      // so this is NOT a general self-review allow — only admins reach
+      // this code path with force=true.
+      const result = canTransitionReviewToDone(
+        baseTask,
+        claimantAgent,
+        { requireDistinctReviewer: true },
+        true,
+      );
+      expect(result.allowed).toBe(true);
+    });
+  });
+
+  describe("production gate (imported from review-gate.ts)", () => {
+    // Call the production gate directly, not through the adapter above,
+    // so regressions in the imported module fail the suite immediately
+    // rather than being hidden by the adapter's legacy Actor shape.
+    it("returns the same shape the route handler reads", () => {
+      const humanActor: BackendActor = { type: "human", userId: "user-worker" };
+      const result = checkDistinctReviewerGate(
+        { ...baseTask, claimedByAgentId: null, claimedByUserId: "user-worker" },
+        humanActor,
+        { requireDistinctReviewer: true },
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("self_review");
+    });
+
+    it("treats humans and agents identically on the gate (governance decision)", () => {
+      // Open question #1 from the task description: humans are bound by
+      // the gate too. Document it as a test so flipping this behaviour
+      // later requires editing a test + a code change, not just code.
+      const humanClaimant: BackendActor = { type: "human", userId: "user-worker" };
+      const agentClaimant: BackendActor = {
+        type: "agent",
+        tokenId: "agent-worker",
+        teamId: "team-x",
+        scopes: [],
+      };
+
+      const humanResult = checkDistinctReviewerGate(
+        { ...baseTask, claimedByAgentId: null, claimedByUserId: "user-worker" },
+        humanClaimant,
+        { requireDistinctReviewer: true },
+      );
+      const agentResult = checkDistinctReviewerGate(
+        baseTask,
+        agentClaimant,
+        { requireDistinctReviewer: true },
+      );
+
+      expect(humanResult.allowed).toBe(false);
+      expect(agentResult.allowed).toBe(false);
+      expect(humanResult.reason).toBe(agentResult.reason);
     });
   });
 });

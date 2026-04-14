@@ -458,6 +458,7 @@ export default function DashboardPage() {
   const [settingsFieldConstraints, setSettingsFieldConstraints] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsPresets, setSettingsPresets] = useState<TemplatePreset[]>([]);
+  const [settingsRequireDistinctReviewer, setSettingsRequireDistinctReviewer] = useState(false);
 
   function closeNewTaskModal() {
     setShowNewTask(false);
@@ -699,6 +700,7 @@ export default function DashboardPage() {
                   setSettingsFieldContext(tpl?.fields?.context ?? true);
                   setSettingsFieldConstraints(tpl?.fields?.constraints ?? true);
                   setSettingsPresets(tpl?.presets?.length ? [...tpl.presets] : DEFAULT_PRESETS.map((p) => ({ ...p })));
+                  setSettingsRequireDistinctReviewer(proj?.requireDistinctReviewer ?? false);
                   setShowProjectSettings(true);
                 }}
               >
@@ -1096,6 +1098,7 @@ export default function DashboardPage() {
           user={user}
           templateFields={templateFields}
           confidenceThreshold={selectedProject?.confidenceThreshold ?? 60}
+          requireDistinctReviewer={selectedProject?.requireDistinctReviewer ?? false}
           onUpdate={handleTaskUpdate}
           onDelete={handleTaskDelete}
           onClose={() => setActiveTaskId(null)}
@@ -1131,6 +1134,23 @@ export default function DashboardPage() {
               onChange={(e) => setSettingsTemplateEnabled(e.target.checked)}
             />
             Enable task template for this project
+          </label>
+        </div>
+
+        <div style={{ marginBottom: "0.75rem", paddingBottom: "0.75rem", borderBottom: "1px solid var(--border)" }}>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", fontSize: "var(--text-sm)", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={settingsRequireDistinctReviewer}
+              onChange={(e) => setSettingsRequireDistinctReviewer(e.target.checked)}
+              style={{ marginTop: "0.2rem" }}
+            />
+            <span>
+              Require a distinct reviewer
+              <span style={{ display: "block", color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.15rem" }}>
+                When enabled, <code>review → done</code> transitions require that a different user or agent than the task&apos;s claimant has formally taken the review lock (via <code>POST /tasks/:id/review/claim</code>). Prevents agents from self-approving their own work. Team admins can still bypass with a forced transition.
+              </span>
+            </span>
           </label>
         </div>
 
@@ -1271,6 +1291,7 @@ export default function DashboardPage() {
               const updated = await updateProject(selectedProjectId, {
                 taskTemplate: tpl,
                 confidenceThreshold: settingsThreshold,
+                requireDistinctReviewer: settingsRequireDistinctReviewer,
               });
               setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
               setShowProjectSettings(false);

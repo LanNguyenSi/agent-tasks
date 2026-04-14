@@ -12,6 +12,7 @@ import {
   addDependency,
   removeDependency,
   reviewTask,
+  transitionTask,
   type User,
   type Task,
   type Comment,
@@ -71,6 +72,7 @@ export interface TaskDetailModalProps {
   user: User | null;
   templateFields: { goal?: boolean; acceptanceCriteria?: boolean; context?: boolean; constraints?: boolean } | null;
   confidenceThreshold: number;
+  requireDistinctReviewer?: boolean;
   onUpdate: (task: Task) => void;
   onDelete: (taskId: string) => void;
   onClose: () => void;
@@ -83,6 +85,7 @@ export default function TaskDetailModal({
   user,
   templateFields,
   confidenceThreshold,
+  requireDistinctReviewer = false,
   onUpdate,
   onDelete,
   onClose,
@@ -615,25 +618,38 @@ export default function TaskDetailModal({
         {task.status === "review" && task.claimedByUserId === user?.id && (
           <section style={{ marginBottom: "0.8rem" }}>
             <p className="section-kicker">Review</p>
-            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>This is your task. Once review is complete, mark it done.</p>
-            <Button
-              size="sm"
-              disabled={reviewBusy}
-              loading={reviewBusy}
-              onClick={async () => {
-                setReviewBusy(true);
-                try {
-                  const updated = await updateTask(task.id, { status: "done" });
-                  onUpdate(updated);
-                } catch (err) {
-                  onError((err as Error).message);
-                } finally {
-                  setReviewBusy(false);
-                }
-              }}
-            >
-              Mark Done
-            </Button>
+            {requireDistinctReviewer ? (
+              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>
+                This project requires a <strong>distinct reviewer</strong>. You claimed this task, so you cannot approve it yourself — a different user or agent must take the review lock and approve. Once approved, the task moves to done automatically.
+              </p>
+            ) : (
+              <>
+                <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>This is your task. Once review is complete, mark it done.</p>
+                <Button
+                  size="sm"
+                  disabled={reviewBusy}
+                  loading={reviewBusy}
+                  onClick={async () => {
+                    setReviewBusy(true);
+                    try {
+                      // Route through /transition so the backend can enforce
+                      // workflow rules, precondition gates, and (when the
+                      // project has it on) the distinct-reviewer gate. The
+                      // old code called PATCH directly, which bypassed all
+                      // three.
+                      const updated = await transitionTask(task.id, "done");
+                      onUpdate(updated);
+                    } catch (err) {
+                      onError((err as Error).message);
+                    } finally {
+                      setReviewBusy(false);
+                    }
+                  }}
+                >
+                  Mark Done
+                </Button>
+              </>
+            )}
           </section>
         )}
 

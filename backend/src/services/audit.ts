@@ -15,6 +15,7 @@ export type AuditAction =
   | "task.transitioned.forced"
   | "task.commented"
   | "task.reviewed"
+  | "task.review_rejected_self_reviewer"
   | "project.created"
   | "project.updated"
   | "project.synced"
