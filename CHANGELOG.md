@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-04-14
+
+**Headline: Agents can now connect themselves.** Onboarding a new agent is
+a copy-paste from Settings instead of a config file, and a single agent can
+no longer both open and merge a PR for the same task.
+
+### Added
+
+#### Agent onboarding
+- `@agent-tasks/mcp-bridge` — zero-setup MCP distribution via `npx`, with
+  OS keychain login so credentials don't live in config files
+- "Connect your agent" modal in Settings: inline API token generation and
+  per-client install snippets (Claude, Cursor, Continue, generic MCP)
+- Full npm metadata (repository, homepage, bugs, license) on the published
+  `@agent-tasks/mcp-server` and `@agent-tasks/mcp-bridge` packages
+
+#### Governance
+- **Distinct-reviewer gate**: a task's reviewer must be a different actor
+  than the one who moved it into review. Enforced at every transition and
+  at the merge endpoint, not just in the UI.
+- Per-project toggle `requireDistinctReviewer` with default-on for new
+  projects
+- Merge endpoint refuses delegated merges when the authenticated actor is
+  the same agent that requested the review
+
+#### MCP tools
+- New MCP tools for GitHub delegation: `pull_requests_create`,
+  `pull_requests_merge`, `pull_requests_comment` — agents can now drive
+  their own PR lifecycle entirely through MCP without falling back to the
+  REST API
+
+### Changed
+
+- Connect-agent flow moved from the dashboard header into `Settings` where
+  it belongs; the dashboard button was removed
+- `mcp-server` and `mcp-bridge` bumped to `0.2.0` on npm (shipped
+  separately in the previous release cycle, now aligned with the main
+  app version)
+
+### Security
+
+- Swept 3 medium Dependabot alerts:
+  - vitest chain in `mcp-bridge` + `mcp-server` bumped 2.1 → 3.2.4
+    (pulls patched vite ≥7.3.2, esbuild ≥0.27)
+  - `scaffold/requirements-dev.txt` pytest floor bumped to 9.0.3
+
 ## [0.1.0] - 2026-04-13
 
 Initial public release of agent-tasks — enforced workflows for human-agent delivery.
