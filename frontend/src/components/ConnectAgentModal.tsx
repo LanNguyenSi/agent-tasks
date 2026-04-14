@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Modal from "./ui/Modal";
 import { Button } from "./ui/Button";
 import AlertBanner from "./ui/AlertBanner";
-import { createAgentToken } from "../lib/api";
+import { createAgentToken, type AgentToken } from "../lib/api";
 
 type TabId = "mcp" | "cli" | "api";
 
@@ -12,7 +12,18 @@ interface ConnectAgentModalProps {
   open: boolean;
   onClose: () => void;
   teamId: string;
-  projectName: string;
+  /**
+   * Label used in the auto-generated token name (visible later in the
+   * Settings token list). Usually the team name or project name — the
+   * token itself is always team-scoped regardless. Keeps the row in the
+   * token list findable: "Agent (TeamFoo) — 2026-04-14T18-30-15-ab12cd34".
+   */
+  scopeLabel: string;
+  /**
+   * Called once after the backend confirms token creation, so the parent
+   * can insert the new row into its token list without a page reload.
+   */
+  onTokenCreated?: (token: AgentToken) => void;
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
@@ -61,7 +72,7 @@ function randomSuffix(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-export default function ConnectAgentModal({ open, onClose, teamId, projectName }: ConnectAgentModalProps) {
+export default function ConnectAgentModal({ open, onClose, teamId, scopeLabel, onTokenCreated }: ConnectAgentModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>("mcp");
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -88,7 +99,7 @@ export default function ConnectAgentModal({ open, onClose, teamId, projectName }
       return;
     }
 
-    const key = `${teamId}::${projectName}`;
+    const key = `${teamId}::${scopeLabel}`;
     if (inflightKey.current === key) {
       // Already fired for this open; do nothing.
       return;
@@ -102,13 +113,14 @@ export default function ConnectAgentModal({ open, onClose, teamId, projectName }
     // Timestamp (seconds) + random suffix so repeat opens never collide,
     // even within a single second or under StrictMode double invoke.
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const name = `Agent (${projectName}) — ${stamp}-${randomSuffix()}`;
+    const name = `Agent (${scopeLabel}) — ${stamp}-${randomSuffix()}`;
     const expiresAt = new Date(Date.now() + TOKEN_TTL_DAYS * 86_400_000).toISOString();
 
     createAgentToken({ teamId, name, scopes: AGENT_SCOPES, expiresAt })
       .then((res) => {
         if (cancelled) return;
         setToken(res.rawToken);
+        onTokenCreated?.(res.token);
       })
       .catch((err: Error) => {
         if (cancelled) return;
@@ -126,10 +138,12 @@ export default function ConnectAgentModal({ open, onClose, teamId, projectName }
     return () => {
       cancelled = true;
     };
-    // Intentionally excluding `token` and `loading` — they are written by
-    // this effect and including them would cause spurious re-runs.
+    // Intentionally excluding `token`, `loading`, and `onTokenCreated` —
+    // the first two are written by this effect and including them would
+    // cause spurious re-runs; the callback is a stable external reference
+    // that should never retrigger token generation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, teamId, projectName]);
+  }, [open, teamId, scopeLabel]);
 
   async function copy(value: string, message: string) {
     try {
@@ -151,7 +165,7 @@ export default function ConnectAgentModal({ open, onClose, teamId, projectName }
 
   const verifyHint =
     activeTab === "mcp"
-      ? "Restart Claude Code. Then ask it to list your agent-tasks — it should return the tasks from this team."
+      ? "Restart Claude Code. Then ask it to list your agent-tasks — it should return the tasks from your team."
       : activeTab === "cli"
         ? "You should see a list of claimable tasks."
         : "You should receive a JSON response with a `tasks` array.";
@@ -159,10 +173,10 @@ export default function ConnectAgentModal({ open, onClose, teamId, projectName }
   return (
     <Modal open={open} onClose={onClose} title="Connect your agent">
       <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.5rem" }}>
-        Generate a token and wire up any agent client in one step. Paste the snippet below into your terminal — no Settings round-trip needed.
+        Generate a token and wire up any agent client in one step. Paste the snippet below into your terminal.
       </p>
       <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "1rem" }}>
-        The token is <strong>team-scoped</strong> (grants access to every project in this team, not just <em>{projectName}</em>), expires in {TOKEN_TTL_DAYS} days, and carries exactly these scopes: <code>{AGENT_SCOPES.join(" ")}</code>.
+        The token is <strong>team-scoped</strong> (grants access to every project in this team), expires in {TOKEN_TTL_DAYS} days, and carries exactly these scopes: <code>{AGENT_SCOPES.join(" ")}</code>.
       </p>
 
       <div
