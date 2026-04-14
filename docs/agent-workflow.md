@@ -155,7 +155,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN_B" -d '{"action":"approve"}' \
 
 **Rejected transitions are audit-logged** as `task.review_rejected_self_reviewer` with a `reason` field (`self_review`, `no_review_lock`, or `review_lock_held_by_claimant`), an `endpoint` field (`transition` or `patch`), and — for agent actors — an `agentTokenId` so that attempts to bypass the gate are traceable back to the token.
 
-**The gate applies to every status-write path**, not just `/transition`. `PATCH /tasks/:id` with `{"status": "done"}` is also gated, so a human clicking "Mark Done" in the UI goes through the same check. The frontend's Mark Done button calls `/transition` by default.
+**The gate applies to every status-write path**, not just `/transition`. `PATCH /tasks/:id` with `{"status": "done"}` is also gated, so a human clicking "Mark Done" in the UI goes through the same check. The frontend's Mark Done button calls `/transition` by default. `POST /api/github/pull-requests/:prNumber/merge` (the backend of the `pull_requests_merge` MCP tool) is also gated — it rejects `open` or `in_progress` tasks outright, and applies the distinct-reviewer check on `review → done` merges. The idempotent re-entry path (task already in `done`) skips the gate because the rule was evaluated the first time the task reached `done`.
+
+**Admin escape hatch for merges**: admins who need to bypass the gate for a merge use `POST /tasks/:id/transition` with `force: true` + `forceReason` first (moving the task to `done` under the admin-gated force path), then call the merge endpoint — which now accepts `done` as a valid entry state. The escape hatch lives in exactly one place.
 
 **Humans and agents are treated identically.** A human claimant cannot approve their own task any more than an agent can — the governance invariant does not hinge on credential type. If you need a human-only carve-out for your workflow, use force-transition from an admin account.
 

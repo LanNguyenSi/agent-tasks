@@ -207,6 +207,53 @@ describe("single-reviewer lock", () => {
   });
 });
 
+/**
+ * Mirror of the merge-endpoint status + gate decision tree in
+ * `backend/src/routes/github.ts`. Same discipline as
+ * `canTransitionReviewToDone` above: the real handler imports the shared
+ * `checkDistinctReviewerGate` service, and this helper does too, so the
+ * only thing that could drift is the surrounding status branching. A
+ * future refactor should extract both into
+ * `backend/src/services/review-gate.ts` — kept as a local mirror here
+ * to match the existing pattern in this file.
+ */
+type MergeDecision =
+  | { outcome: "allow" }
+  | { outcome: "reject_status"; reason: string }
+  | { outcome: "reject_gate"; reason: string };
+
+function mergeDecision(
+  task: TaskReviewState,
+  actor: Actor,
+  project: { requireDistinctReviewer: boolean },
+): MergeDecision {
+  if (task.status === "open" || task.status === "in_progress") {
+    return {
+      outcome: "reject_status",
+      reason: `Cannot merge: task is in '${task.status}', expected 'review'.`,
+    };
+  }
+  if (task.status !== "review" && task.status !== "done") {
+    return {
+      outcome: "reject_status",
+      reason: `Cannot merge: task is in '${task.status}', expected 'review' or 'done'.`,
+    };
+  }
+  // `done` is the idempotent re-entry path; the gate was evaluated the
+  // first time the task reached done and re-checking would reject
+  // admin-force-transitioned tasks that never held a review lock.
+  if (task.status === "done") return { outcome: "allow" };
+
+  const productionActor: BackendActor = actor.type === "human"
+    ? { type: "human", userId: actor.userId! }
+    : { type: "agent", tokenId: actor.tokenId!, teamId: "team-test", scopes: [] };
+  const gate = checkDistinctReviewerGate(task, productionActor, project);
+  if (!gate.allowed) {
+    return { outcome: "reject_gate", reason: gate.reason ?? "unknown" };
+  }
+  return { outcome: "allow" };
+}
+
 describe("distinct-reviewer gate on review→done transition", () => {
   const claimantAgent: Actor = { type: "agent", tokenId: "agent-worker" };
   const otherAgent: Actor = { type: "agent", tokenId: "agent-reviewer" };
@@ -336,6 +383,113 @@ describe("distinct-reviewer gate on review→done transition", () => {
         true,
       );
       expect(result.allowed).toBe(true);
+    });
+  });
+
+  describe("merge endpoint gates (review→done via GitHub merge path)", () => {
+    // Rejects any task that's not past the review step. Closes the gap
+    // where POST /api/github/pull-requests/:prNumber/merge would fast-
+    // track an `open` or `in_progress` task straight to `done`.
+    const reviewerAgent: Actor = { type: "agent", tokenId: "agent-reviewer" };
+    const claimantAgent: Actor = { type: "agent", tokenId: "agent-worker" };
+
+    it("rejects a task in 'open' with a helpful status message", () => {
+      const result = mergeDecision(
+        { ...baseTask, status: "open" },
+        reviewerAgent,
+        { requireDistinctReviewer: false },
+      );
+      expect(result.outcome).toBe("reject_status");
+      if (result.outcome === "reject_status") {
+        expect(result.reason).toContain("'open'");
+        expect(result.reason).toContain("expected 'review'");
+      }
+    });
+
+    it("rejects a task in 'in_progress'", () => {
+      const result = mergeDecision(
+        { ...baseTask, status: "in_progress" },
+        reviewerAgent,
+        { requireDistinctReviewer: false },
+      );
+      expect(result.outcome).toBe("reject_status");
+      if (result.outcome === "reject_status") {
+        expect(result.reason).toContain("'in_progress'");
+      }
+    });
+
+    it("allows a task in 'review' when the flag is off (backwards compatible)", () => {
+      const result = mergeDecision(
+        { ...baseTask, status: "review" },
+        reviewerAgent,
+        { requireDistinctReviewer: false },
+      );
+      expect(result.outcome).toBe("allow");
+    });
+
+    it("allows a distinct reviewer to merge when the flag is on and the lock is held", () => {
+      const lockedTask: TaskReviewState = {
+        ...baseTask,
+        status: "review",
+        reviewClaimedByAgentId: "agent-reviewer",
+      };
+      const result = mergeDecision(
+        lockedTask,
+        reviewerAgent,
+        { requireDistinctReviewer: true },
+      );
+      expect(result.outcome).toBe("allow");
+    });
+
+    it("rejects the claimant trying to merge their own task when the flag is on", () => {
+      const result = mergeDecision(
+        { ...baseTask, status: "review" },
+        claimantAgent,
+        { requireDistinctReviewer: true },
+      );
+      expect(result.outcome).toBe("reject_gate");
+      if (result.outcome === "reject_gate") {
+        expect(result.reason).toBe("self_review");
+      }
+    });
+
+    it("rejects a review→merge when the flag is on but no review lock is set", () => {
+      // A distinct agent calling merge without first taking the review
+      // lock. Forces the lock-then-merge workflow so every merge under
+      // the flag has a recorded reviewer identity.
+      const result = mergeDecision(
+        { ...baseTask, status: "review" },
+        reviewerAgent,
+        { requireDistinctReviewer: true },
+      );
+      expect(result.outcome).toBe("reject_gate");
+      if (result.outcome === "reject_gate") {
+        expect(result.reason).toBe("no_review_lock");
+      }
+    });
+
+    it("allows a task already in 'done' as the idempotent re-entry path (no gate re-check)", () => {
+      // Task was previously moved to `done` (either normally or via
+      // admin force-transition). Calling merge again against an
+      // already-merged PR or a not-yet-merged PR should proceed to the
+      // GitHub call — the gate was evaluated at the original review→done
+      // and re-checking would spuriously reject admin-forced tasks that
+      // never held a review lock.
+      const result = mergeDecision(
+        { ...baseTask, status: "done" },
+        claimantAgent,
+        { requireDistinctReviewer: true },
+      );
+      expect(result.outcome).toBe("allow");
+    });
+
+    it("still allows 'done' idempotency with the flag off", () => {
+      const result = mergeDecision(
+        { ...baseTask, status: "done" },
+        reviewerAgent,
+        { requireDistinctReviewer: false },
+      );
+      expect(result.outcome).toBe("allow");
     });
   });
 

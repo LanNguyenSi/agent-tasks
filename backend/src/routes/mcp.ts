@@ -461,7 +461,7 @@ function buildServer(token: string): McpServer {
     "pull_requests_merge",
     {
       description:
-        "Merge a GitHub pull request via delegation and auto-transition the linked task to 'done'. Dispatched through a team member with 'Allow agents to merge PRs' consent. Idempotent on PRs that are already merged. Requires token scope tasks:transition. mergeMethod defaults to 'squash'.",
+        "Merge a GitHub pull request via delegation and auto-transition the linked task to 'done'. Dispatched through a team member with 'Allow agents to merge PRs' consent. Idempotent on PRs that are already merged. Requires token scope tasks:transition. mergeMethod defaults to 'squash'. REQUIRES the task to be in 'review' state (or already 'done' for re-entry) — tasks in 'open' / 'in_progress' are rejected with 403. If the project has `requireDistinctReviewer` enabled, the merge caller must not be the task's claimant and must have already taken the review lock via tasks_transition→review plus the review-claim flow. To bypass these gates, a team admin can force-transition the task to 'done' via tasks_transition with force=true first, then call this tool.",
       inputSchema: {
         taskId: uuid(),
         owner: z.string().min(1),

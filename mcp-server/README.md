@@ -90,6 +90,14 @@ the task to `done`. No extra `tasks_update` / `tasks_transition` call
 needed — one tool call drives both the GitHub action and the task-state
 side effect.
 
+`pull_requests_merge` also enforces the review gate: the task must be in
+`review` state (or already `done` for an idempotent re-try), otherwise
+the endpoint returns 403. If the project has `requireDistinctReviewer`
+enabled, the merge caller must not be the task's claimant — same rule
+the `/transition` and `/review` endpoints apply. To bypass the gate,
+admins force-transition to `done` via `tasks_transition` with `force=true`
+first, then call this tool (which accepts `done` as a valid entry state).
+
 ## Transport
 
 This package ships **stdio** only. It is the recommended path for
