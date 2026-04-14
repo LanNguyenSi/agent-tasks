@@ -43,6 +43,7 @@ export interface Project {
   githubSyncAt: string | null;
   taskTemplate: TaskTemplate | null;
   confidenceThreshold: number;
+  requireDistinctReviewer: boolean;
   createdAt: string;
 }
 
@@ -315,6 +316,7 @@ export async function updateProject(
     githubRepo?: string;
     taskTemplate?: TaskTemplate | null;
     confidenceThreshold?: number;
+    requireDistinctReviewer?: boolean;
   },
 ): Promise<Project> {
   const data = await request<{ project: Project }>(`/api/projects/${id}`, {

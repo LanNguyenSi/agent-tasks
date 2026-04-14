@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
@@ -11,15 +11,15 @@ datasource db {
 // ── Identity ─────────────────────────────────────────────────────────────────
 
 model User {
-  id            String   @id @default(uuid())
-  githubId      String?  @unique
-  login         String   @unique
-  name          String?
-  avatarUrl     String?
-  email         String?  @unique
-  passwordHash  String?
-  githubAccessToken String?
-  githubConnectedAt DateTime?
+  id                       String    @id @default(uuid())
+  githubId                 String?   @unique
+  login                    String    @unique
+  name                     String?
+  avatarUrl                String?
+  email                    String?   @unique
+  passwordHash             String?
+  githubAccessToken        String?
+  githubConnectedAt        DateTime?
   // Token health probe state — set by lazy probe when the user or an
   // ops dashboard asks. Null means "not yet checked".
   githubTokenLastCheckedAt DateTime?
@@ -30,18 +30,18 @@ model User {
   allowAgentPrMerge   Boolean @default(false)
   allowAgentPrComment Boolean @default(false)
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  memberships   TeamMember[]
-  identities    UserIdentity[]
-  agentTokens   AgentToken[]
-  tasks         Task[]       @relation("TaskCreator")
-  claims        Task[]       @relation("TaskClaimant")
-  reviews       Task[]       @relation("TaskReviewer")
-  signals       Signal[]     @relation("SignalRecipientUser")
-  comments      Comment[]    @relation("CommentAuthor")
-  auditLogs     AuditLog[]
+  memberships TeamMember[]
+  identities  UserIdentity[]
+  agentTokens AgentToken[]
+  tasks       Task[]         @relation("TaskCreator")
+  claims      Task[]         @relation("TaskClaimant")
+  reviews     Task[]         @relation("TaskReviewer")
+  signals     Signal[]       @relation("SignalRecipientUser")
+  comments    Comment[]      @relation("CommentAuthor")
+  auditLogs   AuditLog[]
 
   @@map("users")
 }
@@ -55,10 +55,10 @@ model Team {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  members        TeamMember[]
-  projects       Project[]
-  tokens         AgentToken[]
-  ssoConnection  SsoConnection?
+  members       TeamMember[]
+  projects      Project[]
+  tokens        AgentToken[]
+  ssoConnection SsoConnection?
 
   @@map("teams")
 }
@@ -66,25 +66,25 @@ model Team {
 // ── SSO (OIDC) ───────────────────────────────────────────────────────────────
 
 model SsoConnection {
-  id             String   @id @default(uuid())
-  teamId         String   @unique
+  id              String   @id @default(uuid())
+  teamId          String   @unique
   // Display label shown to users ("Acme Okta")
-  displayName    String
+  displayName     String
   // OIDC issuer URL — used for discovery (.well-known/openid-configuration)
-  issuer         String
-  clientId       String
+  issuer          String
+  clientId        String
   // Encrypted at rest with SSO_ENCRYPTION_KEY (AES-256-GCM)
   clientSecretEnc String
   // Comma-separated list of email domains this IdP is authoritative for
   // (used for domain-based discovery from the login page).
-  emailDomains   String[] @default([])
+  emailDomains    String[] @default([])
   // Auto-provision new users on first login (default: true)
-  autoProvision  Boolean  @default(true)
-  enabled        Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  autoProvision   Boolean  @default(true)
+  enabled         Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  team           Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
   @@index([enabled])
   @@map("sso_connections")
@@ -93,19 +93,19 @@ model SsoConnection {
 // ── Federated Identities ─────────────────────────────────────────────────────
 
 model UserIdentity {
-  id             String   @id @default(uuid())
-  userId         String
+  id              String   @id @default(uuid())
+  userId          String
   // "github" | "oidc"
-  provider       String
+  provider        String
   // Stable subject identifier from the IdP (GitHub id, OIDC "sub")
-  providerUserId String
+  providerUserId  String
   // For OIDC: the SsoConnection that minted this identity (null for github)
   ssoConnectionId String?
-  email          String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  email           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerUserId])
   @@index([userId])
@@ -119,8 +119,8 @@ model TeamMember {
   role      MemberRole @default(HUMAN_MEMBER)
   createdAt DateTime   @default(now())
 
-  team      Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, userId])
   @@map("team_members")
@@ -146,13 +146,13 @@ model AgentToken {
   lastUsedAt  DateTime?
   createdAt   DateTime  @default(now())
 
-  team        Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  createdBy   User      @relation(fields: [createdById], references: [id])
-  tasks       Task[]    @relation("TaskAgentCreator")
-  claims      Task[]    @relation("TaskAgentClaimant")
-  reviews     Task[]    @relation("TaskAgentReviewer")
-  signals     Signal[]  @relation("SignalRecipientAgent")
-  comments    Comment[] @relation("CommentAgentAuthor")
+  team      Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdBy User      @relation(fields: [createdById], references: [id])
+  tasks     Task[]    @relation("TaskAgentCreator")
+  claims    Task[]    @relation("TaskAgentClaimant")
+  reviews   Task[]    @relation("TaskAgentReviewer")
+  signals   Signal[]  @relation("SignalRecipientAgent")
+  comments  Comment[] @relation("CommentAgentAuthor")
 
   @@map("agent_tokens")
 }
@@ -160,24 +160,25 @@ model AgentToken {
 // ── Projects ─────────────────────────────────────────────────────────────────
 
 model Project {
-  id                  String        @id @default(uuid())
-  teamId              String
-  name                String
-  slug                String
-  description         String?
-  githubRepo          String?       // "owner/repo" if synced from GitHub
-  githubSyncAt        DateTime?
-  taskTemplate        Json?         // { fields: { goal: bool, acceptanceCriteria: bool, context: bool, constraints: bool } }
-  confidenceThreshold Int           @default(60) // 0-100, minimum confidence score for agent claims
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  id                      String    @id @default(uuid())
+  teamId                  String
+  name                    String
+  slug                    String
+  description             String?
+  githubRepo              String? // "owner/repo" if synced from GitHub
+  githubSyncAt            DateTime?
+  taskTemplate            Json? // { fields: { goal: bool, acceptanceCriteria: bool, context: bool, constraints: bool } }
+  confidenceThreshold     Int       @default(60) // 0-100, minimum confidence score for agent claims
+  requireDistinctReviewer Boolean   @default(false) // When true, review→done requires a review lock held by an actor distinct from the claimant
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
-  team         Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  tasks        Task[]
-  workflows    Workflow[]
-  boards       Board[]
-  signals      Signal[]
-  auditLogs    AuditLog[]
+  team      Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+  workflows Workflow[]
+  boards    Board[]
+  signals   Signal[]
+  auditLogs AuditLog[]
 
   @@unique([teamId, slug])
   @@map("projects")
@@ -186,16 +187,16 @@ model Project {
 // ── Workflows ────────────────────────────────────────────────────────────────
 
 model Workflow {
-  id          String   @id @default(uuid())
-  projectId   String
-  name        String
-  definition  Json     // { states: [...], transitions: [...], policies: [...] }
-  isDefault   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  projectId  String
+  name       String
+  definition Json // { states: [...], transitions: [...], policies: [...] }
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  tasks       Task[]
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks   Task[]
 
   @@map("workflows")
 }
@@ -203,13 +204,13 @@ model Workflow {
 // ── Tasks ────────────────────────────────────────────────────────────────────
 
 model Task {
-  id               String      @id @default(uuid())
-  projectId        String
-  workflowId       String?
-  title            String
-  description      String?
-  status           String      @default("open")
-  priority         TaskPriority @default(MEDIUM)
+  id          String       @id @default(uuid())
+  projectId   String
+  workflowId  String?
+  title       String
+  description String?
+  status      String       @default("open")
+  priority    TaskPriority @default(MEDIUM)
 
   // Human creator
   createdByUserId  String?
@@ -221,8 +222,8 @@ model Task {
   // Agent claimant
   claimedByAgentId String?
 
-  claimedAt        DateTime?
-  dueAt            DateTime?
+  claimedAt DateTime?
+  dueAt     DateTime?
 
   // Review lock — only one reviewer at a time
   reviewClaimedByUserId  String?
@@ -230,39 +231,39 @@ model Task {
   reviewClaimedAt        DateTime?
 
   // Template data (structured task info for agents)
-  templateData     Json?     // { goal?, acceptanceCriteria?, context?, constraints? }
+  templateData Json? // { goal?, acceptanceCriteria?, context?, constraints? }
 
   // External system reference (e.g. Jira key "PROJ-123", GitHub issue "#42")
-  externalRef      String?
+  externalRef String?
   // Free-form labels for categorization
-  labels           String[]    @default([])
+  labels      String[] @default([])
 
   // Agent-populated fields
-  branchName       String?
-  prUrl            String?
-  prNumber         Int?
-  result           String?
+  branchName String?
+  prUrl      String?
+  prNumber   Int?
+  result     String?
 
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  project          Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  workflow         Workflow?   @relation(fields: [workflowId], references: [id])
-  createdByUser    User?       @relation("TaskCreator", fields: [createdByUserId], references: [id])
-  createdByAgent   AgentToken? @relation("TaskAgentCreator", fields: [createdByAgentId], references: [id])
-  claimedByUser    User?       @relation("TaskClaimant", fields: [claimedByUserId], references: [id])
-  claimedByAgent   AgentToken? @relation("TaskAgentClaimant", fields: [claimedByAgentId], references: [id])
+  project              Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  workflow             Workflow?   @relation(fields: [workflowId], references: [id])
+  createdByUser        User?       @relation("TaskCreator", fields: [createdByUserId], references: [id])
+  createdByAgent       AgentToken? @relation("TaskAgentCreator", fields: [createdByAgentId], references: [id])
+  claimedByUser        User?       @relation("TaskClaimant", fields: [claimedByUserId], references: [id])
+  claimedByAgent       AgentToken? @relation("TaskAgentClaimant", fields: [claimedByAgentId], references: [id])
   reviewClaimedByUser  User?       @relation("TaskReviewer", fields: [reviewClaimedByUserId], references: [id])
   reviewClaimedByAgent AgentToken? @relation("TaskAgentReviewer", fields: [reviewClaimedByAgentId], references: [id])
 
   // Dependencies: this task blocks others / is blocked by others
-  blocks           Task[]    @relation("TaskDependency")
-  blockedBy        Task[]    @relation("TaskDependency")
+  blocks    Task[] @relation("TaskDependency")
+  blockedBy Task[] @relation("TaskDependency")
 
-  comments         Comment[]
-  attachments      TaskAttachment[]
-  signals          Signal[]
-  auditLogs        AuditLog[]
+  comments    Comment[]
+  attachments TaskAttachment[]
+  signals     Signal[]
+  auditLogs   AuditLog[]
 
   @@unique([projectId, externalRef])
   @@index([projectId])
@@ -282,7 +283,7 @@ model TaskAttachment {
   createdByUserId String?
   createdAt       DateTime @default(now())
 
-  task            Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([taskId])
   @@map("task_attachments")
@@ -298,16 +299,16 @@ enum TaskPriority {
 // ── Comments ─────────────────────────────────────────────────────────────────
 
 model Comment {
-  id             String      @id @default(uuid())
-  taskId         String
-  authorUserId   String?
-  authorAgentId  String?
-  content        String
-  createdAt      DateTime    @default(now())
+  id            String   @id @default(uuid())
+  taskId        String
+  authorUserId  String?
+  authorAgentId String?
+  content       String
+  createdAt     DateTime @default(now())
 
-  task           Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  authorUser     User?       @relation("CommentAuthor", fields: [authorUserId], references: [id])
-  authorAgent    AgentToken? @relation("CommentAgentAuthor", fields: [authorAgentId], references: [id])
+  task        Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorUser  User?       @relation("CommentAuthor", fields: [authorUserId], references: [id])
+  authorAgent AgentToken? @relation("CommentAgentAuthor", fields: [authorAgentId], references: [id])
 
   @@index([taskId])
   @@map("comments")
@@ -316,14 +317,14 @@ model Comment {
 // ── Boards ───────────────────────────────────────────────────────────────────
 
 model Board {
-  id          String   @id @default(uuid())
-  projectId   String
-  name        String
-  config      Json     // { columns: [...], groupBy: ..., filters: [...] }
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(uuid())
+  projectId String
+  name      String
+  config    Json // { columns: [...], groupBy: ..., filters: [...] }
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
   @@map("boards")
@@ -332,20 +333,20 @@ model Board {
 // ── Agent Signals ───────────────────────────────────────────────────────────
 
 model Signal {
-  id                   String    @id @default(uuid())
-  type                 String    // "review_needed" | "changes_requested" | "task_approved" | "task_assigned"
-  taskId               String
-  projectId            String
-  recipientAgentId     String?   // Target agent token (null for human)
-  recipientUserId      String?   // Target human user (null for agent)
-  context              Json      // Inline context per signal-payload-design.md
-  acknowledgedAt       DateTime?
-  createdAt            DateTime  @default(now())
+  id               String    @id @default(uuid())
+  type             String // "review_needed" | "changes_requested" | "task_approved" | "task_assigned"
+  taskId           String
+  projectId        String
+  recipientAgentId String? // Target agent token (null for human)
+  recipientUserId  String? // Target human user (null for agent)
+  context          Json // Inline context per signal-payload-design.md
+  acknowledgedAt   DateTime?
+  createdAt        DateTime  @default(now())
 
-  task                 Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  project              Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  recipientAgent       AgentToken? @relation("SignalRecipientAgent", fields: [recipientAgentId], references: [id])
-  recipientUser        User?     @relation("SignalRecipientUser", fields: [recipientUserId], references: [id])
+  task           Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project        Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  recipientAgent AgentToken? @relation("SignalRecipientAgent", fields: [recipientAgentId], references: [id])
+  recipientUser  User?       @relation("SignalRecipientUser", fields: [recipientUserId], references: [id])
 
   @@index([recipientAgentId, acknowledgedAt])
   @@index([recipientUserId, acknowledgedAt])
@@ -359,14 +360,14 @@ model AuditLog {
   id        String   @id @default(uuid())
   projectId String?
   taskId    String?
-  actorId   String?  // userId
+  actorId   String? // userId
   action    String
   payload   Json     @default("{}")
   createdAt DateTime @default(now())
 
-  project   Project? @relation(fields: [projectId], references: [id])
-  task      Task?    @relation(fields: [taskId], references: [id])
-  actor     User?    @relation(fields: [actorId], references: [id])
+  project Project? @relation(fields: [projectId], references: [id])
+  task    Task?    @relation(fields: [taskId], references: [id])
+  actor   User?    @relation(fields: [actorId], references: [id])
 
   @@index([projectId])
   @@index([taskId])

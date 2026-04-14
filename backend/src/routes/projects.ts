@@ -8,6 +8,8 @@ import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import { ensureDefaultBoardForProject } from "../services/board-default.js";
 import { taskTemplateSchema } from "../lib/confidence.js";
+import { isProjectAdmin } from "../services/team-access.js";
+import { logAuditEvent } from "../services/audit.js";
 
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -29,6 +31,7 @@ const createProjectSchema = z.object({
 const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, slug: true }).extend({
   taskTemplate: taskTemplateSchema.nullable().optional(),
   confidenceThreshold: z.number().int().min(0).max(100).optional(),
+  requireDistinctReviewer: z.boolean().optional(),
 });
 
 async function assertMembership(actor: Actor, teamId: string): Promise<boolean> {
@@ -208,11 +211,18 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
   const project = await prisma.project.findUnique({ where: { id: c.req.param("id") } });
   if (!project) return notFound(c);
 
-  if (!(await assertMembership(actor, project.teamId))) {
-    return forbidden(c, "Access denied");
+  // Project settings carry governance semantics (confidence threshold,
+  // distinct-reviewer gate, task template). Any team member used to be
+  // able to flip these — which means a careless or malicious member could
+  // silently disable the distinct-reviewer gate before self-approving
+  // a task. Require admin on the whole PATCH path, matching the existing
+  // `DELETE /projects/:id` check above.
+  if (!(await isProjectAdmin(actor, project.id))) {
+    return forbidden(c, "Only team admins can update project settings");
   }
 
-  const { taskTemplate, ...rest } = c.req.valid("json");
+  const body = c.req.valid("json");
+  const { taskTemplate, ...rest } = body;
   const data: Prisma.ProjectUpdateInput = { ...rest };
   if (taskTemplate !== undefined) {
     data.taskTemplate = taskTemplate === null ? Prisma.JsonNull : taskTemplate;
@@ -221,6 +231,31 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
     where: { id: project.id },
     data,
   });
+
+  // Audit the toggle so flipping the governance flag is traceable.
+  // Scoped to the fields that carry real authorization meaning —
+  // cosmetic renames are covered by updatedAt.
+  const governanceChange: Record<string, unknown> = {};
+  if (body.requireDistinctReviewer !== undefined && body.requireDistinctReviewer !== project.requireDistinctReviewer) {
+    governanceChange.requireDistinctReviewer = {
+      from: project.requireDistinctReviewer,
+      to: body.requireDistinctReviewer,
+    };
+  }
+  if (body.confidenceThreshold !== undefined && body.confidenceThreshold !== project.confidenceThreshold) {
+    governanceChange.confidenceThreshold = {
+      from: project.confidenceThreshold,
+      to: body.confidenceThreshold,
+    };
+  }
+  if (Object.keys(governanceChange).length > 0) {
+    void logAuditEvent({
+      action: "project.updated",
+      actorId: actor.userId,
+      projectId: project.id,
+      payload: { changes: governanceChange },
+    });
+  }
 
   return c.json({ project: updated });
 });
