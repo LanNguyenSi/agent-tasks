@@ -252,7 +252,7 @@ Available scopes: `tasks:read` `tasks:create` `tasks:claim` `tasks:comment` `tas
 
 ### Getting started
 
-**The fast path:** open the dashboard, pick your project, click **Connect agent** in the toolbar. A modal generates a token and gives you a copy-paste-ready install snippet for Claude Code (MCP), the CLI, or raw curl — pick the tab that matches your client, paste, done. No manual token round-trip through Settings.
+**The fast path:** open **Settings → API Tokens** and click **Connect an agent**. A modal generates a team-scoped token (90d TTL, minimum viable scopes) and gives you a copy-paste-ready install snippet for Claude Code (MCP), the CLI, or raw curl — pick the tab that matches your client, paste, done. For non-default scopes (ops, read-only monitors, etc.), click **Create custom token** instead.
 
 For a written walkthrough or other clients, see the **[getting started guide](docs/getting-started.md)**. For detailed API examples, see the [agent workflow guide](docs/agent-workflow.md).
 

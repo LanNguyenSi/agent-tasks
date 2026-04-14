@@ -23,6 +23,7 @@ import Card from "../../components/ui/Card";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import FormField from "../../components/ui/FormField";
 import Select from "@/components/ui/Select";
+import ConnectAgentModal from "../../components/ConnectAgentModal";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -59,6 +60,7 @@ export default function SettingsPage() {
   const [newToken, setNewToken] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
 
+  const [showConnect, setShowConnect] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [tokenName, setTokenName] = useState("");
   const [selectedScopes, setSelectedScopes] = useState<string[]>(["tasks:read", "tasks:create", "tasks:claim"]);
@@ -363,9 +365,38 @@ export default function SettingsPage() {
               Tokens are team-scoped. Create and manage them here in user settings.
             </p>
           </div>
-          {teams.length > 0 && (
-            <Button onClick={() => setShowCreate(true)} size="sm">+ New Token</Button>
-          )}
+          {teams.length > 0 && (() => {
+            // Admin-only: backend `canManageTeamTokens` rejects non-admins
+            // on `POST /api/agent-tokens`. Disable the buttons in the UI
+            // rather than letting users click a primary CTA that 403s,
+            // mirroring the gating the dashboard Connect button had before
+            // the flow moved here.
+            const canManage = selectedTeam?.role === "ADMIN";
+            const adminTitle = canManage
+              ? undefined
+              : "Only team admins can generate agent tokens";
+            return (
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <Button
+                  onClick={() => setShowConnect(true)}
+                  size="sm"
+                  disabled={!canManage}
+                  title={adminTitle}
+                >
+                  Connect an agent
+                </Button>
+                <Button
+                  onClick={() => setShowCreate(true)}
+                  size="sm"
+                  variant="ghost"
+                  disabled={!canManage}
+                  title={adminTitle}
+                >
+                  Create custom token
+                </Button>
+              </div>
+            );
+          })()}
         </div>
 
         {teams.length === 0 ? (
@@ -522,6 +553,22 @@ export default function SettingsPage() {
           setRevokeTarget(null);
         }}
       />
+
+      {selectedTeamId && selectedTeam && (
+        <ConnectAgentModal
+          open={showConnect}
+          onClose={() => setShowConnect(false)}
+          teamId={selectedTeamId}
+          scopeLabel={selectedTeam.name}
+          onTokenCreated={(token) => {
+            // Optimistic insert into the visible token list so the user
+            // sees the new row immediately without a page reload. The
+            // server-side create is done by the modal; this just mirrors
+            // it in the table below.
+            setTokens((prev) => [...prev, token]);
+          }}
+        />
+      )}
     </main>
   );
 }

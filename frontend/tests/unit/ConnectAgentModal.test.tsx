@@ -24,7 +24,7 @@ function renderModal(open = true) {
       open={open}
       onClose={() => {}}
       teamId="team-1"
-      projectName="Pandora"
+      scopeLabel="Pandora Team"
     />,
   );
 }
@@ -126,46 +126,90 @@ describe("ConnectAgentModal", () => {
 
   it("generates a fresh token on reopen and does not fire during close", async () => {
     const { rerender } = render(
-      <ConnectAgentModal open={true} onClose={() => {}} teamId="team-1" projectName="Pandora" />,
+      <ConnectAgentModal open={true} onClose={() => {}} teamId="team-1" scopeLabel="Pandora Team" />,
     );
     await screen.findByTestId("connect-snippet");
     expect(mockCreate).toHaveBeenCalledTimes(1);
 
     rerender(
-      <ConnectAgentModal open={false} onClose={() => {}} teamId="team-1" projectName="Pandora" />,
+      <ConnectAgentModal open={false} onClose={() => {}} teamId="team-1" scopeLabel="Pandora Team" />,
     );
     expect(screen.queryByTestId("connect-snippet")).not.toBeInTheDocument();
     expect(mockCreate).toHaveBeenCalledTimes(1);
 
     rerender(
-      <ConnectAgentModal open={true} onClose={() => {}} teamId="team-1" projectName="Pandora" />,
+      <ConnectAgentModal open={true} onClose={() => {}} teamId="team-1" scopeLabel="Pandora Team" />,
     );
     await screen.findByTestId("connect-snippet");
     expect(mockCreate).toHaveBeenCalledTimes(2);
   });
 
   it("refuses to fire a second POST if the effect re-runs while the modal stays open", async () => {
+    const tokenSpy = vi.fn();
     const { rerender } = render(
-      <ConnectAgentModal open={true} onClose={() => {}} teamId="team-1" projectName="Pandora" />,
+      <ConnectAgentModal
+        open={true}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+        onTokenCreated={tokenSpy}
+      />,
     );
     await screen.findByTestId("connect-snippet");
     expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(tokenSpy).toHaveBeenCalledTimes(1);
 
     // Re-render with identical props (simulates parent re-render, StrictMode
-    // double invoke, or an unrelated state bump). Must NOT fire a second POST.
+    // double invoke, or an unrelated state bump). Must NOT fire a second POST
+    // AND must NOT fire onTokenCreated a second time — otherwise Settings
+    // would insert the same row twice into its visible token list.
     rerender(
-      <ConnectAgentModal open={true} onClose={() => {}} teamId="team-1" projectName="Pandora" />,
+      <ConnectAgentModal
+        open={true}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+        onTokenCreated={tokenSpy}
+      />,
     );
     expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(tokenSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("shows an error banner when token creation fails", async () => {
+  it("calls onTokenCreated after successful generation so parent can refresh its token list", async () => {
+    const spy = vi.fn();
+    render(
+      <ConnectAgentModal
+        open={true}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+        onTokenCreated={spy}
+      />,
+    );
+    await screen.findByTestId("connect-snippet");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const passedToken = spy.mock.calls[0]![0];
+    expect(passedToken.id).toBe("t-1");
+    expect(passedToken.scopes).toContain("tasks:claim");
+  });
+
+  it("does NOT call onTokenCreated when the backend rejects the request", async () => {
     mockCreate.mockReset();
     mockCreate.mockRejectedValue(new Error("Only team admins can create agent tokens"));
-    renderModal(true);
+    const spy = vi.fn();
+    render(
+      <ConnectAgentModal
+        open={true}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+        onTokenCreated={spy}
+      />,
+    );
 
     await screen.findByText(/could not generate token/i);
     expect(screen.getByText(/only team admins/i)).toBeInTheDocument();
-    expect(screen.queryByTestId("connect-snippet")).not.toBeInTheDocument();
+    expect(spy).not.toHaveBeenCalled();
   });
 });
