@@ -189,6 +189,7 @@ export async function createAgentToken(body: {
   teamId: string;
   name: string;
   scopes: string[];
+  expiresAt?: string;
 }): Promise<CreateAgentTokenResponse> {
   return request<CreateAgentTokenResponse>("/api/agent-tokens", { method: "POST", body: JSON.stringify(body) });
 }

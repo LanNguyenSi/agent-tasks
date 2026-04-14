@@ -766,14 +766,24 @@ export default function DashboardPage() {
               </button>
             </div>
           </div>
-          <Button
-            variant="secondary"
-            onClick={() => setShowConnectAgent(true)}
-            disabled={!selectedProjectId || !selectedTeamId}
-            title="Generate an API token and get an install snippet for Claude Code, the CLI, or curl"
-          >
-            Connect agent
-          </Button>
+          {(() => {
+            const canConnect = selectedTeam?.role === "ADMIN";
+            const connectTitle = !selectedProjectId || !selectedTeamId
+              ? "Pick a project first"
+              : canConnect
+                ? "Generate an API token and get an install snippet for Claude Code, the CLI, or curl"
+                : "Only team admins can generate agent tokens";
+            return (
+              <Button
+                variant="secondary"
+                onClick={() => setShowConnectAgent(true)}
+                disabled={!selectedProjectId || !selectedTeamId || !canConnect}
+                title={connectTitle}
+              >
+                Connect agent
+              </Button>
+            );
+          })()}
           <Button
             variant="ghost"
             onClick={() => setShowImport(true)}

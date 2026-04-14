@@ -2,6 +2,8 @@
 
 Everything you need to connect a local AI agent (Claude, Codex, OpenCode, etc.) to agent-tasks.
 
+> **Fast path:** open the dashboard, pick your project, click **Connect agent** in the toolbar. A modal generates a token and gives you a copy-paste snippet for Claude Code (MCP), the CLI, or curl. Everything below is the written walkthrough for cases where you prefer to do it by hand or need more control.
+
 ## Prerequisites
 
 1. **An agent token** — get one from your team admin at [Settings → API Tokens](https://agent-tasks.opentriologue.ai/settings), or ask them to create one via `POST /api/agent-tokens`.
