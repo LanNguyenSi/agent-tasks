@@ -1,6 +1,6 @@
 {
   "name": "@agent-tasks/mcp-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server exposing the agent-tasks API as tools for MCP-capable clients",
   "homepage": "https://github.com/LanNguyenSi/agent-tasks/tree/master/mcp-server#readme",
   "repository": {
