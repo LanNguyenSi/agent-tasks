@@ -7,6 +7,7 @@ import { prisma } from "../lib/prisma.js";
 import { findDelegationUser } from "../services/github-delegation.js";
 import { logAuditEvent } from "../services/audit.js";
 import { requireScope } from "../middleware/auth.js";
+import { checkDistinctReviewerGate, distinctReviewerRejectionMessage } from "../services/review-gate.js";
 
 export const githubRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -148,14 +149,119 @@ githubRouter.post(
 
     const body = c.req.valid("json");
 
-    // 1. Find the task
+    // 1. Find the task. Pull `requireDistinctReviewer` from the project
+    // alongside the team id so the distinct-reviewer gate below can run
+    // without a second round-trip.
     const task = await prisma.task.findUnique({
       where: { id: body.taskId },
-      include: { project: { select: { id: true, teamId: true } } },
+      include: {
+        project: {
+          select: { id: true, teamId: true, requireDistinctReviewer: true },
+        },
+      },
     });
 
     if (!task) {
       return c.json({ error: "not_found", message: "Task not found" }, 404);
+    }
+
+    // Governance gate: merging drives the task to `done`, so the same
+    // review→done invariants the /transition handler enforces must also
+    // apply here. Previously this endpoint wrote `status: "done"`
+    // directly no matter what the task's current status was — which meant
+    // an agent could fast-track an `open` or `in_progress` task straight
+    // to done by pointing this endpoint at a valid PR number, bypassing
+    // every workflow precondition, every review lock, and every
+    // distinct-reviewer check.
+    //
+    // Two legal entry states:
+    //   - `review`: normal happy path, apply the distinct-reviewer gate
+    //   - `done`: idempotent re-try against an already-merged PR; the gate
+    //     was evaluated when the task first reached `done` and does not
+    //     need to run again (re-checking would spuriously reject
+    //     admin-force-transitioned tasks that never held a review lock).
+    //
+    // Admin escape hatch: admins who need to bypass this gate use
+    // `POST /tasks/:id/transition` with `force: true` + `forceReason` first
+    // (that endpoint's existing admin-gated force path), which moves the
+    // task to `done`, and THEN call this merge endpoint to perform the
+    // actual GitHub merge. The escape hatch lives in exactly one place —
+    // the transition handler — instead of being duplicated here where the
+    // actor is always an agent and can never satisfy `isProjectAdmin`.
+    if (task.status === "open" || task.status === "in_progress") {
+      void logAuditEvent({
+        action: "task.merge_rejected_bad_status",
+        projectId: task.project.id,
+        taskId: task.id,
+        payload: {
+          status: task.status,
+          agentTokenId: actor.tokenId,
+          owner: body.owner,
+          repo: body.repo,
+          prNumber,
+        },
+      });
+      return c.json(
+        {
+          error: "forbidden",
+          message: `Cannot merge: task is in '${task.status}', expected 'review'. Transition the task to 'review' first (POST /tasks/:id/transition) — or, if you need to bypass the review flow entirely, force-transition to 'done' as an admin and then re-run this merge.`,
+        },
+        403,
+      );
+    }
+    if (task.status !== "review" && task.status !== "done") {
+      // Any future status other than open/in_progress/review/done falls
+      // through here. Fail closed and audit so the unknown-status attempt
+      // is visible in the timeline.
+      void logAuditEvent({
+        action: "task.merge_rejected_bad_status",
+        projectId: task.project.id,
+        taskId: task.id,
+        payload: {
+          status: task.status,
+          agentTokenId: actor.tokenId,
+          owner: body.owner,
+          repo: body.repo,
+          prNumber,
+          unknown: true,
+        },
+      });
+      return c.json(
+        {
+          error: "forbidden",
+          message: `Cannot merge: task is in '${task.status}', expected 'review' or 'done'.`,
+        },
+        403,
+      );
+    }
+
+    // Distinct-reviewer gate. Only runs on the review→done path — the
+    // `done` idempotent entry skips it on purpose (see above). Shared
+    // service from backend/src/services/review-gate.ts keeps this in
+    // lockstep with the /transition handler so the rule cannot drift.
+    if (task.status === "review") {
+      const gate = checkDistinctReviewerGate(task, actor, task.project);
+      if (!gate.allowed) {
+        void logAuditEvent({
+          action: "task.review_rejected_self_reviewer",
+          projectId: task.project.id,
+          taskId: task.id,
+          payload: {
+            reason: gate.reason,
+            actorType: actor.type,
+            agentTokenId: actor.tokenId,
+            endpoint: "merge",
+            claimedByUserId: task.claimedByUserId,
+            claimedByAgentId: task.claimedByAgentId,
+            reviewClaimedByUserId: task.reviewClaimedByUserId,
+            reviewClaimedByAgentId: task.reviewClaimedByAgentId,
+          },
+        });
+        return c.json(
+          { error: "forbidden", message: distinctReviewerRejectionMessage() },
+          403,
+        );
+      }
     }
 
     // 2. Find a user with merge consent
