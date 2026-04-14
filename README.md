@@ -69,7 +69,14 @@ agent-tasks/
 ├── mcp-server/       # @agent-tasks/mcp-server — stdio MCP wrapper for agents
 │   └── src/
 │       ├── client.ts # Bearer-auth HTTP client for the REST API
+│       ├── server.ts # Library entry (createServer / runStdioServer)
 │       └── tools.ts  # Tool definitions (projects, tasks, signals)
+├── mcp-bridge/       # @agent-tasks/mcp-bridge — npx-distributable bridge with
+│   │                 #   keychain login, wraps mcp-server for zero-setup use
+│   └── src/
+│       ├── cli.ts         # CLI entry (serve | login | logout | status)
+│       ├── login.ts       # Token prompt + backend validation
+│       └── token-store.ts # env / keychain / file fallback
 ├── docs/             # Specs (from planforge)
 └── .github/          # CI workflows
 ```
