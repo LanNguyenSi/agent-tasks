@@ -749,7 +749,10 @@ const finishWorkSchema = z.object({
   result: z.string().max(5000).optional(),
   prUrl: z
     .string()
-    .regex(/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/, "prUrl must be a github.com pull request URL")
+    .regex(
+      /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#].*)?$/,
+      "prUrl must be a github.com pull request URL",
+    )
     .optional(),
 });
 
@@ -978,14 +981,28 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
     return forbidden(c, "You do not hold a claim on this task");
   }
 
+  // Reject abandoning a work claim while the task is already in review.
+  // Clearing the work claim here would leave an orphan: the task stays in
+  // review, but `request_changes` relies on the retained work claim to
+  // auto-resume the author. Force the author to wait for the reviewer.
+  if (holdsWorkClaim && !holdsReviewClaim && task.status === "review") {
+    return c.json(
+      {
+        error: "bad_state",
+        message:
+          "Cannot abandon a work claim while the task is in review. Wait for the reviewer to approve or request changes.",
+      },
+      409,
+    );
+  }
+
   const updateData: Prisma.TaskUncheckedUpdateInput = {};
   if (holdsWorkClaim) {
     updateData.claimedByUserId = null;
     updateData.claimedByAgentId = null;
     updateData.claimedAt = null;
     // Only reset status to open when we were in the transitional in_progress
-    // state. If the task is already in review, abandoning the work claim
-    // should not drag it back to open.
+    // state. If the task is already in review, we rejected above.
     if (task.status === "in_progress") {
       updateData.status = "open";
     }
