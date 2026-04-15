@@ -17,6 +17,7 @@ export type AuditAction =
   | "task.reviewed"
   | "task.review_rejected_self_reviewer"
   | "task.merge_rejected_bad_status"
+  | "task.pr_submitted"
   | "project.created"
   | "project.updated"
   | "project.synced"

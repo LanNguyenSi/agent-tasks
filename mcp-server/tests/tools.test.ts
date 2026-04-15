@@ -51,6 +51,7 @@ describe("buildTools", () => {
         "task_note",
         "task_pickup",
         "task_start",
+        "task_submit_pr",
         "tasks_claim",
         "tasks_comment",
         "tasks_create",

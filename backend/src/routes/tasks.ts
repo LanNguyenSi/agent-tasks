@@ -761,6 +761,27 @@ const finishReviewSchema = z.object({
   outcome: z.enum(["approve", "request_changes"]),
 });
 
+// POST /tasks/:id/submit-pr — v2 verb for writing branch + PR metadata on a
+// work-claimed task. Not a transition. Not tied to a specific status. Exists
+// because v2 task_finish only accepts prUrl/prNumber, not branchName, which
+// makes projects that enforce the `branchPresent` gate unsatisfiable without
+// falling back to the deprecated v1 tasks_update path. Agents call this after
+// `gh pr create`, then proceed to task_finish.
+const submitPrSchema = z.object({
+  branchName: z
+    .string()
+    .trim()
+    .min(1, "branchName must not be empty")
+    .max(255, "branchName must be at most 255 characters"),
+  prUrl: z
+    .string()
+    .regex(
+      /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#].*)?$/,
+      "prUrl must be a github.com pull request URL",
+    ),
+  prNumber: z.number().int().positive(),
+});
+
 // Result of evaluating workflow transition gates for a v2 `task_finish` call.
 // Discriminated union so the caller builds the HTTP response while the helper
 // stays free of Hono Context coupling. Distinct-reviewer is checked by the
@@ -1208,6 +1229,155 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   }
 
   return c.json({ kind: "work", task: updated, targetStatus });
+});
+
+// ── Agent PR submission (v2 MCP) ─────────────────────────────────────────────
+//
+// Writes `branchName`, `prUrl`, `prNumber` atomically on a work-claimed task.
+// Not a transition. Closes the v2 gap where `task_finish` accepts prUrl but
+// not branchName, making `branchPresent`-gated workflows unsatisfiable
+// without falling back to the deprecated v1 `tasks_update` path.
+//
+// Semantics:
+// - Caller must hold the work-claim on the task. Review-claim holders are
+//   rejected (they already saw the PR; they don't submit it).
+// - Task must be in a non-terminal state AND not `open`. Check is
+//   polymorphic over the resolved workflow — no hardcoded state names.
+//   `open` is rejected because no claim exists yet; terminal states are
+//   rejected because the task is done.
+// - Re-submission is allowed and overwrites. The audit event records the
+//   previous values for diff reconstruction, BUT audit is supplementary per
+//   `services/audit.ts` — history is best-effort, not durable.
+// - No signal emitted. A broadcast signal would need a concrete recipient
+//   rule (none exists today); deferred until there's a real consumer.
+// - No gate evaluation — that happens on the next `task_finish` call.
+//
+// Scope reuses `tasks:transition`. Submitting a PR is strictly weaker than
+// finishing, so the existing scope covers it; a narrower `tasks:submit_pr`
+// scope is future work if a submitter-only role is ever needed.
+
+taskRouter.post("/tasks/:id/submit-pr", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:transition")) {
+    return forbidden(c, "Missing scope: tasks:transition");
+  }
+
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    include: {
+      workflow: true,
+      project: { select: { id: true, name: true, slug: true } },
+    },
+  });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  // Work-claim required. Review-claim holders cannot submit; they review.
+  const holdsWorkClaim =
+    (actor.type === "human" && task.claimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
+  if (!holdsWorkClaim) {
+    return forbidden(c, "You do not hold a work claim on this task");
+  }
+
+  // Polymorphic state check. Resolve the effective workflow (custom
+  // workflow → project default row → built-in fallback) and look up the
+  // task's current status in its state list. Two rejection paths:
+  //
+  //   1. Unknown state — the task's status is not defined in the current
+  //      workflow definition. This typically means the workflow was
+  //      customized while tasks were still in a now-dropped state. Reject
+  //      so we don't silently write metadata into a task the workflow
+  //      model no longer understands.
+  //
+  //   2. Terminal state — rejected because the task is done. Whether
+  //      `done`, `cancelled`, or any custom terminal label, the flag on
+  //      the state itself is the source of truth (no hardcoded names).
+  //
+  // The holdsWorkClaim check above already rejects tasks in the typical
+  // initial state (no claim exists yet), so `open` / custom-initial names
+  // don't need a separate literal check here — the claim requirement
+  // makes that redundant.
+  //
+  // Note on `review`: the "review" state is non-terminal in the default
+  // workflow and is intentionally allowed when the caller holds the work
+  // claim. That supports the rework path where an author re-submits a
+  // new branch/PR during or after the request_changes loop. If the task
+  // also has an active `reviewClaimedBy*` set, the reviewer will observe
+  // the metadata change on their next poll — that's considered safe
+  // because reviewers re-read the PR on each approve/request_changes
+  // action anyway.
+  let effectiveDefinition: WorkflowDefinitionShape | null = null;
+  if (task.workflowId && task.workflow) {
+    effectiveDefinition = task.workflow.definition as unknown as WorkflowDefinitionShape;
+  } else {
+    const projectDefault = await prisma.workflow.findFirst({
+      where: { projectId: task.projectId, isDefault: true },
+    });
+    effectiveDefinition = projectDefault
+      ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
+      : defaultWorkflowDefinition();
+  }
+
+  const currentState = effectiveDefinition.states.find((s) => s.name === task.status);
+  if (!currentState) {
+    return c.json(
+      {
+        error: "bad_state",
+        message: `Task state '${task.status}' is not defined in the effective workflow.`,
+      },
+      409,
+    );
+  }
+  if (currentState.terminal) {
+    return c.json(
+      {
+        error: "bad_state",
+        message: `Cannot submit a PR on a task in terminal state '${task.status}'.`,
+      },
+      409,
+    );
+  }
+
+  const rawBody = await c.req.json().catch(() => ({}));
+  const parsed = submitPrSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return c.json({ error: "bad_request", message: parsed.error.message }, 400);
+  }
+  const { branchName, prUrl, prNumber } = parsed.data;
+
+  const previousBranchName = task.branchName;
+  const previousPrUrl = task.prUrl;
+  const previousPrNumber = task.prNumber;
+
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: { branchName, prUrl, prNumber },
+    include: taskInclude,
+  });
+
+  void logAuditEvent({
+    action: "task.pr_submitted",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: {
+      actorType: actor.type,
+      agentTokenId: actor.type === "agent" ? actor.tokenId : null,
+      branchName,
+      prUrl,
+      prNumber,
+      previousBranchName,
+      previousPrUrl,
+      previousPrNumber,
+    },
+  });
+
+  return c.json({ kind: "submit_pr", task: updated });
 });
 
 // ── Agent abandon (v2 MCP) ───────────────────────────────────────────────────
