@@ -761,6 +761,126 @@ const finishReviewSchema = z.object({
   outcome: z.enum(["approve", "request_changes"]),
 });
 
+// Result of evaluating workflow transition gates for a v2 `task_finish` call.
+// Discriminated union so the caller builds the HTTP response while the helper
+// stays free of Hono Context coupling. Distinct-reviewer is checked by the
+// caller in the review-finish branch (not here) because the audit-event
+// payload needs caller-only fields (actor identity, claim columns).
+type FinishGateResult =
+  | { ok: true; resolvedRequires: string[] | undefined }
+  | { ok: false; kind: "no_transition"; message: string }
+  | { ok: false; kind: "forbidden_role"; requiredRole: string }
+  | {
+      ok: false;
+      kind: "precondition";
+      failed: TransitionRule[];
+      ruleErrors: Record<string, string>;
+    };
+
+// Enforce workflow-transition gates for a v2 `task_finish` call. Mirrors the
+// inline block inside the v1 `/transition` handler at tasks.ts:~1697–1833 so
+// v1 and v2 transitions reject the same preconditions. v2 has no `force`
+// escape hatch by design — admin overrides remain on the v1 `/transition`
+// endpoint per ADR-0008 "REST-API bleibt unverändert vollständig".
+//
+// Gate evaluation uses a merged context: `prUrl` / `prNumber` come from the
+// finish payload if provided, otherwise from the task's current DB state.
+// `branchName` is always read from the DB state (v2 task_finish has no
+// branchName payload — that's the gap ADR-0009's `task_submit_pr` closes).
+// This matches the v2 API's stated contract that `task_finish { prUrl }`
+// is an atomic "submit this PR and finish" intent; requiring a separate
+// PATCH first would break the verb's ergonomics without a good reason.
+//
+// /transition does not have this merge because its payload has no prUrl
+// field — it assumes callers set prUrl via PATCH. So the two paths differ
+// in inputs but apply the same rule-evaluation logic. Strict parity is on
+// the rule semantics, not on the input plumbing.
+//
+// The caller resolves the effective workflow definition (task.workflow →
+// project default → built-in fallback) and passes it in. This keeps the
+// target-state derivation and gate evaluation consistent — both operate on
+// the same resolved definition, instead of risking a drift where one uses
+// the project default and the other the built-in.
+async function evaluateFinishTransitionGates(task: {
+  projectId: string;
+  status: string;
+  project: { teamId: string; githubRepo: string | null };
+}, gateContext: {
+  branchName: string | null;
+  prUrl: string | null;
+  prNumber: number | null;
+}, targetStatus: string, actor: Actor, effectiveDefinition: WorkflowDefinitionShape | null): Promise<FinishGateResult> {
+  let resolvedRequires: string[] | undefined;
+  let requiredRole: string | undefined;
+
+  if (effectiveDefinition) {
+    const transition = effectiveDefinition.transitions.find(
+      (t) => t.from === task.status && t.to === targetStatus,
+    );
+    if (!transition) {
+      return {
+        ok: false,
+        kind: "no_transition",
+        message: `Transition from '${task.status}' to '${targetStatus}' is not allowed by workflow`,
+      };
+    }
+    resolvedRequires = transition.requires;
+    requiredRole = transition.requiredRole;
+  } else {
+    const defaultT = findDefaultTransition(task.status, targetStatus);
+    if (!defaultT) {
+      return {
+        ok: false,
+        kind: "no_transition",
+        message: `Transition from '${task.status}' to '${targetStatus}' is not allowed by the default workflow`,
+      };
+    }
+    resolvedRequires = defaultT.requires;
+  }
+
+  // Role gate. "any" is the common path and bypasses the DB round-trip, per
+  // the same hot-path optimization as /transition.
+  if (requiredRole && requiredRole !== "any") {
+    const hasRole = await hasProjectRole(actor, task.projectId, requiredRole as ProjectRole);
+    if (!hasRole) {
+      return { ok: false, kind: "forbidden_role", requiredRole };
+    }
+  }
+
+  // Precondition rules. GitHub token is only resolved when at least one rule
+  // actually needs it — same optimization as /transition.
+  let githubToken: string | null = null;
+  const needsGithub =
+    resolvedRequires?.some((r) => GITHUB_BACKED_RULES.has(r as never)) ?? false;
+  if (needsGithub && task.project.githubRepo) {
+    const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate");
+    githubToken = delegate?.githubAccessToken ?? null;
+  }
+
+  const { failed, unknown, errors: ruleErrors } = await evaluateTransitionRules(
+    resolvedRequires,
+    {
+      branchName: gateContext.branchName,
+      prUrl: gateContext.prUrl,
+      prNumber: gateContext.prNumber,
+      projectGithubRepo: task.project.githubRepo,
+      githubToken,
+    },
+  );
+
+  if (failed.length > 0) {
+    return { ok: false, kind: "precondition", failed, ruleErrors };
+  }
+
+  if (unknown.length > 0) {
+    console.warn(
+      `[workflow] v2 task_finish references unknown rules: ${unknown.join(", ")}`,
+    );
+  }
+
+  return { ok: true, resolvedRequires };
+}
+
 taskRouter.post("/tasks/:id/finish", async (c) => {
   const actor = c.get("actor") as Actor;
 
@@ -772,7 +892,16 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     where: { id: c.req.param("id") },
     include: {
       workflow: true,
-      project: { select: { id: true, name: true, slug: true } },
+      project: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          teamId: true,
+          githubRepo: true,
+          requireDistinctReviewer: true,
+        },
+      },
       ...taskInclude,
     },
   });
@@ -809,6 +938,91 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     const { outcome, result } = parsed.data;
 
     const targetStatus = outcome === "approve" ? "done" : "in_progress";
+
+    // Distinct-reviewer gate. Defense-in-depth: pickup already excludes the
+    // author from the review pool, but an explicit workflow path could place
+    // an author into a review state some other way. The PATCH and /transition
+    // handlers both check this; v2 task_finish was silently skipping it.
+    if (outcome === "approve" && task.project.requireDistinctReviewer) {
+      const gate = checkDistinctReviewerGate(task, actor, task.project);
+      if (!gate.allowed) {
+        void logAuditEvent({
+          action: "task.review_rejected_self_reviewer",
+          actorId: actor.type === "human" ? actor.userId : undefined,
+          projectId: task.projectId,
+          taskId: task.id,
+          payload: {
+            reason: gate.reason,
+            actorType: actor.type,
+            agentTokenId: actor.type === "agent" ? actor.tokenId : null,
+            endpoint: "task_finish",
+            claimedByUserId: task.claimedByUserId,
+            claimedByAgentId: task.claimedByAgentId,
+            reviewClaimedByUserId: task.reviewClaimedByUserId,
+            reviewClaimedByAgentId: task.reviewClaimedByAgentId,
+          },
+        });
+        return forbidden(c, distinctReviewerRejectionMessage());
+      }
+    }
+
+    // Transition gates (branchPresent / prPresent / ciGreen / prMerged).
+    // Mirrors the /transition block; see evaluateFinishTransitionGates
+    // for the shared semantics. Resolve the effective workflow the same
+    // way the work-finish branch does below so both paths evaluate gates
+    // against the same definition.
+    let effectiveReviewDefinition: WorkflowDefinitionShape | null = null;
+    if (task.workflowId && task.workflow) {
+      effectiveReviewDefinition = task.workflow.definition as unknown as WorkflowDefinitionShape;
+    } else {
+      const projectDefault = await prisma.workflow.findFirst({
+        where: { projectId: task.projectId, isDefault: true },
+      });
+      effectiveReviewDefinition = projectDefault
+        ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
+        : defaultWorkflowDefinition();
+    }
+    // Review-finish has no prUrl / branchName payload, so the gate context
+    // is just the task's current DB state.
+    const gateResult = await evaluateFinishTransitionGates(
+      task,
+      { branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber },
+      targetStatus,
+      actor,
+      effectiveReviewDefinition,
+    );
+    if (!gateResult.ok) {
+      if (gateResult.kind === "no_transition") {
+        return c.json({ error: "bad_request", message: gateResult.message }, 400);
+      }
+      if (gateResult.kind === "forbidden_role") {
+        return forbidden(c, `Requires role: ${gateResult.requiredRole}`);
+      }
+      if (gateResult.kind === "precondition") {
+        const { failed, ruleErrors } = gateResult;
+        return c.json(
+          {
+            error: "precondition_failed",
+            message: `Transition blocked — ${failed
+              .map((r) => (ruleErrors[r] ? `${RULE_MESSAGES[r]} (${ruleErrors[r]})` : RULE_MESSAGES[r]))
+              .join(" ")}`,
+            failed: failed.map((r) => ({
+              rule: r,
+              message: RULE_MESSAGES[r],
+              ...(ruleErrors[r] ? { error: ruleErrors[r] } : {}),
+            })),
+            canForce: false,
+          },
+          422,
+        );
+      }
+      // Exhaustiveness check — if a new FinishGateResult variant is added and
+      // this branch forgets to handle it, TS fails here. Without this guard
+      // an unhandled variant would silently fall through to the task-update
+      // path, which is *exactly* the bug this handler was just fixed for.
+      const _exhaustive: never = gateResult;
+      return _exhaustive;
+    }
 
     const updateData: Prisma.TaskUncheckedUpdateInput = {
       status: targetStatus,
@@ -899,11 +1113,59 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   }
   const targetStatus = expectedFinishStateFromDefinition(effectiveDefinition);
 
-  // Extract PR number from URL if provided
+  // Extract PR number from URL if provided. Done once, up-front, so both
+  // the gate context and the DB write see the same value.
   let prNumber: number | null = null;
   if (prUrl) {
     const match = prUrl.match(/\/pull\/(\d+)/);
     if (match) prNumber = Number.parseInt(match[1], 10);
+  }
+
+  // Transition gates (branchPresent / prPresent / ciGreen / prMerged).
+  // Mirrors /transition's rule evaluation. The gate context merges the
+  // finish payload's prUrl/prNumber onto the task's DB state so that
+  // `task_finish { prUrl }` works as the atomic "submit + finish" intent
+  // the v2 API advertises. branchName is never in the payload — that gap
+  // is what ADR-0009's `task_submit_pr` closes.
+  const gateResult = await evaluateFinishTransitionGates(
+    task,
+    {
+      branchName: task.branchName,
+      prUrl: prUrl ?? task.prUrl,
+      prNumber: prNumber ?? task.prNumber,
+    },
+    targetStatus,
+    actor,
+    effectiveDefinition,
+  );
+  if (!gateResult.ok) {
+    if (gateResult.kind === "no_transition") {
+      return c.json({ error: "bad_request", message: gateResult.message }, 400);
+    }
+    if (gateResult.kind === "forbidden_role") {
+      return forbidden(c, `Requires role: ${gateResult.requiredRole}`);
+    }
+    if (gateResult.kind === "precondition") {
+      const { failed, ruleErrors } = gateResult;
+      return c.json(
+        {
+          error: "precondition_failed",
+          message: `Transition blocked — ${failed
+            .map((r) => (ruleErrors[r] ? `${RULE_MESSAGES[r]} (${ruleErrors[r]})` : RULE_MESSAGES[r]))
+            .join(" ")}`,
+          failed: failed.map((r) => ({
+            rule: r,
+            message: RULE_MESSAGES[r],
+            ...(ruleErrors[r] ? { error: ruleErrors[r] } : {}),
+          })),
+          canForce: false,
+        },
+        422,
+      );
+    }
+    // Exhaustiveness check — see review-finish branch above for the rationale.
+    const _exhaustive: never = gateResult;
+    return _exhaustive;
   }
 
   const updateData: Prisma.TaskUncheckedUpdateInput = {

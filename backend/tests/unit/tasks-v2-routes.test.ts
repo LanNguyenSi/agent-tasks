@@ -122,6 +122,10 @@ const baseTask = {
   reviewClaimedByAgentId: null,
   reviewClaimedByUserId: null,
   reviewClaimedAt: null,
+  // Default-workflow `in_progress → review` and `→ done` transitions require
+  // `branchPresent`, so every work-finish fixture needs a branch. Tests that
+  // want to exercise a gate-fail override this back to null explicitly.
+  branchName: "feat/test-branch",
   prUrl: null,
   prNumber: null,
   result: null,
@@ -129,8 +133,11 @@ const baseTask = {
     id: "proj-1",
     name: "Agent Tasks",
     slug: "agent-tasks",
+    teamId: "team-1",
+    githubRepo: "acme/thing",
     confidenceThreshold: 0,
     taskTemplate: null,
+    requireDistinctReviewer: false,
   },
   attachments: [],
   comments: [],
@@ -386,6 +393,173 @@ describe("POST /tasks/:id/finish (work claim)", () => {
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(403);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /tasks/:id/finish — gate enforcement (regression)", () => {
+  // Regression coverage for the pre-existing v2 bug where task_finish
+  // silently bypassed every transition-rule gate. The default workflow
+  // requires branchPresent + prPresent on in_progress→review and →done,
+  // so these tests assert the handler rejects finishes that would have
+  // been silently accepted before.
+
+  it("rejects with 422 precondition_failed when branchName is missing (default workflow)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      branchName: null, // explicit gate miss
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as {
+      error: string;
+      failed: { rule: string }[];
+      canForce: boolean;
+    };
+    expect(body.error).toBe("precondition_failed");
+    expect(body.failed.map((f) => f.rule)).toContain("branchPresent");
+    expect(body.canForce).toBe(false); // v2 has no force escape hatch
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects with 422 when prUrl is missing and not provided in payload (default workflow)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      branchName: "feat/x",
+      prUrl: null,
+      prNumber: null,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { failed: { rule: string }[] };
+    expect(body.failed.map((f) => f.rule)).toContain("prPresent");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("accepts the payload prUrl as an atomic submit + finish (merged gate context)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      branchName: "feat/x",
+      prUrl: null,
+      prNumber: null,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        prUrl: "https://github.com/acme/thing/pull/42",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    expect(data.prUrl).toBe("https://github.com/acme/thing/pull/42");
+    expect(data.prNumber).toBe(42);
+  });
+
+  it("skips gate eval and passes when workflow has no requires on the target transition", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      branchName: null, // would fail branchPresent on the default workflow
+      prUrl: null,
+      prNumber: null,
+    });
+    // Custom workflow that omits gates entirely
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce({
+      definition: {
+        initialState: "open",
+        states: [],
+        transitions: [{ from: "in_progress", to: "done" }],
+      },
+    });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    expect(data.status).toBe("done");
+  });
+
+  it("returns a multi-rule failed array when several gates miss at once", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      branchName: null,
+      prUrl: null,
+      prNumber: null,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { failed: { rule: string }[] };
+    const failed = body.failed.map((f) => f.rule);
+    expect(failed).toContain("branchPresent");
+    expect(failed).toContain("prPresent");
+  });
+
+  it("evaluates the review-finish path against the same gate evaluator", async () => {
+    // Custom workflow that requires prPresent on review → done. Set both
+    // claims (work + review) so the caller's review claim is active.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      claimedByAgentId: "agent-author",
+      reviewClaimedByAgentId: "agent-1",
+      branchName: "feat/x",
+      prUrl: null,
+      prNumber: null,
+      workflowId: "wf-1",
+      workflow: {
+        definition: {
+          initialState: "open",
+          states: [],
+          transitions: [
+            { from: "review", to: "done", requires: ["prPresent"] },
+            { from: "review", to: "in_progress" },
+          ],
+        },
+      },
+    });
+    prismaMocks.agentTokenFindUnique.mockResolvedValueOnce({ name: "Reviewer" });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ outcome: "approve" }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { failed: { rule: string }[] };
+    expect(body.failed.map((f) => f.rule)).toContain("prPresent");
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 });
