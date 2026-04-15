@@ -16,7 +16,13 @@ import { logAuditEvent } from "../services/audit.js";
 import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } from "../services/review-signal.js";
 import { emitTaskAvailableSignal } from "../services/task-signal.js";
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
-import { DEFAULT_TRANSITIONS, findDefaultTransition } from "../services/default-workflow.js";
+import {
+  DEFAULT_TRANSITIONS,
+  findDefaultTransition,
+  defaultWorkflowDefinition,
+  expectedFinishStateFromDefinition,
+  type WorkflowDefinitionShape,
+} from "../services/default-workflow.js";
 import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES } from "../services/transition-rules.js";
 import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
@@ -497,6 +503,223 @@ taskRouter.post("/tasks/pickup", async (c) => {
 
   // ── 4. Idle ───────────────────────────────────────────────────────────────
   return c.json({ kind: "idle" });
+});
+
+// ── Agent start (v2 MCP) ─────────────────────────────────────────────────────
+//
+// Polymorphic "begin work on this task" endpoint. The behavior depends on
+// the task's current status:
+//
+//   status=open     → author-claim the task, transition to `in_progress`,
+//                     return full context (task, description, templateData,
+//                     expectedFinishState, workflow hints).
+//   status=review   → review-claim the task (no status change), return the
+//                     same context plus review-specific hints.
+//
+// Hard-limit enforced: agents with an existing active claim are rejected.
+// Distinct-reviewer rule applies to the review case: an agent cannot review
+// a task it authored.
+//
+// See ADR 0008.
+
+taskRouter.post("/tasks/:id/start", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent") {
+    if (!actor.scopes.includes("tasks:claim") || !actor.scopes.includes("tasks:transition")) {
+      return forbidden(c, "Missing scope: tasks:claim, tasks:transition");
+    }
+  }
+
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    include: {
+      workflow: true,
+      project: { select: { id: true, name: true, slug: true, confidenceThreshold: true, taskTemplate: true } },
+      ...taskInclude,
+    },
+  });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  // Hard-limit: reject if the agent already holds any active claim. Humans
+  // are exempt — they may manage multiple tasks through the web UI.
+  if (actor.type === "agent") {
+    const existing = await prisma.task.findFirst({
+      where: {
+        id: { not: task.id },
+        OR: [
+          { claimedByAgentId: actor.tokenId, status: { not: "done" } },
+          { reviewClaimedByAgentId: actor.tokenId, status: "review" },
+        ],
+      },
+      select: { id: true, title: true, claimedByAgentId: true, reviewClaimedByAgentId: true },
+    });
+    if (existing) {
+      const role = existing.reviewClaimedByAgentId === actor.tokenId ? "reviewer" : "author";
+      return c.json(
+        {
+          error: "already_claimed",
+          message:
+            "You already hold an active claim. Call task_finish or task_abandon on it before starting another.",
+          activeClaim: { taskId: existing.id, title: existing.title, role },
+        },
+        409,
+      );
+    }
+  }
+
+  // Resolve the workflow definition once so both branches can compute the
+  // expected finish state.
+  let effectiveDefinition: WorkflowDefinitionShape | null = null;
+  if (task.workflowId && task.workflow) {
+    effectiveDefinition = task.workflow.definition as unknown as WorkflowDefinitionShape;
+  } else {
+    const projectDefault = await prisma.workflow.findFirst({
+      where: { projectId: task.projectId, isDefault: true },
+    });
+    effectiveDefinition = projectDefault
+      ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
+      : defaultWorkflowDefinition();
+  }
+  const expectedFinishState = expectedFinishStateFromDefinition(effectiveDefinition);
+
+  // ── Branch: status=open → author-claim + transition ──────────────────────
+  if (task.status === "open") {
+    if (task.claimedByUserId || task.claimedByAgentId) {
+      return conflict(c, "Task is already claimed");
+    }
+
+    // Dependency gate
+    const blockers = await prisma.task.findMany({
+      where: { blocks: { some: { id: task.id } } },
+      select: { id: true, title: true, status: true },
+    });
+    const unresolved = blockers.filter((dep) => dep.status !== "done");
+    if (unresolved.length > 0) {
+      return c.json(
+        {
+          error: "blocked",
+          message: "Task is blocked by unresolved dependencies",
+          blockedBy: unresolved,
+        },
+        409,
+      );
+    }
+
+    // Confidence gate — mirrors v1 /claim behavior
+    if (actor.type === "agent" && c.req.query("force") !== "true") {
+      const threshold = task.project.confidenceThreshold;
+      const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
+      const confidence = calculateConfidence({
+        title: task.title,
+        description: task.description,
+        templateData: task.templateData as TemplateData | null,
+        templateFields: tpl?.fields ?? null,
+      });
+      if (confidence.score < threshold) {
+        return lowConfidence(c, { ...confidence, threshold });
+      }
+    }
+
+    const updated = await prisma.task.update({
+      where: { id: task.id },
+      data: {
+        claimedByUserId: actor.type === "human" ? actor.userId : null,
+        claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
+        claimedAt: new Date(),
+        status: "in_progress",
+      },
+      include: taskInclude,
+    });
+
+    void logAuditEvent({
+      action: "task.claimed",
+      actorId: actor.type === "human" ? actor.userId : undefined,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: {
+        actorType: actor.type,
+        actorId: actor.type === "agent" ? actor.tokenId : actor.userId,
+        via: "task_start",
+      },
+    });
+
+    return c.json({
+      kind: "work",
+      task: updated,
+      expectedFinishState,
+      project: task.project,
+    });
+  }
+
+  // ── Branch: status=review → review-claim ────────────────────────────────
+  if (task.status === "review") {
+    // Distinct-reviewer: cannot review your own task
+    const isSelfReview =
+      (actor.type === "human" && task.claimedByUserId === actor.userId) ||
+      (actor.type === "agent" && task.claimedByAgentId === actor.tokenId) ||
+      (actor.type === "agent" && task.createdByAgentId === actor.tokenId);
+    if (isSelfReview) {
+      return forbidden(c, "Cannot review your own task");
+    }
+
+    const isCurrentReviewer =
+      (actor.type === "human" && task.reviewClaimedByUserId === actor.userId) ||
+      (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
+
+    if ((task.reviewClaimedByUserId || task.reviewClaimedByAgentId) && !isCurrentReviewer) {
+      return conflict(c, "Task is already being reviewed by another reviewer");
+    }
+
+    let updated = task;
+    if (!isCurrentReviewer) {
+      updated = await prisma.task.update({
+        where: { id: task.id },
+        data: {
+          reviewClaimedByUserId: actor.type === "human" ? actor.userId : null,
+          reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
+          reviewClaimedAt: new Date(),
+        },
+        include: {
+          workflow: true,
+          project: { select: { id: true, name: true, slug: true, confidenceThreshold: true, taskTemplate: true } },
+          ...taskInclude,
+        },
+      });
+
+      void logAuditEvent({
+        action: "task.reviewed",
+        actorId: actor.type === "human" ? actor.userId : undefined,
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: {
+          event: "review_claimed",
+          actorType: actor.type,
+          reviewerId: actor.type === "human" ? actor.userId : actor.tokenId,
+          via: "task_start",
+        },
+      });
+    }
+
+    return c.json({
+      kind: "review",
+      task: updated,
+      expectedFinishState: "done" as const,
+      project: task.project,
+    });
+  }
+
+  return c.json(
+    {
+      error: "bad_state",
+      message: `Cannot start a task in status '${task.status}'. Only 'open' or 'review' tasks can be started.`,
+    },
+    409,
+  );
 });
 
 // ── Get task ─────────────────────────────────────────────────────────────────

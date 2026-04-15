@@ -137,3 +137,23 @@ export function defaultWorkflowDefinition(): WorkflowDefinitionShape {
     initialState: DEFAULT_INITIAL_STATE,
   };
 }
+
+/**
+ * Resolve which state `task_finish` should target for a task currently in
+ * `in_progress`. Used by the v2 MCP surface so agents know up-front whether
+ * their finish will go to `review` or straight to `done`.
+ *
+ * Inspects the provided workflow definition (or the built-in default) for
+ * transitions originating from `in_progress` and prefers a `review` target
+ * over `done`. If the workflow has neither, falls back to `done` — that is
+ * the hardcoded final fallback defined in ADR 0008.
+ */
+export function expectedFinishStateFromDefinition(
+  definition: WorkflowDefinitionShape | null,
+): "review" | "done" {
+  const transitions = definition?.transitions ?? defaultWorkflowDefinition().transitions;
+  const fromInProgress = transitions.filter((t) => t.from === "in_progress");
+  if (fromInProgress.some((t) => t.to === "review")) return "review";
+  if (fromInProgress.some((t) => t.to === "done")) return "done";
+  return "done";
+}
