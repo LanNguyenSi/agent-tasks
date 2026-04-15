@@ -16,7 +16,13 @@ import { logAuditEvent } from "../services/audit.js";
 import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } from "../services/review-signal.js";
 import { emitTaskAvailableSignal } from "../services/task-signal.js";
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
-import { DEFAULT_TRANSITIONS, findDefaultTransition } from "../services/default-workflow.js";
+import {
+  DEFAULT_TRANSITIONS,
+  findDefaultTransition,
+  defaultWorkflowDefinition,
+  expectedFinishStateFromDefinition,
+  type WorkflowDefinitionShape,
+} from "../services/default-workflow.js";
 import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES } from "../services/transition-rules.js";
 import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
@@ -371,6 +377,661 @@ taskRouter.get("/tasks/claimable", async (c) => {
   });
 
   return c.json({ tasks });
+});
+
+// ── Agent pickup (v2 MCP) ────────────────────────────────────────────────────
+//
+// Single "what should I do next?" endpoint for the v2 MCP surface. Resolution:
+//   1. Pending signals for this agent → return the oldest, ack it atomically
+//   2. Tasks in status `review` with a free review-claim, author != this agent
+//   3. Claimable tasks in status `open`, not blocked, in authorized projects
+//   4. Nothing → idle
+//
+// Hard-limit: agents with an active author-claim OR review-claim are rejected
+// upfront. Parallelism is achieved by using multiple agent identities.
+//
+// See ADR 0008.
+
+taskRouter.post("/tasks/pickup", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:read")) {
+    return forbidden(c, "Missing scope: tasks:read");
+  }
+
+  // Hard-limit: reject if the agent already holds any active claim
+  if (actor.type === "agent") {
+    const existing = await prisma.task.findFirst({
+      where: {
+        OR: [
+          { claimedByAgentId: actor.tokenId, status: { not: "done" } },
+          { reviewClaimedByAgentId: actor.tokenId, status: "review" },
+        ],
+      },
+      select: { id: true, title: true, claimedByAgentId: true, reviewClaimedByAgentId: true },
+    });
+    if (existing) {
+      const role = existing.reviewClaimedByAgentId === actor.tokenId ? "reviewer" : "author";
+      return c.json(
+        {
+          error: "already_claimed",
+          message:
+            "You already hold an active claim. Call task_finish or task_abandon on it before picking up new work.",
+          activeClaim: { taskId: existing.id, title: existing.title, role },
+        },
+        409,
+      );
+    }
+  }
+
+  // ── 1. Signals ────────────────────────────────────────────────────────────
+  const signal = await prisma.signal.findFirst({
+    where: {
+      acknowledgedAt: null,
+      ...(actor.type === "agent"
+        ? { recipientAgentId: actor.tokenId }
+        : { recipientUserId: actor.userId }),
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  if (signal) {
+    // Immediate ack: the signal is delivered as part of this response. If the
+    // agent crashes between receiving and acting on it, the operator must
+    // resend — at-most-once is acceptable here.
+    await prisma.signal.update({
+      where: { id: signal.id },
+      data: { acknowledgedAt: new Date() },
+    });
+    return c.json({ kind: "signal", signal });
+  }
+
+  // Team scope for both review and work lookups
+  const teamFilter =
+    actor.type === "agent"
+      ? { project: { teamId: actor.teamId } }
+      : undefined;
+
+  // For humans hitting this endpoint directly without a teamId we can't
+  // resolve a scope — agents are the primary audience, humans should use the
+  // REST list endpoints. Reject the human fallback for now.
+  if (actor.type !== "agent") {
+    return c.json(
+      { error: "bad_request", message: "task_pickup is agent-only; use /tasks/claimable for human flows" },
+      400,
+    );
+  }
+
+  // ── 2. Review pickup ──────────────────────────────────────────────────────
+  // Distinct-reviewer: the agent must not be the author of the task.
+  const reviewTask = await prisma.task.findFirst({
+    where: {
+      status: "review",
+      reviewClaimedByAgentId: null,
+      reviewClaimedByUserId: null,
+      createdByAgentId: { not: actor.tokenId },
+      ...teamFilter,
+      blockedBy: { none: { status: { not: "done" } } },
+    },
+    orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+    include: {
+      ...taskInclude,
+      project: { select: { id: true, name: true, slug: true } },
+    },
+  });
+  if (reviewTask) {
+    return c.json({ kind: "review", task: reviewTask });
+  }
+
+  // ── 3. Work pickup ────────────────────────────────────────────────────────
+  const workTask = await prisma.task.findFirst({
+    where: {
+      status: "open",
+      claimedByAgentId: null,
+      claimedByUserId: null,
+      ...teamFilter,
+      blockedBy: { none: { status: { not: "done" } } },
+    },
+    orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+    include: {
+      ...taskInclude,
+      project: { select: { id: true, name: true, slug: true } },
+    },
+  });
+  if (workTask) {
+    return c.json({ kind: "work", task: workTask });
+  }
+
+  // ── 4. Idle ───────────────────────────────────────────────────────────────
+  return c.json({ kind: "idle" });
+});
+
+// ── Agent start (v2 MCP) ─────────────────────────────────────────────────────
+//
+// Polymorphic "begin work on this task" endpoint. The behavior depends on
+// the task's current status:
+//
+//   status=open     → author-claim the task, transition to `in_progress`,
+//                     return full context (task, description, templateData,
+//                     expectedFinishState, workflow hints).
+//   status=review   → review-claim the task (no status change), return the
+//                     same context plus review-specific hints.
+//
+// Hard-limit enforced: agents with an existing active claim are rejected.
+// Distinct-reviewer rule applies to the review case: an agent cannot review
+// a task it authored.
+//
+// See ADR 0008.
+
+taskRouter.post("/tasks/:id/start", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent") {
+    if (!actor.scopes.includes("tasks:claim") || !actor.scopes.includes("tasks:transition")) {
+      return forbidden(c, "Missing scope: tasks:claim, tasks:transition");
+    }
+  }
+
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    include: {
+      workflow: true,
+      project: { select: { id: true, name: true, slug: true, confidenceThreshold: true, taskTemplate: true } },
+      ...taskInclude,
+    },
+  });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  // Hard-limit: reject if the agent already holds any active claim. Humans
+  // are exempt — they may manage multiple tasks through the web UI.
+  if (actor.type === "agent") {
+    const existing = await prisma.task.findFirst({
+      where: {
+        id: { not: task.id },
+        OR: [
+          { claimedByAgentId: actor.tokenId, status: { not: "done" } },
+          { reviewClaimedByAgentId: actor.tokenId, status: "review" },
+        ],
+      },
+      select: { id: true, title: true, claimedByAgentId: true, reviewClaimedByAgentId: true },
+    });
+    if (existing) {
+      const role = existing.reviewClaimedByAgentId === actor.tokenId ? "reviewer" : "author";
+      return c.json(
+        {
+          error: "already_claimed",
+          message:
+            "You already hold an active claim. Call task_finish or task_abandon on it before starting another.",
+          activeClaim: { taskId: existing.id, title: existing.title, role },
+        },
+        409,
+      );
+    }
+  }
+
+  // Resolve the workflow definition once so both branches can compute the
+  // expected finish state.
+  let effectiveDefinition: WorkflowDefinitionShape | null = null;
+  if (task.workflowId && task.workflow) {
+    effectiveDefinition = task.workflow.definition as unknown as WorkflowDefinitionShape;
+  } else {
+    const projectDefault = await prisma.workflow.findFirst({
+      where: { projectId: task.projectId, isDefault: true },
+    });
+    effectiveDefinition = projectDefault
+      ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
+      : defaultWorkflowDefinition();
+  }
+  const expectedFinishState = expectedFinishStateFromDefinition(effectiveDefinition);
+
+  // ── Branch: status=open → author-claim + transition ──────────────────────
+  if (task.status === "open") {
+    if (task.claimedByUserId || task.claimedByAgentId) {
+      return conflict(c, "Task is already claimed");
+    }
+
+    // Dependency gate
+    const blockers = await prisma.task.findMany({
+      where: { blocks: { some: { id: task.id } } },
+      select: { id: true, title: true, status: true },
+    });
+    const unresolved = blockers.filter((dep) => dep.status !== "done");
+    if (unresolved.length > 0) {
+      return c.json(
+        {
+          error: "blocked",
+          message: "Task is blocked by unresolved dependencies",
+          blockedBy: unresolved,
+        },
+        409,
+      );
+    }
+
+    // Confidence gate — mirrors v1 /claim behavior
+    if (actor.type === "agent" && c.req.query("force") !== "true") {
+      const threshold = task.project.confidenceThreshold;
+      const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
+      const confidence = calculateConfidence({
+        title: task.title,
+        description: task.description,
+        templateData: task.templateData as TemplateData | null,
+        templateFields: tpl?.fields ?? null,
+      });
+      if (confidence.score < threshold) {
+        return lowConfidence(c, { ...confidence, threshold });
+      }
+    }
+
+    const updated = await prisma.task.update({
+      where: { id: task.id },
+      data: {
+        claimedByUserId: actor.type === "human" ? actor.userId : null,
+        claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
+        claimedAt: new Date(),
+        status: "in_progress",
+      },
+      include: taskInclude,
+    });
+
+    void logAuditEvent({
+      action: "task.claimed",
+      actorId: actor.type === "human" ? actor.userId : undefined,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: {
+        actorType: actor.type,
+        actorId: actor.type === "agent" ? actor.tokenId : actor.userId,
+        via: "task_start",
+      },
+    });
+
+    return c.json({
+      kind: "work",
+      task: updated,
+      expectedFinishState,
+      project: task.project,
+    });
+  }
+
+  // ── Branch: status=review → review-claim ────────────────────────────────
+  if (task.status === "review") {
+    // Distinct-reviewer: cannot review your own task
+    const isSelfReview =
+      (actor.type === "human" && task.claimedByUserId === actor.userId) ||
+      (actor.type === "agent" && task.claimedByAgentId === actor.tokenId) ||
+      (actor.type === "agent" && task.createdByAgentId === actor.tokenId);
+    if (isSelfReview) {
+      return forbidden(c, "Cannot review your own task");
+    }
+
+    const isCurrentReviewer =
+      (actor.type === "human" && task.reviewClaimedByUserId === actor.userId) ||
+      (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
+
+    if ((task.reviewClaimedByUserId || task.reviewClaimedByAgentId) && !isCurrentReviewer) {
+      return conflict(c, "Task is already being reviewed by another reviewer");
+    }
+
+    let updated = task;
+    if (!isCurrentReviewer) {
+      updated = await prisma.task.update({
+        where: { id: task.id },
+        data: {
+          reviewClaimedByUserId: actor.type === "human" ? actor.userId : null,
+          reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
+          reviewClaimedAt: new Date(),
+        },
+        include: {
+          workflow: true,
+          project: { select: { id: true, name: true, slug: true, confidenceThreshold: true, taskTemplate: true } },
+          ...taskInclude,
+        },
+      });
+
+      void logAuditEvent({
+        action: "task.reviewed",
+        actorId: actor.type === "human" ? actor.userId : undefined,
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: {
+          event: "review_claimed",
+          actorType: actor.type,
+          reviewerId: actor.type === "human" ? actor.userId : actor.tokenId,
+          via: "task_start",
+        },
+      });
+    }
+
+    return c.json({
+      kind: "review",
+      task: updated,
+      expectedFinishState: "done" as const,
+      project: task.project,
+    });
+  }
+
+  return c.json(
+    {
+      error: "bad_state",
+      message: `Cannot start a task in status '${task.status}'. Only 'open' or 'review' tasks can be started.`,
+    },
+    409,
+  );
+});
+
+// ── Agent finish (v2 MCP) ────────────────────────────────────────────────────
+//
+// Polymorphic "finish" endpoint. Behavior depends on which claim the caller
+// holds on the task:
+//
+//   Work claim (status=in_progress):
+//     Body: { result?, prUrl? }
+//     - Validates prUrl format when present, stores url + number
+//     - Transitions to expectedFinishState (review or done) derived from the
+//       task's workflow definition
+//     - Clears the work claim when the target state is `done`. Keeps the
+//       work claim set when the target is `review` so the author is still
+//       "on the hook" for the task until the reviewer decides.
+//
+//   Review claim (status=review):
+//     Body: { result?, outcome: "approve" | "request_changes" }
+//     - approve → transition to done, clear both claims
+//     - request_changes → transition back to in_progress, clear review
+//       claim only, leave the work claim in place, emit a signal to the
+//       original author
+//
+// See ADR 0008.
+
+const finishWorkSchema = z.object({
+  result: z.string().max(5000).optional(),
+  prUrl: z
+    .string()
+    .regex(
+      /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#].*)?$/,
+      "prUrl must be a github.com pull request URL",
+    )
+    .optional(),
+});
+
+const finishReviewSchema = z.object({
+  result: z.string().max(5000).optional(),
+  outcome: z.enum(["approve", "request_changes"]),
+});
+
+taskRouter.post("/tasks/:id/finish", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:transition")) {
+    return forbidden(c, "Missing scope: tasks:transition");
+  }
+
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    include: {
+      workflow: true,
+      project: { select: { id: true, name: true, slug: true } },
+      ...taskInclude,
+    },
+  });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  // Determine which claim the actor holds. A missing claim is a 403 — the
+  // caller must hold a claim to finish a task.
+  const holdsWorkClaim =
+    (actor.type === "human" && task.claimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
+  const holdsReviewClaim =
+    (actor.type === "human" && task.reviewClaimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
+
+  if (!holdsWorkClaim && !holdsReviewClaim) {
+    return forbidden(c, "You do not hold a claim on this task");
+  }
+
+  const rawBody = await c.req.json().catch(() => ({}));
+
+  // ── Branch: review finish ─────────────────────────────────────────────────
+  if (holdsReviewClaim) {
+    if (task.status !== "review") {
+      return c.json({ error: "bad_state", message: "Task must be in review status" }, 409);
+    }
+    const parsed = finishReviewSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return c.json({ error: "bad_request", message: parsed.error.message }, 400);
+    }
+    const { outcome, result } = parsed.data;
+
+    const targetStatus = outcome === "approve" ? "done" : "in_progress";
+
+    const updateData: Prisma.TaskUncheckedUpdateInput = {
+      status: targetStatus,
+      reviewClaimedByUserId: null,
+      reviewClaimedByAgentId: null,
+      reviewClaimedAt: null,
+      ...(result !== undefined ? { result } : {}),
+    };
+
+    if (outcome === "approve") {
+      // Clear the work claim on approval — the task is done, free the author
+      updateData.claimedByUserId = null;
+      updateData.claimedByAgentId = null;
+      updateData.claimedAt = null;
+    }
+    // On request_changes we intentionally keep claimedBy* so the original
+    // author resumes ownership automatically and the hard-limit still
+    // reflects their active claim.
+
+    const updated = await prisma.task.update({
+      where: { id: task.id },
+      data: updateData,
+      include: taskInclude,
+    });
+
+    const actorId = actor.type === "human" ? actor.userId : actor.tokenId;
+    void logAuditEvent({
+      action: "task.reviewed",
+      actorId: actor.type === "human" ? actor.userId : undefined,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: { reviewAction: outcome, from: "review", to: targetStatus, actorType: actor.type, reviewerId: actorId, via: "task_finish" },
+    });
+
+    const reviewerName =
+      actor.type === "agent"
+        ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
+        : (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Reviewer";
+
+    if (outcome === "request_changes") {
+      void emitChangesRequestedSignal(
+        task.id,
+        task.projectId,
+        task.claimedByUserId,
+        task.claimedByAgentId,
+        reviewerName,
+        result,
+      );
+    } else {
+      void emitTaskApprovedSignal(
+        task.id,
+        task.projectId,
+        task.claimedByUserId,
+        task.claimedByAgentId,
+        reviewerName,
+        result,
+      );
+    }
+
+    return c.json({ kind: "review", task: updated, outcome });
+  }
+
+  // ── Branch: work finish ───────────────────────────────────────────────────
+  if (task.status !== "in_progress") {
+    return c.json(
+      { error: "bad_state", message: `Work finish requires status=in_progress, got '${task.status}'` },
+      409,
+    );
+  }
+
+  const parsed = finishWorkSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return c.json({ error: "bad_request", message: parsed.error.message }, 400);
+  }
+  const { result, prUrl } = parsed.data;
+
+  // Derive expectedFinishState from the workflow
+  let effectiveDefinition: WorkflowDefinitionShape | null = null;
+  if (task.workflowId && task.workflow) {
+    effectiveDefinition = task.workflow.definition as unknown as WorkflowDefinitionShape;
+  } else {
+    const projectDefault = await prisma.workflow.findFirst({
+      where: { projectId: task.projectId, isDefault: true },
+    });
+    effectiveDefinition = projectDefault
+      ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
+      : defaultWorkflowDefinition();
+  }
+  const targetStatus = expectedFinishStateFromDefinition(effectiveDefinition);
+
+  // Extract PR number from URL if provided
+  let prNumber: number | null = null;
+  if (prUrl) {
+    const match = prUrl.match(/\/pull\/(\d+)/);
+    if (match) prNumber = Number.parseInt(match[1], 10);
+  }
+
+  const updateData: Prisma.TaskUncheckedUpdateInput = {
+    status: targetStatus,
+    ...(prUrl !== undefined ? { prUrl } : {}),
+    ...(prNumber !== null ? { prNumber } : {}),
+    ...(result !== undefined ? { result } : {}),
+  };
+
+  // Clear work claim only when going straight to done. If going to review,
+  // keep the claim so the original author resumes if changes are requested.
+  if (targetStatus === "done") {
+    updateData.claimedByUserId = null;
+    updateData.claimedByAgentId = null;
+    updateData.claimedAt = null;
+  }
+
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: updateData,
+    include: taskInclude,
+  });
+
+  void logAuditEvent({
+    action: "task.transitioned",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: { from: "in_progress", to: targetStatus, actorType: actor.type, via: "task_finish" },
+  });
+
+  // If we just moved the task into review, notify potential reviewers
+  if (targetStatus === "review") {
+    void emitReviewSignal(
+      task.id,
+      task.projectId,
+      task.claimedByUserId,
+      task.claimedByAgentId,
+    );
+  }
+
+  return c.json({ kind: "work", task: updated, targetStatus });
+});
+
+// ── Agent abandon (v2 MCP) ───────────────────────────────────────────────────
+//
+// Explicit bail-out. Releases the active claim (work or review) without
+// finishing. Work claim → task back to `open`. Review claim → task stays in
+// `review` with the review lock cleared so someone else can pick it up.
+//
+// See ADR 0008.
+
+taskRouter.post("/tasks/:id/abandon", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:claim")) {
+    return forbidden(c, "Missing scope: tasks:claim");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const holdsWorkClaim =
+    (actor.type === "human" && task.claimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
+  const holdsReviewClaim =
+    (actor.type === "human" && task.reviewClaimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
+
+  if (!holdsWorkClaim && !holdsReviewClaim) {
+    return forbidden(c, "You do not hold a claim on this task");
+  }
+
+  // Reject abandoning a work claim while the task is already in review.
+  // Clearing the work claim here would leave an orphan: the task stays in
+  // review, but `request_changes` relies on the retained work claim to
+  // auto-resume the author. Force the author to wait for the reviewer.
+  if (holdsWorkClaim && !holdsReviewClaim && task.status === "review") {
+    return c.json(
+      {
+        error: "bad_state",
+        message:
+          "Cannot abandon a work claim while the task is in review. Wait for the reviewer to approve or request changes.",
+      },
+      409,
+    );
+  }
+
+  const updateData: Prisma.TaskUncheckedUpdateInput = {};
+  if (holdsWorkClaim) {
+    updateData.claimedByUserId = null;
+    updateData.claimedByAgentId = null;
+    updateData.claimedAt = null;
+    // Only reset status to open when we were in the transitional in_progress
+    // state. If the task is already in review, we rejected above.
+    if (task.status === "in_progress") {
+      updateData.status = "open";
+    }
+  }
+  if (holdsReviewClaim) {
+    updateData.reviewClaimedByUserId = null;
+    updateData.reviewClaimedByAgentId = null;
+    updateData.reviewClaimedAt = null;
+  }
+
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: updateData,
+    include: taskInclude,
+  });
+
+  void logAuditEvent({
+    action: "task.released",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: {
+      actorType: actor.type,
+      claimType: holdsReviewClaim ? "review" : "work",
+      via: "task_abandon",
+    },
+  });
+
+  return c.json({ task: updated });
 });
 
 // ── Get task ─────────────────────────────────────────────────────────────────

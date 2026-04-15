@@ -158,6 +158,33 @@ export class AgentTasksClient {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/review/release`);
   }
 
+  // ── v2 MCP workflow surface ──────────────────────────────────────────
+  //
+  // Verb-oriented endpoints backing the v2 MCP tools. See ADR 0008.
+
+  pickupWork() {
+    return this.request<unknown>("POST", "/api/tasks/pickup");
+  }
+
+  startTask(taskId: string) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/start`);
+  }
+
+  finishTask(
+    taskId: string,
+    input: {
+      result?: string;
+      prUrl?: string;
+      outcome?: "approve" | "request_changes";
+    },
+  ) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/finish`, input);
+  }
+
+  abandonTask(taskId: string) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/abandon`);
+  }
+
   pollSignals() {
     return this.request<unknown>("GET", "/api/agent/signals");
   }

@@ -85,11 +85,13 @@ export default function SettingsPage() {
   }, []);
   const docsUrl = `${API_BASE}/docs`;
   const openApiUrl = `${API_BASE}/api/openapi.json`;
+  const mcpPackage = "@agent-tasks/mcp-server";
+  const mcpCommand = `npx ${mcpPackage} --token <TOKEN>`;
   const setupSnippet = [
-    "Agent Setup",
-    `Swagger Docs: ${docsUrl}`,
-    `OpenAPI JSON: ${openApiUrl}`,
-    "Authorization: Bearer <TOKEN>",
+    "Agent Setup (MCP-first)",
+    `MCP server: ${mcpPackage}`,
+    `Quick start: ${mcpCommand}`,
+    "REST fallback header: Authorization: Bearer <TOKEN>",
   ].join("\n");
 
   useEffect(() => {
@@ -424,12 +426,52 @@ export default function SettingsPage() {
 
         <AlertBanner tone="info" title="Agent setup (2 steps)">
           <ol style={{ margin: "0 0 0.625rem 1.1rem", padding: 0 }}>
-            <li>Create a token and pass it to the agent as a Bearer token.</li>
-            <li>Share the Swagger docs link so the agent can discover all endpoints.</li>
+            <li>Create a token and pass it to the agent.</li>
+            <li>
+              Connect the agent to the MCP server — this is the supported
+              agent interface. The REST API stays available as a fallback.
+            </li>
           </ol>
           <div style={{ display: "grid", gap: "0.5rem", marginBottom: "0.4rem" }}>
             <label style={{ display: "grid", gap: "0.25rem" }}>
-              <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Swagger Docs</span>
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>MCP server package</span>
+              <span style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "var(--text-xs)", wordBreak: "break-all", flex: "1 1 380px" }}>
+                  {mcpPackage}
+                </code>
+                <Button variant="ghost" size="sm" onClick={() => void copyToClipboard(mcpPackage, "Package name copied.")}>Copy</Button>
+              </span>
+            </label>
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Quick start command</span>
+              <span style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "var(--text-xs)", wordBreak: "break-all", flex: "1 1 380px" }}>
+                  {mcpCommand}
+                </code>
+                <Button variant="ghost" size="sm" onClick={() => void copyToClipboard(mcpCommand, "Command copied.")}>Copy</Button>
+              </span>
+            </label>
+          </div>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", margin: 0 }}>
+            Or add the server to your MCP client config (Claude Code, Cursor, …).
+            REST fallback header: <code>Authorization: Bearer &lt;TOKEN&gt;</code>
+          </p>
+          <Button variant="ghost" size="sm" style={{ marginTop: "0.55rem" }} onClick={() => void copyToClipboard(setupSnippet, "Setup info copied.")}>Copy all setup info</Button>
+          {copyMessage && (
+            <p style={{ color: "var(--text)", fontSize: "var(--text-xs)", marginTop: "0.4rem" }}>
+              {copyMessage}
+            </p>
+          )}
+        </AlertBanner>
+
+        <AlertBanner tone="info" title="Developer docs (REST API)">
+          <p style={{ margin: "0 0 0.5rem 0", color: "var(--muted)", fontSize: "var(--text-xs)" }}>
+            For frontend, CLI, or integrations that talk to the REST API
+            directly. Agents should use the MCP server above.
+          </p>
+          <div style={{ display: "grid", gap: "0.5rem" }}>
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Swagger docs</span>
               <span style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
                 <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "var(--text-xs)", wordBreak: "break-all", flex: "1 1 380px" }}>
                   {docsUrl}
@@ -447,15 +489,6 @@ export default function SettingsPage() {
               </span>
             </label>
           </div>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", margin: 0 }}>
-            Agent auth header: <code>Authorization: Bearer &lt;TOKEN&gt;</code>
-          </p>
-          <Button variant="ghost" size="sm" style={{ marginTop: "0.55rem" }} onClick={() => void copyToClipboard(setupSnippet, "Setup info copied.")}>Copy all setup info</Button>
-          {copyMessage && (
-            <p style={{ color: "var(--text)", fontSize: "var(--text-xs)", marginTop: "0.4rem" }}>
-              {copyMessage}
-            </p>
-          )}
         </AlertBanner>
 
         {error && !showCreate && (
