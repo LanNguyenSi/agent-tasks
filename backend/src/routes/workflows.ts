@@ -13,6 +13,29 @@ import { RULE_CATALOG } from "../services/transition-rules.js";
 import { logAuditEvent } from "../services/audit.js";
 import { summarizeWorkflowDiff } from "../services/workflow-diff.js";
 
+/**
+ * Shape snapshot written into the `workflow.customized` audit payload.
+ * A small forensic slice so a future auditor can reconstruct what a
+ * user forked without needing git history of `DEFAULT_STATES`.
+ */
+export interface ForkedFromDefaultSnapshot {
+  stateCount: number;
+  transitionCount: number;
+  stateNames: string[];
+  initialState: string;
+}
+
+export function buildForkedFromDefaultSnapshot(
+  def: WorkflowDefinitionShape,
+): ForkedFromDefaultSnapshot {
+  return {
+    stateCount: def.states.length,
+    transitionCount: def.transitions.length,
+    stateNames: def.states.map((s) => s.name),
+    initialState: def.initialState,
+  };
+}
+
 export const workflowRouter = new Hono<{ Variables: AppVariables }>();
 
 // State names must match the task.status storage format: lowercase letters,
@@ -196,11 +219,15 @@ workflowRouter.post("/projects/:projectId/workflow/customize", async (c) => {
       });
     });
 
+    const forkedDef = workflow.definition as unknown as WorkflowDefinitionShape;
     void logAuditEvent({
       action: "workflow.customized",
       actorId: actor.type === "human" ? actor.userId : undefined,
       projectId,
-      payload: { workflowId: workflow.id },
+      payload: {
+        workflowId: workflow.id,
+        forkedFromDefault: buildForkedFromDefaultSnapshot(forkedDef),
+      },
     });
 
     return c.json(
