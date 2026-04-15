@@ -189,6 +189,50 @@ describe("emitForceTransitionedSignal", () => {
     expect(count).toBe(0);
   });
 
+  it("returns count of successful writes when one recipient fails mid-loop", async () => {
+    findUniqueTaskMock.mockResolvedValue(
+      fakeTask({ claimedByUserId: "alice", reviewClaimedByUserId: "bob" }),
+    );
+    createSignalMock
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error("unique constraint violation"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const count = await emitForceTransitionedSignal({
+      taskId: "task-1",
+      projectId: "proj-1",
+      from: "review",
+      to: "done",
+      forcedRules: ["ciGreen"],
+      forcedByUserId: "admin-1",
+    });
+    expect(count).toBe(1);
+    expect(createSignalMock).toHaveBeenCalledTimes(2);
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    const logLine = String(errSpy.mock.calls[0]?.[0] ?? "");
+    expect(logLine).toContain("[force-signal] failed for task=task-1 recipient=");
+    errSpy.mockRestore();
+  });
+
+  it("returns 0 and logs per recipient when all signal writes fail", async () => {
+    findUniqueTaskMock.mockResolvedValue(
+      fakeTask({ claimedByUserId: "alice", reviewClaimedByUserId: "bob" }),
+    );
+    createSignalMock.mockRejectedValue(new Error("db down"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const count = await emitForceTransitionedSignal({
+      taskId: "task-1",
+      projectId: "proj-1",
+      from: "review",
+      to: "done",
+      forcedRules: ["ciGreen"],
+      forcedByUserId: "admin-1",
+    });
+    expect(count).toBe(0);
+    expect(createSignalMock).toHaveBeenCalledTimes(2);
+    expect(errSpy).toHaveBeenCalledTimes(2);
+    errSpy.mockRestore();
+  });
+
   it("returns 0 when task is not found", async () => {
     findUniqueTaskMock.mockResolvedValue(null);
     const count = await emitForceTransitionedSignal({

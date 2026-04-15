@@ -100,18 +100,27 @@ export async function emitForceTransitionedSignal(
       });
     }
 
-    for (const target of targets.values()) {
-      await createSignal({
-        type: "task_force_transitioned",
-        taskId: input.taskId,
-        projectId: input.projectId,
-        recipientAgentId: target.recipientAgentId ?? null,
-        recipientUserId: target.recipientUserId ?? null,
-        context,
-      });
+    let written = 0;
+    for (const [key, target] of targets.entries()) {
+      try {
+        await createSignal({
+          type: "task_force_transitioned",
+          taskId: input.taskId,
+          projectId: input.projectId,
+          recipientAgentId: target.recipientAgentId ?? null,
+          recipientUserId: target.recipientUserId ?? null,
+          context,
+        });
+        written++;
+      } catch (err) {
+        console.error(
+          `[force-signal] failed for task=${input.taskId} recipient=${key}:`,
+          (err as Error).message,
+        );
+      }
     }
 
-    return targets.size;
+    return written;
   } catch (err) {
     // Signal emission is supplementary. A failure must not prevent the
     // transition from landing — match the audit-log error posture.
