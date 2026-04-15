@@ -240,6 +240,64 @@ describe("ConnectAgentModal", () => {
     );
   });
 
+  it("passes an AbortSignal to createAgentToken and aborts it when the modal closes mid-flight", async () => {
+    // Hold the mock pending so we can close the modal while the
+    // request is still in flight. The effect cleanup should call
+    // controller.abort() on the signal we gave it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let resolvePending: (value: any) => void = () => {};
+    mockCreate.mockReset();
+    mockCreate.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePending = resolve;
+        }),
+    );
+
+    const { rerender } = render(
+      <ConnectAgentModal
+        open={true}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+      />,
+    );
+
+    // The request was fired with a signal in the second argument.
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
+    const [, options] = mockCreate.mock.calls[0]!;
+    expect(options).toBeDefined();
+    expect(options!.signal).toBeInstanceOf(AbortSignal);
+    expect(options!.signal!.aborted).toBe(false);
+
+    // Close the modal mid-flight — effect cleanup must abort the signal.
+    rerender(
+      <ConnectAgentModal
+        open={false}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+      />,
+    );
+    expect(options!.signal!.aborted).toBe(true);
+
+    // Resolve the stale request AFTER abort — must NOT render the
+    // snippet (the effect's cancelled flag swallows late resolves).
+    resolvePending({
+      rawToken: "atk_live_late",
+      token: {
+        id: "t-late",
+        name: "late",
+        scopes: [],
+        expiresAt: null,
+        lastUsedAt: null,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("connect-snippet")).not.toBeInTheDocument();
+  });
+
   it("does NOT call onTokenCreated when the backend rejects the request", async () => {
     mockCreate.mockReset();
     mockCreate.mockRejectedValue(new Error("Only team admins can create agent tokens"));
