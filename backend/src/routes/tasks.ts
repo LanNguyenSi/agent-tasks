@@ -535,7 +535,17 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     where: { id: c.req.param("id") },
     include: {
       workflow: true,
-      project: { select: { id: true, name: true, slug: true, confidenceThreshold: true, taskTemplate: true } },
+      project: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          teamId: true,
+          githubRepo: true,
+          confidenceThreshold: true,
+          taskTemplate: true,
+        },
+      },
       ...taskInclude,
     },
   });
@@ -625,6 +635,52 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       }
     }
 
+    // Transition-rule gates (branchPresent / prPresent / ciGreen / prMerged).
+    // Mirrors the b459be3 fix for task_finish. Before this change, task_start
+    // silently bypassed any gate configured on the `open → in_progress`
+    // transition; every custom workflow with gates on that edge had them
+    // no-op'd. Now parity with `/transition`. The default workflow has no
+    // gates on this edge (see default-workflow.ts — `branchPresent` was
+    // removed from the start edge in this same change to avoid a structural
+    // self-checkmate), so default-workflow projects pass cleanly.
+    const gateResult = await evaluateV2TransitionGates(
+      task,
+      { branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber },
+      "in_progress",
+      actor,
+      effectiveDefinition,
+    );
+    if (!gateResult.ok) {
+      if (gateResult.kind === "no_transition") {
+        return c.json({ error: "bad_request", message: gateResult.message }, 400);
+      }
+      if (gateResult.kind === "forbidden_role") {
+        return forbidden(c, `Requires role: ${gateResult.requiredRole}`);
+      }
+      if (gateResult.kind === "precondition") {
+        const { failed, ruleErrors } = gateResult;
+        return c.json(
+          {
+            error: "precondition_failed",
+            message: `Transition blocked — ${failed
+              .map((r) => (ruleErrors[r] ? `${RULE_MESSAGES[r]} (${ruleErrors[r]})` : RULE_MESSAGES[r]))
+              .join(" ")}`,
+            failed: failed.map((r) => ({
+              rule: r,
+              message: RULE_MESSAGES[r],
+              ...(ruleErrors[r] ? { error: ruleErrors[r] } : {}),
+            })),
+            canForce: false,
+          },
+          422,
+        );
+      }
+      // Exhaustiveness check — see the same pattern in the task_finish
+      // branches for the rationale.
+      const _exhaustive: never = gateResult;
+      return _exhaustive;
+    }
+
     const updated = await prisma.task.update({
       where: { id: task.id },
       data: {
@@ -686,7 +742,17 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         },
         include: {
           workflow: true,
-          project: { select: { id: true, name: true, slug: true, confidenceThreshold: true, taskTemplate: true } },
+          project: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              teamId: true,
+              githubRepo: true,
+              confidenceThreshold: true,
+              taskTemplate: true,
+            },
+          },
           ...taskInclude,
         },
       });
@@ -822,7 +888,7 @@ type FinishGateResult =
 // target-state derivation and gate evaluation consistent — both operate on
 // the same resolved definition, instead of risking a drift where one uses
 // the project default and the other the built-in.
-async function evaluateFinishTransitionGates(task: {
+async function evaluateV2TransitionGates(task: {
   projectId: string;
   status: string;
   project: { teamId: string; githubRepo: string | null };
@@ -895,7 +961,7 @@ async function evaluateFinishTransitionGates(task: {
 
   if (unknown.length > 0) {
     console.warn(
-      `[workflow] v2 task_finish references unknown rules: ${unknown.join(", ")}`,
+      `[workflow] v2 transition references unknown rules: ${unknown.join(", ")}`,
     );
   }
 
@@ -988,7 +1054,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     }
 
     // Transition gates (branchPresent / prPresent / ciGreen / prMerged).
-    // Mirrors the /transition block; see evaluateFinishTransitionGates
+    // Mirrors the /transition block; see evaluateV2TransitionGates
     // for the shared semantics. Resolve the effective workflow the same
     // way the work-finish branch does below so both paths evaluate gates
     // against the same definition.
@@ -1005,7 +1071,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     }
     // Review-finish has no prUrl / branchName payload, so the gate context
     // is just the task's current DB state.
-    const gateResult = await evaluateFinishTransitionGates(
+    const gateResult = await evaluateV2TransitionGates(
       task,
       { branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber },
       targetStatus,
@@ -1148,7 +1214,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   // `task_finish { prUrl }` works as the atomic "submit + finish" intent
   // the v2 API advertises. branchName is never in the payload — that gap
   // is what ADR-0009's `task_submit_pr` closes.
-  const gateResult = await evaluateFinishTransitionGates(
+  const gateResult = await evaluateV2TransitionGates(
     task,
     {
       branchName: task.branchName,

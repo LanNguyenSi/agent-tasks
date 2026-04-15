@@ -66,9 +66,18 @@ export const DEFAULT_INITIAL_STATE = "open";
 
 export const DEFAULT_TRANSITIONS: Record<string, DefaultTransition[]> = {
   open: [
-    // Claiming the task and starting work implies you have somewhere to put
-    // the code. Require a branch name before the task leaves "open".
-    { to: "in_progress", label: "Start", requires: ["branchPresent"] },
+    // Starting work does not require a branch. Exploratory work (scoping,
+    // prototyping, reading code) is legitimate before the agent decides
+    // where to put the PR, and `task_submit_pr` (the v2-native path for
+    // writing branchName) requires the task to already be `in_progress`.
+    // Keeping `branchPresent` on this edge would self-checkmate the
+    // default workflow once `task_start` enforces gates. See ticket
+    // 10c11d76-72f5-4987-ab59-db579e316823 for the full rationale.
+    //
+    // `branchPresent` still applies on `in_progress → review` and
+    // `→ done` below, where it is load-bearing: you cannot submit work
+    // for review without a branch to review.
+    { to: "in_progress", label: "Start" },
   ],
   in_progress: [
     // "Submit for review" without an actual PR produces an empty review
