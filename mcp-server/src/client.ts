@@ -185,6 +185,13 @@ export class AgentTasksClient {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/abandon`);
   }
 
+  submitPr(
+    taskId: string,
+    input: { branchName: string; prUrl: string; prNumber: number },
+  ) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/submit-pr`, input);
+  }
+
   pollSignals() {
     return this.request<unknown>("GET", "/api/agent/signals");
   }

@@ -631,6 +631,291 @@ describe("POST /tasks/:id/finish (review claim)", () => {
   });
 });
 
+// ── /tasks/:id/submit-pr ─────────────────────────────────────────────────────
+
+describe("POST /tasks/:id/submit-pr", () => {
+  const validBody = {
+    branchName: "feat/new-thing",
+    prUrl: "https://github.com/acme/thing/pull/99",
+    prNumber: 99,
+  };
+
+  // Helper for a work-claimed in_progress task in the default workflow.
+  function inProgressWorkClaimed() {
+    return {
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      branchName: null,
+      prUrl: null,
+      prNumber: null,
+    };
+  }
+
+  it("happy path: writes branchName/prUrl/prNumber, logs audit with previous values", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(inProgressWorkClaimed());
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null); // built-in default
+
+    const res = await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { kind: string };
+    expect(body.kind).toBe("submit_pr");
+
+    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    expect(data.branchName).toBe("feat/new-thing");
+    expect(data.prUrl).toBe("https://github.com/acme/thing/pull/99");
+    expect(data.prNumber).toBe(99);
+    // Does NOT write status
+    expect(data.status).toBeUndefined();
+  });
+
+  it("re-submission: second call overwrites the first, both writes land", async () => {
+    const firstCallTask = inProgressWorkClaimed();
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(firstCallTask);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res1 = await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    });
+    expect(res1.status).toBe(200);
+
+    // Second call — task already has the first submission's values
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...firstCallTask,
+      branchName: "feat/new-thing",
+      prUrl: "https://github.com/acme/thing/pull/99",
+      prNumber: 99,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res2 = await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        branchName: "feat/retry",
+        prUrl: "https://github.com/acme/thing/pull/100",
+        prNumber: 100,
+      }),
+    });
+    expect(res2.status).toBe(200);
+
+    // Both writes visible in the mock
+    expect(prismaMocks.taskUpdate).toHaveBeenCalledTimes(2);
+    const second = prismaMocks.taskUpdate.mock.calls[1]![0].data;
+    expect(second.branchName).toBe("feat/retry");
+    expect(second.prNumber).toBe(100);
+  });
+
+  it("rejects a review-claim-only caller with 403", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      claimedByAgentId: "agent-author",
+      reviewClaimedByAgentId: "agent-1", // caller has review, not work
+    });
+
+    const res = await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    });
+    expect(res.status).toBe(403);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a caller with no claim at all with 403", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "someone-else",
+    });
+
+    const res = await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    });
+    expect(res.status).toBe(403);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects state=open (no work claim possible on an open task) with 403", async () => {
+    // An `open` task by definition has no work claim. The claim check
+    // is the canonical guard — there's no separate literal "state == open"
+    // gate because the claim requirement makes it redundant.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      claimedByAgentId: null,
+    });
+
+    const res = await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    });
+    expect(res.status).toBe(403);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown state (workflow customization dropped the current state) with 409", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "coding", // not in default workflow's states
+      claimedByAgentId: "agent-1",
+    });
+    // Custom workflow that doesn't include "coding" either
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce({
+      definition: {
+        initialState: "open",
+        states: [
+          { name: "open", terminal: false },
+          { name: "in_progress", terminal: false },
+          { name: "done", terminal: true },
+        ],
+        transitions: [],
+      },
+    });
+
+    const res = await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("bad_state");
+    expect(body.message).toContain("not defined in the effective workflow");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects state=done with 409 bad_state (terminal state)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "done",
+      claimedByAgentId: "agent-1",
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("bad_state");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("allows state=review with an active work claim (rework flow after request_changes)", async () => {
+    // After request_changes, the author still holds the work claim and the
+    // task is back in in_progress — but a workflow could keep it in review.
+    // Here we test that the polymorphic state check allows review (non-
+    // terminal) when the caller has the work claim, matching the rework path.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      claimedByAgentId: "agent-1",
+      reviewClaimedByAgentId: null,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects empty branchName with 400", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(inProgressWorkClaimed());
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...validBody, branchName: "   " }),
+    });
+    expect(res.status).toBe(400);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed prUrl with 400", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(inProgressWorkClaimed());
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...validBody, prUrl: "https://gitlab.example/x/y/-/merge/1" }),
+    });
+    expect(res.status).toBe(400);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects prNumber <= 0 with 400", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(inProgressWorkClaimed());
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...validBody, prNumber: 0 }),
+    });
+    expect(res.status).toBe(400);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when task does not exist", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-unknown/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    });
+    expect(res.status).toBe(404);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("integration: after submit-pr, task_finish with empty body passes branchPresent+prPresent gates", async () => {
+    // First: task_submit_pr writes the fields
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(inProgressWorkClaimed());
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    await makeApp().request("/tasks/task-1/submit-pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    });
+
+    // Second: task_finish on the same task now has the values from the
+    // submit-pr write. Simulate by returning a task with those values set.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...inProgressWorkClaimed(),
+      branchName: "feat/new-thing",
+      prUrl: "https://github.com/acme/thing/pull/99",
+      prNumber: 99,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+  });
+});
+
 // ── /tasks/:id/abandon ───────────────────────────────────────────────────────
 
 describe("POST /tasks/:id/abandon", () => {

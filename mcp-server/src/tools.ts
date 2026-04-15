@@ -111,6 +111,24 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       inputShape: { taskId: uuid() },
       handler: async ({ taskId }) => wrap(() => client.abandonTask(taskId)),
     }),
+    def({
+      name: "task_submit_pr",
+      description:
+        "Record the branch + pull request metadata on a work-claimed task. Atomic metadata write, not a state transition. Use this after `gh pr create` to satisfy the `branchPresent` / `prPresent` workflow gates before calling task_finish. The canonical v2 flow for projects that enforce branch gates is: task_start → (work + gh pr create) → task_submit_pr → task_finish. For projects that only need prPresent, the shorthand `task_finish { prUrl }` still works and this verb is optional. This is the v2-native replacement for the deprecated v1 `tasks_update { branchName, prUrl, prNumber }` path, which is being sunset 4 weeks after 2026-04-15. Re-submission is allowed and overwrites the prior values (supports the request_changes rework loop). Caller must hold the work claim; task must be in a non-terminal state and not `open`.",
+      inputShape: {
+        taskId: uuid(),
+        branchName: z.string().trim().min(1).max(255),
+        prUrl: z
+          .string()
+          .regex(
+            /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#].*)?$/,
+            "prUrl must be a github.com pull request URL",
+          ),
+        prNumber: z.number().int().positive(),
+      },
+      handler: async ({ taskId, ...input }) =>
+        wrap(() => client.submitPr(taskId, input)),
+    }),
 
     // ── v1 surface (deprecated) ──────────────────────────────────────────
     def({
