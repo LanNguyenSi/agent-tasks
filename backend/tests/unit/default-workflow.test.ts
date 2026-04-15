@@ -18,10 +18,17 @@ describe("default workflow", () => {
     expect(DEFAULT_TRANSITIONS.done).toEqual([]);
   });
 
-  it("open → in_progress requires a branch", () => {
+  it("open → in_progress has no gate (branchPresent lives on the later edges)", () => {
+    // Historically this edge required `branchPresent`, but that self-
+    // checkmated `task_start` once v2 started enforcing gates: the only
+    // v2-native path to write `branchName` is `task_submit_pr`, which
+    // requires the task to already be `in_progress`. The gate was
+    // relaxed on this edge and kept on `in_progress → review` / `→ done`
+    // where it is load-bearing. See the fix/v2-task-start-gate-enforcement
+    // ticket for the full rationale.
     const t = findDefaultTransition("open", "in_progress");
     expect(t).toBeDefined();
-    expect(t?.requires).toContain("branchPresent");
+    expect(t?.requires).toBeUndefined();
   });
 
   it("in_progress → review requires branch AND PR", () => {

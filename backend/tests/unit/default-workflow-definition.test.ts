@@ -42,9 +42,13 @@ describe("defaultWorkflowDefinition()", () => {
     }
   });
 
-  it("preserves the branchPresent gate on open→in_progress", () => {
+  it("open→in_progress has no gate in the serialized definition (relaxed from branchPresent)", () => {
+    // See default-workflow.test.ts for the rationale: keeping the gate
+    // on this edge self-checkmated task_start. It lives on the later
+    // edges (in_progress → review / → done) where it is actually
+    // load-bearing.
     const t = def.transitions.find((x) => x.from === "open" && x.to === "in_progress");
-    expect(t?.requires).toEqual(["branchPresent"]);
+    expect(t?.requires).toBeUndefined();
   });
 
   it("preserves the branchPresent+prPresent gate on in_progress→review", () => {

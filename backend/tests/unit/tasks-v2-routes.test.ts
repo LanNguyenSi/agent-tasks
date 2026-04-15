@@ -298,6 +298,99 @@ describe("POST /tasks/:id/start", () => {
   });
 });
 
+describe("POST /tasks/:id/start — gate enforcement (parity with task_finish)", () => {
+  // Regression coverage for the pre-existing v2 bug where task_start
+  // silently bypassed every transition-rule gate on the `open → in_progress`
+  // edge. Sibling fix to b459be3 which covered task_finish. The default
+  // workflow no longer configures a gate on this edge (the `branchPresent`
+  // requirement was relaxed to avoid self-checkmating task_start), so
+  // these tests use custom workflows to exercise the gate path.
+
+  it("rejects open→in_progress with 422 when a custom workflow requires branchPresent and it fails", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: null, // would fail branchPresent
+      workflowId: "wf-1",
+      workflow: {
+        definition: {
+          initialState: "open",
+          states: [
+            { name: "open", terminal: false },
+            { name: "in_progress", terminal: false },
+          ],
+          transitions: [
+            { from: "open", to: "in_progress", requires: ["branchPresent"] },
+          ],
+        },
+      },
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as {
+      error: string;
+      failed: { rule: string }[];
+      canForce: boolean;
+    };
+    expect(body.error).toBe("precondition_failed");
+    expect(body.failed.map((f) => f.rule)).toContain("branchPresent");
+    expect(body.canForce).toBe(false); // v2 has no force escape hatch
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("accepts open→in_progress when a custom workflow's gate passes", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: "feat/pre-set", // satisfies branchPresent
+      workflowId: "wf-1",
+      workflow: {
+        definition: {
+          initialState: "open",
+          states: [
+            { name: "open", terminal: false },
+            { name: "in_progress", terminal: false },
+          ],
+          transitions: [
+            { from: "open", to: "in_progress", requires: ["branchPresent"] },
+          ],
+        },
+      },
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("in_progress");
+  });
+
+  it("default workflow: task_start on a branchless open task now passes (gate relaxed)", async () => {
+    // The default workflow used to require branchPresent on this edge.
+    // The fix relaxed it — default-workflow projects can start tasks
+    // without a pre-set branchName. This is the self-checkmate fix.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: null,
+      workflowId: null,
+      workflow: null,
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null); // no project default → built-in
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("in_progress");
+  });
+});
+
 // ── /tasks/:id/finish ────────────────────────────────────────────────────────
 
 describe("POST /tasks/:id/finish (work claim)", () => {

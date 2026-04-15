@@ -70,13 +70,21 @@ and matches the recommended config below:
 
 | From | To | Label | Requires |
 | ---- | -- | ----- | -------- |
-| `open` | `in_progress` | Start | `branchPresent` |
+| `open` | `in_progress` | Start | *(none)* |
 | `in_progress` | `review` | Submit for review | `branchPresent`, `prPresent` |
 | `in_progress` | `done` | Mark done (skip review) | `branchPresent`, `prPresent` |
 | `in_progress` | `open` | Release | *(none)* |
 | `review` | `done` | Approve | *(none)* |
 | `review` | `in_progress` | Request changes | *(none)* |
 | `done` | — | *(terminal)* | — |
+
+> `open → in_progress` has no gate on the default workflow. `branchPresent`
+> used to live on this edge, but that self-checkmated `task_start`: the only
+> v2-native path to write `branchName` is `task_submit_pr`, which requires
+> the task to already be `in_progress`. The gate now lives on
+> `in_progress → review` and `→ done` where it is load-bearing. Projects
+> that need branch-before-start can customize their workflow to re-add
+> the rule.
 
 Before this change the no-workflow path accepted any transition string
 without validation. It now rejects transitions that aren't listed with HTTP
