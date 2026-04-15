@@ -373,6 +373,132 @@ taskRouter.get("/tasks/claimable", async (c) => {
   return c.json({ tasks });
 });
 
+// ── Agent pickup (v2 MCP) ────────────────────────────────────────────────────
+//
+// Single "what should I do next?" endpoint for the v2 MCP surface. Resolution:
+//   1. Pending signals for this agent → return the oldest, ack it atomically
+//   2. Tasks in status `review` with a free review-claim, author != this agent
+//   3. Claimable tasks in status `open`, not blocked, in authorized projects
+//   4. Nothing → idle
+//
+// Hard-limit: agents with an active author-claim OR review-claim are rejected
+// upfront. Parallelism is achieved by using multiple agent identities.
+//
+// See ADR 0008.
+
+taskRouter.post("/tasks/pickup", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:read")) {
+    return forbidden(c, "Missing scope: tasks:read");
+  }
+
+  // Hard-limit: reject if the agent already holds any active claim
+  if (actor.type === "agent") {
+    const existing = await prisma.task.findFirst({
+      where: {
+        OR: [
+          { claimedByAgentId: actor.tokenId, status: { not: "done" } },
+          { reviewClaimedByAgentId: actor.tokenId, status: "review" },
+        ],
+      },
+      select: { id: true, title: true, claimedByAgentId: true, reviewClaimedByAgentId: true },
+    });
+    if (existing) {
+      const role = existing.reviewClaimedByAgentId === actor.tokenId ? "reviewer" : "author";
+      return c.json(
+        {
+          error: "already_claimed",
+          message:
+            "You already hold an active claim. Call task_finish or task_abandon on it before picking up new work.",
+          activeClaim: { taskId: existing.id, title: existing.title, role },
+        },
+        409,
+      );
+    }
+  }
+
+  // ── 1. Signals ────────────────────────────────────────────────────────────
+  const signal = await prisma.signal.findFirst({
+    where: {
+      acknowledgedAt: null,
+      ...(actor.type === "agent"
+        ? { recipientAgentId: actor.tokenId }
+        : { recipientUserId: actor.userId }),
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  if (signal) {
+    // Immediate ack: the signal is delivered as part of this response. If the
+    // agent crashes between receiving and acting on it, the operator must
+    // resend — at-most-once is acceptable here.
+    await prisma.signal.update({
+      where: { id: signal.id },
+      data: { acknowledgedAt: new Date() },
+    });
+    return c.json({ kind: "signal", signal });
+  }
+
+  // Team scope for both review and work lookups
+  const teamFilter =
+    actor.type === "agent"
+      ? { project: { teamId: actor.teamId } }
+      : undefined;
+
+  // For humans hitting this endpoint directly without a teamId we can't
+  // resolve a scope — agents are the primary audience, humans should use the
+  // REST list endpoints. Reject the human fallback for now.
+  if (actor.type !== "agent") {
+    return c.json(
+      { error: "bad_request", message: "task_pickup is agent-only; use /tasks/claimable for human flows" },
+      400,
+    );
+  }
+
+  // ── 2. Review pickup ──────────────────────────────────────────────────────
+  // Distinct-reviewer: the agent must not be the author of the task.
+  const reviewTask = await prisma.task.findFirst({
+    where: {
+      status: "review",
+      reviewClaimedByAgentId: null,
+      reviewClaimedByUserId: null,
+      createdByAgentId: { not: actor.tokenId },
+      ...teamFilter,
+      blockedBy: { none: { status: { not: "done" } } },
+    },
+    orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+    include: {
+      ...taskInclude,
+      project: { select: { id: true, name: true, slug: true } },
+    },
+  });
+  if (reviewTask) {
+    return c.json({ kind: "review", task: reviewTask });
+  }
+
+  // ── 3. Work pickup ────────────────────────────────────────────────────────
+  const workTask = await prisma.task.findFirst({
+    where: {
+      status: "open",
+      claimedByAgentId: null,
+      claimedByUserId: null,
+      ...teamFilter,
+      blockedBy: { none: { status: { not: "done" } } },
+    },
+    orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+    include: {
+      ...taskInclude,
+      project: { select: { id: true, name: true, slug: true } },
+    },
+  });
+  if (workTask) {
+    return c.json({ kind: "work", task: workTask });
+  }
+
+  // ── 4. Idle ───────────────────────────────────────────────────────────────
+  return c.json({ kind: "idle" });
+});
+
 // ── Get task ─────────────────────────────────────────────────────────────────
 
 taskRouter.get("/tasks/:id", async (c) => {
