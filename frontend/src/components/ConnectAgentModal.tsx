@@ -137,6 +137,15 @@ export default function ConnectAgentModal({ open, onClose, teamId, scopeLabel, o
     inflightKey.current = key;
 
     let cancelled = false;
+    // An AbortController tied to this effect run. Abort in cleanup so
+    // the in-flight `fetch` is actually cancelled — the old `cancelled`
+    // flag only stopped stale responses from writing state, it did NOT
+    // cancel the request, so the POST still landed server-side.
+    // Defence-in-depth alongside the `inflightKey` ref guard: the ref
+    // handles the StrictMode double-invoke case (same effect intent),
+    // the controller handles the parent-unmount / rapid-close case
+    // (effect cleanup while the fetch is mid-flight).
+    const controller = new AbortController();
     setLoading(true);
     setError(null);
 
@@ -146,7 +155,10 @@ export default function ConnectAgentModal({ open, onClose, teamId, scopeLabel, o
     const name = `Agent (${scopeLabel}) — ${stamp}-${randomSuffix()}`;
     const expiresAt = new Date(Date.now() + TOKEN_TTL_DAYS * 86_400_000).toISOString();
 
-    createAgentToken({ teamId, name, scopes: AGENT_SCOPES, expiresAt })
+    createAgentToken(
+      { teamId, name, scopes: AGENT_SCOPES, expiresAt },
+      { signal: controller.signal },
+    )
       .then((res) => {
         if (cancelled) return;
         setToken(res.rawToken);
@@ -154,6 +166,10 @@ export default function ConnectAgentModal({ open, onClose, teamId, scopeLabel, o
       })
       .catch((err: Error) => {
         if (cancelled) return;
+        // Swallow AbortError — that's our own cleanup cancelling the
+        // request, not a real failure. Any other error still surfaces
+        // through the AlertBanner below.
+        if (err.name === "AbortError") return;
         // Friendly message for the common non-admin case. The backend
         // returns "Only team admins can create agent tokens" on 403
         // (backend/src/routes/agent-tokens.ts), which is already clear,
@@ -167,6 +183,7 @@ export default function ConnectAgentModal({ open, onClose, teamId, scopeLabel, o
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
     // Intentionally excluding `token`, `loading`, and `onTokenCreated` —
     // the first two are written by this effect and including them would
