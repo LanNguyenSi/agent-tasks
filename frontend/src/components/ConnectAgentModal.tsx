@@ -73,6 +73,12 @@ function snippetMcp(token: string): string {
   -- npx -y @agent-tasks/mcp-server`;
 }
 
+function snippetMcpHttp(token: string, apiBase: string): string {
+  return `claude mcp add --transport http agent-tasks \\
+  ${apiBase}/api/mcp \\
+  --header "Authorization: Bearer ${token}"`;
+}
+
 function snippetCli(token: string, apiBase: string): string {
   return `export AGENT_TASKS_ENDPOINT="${apiBase}"
 export AGENT_TASKS_TOKEN="${token}"
@@ -323,6 +329,60 @@ export default function ConnectAgentModal({ open, onClose, teamId, scopeLabel, o
           <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.75rem" }}>
             <strong style={{ color: "var(--text)" }}>Verify:</strong> {verifyHint}
           </p>
+          {activeTab === "mcp" && token && (
+            <details
+              data-testid="connect-mcp-http-alt"
+              style={{
+                marginBottom: "0.75rem",
+                fontSize: "var(--text-xs)",
+                color: "var(--muted)",
+              }}
+            >
+              <summary style={{ cursor: "pointer", userSelect: "none" }}>
+                Running remote / headless? Use the HTTP transport instead.
+              </summary>
+              <p style={{ margin: "0.5rem 0 0.375rem 0" }}>
+                Remote agents that can&apos;t spawn a stdio subprocess can register
+                the backend&apos;s stateless{" "}
+                <a
+                  href="https://github.com/LanNguyenSi/agent-tasks/tree/master/mcp-server#remote-clients-use-the-backends-apimcp-endpoint-instead"
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--link)" }}
+                >
+                  HTTP MCP endpoint
+                </a>{" "}
+                instead — same 20 tools, same governance, no child process.
+              </p>
+              <pre
+                data-testid="connect-mcp-http-snippet"
+                style={{
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "6px",
+                  padding: "0.625rem 0.75rem",
+                  fontSize: "var(--text-xs)",
+                  fontFamily: "monospace",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all",
+                  color: "var(--text)",
+                  margin: 0,
+                  marginBottom: "0.5rem",
+                }}
+              >
+                {tokenMasked && token
+                  ? snippetMcpHttp(token, API_BASE).split(token).join(MASK_PLACEHOLDER)
+                  : snippetMcpHttp(token, API_BASE)}
+              </pre>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void copy(snippetMcpHttp(token, API_BASE), "HTTP snippet copied.")}
+              >
+                Copy HTTP snippet
+              </Button>
+            </details>
+          )}
           <AlertBanner tone="warning">
             This token is shown once. It has been saved to{" "}
             <a href="/settings#api-tokens" style={{ color: "var(--link)" }}>

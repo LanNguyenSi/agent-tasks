@@ -240,6 +240,37 @@ describe("ConnectAgentModal", () => {
     );
   });
 
+  it("exposes the HTTP MCP transport alternative under the MCP tab only", async () => {
+    renderModal(true);
+    await screen.findByTestId("connect-snippet");
+
+    // Disclosure present under the MCP tab (default), collapsed content
+    // still renders into the DOM so we can assert its shape.
+    const details = screen.getByTestId("connect-mcp-http-alt");
+    expect(details.tagName.toLowerCase()).toBe("details");
+
+    const httpSnippet = screen.getByTestId("connect-mcp-http-snippet");
+    expect(httpSnippet.textContent).toContain(
+      "claude mcp add --transport http agent-tasks",
+    );
+    expect(httpSnippet.textContent).toContain("/api/mcp");
+    expect(httpSnippet.textContent).toContain(
+      `Authorization: Bearer atk_live_test123`,
+    );
+
+    // Not shown on other tabs — the HTTP transport only matches the
+    // Claude Code MCP client flow, not the CLI or curl paths.
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-tab-cli"));
+    expect(screen.queryByTestId("connect-mcp-http-alt")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("connect-tab-api"));
+    expect(screen.queryByTestId("connect-mcp-http-alt")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("connect-tab-mcp"));
+    expect(screen.getByTestId("connect-mcp-http-alt")).toBeInTheDocument();
+  });
+
   it("passes an AbortSignal to createAgentToken and aborts it when the modal closes mid-flight", async () => {
     // Hold the mock pending so we can close the modal while the
     // request is still in flight. The effect cleanup should call
