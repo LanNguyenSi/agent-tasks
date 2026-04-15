@@ -10,11 +10,31 @@ describe("classifyProbeResponse", () => {
     expect(classifyProbeResponse(401, false)).toBe("invalid");
   });
 
-  it("403 → invalid (rate-limited or OAuth app revoked)", () => {
-    // 403 can also be rate limiting, but in that case the user should
-    // reconnect or wait — treating it as invalid is conservative but
-    // doesn't cause harm (the UI shows a 'reconnect' prompt).
+  it("403 without rate-limit markers → invalid (OAuth app revoked / scope downgrade)", () => {
     expect(classifyProbeResponse(403, false)).toBe("invalid");
+  });
+
+  it("403 with x-ratelimit-remaining=0 → unknown (transient, don't flap)", () => {
+    expect(
+      classifyProbeResponse(403, false, { "x-ratelimit-remaining": "0" }),
+    ).toBe("unknown");
+  });
+
+  it("403 with retry-after header → unknown", () => {
+    expect(classifyProbeResponse(403, false, { "retry-after": "60" })).toBe("unknown");
+  });
+
+  it("403 with rate-limit wording in body message → unknown", () => {
+    expect(
+      classifyProbeResponse(403, false, null, {
+        message: "API rate limit exceeded for user",
+      }),
+    ).toBe("unknown");
+  });
+
+  it("403 with Headers instance (not plain record) is still classified", () => {
+    const h = new Headers({ "x-ratelimit-remaining": "0" });
+    expect(classifyProbeResponse(403, false, h)).toBe("unknown");
   });
 
   it("500 → unknown (transient server error, don't flap)", () => {
