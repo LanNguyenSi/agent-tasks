@@ -10,7 +10,7 @@
  * What we verify:
  *   1. Missing / malformed Authorization header → 401 before any
  *      MCP machinery runs.
- *   2. `tools/list` returns exactly the 12 expected tool names.
+ *   2. `tools/list` returns exactly the 20 expected tool names.
  *   3. `tools/call` for each family reaches the right self-dispatch
  *      path and forwards the caller's Bearer token verbatim.
  *   4. GET and DELETE return 405 with `Allow: POST`.
@@ -139,7 +139,7 @@ describe("POST /api/mcp — tool registration", () => {
     ({ app } = makeTestApp());
   });
 
-  it("tools/list returns the full set of 15 tools", async () => {
+  it("tools/list returns the full set of 20 tools", async () => {
     const res = await mcpRequest(
       app,
       { jsonrpc: "2.0", id: 1, method: "tools/list" },
@@ -152,10 +152,15 @@ describe("POST /api/mcp — tool registration", () => {
     const names = (payload.result?.tools ?? []).map((t) => t.name).sort();
     expect(names).toEqual(
       [
+        "projects_get",
         "projects_list",
         "pull_requests_comment",
         "pull_requests_create",
         "pull_requests_merge",
+        "review_approve",
+        "review_claim",
+        "review_release",
+        "review_request_changes",
         "signals_ack",
         "signals_poll",
         "tasks_claim",
@@ -293,6 +298,67 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     expect(recorded[0]).toMatchObject({
       method: "POST",
       path: `/api/agent/signals/${signalId}/ack`,
+    });
+  });
+
+  it("projects_get routes a UUID to /api/projects/:id", async () => {
+    const slugOrId = "77777777-7777-7777-7777-777777777777";
+    await callTool("projects_get", { slugOrId });
+    expect(recorded[0]).toMatchObject({
+      method: "GET",
+      path: `/api/projects/${slugOrId}`,
+    });
+  });
+
+  it("projects_get routes a non-UUID slug to /api/projects/by-slug/:slug", async () => {
+    // Hono decodes the path before recording; the wire-level encoding
+    // is asserted in mcp-server/tests/tools.test.ts. Here we just
+    // verify the UUID-vs-slug branch selected the slug route.
+    await callTool("projects_get", { slugOrId: "alpha" });
+    expect(recorded[0]).toMatchObject({
+      method: "GET",
+      path: "/api/projects/by-slug/alpha",
+    });
+  });
+
+  it("review_approve → POST /api/tasks/:id/review with action=approve", async () => {
+    const taskId = "88888888-8888-8888-8888-888888888888";
+    await callTool("review_approve", { taskId, comment: "lgtm" });
+    expect(recorded[0]).toMatchObject({
+      method: "POST",
+      path: `/api/tasks/${taskId}/review`,
+      body: { action: "approve", comment: "lgtm" },
+    });
+  });
+
+  it("review_request_changes → POST /api/tasks/:id/review with action=request_changes", async () => {
+    const taskId = "99999999-9999-9999-9999-999999999999";
+    await callTool("review_request_changes", {
+      taskId,
+      comment: "please split the diff",
+    });
+    expect(recorded[0]).toMatchObject({
+      method: "POST",
+      path: `/api/tasks/${taskId}/review`,
+      body: { action: "request_changes", comment: "please split the diff" },
+    });
+  });
+
+  it("review_claim → POST /api/tasks/:id/review/claim with no body", async () => {
+    const taskId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    await callTool("review_claim", { taskId });
+    expect(recorded[0]).toMatchObject({
+      method: "POST",
+      path: `/api/tasks/${taskId}/review/claim`,
+    });
+  });
+
+  it("review_release → POST /api/tasks/:id/review/release with no body", async () => {
+    const taskId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    await callTool("review_release", { taskId });
+    expect(recorded[0]).toMatchObject({
+      method: "POST",
+      path: `/api/tasks/${taskId}/review/release`,
     });
   });
 

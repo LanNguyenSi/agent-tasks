@@ -51,6 +51,7 @@ Drop `--scope user` if you want it project-local instead. See
 | Tool                    | Wraps                                              |
 | ----------------------- | -------------------------------------------------- |
 | `projects_list`         | `GET /api/projects/available`                      |
+| `projects_get`          | `GET /api/projects/:slugOrId` (or `/by-slug/:slug`)|
 | `tasks_list`            | `GET /api/tasks/claimable`                         |
 | `tasks_get`             | `GET /api/tasks/:id`                               |
 | `tasks_instructions`    | `GET /api/tasks/:id/instructions`                  |
@@ -60,6 +61,10 @@ Drop `--scope user` if you want it project-local instead. See
 | `tasks_transition`      | `POST /api/tasks/:id/transition`                   |
 | `tasks_update`          | `PATCH /api/tasks/:id`                             |
 | `tasks_comment`         | `POST /api/tasks/:id/comments`                     |
+| `review_approve`        | `POST /api/tasks/:id/review` (`action: approve`)   |
+| `review_request_changes`| `POST /api/tasks/:id/review` (`action: request_changes`) |
+| `review_claim`          | `POST /api/tasks/:id/review/claim`                 |
+| `review_release`        | `POST /api/tasks/:id/review/release`               |
 | `pull_requests_create`  | `POST /api/github/pull-requests`                   |
 | `pull_requests_merge`   | `POST /api/github/pull-requests/:prNumber/merge`   |
 | `pull_requests_comment` | `POST /api/github/pull-requests/:prNumber/comments`|
@@ -108,7 +113,7 @@ no running server to maintain, no network hop.
 
 Remote MCP clients that speak HTTP + JSON-RPC (e.g. Triologue's
 `mcpBridge.ts`) cannot drive a stdio child process across a network
-boundary. For those, the agent-tasks backend exposes the **same 12
+boundary. For those, the agent-tasks backend exposes the **same 20
 tools** over HTTP at `POST /api/mcp`:
 
 ```bash

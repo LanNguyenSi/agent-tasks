@@ -1,6 +1,6 @@
 /**
  * HTTP-transport peer of the stdio `@agent-tasks/mcp-server` package.
- * Exposes the same 15 tools over JSON-RPC via the MCP SDK's
+ * Exposes the same 20 tools over JSON-RPC via the MCP SDK's
  * `WebStandardStreamableHTTPServerTransport`, which plugs directly
  * into Hono's fetch-native request/response.
  *
@@ -149,7 +149,7 @@ function errorResult(err: unknown) {
 }
 
 /**
- * Build a fresh `McpServer` with all 15 tools bound to the caller's
+ * Build a fresh `McpServer` with all 20 tools bound to the caller's
  * token. Called per request so there is no shared mutable state
  * between concurrent MCP requests.
  */
@@ -169,6 +169,30 @@ function buildServer(token: string): McpServer {
     async () => {
       try {
         const r = await callSelf("/api/projects/available", { method: "GET" }, token);
+        return textResult(r);
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "projects_get",
+    {
+      description:
+        "Fetch a single project by slug or id. Accepts either a UUID or a slug — the tool routes to the correct endpoint automatically. Returns the full project record (id, slug, name, GitHub repo, team members, workflow info).",
+      inputSchema: { slugOrId: z.string().min(1) },
+    },
+    async ({ slugOrId }) => {
+      try {
+        const isUuid =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            slugOrId,
+          );
+        const path = isUuid
+          ? `/api/projects/${slugOrId}`
+          : `/api/projects/by-slug/${encodeURIComponent(slugOrId)}`;
+        const r = await callSelf(path, { method: "GET" }, token);
         return textResult(r);
       } catch (e) {
         return errorResult(e);
@@ -369,6 +393,104 @@ function buildServer(token: string): McpServer {
         const r = await callSelf(
           `/api/tasks/${taskId}/comments`,
           { method: "POST", body: { content } },
+          token,
+        );
+        return textResult(r);
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  // ── Review tools ────────────────────────────────────────────────────────
+  //
+  // Mirror of the four `review_*` tools in the stdio package. Each hits one
+  // of the three `/api/tasks/:id/review*` endpoints. The stdio package
+  // exposes review_approve + review_request_changes as separate tools even
+  // though they share an endpoint, because agents find named tools easier
+  // to reason about than action enums — kept consistent here.
+
+  server.registerTool(
+    "review_approve",
+    {
+      description:
+        "Approve a task in review. The task's claimant must not be the reviewer (distinct-reviewer gate). The backend checks the project's review policy and transitions the task when the policy is satisfied. Optional comment is stored alongside the review event. Requires the task to be in 'review' state and the actor to hold the review lock (acquired via review_claim).",
+      inputSchema: {
+        taskId: uuid(),
+        comment: z.string().max(5000).optional(),
+      },
+    },
+    async ({ taskId, comment }) => {
+      try {
+        const r = await callSelf(
+          `/api/tasks/${taskId}/review`,
+          { method: "POST", body: { action: "approve", comment } },
+          token,
+        );
+        return textResult(r);
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "review_request_changes",
+    {
+      description:
+        "Request changes on a task in review. Moves the task back to the claimant with the comment attached. The claimant receives a changes_requested signal. Requires the task to be in 'review' state and the actor to hold the review lock.",
+      inputSchema: {
+        taskId: uuid(),
+        comment: z.string().max(5000).optional(),
+      },
+    },
+    async ({ taskId, comment }) => {
+      try {
+        const r = await callSelf(
+          `/api/tasks/${taskId}/review`,
+          { method: "POST", body: { action: "request_changes", comment } },
+          token,
+        );
+        return textResult(r);
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "review_claim",
+    {
+      description:
+        "Acquire the single-reviewer lock on a task in review. A task can have at most one active reviewer at a time; call review_release or review_approve/review_request_changes to free the lock. Fails if the caller is the task's claimant (no self-review) or if another reviewer already holds the lock.",
+      inputSchema: { taskId: uuid() },
+    },
+    async ({ taskId }) => {
+      try {
+        const r = await callSelf(
+          `/api/tasks/${taskId}/review/claim`,
+          { method: "POST" },
+          token,
+        );
+        return textResult(r);
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "review_release",
+    {
+      description:
+        "Release the review lock on a task without approving or requesting changes. Returns the task to the pool so another actor can pick it up for review.",
+      inputSchema: { taskId: uuid() },
+    },
+    async ({ taskId }) => {
+      try {
+        const r = await callSelf(
+          `/api/tasks/${taskId}/review/release`,
+          { method: "POST" },
           token,
         );
         return textResult(r);
