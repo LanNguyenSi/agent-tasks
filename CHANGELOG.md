@@ -5,6 +5,89 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-04-15
+
+**Headline: MCP agents can now drive the full review loop, and the
+one-click onboarding flow got a security and reliability pass.**
+`@agent-tasks/mcp-server` ships five new tools that close the last
+CLI-parity gap so agents no longer have to fall back to REST to
+approve, request changes, or hold a review lock. Plus real fixes for
+two production rough edges — the signal service no longer under-reports
+partial writes, and the GitHub token-health probe stops flashing
+"Token revoked" when users just brushed against a rate limit.
+
+### Added
+
+#### MCP CLI parity
+- **`@agent-tasks/mcp-server` 0.3.0** — five new tools:
+  - `projects_get` — fetch a single project by slug or UUID
+    (`GET /api/projects/:slugOrId`, auto-routes)
+  - `review_approve`, `review_request_changes` — wraps
+    `POST /api/tasks/:id/review` with the two actions
+  - `review_claim`, `review_release` — acquire and release the
+    single-reviewer lock
+- All five mirrored in the HTTP MCP peer at `POST /api/mcp`, so
+  remote / stateless clients (Triologue's `mcpBridge`, custom MCP
+  clients) get them too. Stdio + HTTP transports now both expose
+  the same 20 tools.
+- Fully typed, documented in `mcp-server/README.md`, covered by
+  unit tests on both surfaces.
+
+#### Audit forensics
+- `workflow.customized` audit events now carry a
+  `forkedFromDefault` snapshot (`stateCount`, `transitionCount`,
+  `stateNames[]`, `initialState`) so an auditor looking at an old
+  row can reconstruct what the user actually forked even after
+  `DEFAULT_STATES` drifts. No change to the customize endpoint's
+  HTTP response — audit-payload only.
+
+#### Connect modal hardening
+- **Token masking after copy** — 30s after the user clicks
+  "Copy snippet", the raw token in the `<pre>` is replaced with
+  `••••••••` while the surrounding command stays readable. A
+  "Reveal token" button restores it on demand. Closes the
+  shoulder-surfing / DOM-scrape window without disrupting the
+  one-click flow.
+- **`AbortSignal` plumbing** — `createAgentToken` now accepts an
+  optional `{ signal }` options bag; `ConnectAgentModal` creates a
+  fresh `AbortController` per effect run and calls `abort()` in
+  cleanup. Closing the modal mid-flight cancels the actual fetch
+  instead of just ignoring the response server-side.
+- **HTTP MCP transport disclosure** — a collapsed `<details>`
+  under the MCP tab with a ready-to-paste
+  `claude mcp add --transport http agent-tasks <base>/api/mcp`
+  snippet for remote / headless agents that can't spawn a stdio
+  subprocess. Shares the same copy / mask pipeline as the main
+  snippet.
+
+### Fixed
+
+#### Signals
+- **`emitForceTransitionedSignal` partial-write handling** — the
+  recipient loop used to be wrapped in a single try/catch, so a
+  failure on recipient N would return `0` even if N-1 signals had
+  already persisted, and the failing recipient was silently
+  dropped. Each iteration now has its own try/catch with a
+  targeted error log; the return value accurately reports the
+  number of signals written.
+
+#### GitHub health probe
+- **403 rate-limit vs genuine revocation disambiguation** — a user
+  who briefly tripped a GitHub secondary rate limit saw a false
+  "Token revoked, reconnect" banner in Settings, because the probe
+  collapsed every 403 into `invalid`. `classifyProbeResponse` now
+  inspects the response headers and body: `x-ratelimit-remaining=0`
+  / `retry-after` / a rate-limit mention in `body.message` →
+  `unknown` (transient, preserves the last definitive state); any
+  other 403 → `invalid` (genuine OAuth app revocation or scope
+  downgrade). Backward-compatible signature with defaulted params.
+
+### Changed
+
+- `@agent-tasks/backend` and `@agent-tasks/frontend` bumped
+  `0.2.0 → 0.3.0` to match the release tag. `@agent-tasks/mcp-bridge`
+  stays at `0.2.0` — no changes this cycle.
+
 ## [0.2.0] - 2026-04-14
 
 **Headline: Agents can now connect themselves.** Onboarding a new agent is
