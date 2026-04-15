@@ -34,10 +34,15 @@ describe("buildTools", () => {
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
       [
+        "projects_get",
         "projects_list",
         "pull_requests_comment",
         "pull_requests_create",
         "pull_requests_merge",
+        "review_approve",
+        "review_claim",
+        "review_release",
+        "review_request_changes",
         "signals_ack",
         "signals_poll",
         "tasks_claim",
@@ -245,6 +250,84 @@ describe("buildTools", () => {
       body: "CI green, merging now.",
     });
     expect(parsed).not.toHaveProperty("prNumber");
+  });
+
+  // ── projects_get ───────────────────────────────────────────────────
+
+  it("projects_get routes UUIDs to /api/projects/:id", async () => {
+    fetchMock.mockResolvedValue(ok({ project: { id: "77777777-7777-7777-7777-777777777777" } }));
+    await tool("projects_get").handler({
+      slugOrId: "77777777-7777-7777-7777-777777777777",
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://example.test/api/projects/77777777-7777-7777-7777-777777777777",
+    );
+    expect(init.method).toBe("GET");
+  });
+
+  it("projects_get routes slugs to /api/projects/by-slug/:slug and URL-encodes them", async () => {
+    fetchMock.mockResolvedValue(ok({ project: { slug: "agent tasks" } }));
+    await tool("projects_get").handler({ slugOrId: "agent tasks" });
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://example.test/api/projects/by-slug/agent%20tasks");
+  });
+
+  // ── review_* ───────────────────────────────────────────────────────
+
+  it("review_approve POSTs action=approve with optional comment", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1", status: "done" } }));
+    await tool("review_approve").handler({
+      taskId: "11111111-1111-1111-1111-111111111111",
+      comment: "lgtm",
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://example.test/api/tasks/11111111-1111-1111-1111-111111111111/review",
+    );
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ action: "approve", comment: "lgtm" });
+  });
+
+  it("review_request_changes POSTs action=request_changes", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1", status: "in_progress" } }));
+    await tool("review_request_changes").handler({
+      taskId: "22222222-2222-2222-2222-222222222222",
+      comment: "please split the diff",
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://example.test/api/tasks/22222222-2222-2222-2222-222222222222/review",
+    );
+    expect(JSON.parse(init.body)).toEqual({
+      action: "request_changes",
+      comment: "please split the diff",
+    });
+  });
+
+  it("review_claim POSTs to /review/claim with no body", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
+    await tool("review_claim").handler({
+      taskId: "33333333-3333-3333-3333-333333333333",
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://example.test/api/tasks/33333333-3333-3333-3333-333333333333/review/claim",
+    );
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeUndefined();
+  });
+
+  it("review_release POSTs to /review/release", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
+    await tool("review_release").handler({
+      taskId: "44444444-4444-4444-4444-444444444444",
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://example.test/api/tasks/44444444-4444-4444-4444-444444444444/review/release",
+    );
+    expect(init.method).toBe("POST");
   });
 
   it("pull_requests_merge propagates a 403 delegation-missing error through wrap", async () => {

@@ -62,6 +62,17 @@ export class AgentTasksClient {
     return this.request<unknown>("GET", "/api/projects/available");
   }
 
+  getProject(slugOrId: string) {
+    // Mirror the CLI: UUIDs route to the id endpoint, anything else is
+    // treated as a slug. Keeps the MCP tool input permissive (one string)
+    // without forcing callers to know which flavor of identifier they hold.
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slugOrId);
+    const path = isUuid
+      ? `/api/projects/${slugOrId}`
+      : `/api/projects/by-slug/${encodeURIComponent(slugOrId)}`;
+    return this.request<unknown>("GET", path);
+  }
+
   listClaimableTasks(params?: { limit?: number }) {
     const qs =
       params?.limit !== undefined ? `?limit=${params.limit}` : "";
@@ -130,6 +141,21 @@ export class AgentTasksClient {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/comments`, {
       content,
     });
+  }
+
+  reviewTask(
+    taskId: string,
+    input: { action: "approve" | "request_changes"; comment?: string },
+  ) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/review`, input);
+  }
+
+  claimReview(taskId: string) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/review/claim`);
+  }
+
+  releaseReview(taskId: string) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/review/release`);
   }
 
   pollSignals() {

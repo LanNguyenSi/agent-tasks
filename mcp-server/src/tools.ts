@@ -48,6 +48,13 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       handler: async () => wrap(() => client.listProjects()),
     }),
     def({
+      name: "projects_get",
+      description:
+        "Fetch a single project by slug or id. Accepts either a UUID or a slug — the tool routes to the correct endpoint automatically. Returns the full project record (id, slug, name, GitHub repo, team members, workflow info).",
+      inputShape: { slugOrId: z.string().min(1) },
+      handler: async ({ slugOrId }) => wrap(() => client.getProject(slugOrId)),
+    }),
+    def({
       name: "tasks_list",
       description:
         "List tasks that the authenticated actor may claim (status=open, not blocked, not already claimed). Supports an optional limit.",
@@ -143,6 +150,44 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       },
       handler: async ({ taskId, content }) =>
         wrap(() => client.addTaskComment(taskId, content)),
+    }),
+    def({
+      name: "review_approve",
+      description:
+        "Approve a task in review. The task's claimant must not be the reviewer (distinct-reviewer gate). The backend checks the project's review policy and transitions the task when the policy is satisfied. Optional comment is stored alongside the review event. Requires the task to be in 'review' state and the actor to hold the review lock (acquired via review_claim).",
+      inputShape: {
+        taskId: uuid(),
+        comment: z.string().max(5000).optional(),
+      },
+      handler: async ({ taskId, comment }) =>
+        wrap(() => client.reviewTask(taskId, { action: "approve", comment })),
+    }),
+    def({
+      name: "review_request_changes",
+      description:
+        "Request changes on a task in review. Moves the task back to the claimant with the comment attached. The claimant receives a changes_requested signal. Requires the task to be in 'review' state and the actor to hold the review lock.",
+      inputShape: {
+        taskId: uuid(),
+        comment: z.string().max(5000).optional(),
+      },
+      handler: async ({ taskId, comment }) =>
+        wrap(() =>
+          client.reviewTask(taskId, { action: "request_changes", comment }),
+        ),
+    }),
+    def({
+      name: "review_claim",
+      description:
+        "Acquire the single-reviewer lock on a task in review. A task can have at most one active reviewer at a time; call review_release or review_approve/review_request_changes to free the lock. Fails if the caller is the task's claimant (no self-review) or if another reviewer already holds the lock.",
+      inputShape: { taskId: uuid() },
+      handler: async ({ taskId }) => wrap(() => client.claimReview(taskId)),
+    }),
+    def({
+      name: "review_release",
+      description:
+        "Release the review lock on a task without approving or requesting changes. Returns the task to the pool so another actor can pick it up for review.",
+      inputShape: { taskId: uuid() },
+      handler: async ({ taskId }) => wrap(() => client.releaseReview(taskId)),
     }),
     def({
       name: "signals_poll",
