@@ -13,8 +13,14 @@ vi.mock("../../src/lib/api", () => ({
   createAgentToken: vi.fn(),
 }));
 
-import ConnectAgentModal from "../../src/components/ConnectAgentModal";
+import ConnectAgentModal, {
+  __setMaskDelayForTests,
+} from "../../src/components/ConnectAgentModal";
 import { createAgentToken } from "../../src/lib/api";
+
+// Drop the 30s mask delay to something tests can wait on without
+// slowing the suite. Production keeps the 30s default.
+__setMaskDelayForTests(50);
 
 const mockCreate = vi.mocked(createAgentToken);
 
@@ -47,6 +53,9 @@ describe("ConnectAgentModal", () => {
 
   afterEach(() => {
     cleanup();
+    // Restore real timers in case an earlier test bailed before its own
+    // cleanup — otherwise the next test's waitFor would deadlock.
+    vi.useRealTimers();
   });
 
   it("does not generate a token while closed", () => {
@@ -192,6 +201,43 @@ describe("ConnectAgentModal", () => {
     const passedToken = spy.mock.calls[0]![0];
     expect(passedToken.id).toBe("t-1");
     expect(passedToken.scopes).toContain("tasks:claim");
+  });
+
+  it("masks the token in the DOM after Copy snippet and exposes a Reveal button", async () => {
+    renderModal(true);
+
+    const snippet = await screen.findByTestId("connect-snippet");
+    expect(snippet.textContent).toContain("atk_live_test123");
+    expect(snippet).toHaveAttribute("data-token-masked", "false");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /copy snippet/i }));
+
+    // Wait for the mask timer to fire — the test-env delay is 50ms
+    // (see setMaskDelayForTests at bottom of the component file).
+    await waitFor(
+      () => {
+        expect(screen.getByTestId("connect-snippet")).toHaveAttribute(
+          "data-token-masked",
+          "true",
+        );
+      },
+      { timeout: 1000 },
+    );
+
+    const masked = screen.getByTestId("connect-snippet");
+    expect(masked.textContent).not.toContain("atk_live_test123");
+    expect(masked.textContent).toContain("••••••••");
+
+    // Reveal restores the raw token.
+    await user.click(screen.getByTestId("connect-reveal"));
+    expect(screen.getByTestId("connect-snippet").textContent).toContain(
+      "atk_live_test123",
+    );
+    expect(screen.getByTestId("connect-snippet")).toHaveAttribute(
+      "data-token-masked",
+      "false",
+    );
   });
 
   it("does NOT call onTokenCreated when the backend rejects the request", async () => {

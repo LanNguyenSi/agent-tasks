@@ -47,6 +47,25 @@ const AGENT_SCOPES = [
 // without being disruptive.
 const TOKEN_TTL_DAYS = 90;
 
+// How long after "Copy snippet" the raw token stays visible in the DOM
+// before being replaced with `****`. Long enough to paste into a
+// terminal + verify, short enough that an abandoned tab (or a passer-by
+// glancing at the screen, or a DOM-scraping browser extension) only has
+// a narrow window to read it. Revealing again is a deliberate click.
+const DEFAULT_REVEAL_MASK_DELAY_MS = 30_000;
+const MASK_PLACEHOLDER = "••••••••";
+
+// Test-only override. Unit tests drive the component through userEvent
+// and can't reliably mix vi.useFakeTimers with React's async effect
+// queue here (the initial token-generation Promise chain interleaves
+// with the mask setTimeout). Dropping to a small real delay in tests
+// gives a deterministic window without making the whole component
+// time-aware. Production code never calls this.
+let revealMaskDelayMs = DEFAULT_REVEAL_MASK_DELAY_MS;
+export function __setMaskDelayForTests(ms: number): void {
+  revealMaskDelayMs = ms;
+}
+
 function snippetMcp(token: string): string {
   return `claude mcp add agent-tasks \\
   --scope user \\
@@ -78,6 +97,15 @@ export default function ConnectAgentModal({ open, onClose, teamId, scopeLabel, o
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [tokenMasked, setTokenMasked] = useState(false);
+  const maskTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearMaskTimer() {
+    if (maskTimerRef.current) {
+      clearTimeout(maskTimerRef.current);
+      maskTimerRef.current = null;
+    }
+  }
 
   // Hard guard against issuing more than one POST per "open" intent. The
   // `cancelled` flag in the effect only stops a stale response from writing
@@ -95,6 +123,8 @@ export default function ConnectAgentModal({ open, onClose, teamId, scopeLabel, o
       setCopyMessage(null);
       setActiveTab("mcp");
       setLoading(false);
+      setTokenMasked(false);
+      clearMaskTimer();
       inflightKey.current = null;
       return;
     }
@@ -153,7 +183,28 @@ export default function ConnectAgentModal({ open, onClose, teamId, scopeLabel, o
     } catch {
       setCopyMessage("Copy failed — select and copy manually.");
     }
+    // After the token has been copied to the clipboard, start the
+    // mask-after-delay timer. The user has already transferred the
+    // value to their terminal; the DOM copy is now a passive leak.
+    // Clearing any pre-existing timer prevents a second copy from
+    // double-masking and shortening the window.
+    clearMaskTimer();
+    maskTimerRef.current = setTimeout(() => {
+      setTokenMasked(true);
+      maskTimerRef.current = null;
+    }, revealMaskDelayMs);
   }
+
+  function revealToken() {
+    clearMaskTimer();
+    setTokenMasked(false);
+  }
+
+  // Clear any pending timer when the modal unmounts so a stale fire
+  // after route change cannot setState on an unmounted tree.
+  useEffect(() => {
+    return () => clearMaskTimer();
+  }, []);
 
   const snippet = token
     ? activeTab === "mcp"
@@ -162,6 +213,14 @@ export default function ConnectAgentModal({ open, onClose, teamId, scopeLabel, o
         ? snippetCli(token, API_BASE)
         : snippetCurl(token, API_BASE)
     : "";
+
+  // The display snippet is what actually lands in the DOM. When masked,
+  // replace every occurrence of the raw token with the placeholder so
+  // the rest of the snippet (command, flags, env var names) remains
+  // readable — useful for users who want to double-check they pasted
+  // the right command without revealing the token again.
+  const displaySnippet =
+    tokenMasked && token ? snippet.split(token).join(MASK_PLACEHOLDER) : snippet;
 
   const verifyHint =
     activeTab === "mcp"
@@ -209,6 +268,7 @@ export default function ConnectAgentModal({ open, onClose, teamId, scopeLabel, o
         <>
           <pre
             data-testid="connect-snippet"
+            data-token-masked={tokenMasked}
             style={{
               background: "var(--surface)",
               border: "1px solid var(--border)",
@@ -223,12 +283,22 @@ export default function ConnectAgentModal({ open, onClose, teamId, scopeLabel, o
               marginBottom: "0.625rem",
             }}
           >
-            {snippet}
+            {displaySnippet}
           </pre>
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.75rem", flexWrap: "wrap" }}>
             <Button size="sm" onClick={() => void copy(snippet, "Snippet copied.")}>
               Copy snippet
             </Button>
+            {tokenMasked && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={revealToken}
+                data-testid="connect-reveal"
+              >
+                Reveal token
+              </Button>
+            )}
             {copyMessage && (
               <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{copyMessage}</span>
             )}
