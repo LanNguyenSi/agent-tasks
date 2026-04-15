@@ -38,26 +38,102 @@ function def<Shape extends ZodRawShape>(
   return d as unknown as ToolDefinition;
 }
 
+// ── v1 deprecation notice ────────────────────────────────────────────────────
+//
+// The v1 tools below are being phased out in favor of the v2 verb-oriented
+// surface (task_pickup / task_start / task_note / task_finish / task_create /
+// task_abandon). LLM clients that see both should prefer the non-deprecated
+// variant. v1 tools will be removed 4 weeks after the v2 release. See ADR 0008.
+const DEPRECATED = "[DEPRECATED, use v2 tools] ";
+
 export function buildTools(client: AgentTasksClient): ToolDefinition[] {
   return [
+    // ── v2 surface (ADR 0008) ────────────────────────────────────────────
+    def({
+      name: "task_pickup",
+      description:
+        "Get the next piece of work. Returns one of: a pending signal, a task ready for review, a claimable task, or idle. The response is tagged with `kind: \"signal\" | \"review\" | \"work\" | \"idle\"`. Signals are delivered at-most-once and acked atomically. Review tasks are filtered by the distinct-reviewer rule (you cannot review tasks you authored). Fails with 409 if you already hold an active claim — call task_finish or task_abandon first.",
+      inputShape: {},
+      handler: async () => wrap(() => client.pickupWork()),
+    }),
+    def({
+      name: "task_start",
+      description:
+        "Begin work on a task. Polymorphic by task status: an `open` task is author-claimed and transitioned to in_progress; a `review` task is review-claimed without state change. Response includes the task data, project info, and `expectedFinishState` (the state task_finish will target for a work claim). Fails with 409 if you already hold an active claim.",
+      inputShape: { taskId: uuid() },
+      handler: async ({ taskId }) => wrap(() => client.startTask(taskId)),
+    }),
+    def({
+      name: "task_note",
+      description:
+        "Comment on a task. Works for both work and review claims — use this to record progress, ask questions, or leave review feedback. Requires taskId today; a future revision may infer it from the active claim.",
+      inputShape: {
+        taskId: uuid(),
+        content: z.string().min(1).max(5000),
+      },
+      handler: async ({ taskId, content }) =>
+        wrap(() => client.addTaskComment(taskId, content)),
+    }),
+    def({
+      name: "task_finish",
+      description:
+        "Finish a task. Polymorphic based on the claim you hold.\n\nWork claim: pass { result?, prUrl? }. prUrl must be a github.com pull-request URL if provided. The task transitions to its expectedFinishState (review or done depending on the workflow). The work claim is cleared when going to done and kept when going to review.\n\nReview claim: pass { result?, outcome: \"approve\" | \"request_changes\" }. approve → task to done, both claims cleared. request_changes → task back to in_progress, review claim cleared, work claim kept so the author resumes, changes_requested signal emitted.",
+      inputShape: {
+        taskId: uuid(),
+        result: z.string().max(5000).optional(),
+        prUrl: z.string().url().optional(),
+        outcome: z.enum(["approve", "request_changes"]).optional(),
+      },
+      handler: async ({ taskId, ...body }) =>
+        wrap(() => client.finishTask(taskId, body)),
+    }),
+    def({
+      name: "task_create",
+      description:
+        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef).",
+      inputShape: {
+        projectId: uuid(),
+        title: z.string().min(1).max(255),
+        description: z.string().optional(),
+        priority: priorityEnum.optional(),
+        workflowId: uuid().optional(),
+        dueAt: z.string().datetime().optional(),
+        externalRef: z.string().trim().min(1).max(255).optional(),
+        labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+      },
+      handler: async ({ projectId, ...input }) =>
+        wrap(() => client.createTask(projectId, input)),
+    }),
+    def({
+      name: "task_abandon",
+      description:
+        "Explicit bail-out: release the active claim on a task without finishing. A work claim on an in_progress task returns it to open; a review claim simply releases the review lock. Use this sparingly — task_finish is the normal path. Separate intent from finish so audit trails distinguish abandonment from completion.",
+      inputShape: { taskId: uuid() },
+      handler: async ({ taskId }) => wrap(() => client.abandonTask(taskId)),
+    }),
+
+    // ── v1 surface (deprecated) ──────────────────────────────────────────
     def({
       name: "projects_list",
       description:
-        "List all projects visible to the authenticated actor. Returns id, slug, name, and GitHub repo for each.",
+        DEPRECATED +
+        "List all projects visible to the authenticated actor. Returns id, slug, name, and GitHub repo for each. Agents should use task_pickup instead of browsing.",
       inputShape: {},
       handler: async () => wrap(() => client.listProjects()),
     }),
     def({
       name: "projects_get",
       description:
-        "Fetch a single project by slug or id. Accepts either a UUID or a slug — the tool routes to the correct endpoint automatically. Returns the full project record (id, slug, name, GitHub repo, team members, workflow info).",
+        DEPRECATED +
+        "Fetch a single project by slug or id. Project browsing is not an agent concern under v2.",
       inputShape: { slugOrId: z.string().min(1) },
       handler: async ({ slugOrId }) => wrap(() => client.getProject(slugOrId)),
     }),
     def({
       name: "tasks_list",
       description:
-        "List tasks that the authenticated actor may claim (status=open, not blocked, not already claimed). Supports an optional limit.",
+        DEPRECATED +
+        "List claimable tasks. Use task_pickup instead — it returns one prioritized item.",
       inputShape: {
         limit: z.number().int().positive().max(500).optional(),
       },
@@ -67,14 +143,16 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "tasks_get",
       description:
-        "Fetch a single task by id, including comments and dependencies.",
+        DEPRECATED +
+        "Fetch a task by id. v2 folds this into the task_start response.",
       inputShape: { taskId: uuid() },
       handler: async ({ taskId }) => wrap(() => client.getTask(taskId)),
     }),
     def({
       name: "tasks_instructions",
       description:
-        "Fetch agent-facing instructions for a task: current state, allowed transitions, confidence score, required-field checklist, and updatable fields.",
+        DEPRECATED +
+        "Fetch agent-facing instructions. v2 folds this into the task_start response.",
       inputShape: { taskId: uuid() },
       handler: async ({ taskId }) =>
         wrap(() => client.getTaskInstructions(taskId)),
@@ -82,7 +160,8 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "tasks_create",
       description:
-        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef).",
+        DEPRECATED +
+        "Use task_create instead (same behavior, v2 naming).",
       inputShape: {
         projectId: uuid(),
         title: z.string().min(1).max(255),
@@ -102,21 +181,24 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "tasks_claim",
       description:
-        "Claim a task as the authenticated actor. Fails if the task is already claimed, blocked, or not in a claimable state.",
+        DEPRECATED +
+        "Use task_start instead (atomic claim + in_progress + instructions).",
       inputShape: { taskId: uuid() },
       handler: async ({ taskId }) => wrap(() => client.claimTask(taskId)),
     }),
     def({
       name: "tasks_release",
       description:
-        "Release a previously claimed task, returning it to the claimable pool.",
+        DEPRECATED +
+        "Use task_abandon instead (explicit bail-out with audit trail).",
       inputShape: { taskId: uuid() },
       handler: async ({ taskId }) => wrap(() => client.releaseTask(taskId)),
     }),
     def({
       name: "tasks_transition",
       description:
-        "Transition a task to a new status. Preconditions from the task's workflow (branchPresent, prMerged, ciGreen, …) are enforced server-side. Use force=true with a forceReason only when you have explicit authorization to bypass gates.",
+        DEPRECATED +
+        "Agents should not pick status values directly. Use task_start and task_finish; the system owns transitions under v2.",
       inputShape: {
         taskId: uuid(),
         status: transitionStatusEnum,
@@ -129,7 +211,8 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "tasks_update",
       description:
-        "Update mutable fields on a task: branchName, prUrl, prNumber, result. Pass null to clear a field.",
+        DEPRECATED +
+        "Generic field updates are not part of the v2 agent surface. Pass prUrl via task_finish instead.",
       inputShape: {
         taskId: uuid(),
         branchName: z.string().max(255).nullable().optional(),
@@ -143,7 +226,8 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "tasks_comment",
       description:
-        "Add a comment to a task. Useful for logging progress, asking human reviewers for clarification, or recording decisions.",
+        DEPRECATED +
+        "Use task_note instead (same behavior, v2 naming).",
       inputShape: {
         taskId: uuid(),
         content: z.string().min(1).max(5000),
@@ -154,7 +238,8 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "review_approve",
       description:
-        "Approve a task in review. The task's claimant must not be the reviewer (distinct-reviewer gate). The backend checks the project's review policy and transitions the task when the policy is satisfied. Optional comment is stored alongside the review event. Requires the task to be in 'review' state and the actor to hold the review lock (acquired via review_claim).",
+        DEPRECATED +
+        "Use task_finish with outcome=\"approve\" instead (after task_start on a review task).",
       inputShape: {
         taskId: uuid(),
         comment: z.string().max(5000).optional(),
@@ -165,7 +250,8 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "review_request_changes",
       description:
-        "Request changes on a task in review. Moves the task back to the claimant with the comment attached. The claimant receives a changes_requested signal. Requires the task to be in 'review' state and the actor to hold the review lock.",
+        DEPRECATED +
+        "Use task_finish with outcome=\"request_changes\" instead (after task_start on a review task).",
       inputShape: {
         taskId: uuid(),
         comment: z.string().max(5000).optional(),
@@ -178,35 +264,40 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "review_claim",
       description:
-        "Acquire the single-reviewer lock on a task in review. A task can have at most one active reviewer at a time; call review_release or review_approve/review_request_changes to free the lock. Fails if the caller is the task's claimant (no self-review) or if another reviewer already holds the lock.",
+        DEPRECATED +
+        "Use task_start on a task in review status instead — it review-claims polymorphically.",
       inputShape: { taskId: uuid() },
       handler: async ({ taskId }) => wrap(() => client.claimReview(taskId)),
     }),
     def({
       name: "review_release",
       description:
-        "Release the review lock on a task without approving or requesting changes. Returns the task to the pool so another actor can pick it up for review.",
+        DEPRECATED +
+        "Use task_abandon instead.",
       inputShape: { taskId: uuid() },
       handler: async ({ taskId }) => wrap(() => client.releaseReview(taskId)),
     }),
     def({
       name: "signals_poll",
       description:
-        "Poll the signal inbox for the authenticated agent. Signals represent state changes the agent should react to (task claimed, review requested, force-transition, …).",
+        DEPRECATED +
+        "Signals are delivered inline by task_pickup under v2.",
       inputShape: {},
       handler: async () => wrap(() => client.pollSignals()),
     }),
     def({
       name: "signals_ack",
       description:
-        "Acknowledge a signal by id. Acknowledged signals are removed from the inbox.",
+        DEPRECATED +
+        "Signals are acked atomically when delivered by task_pickup under v2.",
       inputShape: { signalId: uuid() },
       handler: async ({ signalId }) => wrap(() => client.ackSignal(signalId)),
     }),
     def({
       name: "pull_requests_create",
       description:
-        "Create a GitHub pull request bound to a task via delegation. The backend dispatches the create call through a team member who has connected GitHub and enabled 'Allow agents to create PRs'; on success the task's branchName, prUrl, and prNumber are patched server-side. Requires token scope tasks:update. base defaults to 'main' — pass the repo's actual default branch (e.g. 'master') explicitly if it differs.",
+        DEPRECATED +
+        "PR creation is not an agent-tasks concern under v2. Use the `gh` CLI directly; pass the resulting URL to task_finish as prUrl.",
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),
@@ -221,7 +312,8 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "pull_requests_merge",
       description:
-        "Merge a GitHub pull request via delegation and auto-transition the linked task to 'done'. Dispatched through a team member with 'Allow agents to merge PRs' consent. Idempotent on PRs that are already merged. Requires token scope tasks:transition. mergeMethod defaults to 'squash'. REQUIRES the task to be in 'review' state (or already 'done' for re-entry) — tasks in 'open' / 'in_progress' are rejected with 403. If the project has `requireDistinctReviewer` enabled, the merge caller must not be the task's claimant and must have already taken the review lock via tasks_transition→review plus the review-claim flow. To bypass these gates, a team admin can force-transition the task to 'done' via tasks_transition with force=true first, then call this tool.",
+        DEPRECATED +
+        "Merge is a human decision, not an agent routine. Use the web UI or `gh pr merge` directly.",
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),
@@ -244,7 +336,8 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "pull_requests_comment",
       description:
-        "Post a comment on a GitHub pull request via delegation. Dispatched through a team member with 'Allow agents to comment on PRs' consent. Requires token scope tasks:comment. Use for CI status notes, review follow-ups, or cross-referencing other tasks — agent-authored comments are audit-logged separately from human comments.",
+        DEPRECATED +
+        "Use `gh pr comment` directly or leave the note on the task via task_note.",
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),
