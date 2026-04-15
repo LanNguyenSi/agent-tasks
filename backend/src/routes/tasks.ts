@@ -722,6 +722,301 @@ taskRouter.post("/tasks/:id/start", async (c) => {
   );
 });
 
+// ── Agent finish (v2 MCP) ────────────────────────────────────────────────────
+//
+// Polymorphic "finish" endpoint. Behavior depends on which claim the caller
+// holds on the task:
+//
+//   Work claim (status=in_progress):
+//     Body: { result?, prUrl? }
+//     - Validates prUrl format when present, stores url + number
+//     - Transitions to expectedFinishState (review or done) derived from the
+//       task's workflow definition
+//     - Clears the work claim when the target state is `done`. Keeps the
+//       work claim set when the target is `review` so the author is still
+//       "on the hook" for the task until the reviewer decides.
+//
+//   Review claim (status=review):
+//     Body: { result?, outcome: "approve" | "request_changes" }
+//     - approve → transition to done, clear both claims
+//     - request_changes → transition back to in_progress, clear review
+//       claim only, leave the work claim in place, emit a signal to the
+//       original author
+//
+// See ADR 0008.
+
+const finishWorkSchema = z.object({
+  result: z.string().max(5000).optional(),
+  prUrl: z
+    .string()
+    .regex(/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/, "prUrl must be a github.com pull request URL")
+    .optional(),
+});
+
+const finishReviewSchema = z.object({
+  result: z.string().max(5000).optional(),
+  outcome: z.enum(["approve", "request_changes"]),
+});
+
+taskRouter.post("/tasks/:id/finish", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:transition")) {
+    return forbidden(c, "Missing scope: tasks:transition");
+  }
+
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    include: {
+      workflow: true,
+      project: { select: { id: true, name: true, slug: true } },
+      ...taskInclude,
+    },
+  });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  // Determine which claim the actor holds. A missing claim is a 403 — the
+  // caller must hold a claim to finish a task.
+  const holdsWorkClaim =
+    (actor.type === "human" && task.claimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
+  const holdsReviewClaim =
+    (actor.type === "human" && task.reviewClaimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
+
+  if (!holdsWorkClaim && !holdsReviewClaim) {
+    return forbidden(c, "You do not hold a claim on this task");
+  }
+
+  const rawBody = await c.req.json().catch(() => ({}));
+
+  // ── Branch: review finish ─────────────────────────────────────────────────
+  if (holdsReviewClaim) {
+    if (task.status !== "review") {
+      return c.json({ error: "bad_state", message: "Task must be in review status" }, 409);
+    }
+    const parsed = finishReviewSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return c.json({ error: "bad_request", message: parsed.error.message }, 400);
+    }
+    const { outcome, result } = parsed.data;
+
+    const targetStatus = outcome === "approve" ? "done" : "in_progress";
+
+    const updateData: Prisma.TaskUncheckedUpdateInput = {
+      status: targetStatus,
+      reviewClaimedByUserId: null,
+      reviewClaimedByAgentId: null,
+      reviewClaimedAt: null,
+      ...(result !== undefined ? { result } : {}),
+    };
+
+    if (outcome === "approve") {
+      // Clear the work claim on approval — the task is done, free the author
+      updateData.claimedByUserId = null;
+      updateData.claimedByAgentId = null;
+      updateData.claimedAt = null;
+    }
+    // On request_changes we intentionally keep claimedBy* so the original
+    // author resumes ownership automatically and the hard-limit still
+    // reflects their active claim.
+
+    const updated = await prisma.task.update({
+      where: { id: task.id },
+      data: updateData,
+      include: taskInclude,
+    });
+
+    const actorId = actor.type === "human" ? actor.userId : actor.tokenId;
+    void logAuditEvent({
+      action: "task.reviewed",
+      actorId: actor.type === "human" ? actor.userId : undefined,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: { reviewAction: outcome, from: "review", to: targetStatus, actorType: actor.type, reviewerId: actorId, via: "task_finish" },
+    });
+
+    const reviewerName =
+      actor.type === "agent"
+        ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
+        : (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Reviewer";
+
+    if (outcome === "request_changes") {
+      void emitChangesRequestedSignal(
+        task.id,
+        task.projectId,
+        task.claimedByUserId,
+        task.claimedByAgentId,
+        reviewerName,
+        result,
+      );
+    } else {
+      void emitTaskApprovedSignal(
+        task.id,
+        task.projectId,
+        task.claimedByUserId,
+        task.claimedByAgentId,
+        reviewerName,
+        result,
+      );
+    }
+
+    return c.json({ kind: "review", task: updated, outcome });
+  }
+
+  // ── Branch: work finish ───────────────────────────────────────────────────
+  if (task.status !== "in_progress") {
+    return c.json(
+      { error: "bad_state", message: `Work finish requires status=in_progress, got '${task.status}'` },
+      409,
+    );
+  }
+
+  const parsed = finishWorkSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return c.json({ error: "bad_request", message: parsed.error.message }, 400);
+  }
+  const { result, prUrl } = parsed.data;
+
+  // Derive expectedFinishState from the workflow
+  let effectiveDefinition: WorkflowDefinitionShape | null = null;
+  if (task.workflowId && task.workflow) {
+    effectiveDefinition = task.workflow.definition as unknown as WorkflowDefinitionShape;
+  } else {
+    const projectDefault = await prisma.workflow.findFirst({
+      where: { projectId: task.projectId, isDefault: true },
+    });
+    effectiveDefinition = projectDefault
+      ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
+      : defaultWorkflowDefinition();
+  }
+  const targetStatus = expectedFinishStateFromDefinition(effectiveDefinition);
+
+  // Extract PR number from URL if provided
+  let prNumber: number | null = null;
+  if (prUrl) {
+    const match = prUrl.match(/\/pull\/(\d+)/);
+    if (match) prNumber = Number.parseInt(match[1], 10);
+  }
+
+  const updateData: Prisma.TaskUncheckedUpdateInput = {
+    status: targetStatus,
+    ...(prUrl !== undefined ? { prUrl } : {}),
+    ...(prNumber !== null ? { prNumber } : {}),
+    ...(result !== undefined ? { result } : {}),
+  };
+
+  // Clear work claim only when going straight to done. If going to review,
+  // keep the claim so the original author resumes if changes are requested.
+  if (targetStatus === "done") {
+    updateData.claimedByUserId = null;
+    updateData.claimedByAgentId = null;
+    updateData.claimedAt = null;
+  }
+
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: updateData,
+    include: taskInclude,
+  });
+
+  void logAuditEvent({
+    action: "task.transitioned",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: { from: "in_progress", to: targetStatus, actorType: actor.type, via: "task_finish" },
+  });
+
+  // If we just moved the task into review, notify potential reviewers
+  if (targetStatus === "review") {
+    void emitReviewSignal(
+      task.id,
+      task.projectId,
+      task.claimedByUserId,
+      task.claimedByAgentId,
+    );
+  }
+
+  return c.json({ kind: "work", task: updated, targetStatus });
+});
+
+// ── Agent abandon (v2 MCP) ───────────────────────────────────────────────────
+//
+// Explicit bail-out. Releases the active claim (work or review) without
+// finishing. Work claim → task back to `open`. Review claim → task stays in
+// `review` with the review lock cleared so someone else can pick it up.
+//
+// See ADR 0008.
+
+taskRouter.post("/tasks/:id/abandon", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:claim")) {
+    return forbidden(c, "Missing scope: tasks:claim");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const holdsWorkClaim =
+    (actor.type === "human" && task.claimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
+  const holdsReviewClaim =
+    (actor.type === "human" && task.reviewClaimedByUserId === actor.userId) ||
+    (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
+
+  if (!holdsWorkClaim && !holdsReviewClaim) {
+    return forbidden(c, "You do not hold a claim on this task");
+  }
+
+  const updateData: Prisma.TaskUncheckedUpdateInput = {};
+  if (holdsWorkClaim) {
+    updateData.claimedByUserId = null;
+    updateData.claimedByAgentId = null;
+    updateData.claimedAt = null;
+    // Only reset status to open when we were in the transitional in_progress
+    // state. If the task is already in review, abandoning the work claim
+    // should not drag it back to open.
+    if (task.status === "in_progress") {
+      updateData.status = "open";
+    }
+  }
+  if (holdsReviewClaim) {
+    updateData.reviewClaimedByUserId = null;
+    updateData.reviewClaimedByAgentId = null;
+    updateData.reviewClaimedAt = null;
+  }
+
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: updateData,
+    include: taskInclude,
+  });
+
+  void logAuditEvent({
+    action: "task.released",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: {
+      actorType: actor.type,
+      claimType: holdsReviewClaim ? "review" : "work",
+      via: "task_abandon",
+    },
+  });
+
+  return c.json({ task: updated });
+});
+
 // ── Get task ─────────────────────────────────────────────────────────────────
 
 taskRouter.get("/tasks/:id", async (c) => {
