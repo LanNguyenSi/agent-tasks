@@ -415,6 +415,16 @@ and are versioned with the backend.
 
 ### AI Coding Agent Pipeline (`coding-agent`)
 
+> **Compatibility note:** The v2 MCP verbs (`task_start`, `task_finish`,
+> `task_pickup`, `task_abandon`) are currently hardcoded to the default
+> 4-state workflow (`open`, `in_progress`, `review`, `done`). Projects
+> using this 7-stage template must use the generic
+> `POST /tasks/:id/transition` endpoint for all state changes. Task
+> creation defaults to `status: "open"` — tasks need a manual transition
+> to `backlog` as the first step, or an admin can force-create with the
+> correct initial status. A follow-up to make v2 verbs workflow-aware is
+> tracked separately.
+
 A 7-stage pipeline designed for AI coding agents:
 
 ```
