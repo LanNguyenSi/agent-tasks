@@ -24,7 +24,8 @@ import {
   type WorkflowDefinitionShape,
 } from "../services/default-workflow.js";
 import { findDelegationUser } from "../services/github-delegation.js";
-import { GITHUB_BACKED_RULES } from "../services/transition-rules.js";
+import { GITHUB_BACKED_RULES, parseOwnerRepo } from "../services/transition-rules.js";
+import { performPrMerge } from "../services/github-merge.js";
 import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
 import { checkDistinctReviewerGate, distinctReviewerRejectionMessage } from "../services/review-gate.js";
 
@@ -820,12 +821,21 @@ const finishWorkSchema = z.object({
       "prUrl must be a github.com pull request URL",
     )
     .optional(),
+  autoMerge: z.boolean().optional(),
+  mergeMethod: z.enum(["squash", "merge", "rebase"]).optional().default("squash"),
 });
 
-const finishReviewSchema = z.object({
-  result: z.string().max(5000).optional(),
-  outcome: z.enum(["approve", "request_changes"]),
-});
+const finishReviewSchema = z
+  .object({
+    result: z.string().max(5000).optional(),
+    outcome: z.enum(["approve", "request_changes"]),
+    autoMerge: z.boolean().optional(),
+    mergeMethod: z.enum(["squash", "merge", "rebase"]).optional().default("squash"),
+  })
+  .refine(
+    (data) => !(data.outcome === "request_changes" && data.autoMerge),
+    { message: "autoMerge is not allowed with outcome 'request_changes'" },
+  );
 
 // POST /tasks/:id/submit-pr — v2 verb for writing branch + PR metadata on a
 // work-claimed task. Not a transition. Not tied to a specific status. Exists
@@ -896,7 +906,7 @@ async function evaluateV2TransitionGates(task: {
   branchName: string | null;
   prUrl: string | null;
   prNumber: number | null;
-}, targetStatus: string, actor: Actor, effectiveDefinition: WorkflowDefinitionShape | null): Promise<FinishGateResult> {
+}, targetStatus: string, actor: Actor, effectiveDefinition: WorkflowDefinitionShape | null, skipRules?: readonly string[]): Promise<FinishGateResult> {
   let resolvedRequires: string[] | undefined;
   let requiredRole: string | undefined;
 
@@ -923,6 +933,12 @@ async function evaluateV2TransitionGates(task: {
       };
     }
     resolvedRequires = defaultT.requires;
+  }
+
+  // Strip rules that the caller needs to handle separately (e.g. prMerged
+  // during autoMerge — the merge hasn't happened yet at pre-check time).
+  if (skipRules && skipRules.length > 0 && resolvedRequires) {
+    resolvedRequires = resolvedRequires.filter((r) => !skipRules.includes(r));
   }
 
   // Role gate. "any" is the common path and bypasses the DB round-trip, per
@@ -987,6 +1003,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           teamId: true,
           githubRepo: true,
           requireDistinctReviewer: true,
+          soloMode: true,
         },
       },
       ...taskInclude,
@@ -1022,7 +1039,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     if (!parsed.success) {
       return c.json({ error: "bad_request", message: parsed.error.message }, 400);
     }
-    const { outcome, result } = parsed.data;
+    const { outcome, result, autoMerge, mergeMethod } = parsed.data;
 
     const targetStatus = outcome === "approve" ? "done" : "in_progress";
 
@@ -1077,6 +1094,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       targetStatus,
       actor,
       effectiveReviewDefinition,
+      autoMerge ? ["prMerged"] : undefined,
     );
     if (!gateResult.ok) {
       if (gateResult.kind === "no_transition") {
@@ -1111,12 +1129,59 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       return _exhaustive;
     }
 
+    // ── Mode B autoMerge: review-approve + merge (ADR-0010 §2) ──────────
+    let reviewAutoMergeSha: string | null = null;
+    if (autoMerge && outcome === "approve") {
+      const mergeResult = await performPrMerge(task, mergeMethod, actor);
+      if (!mergeResult.ok) {
+        const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
+        return c.json(
+          { error: mergeResult.error, message: mergeResult.message },
+          status as 403 | 502,
+        );
+      }
+
+      // Post-check: if the workflow required prMerged, verify it now.
+      const workflowHadPrMerged =
+        effectiveReviewDefinition
+          ? effectiveReviewDefinition.transitions
+              .find((t) => t.from === "review" && t.to === "done")
+              ?.requires?.includes("prMerged") ?? false
+          : false;
+
+      if (workflowHadPrMerged) {
+        const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge");
+        const postCheck = await evaluateTransitionRules(["prMerged"], {
+          branchName: task.branchName,
+          prUrl: task.prUrl,
+          prNumber: task.prNumber,
+          projectGithubRepo: task.project.githubRepo,
+          githubToken: delegate?.githubAccessToken ?? null,
+        });
+        if (postCheck.failed.length > 0) {
+          void logAuditEvent({
+            action: "task.auto_merge_post_assert_failed",
+            projectId: task.projectId,
+            taskId: task.id,
+            payload: { mode: "B", mergeSha: mergeResult.sha, postCheckFailed: postCheck.failed },
+          });
+          return c.json(
+            { error: "github_error", message: "PR merge succeeded but post-check failed — prMerged rule not satisfied. Manual reconciliation required." },
+            502,
+          );
+        }
+      }
+
+      reviewAutoMergeSha = mergeResult.sha;
+    }
+
     const updateData: Prisma.TaskUncheckedUpdateInput = {
       status: targetStatus,
       reviewClaimedByUserId: null,
       reviewClaimedByAgentId: null,
       reviewClaimedAt: null,
       ...(result !== undefined ? { result } : {}),
+      ...(reviewAutoMergeSha !== null ? { autoMergeSha: reviewAutoMergeSha } : {}),
     };
 
     if (outcome === "approve") {
@@ -1144,6 +1209,17 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       payload: { reviewAction: outcome, from: "review", to: targetStatus, actorType: actor.type, reviewerId: actorId, via: "task_finish" },
     });
 
+    // Audit the autoMerge join record (ties the merge to this task finish).
+    if (reviewAutoMergeSha !== null) {
+      void logAuditEvent({
+        action: "task.auto_merged",
+        actorId: actor.type === "human" ? actor.userId : undefined,
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: { mode: "B", autoMergeSha: reviewAutoMergeSha, mergeMethod, actorType: actor.type },
+      });
+    }
+
     const reviewerName =
       actor.type === "agent"
         ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
@@ -1169,22 +1245,69 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       );
     }
 
-    return c.json({ kind: "review", task: updated, outcome });
+    return c.json({ kind: "review", task: updated, outcome, ...(reviewAutoMergeSha !== null ? { autoMergeSha: reviewAutoMergeSha } : {}) });
   }
 
   // ── Branch: work finish ───────────────────────────────────────────────────
+
+  const parsed = finishWorkSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return c.json({ error: "bad_request", message: parsed.error.message }, 400);
+  }
+  const { result, prUrl, autoMerge: workAutoMerge, mergeMethod: workMergeMethod } = parsed.data;
+
+  // ── Retry idempotency (ADR-0010 §8) ──────────────────────────────────
+  if (workAutoMerge) {
+    // Short-circuit: task already done + autoMergeSha set → return existing.
+    if (task.status === "done" && task.autoMergeSha) {
+      return c.json({ kind: "work", task, targetStatus: "done", autoMergeSha: task.autoMergeSha });
+    }
+    // Mid-flight recovery: task still in_progress + autoMergeSha set →
+    // check if the merge actually succeeded on GitHub and skip re-merging.
+    if (task.status === "in_progress" && task.autoMergeSha) {
+      // The merge succeeded in a prior call but the transition didn't complete.
+      // Verify via prMerged rule, then proceed to transition only.
+      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge");
+      const postCheck = await evaluateTransitionRules(["prMerged"], {
+        branchName: task.branchName,
+        prUrl: task.prUrl,
+        prNumber: task.prNumber,
+        projectGithubRepo: task.project.githubRepo,
+        githubToken: delegate?.githubAccessToken ?? null,
+      });
+      if (postCheck.failed.length === 0) {
+        // PR is merged on GitHub — complete the transition without re-calling merge.
+        const recovered = await prisma.task.update({
+          where: { id: task.id },
+          data: {
+            status: "done",
+            claimedByUserId: null,
+            claimedByAgentId: null,
+            claimedAt: null,
+            ...(result !== undefined ? { result } : {}),
+          },
+          include: taskInclude,
+        });
+        void logAuditEvent({
+          action: "task.transitioned",
+          actorId: actor.type === "human" ? actor.userId : undefined,
+          projectId: task.projectId,
+          taskId: task.id,
+          payload: { from: "in_progress", to: "done", actorType: actor.type, via: "task_finish", recovery: true },
+        });
+        return c.json({ kind: "work", task: recovered, targetStatus: "done", autoMergeSha: task.autoMergeSha });
+      }
+      // PR not yet merged despite having autoMergeSha — fall through to
+      // the normal merge path (GitHub API 405 will handle idempotency).
+    }
+  }
+
   if (task.status !== "in_progress") {
     return c.json(
       { error: "bad_state", message: `Work finish requires status=in_progress, got '${task.status}'` },
       409,
     );
   }
-
-  const parsed = finishWorkSchema.safeParse(rawBody);
-  if (!parsed.success) {
-    return c.json({ error: "bad_request", message: parsed.error.message }, 400);
-  }
-  const { result, prUrl } = parsed.data;
 
   // Derive expectedFinishState from the workflow
   let effectiveDefinition: WorkflowDefinitionShape | null = null;
@@ -1198,7 +1321,40 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
       : defaultWorkflowDefinition();
   }
-  const targetStatus = expectedFinishStateFromDefinition(effectiveDefinition);
+
+  // When autoMerge is requested, hard-set targetStatus to "done" and verify
+  // the workflow actually supports in_progress → done (ADR-0010 §2 Mode A).
+  let targetStatus: "review" | "done";
+  if (workAutoMerge) {
+    if (!task.project.soloMode) {
+      return c.json(
+        { error: "solo_mode_required", message: "autoMerge on a work claim requires project.soloMode to be enabled" },
+        403,
+      );
+    }
+    targetStatus = "done";
+  } else {
+    targetStatus = expectedFinishStateFromDefinition(effectiveDefinition);
+  }
+
+  // Cross-repo validation on prUrl payload (ADR-0010 §5b).
+  if (prUrl && task.project.githubRepo) {
+    const projectRepo = parseOwnerRepo(task.project.githubRepo);
+    const prMatch = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\//);
+    if (projectRepo && prMatch) {
+      const prOwner = prMatch[1].toLowerCase();
+      const prRepo = prMatch[2].toLowerCase();
+      if (prOwner !== projectRepo.owner.toLowerCase() || prRepo !== projectRepo.repo.toLowerCase()) {
+        return c.json(
+          {
+            error: "cross_repo_pr_rejected",
+            message: `PR belongs to ${prMatch[1]}/${prMatch[2]} but this task's project is linked to ${task.project.githubRepo}`,
+          },
+          400,
+        );
+      }
+    }
+  }
 
   // Extract PR number from URL if provided. Done once, up-front, so both
   // the gate context and the DB write see the same value.
@@ -1209,11 +1365,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   }
 
   // Transition gates (branchPresent / prPresent / ciGreen / prMerged).
-  // Mirrors /transition's rule evaluation. The gate context merges the
-  // finish payload's prUrl/prNumber onto the task's DB state so that
-  // `task_finish { prUrl }` works as the atomic "submit + finish" intent
-  // the v2 API advertises. branchName is never in the payload — that gap
-  // is what ADR-0009's `task_submit_pr` closes.
+  // When autoMerge is requested, strip prMerged from the pre-check.
   const gateResult = await evaluateV2TransitionGates(
     task,
     {
@@ -1224,6 +1376,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     targetStatus,
     actor,
     effectiveDefinition,
+    workAutoMerge ? ["prMerged"] : undefined,
   );
   if (!gateResult.ok) {
     if (gateResult.kind === "no_transition") {
@@ -1250,9 +1403,60 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         422,
       );
     }
-    // Exhaustiveness check — see review-finish branch above for the rationale.
     const _exhaustive: never = gateResult;
     return _exhaustive;
+  }
+
+  // ── Mode A autoMerge: solo work-claim merge (ADR-0010 §2) ────────────
+  let workAutoMergeSha: string | null = null;
+  if (workAutoMerge) {
+    // Merge payload-derived prNumber onto task so performPrMerge sees it
+    // even when prNumber is not yet in the DB (task_finish { prUrl } shorthand).
+    const mergeResult = await performPrMerge(
+      { ...task, prNumber: prNumber ?? task.prNumber },
+      workMergeMethod,
+      actor,
+    );
+    if (!mergeResult.ok) {
+      const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
+      return c.json(
+        { error: mergeResult.error, message: mergeResult.message },
+        status as 403 | 502,
+      );
+    }
+
+    // Post-check: if the workflow required prMerged, verify it now.
+    const workflowHadPrMerged =
+      effectiveDefinition
+        ? effectiveDefinition.transitions
+            .find((t) => t.from === "in_progress" && t.to === "done")
+            ?.requires?.includes("prMerged") ?? false
+        : false;
+
+    if (workflowHadPrMerged) {
+      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge");
+      const postCheck = await evaluateTransitionRules(["prMerged"], {
+        branchName: task.branchName,
+        prUrl: prUrl ?? task.prUrl,
+        prNumber: prNumber ?? task.prNumber,
+        projectGithubRepo: task.project.githubRepo,
+        githubToken: delegate?.githubAccessToken ?? null,
+      });
+      if (postCheck.failed.length > 0) {
+        void logAuditEvent({
+          action: "task.auto_merge_post_assert_failed",
+          projectId: task.projectId,
+          taskId: task.id,
+          payload: { mode: "A", mergeSha: mergeResult.sha, postCheckFailed: postCheck.failed },
+        });
+        return c.json(
+          { error: "github_error", message: "PR merge succeeded but post-check failed — prMerged rule not satisfied. Manual reconciliation required." },
+          502,
+        );
+      }
+    }
+
+    workAutoMergeSha = mergeResult.sha;
   }
 
   const updateData: Prisma.TaskUncheckedUpdateInput = {
@@ -1260,6 +1464,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     ...(prUrl !== undefined ? { prUrl } : {}),
     ...(prNumber !== null ? { prNumber } : {}),
     ...(result !== undefined ? { result } : {}),
+    ...(workAutoMergeSha !== null ? { autoMergeSha: workAutoMergeSha } : {}),
   };
 
   // Clear work claim only when going straight to done. If going to review,
@@ -1284,6 +1489,17 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     payload: { from: "in_progress", to: targetStatus, actorType: actor.type, via: "task_finish" },
   });
 
+  // Audit the autoMerge join record.
+  if (workAutoMergeSha !== null) {
+    void logAuditEvent({
+      action: "task.auto_merged",
+      actorId: actor.type === "human" ? actor.userId : undefined,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: { mode: "A", autoMergeSha: workAutoMergeSha, mergeMethod: workMergeMethod, actorType: actor.type },
+    });
+  }
+
   // If we just moved the task into review, notify potential reviewers
   if (targetStatus === "review") {
     void emitReviewSignal(
@@ -1294,7 +1510,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     );
   }
 
-  return c.json({ kind: "work", task: updated, targetStatus });
+  return c.json({ kind: "work", task: updated, targetStatus, ...(workAutoMergeSha !== null ? { autoMergeSha: workAutoMergeSha } : {}) });
 });
 
 // ── Agent PR submission (v2 MCP) ─────────────────────────────────────────────
@@ -1333,7 +1549,7 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
     where: { id: c.req.param("id") },
     include: {
       workflow: true,
-      project: { select: { id: true, name: true, slug: true } },
+      project: { select: { id: true, name: true, slug: true, githubRepo: true } },
     },
   });
   if (!task) return notFound(c);
@@ -1415,6 +1631,29 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
     return c.json({ error: "bad_request", message: parsed.error.message }, 400);
   }
   const { branchName, prUrl, prNumber } = parsed.data;
+
+  // Cross-repo hardening (ADR-0010 §5b): reject prUrls that point at a
+  // different repo than the task's project.
+  if (task.project.githubRepo) {
+    const projectRepo = parseOwnerRepo(task.project.githubRepo);
+    const prMatch = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\//);
+    if (projectRepo && prMatch) {
+      const prOwner = prMatch[1].toLowerCase();
+      const prRepo = prMatch[2].toLowerCase();
+      if (
+        prOwner !== projectRepo.owner.toLowerCase() ||
+        prRepo !== projectRepo.repo.toLowerCase()
+      ) {
+        return c.json(
+          {
+            error: "cross_repo_pr_rejected",
+            message: `PR belongs to ${prMatch[1]}/${prMatch[2]} but this task's project is linked to ${task.project.githubRepo}`,
+          },
+          400,
+        );
+      }
+    }
+  }
 
   const previousBranchName = task.branchName;
   const previousPrUrl = task.prUrl;

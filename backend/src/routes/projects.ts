@@ -32,6 +32,7 @@ const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, s
   taskTemplate: taskTemplateSchema.nullable().optional(),
   confidenceThreshold: z.number().int().min(0).max(100).optional(),
   requireDistinctReviewer: z.boolean().optional(),
+  soloMode: z.boolean().optional(),
 });
 
 async function assertMembership(actor: Actor, teamId: string): Promise<boolean> {
@@ -246,6 +247,12 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
     governanceChange.confidenceThreshold = {
       from: project.confidenceThreshold,
       to: body.confidenceThreshold,
+    };
+  }
+  if (body.soloMode !== undefined && body.soloMode !== project.soloMode) {
+    governanceChange.soloMode = {
+      from: project.soloMode,
+      to: body.soloMode,
     };
   }
   if (Object.keys(governanceChange).length > 0) {

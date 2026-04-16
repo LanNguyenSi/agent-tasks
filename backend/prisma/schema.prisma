@@ -170,6 +170,7 @@ model Project {
   taskTemplate            Json? // { fields: { goal: bool, acceptanceCriteria: bool, context: bool, constraints: bool } }
   confidenceThreshold     Int       @default(60) // 0-100, minimum confidence score for agent claims
   requireDistinctReviewer Boolean   @default(false) // When true, review→done requires a review lock held by an actor distinct from the claimant
+  soloMode                Boolean   @default(false) // When true, a single agent can merge its own PRs via task_finish { autoMerge }
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
 
@@ -239,10 +240,11 @@ model Task {
   labels      String[] @default([])
 
   // Agent-populated fields
-  branchName String?
-  prUrl      String?
-  prNumber   Int?
-  result     String?
+  branchName   String?
+  prUrl        String?
+  prNumber     Int?
+  result       String?
+  autoMergeSha String? // Merge commit SHA set by task_finish { autoMerge: true }; used for retry idempotency
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
