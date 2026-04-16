@@ -10,6 +10,7 @@ import {
   type WorkflowDefinitionShape,
 } from "../services/default-workflow.js";
 import { RULE_CATALOG } from "../services/transition-rules.js";
+import { WORKFLOW_TEMPLATES, findWorkflowTemplate } from "../services/workflow-templates.js";
 import { logAuditEvent } from "../services/audit.js";
 import { summarizeWorkflowDiff } from "../services/workflow-diff.js";
 
@@ -258,6 +259,99 @@ class WorkflowConflictError extends Error {
     super("Workflow already customized");
   }
 }
+
+// ── Workflow templates ──────────────────────────────────────────────────────
+
+/**
+ * List available workflow templates. No auth required beyond project access
+ * — templates are public metadata, not secrets.
+ */
+workflowRouter.get("/workflow-templates", (c) => {
+  return c.json({
+    templates: WORKFLOW_TEMPLATES.map((t) => ({
+      slug: t.slug,
+      name: t.name,
+      description: t.description,
+      stateCount: t.definition.states.length,
+      initialState: t.definition.initialState,
+    })),
+  });
+});
+
+/**
+ * Apply a predefined workflow template to a project. Works like customize
+ * but seeds the definition from the template instead of copying the
+ * built-in default. Replaces any existing custom workflow.
+ */
+workflowRouter.post("/projects/:projectId/workflow/apply-template/:slug", async (c) => {
+  const actor = c.get("actor");
+  const projectId = c.req.param("projectId");
+  const slug = c.req.param("slug");
+
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) return notFound(c);
+
+  if (!(await isProjectAdmin(actor, projectId))) {
+    return forbidden(c, "Only team admins can apply workflow templates");
+  }
+
+  const template = findWorkflowTemplate(slug);
+  if (!template) {
+    return c.json(
+      { error: "not_found", message: `Unknown workflow template: "${slug}"` },
+      404,
+    );
+  }
+
+  // Upsert: if a custom workflow exists, overwrite its definition.
+  // If none exists, create one. Wrapped in a transaction for safety.
+  const workflow = await prisma.$transaction(async (tx) => {
+    const existing = await tx.workflow.findFirst({
+      where: { projectId, isDefault: true },
+    });
+
+    if (existing) {
+      return tx.workflow.update({
+        where: { id: existing.id },
+        data: {
+          name: template.name,
+          definition: template.definition as object,
+        },
+      });
+    }
+
+    return tx.workflow.create({
+      data: {
+        projectId,
+        name: template.name,
+        isDefault: true,
+        definition: template.definition as object,
+      },
+    });
+  });
+
+  void logAuditEvent({
+    action: "workflow.template_applied",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId,
+    payload: {
+      workflowId: workflow.id,
+      templateSlug: template.slug,
+      templateName: template.name,
+      stateCount: template.definition.states.length,
+      transitionCount: template.definition.transitions.length,
+    },
+  });
+
+  return c.json(
+    {
+      source: "custom" as const,
+      workflowId: workflow.id,
+      definition: workflow.definition,
+    },
+    201,
+  );
+});
 
 // ── Reset (drop the custom row, revert to default) ──────────────────────────
 
