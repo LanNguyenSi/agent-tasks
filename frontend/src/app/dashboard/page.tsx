@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -187,7 +187,7 @@ function getAssigneeName(task: Task): string {
   return "Unassigned";
 }
 
-function TaskCard({
+const TaskCard = memo(function TaskCard({
   task,
   active,
   onSelect,
@@ -278,7 +278,7 @@ function TaskCard({
       </div>
     </button>
   );
-}
+});
 
 function BoardColumns({
   tasks,
@@ -479,14 +479,13 @@ export default function DashboardPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const me = await getCurrentUser();
+        const [me, userTeams] = await Promise.all([getCurrentUser(), getTeams()]);
         if (!me) {
           router.replace("/auth");
           return;
         }
         setUser(me);
 
-        const userTeams = await getTeams();
         setTeams(userTeams);
         if (userTeams.length === 0) {
           router.replace("/onboarding");
@@ -537,7 +536,7 @@ export default function DashboardPage() {
     })();
   }, [router]);
 
-  // Poll for task updates every 5 seconds
+  // Poll for task updates every 15 seconds
   useEffect(() => {
     if (!selectedProjectId) return;
     const interval = setInterval(async () => {
@@ -548,7 +547,7 @@ export default function DashboardPage() {
       } catch {
         // silent – avoid error banner for background polls
       }
-    }, 5000);
+    }, 15_000);
     return () => clearInterval(interval);
   }, [selectedProjectId]);
 
