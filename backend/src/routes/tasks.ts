@@ -20,6 +20,7 @@ import {
   DEFAULT_TRANSITIONS,
   findDefaultTransition,
   defaultWorkflowDefinition,
+  resolveEffectiveDefinition,
   expectedFinishStateFromDefinition,
   type WorkflowDefinitionShape,
 } from "../services/default-workflow.js";
@@ -587,17 +588,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
 
   // Resolve the workflow definition once so both branches can compute the
   // expected finish state.
-  let effectiveDefinition: WorkflowDefinitionShape | null = null;
-  if (task.workflowId && task.workflow) {
-    effectiveDefinition = task.workflow.definition as unknown as WorkflowDefinitionShape;
-  } else {
-    const projectDefault = await prisma.workflow.findFirst({
-      where: { projectId: task.projectId, isDefault: true },
-    });
-    effectiveDefinition = projectDefault
-      ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
-      : defaultWorkflowDefinition();
-  }
+  const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
   const expectedFinishState = expectedFinishStateFromDefinition(effectiveDefinition);
 
   // ── Branch: status=open → author-claim + transition ──────────────────────
@@ -1079,17 +1070,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     // for the shared semantics. Resolve the effective workflow the same
     // way the work-finish branch does below so both paths evaluate gates
     // against the same definition.
-    let effectiveReviewDefinition: WorkflowDefinitionShape | null = null;
-    if (task.workflowId && task.workflow) {
-      effectiveReviewDefinition = task.workflow.definition as unknown as WorkflowDefinitionShape;
-    } else {
-      const projectDefault = await prisma.workflow.findFirst({
-        where: { projectId: task.projectId, isDefault: true },
-      });
-      effectiveReviewDefinition = projectDefault
-        ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
-        : defaultWorkflowDefinition();
-    }
+    const effectiveReviewDefinition = await resolveEffectiveDefinition(task, prisma);
     // Review-finish has no prUrl / branchName payload, so the gate context
     // is just the task's current DB state.
     const gateResult = await evaluateV2TransitionGates(
@@ -1314,17 +1295,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   }
 
   // Derive expectedFinishState from the workflow
-  let effectiveDefinition: WorkflowDefinitionShape | null = null;
-  if (task.workflowId && task.workflow) {
-    effectiveDefinition = task.workflow.definition as unknown as WorkflowDefinitionShape;
-  } else {
-    const projectDefault = await prisma.workflow.findFirst({
-      where: { projectId: task.projectId, isDefault: true },
-    });
-    effectiveDefinition = projectDefault
-      ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
-      : defaultWorkflowDefinition();
-  }
+  const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
 
   // When autoMerge is requested, hard-set targetStatus to "done" and verify
   // the workflow actually supports in_progress → done (ADR-0010 §2 Mode A).
@@ -1597,17 +1568,7 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
   // the metadata change on their next poll — that's considered safe
   // because reviewers re-read the PR on each approve/request_changes
   // action anyway.
-  let effectiveDefinition: WorkflowDefinitionShape | null = null;
-  if (task.workflowId && task.workflow) {
-    effectiveDefinition = task.workflow.definition as unknown as WorkflowDefinitionShape;
-  } else {
-    const projectDefault = await prisma.workflow.findFirst({
-      where: { projectId: task.projectId, isDefault: true },
-    });
-    effectiveDefinition = projectDefault
-      ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
-      : defaultWorkflowDefinition();
-  }
+  const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
 
   const currentState = effectiveDefinition.states.find((s) => s.name === task.status);
   if (!currentState) {
@@ -1883,31 +1844,15 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
   type WorkflowState = { name: string; label: string; terminal: boolean; agentInstructions?: string };
   type WorkflowTransition = { from: string; to: string; label?: string; requiredRole?: string; requires?: string[] };
 
-  let currentState: WorkflowState | null = null;
-  let allowedTransitions: { to: string; label?: string; requires?: string[] }[] = [];
+  // Resolve effective workflow via ADR-0008 §50-56 chain (task → project default → built-in).
+  const effectiveDef = await resolveEffectiveDefinition(task, prisma);
 
-  if (task.workflow) {
-    const def = task.workflow.definition as {
-      states: WorkflowState[];
-      transitions: WorkflowTransition[];
-      initialState: string;
-    };
-
-    currentState = def.states.find((s) => s.name === task.status) ?? null;
-    // Surface `requires` to agents so they know which preconditions to
-    // satisfy (set branch, create PR) before attempting the transition.
-    allowedTransitions = def.transitions
-      .filter((t) => t.from === task.status)
-      .map((t) => ({ to: t.to, label: t.label, requires: t.requires }));
-  } else {
-    // No workflow row — fall back to the built-in default workflow, which
-    // also carries `requires` gates (see services/default-workflow.ts).
-    allowedTransitions = (DEFAULT_TRANSITIONS[task.status] ?? []).map((t) => ({
-      to: t.to,
-      label: t.label,
-      requires: t.requires,
-    }));
-  }
+  const currentState: WorkflowState | null = effectiveDef.states.find((s) => s.name === task.status) ?? null;
+  // Surface `requires` to agents so they know which preconditions to
+  // satisfy (set branch, create PR) before attempting the transition.
+  const allowedTransitions = effectiveDef.transitions
+    .filter((t) => t.from === task.status)
+    .map((t) => ({ to: t.to, label: t.label, requires: t.requires }));
 
   const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
   const { score, missing } = calculateConfidence({
@@ -2500,39 +2445,22 @@ taskRouter.post(
       return forbidden(c, "Only team admins can force a transition");
     }
 
-    // Resolve the transition to evaluate — either from the task's explicit
-    // Workflow row, or from the built-in default workflow that applies to
-    // every project without a custom one. Both paths feed the same rule
-    // evaluator and force-override logic below.
-    let resolvedRequires: string[] | undefined;
-    let requiredRole: string | undefined;
-
-    if (task.workflow) {
-      const def = task.workflow.definition as {
-        states: { name: string }[];
-        transitions: { from: string; to: string; requiredRole?: string; requires?: string[] }[];
-      };
-      const transition = def.transitions.find(
-        (t) => t.from === task.status && t.to === status,
+    // Resolve the effective workflow following the ADR-0008 §50-56 chain:
+    //   1. task.workflowId → that Workflow row
+    //   2. project-default Workflow row (isDefault: true)
+    //   3. built-in defaultWorkflowDefinition()
+    const effectiveDef = await resolveEffectiveDefinition(task, prisma);
+    const transition = effectiveDef.transitions.find(
+      (t) => t.from === task.status && t.to === status,
+    );
+    if (!transition) {
+      return c.json(
+        { error: "bad_request", message: `Transition from '${task.status}' to '${status}' is not allowed by workflow` },
+        400,
       );
-      if (!transition) {
-        return c.json(
-          { error: "bad_request", message: `Transition from '${task.status}' to '${status}' is not allowed by workflow` },
-          400,
-        );
-      }
-      resolvedRequires = transition.requires;
-      requiredRole = transition.requiredRole;
-    } else {
-      const defaultT = findDefaultTransition(task.status, status);
-      if (!defaultT) {
-        return c.json(
-          { error: "bad_request", message: `Transition from '${task.status}' to '${status}' is not allowed by the default workflow` },
-          400,
-        );
-      }
-      resolvedRequires = defaultT.requires;
     }
+    const resolvedRequires = transition.requires;
+    const requiredRole = transition.requiredRole;
 
     // Hot-path optimization: skip the DB round-trip on the common "any"
     // case — any actor that already cleared hasProjectAccess upstream is
