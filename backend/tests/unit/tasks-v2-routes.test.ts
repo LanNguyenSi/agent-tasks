@@ -1222,7 +1222,29 @@ describe("task_submit_pr authorship verification", () => {
     expect(res.status).toBe(200);
   });
 
-  it("fails open on GitHub API error", async () => {
+  it("fails open on non-ok GitHub API response (e.g. 404)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue(claimedTask);
+    findDelegationUserMock.mockResolvedValue({
+      userId: "user-1",
+      login: "delegation-bot",
+      githubAccessToken: "ghp_test",
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+    }) as unknown as typeof fetch;
+
+    const res = await app.request(`/tasks/${claimedTask.id}/submit-pr`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(submitPrBody),
+    });
+    expect(res.status).toBe(200);
+    globalThis.fetch = originalFetch;
+  });
+
+  it("fails open on GitHub API network error", async () => {
     prismaMocks.taskFindUnique.mockResolvedValue(claimedTask);
     findDelegationUserMock.mockResolvedValue({
       userId: "user-1",
