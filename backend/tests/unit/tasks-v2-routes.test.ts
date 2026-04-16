@@ -463,12 +463,19 @@ describe("POST /tasks/:id/finish (work claim)", () => {
       status: "in_progress",
       claimedByAgentId: "agent-1",
     });
-    // Workflow only has in_progress → done
+    // Workflow only has in_progress → done (no review state)
     prismaMocks.workflowFindFirst.mockResolvedValueOnce({
       definition: {
         initialState: "open",
-        states: [],
-        transitions: [{ from: "in_progress", to: "done" }],
+        states: [
+          { name: "open", label: "Open", terminal: false },
+          { name: "in_progress", label: "In progress", terminal: false },
+          { name: "done", label: "Done", terminal: true },
+        ],
+        transitions: [
+          { from: "open", to: "in_progress" },
+          { from: "in_progress", to: "done" },
+        ],
       },
     });
 

@@ -648,10 +648,18 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     // gates on this edge (see default-workflow.ts — `branchPresent` was
     // removed from the start edge in this same change to avoid a structural
     // self-checkmate), so default-workflow projects pass cleanly.
+    const startTarget = firstTransitionTarget(effectiveDefinition, effectiveDefinition.initialState);
+    if (!startTarget) {
+      return c.json(
+        { error: "bad_state", message: `No transition defined from initial state '${effectiveDefinition.initialState}'` },
+        409,
+      );
+    }
+
     const gateResult = await evaluateV2TransitionGates(
       task,
       { branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber },
-      "in_progress",
+      startTarget,
       actor,
       effectiveDefinition,
     );
@@ -680,13 +688,9 @@ taskRouter.post("/tasks/:id/start", async (c) => {
           422,
         );
       }
-      // Exhaustiveness check — see the same pattern in the task_finish
-      // branches for the rationale.
       const _exhaustive: never = gateResult;
       return _exhaustive;
     }
-
-    const startTarget = firstTransitionTarget(effectiveDefinition, effectiveDefinition.initialState);
 
     const updated = await prisma.task.update({
       where: { id: task.id },
@@ -1459,9 +1463,9 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     ...(workAutoMergeSha !== null ? { autoMergeSha: workAutoMergeSha } : {}),
   };
 
-  // Clear work claim only when going straight to done. If going to review,
+  // Clear work claim only when going to a terminal state. If going to review,
   // keep the claim so the original author resumes if changes are requested.
-  if (targetStatus === "done") {
+  if (isTerminalState(effectiveDefinition, targetStatus)) {
     updateData.claimedByUserId = null;
     updateData.claimedByAgentId = null;
     updateData.claimedAt = null;
@@ -1478,7 +1482,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     actorId: actor.type === "human" ? actor.userId : undefined,
     projectId: task.projectId,
     taskId: task.id,
-    payload: { from: "in_progress", to: targetStatus, actorType: actor.type, via: "task_finish" },
+    payload: { from: task.status, to: targetStatus, actorType: actor.type, via: "task_finish" },
   });
 
   // Audit the autoMerge join record.
@@ -1492,8 +1496,8 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     });
   }
 
-  // If we just moved the task into review, notify potential reviewers
-  if (targetStatus === "review") {
+  // If we just moved the task into a review state, notify potential reviewers
+  if (isReviewState(effectiveDefinition, targetStatus)) {
     void emitReviewSignal(
       task.id,
       task.projectId,
