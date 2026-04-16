@@ -545,6 +545,8 @@ taskRouter.post("/tasks/:id/start", async (c) => {
           githubRepo: true,
           confidenceThreshold: true,
           taskTemplate: true,
+          soloMode: true,
+          requireDistinctReviewer: true,
         },
       },
       ...taskInclude,
@@ -752,6 +754,8 @@ taskRouter.post("/tasks/:id/start", async (c) => {
               githubRepo: true,
               confidenceThreshold: true,
               taskTemplate: true,
+              soloMode: true,
+              requireDistinctReviewer: true,
             },
           },
           ...taskInclude,
@@ -1549,7 +1553,7 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
     where: { id: c.req.param("id") },
     include: {
       workflow: true,
-      project: { select: { id: true, name: true, slug: true, githubRepo: true } },
+      project: { select: { id: true, name: true, slug: true, teamId: true, githubRepo: true } },
     },
   });
   if (!task) return notFound(c);
@@ -1651,6 +1655,71 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
           },
           400,
         );
+      }
+    }
+  }
+
+  // Authorship verification (defense-in-depth, ADR-0010 §7 follow-up):
+  // Check that the PR was created by the delegation user. A compromised
+  // agent token in the correct repo could otherwise submit someone else's
+  // PR and later autoMerge it. Fail-open on GitHub API errors (this is
+  // belt-and-braces, not the primary wall — branch protection is).
+  if (task.project.githubRepo && task.project.teamId) {
+    const projectRepo = parseOwnerRepo(task.project.githubRepo);
+    if (projectRepo) {
+      const delegationUser = await findDelegationUser(task.project.teamId, "allowAgentPrCreate");
+      if (delegationUser) {
+        try {
+          const ghRes = await fetch(
+            `https://api.github.com/repos/${projectRepo.owner}/${projectRepo.repo}/pulls/${prNumber}`,
+            {
+              headers: {
+                Authorization: `Bearer ${delegationUser.githubAccessToken}`,
+                Accept: "application/vnd.github+json",
+                "User-Agent": "agent-tasks-bot",
+              },
+            },
+          );
+          if (ghRes.ok) {
+            const pr = (await ghRes.json()) as { user?: { login?: string } };
+            const prAuthor = pr.user?.login?.toLowerCase();
+            const delegationLogin = delegationUser.login.toLowerCase();
+            if (prAuthor && prAuthor !== delegationLogin) {
+              void logAuditEvent({
+                action: "task.pr_submitted",
+                projectId: task.projectId,
+                taskId: task.id,
+                payload: {
+                  rejected: true,
+                  reason: "pr_author_mismatch",
+                  prAuthor: pr.user?.login,
+                  delegationLogin: delegationUser.login,
+                  prUrl,
+                  prNumber,
+                },
+              });
+              return c.json(
+                {
+                  error: "pr_author_mismatch",
+                  message: `PR #${prNumber} was created by '${pr.user?.login}', not by the delegation user '${delegationUser.login}'. Only PRs authored by the delegation user can be submitted.`,
+                },
+                403,
+              );
+            }
+          }
+          // Non-ok responses (404, 403, etc.) → fail open, log for visibility
+          if (!ghRes.ok) {
+            console.warn(
+              `[authorship-check] GitHub API ${ghRes.status} for PR #${prNumber} on ${task.project.githubRepo} — skipping authorship check`,
+            );
+          }
+        } catch (err) {
+          // Network error → fail open
+          console.warn(
+            `[authorship-check] GitHub API unreachable for PR #${prNumber} — skipping authorship check:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
       }
     }
   }
