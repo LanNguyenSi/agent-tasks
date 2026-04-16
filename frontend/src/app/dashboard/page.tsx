@@ -457,6 +457,7 @@ export default function DashboardPage() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsPresets, setSettingsPresets] = useState<TemplatePreset[]>([]);
   const [settingsRequireDistinctReviewer, setSettingsRequireDistinctReviewer] = useState(false);
+  const [settingsSoloMode, setSettingsSoloMode] = useState(false);
 
   function closeNewTaskModal() {
     setShowNewTask(false);
@@ -699,6 +700,7 @@ export default function DashboardPage() {
                   setSettingsFieldConstraints(tpl?.fields?.constraints ?? true);
                   setSettingsPresets(tpl?.presets?.length ? [...tpl.presets] : DEFAULT_PRESETS.map((p) => ({ ...p })));
                   setSettingsRequireDistinctReviewer(proj?.requireDistinctReviewer ?? false);
+                  setSettingsSoloMode(proj?.soloMode ?? false);
                   setShowProjectSettings(true);
                 }}
               >
@@ -1126,6 +1128,23 @@ export default function DashboardPage() {
           </label>
         </div>
 
+        <div style={{ marginBottom: "0.75rem", paddingBottom: "0.75rem", borderBottom: "1px solid var(--border)" }}>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", fontSize: "var(--text-sm)", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={settingsSoloMode}
+              onChange={(e) => setSettingsSoloMode(e.target.checked)}
+              style={{ marginTop: "0.2rem" }}
+            />
+            <span>
+              Solo mode
+              <span style={{ display: "block", color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.15rem" }}>
+                Allows a single agent to merge its own PRs via <code>task_finish {"{"} autoMerge: true {"}"}</code> without a distinct reviewer. Branch protection rules on GitHub remain the primary safeguard &mdash; do not enable solo mode on repositories without <code>require_pull_request_reviews</code> and at least one required status check.
+              </span>
+            </span>
+          </label>
+        </div>
+
         {settingsTemplateEnabled && (
           <>
             <div style={{ marginBottom: "0.75rem" }}>
@@ -1264,6 +1283,7 @@ export default function DashboardPage() {
                 taskTemplate: tpl,
                 confidenceThreshold: settingsThreshold,
                 requireDistinctReviewer: settingsRequireDistinctReviewer,
+                soloMode: settingsSoloMode,
               });
               setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
               setShowProjectSettings(false);

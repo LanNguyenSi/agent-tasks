@@ -27,7 +27,10 @@ export type AuditAction =
   | "user.logout"
   | "github.pr_created"
   | "github.pr_merged"
+  | "github.pr_merge_failed"
   | "github.pr_commented"
+  | "task.auto_merged"
+  | "task.auto_merge_post_assert_failed"
   | "task.imported"
   // Workflow mutations — added so admins editing gates, renaming
   // states, or dropping a custom workflow leave a reconstructible

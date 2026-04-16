@@ -357,3 +357,48 @@ review          ──▶ in_progress    (no requires — "request changes" must
 
 Two gates, zero friction for the legitimate path, and hot-fixes stay
 possible through admin override.
+
+## Solo Mode & autoMerge
+
+**ADR-0010** introduces `task_finish { autoMerge: true }` for atomic
+merge-and-transition in a single call. Two modes:
+
+### Mode A — Solo work-claim merge
+
+Requires `project.soloMode = true`. A single agent can take a task from
+`open` to `done` without a distinct reviewer:
+
+```
+task_start → (work + gh pr create) → task_submit_pr → task_finish { autoMerge: true }
+```
+
+The handler overrides `targetStatus` to `done`, evaluates all workflow gates
+except `prMerged` (which can't pass yet), calls the GitHub merge API via
+`performPrMerge`, runs a `prMerged` post-check if the workflow required it,
+and transitions the task atomically. No review signal is emitted.
+
+### Mode B — Reviewer-triggered merge
+
+Does NOT require `soloMode`. A distinct reviewer calls:
+
+```
+task_finish { outcome: "approve", autoMerge: true }
+```
+
+Same merge + post-check flow, but the distinct-reviewer gate is enforced
+first (defense-in-depth). `emitTaskApprovedSignal` fires as usual.
+
+### Cross-repo hardening
+
+`task_submit_pr` and `task_finish { prUrl }` both validate that the PR's
+`owner/repo` matches `project.githubRepo`. Mismatches are rejected with
+`400 cross_repo_pr_rejected`. The `performPrMerge` helper derives
+`owner/repo` exclusively from the project — body-supplied values are
+ignored.
+
+### Branch protection
+
+Solo mode raises the trust placed in the `allowAgentPrMerge` delegation
+user. **Branch protection on GitHub is the primary safeguard** — do not
+enable solo mode without `require_pull_request_reviews` and at least one
+required status check.

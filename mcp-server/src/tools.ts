@@ -77,12 +77,14 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_finish",
       description:
-        "Finish a task. Polymorphic based on the claim you hold.\n\nWork claim: pass { result?, prUrl? }. prUrl must be a github.com pull-request URL if provided. The task transitions to its expectedFinishState (review or done depending on the workflow). The work claim is cleared when going to done and kept when going to review.\n\nReview claim: pass { result?, outcome: \"approve\" | \"request_changes\" }. approve → task to done, both claims cleared. request_changes → task back to in_progress, review claim cleared, work claim kept so the author resumes, changes_requested signal emitted.\n\nTransitions may be blocked by workflow gates (branchPresent, prPresent, ciGreen, prMerged). A 422 `precondition_failed` response lists the failing rules. If `branchPresent` fails, the branch must be recorded on the task before retrying; during the v1 deprecation window, use v1 `tasks_update { branchName }` — the v2-native `task_submit_pr` verb lands with ADR-0009.",
+        "Finish a task. Polymorphic based on the claim you hold.\n\nWork claim: pass { result?, prUrl?, autoMerge?, mergeMethod? }. prUrl must be a github.com pull-request URL if provided. The task transitions to its expectedFinishState (review or done depending on the workflow). The work claim is cleared when going to done and kept when going to review.\n\nautoMerge (Mode A — work claim): requires project.soloMode=true. Overrides targetStatus to 'done', evaluates gates (skipping prMerged pre-check), merges the PR via GitHub API, then transitions the task to done atomically. Sets autoMergeSha on success.\n\nReview claim: pass { result?, outcome, autoMerge?, mergeMethod? }. approve → task to done, both claims cleared. request_changes → task back to in_progress, review claim cleared, work claim kept so the author resumes, changes_requested signal emitted.\n\nautoMerge (Mode B — review claim + approve): does NOT require soloMode. Merges the PR and transitions to done atomically. outcome 'request_changes' + autoMerge is rejected.\n\nTransitions may be blocked by workflow gates (branchPresent, prPresent, ciGreen, prMerged). A 422 `precondition_failed` response lists the failing rules. See ADR-0010.",
       inputShape: {
         taskId: uuid(),
         result: z.string().max(5000).optional(),
         prUrl: z.string().url().optional(),
         outcome: z.enum(["approve", "request_changes"]).optional(),
+        autoMerge: z.boolean().optional(),
+        mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
       },
       handler: async ({ taskId, ...body }) =>
         wrap(() => client.finishTask(taskId, body)),
@@ -114,7 +116,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_submit_pr",
       description:
-        "Record the branch + pull request metadata on a work-claimed task. Atomic metadata write, not a state transition. Use this after `gh pr create` to satisfy the `branchPresent` / `prPresent` workflow gates before calling task_finish. The canonical v2 flow for projects that enforce branch gates is: task_start → (work + gh pr create) → task_submit_pr → task_finish. For projects that only need prPresent, the shorthand `task_finish { prUrl }` still works and this verb is optional. This is the v2-native replacement for the deprecated v1 `tasks_update { branchName, prUrl, prNumber }` path, which is being sunset 4 weeks after 2026-04-15. Re-submission is allowed and overwrites the prior values (supports the request_changes rework loop). Caller must hold the work claim; task must be in a non-terminal state and not `open`.",
+        "Record the branch + pull request metadata on a work-claimed task. Atomic metadata write, not a state transition. Use this after `gh pr create` to satisfy the `branchPresent` / `prPresent` workflow gates before calling task_finish. The canonical v2 flow for projects that enforce branch gates is: task_start → (work + gh pr create) → task_submit_pr → task_finish. For projects that only need prPresent, the shorthand `task_finish { prUrl }` still works and this verb is optional. This is the v2-native replacement for the deprecated v1 `tasks_update { branchName, prUrl, prNumber }` path, which is being sunset 4 weeks after 2026-04-15. Re-submission is allowed and overwrites the prior values (supports the request_changes rework loop). Caller must hold the work claim; task must be in a non-terminal state and not `open`. Cross-repo hardening: prUrl must point at the same repo as project.githubRepo; mismatches are rejected with 400 cross_repo_pr_rejected.",
       inputShape: {
         taskId: uuid(),
         branchName: z.string().trim().min(1).max(255),

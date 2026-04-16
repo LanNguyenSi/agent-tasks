@@ -176,6 +176,8 @@ export class AgentTasksClient {
       result?: string;
       prUrl?: string;
       outcome?: "approve" | "request_changes";
+      autoMerge?: boolean;
+      mergeMethod?: "squash" | "merge" | "rebase";
     },
   ) {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/finish`, input);

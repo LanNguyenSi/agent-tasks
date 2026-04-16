@@ -44,6 +44,7 @@ export interface Project {
   taskTemplate: TaskTemplate | null;
   confidenceThreshold: number;
   requireDistinctReviewer: boolean;
+  soloMode: boolean;
   createdAt: string;
 }
 
@@ -324,6 +325,7 @@ export async function updateProject(
     taskTemplate?: TaskTemplate | null;
     confidenceThreshold?: number;
     requireDistinctReviewer?: boolean;
+    soloMode?: boolean;
   },
 ): Promise<Project> {
   const data = await request<{ project: Project }>(`/api/projects/${id}`, {

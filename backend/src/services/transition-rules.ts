@@ -73,7 +73,7 @@ type Evaluator = SyncEvaluator | AsyncEvaluator;
  * — a missing slash, empty owner, or empty repo. The classifier pattern
  * matches `ciGreen` and `prMerged` so both rules share the same guard.
  */
-function parseOwnerRepo(
+export function parseOwnerRepo(
   projectGithubRepo: string | null | undefined,
 ): { owner: string; repo: string } | null {
   if (!projectGithubRepo) return null;
