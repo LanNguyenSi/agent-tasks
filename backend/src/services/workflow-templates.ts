@@ -118,7 +118,7 @@ export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
     slug: "coding-agent",
     name: "AI Coding Agent Pipeline",
     description:
-      "7-stage pipeline: backlog → spec → plan → implement → test → review → done. Designed for AI coding agents with gates on branch and PR presence. Note: v2 MCP verbs (task_start, task_finish) are not yet compatible — use POST /tasks/:id/transition for state changes.",
+      "7-stage pipeline: backlog → spec → plan → implement → test → review → done. Designed for AI coding agents with gates on branch and PR presence.",
     definition: codingAgentDefinition,
   },
 ] as const;

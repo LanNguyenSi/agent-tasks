@@ -180,12 +180,114 @@ export async function resolveEffectiveDefinition(
     : defaultWorkflowDefinition();
 }
 
+// ── Workflow state semantic helpers ──────────────────────────────────────────
+//
+// These derive semantic roles (initial, terminal, review, work) from any
+// WorkflowDefinitionShape, replacing hardcoded state-name checks throughout
+// the v2 verb handlers. See the plan at plans/shimmering-stargazing-boot.md.
+
+export function isInitialState(def: WorkflowDefinitionShape, stateName: string): boolean {
+  return def.initialState === stateName;
+}
+
+export function isTerminalState(def: WorkflowDefinitionShape, stateName: string): boolean {
+  return def.states.find((s) => s.name === stateName)?.terminal === true;
+}
+
+/**
+ * A state is "review-like" if it:
+ *   1. Is not the initial state
+ *   2. Is not terminal
+ *   3. Has at least one transition to a terminal state
+ *   4. Is NOT a direct transition target of the initial state
+ *
+ * For the default workflow: "review" qualifies (review→done, open does NOT →review).
+ * For coding-agent: "review" qualifies (review→done, backlog does NOT →review).
+ */
+export function isReviewState(def: WorkflowDefinitionShape, stateName: string): boolean {
+  if (isInitialState(def, stateName) || isTerminalState(def, stateName)) return false;
+  const hasTransitionToTerminal = def.transitions.some(
+    (t) => t.from === stateName && isTerminalState(def, t.to),
+  );
+  if (!hasTransitionToTerminal) return false;
+  const isDirectFromInitial = def.transitions.some(
+    (t) => t.from === def.initialState && t.to === stateName,
+  );
+  return !isDirectFromInitial;
+}
+
+/** Non-initial, non-terminal state (any "work" state including review). */
+export function isWorkState(def: WorkflowDefinitionShape, stateName: string): boolean {
+  return !isInitialState(def, stateName) && !isTerminalState(def, stateName);
+}
+
+/** First transition target from a given state. */
+export function firstTransitionTarget(def: WorkflowDefinitionShape, fromState: string): string | undefined {
+  return def.transitions.find((t) => t.from === fromState)?.to;
+}
+
+/** All terminal state names. */
+export function terminalStates(def: WorkflowDefinitionShape): string[] {
+  return def.states.filter((s) => s.terminal).map((s) => s.name);
+}
+
+/** All review-like state names. */
+export function reviewStates(def: WorkflowDefinitionShape): string[] {
+  return def.states.filter((s) => isReviewState(def, s.name)).map((s) => s.name);
+}
+
+/**
+ * Find the transition target for a review-finish "approve" outcome:
+ * the first transition from `fromState` to a terminal state.
+ */
+export function approveTarget(def: WorkflowDefinitionShape, fromState: string): string | undefined {
+  return def.transitions.find(
+    (t) => t.from === fromState && isTerminalState(def, t.to),
+  )?.to;
+}
+
+/**
+ * Find the transition target for a review-finish "request_changes" outcome:
+ * the first transition from `fromState` to a non-terminal, non-review state.
+ */
+export function requestChangesTarget(def: WorkflowDefinitionShape, fromState: string): string | undefined {
+  return def.transitions.find(
+    (t) => t.from === fromState && !isTerminalState(def, t.to) && !isReviewState(def, t.to),
+  )?.to;
+}
+
+/**
+ * Resolve which state `task_finish` should target for a work-claim finish.
+ *
+ * Inspects transitions from the given state (or the definition overall)
+ * and prefers a review-like target over a terminal one. Falls back to
+ * the first terminal state if no review state is reachable.
+ */
 export function expectedFinishStateFromDefinition(
   definition: WorkflowDefinitionShape | null,
-): "review" | "done" {
-  const transitions = definition?.transitions ?? defaultWorkflowDefinition().transitions;
-  const fromInProgress = transitions.filter((t) => t.from === "in_progress");
-  if (fromInProgress.some((t) => t.to === "review")) return "review";
-  if (fromInProgress.some((t) => t.to === "done")) return "done";
-  return "done";
+): string {
+  const def = definition ?? defaultWorkflowDefinition();
+  // Find a review state reachable from ANY non-initial, non-terminal state
+  const revStates = reviewStates(def);
+  if (revStates.length > 0) return revStates[0]!;
+  // No review state → finish goes to terminal directly
+  const terms = terminalStates(def);
+  return terms[0] ?? "done";
+}
+
+/**
+ * Project-level workflow resolution (no task object needed).
+ * Used by task creation where only projectId is known.
+ */
+export async function resolveProjectEffectiveDefinition(
+  projectId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  prismaClient: { workflow: { findFirst: (...args: any[]) => Promise<{ definition: unknown } | null> } },
+): Promise<WorkflowDefinitionShape> {
+  const projectDefault = await prismaClient.workflow.findFirst({
+    where: { projectId, isDefault: true },
+  });
+  return projectDefault
+    ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
+    : defaultWorkflowDefinition();
 }

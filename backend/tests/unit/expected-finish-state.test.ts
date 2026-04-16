@@ -9,29 +9,49 @@ describe("expectedFinishStateFromDefinition", () => {
   it("prefers review over done when both transitions exist from in_progress", () => {
     const def: WorkflowDefinitionShape = {
       initialState: "open",
-      states: [],
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "review", label: "Review", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
       transitions: [
+        { from: "open", to: "in_progress" },
         { from: "in_progress", to: "review" },
         { from: "in_progress", to: "done" },
+        { from: "review", to: "done" },
       ],
     };
     expect(expectedFinishStateFromDefinition(def)).toBe("review");
   });
 
-  it("returns done when the workflow only has in_progress → done", () => {
+  it("returns done when the workflow has no review state", () => {
     const def: WorkflowDefinitionShape = {
       initialState: "open",
-      states: [],
-      transitions: [{ from: "in_progress", to: "done" }],
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress" },
+        { from: "in_progress", to: "done" },
+      ],
     };
     expect(expectedFinishStateFromDefinition(def)).toBe("done");
   });
 
-  it("falls back to done when workflow has no in_progress transitions at all", () => {
+  it("falls back to done when workflow has no review-like state", () => {
     const def: WorkflowDefinitionShape = {
       initialState: "open",
-      states: [],
-      transitions: [{ from: "open", to: "in_progress" }],
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress" },
+      ],
     };
     expect(expectedFinishStateFromDefinition(def)).toBe("done");
   });
