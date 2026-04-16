@@ -157,6 +157,29 @@ export function defaultWorkflowDefinition(): WorkflowDefinitionShape {
  * over `done`. If the workflow has neither, falls back to `done` — that is
  * the hardcoded final fallback defined in ADR 0008.
  */
+/**
+ * Resolve the effective workflow definition for a task following the
+ * ADR-0008 §50-56 resolution chain:
+ *   1. task.workflowId → that Workflow row's definition
+ *   2. project-default Workflow row (isDefault: true)
+ *   3. built-in defaultWorkflowDefinition()
+ */
+export async function resolveEffectiveDefinition(
+  task: { workflowId: string | null; workflow?: { definition: unknown } | null; projectId: string },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  prismaClient: { workflow: { findFirst: (...args: any[]) => Promise<{ definition: unknown } | null> } },
+): Promise<WorkflowDefinitionShape> {
+  if (task.workflowId && task.workflow) {
+    return task.workflow.definition as unknown as WorkflowDefinitionShape;
+  }
+  const projectDefault = await prismaClient.workflow.findFirst({
+    where: { projectId: task.projectId, isDefault: true },
+  });
+  return projectDefault
+    ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
+    : defaultWorkflowDefinition();
+}
+
 export function expectedFinishStateFromDefinition(
   definition: WorkflowDefinitionShape | null,
 ): "review" | "done" {

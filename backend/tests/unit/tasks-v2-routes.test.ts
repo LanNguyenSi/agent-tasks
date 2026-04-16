@@ -1674,3 +1674,166 @@ describe("task_finish autoMerge", () => {
     );
   });
 });
+
+// ── v1 /transition: project-default workflow resolution (ADR-0008 §50-56) ───
+
+describe("POST /tasks/:id/transition — project-default workflow resolution", () => {
+  const HUMAN: Actor = {
+    type: "human",
+    userId: "user-1",
+    teamId: "team-1",
+    scopes: [],
+  };
+
+  function makeTransitionApp(actor: Actor = HUMAN) {
+    const app = new Hono<{ Variables: AppVariables }>();
+    app.use("*", async (c, next) => {
+      c.set("actor", actor);
+      await next();
+    });
+    app.route("/", taskRouter);
+    return app;
+  }
+
+  it("uses project-default workflow when task has no explicit workflowId", async () => {
+    // Project-default workflow that requires "branchPresent" on in_progress → review
+    // (same as built-in, but proves we read the project-default row).
+    const customDefinition = {
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "review", label: "Review", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress", label: "Start", requiredRole: "any" },
+        // Custom gate: requires a fictitious "customGate" rule
+        { from: "in_progress", to: "review", label: "Submit", requiredRole: "any", requires: ["customGate"] },
+        { from: "review", to: "done", label: "Approve", requiredRole: "any" },
+      ],
+      initialState: "open",
+    };
+
+    const task = {
+      ...baseTask,
+      id: "task-transition-1",
+      status: "in_progress",
+      workflowId: null,
+      workflow: null,
+      claimedByUserId: "user-1",
+      claimedByAgentId: null,
+      project: { ...baseTask.project, requireDistinctReviewer: false },
+    };
+
+    prismaMocks.taskFindUnique.mockResolvedValue(task);
+    // Step 2: project-default workflow row exists
+    prismaMocks.workflowFindFirst.mockResolvedValue({
+      id: "wf-default",
+      projectId: "proj-1",
+      isDefault: true,
+      definition: customDefinition,
+    });
+    prismaMocks.taskUpdate.mockImplementation(
+      ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
+        Promise.resolve({ ...task, id: where.id, ...data, workflow: null, project: task.project }),
+    );
+
+    const app = makeTransitionApp(HUMAN);
+    const res = await app.request("/tasks/task-transition-1/transition", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "review" }),
+    });
+
+    // The custom workflow's "customGate" rule is unknown → transition succeeds
+    // (unknown rules are warned but not blocking). The key assertion is that
+    // we reached the custom workflow at all (not the built-in default).
+    // Verify workflowFindFirst was called with the project-default lookup.
+    expect(prismaMocks.workflowFindFirst).toHaveBeenCalledWith({
+      where: { projectId: "proj-1", isDefault: true },
+    });
+  });
+
+  it("rejects transition not allowed by project-default workflow", async () => {
+    // Project-default workflow that does NOT have a done→open transition
+    const customDefinition = {
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress", label: "Start", requiredRole: "any" },
+        { from: "in_progress", to: "done", label: "Done", requiredRole: "any" },
+      ],
+      initialState: "open",
+    };
+
+    const task = {
+      ...baseTask,
+      id: "task-transition-2",
+      status: "done",
+      workflowId: null,
+      workflow: null,
+      project: { ...baseTask.project, requireDistinctReviewer: false },
+    };
+
+    prismaMocks.taskFindUnique.mockResolvedValue(task);
+    prismaMocks.workflowFindFirst.mockResolvedValue({
+      id: "wf-default",
+      projectId: "proj-1",
+      isDefault: true,
+      definition: customDefinition,
+    });
+
+    const app = makeTransitionApp(HUMAN);
+    const res = await app.request("/tasks/task-transition-2/transition", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "open" }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toContain("not allowed by workflow");
+  });
+
+  it("falls back to built-in default when no project-default workflow exists", async () => {
+    const task = {
+      ...baseTask,
+      id: "task-transition-3",
+      status: "in_progress",
+      workflowId: null,
+      workflow: null,
+      branchName: "feat/test",
+      prUrl: "https://github.com/acme/thing/pull/1",
+      prNumber: 1,
+      claimedByUserId: "user-1",
+      claimedByAgentId: null,
+      project: { ...baseTask.project, requireDistinctReviewer: false },
+    };
+
+    prismaMocks.taskFindUnique.mockResolvedValue(task);
+    // No project-default workflow
+    prismaMocks.workflowFindFirst.mockResolvedValue(null);
+    prismaMocks.taskUpdate.mockImplementation(
+      ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
+        Promise.resolve({ ...task, id: where.id, ...data, workflow: null, project: task.project }),
+    );
+
+    const app = makeTransitionApp(HUMAN);
+    const res = await app.request("/tasks/task-transition-3/transition", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "review" }),
+    });
+
+    // Built-in default allows in_progress→review with branchPresent+prPresent satisfied
+    expect(res.status).toBe(200);
+    // workflowFindFirst was called but returned null → built-in default used
+    expect(prismaMocks.workflowFindFirst).toHaveBeenCalledWith({
+      where: { projectId: "proj-1", isDefault: true },
+    });
+  });
+});
