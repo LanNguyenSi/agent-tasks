@@ -648,7 +648,12 @@ describe("POST /tasks/:id/finish — gate enforcement (regression)", () => {
       workflow: {
         definition: {
           initialState: "open",
-          states: [],
+          states: [
+            { name: "open" },
+            { name: "in_progress" },
+            { name: "review" },
+            { name: "done", terminal: true },
+          ],
           transitions: [
             { from: "review", to: "done", requires: ["prPresent"] },
             { from: "review", to: "in_progress" },

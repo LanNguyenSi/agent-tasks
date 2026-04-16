@@ -21,7 +21,17 @@ import {
   findDefaultTransition,
   defaultWorkflowDefinition,
   resolveEffectiveDefinition,
+  resolveProjectEffectiveDefinition,
   expectedFinishStateFromDefinition,
+  isInitialState,
+  isTerminalState,
+  isReviewState,
+  isWorkState,
+  firstTransitionTarget,
+  terminalStates,
+  reviewStates,
+  approveTarget,
+  requestChangesTarget,
   type WorkflowDefinitionShape,
 } from "../services/default-workflow.js";
 import { findDelegationUser } from "../services/github-delegation.js";
@@ -336,7 +346,8 @@ taskRouter.get("/tasks/claimable", async (c) => {
     projectId?: string;
     project?: { teamId: string };
   } = {
-    status: "open",
+    status: "open", // TODO: use terminalStates across team workflows — misses coding-agent "backlog" tasks
+
     claimedByUserId: null,
     claimedByAgentId: null,
   };
@@ -406,8 +417,8 @@ taskRouter.post("/tasks/pickup", async (c) => {
     const existing = await prisma.task.findFirst({
       where: {
         OR: [
-          { claimedByAgentId: actor.tokenId, status: { not: "done" } },
-          { reviewClaimedByAgentId: actor.tokenId, status: "review" },
+          { claimedByAgentId: actor.tokenId, status: { not: "done" } }, // TODO: use terminalStates across team workflows
+          { reviewClaimedByAgentId: actor.tokenId, status: "review" }, // TODO: use reviewStates across team workflows
         ],
       },
       select: { id: true, title: true, claimedByAgentId: true, reviewClaimedByAgentId: true },
@@ -467,7 +478,7 @@ taskRouter.post("/tasks/pickup", async (c) => {
   // Distinct-reviewer: the agent must not be the author of the task.
   const reviewTask = await prisma.task.findFirst({
     where: {
-      status: "review",
+      status: "review", // TODO: use reviewStates across team workflows — misses non-default review states
       reviewClaimedByAgentId: null,
       reviewClaimedByUserId: null,
       createdByAgentId: { not: actor.tokenId },
@@ -487,7 +498,7 @@ taskRouter.post("/tasks/pickup", async (c) => {
   // ── 3. Work pickup ────────────────────────────────────────────────────────
   const workTask = await prisma.task.findFirst({
     where: {
-      status: "open",
+      status: "open", // TODO: use initial states across team workflows — misses coding-agent "backlog" tasks
       claimedByAgentId: null,
       claimedByUserId: null,
       ...teamFilter,
@@ -592,7 +603,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
   const expectedFinishState = expectedFinishStateFromDefinition(effectiveDefinition);
 
   // ── Branch: status=open → author-claim + transition ──────────────────────
-  if (task.status === "open") {
+  if (isInitialState(effectiveDefinition, task.status)) {
     if (task.claimedByUserId || task.claimedByAgentId) {
       return conflict(c, "Task is already claimed");
     }
@@ -675,13 +686,15 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       return _exhaustive;
     }
 
+    const startTarget = firstTransitionTarget(effectiveDefinition, effectiveDefinition.initialState);
+
     const updated = await prisma.task.update({
       where: { id: task.id },
       data: {
         claimedByUserId: actor.type === "human" ? actor.userId : null,
         claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
         claimedAt: new Date(),
-        status: "in_progress",
+        status: startTarget,
       },
       include: taskInclude,
     });
@@ -707,7 +720,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
   }
 
   // ── Branch: status=review → review-claim ────────────────────────────────
-  if (task.status === "review") {
+  if (isReviewState(effectiveDefinition, task.status)) {
     // Distinct-reviewer: cannot review your own task
     const isSelfReview =
       (actor.type === "human" && task.claimedByUserId === actor.userId) ||
@@ -770,7 +783,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     return c.json({
       kind: "review",
       task: updated,
-      expectedFinishState: "done" as const,
+      expectedFinishState: expectedFinishStateFromDefinition(effectiveDefinition),
       project: task.project,
     });
   }
@@ -778,7 +791,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
   return c.json(
     {
       error: "bad_state",
-      message: `Cannot start a task in status '${task.status}'. Only 'open' or 'review' tasks can be started.`,
+      message: `Task in '${task.status}' cannot be started — must be in initial state ('${effectiveDefinition.initialState}') or a review state`,
     },
     409,
   );
@@ -1027,7 +1040,10 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
 
   // ── Branch: review finish ─────────────────────────────────────────────────
   if (holdsReviewClaim) {
-    if (task.status !== "review") {
+    // Resolve once so the review-state check and gate evaluator share the same definition.
+    const effectiveReviewDefinition = await resolveEffectiveDefinition(task, prisma);
+
+    if (!isReviewState(effectiveReviewDefinition, task.status)) {
       return c.json({ error: "bad_state", message: "Task must be in review status" }, 409);
     }
     const parsed = finishReviewSchema.safeParse(rawBody);
@@ -1036,7 +1052,9 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     }
     const { outcome, result, autoMerge, mergeMethod } = parsed.data;
 
-    const targetStatus = outcome === "approve" ? "done" : "in_progress";
+    const targetStatus = outcome === "approve"
+      ? approveTarget(effectiveReviewDefinition, task.status) ?? "done"
+      : requestChangesTarget(effectiveReviewDefinition, task.status) ?? task.status;
 
     // Distinct-reviewer gate. Defense-in-depth: pickup already excludes the
     // author from the review pool, but an explicit workflow path could place
@@ -1067,10 +1085,9 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
 
     // Transition gates (branchPresent / prPresent / ciGreen / prMerged).
     // Mirrors the /transition block; see evaluateV2TransitionGates
-    // for the shared semantics. Resolve the effective workflow the same
-    // way the work-finish branch does below so both paths evaluate gates
-    // against the same definition.
-    const effectiveReviewDefinition = await resolveEffectiveDefinition(task, prisma);
+    // for the shared semantics. The effective workflow was resolved above
+    // (effectiveReviewDefinition) so both paths evaluate gates against
+    // the same definition.
     // Review-finish has no prUrl / branchName payload, so the gate context
     // is just the task's current DB state.
     const gateResult = await evaluateV2TransitionGates(
@@ -1287,19 +1304,19 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     }
   }
 
-  if (task.status !== "in_progress") {
+  // Derive expectedFinishState from the workflow
+  const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
+
+  if (!isWorkState(effectiveDefinition, task.status)) {
     return c.json(
-      { error: "bad_state", message: `Work finish requires status=in_progress, got '${task.status}'` },
+      { error: "bad_state", message: `Work finish requires a work state (non-initial, non-terminal), got '${task.status}'` },
       409,
     );
   }
 
-  // Derive expectedFinishState from the workflow
-  const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
-
   // When autoMerge is requested, hard-set targetStatus to "done" and verify
   // the workflow actually supports in_progress → done (ADR-0010 §2 Mode A).
-  let targetStatus: "review" | "done";
+  let targetStatus: string;
   if (workAutoMerge) {
     if (!task.project.soloMode) {
       return c.json(
@@ -1748,11 +1765,13 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
     return forbidden(c, "You do not hold a claim on this task");
   }
 
+  const effectiveDef = await resolveEffectiveDefinition(task, prisma);
+
   // Reject abandoning a work claim while the task is already in review.
   // Clearing the work claim here would leave an orphan: the task stays in
   // review, but `request_changes` relies on the retained work claim to
   // auto-resume the author. Force the author to wait for the reviewer.
-  if (holdsWorkClaim && !holdsReviewClaim && task.status === "review") {
+  if (holdsWorkClaim && !holdsReviewClaim && isReviewState(effectiveDef, task.status)) {
     return c.json(
       {
         error: "bad_state",
@@ -1768,10 +1787,10 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
     updateData.claimedByUserId = null;
     updateData.claimedByAgentId = null;
     updateData.claimedAt = null;
-    // Only reset status to open when we were in the transitional in_progress
-    // state. If the task is already in review, we rejected above.
-    if (task.status === "in_progress") {
-      updateData.status = "open";
+    // Only reset status to initial when we were in a work state.
+    // If the task is already in review, we rejected above.
+    if (isWorkState(effectiveDef, task.status)) {
+      updateData.status = effectiveDef.initialState;
     }
   }
   if (holdsReviewClaim) {
@@ -2344,13 +2363,15 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     }
   }
 
+  const effectiveDef = await resolveEffectiveDefinition(task, prisma);
+
   const updated = await prisma.task.update({
     where: { id: task.id },
     data: {
       claimedByUserId: actor.type === "human" ? actor.userId : null,
       claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
       claimedAt: new Date(),
-      status: "in_progress",
+      status: firstTransitionTarget(effectiveDef, effectiveDef.initialState) ?? "in_progress",
     },
     include: taskInclude,
   });
@@ -2386,13 +2407,15 @@ taskRouter.post("/tasks/:id/release", async (c) => {
     return forbidden(c, "Only the current claimant can release this task");
   }
 
+  const effectiveDef = await resolveEffectiveDefinition(task, prisma);
+
   const updated = await prisma.task.update({
     where: { id: task.id },
     data: {
       claimedByUserId: null,
       claimedByAgentId: null,
       claimedAt: null,
-      status: "open",
+      status: effectiveDef.initialState,
     },
     include: taskInclude,
   });
