@@ -8,6 +8,7 @@ import {
   getTeams,
   getProjects,
   getTasks,
+  getTask,
   createTask,
   claimTask,
   updateProject,
@@ -365,10 +366,22 @@ export default function DashboardPage() {
   );
 
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const activeTask = useMemo(
-    () => tasks.find((task) => task.id === activeTaskId) ?? null,
-    [tasks, activeTaskId],
-  );
+  const [activeTaskDetail, setActiveTaskDetail] = useState<Task | null>(null);
+
+  // Fetch full task detail (with comments/attachments) when a task is selected
+  useEffect(() => {
+    if (!activeTaskId) {
+      setActiveTaskDetail(null);
+      return;
+    }
+    let cancelled = false;
+    void getTask(activeTaskId).then((task) => {
+      if (!cancelled) setActiveTaskDetail(task);
+    });
+    return () => { cancelled = true; };
+  }, [activeTaskId]);
+
+  const activeTask = activeTaskDetail;
   const filteredTasks = useMemo(() => {
     const normalizedQuery = taskQuery.trim().toLowerCase();
 
@@ -616,6 +629,7 @@ export default function DashboardPage() {
 
   function handleTaskUpdate(updated: Task) {
     setTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
+    setActiveTaskDetail(updated);
   }
 
   function handleTaskDelete(taskId: string) {
