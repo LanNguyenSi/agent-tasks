@@ -74,6 +74,22 @@ const taskInclude = {
   },
 };
 
+/** Lightweight include for list/dashboard views — no comments or attachments. */
+const taskListInclude = {
+  claimedByUser: {
+    select: { id: true, login: true, name: true, avatarUrl: true },
+  },
+  claimedByAgent: {
+    select: { id: true, name: true },
+  },
+  blockedBy: {
+    select: { id: true, title: true, status: true },
+  },
+  blocks: {
+    select: { id: true, title: true, status: true },
+  },
+};
+
 const createTaskSchema = z.object({
   title: z.string().min(1).max(255),
   description: z.string().optional(),
@@ -142,6 +158,8 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
 
   const labelFilter = c.req.query("labels");
   const externalRefFilter = c.req.query("externalRef");
+  const statusFilter = c.req.query("status");
+  const detail = c.req.query("detail");
 
   const where: Record<string, unknown> = { projectId };
   if (labelFilter) {
@@ -153,10 +171,16 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
   if (externalRefFilter && externalRefFilter.length <= 255) {
     where.externalRef = externalRefFilter;
   }
+  if (statusFilter) {
+    const parsed = statusFilter.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parsed.length > 0) {
+      where.status = { in: parsed };
+    }
+  }
 
   const tasks = await prisma.task.findMany({
     where,
-    include: taskInclude,
+    include: detail === "full" ? taskInclude : taskListInclude,
     orderBy: { createdAt: "desc" },
   });
   return c.json({ tasks });

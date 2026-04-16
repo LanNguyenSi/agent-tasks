@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -8,6 +8,7 @@ import {
   getTeams,
   getProjects,
   getTasks,
+  getTask,
   createTask,
   claimTask,
   updateProject,
@@ -187,7 +188,7 @@ function getAssigneeName(task: Task): string {
   return "Unassigned";
 }
 
-function TaskCard({
+const TaskCard = memo(function TaskCard({
   task,
   active,
   onSelect,
@@ -278,7 +279,7 @@ function TaskCard({
       </div>
     </button>
   );
-}
+});
 
 function BoardColumns({
   tasks,
@@ -365,10 +366,22 @@ export default function DashboardPage() {
   );
 
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const activeTask = useMemo(
-    () => tasks.find((task) => task.id === activeTaskId) ?? null,
-    [tasks, activeTaskId],
-  );
+  const [activeTaskDetail, setActiveTaskDetail] = useState<Task | null>(null);
+
+  // Fetch full task detail (with comments/attachments) when a task is selected
+  useEffect(() => {
+    if (!activeTaskId) {
+      setActiveTaskDetail(null);
+      return;
+    }
+    let cancelled = false;
+    void getTask(activeTaskId).then((task) => {
+      if (!cancelled) setActiveTaskDetail(task);
+    });
+    return () => { cancelled = true; };
+  }, [activeTaskId]);
+
+  const activeTask = activeTaskDetail;
   const filteredTasks = useMemo(() => {
     const normalizedQuery = taskQuery.trim().toLowerCase();
 
@@ -479,14 +492,13 @@ export default function DashboardPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const me = await getCurrentUser();
+        const [me, userTeams] = await Promise.all([getCurrentUser(), getTeams()]);
         if (!me) {
           router.replace("/auth");
           return;
         }
         setUser(me);
 
-        const userTeams = await getTeams();
         setTeams(userTeams);
         if (userTeams.length === 0) {
           router.replace("/onboarding");
@@ -537,7 +549,7 @@ export default function DashboardPage() {
     })();
   }, [router]);
 
-  // Poll for task updates every 5 seconds
+  // Poll for task updates every 15 seconds
   useEffect(() => {
     if (!selectedProjectId) return;
     const interval = setInterval(async () => {
@@ -548,7 +560,7 @@ export default function DashboardPage() {
       } catch {
         // silent – avoid error banner for background polls
       }
-    }, 5000);
+    }, 15_000);
     return () => clearInterval(interval);
   }, [selectedProjectId]);
 
@@ -617,6 +629,7 @@ export default function DashboardPage() {
 
   function handleTaskUpdate(updated: Task) {
     setTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
+    setActiveTaskDetail(updated);
   }
 
   function handleTaskDelete(taskId: string) {
