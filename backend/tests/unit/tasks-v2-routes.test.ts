@@ -90,6 +90,11 @@ vi.mock("../../src/services/github-merge.js", () => ({
   performPrMerge: performPrMergeMock,
 }));
 
+const findDelegationUserMock = vi.hoisted(() => vi.fn().mockResolvedValue(null));
+vi.mock("../../src/services/github-delegation.js", () => ({
+  findDelegationUser: findDelegationUserMock,
+}));
+
 import { taskRouter } from "../../src/routes/tasks.js";
 import { logAuditEvent } from "../../src/services/audit.js";
 
@@ -1468,5 +1473,87 @@ describe("task_finish autoMerge", () => {
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toBe("no_delegation");
+  });
+
+  // Test 9: Mid-flight recovery — in_progress + autoMergeSha set → recovery
+  it("recovers mid-flight when task has autoMergeSha but is still in_progress", async () => {
+    const midFlightTask = {
+      ...inProgressTask,
+      autoMergeSha: "mid-flight-sha",
+      project: { ...baseTask.project, soloMode: true },
+    };
+    prismaMocks.taskFindUnique.mockResolvedValue(midFlightTask);
+
+    // The recovery path calls evaluateTransitionRules(["prMerged"], ...).
+    // findDelegationUser returns null (default mock) → no token → prMerged
+    // returns false → falls through to normal merge path.
+    performPrMergeMock.mockResolvedValue({ ok: true, sha: null, alreadyMerged: true });
+
+    const res = await app.request(`/tasks/${midFlightTask.id}/finish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoMerge: true }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.targetStatus).toBe("done");
+  });
+
+  // Test 11: Mode B no_delegation
+  it("returns 403 on Mode B when no delegation user available", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue(reviewTask);
+    performPrMergeMock.mockResolvedValue({ ok: false, error: "no_delegation", message: "No authorized user" });
+    const res = await app.request(`/tasks/${reviewTask.id}/finish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome: "approve", autoMerge: true }),
+    });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("no_delegation");
+  });
+
+  // Test 11b: Mode A post-check failure → 502
+  it("returns 502 when post-check fails after successful merge (Mode A)", async () => {
+    // To trigger the post-check, we need a custom workflow with prMerged required
+    // on the in_progress → done transition.
+    const customWorkflow = {
+      id: "wf-pr-merged",
+      projectId: "proj-1",
+      isDefault: false,
+      definition: {
+        states: [
+          { name: "open", label: "Open", terminal: false },
+          { name: "in_progress", label: "In Progress", terminal: false },
+          { name: "done", label: "Done", terminal: true },
+        ],
+        transitions: [
+          { from: "open", to: "in_progress", label: "Start", requiredRole: "any" },
+          { from: "in_progress", to: "done", label: "Done", requiredRole: "any", requires: ["branchPresent", "prPresent", "prMerged"] },
+        ],
+        initialState: "open",
+      },
+    };
+    const soloTask = {
+      ...inProgressTask,
+      workflowId: "wf-pr-merged",
+      workflow: customWorkflow,
+      project: { ...baseTask.project, soloMode: true },
+    };
+    prismaMocks.taskFindUnique.mockResolvedValue(soloTask);
+    // Merge succeeds but prMerged post-check will fail because no delegation
+    // user is available (Prisma mocked, findDelegationUser returns null → no token → prMerged fails)
+    performPrMergeMock.mockResolvedValue({ ok: true, sha: "merge-sha", alreadyMerged: false });
+    const res = await app.request(`/tasks/${soloTask.id}/finish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoMerge: true }),
+    });
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.error).toBe("github_error");
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.auto_merge_post_assert_failed" }),
+    );
   });
 });

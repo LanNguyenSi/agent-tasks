@@ -1150,7 +1150,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           : false;
 
       if (workflowHadPrMerged) {
-        const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate");
+        const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge");
         const postCheck = await evaluateTransitionRules(["prMerged"], {
           branchName: task.branchName,
           prUrl: task.prUrl,
@@ -1267,7 +1267,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     if (task.status === "in_progress" && task.autoMergeSha) {
       // The merge succeeded in a prior call but the transition didn't complete.
       // Verify via prMerged rule, then proceed to transition only.
-      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate");
+      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge");
       const postCheck = await evaluateTransitionRules(["prMerged"], {
         branchName: task.branchName,
         prUrl: task.prUrl,
@@ -1410,7 +1410,13 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   // ── Mode A autoMerge: solo work-claim merge (ADR-0010 §2) ────────────
   let workAutoMergeSha: string | null = null;
   if (workAutoMerge) {
-    const mergeResult = await performPrMerge(task, workMergeMethod, actor);
+    // Merge payload-derived prNumber onto task so performPrMerge sees it
+    // even when prNumber is not yet in the DB (task_finish { prUrl } shorthand).
+    const mergeResult = await performPrMerge(
+      { ...task, prNumber: prNumber ?? task.prNumber },
+      workMergeMethod,
+      actor,
+    );
     if (!mergeResult.ok) {
       const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
       return c.json(
@@ -1428,7 +1434,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         : false;
 
     if (workflowHadPrMerged) {
-      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate");
+      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge");
       const postCheck = await evaluateTransitionRules(["prMerged"], {
         branchName: task.branchName,
         prUrl: prUrl ?? task.prUrl,
