@@ -1147,6 +1147,101 @@ describe("POST /tasks/:id/finish — prUrl regex hardening", () => {
   });
 });
 
+// ── Authorship verification tests ────────────────────────────────────────────
+
+describe("task_submit_pr authorship verification", () => {
+  const app = makeApp();
+  const claimedTask = {
+    ...baseTask,
+    status: "in_progress",
+    claimedByAgentId: AGENT.tokenId,
+    project: { ...baseTask.project, teamId: "team-1", githubRepo: "acme/thing" },
+  };
+
+  const submitPrBody = {
+    branchName: "feat/x",
+    prUrl: "https://github.com/acme/thing/pull/42",
+    prNumber: 42,
+  };
+
+  it("allows PR authored by the delegation user", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue(claimedTask);
+    findDelegationUserMock.mockResolvedValue({
+      userId: "user-1",
+      login: "delegation-bot",
+      githubAccessToken: "ghp_test",
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ user: { login: "delegation-bot" } }),
+    }) as unknown as typeof fetch;
+
+    const res = await app.request(`/tasks/${claimedTask.id}/submit-pr`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(submitPrBody),
+    });
+    expect(res.status).toBe(200);
+    globalThis.fetch = originalFetch;
+  });
+
+  it("rejects PR authored by someone else with 403 pr_author_mismatch", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue(claimedTask);
+    findDelegationUserMock.mockResolvedValue({
+      userId: "user-1",
+      login: "delegation-bot",
+      githubAccessToken: "ghp_test",
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ user: { login: "malicious-actor" } }),
+    }) as unknown as typeof fetch;
+
+    const res = await app.request(`/tasks/${claimedTask.id}/submit-pr`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(submitPrBody),
+    });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("pr_author_mismatch");
+    globalThis.fetch = originalFetch;
+  });
+
+  it("skips authorship check when no delegation user is available", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue(claimedTask);
+    findDelegationUserMock.mockResolvedValue(null);
+
+    const res = await app.request(`/tasks/${claimedTask.id}/submit-pr`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(submitPrBody),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("fails open on GitHub API error", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue(claimedTask);
+    findDelegationUserMock.mockResolvedValue({
+      userId: "user-1",
+      login: "delegation-bot",
+      githubAccessToken: "ghp_test",
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("network timeout")) as unknown as typeof fetch;
+
+    const res = await app.request(`/tasks/${claimedTask.id}/submit-pr`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(submitPrBody),
+    });
+    expect(res.status).toBe(200);
+    globalThis.fetch = originalFetch;
+  });
+});
+
 // ── ADR-0010 autoMerge tests ────────────────────────────────────────────────
 
 describe("task_finish autoMerge", () => {
