@@ -538,6 +538,25 @@ export async function resetProjectWorkflow(projectId: string): Promise<Effective
   });
 }
 
+export interface WorkflowTemplateSummary {
+  slug: string;
+  name: string;
+  description: string;
+  stateCount: number;
+  initialState: string;
+}
+
+export async function listWorkflowTemplates(): Promise<WorkflowTemplateSummary[]> {
+  const data = await request<{ templates: WorkflowTemplateSummary[] }>("/api/workflow-templates");
+  return data.templates;
+}
+
+export async function applyWorkflowTemplate(projectId: string, slug: string): Promise<EffectiveWorkflow> {
+  return request<EffectiveWorkflow>(`/api/projects/${projectId}/workflow/apply-template/${slug}`, {
+    method: "POST",
+  });
+}
+
 export interface Workflow {
   id: string;
   projectId: string;

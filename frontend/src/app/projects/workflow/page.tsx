@@ -20,12 +20,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
+  applyWorkflowTemplate,
   customizeProjectWorkflow,
   getCurrentUser,
   getEffectiveWorkflow,
   getProject,
   getTeams,
   getWorkflowRules,
+  listWorkflowTemplates,
   resetProjectWorkflow,
   updateWorkflow,
   type EffectiveWorkflow,
@@ -35,6 +37,7 @@ import {
   type WorkflowDefinition,
   type WorkflowRule,
   type WorkflowState,
+  type WorkflowTemplateSummary,
   type WorkflowTransition,
 } from "../../../lib/api";
 import AppHeader from "../../../components/AppHeader";
@@ -71,6 +74,8 @@ export default function WorkflowEditorPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [customizing, setCustomizing] = useState(false);
+  const [templates, setTemplates] = useState<WorkflowTemplateSummary[]>([]);
+  const [applyingTemplate, setApplyingTemplate] = useState(false);
 
   // Single draft of the workflow definition. Null means "not editing" and
   // the page renders the canonical workflow.definition. Any mutation
@@ -96,12 +101,13 @@ export default function WorkflowEditorPage() {
     const id = projectId;
     void (async () => {
       try {
-        const [me, proj, teams, wf, catalog] = await Promise.all([
+        const [me, proj, teams, wf, catalog, tpls] = await Promise.all([
           getCurrentUser(),
           getProject(id),
           getTeams(),
           getEffectiveWorkflow(id),
           getWorkflowRules(),
+          listWorkflowTemplates(),
         ]);
         if (!me) {
           router.replace("/auth");
@@ -112,6 +118,7 @@ export default function WorkflowEditorPage() {
         setTeam(teams.find((t) => t.id === proj.teamId) ?? null);
         setWorkflow(wf);
         setRules(catalog);
+        setTemplates(tpls);
       } catch (err) {
         setError((err as Error).message);
       } finally {
@@ -365,6 +372,22 @@ export default function WorkflowEditorPage() {
     }
   }
 
+  async function handleApplyTemplate(slug: string) {
+    if (!projectId) return;
+    setApplyingTemplate(true);
+    setError(null);
+    try {
+      const next = await applyWorkflowTemplate(projectId, slug);
+      setWorkflow(next);
+      setDraft(null);
+      setSavedBanner(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setApplyingTemplate(false);
+    }
+  }
+
   function handleCancel() {
     setDraft(null);
     setError(null);
@@ -503,9 +526,28 @@ export default function WorkflowEditorPage() {
                   : "This project has its own workflow. Only team admins can edit."}
             </span>
             {isDefault && isAdmin && (
-              <Button type="button" onClick={() => void handleCustomize()} disabled={customizing} loading={customizing}>
-                Customize this workflow
-              </Button>
+              <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
+                <Button type="button" onClick={() => void handleCustomize()} disabled={customizing || applyingTemplate} loading={customizing}>
+                  Customize this workflow
+                </Button>
+                {templates.length > 0 && (
+                  <>
+                    <span style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>or use a template:</span>
+                    {templates.map((tpl) => (
+                      <Button
+                        key={tpl.slug}
+                        type="button"
+                        onClick={() => void handleApplyTemplate(tpl.slug)}
+                        disabled={customizing || applyingTemplate}
+                        loading={applyingTemplate}
+                        title={tpl.description}
+                      >
+                        {tpl.name}
+                      </Button>
+                    ))}
+                  </>
+                )}
+              </div>
             )}
             {isDefault && !isAdmin && (
               <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>Only team admins can customize.</span>

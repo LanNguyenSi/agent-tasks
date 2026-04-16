@@ -269,6 +269,8 @@ rules.
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
+| `GET` | `/api/workflow-templates` | List available workflow templates: `{templates: [{slug, name, description, stateCount, initialState}]}`. |
+| `POST` | `/api/projects/:projectId/workflow/apply-template/:slug` | Admin-only. Creates (or overwrites) a custom workflow from a predefined template. Returns `201` with the new workflow. Returns `404` if the template slug is unknown. |
 | `GET` | `/api/workflow-rules` | Catalog of built-in rules: `{rules: [{id, label, description, failureMessage}]}`. Used by the UI to render rule checkboxes without hardcoding any IDs on the frontend. |
 | `GET` | `/api/projects/:projectId/effective-workflow` | Returns the workflow currently in force for the project: `{source: "custom"\|"default", workflowId, definition}`. The response shape is stable whether a custom `Workflow` row exists or not — the UI can render it identically. |
 | `POST` | `/api/projects/:projectId/workflow/customize` | Admin-only. Forks the hardcoded default into a new `Workflow` row marked `isDefault: true`. Returns `201` with the new workflow. Returns `409` if the project already has a custom workflow. |
@@ -287,8 +289,9 @@ and the dashboard gear icon. Non-admins see a read-only view.
 **Flow for a project using the default workflow:**
 
 1. Open the page. The banner shows "Using system default".
-2. Click **Customize this workflow** — this forks the hardcoded default
-   into a new custom `Workflow` row you can edit.
+2. Either click **Customize this workflow** to fork the built-in default,
+   or click a **template button** (e.g. "AI Coding Agent Pipeline") to
+   apply a predefined workflow with stages and gates pre-configured.
 3. Edit states: inline-edit name/label, toggle terminal, click
    "Add instructions…" to open a textarea for the state's agent
    instructions, use `+ Add state` / the `✕` button per row.
@@ -402,3 +405,51 @@ Solo mode raises the trust placed in the `allowAgentPrMerge` delegation
 user. **Branch protection on GitHub is the primary safeguard** — do not
 enable solo mode without `require_pull_request_reviews` and at least one
 required status check.
+
+## Workflow templates
+
+Predefined templates provide complete workflow definitions that can be
+applied to a project in one click. Templates are defined in code at
+[`backend/src/services/workflow-templates.ts`](../backend/src/services/workflow-templates.ts)
+and are versioned with the backend.
+
+### AI Coding Agent Pipeline (`coding-agent`)
+
+> **Compatibility note:** The v2 MCP verbs (`task_start`, `task_finish`,
+> `task_pickup`, `task_abandon`) are currently hardcoded to the default
+> 4-state workflow (`open`, `in_progress`, `review`, `done`). Projects
+> using this 7-stage template must use the generic
+> `POST /tasks/:id/transition` endpoint for all state changes. Task
+> creation defaults to `status: "open"` — tasks need a manual transition
+> to `backlog` as the first step, or an admin can force-create with the
+> correct initial status. A follow-up to make v2 verbs workflow-aware is
+> tracked separately.
+
+A 7-stage pipeline designed for AI coding agents:
+
+```
+backlog → spec → plan → implement → test → review → done
+```
+
+| From | To | Label | Requires |
+| ---- | -- | ----- | -------- |
+| `backlog` | `spec` | Start scoping | *(none)* |
+| `spec` | `plan` | Spec complete | *(none)* |
+| `spec` | `backlog` | Release | *(none)* |
+| `plan` | `implement` | Start implementing | `branchPresent` |
+| `plan` | `spec` | Revisit spec | *(none)* |
+| `implement` | `test` | Ready for testing | *(none)* |
+| `implement` | `plan` | Revisit plan | *(none)* |
+| `test` | `review` | Submit for review | `branchPresent`, `prPresent` |
+| `test` | `implement` | Fix failures | *(none)* |
+| `review` | `done` | Approve | *(none)* |
+| `review` | `implement` | Request changes | *(none)* |
+
+Each state includes `agentInstructions` so agents using `task_start`
+know exactly what is expected at each stage. Back-transitions allow
+revisiting earlier stages when assumptions change.
+
+Applying a template replaces the project's custom workflow (or creates
+one if none exists). Existing tasks are not migrated — their `status`
+field stays as-is. Tasks stuck on a state that no longer exists will
+need an admin force-transition.

@@ -39,7 +39,8 @@ export type AuditAction =
   | "workflow.created"
   | "workflow.customized"
   | "workflow.updated"
-  | "workflow.reset";
+  | "workflow.reset"
+  | "workflow.template_applied";
 
 export interface AuditPayload {
   [key: string]: unknown;
