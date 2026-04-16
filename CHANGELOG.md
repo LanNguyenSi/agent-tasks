@@ -5,6 +5,86 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-04-16
+
+**Headline: Custom workflows now work end-to-end with v2 MCP verbs,
+and the first predefined workflow template ships out of the box.**
+
+This release closes the "custom workflows are cosmetic" gap — agents
+using the MCP surface (`task_start`, `task_finish`, `task_abandon`,
+`claim`, `release`) can now operate on projects with non-default
+state machines. The AI Coding Agent Pipeline template provides a
+ready-made 7-stage workflow for coding-focused teams.
+
+### Added
+
+#### Workflow templates
+- **Predefined workflow templates** — `GET /api/workflow-templates`
+  lists available templates; `POST /api/projects/:id/workflow/apply-template/:slug`
+  applies one to a project in a single call. (#159)
+- **AI Coding Agent Pipeline** (`coding-agent`) — 7-stage template:
+  `backlog → spec → plan → implement → test → review → done` with
+  gates on `branchPresent` (plan→implement) and
+  `branchPresent`+`prPresent` (test→review). Each state carries
+  `agentInstructions` for MCP agents. (#159)
+- Template picker buttons in the workflow editor UI alongside
+  "Customize this workflow". (#159)
+
+#### v2 verbs workflow-aware
+- **Semantic state helpers** — `isInitialState`, `isTerminalState`,
+  `isReviewState`, `isWorkState`, `firstTransitionTarget`,
+  `approveTarget`, `requestChangesTarget` derive state roles from
+  any `WorkflowDefinitionShape`. (#160)
+- **task_start** uses `initialState` instead of hardcoded `"open"`,
+  `isReviewState` instead of `"review"`, dynamic transition target
+  instead of `"in_progress"`. (#160)
+- **task_finish** work branch accepts any work state, review branch
+  derives approve/request_changes targets from workflow transitions,
+  claim clearing uses `isTerminalState`. (#160)
+- **task_abandon** resets to `initialState` instead of `"open"`. (#160)
+- **claim/release** use workflow-derived targets. (#160)
+- `resolveProjectEffectiveDefinition` for task creation without a
+  task object. (#160)
+
+#### Solo mode & autoMerge (ADR-0010)
+- **`task_finish { autoMerge: true }`** — atomic PR merge + task
+  transition in a single call. Mode A (solo work-claim) and Mode B
+  (reviewer-triggered). (#155)
+- **`project.soloMode`** flag — enables Mode A for single-agent
+  projects that skip distinct review. (#155)
+- ADR-0010 documenting the design. (#154)
+
+#### task_submit_pr
+- **`POST /tasks/:id/submit-pr`** — new v2 verb to register branch +
+  PR on a task with validation and authorship verification. (#152, #156)
+- Cross-repo PR rejection hardening. (#156)
+
+#### Gate enforcement
+- **task_start** now evaluates workflow transition gates (was
+  previously a no-op). (#153)
+- **task_finish** evaluates gates before transitioning. (#151)
+- `branchPresent` removed from `open→in_progress` default edge to
+  avoid structural self-checkmate with `task_submit_pr`. (#153)
+
+### Fixed
+
+- **v1 /transition** skipped project-default workflow lookup (step 2
+  of ADR-0008 §50-56 resolution chain). Extracted
+  `resolveEffectiveDefinition` helper, DRY'd 6 inline blocks. (#158)
+- **Security sweep** — bumped hono (JSX SSR injection), follow-redirects
+  (auth header leak), dompurify (ADD_TAGS bypass). (#157)
+
+## [0.4.0] - 2026-04-15
+
+### Added
+
+- **v2 verb-oriented MCP surface** — `task_start`, `task_finish`,
+  `task_pickup`, `task_abandon`, `task_note` replace the CRUD-style
+  v1 tools. Agents interact via lifecycle verbs instead of raw
+  status strings. (#150)
+- `@agent-tasks/mcp-server` 0.3.1 and `@agent-tasks/mcp-bridge` 0.3.0
+  updated to expose the v2 tools.
+
 ## [0.3.0] - 2026-04-15
 
 **Headline: MCP agents can now drive the full review loop, and the
