@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { logout } from "../lib/api";
 import DropdownMenu from "./ui/DropdownMenu";
+import ThemeToggle from "./ThemeToggle";
 
 interface AppHeaderProps {
   user?: {
@@ -52,83 +53,86 @@ export default function AppHeader({ user, boardHref = "/dashboard" }: AppHeaderP
         </Link>
       </div>
 
-      {user && (
-        <div>
-          <button
-            ref={triggerRef}
-            type="button"
-            className="app-user-trigger"
-            onClick={() => setMenuOpen((value) => !value)}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              border: "1px solid var(--border)",
-              background: "transparent",
-              color: "var(--muted)",
-              borderRadius: "8px",
-              padding: "0.3rem 0.55rem",
-            }}
-          >
-            {user.avatarUrl ? (
-              <img src={user.avatarUrl} alt={user.login} style={{ width: "24px", height: "24px", borderRadius: "50%" }} />
-            ) : (
-              <span
-                style={{
-                  width: "24px",
-                  height: "24px",
-                  borderRadius: "999px",
-                  background: "var(--border)",
-                  color: "var(--text)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "0.75rem",
-                  fontWeight: 700,
-                }}
-              >
-                {user.login.charAt(0).toUpperCase()}
-              </span>
-            )}
-            <span className="app-user-name" style={{ color: "var(--text)", fontSize: "0.85rem" }}>{user.login}</span>
-            <span style={{ color: "var(--muted)", fontSize: "0.7rem" }}>{menuOpen ? "▲" : "▼"}</span>
-          </button>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <ThemeToggle />
+        {user && (
+          <div>
+            <button
+              ref={triggerRef}
+              type="button"
+              className="app-user-trigger"
+              onClick={() => setMenuOpen((value) => !value)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--muted)",
+                borderRadius: "8px",
+                padding: "0.3rem 0.55rem",
+              }}
+            >
+              {user.avatarUrl ? (
+                <img src={user.avatarUrl} alt={user.login} style={{ width: "24px", height: "24px", borderRadius: "50%" }} />
+              ) : (
+                <span
+                  style={{
+                    width: "24px",
+                    height: "24px",
+                    borderRadius: "999px",
+                    background: "var(--border)",
+                    color: "var(--text)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "0.75rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  {user.login.charAt(0).toUpperCase()}
+                </span>
+              )}
+              <span className="app-user-name" style={{ color: "var(--text)", fontSize: "0.85rem" }}>{user.login}</span>
+              <span style={{ color: "var(--muted)", fontSize: "0.7rem" }}>{menuOpen ? "▲" : "▼"}</span>
+            </button>
 
-          <DropdownMenu
-            anchorRef={triggerRef}
-            open={menuOpen}
-            onClose={() => setMenuOpen(false)}
-            align="end"
-            minWidth={190}
-          >
-            <div role="menu">
-              <Link
-                href="/settings"
-                role="menuitem"
-                onClick={() => setMenuOpen(false)}
-                className="app-dropdown-item"
-              >
-                Settings
-              </Link>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setMenuOpen(false);
-                  void logout().then(() => {
-                    router.replace("/");
-                  });
-                }}
-                className="app-dropdown-item app-dropdown-item-danger"
-              >
-                Logout
-              </button>
-            </div>
-          </DropdownMenu>
-        </div>
-      )}
+            <DropdownMenu
+              anchorRef={triggerRef}
+              open={menuOpen}
+              onClose={() => setMenuOpen(false)}
+              align="end"
+              minWidth={190}
+            >
+              <div role="menu">
+                <Link
+                  href="/settings"
+                  role="menuitem"
+                  onClick={() => setMenuOpen(false)}
+                  className="app-dropdown-item"
+                >
+                  Settings
+                </Link>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void logout().then(() => {
+                      router.replace("/");
+                    });
+                  }}
+                  className="app-dropdown-item app-dropdown-item-danger"
+                >
+                  Logout
+                </button>
+              </div>
+            </DropdownMenu>
+          </div>
+        )}
+      </div>
     </header>
   );
 }

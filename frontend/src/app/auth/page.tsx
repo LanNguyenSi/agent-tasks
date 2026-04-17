@@ -8,6 +8,7 @@ import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import FormField from "../../components/ui/FormField";
 import Card from "../../components/ui/Card";
+import ThemeCorner from "../../components/ThemeCorner";
 
 type Mode = "login" | "register";
 
@@ -74,13 +75,18 @@ export default function AuthPage() {
 
   if (checkingSession) {
     return (
-      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "var(--muted)" }}>Loading…</p>
-      </main>
+      <>
+        <ThemeCorner />
+        <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <p style={{ color: "var(--muted)" }}>Loading…</p>
+        </main>
+      </>
     );
   }
 
   return (
+    <>
+    <ThemeCorner />
     <main
       style={{
         minHeight: "100vh",
@@ -213,5 +219,6 @@ export default function AuthPage() {
         </Card>
       </div>
     </main>
+    </>
   );
 }
