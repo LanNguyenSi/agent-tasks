@@ -184,13 +184,15 @@ same GitHub delegation path and shares the PR cache: when both
 - PR is `closed && !merged` → fails (rejected / closed without merge)
 - Malformed response (missing `merged` or `state` fields) → fails
 
-**Interaction with the webhook path**: GitHub webhooks already set
-task status to `done` on PR merge via a raw `prisma.update` that
-bypasses the rule evaluator entirely (see "What bypasses these
-gates" above). The `prMerged` rule only matters for
-manual/agent-driven transitions where the webhook hasn't arrived
-yet, or when the task's `prNumber` is linked to a PR whose webhook
-events aren't subscribed.
+**Interaction with the webhook path**: GitHub webhooks auto-transition
+tasks on PR merge via a raw `prisma.update` that bypasses the rule
+evaluator entirely (see "What bypasses these gates" above). In the
+default workflow the webhook lands the task in `review` (soloMode
+and custom-workflow tasks still go to `done`; see
+[review-automation-policy.md](review-automation-policy.md)). The
+`prMerged` rule only matters for manual/agent-driven transitions
+where the webhook hasn't arrived yet, or when the task's `prNumber`
+is linked to a PR whose webhook events aren't subscribed.
 
 **Recommended pairing**: add both `prPresent` and `prMerged` to the
 same transition. `prPresent` gives a clean early error when the task
