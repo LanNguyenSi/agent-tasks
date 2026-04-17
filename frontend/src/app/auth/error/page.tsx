@@ -1,10 +1,7 @@
 import Link from "next/link";
-import ThemeCorner from "../../../components/ThemeCorner";
 
 export default function AuthErrorPage() {
   return (
-    <>
-    <ThemeCorner />
     <main
       style={{
         minHeight: "100vh",
@@ -40,6 +37,5 @@ export default function AuthErrorPage() {
         </a>
       </div>
     </main>
-    </>
   );
 }

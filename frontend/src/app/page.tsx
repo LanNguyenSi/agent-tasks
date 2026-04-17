@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getCurrentUser, getTeams } from "../lib/api";
-import ThemeToggle from "../components/ThemeToggle";
 
 export default function HomePage() {
   const router = useRouter();
@@ -34,10 +33,7 @@ export default function HomePage() {
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       <header className="landing-header">
         <span className="landing-logo">agent-tasks</span>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <ThemeToggle />
-          <Link href="/auth" className="landing-header-link">Sign in</Link>
-        </div>
+        <Link href="/auth" className="landing-header-link">Sign in</Link>
       </header>
 
       <main className="landing-shell" style={{ flex: 1 }}>

@@ -10,23 +10,11 @@ import {
   type ThemePreference,
 } from "../lib/theme";
 
-interface ThemeToggleProps {
-  className?: string;
-}
-
-const ORDER: ThemePreference[] = ["system", "light", "dark"];
-
-const LABEL: Record<ThemePreference, string> = {
-  system: "System",
-  light: "Light",
-  dark: "Dark",
-};
-
-const ICON: Record<ThemePreference, string> = {
-  system: "🖥",
-  light: "☀",
-  dark: "☾",
-};
+const OPTIONS: { value: ThemePreference; label: string; hint: string }[] = [
+  { value: "system", label: "System", hint: "Match OS preference" },
+  { value: "light", label: "Light", hint: "Always light" },
+  { value: "dark", label: "Dark", hint: "Always dark" },
+];
 
 function readSystemPrefersDark(): boolean {
   if (typeof window === "undefined" || !window.matchMedia) return false;
@@ -44,7 +32,7 @@ function readStoredPreference(): ThemePreference {
   return "system";
 }
 
-export default function ThemeToggle({ className }: ThemeToggleProps) {
+export default function ThemePreferenceField() {
   const [preference, setPreference] = useState<ThemePreference>("system");
   const [resolved, setResolved] = useState<ResolvedTheme>("dark");
   const [mounted, setMounted] = useState(false);
@@ -71,47 +59,46 @@ export default function ThemeToggle({ className }: ThemeToggleProps) {
     return () => mq.removeEventListener("change", handler);
   }, [mounted, preference]);
 
-  function cycle() {
-    const idx = ORDER.indexOf(preference);
-    const nextPref = ORDER[(idx + 1) % ORDER.length];
-    const nextResolved = resolveTheme(nextPref, readSystemPrefersDark());
-    setPreference(nextPref);
+  function pick(next: ThemePreference) {
+    const nextResolved = resolveTheme(next, readSystemPrefersDark());
+    setPreference(next);
     setResolved(nextResolved);
     applyResolvedTheme(nextResolved);
     try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, nextPref);
+      window.localStorage.setItem(THEME_STORAGE_KEY, next);
     } catch {
       // Ignore storage failures — theme still applies for this session.
     }
   }
 
-  const label = mounted ? LABEL[preference] : LABEL.system;
-  const icon = mounted ? ICON[preference] : ICON.system;
-  const ariaLabel = `Theme: ${label}${preference === "system" ? ` (resolved to ${resolved})` : ""}. Click to change.`;
+  const activePref = mounted ? preference : "system";
 
   return (
-    <button
-      type="button"
-      onClick={cycle}
-      aria-label={ariaLabel}
-      title={ariaLabel}
-      className={className}
-      data-theme-pref={preference}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "0.4rem",
-        border: "1px solid var(--border)",
-        background: "transparent",
-        color: "var(--muted)",
-        borderRadius: "8px",
-        padding: "0.3rem 0.55rem",
-        fontSize: "0.85rem",
-        lineHeight: 1,
-      }}
-    >
-      <span aria-hidden="true" style={{ fontSize: "0.95rem" }}>{icon}</span>
-      <span style={{ color: "var(--text)" }}>{label}</span>
-    </button>
+    <div role="radiogroup" aria-label="Theme preference" data-testid="theme-preference">
+      <div className="view-toggle" style={{ display: "inline-flex" }}>
+        {OPTIONS.map((opt) => {
+          const active = opt.value === activePref;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => pick(opt.value)}
+              title={opt.hint}
+              className={active ? "view-toggle-active" : undefined}
+              data-theme-pref={opt.value}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+      <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "var(--space-2)" }}>
+        {activePref === "system"
+          ? `Following your operating system (currently ${resolved}).`
+          : `Using ${activePref} theme.`}
+      </p>
+    </div>
   );
 }
