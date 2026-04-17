@@ -83,3 +83,5 @@ The following are explicitly **not** automated in the default workflow:
 ## ENGINEERING.md pattern
 
 When a new webhook event type is added, update this policy document first. The matrix is the contract; the code implements the contract.
+
+Likewise, when you change a transition target in the handler, update the matrix in the same PR — out-of-sync policy and handler is the scenario this doc exists to prevent.
