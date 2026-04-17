@@ -48,11 +48,11 @@ function TaskRow({ task, teamId }: { task: EnrichedTask; teamId: string }) {
         <span className="open-task-row-title" style={{ flex: 1, fontSize: "var(--text-sm)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
           {task.title}
         </span>
-        <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
+        <span title={task.projectName} style={{ color: "var(--muted)", fontSize: "var(--text-xs)", maxWidth: "8rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
           {task.projectName}
         </span>
         {task.externalRef && (
-          <span style={{ fontSize: "var(--text-xs)", color: "var(--primary)", background: "var(--primary-muted)", borderRadius: "4px", padding: "0.05rem 0.3rem", fontWeight: 600, fontFamily: "monospace", flexShrink: 0 }}>
+          <span title={task.externalRef} style={{ fontSize: "var(--text-xs)", color: "var(--primary)", background: "var(--primary-muted)", borderRadius: "4px", padding: "0.05rem 0.3rem", fontWeight: 600, fontFamily: "monospace", maxWidth: "6rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
             {task.externalRef}
           </span>
         )}
