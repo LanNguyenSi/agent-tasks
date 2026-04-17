@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-04-17
+
+**Headline: Frontend polish release — theming lands in Settings,
+dashboard widgets load faster, and task-row elements no longer
+break out of their containers.**
+
+### Added
+
+- **Light / dark / system theme toggle** — preference persisted in
+  localStorage; follows `prefers-color-scheme` while set to
+  "system". Inline `<head>` init script resolves the theme before
+  first paint (no FOUC). Light-theme CSS overrides core tokens plus
+  rules with hard-coded dark hexes (form controls, task list, view
+  toggle, modals, alerts, filter chips, dropdowns, landing card,
+  prose blockquote). Vitest coverage for resolution, cycling,
+  persistence, restore, live `prefers-color-scheme` change, and
+  invalid stored-value fallback. (#163)
+- **`taskListInclude`** — lightweight backend include for task-list
+  endpoints (no comments/attachments); `detail=full` query param
+  opts into the full includes on demand. (#162)
+- **Server-side status filter** on the task list endpoint. (#162)
+
+### Changed
+
+- **Theme toggle lives in Settings** — new `ThemePreferenceField`
+  (radio group System / Light / Dark with `aria-checked`) in an
+  Appearance section under `/settings`, with an anchor in the
+  in-page nav. Removed from `AppHeader`, the landing header, and
+  the `ThemeCorner` fallback on auth / onboarding / error / SSO
+  pages. (#165)
+- **Dashboard polling interval** 5s → 15s — less background chatter
+  for the same perceived freshness. (#162)
+
+### Performance
+
+- **Dashboard widget load time reduced** — parallelized
+  `getCurrentUser` + `getTeams` via `Promise.all`, `TaskCard`
+  wrapped in `React.memo` to avoid unnecessary re-renders, and the
+  list endpoint no longer overfetches comments/attachments. Task
+  detail still loads the full payload when a modal opens. (#162)
+
+### Fixed
+
+- **Home widget no longer overflows for long metadata** — the
+  `projectName` span and `externalRef` pill in the home-page
+  TaskRow now cap at 8rem / 6rem with ellipsis truncation plus
+  `minWidth: 0`, so they shrink inside the `minmax(0, 1fr)` grid
+  column instead of forcing the row wider than its Card. `title=`
+  attrs preserve the full value on hover. (#166)
+- **Dashboard TaskCard no longer stretches for long labels** — each
+  label span and the `externalRef` pill now use `maxWidth: 100%` +
+  `overflowWrap: anywhere`, so unbreakable 40+ character tokens
+  wrap inside the card instead of pushing the kanban column wider.
+  `title=` attrs added for consistency. (#167)
+
 ## [0.5.0] - 2026-04-16
 
 **Headline: Custom workflows now work end-to-end with v2 MCP verbs,
