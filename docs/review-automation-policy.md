@@ -22,7 +22,7 @@ Companion to [ADR 0001 — Webhook event model](adr/0001-webhook-event-model.md)
 | `pull_request_review` | `submitted` (changes_requested) | Task is `review` | `review → in_progress` | Add timeline entry: "Changes requested by {reviewer}" | `webhook.changes_requested` |
 | `pull_request_review` | `submitted` (commented) | Any | None | Add timeline entry: "Review comment by {reviewer}" | `webhook.review_commented` |
 | `pull_request_review` | `dismissed` | Any | None | Add timeline entry: "Review dismissed" | `webhook.review_dismissed` |
-| `pull_request` | `closed` + `merged=true` | Task is not `done` | `* → done` | Update metadata: `mergedAt`, `mergedBy` | `webhook.pr_merged` |
+| `pull_request` | `closed` + `merged=true` | Task is not `done` | Default workflow, non-solo: `open/in_progress → review`, `review → review` (no-op — explicit approval still required). Solo-mode or custom workflow: `* → done`. | Update metadata: `mergedAt`, `mergedBy` | `webhook.pr_merged` |
 | `pull_request` | `closed` + `merged=false` | Task is not `done` | **No auto-transition** | Add timeline entry: "PR closed without merge" | `webhook.pr_closed` |
 | `pull_request` | `opened` | — | None | Add timeline entry: "PR opened"; update `prUrl`, `prNumber` if unset | `webhook.pr_opened` |
 | `pull_request` | `synchronize` | — | None | Add timeline entry: "PR updated (new commits)" | `webhook.pr_synchronized` |
@@ -35,8 +35,12 @@ A single approval does not necessarily mean the task is done. Teams may require 
 **Why auto-transition on changes requested?**
 Changes requested is an unambiguous signal that the task needs more work. Sending it back to `in_progress` is the conservative, expected behavior. The assignee can re-submit for review when ready.
 
-**Why auto-transition on PR merged?**
-In the default workflow, `done` means the task's modeled lifecycle is complete. A merged PR is the strongest external signal that the work is finished. This is the one transition where automation matches universal expectation.
+**Why PR merged lands in `review` (and not `done`) by default?**
+In the default workflow `review → done` is a real gate: the reviewer — human or agent via `task_finish({ outcome: "approve" })` — signs off on more than just the code landing. A merged PR means the code shipped, not that the task is approved, so the webhook hands the task off for explicit review instead of closing it. Tasks already in `review` stay in `review` (no self-approval from a merge event).
+
+Two escape hatches preserve the old "merge ⇒ done" shortcut where it matches intent:
+- **`soloMode` projects** (ADR-0010) opt out of review-gating entirely. A merge still moves solo tasks straight to `done`.
+- **Tasks bound to a custom workflow** fall back to `done` for now, because the webhook doesn't know which custom state corresponds to "ready for review". Proper custom-workflow handling is tracked under `webhookPolicy` (below).
 
 **Why no auto-transition on PR closed without merge?**
 Closing a PR without merging is ambiguous — it could mean the approach was abandoned, replaced by another PR, or accidentally closed. The task should not silently move to `done`. A timeline entry alerts the assignee.

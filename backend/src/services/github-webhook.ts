@@ -196,13 +196,39 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
   }
 }
 
+/**
+ * Decide the post-merge status for a task when a webhook reports its PR
+ * was merged. Returns null to mean "no transition" (idempotent or explicit
+ * approval still required).
+ *
+ * - soloMode → always target `done` (preserves ADR-0010 auto-merge semantics).
+ * - Custom workflows (task.workflowId set) → legacy `done` until
+ *   custom-workflow webhook policy lands, since we can't safely pick a
+ *   target state machine we don't know.
+ * - Default workflow, non-solo:
+ *     - `review` or `done` → no transition (explicit approval required).
+ *     - anything else (open/in_progress) → `review` to hand off for review.
+ */
+export function pickMergeTargetStatus(input: {
+  soloMode: boolean;
+  hasCustomWorkflow: boolean;
+  currentStatus: string;
+}): string | null {
+  const { soloMode, hasCustomWorkflow, currentStatus } = input;
+  if (currentStatus === "done") return null;
+  if (soloMode) return "done";
+  if (hasCustomWorkflow) return "done";
+  if (currentStatus === "review") return null;
+  return "review";
+}
+
 /** Process a GitHub pull_request event — per review-automation-policy.md */
 export async function handlePullRequestEvent(payload: GitHubPullRequestPayload): Promise<void> {
   const repoFullName = payload.repository.full_name;
 
   const projects = await prisma.project.findMany({
     where: { githubRepo: repoFullName },
-    select: { id: true },
+    select: { id: true, soloMode: true },
   });
 
   if (projects.length === 0) return;
@@ -242,13 +268,26 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
       const tasks = await findTasksByPr(project.id, hint);
 
       if (payload.pull_request.merged) {
-        // Policy: PR merged → done
+        // Policy: PR merged → done (soloMode) OR → review (non-solo, default
+        // workflow, pre-review state). Projects with a custom workflow keep
+        // the legacy "→ done" behavior until custom-workflow policy lands.
+        //
+        // Rationale: soloMode projects skip review by design (ADR-0010). For
+        // non-solo projects the review state is a real gate — merging the PR
+        // on GitHub should hand the task off for explicit approval via
+        // task_finish({ outcome: "approve" }), not terminate it silently.
         const mergedBy = payload.pull_request.merged_by?.login ?? "unknown";
         for (const task of tasks) {
-          if (task.status !== "done") {
+          const toStatus = pickMergeTargetStatus({
+            soloMode: project.soloMode,
+            hasCustomWorkflow: task.workflowId !== null,
+            currentStatus: task.status,
+          });
+
+          if (toStatus !== null && toStatus !== task.status) {
             await prisma.task.update({
               where: { id: task.id },
-              data: { status: "done" },
+              data: { status: toStatus },
             });
           }
           await addTimelineComment(task.id, `PR #${prNumber} merged by ${mergedBy}`);
@@ -256,7 +295,14 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
             action: "task.transitioned",
             projectId: project.id,
             taskId: task.id,
-            payload: { source: "github_webhook", event: "pr_merged", pr_number: prNumber, merged_by: mergedBy, from: task.status, to: "done" },
+            payload: {
+              source: "github_webhook",
+              event: "pr_merged",
+              pr_number: prNumber,
+              merged_by: mergedBy,
+              from: task.status,
+              to: toStatus ?? task.status,
+            },
           });
         }
       } else {

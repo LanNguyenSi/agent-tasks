@@ -34,11 +34,11 @@ import { handlePullRequestReviewEvent, handlePullRequestEvent } from "../../src/
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+  mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: false }]);
 });
 
 function makeTask(overrides = {}) {
-  return { id: "task-1", projectId: "proj-1", status: "review", prNumber: 42, prUrl: "https://github.com/test/repo/pull/42", ...overrides };
+  return { id: "task-1", projectId: "proj-1", status: "review", prNumber: 42, prUrl: "https://github.com/test/repo/pull/42", workflowId: null, ...overrides };
 }
 
 describe("handlePullRequestReviewEvent", () => {
@@ -167,8 +167,38 @@ describe("handlePullRequestEvent", () => {
     },
   };
 
-  it("transitions task to done on PR merged", async () => {
+  it("transitions in_progress → review on PR merged (non-solo, default workflow)", async () => {
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress" })]);
+
+    await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
+
+    expect(mockTaskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { status: "review" },
+    });
+    expect(mockCommentCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        content: expect.stringContaining("merged by merger"),
+      }),
+    });
+  });
+
+  it("leaves task in review on PR merged (non-solo — explicit approval still required)", async () => {
     mockTaskFindMany.mockResolvedValue([makeTask({ status: "review" })]);
+
+    await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
+
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockCommentCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        content: expect.stringContaining("merged by merger"),
+      }),
+    });
+  });
+
+  it("transitions task to done on PR merged when project is soloMode", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: true }]);
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress" })]);
 
     await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
 
@@ -176,10 +206,18 @@ describe("handlePullRequestEvent", () => {
       where: { id: "task-1" },
       data: { status: "done" },
     });
-    expect(mockCommentCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        content: expect.stringContaining("merged by merger"),
-      }),
+  });
+
+  it("transitions task to done on PR merged when task has a custom workflow", async () => {
+    mockTaskFindMany.mockResolvedValue([
+      makeTask({ status: "in_progress", workflowId: "workflow-1" }),
+    ]);
+
+    await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
+
+    expect(mockTaskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { status: "done" },
     });
   });
 
