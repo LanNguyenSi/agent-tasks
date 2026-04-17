@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import ThemeToggle from "../../src/components/ThemeToggle";
+import ThemePreferenceField from "../../src/components/ThemePreferenceField";
 import { THEME_STORAGE_KEY, resolveTheme } from "../../src/lib/theme";
 
 function mockMatchMedia(prefersDark: boolean) {
@@ -38,39 +38,38 @@ describe("resolveTheme", () => {
   });
 });
 
-describe("ThemeToggle", () => {
+describe("ThemePreferenceField", () => {
   beforeEach(() => {
     window.localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.style.colorScheme = "";
   });
 
-  it("defaults to system and applies resolved theme from matchMedia", async () => {
+  it("renders three radios and applies the resolved system theme by default", async () => {
     mockMatchMedia(true);
-    render(<ThemeToggle />);
-    const btn = await screen.findByRole("button");
-    expect(btn).toHaveAttribute("data-theme-pref", "system");
+    render(<ThemePreferenceField />);
+    const radios = await screen.findAllByRole("radio");
+    expect(radios).toHaveLength(3);
+    const checked = radios.find((r) => r.getAttribute("aria-checked") === "true");
+    expect(checked?.getAttribute("data-theme-pref")).toBe("system");
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
   });
 
-  it("cycles system → light → dark → system and persists the choice", async () => {
+  it("selecting a value persists it and applies the resolved theme immediately", async () => {
     mockMatchMedia(false);
-    render(<ThemeToggle />);
-    const btn = await screen.findByRole("button");
+    render(<ThemePreferenceField />);
+    await screen.findAllByRole("radio");
     const user = userEvent.setup();
 
-    await user.click(btn);
-    expect(btn).toHaveAttribute("data-theme-pref", "light");
-    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
-    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
-
-    await user.click(btn);
-    expect(btn).toHaveAttribute("data-theme-pref", "dark");
+    await user.click(screen.getByRole("radio", { name: "Dark" }));
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark");
 
-    await user.click(btn);
-    expect(btn).toHaveAttribute("data-theme-pref", "system");
+    await user.click(screen.getByRole("radio", { name: "Light" }));
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
+
+    await user.click(screen.getByRole("radio", { name: "System" }));
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("system");
   });
@@ -78,25 +77,26 @@ describe("ThemeToggle", () => {
   it("restores a stored preference on mount", async () => {
     window.localStorage.setItem(THEME_STORAGE_KEY, "light");
     mockMatchMedia(true);
-    render(<ThemeToggle />);
-    const btn = await screen.findByRole("button");
-    expect(btn).toHaveAttribute("data-theme-pref", "light");
+    render(<ThemePreferenceField />);
+    const radios = await screen.findAllByRole("radio");
+    const checked = radios.find((r) => r.getAttribute("aria-checked") === "true");
+    expect(checked?.getAttribute("data-theme-pref")).toBe("light");
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
   });
 
   it("falls back to system when stored value is invalid", async () => {
     window.localStorage.setItem(THEME_STORAGE_KEY, "neon");
     mockMatchMedia(true);
-    render(<ThemeToggle />);
-    const btn = await screen.findByRole("button");
-    expect(btn).toHaveAttribute("data-theme-pref", "system");
-    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    render(<ThemePreferenceField />);
+    const radios = await screen.findAllByRole("radio");
+    const checked = radios.find((r) => r.getAttribute("aria-checked") === "true");
+    expect(checked?.getAttribute("data-theme-pref")).toBe("system");
   });
 
   it("follows live system changes while pref is 'system'", async () => {
     const mq = mockMatchMedia(false);
-    render(<ThemeToggle />);
-    await screen.findByRole("button");
+    render(<ThemePreferenceField />);
+    await screen.findAllByRole("radio");
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
 
     act(() => mq.fire(true));

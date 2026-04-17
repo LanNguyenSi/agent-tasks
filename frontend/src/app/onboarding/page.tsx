@@ -8,7 +8,6 @@ import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
 import FormField from "../../components/ui/FormField";
-import ThemeCorner from "../../components/ThemeCorner";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -71,18 +70,13 @@ export default function OnboardingPage() {
 
   if (loading || step === "loading" || step === "redirect") {
     return (
-      <>
-        <ThemeCorner />
-        <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <p style={{ color: "var(--muted)" }}>Loading…</p>
-        </main>
-      </>
+      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <p style={{ color: "var(--muted)" }}>Loading…</p>
+      </main>
     );
   }
 
   return (
-    <>
-    <ThemeCorner />
     <main
       style={{
         minHeight: "100vh",
@@ -166,6 +160,5 @@ export default function OnboardingPage() {
         </Card>
       </div>
     </main>
-    </>
   );
 }
