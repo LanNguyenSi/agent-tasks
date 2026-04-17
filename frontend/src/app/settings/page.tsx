@@ -24,6 +24,7 @@ import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import FormField from "../../components/ui/FormField";
 import Select from "@/components/ui/Select";
 import ConnectAgentModal from "../../components/ConnectAgentModal";
+import ThemePreferenceField from "../../components/ThemePreferenceField";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -208,6 +209,7 @@ export default function SettingsPage() {
 
       <nav style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", fontSize: "var(--text-sm)" }}>
         <a href="#account" style={{ color: "var(--muted)" }}>Account</a>
+        <a href="#appearance" style={{ color: "var(--muted)" }}>Appearance</a>
         <a href="#github" style={{ color: "var(--muted)" }}>GitHub</a>
         <a href="#sso" style={{ color: "var(--muted)" }}>Enterprise SSO</a>
         <a href="#delegation" style={{ color: "var(--muted)" }}>Agent Permissions</a>
@@ -220,6 +222,16 @@ export default function SettingsPage() {
           <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.25rem" }}>Login: {user?.login}</p>
           <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.25rem" }}>Name: {user?.name ?? "-"}</p>
           <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>Email: {user?.email ?? "-"}</p>
+        </section>
+      </Card>
+
+      <Card style={{ marginBottom: "var(--space-4)" }}>
+        <section id="appearance">
+          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "0.5rem" }}>Appearance</h2>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "var(--space-3)" }}>
+            Choose how agent-tasks looks on this device. The preference is stored locally in your browser.
+          </p>
+          <ThemePreferenceField />
         </section>
       </Card>
 
