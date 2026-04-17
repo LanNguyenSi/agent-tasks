@@ -6,7 +6,6 @@ import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
 import FormField from "../../../components/ui/FormField";
-import ThemeCorner from "../../../components/ThemeCorner";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -174,8 +173,6 @@ export default function SsoSettingsPage() {
   }
 
   return (
-    <>
-    <ThemeCorner />
     <main style={{ maxWidth: "720px", margin: "0 auto", padding: "var(--space-6) var(--space-4)" }}>
       <div style={{ marginBottom: "var(--space-4)" }}>
         <Link href="/settings" style={{ color: "var(--muted)", fontSize: "var(--text-sm)", textDecoration: "none" }}>
@@ -331,6 +328,5 @@ export default function SsoSettingsPage() {
         </>
       )}
     </main>
-    </>
   );
 }
