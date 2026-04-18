@@ -5,6 +5,142 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-04-18
+
+**Headline: Typed artifacts pipeline stages can hand to each other,
+server-side PR create + merge with a structural self-merge gate, and
+the settings UI now reads its scope list from the backend so the two
+can no longer drift.**
+
+Two load-bearing feature releases plus the ops-side finish that keeps
+`sso:admin` from silently disappearing again. The migration story for
+operators is small but real: tokens minted before v0.7 that opened or
+merged PRs through agent-tasks need to be re-minted with the new
+`github:pr_create` / `github:pr_merge` scopes. See **Migration** at
+the bottom.
+
+### Added
+
+#### Typed task artifacts (#171)
+
+- **New `TaskArtifact` model** distinct from `TaskAttachment`. Typed,
+  agent-produced task outputs — `build_log`, `test_report`,
+  `generated_code`, `coverage`, `diff`, `other`. Attachments remain
+  the human-uploaded metadata surface with no semantics.
+- **REST**: `POST /api/tasks/:id/artifacts` (create, scope
+  `tasks:update`), `GET /api/tasks/:id/artifacts` (list, metadata
+  only), `GET /api/tasks/:id/artifacts/:artifactId` (single, with
+  `content`), `DELETE /api/tasks/:id/artifacts/:artifactId` (creator
+  or project admin). Inline payload capped at **1 MiB** with a
+  runtime UTF-8 byte-length re-check — multi-byte overflow is a
+  `413`, not a truncated blob. URLs capped at 2048 chars.
+- **MCP v2 verbs**: `task_artifact_create`, `task_artifact_list`,
+  `task_artifact_get`. Typical pipeline pattern: Stage N reads Stage
+  N-1's typed outputs via `task_artifact_list` + `task_artifact_get`
+  instead of scraping comments.
+- **UI**: task-detail modal gains an Artifacts section grouped by
+  type, lazy content fetch, text preview, blob download. Delete
+  affordance for creator + project admin (backend re-validates).
+- **Audit**: `task.artifact.created` / `task.artifact.deleted`
+  entries with type, size, and actor payload.
+- **Docs**: new `docs/artifacts.md` with the full contract, storage
+  limits, audit catalogue. Known gap documented: no per-task
+  aggregate count cap yet (tracked as a follow-up).
+
+#### Server-side PR lifecycle + self-merge gate (#172)
+
+- **New `task_merge` MCP verb** and `POST /api/tasks/:id/merge` REST
+  endpoint — task-scoped merge that derives owner/repo/PR number
+  from the task's project metadata. Preferred over the older
+  `pull_requests_merge` tool for anyone holding a task id.
+- **Self-merge gate** (`services/review-gate.ts::checkSelfMergeGate`)
+  shared by all four merge paths: the new `task_merge` route, the
+  existing `POST /api/github/pull-requests/:n/merge`, and both
+  `autoMerge: true` branches of `task_finish`. Blocks
+  `actor == work-claim holder` when
+  `project.requireDistinctReviewer=true && project.soloMode=false`.
+  Runs before the broader distinct-reviewer gate so callers receive
+  the narrower `self_merge_blocked` error code rather than the
+  generic `forbidden`. Rejected attempts audit as
+  `task.pr_merged.blocked_self_merge` with the via-tag, actor,
+  claimant, and task id.
+- **New token scopes** `github:pr_create` and `github:pr_merge`
+  (`services/scopes.ts::ALL_SCOPES`). `POST /api/github/pull-requests`
+  now requires `tasks:update` **and** `github:pr_create`;
+  `POST /api/github/pull-requests/:n/merge` requires
+  `tasks:transition` **and** `github:pr_merge`. Existing tokens do
+  **not** auto-gain the new scopes — operators re-mint.
+  Token-creation validates with `z.enum(ALL_SCOPES)` so typos like
+  `github:pr-create` fail loudly at mint time instead of producing a
+  permanently-403'd token.
+- **Un-deprecated** `pull_requests_create` and `pull_requests_merge`
+  MCP tools. Descriptions updated to document the new scope
+  requirements; the historic `gh` CLI fallback path still works for
+  orgs that prefer not to share a GitHub identity with agent-tasks.
+- **Audit**: new `task.merged` (successful server-side merge via the
+  new verb) and `task.pr_merged.blocked_self_merge` actions.
+
+#### Canonical scope list endpoint (fix/scope-ui-backend-drift)
+
+- **New `GET /api/agent-tokens/scopes`** returns `{ id, label }[]`
+  from `services/scopes.ts::ALL_SCOPES` / `SCOPE_LABELS`. The
+  settings UI fetches from it instead of hard-coding its own list,
+  so the two sources of truth can't drift again (they already had —
+  the new GitHub scopes were invisible in the UI before this fix).
+
+### Fixed
+
+- **`sso:admin` scope was silently excluded** when #172 narrowed the
+  token-creation schema to `z.enum(ALL_SCOPES)`. Minting a token
+  with that scope was returning 400 even though `routes/sso.ts` was
+  still enforcing it at runtime. Re-added to `ALL_SCOPES`; a new
+  regression test pins the scope in place.
+- **Non-solo default-workflow tasks** now land in `review` when their
+  PR merges on GitHub, instead of skipping straight to `done` and
+  stranding downstream `task_finish` calls with 409s. (#169)
+
+### Documentation
+
+- `docs/agent-workflow.md` gains a "Server-side PR lifecycle"
+  section describing the new `task_merge` flow, the self-merge
+  rejection semantics, the scope-by-scope matrix, and a legacy
+  gh-CLI fallback block clearly labelled as such.
+- `docs/api-contract.md` adds entries for the new artifact routes,
+  the new `/tasks/:id/merge`, and the two github-delegation routes
+  with their scope requirements.
+- Policy-matrix + handler note (#170) — documents that the two stay
+  in lockstep, no code change.
+
+### Migration
+
+Operators running agent-tasks in production should read this before
+rolling out.
+
+1. **Re-mint tokens that open or merge PRs.** Any token that used
+   `pull_requests_create` or `pull_requests_merge` pre-v0.7 was
+   silently passing with `tasks:update` / `tasks:transition` alone.
+   Starting with this release those paths also require
+   `github:pr_create` / `github:pr_merge`. Expect 403 until
+   re-minted. The Settings UI surfaces the new scopes once
+   #fix-scope-ui-drift is deployed.
+2. **Self-merge rejection is new.** Projects with
+   `requireDistinctReviewer=true && !soloMode` will now refuse to
+   merge when the actor is the work-claim holder, including via
+   `task_finish { outcome: "approve", autoMerge: true }`. Workflows
+   that relied on a single-agent approve+merge need a second actor
+   or need to opt the project into `soloMode`.
+3. **`sso:admin` tokens minted between #172 and the hotfix**
+   silently dropped the scope. If any such token exists, re-mint
+   it — the SSO routes still enforce the scope at request time, so
+   those tokens will 403 on SSO admin calls.
+
+### Internals
+
+- 493 → 495 backend tests (gate + scope-validation + token-route
+  tests added inline with the feature commits).
+- No schema-breaking changes; the `TaskArtifact` table is new
+  (additive), no existing columns renamed.
+
 ## [0.6.0] - 2026-04-17
 
 **Headline: Frontend polish release — theming lands in Settings,
