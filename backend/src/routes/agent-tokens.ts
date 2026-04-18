@@ -5,9 +5,20 @@ import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import { createAgentToken, listAgentTokens, revokeAgentToken } from "../services/agent-token-service.js";
-import { ALL_SCOPES } from "../services/scopes.js";
+import { ALL_SCOPES, SCOPE_LABELS } from "../services/scopes.js";
 
 export const agentTokenRouter = new Hono<{ Variables: AppVariables }>();
+
+// GET /api/agent-tokens/scopes — the canonical scope list + human labels.
+// The settings UI fetches this instead of hard-coding its own list so the
+// two sources of truth stay in lockstep. Public (no team required) because
+// the list is not sensitive — it's the menu of permissions a token can
+// carry, not any actual grants.
+agentTokenRouter.get("/scopes", (c) => {
+  return c.json({
+    scopes: ALL_SCOPES.map((id) => ({ id, label: SCOPE_LABELS[id] })),
+  });
+});
 
 const createTokenSchema = z.object({
   teamId: z.string().uuid(),

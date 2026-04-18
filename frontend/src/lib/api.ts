@@ -246,6 +246,16 @@ export async function getAgentTokens(teamId: string): Promise<AgentToken[]> {
   return data.tokens;
 }
 
+export interface ScopeDescriptor {
+  id: string;
+  label: string;
+}
+
+export async function getAvailableScopes(): Promise<ScopeDescriptor[]> {
+  const data = await request<{ scopes: ScopeDescriptor[] }>(`/api/agent-tokens/scopes`);
+  return data.scopes;
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export async function getCurrentUser(): Promise<User | null> {

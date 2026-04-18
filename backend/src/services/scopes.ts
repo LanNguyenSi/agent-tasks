@@ -29,9 +29,34 @@ export const ALL_SCOPES = [
   // the older gh-CLI workflow where agents carry their own GitHub token.
   "github:pr_create",
   "github:pr_merge",
+  // SSO connection management — team-scoped sensitive write. Enforced in
+  // `backend/src/routes/sso.ts` via a direct `actor.scopes.includes(...)`
+  // check. Kept in this enum so (a) token-creation validates it as a real
+  // scope and (b) the settings UI surfaces it alongside the others.
+  "sso:admin",
 ] as const;
 
 export type Scope = (typeof ALL_SCOPES)[number];
+
+/**
+ * Human-facing labels for each scope, shown in the settings UI when a user
+ * mints an agent token. Kept in this file so frontend and backend source
+ * from the same place and cannot drift; the settings page fetches via the
+ * `GET /api/agent-tokens/scopes` endpoint.
+ */
+export const SCOPE_LABELS: Record<Scope, string> = {
+  "tasks:read": "Read tasks",
+  "tasks:create": "Create tasks",
+  "tasks:claim": "Claim tasks",
+  "tasks:comment": "Comment on tasks",
+  "tasks:transition": "Transition tasks",
+  "tasks:update": "Update task fields (branch, PR, result)",
+  "projects:read": "Read projects",
+  "boards:read": "Read boards",
+  "github:pr_create": "Open pull requests on behalf of a team member (server-side)",
+  "github:pr_merge": "Merge pull requests on behalf of a team member (server-side)",
+  "sso:admin": "Manage SSO connection (team-scoped, sensitive)",
+};
 
 export const SCOPES = {
   TasksRead: "tasks:read",
@@ -44,4 +69,5 @@ export const SCOPES = {
   BoardsRead: "boards:read",
   GithubPrCreate: "github:pr_create",
   GithubPrMerge: "github:pr_merge",
+  SsoAdmin: "sso:admin",
 } as const satisfies Record<string, Scope>;
