@@ -132,6 +132,63 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         wrap(() => client.submitPr(taskId, input)),
     }),
 
+    // ── Artifacts (v2) ───────────────────────────────────────────────────
+    //
+    // Typed, agent-produced task outputs. Unlike attachments (human-uploaded
+    // metadata), artifacts carry semantics — later pipeline stages read the
+    // outputs of earlier ones (e.g. Stage N reads Stage N-1's `test_report`).
+    def({
+      name: "task_artifact_create",
+      description:
+        "Record a typed, agent-produced output on a task (build_log, test_report, generated_code, coverage, diff, other). Inline content is capped at 1 MiB; larger payloads must be uploaded externally and referenced via `url`. Either `content` or `url` is required. Requires the tasks:update scope for agent callers. Task-scoped: no claim required, but the caller must have project access.",
+      inputShape: {
+        taskId: uuid(),
+        type: z.enum([
+          "build_log",
+          "test_report",
+          "generated_code",
+          "coverage",
+          "diff",
+          "other",
+        ]),
+        name: z.string().min(1).max(255),
+        description: z.string().max(1000).optional(),
+        content: z.string().max(1_048_576).optional(),
+        url: z.string().url().max(2048).optional(),
+        mimeType: z.string().max(255).optional(),
+      },
+      handler: async ({ taskId, ...input }) =>
+        wrap(() => client.createTaskArtifact(taskId, input)),
+    }),
+    def({
+      name: "task_artifact_list",
+      description:
+        "List artifact metadata for a task (most recent first). Payload bytes are not included — use task_artifact_get to fetch a single artifact with its `content`. Optional `type` filter matches the artifact-type enum exactly.",
+      inputShape: {
+        taskId: uuid(),
+        type: z
+          .enum([
+            "build_log",
+            "test_report",
+            "generated_code",
+            "coverage",
+            "diff",
+            "other",
+          ])
+          .optional(),
+      },
+      handler: async ({ taskId, type }) =>
+        wrap(() => client.listTaskArtifacts(taskId, type)),
+    }),
+    def({
+      name: "task_artifact_get",
+      description:
+        "Fetch a single artifact including its inline `content` (if any) and `url` (if external). Use this when a later pipeline stage needs the output of an earlier stage. Requires the tasks:read scope for agent callers.",
+      inputShape: { taskId: uuid(), artifactId: uuid() },
+      handler: async ({ taskId, artifactId }) =>
+        wrap(() => client.getTaskArtifact(taskId, artifactId)),
+    }),
+
     // ── v1 surface (deprecated) ──────────────────────────────────────────
     def({
       name: "projects_list",

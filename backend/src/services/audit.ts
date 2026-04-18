@@ -32,6 +32,8 @@ export type AuditAction =
   | "task.auto_merged"
   | "task.auto_merge_post_assert_failed"
   | "task.imported"
+  | "task.artifact.created"
+  | "task.artifact.deleted"
   // Workflow mutations — added so admins editing gates, renaming
   // states, or dropping a custom workflow leave a reconstructible
   // trail. Previously the only record was `updated_at` on the row,

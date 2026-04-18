@@ -20,6 +20,7 @@ import {
 } from "../lib/api";
 import { calculateConfidence } from "../lib/confidence";
 import ConfidenceBadge from "./ConfidenceBadge";
+import TaskArtifactsSection from "./TaskArtifactsSection";
 import { Button } from "./ui/Button";
 import ConfirmDialog from "./ui/ConfirmDialog";
 import FormField from "./ui/FormField";
@@ -732,6 +733,14 @@ export default function TaskDetailModal({
             </div>
           </section>
         )}
+
+        {/* ── Artifacts ─────────────────────────────────────────── */}
+        <TaskArtifactsSection
+          taskId={task.id}
+          initial={task.artifacts}
+          user={user}
+          onError={onError}
+        />
 
         {/* ── Comments ──────────────────────────────────────────── */}
         <section>

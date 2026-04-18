@@ -45,6 +45,26 @@ export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
 const taskInclude = {
   attachments: { orderBy: { createdAt: "desc" as const } },
+  artifacts: {
+    orderBy: { createdAt: "desc" as const },
+    // Omit `content` in the default task view — artifact payloads can be large
+    // (up to ARTIFACT_MAX_BYTES). Clients fetch individual artifacts to get content.
+    select: {
+      id: true,
+      taskId: true,
+      type: true,
+      name: true,
+      description: true,
+      url: true,
+      mimeType: true,
+      sizeBytes: true,
+      createdByUserId: true,
+      createdByAgentId: true,
+      createdAt: true,
+      createdByUser: { select: { id: true, login: true, name: true, avatarUrl: true } },
+      createdByAgent: { select: { id: true, name: true } },
+    },
+  },
   comments: {
     orderBy: { createdAt: "asc" as const },
     include: {
@@ -145,6 +165,41 @@ const createAttachmentSchema = z.object({
   name: z.string().min(1).max(255),
   url: z.string().url(),
 });
+
+// ── Artifact config / validation ─────────────────────────────────────────────
+//
+// Artifacts are typed, agent-produced task outputs. Distinct from TaskAttachment,
+// which is a human-uploaded metadata pointer. See /docs/artifacts.md for details.
+
+const ARTIFACT_TYPES = [
+  "build_log",
+  "test_report",
+  "generated_code",
+  "coverage",
+  "diff",
+  "other",
+] as const;
+
+// Cap per artifact when content is stored inline. 1 MiB is large enough for a
+// typical test-log / coverage-summary and small enough to keep task rows healthy.
+// Larger payloads must be uploaded externally and referenced via `url`.
+const ARTIFACT_MAX_BYTES = 1_048_576;
+
+const createArtifactSchema = z
+  .object({
+    type: z.enum(ARTIFACT_TYPES),
+    name: z.string().min(1).max(255),
+    description: z.string().max(1000).optional(),
+    content: z.string().max(ARTIFACT_MAX_BYTES).optional(),
+    // Cap URL length so a bogus multi-megabyte "url" string can't reach the DB.
+    // 2048 matches the common browser cap for hyperlinks.
+    url: z.string().url().max(2048).optional(),
+    mimeType: z.string().max(255).optional(),
+  })
+  .refine((v) => Boolean(v.content) || Boolean(v.url), {
+    message: "Either 'content' (inline payload) or 'url' (external pointer) must be provided",
+    path: ["content"],
+  });
 
 // ── List tasks for a project ─────────────────────────────────────────────────
 
@@ -2168,6 +2223,177 @@ taskRouter.delete("/tasks/:id/attachments/:attachmentId", async (c) => {
   }
 
   await prisma.taskAttachment.delete({ where: { id: attachment.id } });
+  return c.json({ success: true });
+});
+
+// ── Artifacts ─────────────────────────────────────────────────────────────────
+
+const artifactMetaSelect = {
+  id: true,
+  taskId: true,
+  type: true,
+  name: true,
+  description: true,
+  url: true,
+  mimeType: true,
+  sizeBytes: true,
+  createdByUserId: true,
+  createdByAgentId: true,
+  createdAt: true,
+  createdByUser: { select: { id: true, login: true, name: true, avatarUrl: true } },
+  createdByAgent: { select: { id: true, name: true } },
+} as const;
+
+taskRouter.get("/tasks/:id/artifacts", async (c) => {
+  const actor = c.get("actor") as Actor;
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:read")) {
+    return forbidden(c, "Missing scope: tasks:read");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const typeFilter = c.req.query("type");
+  const where: Prisma.TaskArtifactWhereInput = { taskId: task.id };
+  if (typeFilter) {
+    const parsed = z.enum(ARTIFACT_TYPES).safeParse(typeFilter);
+    if (!parsed.success) {
+      return c.json({ error: `Unknown artifact type: ${typeFilter}` }, 400);
+    }
+    where.type = parsed.data;
+  }
+
+  const artifacts = await prisma.taskArtifact.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    select: artifactMetaSelect,
+  });
+
+  return c.json({ artifacts });
+});
+
+taskRouter.get("/tasks/:id/artifacts/:artifactId", async (c) => {
+  const actor = c.get("actor") as Actor;
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:read")) {
+    return forbidden(c, "Missing scope: tasks:read");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const artifact = await prisma.taskArtifact.findUnique({
+    where: { id: c.req.param("artifactId") },
+    include: {
+      createdByUser: { select: { id: true, login: true, name: true, avatarUrl: true } },
+      createdByAgent: { select: { id: true, name: true } },
+    },
+  });
+  if (!artifact || artifact.taskId !== task.id) return notFound(c);
+
+  return c.json({ artifact });
+});
+
+taskRouter.post("/tasks/:id/artifacts", zValidator("json", createArtifactSchema), async (c) => {
+  const actor = c.get("actor") as Actor;
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:update")) {
+    return forbidden(c, "Missing scope: tasks:update");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const body = c.req.valid("json");
+  const sizeBytes = body.content ? Buffer.byteLength(body.content, "utf8") : 0;
+  if (sizeBytes > ARTIFACT_MAX_BYTES) {
+    return c.json(
+      { error: `Artifact exceeds inline size limit of ${ARTIFACT_MAX_BYTES} bytes; use 'url' for larger payloads` },
+      413,
+    );
+  }
+
+  const artifact = await prisma.taskArtifact.create({
+    data: {
+      taskId: task.id,
+      type: body.type,
+      name: body.name,
+      description: body.description ?? null,
+      content: body.content ?? null,
+      url: body.url ?? null,
+      mimeType: body.mimeType ?? null,
+      sizeBytes,
+      createdByUserId: actor.type === "human" ? actor.userId : null,
+      createdByAgentId: actor.type === "agent" ? actor.tokenId : null,
+    },
+    include: {
+      createdByUser: { select: { id: true, login: true, name: true, avatarUrl: true } },
+      createdByAgent: { select: { id: true, name: true } },
+    },
+  });
+
+  void logAuditEvent({
+    action: "task.artifact.created",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: {
+      actorType: actor.type,
+      artifactId: artifact.id,
+      artifactType: artifact.type,
+      sizeBytes: artifact.sizeBytes,
+    },
+  });
+
+  return c.json({ artifact }, 201);
+});
+
+taskRouter.delete("/tasks/:id/artifacts/:artifactId", async (c) => {
+  const actor = c.get("actor") as Actor;
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:update")) {
+    return forbidden(c, "Missing scope: tasks:update");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const artifact = await prisma.taskArtifact.findUnique({
+    where: { id: c.req.param("artifactId") },
+  });
+  if (!artifact || artifact.taskId !== task.id) return notFound(c);
+
+  const isCreator =
+    (actor.type === "human" && artifact.createdByUserId === actor.userId) ||
+    (actor.type === "agent" && artifact.createdByAgentId === actor.tokenId);
+  const isAdmin = actor.type === "human" && (await hasProjectRole(actor, task.projectId, "ADMIN"));
+  if (!isCreator && !isAdmin) {
+    return forbidden(c, "Only the artifact creator or a project admin can delete this artifact");
+  }
+
+  await prisma.taskArtifact.delete({ where: { id: artifact.id } });
+
+  void logAuditEvent({
+    action: "task.artifact.deleted",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: { actorType: actor.type, artifactId: artifact.id, artifactType: artifact.type },
+  });
+
   return c.json({ success: true });
 });
 
