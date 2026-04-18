@@ -198,6 +198,34 @@ export class AgentTasksClient {
     return this.request<unknown>("GET", "/api/agent/signals");
   }
 
+  // ── Artifacts ────────────────────────────────────────────────────────────
+  //
+  // Typed, agent-produced task outputs (build logs, test reports, etc.).
+  // List returns metadata only; get-by-id returns the payload.
+
+  listTaskArtifacts(taskId: string, type?: string) {
+    const qs = type ? `?type=${encodeURIComponent(type)}` : "";
+    return this.request<unknown>("GET", `/api/tasks/${taskId}/artifacts${qs}`);
+  }
+
+  getTaskArtifact(taskId: string, artifactId: string) {
+    return this.request<unknown>("GET", `/api/tasks/${taskId}/artifacts/${artifactId}`);
+  }
+
+  createTaskArtifact(
+    taskId: string,
+    input: {
+      type: string;
+      name: string;
+      description?: string;
+      content?: string;
+      url?: string;
+      mimeType?: string;
+    },
+  ) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/artifacts`, input);
+  }
+
   ackSignal(signalId: string) {
     return this.request<unknown>("POST", `/api/agent/signals/${signalId}/ack`);
   }

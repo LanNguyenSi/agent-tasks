@@ -41,6 +41,7 @@ model User {
   reviews     Task[]         @relation("TaskReviewer")
   signals     Signal[]       @relation("SignalRecipientUser")
   comments    Comment[]      @relation("CommentAuthor")
+  artifacts   TaskArtifact[] @relation("ArtifactCreator")
   auditLogs   AuditLog[]
 
   @@map("users")
@@ -153,6 +154,7 @@ model AgentToken {
   reviews   Task[]    @relation("TaskAgentReviewer")
   signals   Signal[]  @relation("SignalRecipientAgent")
   comments  Comment[] @relation("CommentAgentAuthor")
+  artifacts TaskArtifact[] @relation("ArtifactAgentCreator")
 
   @@map("agent_tokens")
 }
@@ -264,6 +266,7 @@ model Task {
 
   comments    Comment[]
   attachments TaskAttachment[]
+  artifacts   TaskArtifact[]
   signals     Signal[]
   auditLogs   AuditLog[]
 
@@ -289,6 +292,32 @@ model TaskAttachment {
 
   @@index([taskId])
   @@map("task_attachments")
+}
+
+// Typed, agent-produced task outputs (build logs, test reports, coverage, generated code, etc.).
+// Distinct from TaskAttachment, which is a human-uploaded metadata pointer with no semantics.
+model TaskArtifact {
+  id               String   @id @default(uuid())
+  taskId           String
+  type             String // validated against ARTIFACT_TYPES enum in routes/services
+  name             String
+  description      String?
+  content          String?  @db.Text // inline payload (subject to ARTIFACT_MAX_BYTES)
+  url              String? // external pointer (S3, GH release, etc.) when content is not inline
+  mimeType         String?
+  sizeBytes        Int      @default(0)
+  createdByUserId  String?
+  createdByAgentId String?
+  createdAt        DateTime @default(now())
+
+  task           Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdByUser  User?       @relation("ArtifactCreator", fields: [createdByUserId], references: [id])
+  createdByAgent AgentToken? @relation("ArtifactAgentCreator", fields: [createdByAgentId], references: [id])
+
+  @@index([taskId])
+  @@index([taskId, type])
+  @@index([createdByAgentId])
+  @@map("task_artifacts")
 }
 
 enum TaskPriority {

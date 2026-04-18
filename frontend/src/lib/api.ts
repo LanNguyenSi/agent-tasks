@@ -76,6 +76,7 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   attachments: TaskAttachment[];
+  artifacts?: TaskArtifactMeta[];
   comments?: Comment[];
   claimedByUser?: {
     id: string;
@@ -114,6 +115,39 @@ export interface TaskAttachment {
   name: string;
   url: string;
   createdAt: string;
+}
+
+export type TaskArtifactType =
+  | "build_log"
+  | "test_report"
+  | "generated_code"
+  | "coverage"
+  | "diff"
+  | "other";
+
+export interface TaskArtifactMeta {
+  id: string;
+  taskId: string;
+  type: TaskArtifactType;
+  name: string;
+  description: string | null;
+  url: string | null;
+  mimeType: string | null;
+  sizeBytes: number;
+  createdByUserId: string | null;
+  createdByAgentId: string | null;
+  createdAt: string;
+  createdByUser?: {
+    id: string;
+    login: string;
+    name: string | null;
+    avatarUrl: string | null;
+  } | null;
+  createdByAgent?: { id: string; name: string } | null;
+}
+
+export interface TaskArtifact extends TaskArtifactMeta {
+  content: string | null;
 }
 
 export interface Team {
@@ -424,6 +458,54 @@ export async function addTaskAttachment(
 
 export async function deleteTaskAttachment(taskId: string, attachmentId: string): Promise<void> {
   await request(`/api/tasks/${taskId}/attachments/${attachmentId}`, { method: "DELETE" });
+}
+
+// ── Artifacts (typed, agent-produced task outputs) ──────────────────────────
+
+export async function listTaskArtifacts(
+  taskId: string,
+  type?: TaskArtifactType,
+): Promise<TaskArtifactMeta[]> {
+  const qs = type ? `?type=${encodeURIComponent(type)}` : "";
+  const data = await request<{ artifacts: TaskArtifactMeta[] }>(
+    `/api/tasks/${taskId}/artifacts${qs}`,
+  );
+  return data.artifacts;
+}
+
+export async function getTaskArtifact(
+  taskId: string,
+  artifactId: string,
+): Promise<TaskArtifact> {
+  const data = await request<{ artifact: TaskArtifact }>(
+    `/api/tasks/${taskId}/artifacts/${artifactId}`,
+  );
+  return data.artifact;
+}
+
+export async function createTaskArtifact(
+  taskId: string,
+  body: {
+    type: TaskArtifactType;
+    name: string;
+    description?: string;
+    content?: string;
+    url?: string;
+    mimeType?: string;
+  },
+): Promise<TaskArtifact> {
+  const data = await request<{ artifact: TaskArtifact }>(
+    `/api/tasks/${taskId}/artifacts`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+  return data.artifact;
+}
+
+export async function deleteTaskArtifact(
+  taskId: string,
+  artifactId: string,
+): Promise<void> {
+  await request(`/api/tasks/${taskId}/artifacts/${artifactId}`, { method: "DELETE" });
 }
 
 export async function createComment(taskId: string, content: string): Promise<Comment> {

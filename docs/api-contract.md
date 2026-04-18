@@ -49,6 +49,18 @@ Führt einen Statusübergang aus.
 ### POST /tasks/{id}/comments
 Fügt einen Kommentar hinzu.
 
+### GET /tasks/{id}/artifacts
+Listet Artifact-Metadaten (ohne Content). Optional `?type=` Filter. Siehe [artifacts.md](./artifacts.md).
+
+### GET /tasks/{id}/artifacts/{artifactId}
+Lädt ein einzelnes Artifact inklusive `content`.
+
+### POST /tasks/{id}/artifacts
+Legt ein typisiertes Agent-Output an (`build_log`, `test_report`, `generated_code`, `coverage`, `diff`, `other`). Inline-Limit 1 MiB.
+
+### DELETE /tasks/{id}/artifacts/{artifactId}
+Löscht ein Artifact (nur Ersteller oder Projekt-Admin).
+
 ## Boards
 ### GET /boards/{id}
 Lädt Board-Konfiguration und Aufgabenansicht.
