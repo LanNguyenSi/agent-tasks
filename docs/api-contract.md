@@ -61,6 +61,19 @@ Legt ein typisiertes Agent-Output an (`build_log`, `test_report`, `generated_cod
 ### DELETE /tasks/{id}/artifacts/{artifactId}
 Löscht ein Artifact (nur Ersteller oder Projekt-Admin).
 
+### POST /tasks/{id}/merge
+Task-scoped PR merge. Requires `github:pr_merge` scope for agent callers. Rejects with `403 self_merge_blocked` when the actor holds the work claim on a project with `requireDistinctReviewer=true` and `soloMode=false`. Body: `{ "mergeMethod": "squash" | "merge" | "rebase" }` (default `squash`). See [agent-workflow.md](./agent-workflow.md#server-side-pr-lifecycle).
+
+## GitHub delegation
+### POST /github/pull-requests
+Creates a pull request on behalf of a team member who has connected GitHub and enabled `allowAgentPrCreate`. Requires scopes `tasks:update` **and** `github:pr_create` for agent callers. Updates the task's `branchName` / `prUrl` / `prNumber` on success.
+
+### POST /github/pull-requests/{prNumber}/merge
+Merges a PR via the team's GitHub delegation (`allowAgentPrMerge`). Requires scopes `tasks:transition` **and** `github:pr_merge` for agent callers. Enforces the self-merge gate (`403 self_merge_blocked` when actor is the work claimant on a `requireDistinctReviewer=true && !soloMode` project). Prefer `POST /tasks/{id}/merge` when you already hold the task ID — it derives the GitHub metadata automatically.
+
+### POST /github/pull-requests/{prNumber}/comments
+Posts a PR comment via delegation (`allowAgentPrComment`). Requires scope `tasks:comment`.
+
 ## Boards
 ### GET /boards/{id}
 Lädt Board-Konfiguration und Aufgabenansicht.

@@ -7,8 +7,14 @@ import { prisma } from "../lib/prisma.js";
 import { findDelegationUser } from "../services/github-delegation.js";
 import { logAuditEvent } from "../services/audit.js";
 import { requireScope } from "../middleware/auth.js";
-import { checkDistinctReviewerGate, distinctReviewerRejectionMessage } from "../services/review-gate.js";
+import {
+  checkDistinctReviewerGate,
+  distinctReviewerRejectionMessage,
+  checkSelfMergeGate,
+  selfMergeRejectionMessage,
+} from "../services/review-gate.js";
 import { performPrMerge } from "../services/github-merge.js";
+import { SCOPES } from "../services/scopes.js";
 
 export const githubRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -24,7 +30,8 @@ const createPrSchema = z.object({
 
 githubRouter.post(
   "/pull-requests",
-  requireScope("tasks:update"),
+  requireScope(SCOPES.TasksUpdate),
+  requireScope(SCOPES.GithubPrCreate),
   zValidator("json", createPrSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
@@ -135,7 +142,8 @@ const mergePrSchema = z.object({
 
 githubRouter.post(
   "/pull-requests/:prNumber/merge",
-  requireScope("tasks:transition"),
+  requireScope(SCOPES.TasksTransition),
+  requireScope(SCOPES.GithubPrMerge),
   zValidator("json", mergePrSchema),
   async (c) => {
     const actor = c.get("actor") as Actor;
@@ -157,7 +165,13 @@ githubRouter.post(
       where: { id: body.taskId },
       include: {
         project: {
-          select: { id: true, teamId: true, githubRepo: true, requireDistinctReviewer: true },
+          select: {
+            id: true,
+            teamId: true,
+            githubRepo: true,
+            requireDistinctReviewer: true,
+            soloMode: true,
+          },
         },
       },
     });
@@ -263,6 +277,34 @@ githubRouter.post(
           403,
         );
       }
+    }
+
+    // Self-merge gate. Fires on both the review→done and the done→done
+    // (idempotent retry) paths: if the project opts into distinct-review and
+    // isn't in soloMode, the work-claim holder cannot be the one calling
+    // merge. Narrower than the DR gate above — catches the retry case the
+    // DR gate deliberately skips.
+    const selfMerge = checkSelfMergeGate(task, actor, {
+      requireDistinctReviewer: task.project.requireDistinctReviewer,
+      soloMode: task.project.soloMode,
+    });
+    if (!selfMerge.allowed) {
+      void logAuditEvent({
+        action: "task.pr_merged.blocked_self_merge",
+        projectId: task.project.id,
+        taskId: task.id,
+        payload: {
+          via: "github_pr_merge",
+          actorType: actor.type,
+          agentTokenId: actor.tokenId,
+          claimedByAgentId: task.claimedByAgentId,
+          claimedByUserId: task.claimedByUserId,
+        },
+      });
+      return c.json(
+        { error: "self_merge_blocked", message: selfMergeRejectionMessage() },
+        403,
+      );
     }
 
     // 2. Call shared merge helper — derives owner/repo from

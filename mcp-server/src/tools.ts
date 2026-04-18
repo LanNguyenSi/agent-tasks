@@ -189,6 +189,24 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         wrap(() => client.getTaskArtifact(taskId, artifactId)),
     }),
 
+    // ── PR lifecycle (v2) ────────────────────────────────────────────────
+    //
+    // Server-side PR create + merge. Pairs with the existing GitHub
+    // delegation (a team member connects GitHub once and opts in per
+    // capability). Self-merge is explicitly blocked on projects with
+    // `requireDistinctReviewer` unless `soloMode` is on — see task_merge.
+    def({
+      name: "task_merge",
+      description:
+        "Merge the PR attached to a task. Task-scoped verb (not a GitHub-identifier verb): derives owner/repo/PR number from the task/project metadata and uses the team's GitHub delegation. Requires `github:pr_merge` scope for agent callers, and — when `project.requireDistinctReviewer` is enabled and the project is not in `soloMode` — refuses with 403 `self_merge_blocked` if the caller also holds the work claim. Idempotent on an already-merged PR (task stays at `done`).",
+      inputShape: {
+        taskId: uuid(),
+        mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
+      },
+      handler: async ({ taskId, mergeMethod }) =>
+        wrap(() => client.mergeTask(taskId, mergeMethod)),
+    }),
+
     // ── v1 surface (deprecated) ──────────────────────────────────────────
     def({
       name: "projects_list",
@@ -373,8 +391,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "pull_requests_create",
       description:
-        DEPRECATED +
-        "PR creation is not an agent-tasks concern under v2. Use the `gh` CLI directly; pass the resulting URL to task_finish as prUrl.",
+        "Create a pull request on behalf of a team member with GitHub connected. Requires `github:pr_create` scope for agent callers plus an operator who has opted in via 'Allow agents to create PRs' in Settings. The task is updated with `branchName`, `prUrl`, `prNumber` on success. The historic alternative — agents running `gh pr create` themselves and passing the URL into `task_finish { prUrl }` — still works and remains a supported fallback for orgs that prefer not to share a GitHub identity with agent-tasks.",
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),
@@ -389,8 +406,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "pull_requests_merge",
       description:
-        DEPRECATED +
-        "Merge is a human decision, not an agent routine. Use the web UI or `gh pr merge` directly.",
+        "GitHub-identifier merge variant (taskId + owner + repo + prNumber). Prefer `task_merge` when you already hold the taskId — it derives owner/repo/PR number from the task, enforces the same self-merge gate, and avoids having to pass GitHub metadata around. Requires `github:pr_merge` scope for agent callers.",
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),
