@@ -70,6 +70,39 @@ describe("POST /agent-tokens scope validation", () => {
     expect(res.status).toBe(400);
   });
 
+  it("accepts the pre-existing `sso:admin` scope — regression for the enum miss", async () => {
+    // A previous refactor that narrowed the scope array to `z.enum(ALL_SCOPES)`
+    // silently excluded sso:admin (a scope enforced in routes/sso.ts), so
+    // minting a token with it started failing with 400. Keep this test so
+    // any future narrowing has to consciously drop the scope.
+    const res = await makeApp().request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        teamId: "00000000-0000-0000-0000-000000000001",
+        name: "sso-admin",
+        scopes: ["sso:admin"],
+      }),
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("GET /scopes returns the canonical list with labels", async () => {
+    const res = await makeApp().request("/scopes");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { scopes: Array<{ id: string; label: string }> };
+    const ids = body.scopes.map((s) => s.id);
+    // A few representatives — asserting exhaustive equality would couple
+    // this test to every scope addition.
+    expect(ids).toContain("tasks:read");
+    expect(ids).toContain("github:pr_create");
+    expect(ids).toContain("github:pr_merge");
+    expect(ids).toContain("sso:admin");
+    for (const s of body.scopes) {
+      expect(s.label).toBeTruthy();
+    }
+  });
+
   it("rejects entirely unknown scopes", async () => {
     const res = await makeApp().request("/", {
       method: "POST",

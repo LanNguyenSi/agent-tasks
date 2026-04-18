@@ -11,6 +11,7 @@ import {
   revokeAgentToken,
   updateDelegationSettings,
   getGithubTokenHealth,
+  getAvailableScopes,
   type User,
   type Team,
   type AgentToken,
@@ -37,8 +38,12 @@ function formatRelativeTime(iso: string): string {
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 }
-const ALL_SCOPES = [
-  { id: "sso:admin", label: "Manage SSO connection (team-scoped, sensitive)" },
+// Fallback used only if the backend scope endpoint fails to load. The
+// canonical list now lives in `backend/src/services/scopes.ts` and is
+// fetched via `GET /api/agent-tokens/scopes` — this hard-coded copy used
+// to drift (it missed `github:pr_create` / `github:pr_merge` after those
+// scopes landed). Kept in sync as a safety net only.
+const FALLBACK_SCOPES = [
   { id: "tasks:read", label: "Read tasks" },
   { id: "tasks:create", label: "Create tasks" },
   { id: "tasks:claim", label: "Claim tasks" },
@@ -47,6 +52,9 @@ const ALL_SCOPES = [
   { id: "tasks:update", label: "Update task fields (branch, PR, result)" },
   { id: "projects:read", label: "Read projects" },
   { id: "boards:read", label: "Read boards" },
+  { id: "github:pr_create", label: "Open pull requests on behalf of a team member (server-side)" },
+  { id: "github:pr_merge", label: "Merge pull requests on behalf of a team member (server-side)" },
+  { id: "sso:admin", label: "Manage SSO connection (team-scoped, sensitive)" },
 ];
 
 type TokenRecord = AgentToken;
@@ -65,6 +73,7 @@ export default function SettingsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [tokenName, setTokenName] = useState("");
   const [selectedScopes, setSelectedScopes] = useState<string[]>(["tasks:read", "tasks:create", "tasks:claim"]);
+  const [availableScopes, setAvailableScopes] = useState<{ id: string; label: string }[]>(FALLBACK_SCOPES);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
@@ -111,6 +120,18 @@ export default function SettingsPage() {
 
       const t = await getTeams();
       setTeams(t);
+
+      // Pull the canonical scope list from the backend so the UI never
+      // drifts. Falls back to the hard-coded list if the endpoint
+      // misbehaves — the settings page stays usable even when a single
+      // scope row is out of date.
+      void getAvailableScopes()
+        .then((scopes) => {
+          if (scopes.length > 0) setAvailableScopes(scopes);
+        })
+        .catch(() => {
+          // keep FALLBACK_SCOPES
+        });
 
       if (t.length > 0) {
         const teamId = t[0]!.id;
@@ -531,7 +552,7 @@ export default function SettingsPage() {
               <div style={{ marginBottom: "1rem" }}>
                 <FormField label="Scopes">
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-                    {ALL_SCOPES.map((scope) => (
+                    {availableScopes.map((scope) => (
                       <label key={scope.id} style={{ display: "flex", alignItems: "center", gap: "0.375rem", cursor: "pointer", fontSize: "var(--text-sm)" }}>
                         <input
                           type="checkbox"
