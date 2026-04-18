@@ -38,7 +38,13 @@ import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES, parseOwnerRepo } from "../services/transition-rules.js";
 import { performPrMerge } from "../services/github-merge.js";
 import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
-import { checkDistinctReviewerGate, distinctReviewerRejectionMessage } from "../services/review-gate.js";
+import {
+  checkDistinctReviewerGate,
+  distinctReviewerRejectionMessage,
+  checkSelfMergeGate,
+  selfMergeRejectionMessage,
+} from "../services/review-gate.js";
+import { SCOPES } from "../services/scopes.js";
 
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -1217,6 +1223,34 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     // ── Mode B autoMerge: review-approve + merge (ADR-0010 §2) ──────────
     let reviewAutoMergeSha: string | null = null;
     if (autoMerge && outcome === "approve") {
+      // Self-merge gate: projects that opt into `requireDistinctReviewer`
+      // (and are not soloMode) forbid the work-claim holder from merging
+      // their own PR, even via auto-merge. Matches the standalone
+      // `POST /tasks/:id/merge` verb — the invariant lives in review-gate.ts
+      // so the two paths cannot drift.
+      if (actor.type === "agent" && !actor.scopes.includes(SCOPES.GithubPrMerge)) {
+        return c.json({ error: "forbidden", message: `Token missing scope: ${SCOPES.GithubPrMerge}` }, 403);
+      }
+      const selfMerge = checkSelfMergeGate(task, actor, task.project);
+      if (!selfMerge.allowed) {
+        void logAuditEvent({
+          action: "task.pr_merged.blocked_self_merge",
+          projectId: task.projectId,
+          taskId: task.id,
+          payload: {
+            via: "task_finish",
+            actorType: actor.type,
+            agentTokenId: actor.type === "agent" ? actor.tokenId : undefined,
+            userId: actor.type === "human" ? actor.userId : undefined,
+            claimedByAgentId: task.claimedByAgentId,
+            claimedByUserId: task.claimedByUserId,
+          },
+        });
+        return c.json(
+          { error: "self_merge_blocked", message: selfMergeRejectionMessage() },
+          403,
+        );
+      }
       const mergeResult = await performPrMerge(task, mergeMethod, actor);
       if (!mergeResult.ok) {
         const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
@@ -1485,6 +1519,29 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   // ── Mode A autoMerge: solo work-claim merge (ADR-0010 §2) ────────────
   let workAutoMergeSha: string | null = null;
   if (workAutoMerge) {
+    if (actor.type === "agent" && !actor.scopes.includes(SCOPES.GithubPrMerge)) {
+      return c.json({ error: "forbidden", message: `Token missing scope: ${SCOPES.GithubPrMerge}` }, 403);
+    }
+    // Self-merge gate is a no-op in soloMode (which Mode A requires anyway),
+    // but keep the call site symmetric with Mode B so the invariant is
+    // visible in one place.
+    const selfMerge = checkSelfMergeGate(task, actor, task.project);
+    if (!selfMerge.allowed) {
+      void logAuditEvent({
+        action: "task.pr_merged.blocked_self_merge",
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: {
+          via: "task_finish_mode_a",
+          actorType: actor.type,
+          agentTokenId: actor.type === "agent" ? actor.tokenId : undefined,
+        },
+      });
+      return c.json(
+        { error: "self_merge_blocked", message: selfMergeRejectionMessage() },
+        403,
+      );
+    }
     // Merge payload-derived prNumber onto task so performPrMerge sees it
     // even when prNumber is not yet in the DB (task_finish { prUrl } shorthand).
     const mergeResult = await performPrMerge(
@@ -1902,6 +1959,204 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
 
   return c.json({ task: updated });
 });
+
+// ── Task-scoped PR merge (v2 MCP) ────────────────────────────────────────────
+//
+// Explicit merge verb, intentionally separate from `task_finish { outcome:
+// "approve" }`. Splitting approve and merge lets the audit trail distinguish
+// "I agree this is done" from "I am the one pushing green on GitHub" — the
+// self-merge gate only fires on the latter.
+//
+// Rules:
+//   - requires `github:pr_merge` scope for agent callers
+//   - task must be in `review` (or already `done` for idempotent retries)
+//   - distinct-reviewer gate (review state only) runs in lockstep with the
+//     existing `/github/pull-requests/:n/merge` endpoint
+//   - self-merge gate (always): if `requireDistinctReviewer && !soloMode`,
+//     the actor who holds the work claim cannot merge
+//
+// Admin force path: force-transition to `done` first (`POST
+// /tasks/:id/transition` with `force: true`), then call this endpoint. The
+// `done` entry is idempotent so the merge still happens.
+
+const taskMergeSchema = z.object({
+  mergeMethod: z.enum(["squash", "merge", "rebase"]).default("squash"),
+});
+
+taskRouter.post(
+  "/tasks/:id/merge",
+  zValidator("json", taskMergeSchema),
+  async (c) => {
+    const actor = c.get("actor") as Actor;
+    if (actor.type === "agent" && !actor.scopes.includes(SCOPES.GithubPrMerge)) {
+      return forbidden(c, `Missing scope: ${SCOPES.GithubPrMerge}`);
+    }
+
+    const task = await prisma.task.findUnique({
+      where: { id: c.req.param("id") },
+      include: {
+        project: {
+          select: {
+            id: true,
+            teamId: true,
+            githubRepo: true,
+            requireDistinctReviewer: true,
+            soloMode: true,
+          },
+        },
+      },
+    });
+    if (!task) return notFound(c);
+    if (!(await hasProjectAccess(actor, task.projectId))) {
+      return forbidden(c, "Access denied to this project");
+    }
+
+    if (task.status === "open" || task.status === "in_progress") {
+      void logAuditEvent({
+        action: "task.merge_rejected_bad_status",
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: {
+          status: task.status,
+          actorType: actor.type,
+          agentTokenId: actor.type === "agent" ? actor.tokenId : undefined,
+          via: "task_merge",
+        },
+      });
+      return c.json(
+        {
+          error: "bad_state",
+          message: `Cannot merge: task is in '${task.status}', expected 'review'. Transition the task to 'review' first.`,
+        },
+        409,
+      );
+    }
+    if (task.status !== "review" && task.status !== "done") {
+      void logAuditEvent({
+        action: "task.merge_rejected_bad_status",
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: {
+          status: task.status,
+          actorType: actor.type,
+          agentTokenId: actor.type === "agent" ? actor.tokenId : undefined,
+          via: "task_merge",
+          unknown: true,
+        },
+      });
+      return c.json(
+        { error: "bad_state", message: `Cannot merge: task is in '${task.status}'.` },
+        409,
+      );
+    }
+
+    // Self-merge gate runs BEFORE the distinct-reviewer gate. Both would
+    // reject an actor==claimant attempt, but the self-merge gate emits the
+    // narrower `self_merge_blocked` error code which is the signal callers
+    // are expected to key off. The DR gate, if we left it first, would
+    // return the broader `forbidden` / "distinct reviewer required" message
+    // and the API consumer would have to re-infer the real cause.
+    //
+    // The self-merge gate also fires on the `done` idempotent-retry path
+    // where the DR gate is intentionally skipped — see below.
+    const selfMerge = checkSelfMergeGate(task, actor, task.project);
+    if (!selfMerge.allowed) {
+      void logAuditEvent({
+        action: "task.pr_merged.blocked_self_merge",
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: {
+          via: "task_merge",
+          actorType: actor.type,
+          agentTokenId: actor.type === "agent" ? actor.tokenId : undefined,
+          userId: actor.type === "human" ? actor.userId : undefined,
+          claimedByAgentId: task.claimedByAgentId,
+          claimedByUserId: task.claimedByUserId,
+        },
+      });
+      return c.json(
+        { error: "self_merge_blocked", message: selfMergeRejectionMessage() },
+        403,
+      );
+    }
+
+    // Distinct-reviewer gate — catches the broader "you have no review lock
+    // yet" / "the review lock is held by the claimant" cases that the
+    // self-merge gate above doesn't cover. Only runs on the review→done
+    // path; done→done is an idempotent retry where DR has already run.
+    if (task.status === "review") {
+      const gate = checkDistinctReviewerGate(task, actor, task.project);
+      if (!gate.allowed) {
+        void logAuditEvent({
+          action: "task.review_rejected_self_reviewer",
+          projectId: task.projectId,
+          taskId: task.id,
+          payload: {
+            reason: gate.reason,
+            actorType: actor.type,
+            agentTokenId: actor.type === "agent" ? actor.tokenId : undefined,
+            endpoint: "task_merge",
+            claimedByUserId: task.claimedByUserId,
+            claimedByAgentId: task.claimedByAgentId,
+            reviewClaimedByUserId: task.reviewClaimedByUserId,
+            reviewClaimedByAgentId: task.reviewClaimedByAgentId,
+          },
+        });
+        return c.json(
+          { error: "forbidden", message: distinctReviewerRejectionMessage() },
+          403,
+        );
+      }
+    }
+
+    const { mergeMethod } = c.req.valid("json");
+    const mergeResult = await performPrMerge(task, mergeMethod, actor);
+    if (!mergeResult.ok) {
+      const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
+      return c.json(
+        { error: mergeResult.error, message: mergeResult.message },
+        status as 400 | 403 | 404 | 405 | 409 | 422 | 500 | 502,
+      );
+    }
+
+    const updated = await prisma.task.update({
+      where: { id: task.id },
+      data: {
+        status: "done",
+        claimedByUserId: null,
+        claimedByAgentId: null,
+        claimedAt: null,
+        reviewClaimedByUserId: null,
+        reviewClaimedByAgentId: null,
+        reviewClaimedAt: null,
+        autoMergeSha: mergeResult.sha,
+      },
+      include: taskInclude,
+    });
+
+    void logAuditEvent({
+      action: "task.merged",
+      actorId: actor.type === "human" ? actor.userId : undefined,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: {
+        via: "task_merge",
+        actorType: actor.type,
+        agentTokenId: actor.type === "agent" ? actor.tokenId : undefined,
+        mergeMethod,
+        sha: mergeResult.sha,
+        alreadyMerged: mergeResult.alreadyMerged,
+      },
+    });
+
+    return c.json({
+      task: updated,
+      merged: true,
+      sha: mergeResult.sha,
+      alreadyMerged: mergeResult.alreadyMerged,
+    });
+  },
+);
 
 // ── Get task ─────────────────────────────────────────────────────────────────
 

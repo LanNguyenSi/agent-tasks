@@ -102,7 +102,17 @@ const AGENT: Actor = {
   type: "agent",
   tokenId: "agent-1",
   teamId: "team-1",
-  scopes: ["tasks:read", "tasks:claim", "tasks:transition", "tasks:create"],
+  scopes: [
+    "tasks:read",
+    "tasks:claim",
+    "tasks:transition",
+    "tasks:create",
+    // Added so the autoMerge (Mode A/B) paths in task_finish can run; the
+    // dedicated scope landed with the PR-lifecycle feature. Tests that want
+    // to verify scope rejection craft an explicit actor with the scope
+    // omitted.
+    "github:pr_merge",
+  ],
 };
 
 function makeApp(actor: Actor = AGENT) {
@@ -1694,7 +1704,6 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     type: "human",
     userId: "user-1",
     teamId: "team-1",
-    scopes: [],
   };
 
   function makeTransitionApp(actor: Actor = HUMAN) {

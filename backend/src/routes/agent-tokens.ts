@@ -5,13 +5,17 @@ import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import { createAgentToken, listAgentTokens, revokeAgentToken } from "../services/agent-token-service.js";
+import { ALL_SCOPES } from "../services/scopes.js";
 
 export const agentTokenRouter = new Hono<{ Variables: AppVariables }>();
 
 const createTokenSchema = z.object({
   teamId: z.string().uuid(),
   name: z.string().min(1).max(100),
-  scopes: z.array(z.string()).default([]),
+  // Reject unknown scopes at the edge so a typo ("task:update" instead of
+  // "tasks:update") fails loudly at token-creation time instead of silently
+  // producing a permanently-403'd token.
+  scopes: z.array(z.enum(ALL_SCOPES)).default([]),
   expiresAt: z.string().datetime().optional(),
 });
 

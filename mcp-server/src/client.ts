@@ -187,6 +187,12 @@ export class AgentTasksClient {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/abandon`);
   }
 
+  mergeTask(taskId: string, mergeMethod?: "squash" | "merge" | "rebase") {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/merge`, {
+      mergeMethod: mergeMethod ?? "squash",
+    });
+  }
+
   submitPr(
     taskId: string,
     input: { branchName: string; prUrl: string; prNumber: number },

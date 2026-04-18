@@ -51,6 +51,7 @@ describe("buildTools", () => {
         "task_artifact_list",
         "task_create",
         "task_finish",
+        "task_merge",
         "task_note",
         "task_pickup",
         "task_start",
