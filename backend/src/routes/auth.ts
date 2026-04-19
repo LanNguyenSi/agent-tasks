@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import type { AppVariables } from "../types/hono.js";
-import { config, hasGitHubOAuthConfigured } from "../config/index.js";
+import { config, hasGitHubOAuthConfigured, allowedGitHubLogins } from "../config/index.js";
 import {
   buildAuthorizationUrl,
   exchangeCodeForToken,
@@ -302,6 +302,22 @@ authRouter.post(
           message: "Claimed githubLogin does not match verified GitHub identity",
         },
         401,
+      );
+    }
+
+    // Optional allowlist stop-gap: gate broker registration by
+    // ALLOWED_GITHUB_LOGINS when set. Empty = back-compat accept-all.
+    // Matches the sibling guard in deploy-panel (PR #57) and project-forge.
+    if (
+      allowedGitHubLogins.length > 0 &&
+      !allowedGitHubLogins.includes(githubUser.login)
+    ) {
+      return c.json(
+        {
+          error: "forbidden_github_login",
+          message: "This GitHub login is not permitted on this agent-tasks instance",
+        },
+        403,
       );
     }
 

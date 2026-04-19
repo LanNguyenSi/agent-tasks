@@ -22,6 +22,11 @@ const configSchema = z.object({
   // sharing a redis instance don't collide. Unused when REDIS_URL is
   // absent.
   REDIS_KEY_PREFIX: z.string().default("agent-tasks:"),
+  // Comma-separated GitHub logins allowed to provision via the
+  // identity-broker endpoint. Empty/unset = any verified GitHub user
+  // (back-compat). Stop-gap until agent-tasks' existing multi-team model
+  // is hardened for cross-user isolation of new OAuth arrivals.
+  ALLOWED_GITHUB_LOGINS: z.string().default(""),
 });
 
 function loadConfig() {
@@ -38,3 +43,13 @@ export type Config = typeof config;
 
 export const hasGitHubOAuthConfigured =
   config.GITHUB_CLIENT_ID.length > 0 && config.GITHUB_CLIENT_SECRET.length > 0;
+
+/**
+ * Parsed allowlist. Empty array means "no allowlist enforced" — the
+ * identity-broker register endpoint treats that as "accept any verified
+ * GitHub login".
+ */
+export const allowedGitHubLogins: string[] = config.ALLOWED_GITHUB_LOGINS
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
