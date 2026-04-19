@@ -10,6 +10,8 @@ import {
   hasProjectAccess,
   hasProjectRole,
   isProjectAdmin,
+  resolveTeamId,
+  resolveTeamIdErrorBody,
   type ProjectRole,
 } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
@@ -442,26 +444,18 @@ taskRouter.get("/tasks/claimable", async (c) => {
       return forbidden(c, "Access denied to this project");
     }
     where.projectId = projectId;
-  } else if (actor.type === "agent") {
-    // For agents, team scope is implicit via token.
-    where.project = { teamId: actor.teamId };
   } else {
-    // For human sessions, keep team boundary explicit when no project is given.
-    if (!teamIdQuery) {
+    // No projectId → scope by team. resolveTeamId handles agent (implicit from
+    // token), human with explicit teamId (membership-checked), and human with
+    // no teamId (defaults to sole membership; 400 if ambiguous).
+    const resolved = await resolveTeamId(actor, teamIdQuery);
+    if (!resolved.ok) {
       return c.json(
-        { error: "bad_request", message: "teamId or projectId required" },
-        400,
+        resolveTeamIdErrorBody(resolved),
+        resolved.status,
       );
     }
-
-    const membership = await prisma.teamMember.findUnique({
-      where: { teamId_userId: { teamId: teamIdQuery, userId: actor.userId } },
-    });
-    if (!membership) {
-      return forbidden(c, "Access denied to this team");
-    }
-
-    where.project = { teamId: teamIdQuery };
+    where.project = { teamId: resolved.teamId };
   }
 
   const tasks = await prisma.task.findMany({

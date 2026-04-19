@@ -6,6 +6,7 @@ import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import { createAgentToken, listAgentTokens, revokeAgentToken } from "../services/agent-token-service.js";
 import { ALL_SCOPES, SCOPE_LABELS } from "../services/scopes.js";
+import { resolveTeamId, resolveTeamIdErrorBody } from "../services/team-access.js";
 
 export const agentTokenRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -32,13 +33,15 @@ const createTokenSchema = z.object({
 
 agentTokenRouter.get("/", async (c) => {
   const actor = c.get("actor") as Actor;
-  const teamId = c.req.query("teamId");
-
-  if (!teamId) {
-    return c.json({ error: "bad_request", message: "teamId required" }, 400);
+  const resolved = await resolveTeamId(actor, c.req.query("teamId"));
+  if (!resolved.ok) {
+    return c.json(
+      resolveTeamIdErrorBody(resolved),
+      resolved.status,
+    );
   }
 
-  const result = await listAgentTokens(actor, teamId);
+  const result = await listAgentTokens(actor, resolved.teamId);
   if (!result.ok) {
     return forbidden(c, "Access denied to this team");
   }
