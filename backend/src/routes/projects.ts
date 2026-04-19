@@ -8,7 +8,7 @@ import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import { ensureDefaultBoardForProject } from "../services/board-default.js";
 import { taskTemplateSchema } from "../lib/confidence.js";
-import { isProjectAdmin } from "../services/team-access.js";
+import { isProjectAdmin, resolveTeamId, resolveTeamIdErrorBody } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
 
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
@@ -49,27 +49,16 @@ async function assertMembership(actor: Actor, teamId: string): Promise<boolean> 
 
 projectRouter.get("/projects", async (c) => {
   const actor = c.get("actor");
-  const requestedTeamId = c.req.query("teamId");
-  let teamId: string;
-
-  if (actor.type === "agent") {
-    if (requestedTeamId && requestedTeamId !== actor.teamId) {
-      return forbidden(c, "Token is only valid for its own team");
-    }
-    teamId = actor.teamId;
-  } else {
-    if (!requestedTeamId) {
-      return c.json({ error: "bad_request", message: "teamId required" }, 400);
-    }
-    teamId = requestedTeamId;
-  }
-
-  if (!(await assertMembership(actor, teamId))) {
-    return forbidden(c, "Access denied to this team");
+  const resolved = await resolveTeamId(actor, c.req.query("teamId"));
+  if (!resolved.ok) {
+    return c.json(
+      resolveTeamIdErrorBody(resolved),
+      resolved.status,
+    );
   }
 
   const projects = await prisma.project.findMany({
-    where: { teamId },
+    where: { teamId: resolved.teamId },
     orderBy: { createdAt: "desc" },
   });
 
@@ -80,27 +69,16 @@ projectRouter.get("/projects", async (c) => {
 
 projectRouter.get("/projects/available", async (c) => {
   const actor = c.get("actor");
-  const requestedTeamId = c.req.query("teamId");
-  let teamId: string;
-
-  if (actor.type === "agent") {
-    if (requestedTeamId && requestedTeamId !== actor.teamId) {
-      return forbidden(c, "Token is only valid for its own team");
-    }
-    teamId = actor.teamId;
-  } else {
-    if (!requestedTeamId) {
-      return c.json({ error: "bad_request", message: "teamId required for human users" }, 400);
-    }
-    teamId = requestedTeamId;
-  }
-
-  if (!(await assertMembership(actor, teamId))) {
-    return forbidden(c, "Access denied to this team");
+  const resolved = await resolveTeamId(actor, c.req.query("teamId"));
+  if (!resolved.ok) {
+    return c.json(
+      resolveTeamIdErrorBody(resolved),
+      resolved.status,
+    );
   }
 
   const projects = await prisma.project.findMany({
-    where: { teamId },
+    where: { teamId: resolved.teamId },
     orderBy: { name: "asc" },
     select: {
       id: true,
@@ -127,14 +105,14 @@ projectRouter.get("/projects/by-slug/:slug", async (c) => {
   const actor = c.get("actor");
   const slug = c.req.param("slug");
 
-  const teamId = actor.type === "agent" ? actor.teamId : c.req.query("teamId");
-  if (!teamId) {
-    return c.json({ error: "bad_request", message: "teamId required" }, 400);
+  const resolved = await resolveTeamId(actor, c.req.query("teamId"));
+  if (!resolved.ok) {
+    return c.json(
+      resolveTeamIdErrorBody(resolved),
+      resolved.status,
+    );
   }
-
-  if (!(await assertMembership(actor, teamId))) {
-    return forbidden(c, "Access denied to this team");
-  }
+  const teamId = resolved.teamId;
 
   const project = await prisma.project.findUnique({
     where: { teamId_slug: { teamId, slug } },
