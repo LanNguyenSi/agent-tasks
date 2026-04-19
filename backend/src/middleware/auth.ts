@@ -14,7 +14,10 @@ import { config } from "../config/index.js";
 export async function authMiddleware(c: Context<{ Variables: AppVariables }>, next: Next): Promise<Response | void> {
   const authorization = c.req.header("Authorization");
 
-  // Agent token auth (Bearer)
+  // Bearer auth: AgentToken (sha256-hashed) OR session JWT (signed, for
+  // server-to-server callers like project-pilot that have no cookie jar).
+  // We try AgentToken first — it's the canonical API path and a revoked
+  // token must not fall through to be re-interpreted as a session.
   if (authorization?.startsWith("Bearer ")) {
     const rawToken = authorization.slice(7).trim();
     const tokenHash = hashToken(rawToken);
@@ -23,24 +26,36 @@ export async function authMiddleware(c: Context<{ Variables: AppVariables }>, ne
       where: { tokenHash },
     });
 
-    if (!token || token.revokedAt || (token.expiresAt && token.expiresAt < new Date())) {
-      return c.json({ error: "unauthorized", message: "Invalid or expired token" }, 401);
+    if (token) {
+      if (token.revokedAt || (token.expiresAt && token.expiresAt < new Date())) {
+        return c.json({ error: "unauthorized", message: "Invalid or expired token" }, 401);
+      }
+
+      // Update last used
+      await prisma.agentToken.update({
+        where: { id: token.id },
+        data: { lastUsedAt: new Date() },
+      });
+
+      const actor: Actor = {
+        type: "agent",
+        tokenId: token.id,
+        teamId: token.teamId,
+        scopes: token.scopes,
+      };
+      c.set("actor", actor);
+      return next();
     }
 
-    // Update last used
-    await prisma.agentToken.update({
-      where: { id: token.id },
-      data: { lastUsedAt: new Date() },
-    });
+    // Not an AgentToken — try as a session JWT.
+    const session = await verifySessionToken(rawToken, config.SESSION_SECRET);
+    if (session) {
+      const actor: Actor = { type: "human", userId: session.userId };
+      c.set("actor", actor);
+      return next();
+    }
 
-    const actor: Actor = {
-      type: "agent",
-      tokenId: token.id,
-      teamId: token.teamId,
-      scopes: token.scopes,
-    };
-    c.set("actor", actor);
-    return next();
+    return c.json({ error: "unauthorized", message: "Invalid or expired token" }, 401);
   }
 
   // Session cookie auth

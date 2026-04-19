@@ -26,6 +26,8 @@ import {
 } from "../services/user.js";
 import { verifyPassword } from "../services/password.js";
 import { getTokenHealth } from "../services/github-health.js";
+import { logAuditEvent } from "../services/audit.js";
+import { prisma } from "../lib/prisma.js";
 
 export const authRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -43,6 +45,11 @@ const registerSchema = z.object({
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+});
+
+const registerFromProjectPilotSchema = z.object({
+  githubAccessToken: z.string().min(1),
+  githubLogin: z.string().min(1).optional(),
 });
 
 const OAUTH_STATE_COOKIE = "oauth_state";
@@ -242,6 +249,91 @@ authRouter.get("/github/callback", async (c) => {
     return c.redirect(`${config.FRONTEND_URL}/auth/error`);
   }
 });
+
+// ── Identity-broker registration (e.g. project-pilot) ────────────────────────
+//
+// A trusted broker (project-pilot) has already performed its own GitHub OAuth
+// dance with the user. It calls this endpoint to provision the user locally
+// and obtain an agent-tasks session token the broker can cache. The broker's
+// word is NOT trusted: we re-verify the access-token against GitHub so
+// agent-tasks remains sovereign — a compromised broker cannot impersonate
+// arbitrary users.
+//
+// Response shape `{ apiToken, userId, githubLogin }` is the shared contract
+// that sibling modules (project-forge, deploy-panel) must mirror. The
+// `apiToken` is a session JWT with a 7-day lifetime (see services/session.ts);
+// callers should handle 401 on expiry by re-invoking this endpoint.
+
+authRouter.post(
+  "/register-from-project-pilot",
+  zValidator("json", registerFromProjectPilotSchema),
+  async (c) => {
+    const body = c.req.valid("json");
+
+    let githubUser;
+    try {
+      githubUser = await fetchGitHubUser(body.githubAccessToken);
+    } catch (err) {
+      // Distinguish token rejection (GitHub said 401) from transient network
+      // failures — the latter should not force a user re-auth. We can't
+      // always tell from the thrown Error, but status-code-bearing messages
+      // do tell us, and anything else we treat as "upstream unavailable".
+      const message = (err as Error).message ?? "";
+      const isAuthFailure = /\b(401|403|404)\b/.test(message);
+      if (isAuthFailure) {
+        return c.json(
+          { error: "unauthorized", message: "GitHub access-token verification failed" },
+          401,
+        );
+      }
+      return c.json(
+        {
+          error: "upstream_unavailable",
+          message: "Could not reach GitHub to verify access-token; retry shortly",
+        },
+        503,
+      );
+    }
+
+    if (body.githubLogin && body.githubLogin !== githubUser.login) {
+      return c.json(
+        {
+          error: "unauthorized",
+          message: "Claimed githubLogin does not match verified GitHub identity",
+        },
+        401,
+      );
+    }
+
+    // Distinguish first-provision from returning-login so the audit trail
+    // preserves the difference. The upsert itself is race-safe (keyed on
+    // githubId), but the pre-check may race with another concurrent
+    // registration; treat the "existed beforehand" signal as advisory.
+    const existed = await prisma.user.findUnique({
+      where: { githubId: String(githubUser.id) },
+      select: { id: true },
+    });
+
+    const user = await upsertUserFromGitHub(githubUser, body.githubAccessToken);
+    const apiToken = await createSessionToken(user.id, config.SESSION_SECRET);
+
+    void logAuditEvent({
+      action: existed ? "user.login" : "user.registered",
+      actorId: user.id,
+      payload: {
+        source: "project-pilot",
+        githubLogin: githubUser.login,
+        isNewUser: !existed,
+      },
+    });
+
+    return c.json({
+      apiToken,
+      userId: user.id,
+      githubLogin: githubUser.login,
+    });
+  },
+);
 
 // ── Current User ──────────────────────────────────────────────────────────────
 
