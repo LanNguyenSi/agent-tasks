@@ -25,6 +25,7 @@ export type AuditAction =
   | "token.revoked"
   | "user.login"
   | "user.logout"
+  | "user.registered"
   | "github.pr_created"
   | "github.pr_merged"
   | "github.pr_merge_failed"

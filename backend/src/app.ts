@@ -45,6 +45,7 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
 
   // Rate limiting on auth endpoints
   app.use("/api/auth/register", rateLimit({ windowMs: 60_000, max: 5 }));
+  app.use("/api/auth/register-from-project-pilot", rateLimit({ windowMs: 60_000, max: 10 }));
   app.use("/api/auth/login", rateLimit({ windowMs: 60_000, max: 10 }));
   app.use("/api/auth/github/*", rateLimit({ windowMs: 60_000, max: 10 }));
   app.use("/api/auth/sso/*", rateLimit({ windowMs: 60_000, max: 20 }));
