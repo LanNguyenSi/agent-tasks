@@ -18,6 +18,9 @@ vi.mock("../../src/services/github-health.js", () => ({
   getTokenHealth: vi.fn(),
 }));
 
+const { allowedLoginsMock } = vi.hoisted(() => ({
+  allowedLoginsMock: [] as string[],
+}));
 vi.mock("../../src/config/index.js", () => ({
   config: {
     NODE_ENV: "test",
@@ -28,8 +31,10 @@ vi.mock("../../src/config/index.js", () => ({
     CORS_ORIGINS: "http://localhost:3000",
     PORT: 3001,
     DATABASE_URL: "postgresql://test:test@localhost/test",
+    ALLOWED_GITHUB_LOGINS: "",
   },
   hasGitHubOAuthConfigured: true,
+  allowedGitHubLogins: allowedLoginsMock,
 }));
 
 import { prisma } from "../../src/lib/prisma.js";
@@ -180,6 +185,52 @@ describe("POST /auth/register-from-project-pilot", () => {
     expect(p1.userId).toBe(p2.userId);
     // create() must NOT have been called — user already existed.
     expect(mockedUser.create).not.toHaveBeenCalled();
+  });
+
+  it("403 when ALLOWED_GITHUB_LOGINS is set and login is not in list", async () => {
+    allowedLoginsMock.length = 0;
+    allowedLoginsMock.push("authorized-user");
+
+    mockedFetch.mockResolvedValue({
+      id: 77,
+      login: "stranger",
+      name: null,
+      avatar_url: "",
+      email: null,
+    });
+
+    const res = await callEndpoint({ githubAccessToken: "valid" });
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("forbidden_github_login");
+    expect(mockedUser.create).not.toHaveBeenCalled();
+    expect(mockedUser.update).not.toHaveBeenCalled();
+
+    allowedLoginsMock.length = 0;
+  });
+
+  it("accepts when ALLOWED_GITHUB_LOGINS is set and login matches", async () => {
+    allowedLoginsMock.length = 0;
+    allowedLoginsMock.push("ok-user");
+
+    mockedFetch.mockResolvedValue({
+      id: 11,
+      login: "ok-user",
+      name: null,
+      avatar_url: "",
+      email: null,
+    });
+    (mockedUser.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockedUser.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "user-ok",
+      githubId: "11",
+    });
+
+    const res = await callEndpoint({ githubAccessToken: "valid" });
+
+    expect(res.status).toBe(200);
+    allowedLoginsMock.length = 0;
   });
 
   it("rejects empty access-token at validation layer", async () => {
