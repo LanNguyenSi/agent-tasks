@@ -310,18 +310,59 @@ describe("POST /tasks/:id/start", () => {
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 
-  it("review branch: rejects self-review when the agent authored the task", async () => {
+  it("review branch: rejects self-review when project requires a distinct reviewer", async () => {
     prismaMocks.taskFindUnique.mockResolvedValueOnce({
       ...baseTask,
       status: "review",
       createdByAgentId: "agent-1",
       claimedByAgentId: "agent-1",
+      project: { ...baseTask.project, requireDistinctReviewer: true, soloMode: false },
     });
     prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
 
     const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
     expect(res.status).toBe(403);
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("review branch: ALLOWS self-review when project is soloMode (single-actor workflow)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      createdByAgentId: "agent-1",
+      claimedByAgentId: "agent-1",
+      project: { ...baseTask.project, requireDistinctReviewer: true, soloMode: true },
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskUpdate.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      reviewClaimedByAgentId: "agent-1",
+    });
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { kind: string };
+    expect(body.kind).toBe("review");
+  });
+
+  it("review branch: ALLOWS self-review when project opts out of requireDistinctReviewer", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      createdByAgentId: "agent-1",
+      claimedByAgentId: "agent-1",
+      project: { ...baseTask.project, requireDistinctReviewer: false, soloMode: false },
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskUpdate.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      reviewClaimedByAgentId: "agent-1",
+    });
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
   });
 
   it("review branch: sets review claim without touching status", async () => {

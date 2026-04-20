@@ -31,6 +31,7 @@ export interface GateTask {
 
 export interface GateProject {
   requireDistinctReviewer: boolean;
+  soloMode?: boolean;
 }
 
 export interface GateResult {
@@ -44,12 +45,19 @@ export interface GateResult {
  * when the project has the feature off (backwards-compatible), and
  * `allowed: false` with a structured reason otherwise. Callers handle the
  * `force: true` escape hatch — this function is flag-only.
+ *
+ * `soloMode` is always allowed — by definition there is no second actor to
+ * protect against, so a self-review block has no counterparty to defend.
+ * This matches `checkSelfMergeGate` below.
  */
 export function checkDistinctReviewerGate(
   task: GateTask,
   actor: Actor,
   project: GateProject,
 ): GateResult {
+  if (project.soloMode) {
+    return { allowed: true };
+  }
   if (!project.requireDistinctReviewer) {
     return { allowed: true };
   }
