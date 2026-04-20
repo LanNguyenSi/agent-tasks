@@ -17,7 +17,13 @@ import {
 import { logAuditEvent } from "../services/audit.js";
 import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } from "../services/review-signal.js";
 import { emitTaskAvailableSignal } from "../services/task-signal.js";
-import { acknowledgeSignalsForTask } from "../services/signal.js";
+import { acknowledgeSignalsForTask, type SignalType } from "../services/signal.js";
+
+// Signals that become meaningless once the underlying task is `done`.
+// Outcome-notification signals (`task_approved`, `changes_requested`,
+// `task_force_transitioned`) are intentionally NOT listed — they are
+// emitted against terminal tasks by design and must still reach recipients.
+const STALE_WHEN_DONE: SignalType[] = ["review_needed", "task_available", "task_assigned"];
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
 import {
   DEFAULT_TRANSITIONS,
@@ -518,14 +524,19 @@ taskRouter.post("/tasks/pickup", async (c) => {
   }
 
   // ── 1. Signals ────────────────────────────────────────────────────────────
-  // Defense-in-depth: skip signals whose underlying task is already `done`.
-  // The status-transition paths ack signals proactively, but this filter
-  // protects against any path that might miss the ack (custom workflows,
-  // future webhook handlers, manual DB edits).
+  // Defense-in-depth: only `review_needed` / `task_available` / `task_assigned`
+  // become stale when the task lands on `done` — those ask the recipient to
+  // DO something ("pick this up", "review this") that no longer applies.
+  // `task_approved`, `changes_requested`, `task_force_transitioned` are
+  // *outcome notifications* emitted against tasks that are already terminal
+  // by design; they must survive to reach the claimant's queue.
   const signal = await prisma.signal.findFirst({
     where: {
       acknowledgedAt: null,
-      task: { status: { not: "done" } },
+      OR: [
+        { type: { notIn: STALE_WHEN_DONE } },
+        { task: { status: { not: "done" } } },
+      ],
       ...(actor.type === "agent"
         ? { recipientAgentId: actor.tokenId }
         : { recipientUserId: actor.userId }),
@@ -1411,6 +1422,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           },
           include: taskInclude,
         });
+        await acknowledgeSignalsForTask(task.id);
         void logAuditEvent({
           action: "task.transitioned",
           actorId: actor.type === "human" ? actor.userId : undefined,
@@ -2141,6 +2153,8 @@ taskRouter.post(
       },
       include: taskInclude,
     });
+
+    await acknowledgeSignalsForTask(task.id);
 
     void logAuditEvent({
       action: "task.merged",
@@ -3116,6 +3130,12 @@ taskRouter.post(
       include: taskInclude,
     });
 
+    // Ack BEFORE emitting outcome signals below — those must survive past
+    // the task's terminal state, so we ack the pending work/review asks first.
+    if (status === "done" && previousStatus !== "done") {
+      await acknowledgeSignalsForTask(task.id);
+    }
+
     void logAuditEvent({
       action: forcedRules.length > 0 ? "task.transitioned.forced" : "task.transitioned",
       actorId: actor.type === "human" ? actor.userId : undefined,
@@ -3245,6 +3265,12 @@ taskRouter.post(
       },
       include: taskInclude,
     });
+
+    // Ack BEFORE emitting `task_approved` below, which is deliberately
+    // emitted against a terminal task and must survive.
+    if (newStatus === "done") {
+      await acknowledgeSignalsForTask(task.id);
+    }
 
     void logAuditEvent({
       action: "task.reviewed",

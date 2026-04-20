@@ -33,7 +33,7 @@ vi.mock("../../src/services/audit.js", () => ({
   logAuditEvent: mockLogAuditEvent,
 }));
 
-import { handlePullRequestReviewEvent, handlePullRequestEvent } from "../../src/services/github-webhook.js";
+import { handlePullRequestReviewEvent, handlePullRequestEvent, handleIssuesEvent } from "../../src/services/github-webhook.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -305,6 +305,37 @@ describe("handlePullRequestEvent", () => {
       data: expect.objectContaining({
         content: expect.stringContaining("PR #42 opened"),
       }),
+    });
+  });
+});
+
+describe("handleIssuesEvent", () => {
+  const baseIssuePayload = {
+    repository: { full_name: "test/repo" },
+    issue: {
+      number: 7,
+      title: "Something",
+      body: null,
+      html_url: "https://github.com/test/repo/issues/7",
+      state: "closed" as const,
+    },
+  };
+
+  it("acks pending signals when issue.closed transitions a task to done", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+    mockTaskFindMany.mockResolvedValue([
+      { id: "task-1", projectId: "proj-1", title: "[GH #7] Something", status: "in_progress" },
+    ]);
+
+    await handleIssuesEvent({ ...baseIssuePayload, action: "closed" });
+
+    expect(mockTaskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { status: "done" },
+    });
+    expect(mockSignalUpdateMany).toHaveBeenCalledWith({
+      where: { taskId: "task-1", acknowledgedAt: null },
+      data: { acknowledgedAt: expect.any(Date) },
     });
   });
 });
