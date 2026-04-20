@@ -126,3 +126,19 @@ export async function acknowledgeSignal(signalId: string, recipientAgentId?: str
     data: { acknowledgedAt: new Date() },
   });
 }
+
+/**
+ * Ack every pending signal targeting a task. Called on the status-transition
+ * paths that land a task in `done`, so `review_needed` / `task_available` /
+ * etc. don't linger in the pickup queue after their underlying task is
+ * terminal.
+ *
+ * Idempotent: `updateMany` with the same task_id is a no-op after the first
+ * call.
+ */
+export async function acknowledgeSignalsForTask(taskId: string) {
+  return prisma.signal.updateMany({
+    where: { taskId, acknowledgedAt: null },
+    data: { acknowledgedAt: new Date() },
+  });
+}

@@ -24,6 +24,7 @@ const prismaMocks = vi.hoisted(() => ({
   taskUpdate: vi.fn(),
   signalFindFirst: vi.fn(),
   signalUpdate: vi.fn(),
+  signalUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
   workflowFindFirst: vi.fn(),
   agentTokenFindUnique: vi.fn(),
   userFindUnique: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     signal: {
       findFirst: prismaMocks.signalFindFirst,
       update: prismaMocks.signalUpdate,
+      updateMany: prismaMocks.signalUpdateMany,
     },
     workflow: {
       findFirst: prismaMocks.workflowFindFirst,

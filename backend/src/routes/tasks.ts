@@ -17,6 +17,7 @@ import {
 import { logAuditEvent } from "../services/audit.js";
 import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } from "../services/review-signal.js";
 import { emitTaskAvailableSignal } from "../services/task-signal.js";
+import { acknowledgeSignalsForTask } from "../services/signal.js";
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
 import {
   DEFAULT_TRANSITIONS,
@@ -517,9 +518,14 @@ taskRouter.post("/tasks/pickup", async (c) => {
   }
 
   // ── 1. Signals ────────────────────────────────────────────────────────────
+  // Defense-in-depth: skip signals whose underlying task is already `done`.
+  // The status-transition paths ack signals proactively, but this filter
+  // protects against any path that might miss the ack (custom workflows,
+  // future webhook handlers, manual DB edits).
   const signal = await prisma.signal.findFirst({
     where: {
       acknowledgedAt: null,
+      task: { status: { not: "done" } },
       ...(actor.type === "agent"
         ? { recipientAgentId: actor.tokenId }
         : { recipientUserId: actor.userId }),
@@ -1313,6 +1319,10 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       include: taskInclude,
     });
 
+    if (outcome === "approve" && isTerminalState(effectiveReviewDefinition, targetStatus)) {
+      await acknowledgeSignalsForTask(task.id);
+    }
+
     const actorId = actor.type === "human" ? actor.userId : actor.tokenId;
     void logAuditEvent({
       action: "task.reviewed",
@@ -1606,6 +1616,10 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     data: updateData,
     include: taskInclude,
   });
+
+  if (isTerminalState(effectiveDefinition, targetStatus)) {
+    await acknowledgeSignalsForTask(task.id);
+  }
 
   void logAuditEvent({
     action: "task.transitioned",
@@ -2398,6 +2412,10 @@ taskRouter.patch("/tasks/:id", async (c) => {
       return conflict(c, `A task with externalRef "${body.externalRef}" already exists in this project`);
     }
     throw e;
+  }
+
+  if (body.status === "done" && task.status !== "done") {
+    await acknowledgeSignalsForTask(task.id);
   }
 
   return c.json({ task: updated });
