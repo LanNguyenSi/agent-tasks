@@ -3206,7 +3206,12 @@ taskRouter.post(
       return forbidden(c, "Missing scope: tasks:transition");
     }
 
-    const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+    const task = await prisma.task.findUnique({
+      where: { id: c.req.param("id") },
+      include: {
+        project: { select: { requireDistinctReviewer: true, soloMode: true } },
+      },
+    });
     if (!task) return notFound(c);
 
     if (!(await hasProjectAccess(actor, task.projectId))) {
@@ -3217,17 +3222,11 @@ taskRouter.post(
       return c.json({ error: "bad_request", message: "Task must be in review status" }, 400);
     }
 
-    const reviewProject = await prisma.project.findUnique({
-      where: { id: task.projectId },
-      select: { requireDistinctReviewer: true, soloMode: true },
-    });
-    if (!reviewProject) return notFound(c);
-
     // Reviewer must not be the same as the claimant (no self-review).
     // soloMode and !requireDistinctReviewer projects bypass this — see
     // checkDistinctReviewerGate in services/review-gate.ts.
     {
-      const gate = checkDistinctReviewerGate(task, actor, reviewProject);
+      const gate = checkDistinctReviewerGate(task, actor, task.project);
       if (!gate.allowed) {
         return forbidden(c, "Cannot review your own task");
       }
@@ -3319,7 +3318,12 @@ taskRouter.post("/tasks/:id/review/claim", async (c) => {
     return forbidden(c, "Missing scope: tasks:transition");
   }
 
-  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    include: {
+      project: { select: { requireDistinctReviewer: true, soloMode: true } },
+    },
+  });
   if (!task) return notFound(c);
 
   if (!(await hasProjectAccess(actor, task.projectId))) {
@@ -3330,16 +3334,10 @@ taskRouter.post("/tasks/:id/review/claim", async (c) => {
     return c.json({ error: "bad_request", message: "Task must be in review status" }, 400);
   }
 
-  const claimReviewProject = await prisma.project.findUnique({
-    where: { id: task.projectId },
-    select: { requireDistinctReviewer: true, soloMode: true },
-  });
-  if (!claimReviewProject) return notFound(c);
-
   // No self-review — bypassed in soloMode and when the project opts out of
   // requireDistinctReviewer (same flag-aware gate as the other endpoints).
   {
-    const gate = checkDistinctReviewerGate(task, actor, claimReviewProject);
+    const gate = checkDistinctReviewerGate(task, actor, task.project);
     if (!gate.allowed) {
       return forbidden(c, "Cannot review your own task");
     }
