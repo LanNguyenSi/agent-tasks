@@ -7,6 +7,7 @@ const {
   mockProjectFindMany,
   mockCommentCreate,
   mockLogAuditEvent,
+  mockSignalUpdateMany,
 } = vi.hoisted(() => ({
   mockTaskFindMany: vi.fn(),
   mockTaskUpdate: vi.fn().mockResolvedValue({}),
@@ -16,6 +17,7 @@ const {
   mockProjectFindMany: vi.fn(),
   mockCommentCreate: vi.fn().mockResolvedValue({}),
   mockLogAuditEvent: vi.fn().mockResolvedValue(undefined),
+  mockSignalUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -23,6 +25,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     task: { findMany: mockTaskFindMany, update: mockTaskUpdate, create: mockTaskCreate },
     project: { findMany: mockProjectFindMany },
     comment: { create: mockCommentCreate },
+    signal: { updateMany: mockSignalUpdateMany },
   },
 }));
 
@@ -30,7 +33,7 @@ vi.mock("../../src/services/audit.js", () => ({
   logAuditEvent: mockLogAuditEvent,
 }));
 
-import { handlePullRequestReviewEvent, handlePullRequestEvent } from "../../src/services/github-webhook.js";
+import { handlePullRequestReviewEvent, handlePullRequestEvent, handleIssuesEvent } from "../../src/services/github-webhook.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -206,6 +209,23 @@ describe("handlePullRequestEvent", () => {
       where: { id: "task-1" },
       data: { status: "done" },
     });
+    // Pending signals for the task are auto-acked so the pickup queue drops them
+    expect(mockSignalUpdateMany).toHaveBeenCalledWith({
+      where: { taskId: "task-1", acknowledgedAt: null },
+      data: { acknowledgedAt: expect.any(Date) },
+    });
+  });
+
+  it("does not ack signals when PR-merge transition does not land on done (non-solo review)", async () => {
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress" })]);
+
+    await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
+
+    expect(mockTaskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { status: "review" },
+    });
+    expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
 
   it("transitions task to done on PR merged when task has a custom workflow", async () => {
@@ -285,6 +305,37 @@ describe("handlePullRequestEvent", () => {
       data: expect.objectContaining({
         content: expect.stringContaining("PR #42 opened"),
       }),
+    });
+  });
+});
+
+describe("handleIssuesEvent", () => {
+  const baseIssuePayload = {
+    repository: { full_name: "test/repo" },
+    issue: {
+      number: 7,
+      title: "Something",
+      body: null,
+      html_url: "https://github.com/test/repo/issues/7",
+      state: "closed" as const,
+    },
+  };
+
+  it("acks pending signals when issue.closed transitions a task to done", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+    mockTaskFindMany.mockResolvedValue([
+      { id: "task-1", projectId: "proj-1", title: "[GH #7] Something", status: "in_progress" },
+    ]);
+
+    await handleIssuesEvent({ ...baseIssuePayload, action: "closed" });
+
+    expect(mockTaskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { status: "done" },
+    });
+    expect(mockSignalUpdateMany).toHaveBeenCalledWith({
+      where: { taskId: "task-1", acknowledgedAt: null },
+      data: { acknowledgedAt: expect.any(Date) },
     });
   });
 });

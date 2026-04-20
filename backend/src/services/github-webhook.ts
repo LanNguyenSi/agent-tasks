@@ -10,6 +10,7 @@
 import { createHmac } from "node:crypto";
 import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
+import { acknowledgeSignalsForTask } from "./signal.js";
 
 export type GitHubWebhookEvent = "push" | "issues" | "pull_request" | "pull_request_review" | "ping";
 
@@ -185,6 +186,7 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
           where: { id: task.id },
           data: { status: "done" },
         });
+        await acknowledgeSignalsForTask(task.id);
         await logAuditEvent({
           action: "task.transitioned",
           projectId: project.id,
@@ -289,6 +291,9 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
               where: { id: task.id },
               data: { status: toStatus },
             });
+            if (toStatus === "done") {
+              await acknowledgeSignalsForTask(task.id);
+            }
           }
           await addTimelineComment(task.id, `PR #${prNumber} merged by ${mergedBy}`);
           await logAuditEvent({

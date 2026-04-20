@@ -6,6 +6,7 @@ const {
   mockSignalFindMany,
   mockSignalFindUnique,
   mockSignalUpdate,
+  mockSignalUpdateMany,
 } = vi.hoisted(() => ({
   mockSignalCreate: vi.fn().mockImplementation((args: { data: Record<string, unknown> }) =>
     Promise.resolve({ id: "sig-1", ...args.data, createdAt: new Date().toISOString(), acknowledgedAt: null }),
@@ -16,6 +17,7 @@ const {
   mockSignalUpdate: vi.fn().mockImplementation((args: { data: Record<string, unknown> }) =>
     Promise.resolve({ id: "sig-1", ...args.data }),
   ),
+  mockSignalUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -26,11 +28,18 @@ vi.mock("../../src/lib/prisma.js", () => ({
       findMany: mockSignalFindMany,
       findUnique: mockSignalFindUnique,
       update: mockSignalUpdate,
+      updateMany: mockSignalUpdateMany,
     },
   },
 }));
 
-import { createSignal, createSignals, getAgentSignals, acknowledgeSignal } from "../../src/services/signal.js";
+import {
+  createSignal,
+  createSignals,
+  getAgentSignals,
+  acknowledgeSignal,
+  acknowledgeSignalsForTask,
+} from "../../src/services/signal.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -193,5 +202,31 @@ describe("acknowledgeSignal", () => {
     const result = await acknowledgeSignal("sig-1", undefined, "user-1");
     expect(mockSignalUpdate).toHaveBeenCalled();
     expect(result).toBeTruthy();
+  });
+});
+
+describe("acknowledgeSignalsForTask", () => {
+  it("acks every unacknowledged signal for the given task", async () => {
+    mockSignalUpdateMany.mockResolvedValue({ count: 3 });
+
+    const result = await acknowledgeSignalsForTask("task-42");
+
+    expect(mockSignalUpdateMany).toHaveBeenCalledWith({
+      where: { taskId: "task-42", acknowledgedAt: null },
+      data: { acknowledgedAt: expect.any(Date) },
+    });
+    expect(result).toEqual({ count: 3 });
+  });
+
+  it("is idempotent — already-acked signals are left untouched by the filter", async () => {
+    mockSignalUpdateMany.mockResolvedValue({ count: 0 });
+
+    await acknowledgeSignalsForTask("task-42");
+    await acknowledgeSignalsForTask("task-42");
+
+    expect(mockSignalUpdateMany).toHaveBeenCalledTimes(2);
+    const [firstCall, secondCall] = mockSignalUpdateMany.mock.calls;
+    expect(firstCall[0].where).toEqual({ taskId: "task-42", acknowledgedAt: null });
+    expect(secondCall[0].where).toEqual({ taskId: "task-42", acknowledgedAt: null });
   });
 });

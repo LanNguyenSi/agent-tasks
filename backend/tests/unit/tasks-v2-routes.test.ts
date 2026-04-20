@@ -24,6 +24,7 @@ const prismaMocks = vi.hoisted(() => ({
   taskUpdate: vi.fn(),
   signalFindFirst: vi.fn(),
   signalUpdate: vi.fn(),
+  signalUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
   workflowFindFirst: vi.fn(),
   agentTokenFindUnique: vi.fn(),
   userFindUnique: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     signal: {
       findFirst: prismaMocks.signalFindFirst,
       update: prismaMocks.signalUpdate,
+      updateMany: prismaMocks.signalUpdateMany,
     },
     workflow: {
       findFirst: prismaMocks.workflowFindFirst,
@@ -247,6 +249,23 @@ describe("POST /tasks/pickup", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { kind: string };
     expect(body.kind).toBe("idle");
+  });
+
+  it("signal-pickup filter lets outcome notifications through even for done tasks", async () => {
+    // Defense-in-depth filter must NOT hide `task_approved` /
+    // `changes_requested` / `task_force_transitioned` — those are emitted
+    // against terminal tasks by design.
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+
+    const whereClause = prismaMocks.signalFindFirst.mock.calls[0]![0].where;
+    expect(whereClause.OR).toEqual([
+      { type: { notIn: ["review_needed", "task_available", "task_assigned"] } },
+      { task: { status: { not: "done" } } },
+    ]);
   });
 });
 
