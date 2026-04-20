@@ -821,12 +821,11 @@ taskRouter.post("/tasks/:id/start", async (c) => {
 
   // ── Branch: status=review → review-claim ────────────────────────────────
   if (isReviewState(effectiveDefinition, task.status)) {
-    // Distinct-reviewer: cannot review your own task
-    const isSelfReview =
-      (actor.type === "human" && task.claimedByUserId === actor.userId) ||
-      (actor.type === "agent" && task.claimedByAgentId === actor.tokenId) ||
-      (actor.type === "agent" && task.createdByAgentId === actor.tokenId);
-    if (isSelfReview) {
+    // Distinct-reviewer: bypassed in soloMode and when the project opts out
+    // of requireDistinctReviewer. Same flag-aware gate the review-finish
+    // and PATCH paths use, so policy stays consistent across endpoints.
+    const gate = checkDistinctReviewerGate(task, actor, task.project);
+    if (!gate.allowed) {
       return forbidden(c, "Cannot review your own task");
     }
 
@@ -3218,12 +3217,20 @@ taskRouter.post(
       return c.json({ error: "bad_request", message: "Task must be in review status" }, 400);
     }
 
-    // Reviewer must not be the same as the claimant (no self-review)
-    const isSelfReview =
-      (actor.type === "human" && task.claimedByUserId === actor.userId) ||
-      (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
-    if (isSelfReview) {
-      return forbidden(c, "Cannot review your own task");
+    const reviewProject = await prisma.project.findUnique({
+      where: { id: task.projectId },
+      select: { requireDistinctReviewer: true, soloMode: true },
+    });
+    if (!reviewProject) return notFound(c);
+
+    // Reviewer must not be the same as the claimant (no self-review).
+    // soloMode and !requireDistinctReviewer projects bypass this — see
+    // checkDistinctReviewerGate in services/review-gate.ts.
+    {
+      const gate = checkDistinctReviewerGate(task, actor, reviewProject);
+      if (!gate.allowed) {
+        return forbidden(c, "Cannot review your own task");
+      }
     }
 
     // Single-reviewer lock: only one reviewer at a time
@@ -3323,12 +3330,19 @@ taskRouter.post("/tasks/:id/review/claim", async (c) => {
     return c.json({ error: "bad_request", message: "Task must be in review status" }, 400);
   }
 
-  // No self-review
-  const isSelfReview =
-    (actor.type === "human" && task.claimedByUserId === actor.userId) ||
-    (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
-  if (isSelfReview) {
-    return forbidden(c, "Cannot review your own task");
+  const claimReviewProject = await prisma.project.findUnique({
+    where: { id: task.projectId },
+    select: { requireDistinctReviewer: true, soloMode: true },
+  });
+  if (!claimReviewProject) return notFound(c);
+
+  // No self-review — bypassed in soloMode and when the project opts out of
+  // requireDistinctReviewer (same flag-aware gate as the other endpoints).
+  {
+    const gate = checkDistinctReviewerGate(task, actor, claimReviewProject);
+    if (!gate.allowed) {
+      return forbidden(c, "Cannot review your own task");
+    }
   }
 
   // Already locked by someone else

@@ -535,5 +535,24 @@ describe("distinct-reviewer gate on review→done transition", () => {
       expect(agentResult.allowed).toBe(false);
       expect(humanResult.reason).toBe(agentResult.reason);
     });
+
+    it("soloMode bypasses the gate even when requireDistinctReviewer is true", () => {
+      // soloMode = single-actor workflow. There is no second actor to
+      // protect; blocking self-review just strands the task in `review`
+      // forever. Mirror checkSelfMergeGate's soloMode escape hatch.
+      const agentClaimant: BackendActor = {
+        type: "agent",
+        tokenId: "agent-worker",
+        teamId: "team-x",
+        scopes: [],
+      };
+      const result = checkDistinctReviewerGate(
+        baseTask, // claimedByAgentId === "agent-worker"
+        agentClaimant,
+        { requireDistinctReviewer: true, soloMode: true },
+      );
+      expect(result.allowed).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
   });
 });
