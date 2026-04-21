@@ -332,7 +332,7 @@ githubRouter.post(
       data: { status: "done" },
     });
     await acknowledgeSignalsForTask(body.taskId);
-    await emitSelfMergeNoticeIfApplicable({
+    void emitSelfMergeNoticeIfApplicable({
       taskId: body.taskId,
       projectId: task.project.id,
       actor,

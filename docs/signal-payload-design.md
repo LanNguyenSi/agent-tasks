@@ -19,6 +19,7 @@ Defines the structure of signals that local Claude/Codex-style agents consume vi
 | `task_assigned` | Task claimed/assigned to agent | The assigned agent |
 | `task_available` | Task transitions to `open` | Eligible agents in the team |
 | `task_force_transitioned` | Admin force-transitions past a failed gate | Current claimant + current reviewer (excluding the forcing admin) |
+| `self_merge_notice` | Agent (or human) self-merged on a non-solo project with `requireDistinctReviewer: false` | All human team members, excluding the merging human |
 
 Future candidates (not in MVP): `deploy_ready`, `mention`, `dependency_resolved`.
 
@@ -51,6 +52,41 @@ forceTransition: {
 Signal emission is best-effort: a failure to write signals does NOT
 prevent the transition from persisting. The audit log
 (`task.transitioned.forced`) remains the authoritative record.
+
+### `self_merge_notice`
+
+Fired when a task lands on `done` via a self-merge in the "async
+human-in-the-loop" governance tier — a project with
+`soloMode: false` and `requireDistinctReviewer: false`. The three-tier
+policy model is:
+
+- `soloMode: true` — autonomous, no notifications. Single-actor
+  projects have no counterparty to notify.
+- `soloMode: false, requireDistinctReviewer: false` — agent may
+  self-merge, but every human on the team gets a `self_merge_notice`
+  so the merge is visible without gating the flow.
+- `soloMode: false, requireDistinctReviewer: true` — dual-control. The
+  merge is blocked by `checkSelfMergeGate` before it can happen, so no
+  notice is emitted.
+
+Recipients are every `teamMember` of the project's team, excluding the
+merging human (if the actor is human). Agents do not receive this
+signal — it is specifically a human-visibility channel for
+agent-driven or potentially-self-reviewing activity.
+
+Emission sites (one per PR-merge-to-done path):
+- `POST /api/github/pull-requests/:n/merge`
+- `POST /api/tasks/:id/merge` (task_merge verb)
+- `POST /api/tasks/:id/finish` with `autoMerge: true` (review-approve + work-finish branches)
+- `POST /api/tasks/:id/finish` mid-flight autoMerge recovery
+
+Audit record: `task.self_merge_notice_emitted` with `via`, `actorType`,
+`mergeSha`, and `recipientCount`.
+
+Signal emission is best-effort: the merge has already succeeded on
+GitHub and on the task row by the time the notice is attempted, so a
+DB blip during emission is swallowed and logged to stderr. The audit
+log remains the authoritative record.
 
 ## Payload schema
 

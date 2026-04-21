@@ -163,6 +163,28 @@ describe("emitSelfMergeNoticeIfApplicable", () => {
     expect(prismaMocks.signalCreate).not.toHaveBeenCalled();
   });
 
+  it("is best-effort: swallows internal errors and returns 0 instead of throwing", async () => {
+    prismaMocks.teamMemberFindMany.mockRejectedValue(
+      new Error("DB connection refused"),
+    );
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const n = await emitSelfMergeNoticeIfApplicable({
+      taskId: "task-1",
+      projectId: "proj-1",
+      actor: agentActor,
+      project: { soloMode: false, requireDistinctReviewer: false },
+      via: "task_merge",
+    });
+
+    expect(n).toBe(0);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("task task-1"),
+      expect.any(Error),
+    );
+    errorSpy.mockRestore();
+  });
+
   it("signal context carries prUrl, prNumber, actor info, and task metadata", async () => {
     prismaMocks.teamMemberFindMany.mockResolvedValue([{ userId: "u1" }]);
 

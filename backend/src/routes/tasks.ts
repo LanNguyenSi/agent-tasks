@@ -1333,7 +1333,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     if (outcome === "approve" && isTerminalState(effectiveReviewDefinition, targetStatus)) {
       await acknowledgeSignalsForTask(task.id);
       if (reviewAutoMergeSha !== null) {
-        await emitSelfMergeNoticeIfApplicable({
+        void emitSelfMergeNoticeIfApplicable({
           taskId: task.id,
           projectId: task.projectId,
           actor,
@@ -1439,7 +1439,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         // Mid-flight recovery: the merge happened in a prior request that
         // never got to emit the notice. Emit it now so the human-visibility
         // path isn't skipped on retries.
-        await emitSelfMergeNoticeIfApplicable({
+        void emitSelfMergeNoticeIfApplicable({
           taskId: task.id,
           projectId: task.projectId,
           actor,
@@ -1659,7 +1659,12 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   if (isTerminalState(effectiveDefinition, targetStatus)) {
     await acknowledgeSignalsForTask(task.id);
     if (workAutoMergeSha !== null) {
-      await emitSelfMergeNoticeIfApplicable({
+      // Currently only reachable from soloMode projects (work-finish
+      // autoMerge is gated on soloMode further up), so the helper will
+      // short-circuit. Kept as a symmetric call site with the other
+      // merge-to-done paths; if the soloMode gate is ever relaxed on the
+      // work-finish branch, the notice will fire automatically.
+      void emitSelfMergeNoticeIfApplicable({
         taskId: task.id,
         projectId: task.projectId,
         actor,
@@ -2195,7 +2200,7 @@ taskRouter.post(
     });
 
     await acknowledgeSignalsForTask(task.id);
-    await emitSelfMergeNoticeIfApplicable({
+    void emitSelfMergeNoticeIfApplicable({
       taskId: task.id,
       projectId: task.projectId,
       actor,

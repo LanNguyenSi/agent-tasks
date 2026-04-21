@@ -45,8 +45,32 @@ export interface SelfMergeNoticeInput {
  * Emit a `self_merge_notice` signal to every human team member when the
  * merge happened under the "async HITL" tier. Safe to call unconditionally
  * — the guard is inside.
+ *
+ * Best-effort: never throws. A DB blip inside recipient lookup or signal
+ * creation must NOT roll back a merge that already succeeded on GitHub and
+ * on the task row. Callers should `void` this (matches the convention for
+ * the other signal emitters in services/*-signal.ts per
+ * docs/signal-payload-design.md).
  */
 export async function emitSelfMergeNoticeIfApplicable(
+  input: SelfMergeNoticeInput,
+): Promise<number> {
+  try {
+    return await emitSelfMergeNoticeInner(input);
+  } catch (err) {
+    // Swallow — best-effort contract. Log to console so the failure is
+    // still grep-able in production logs; the audit system is intentionally
+    // not used here because writing to it could itself be the failure mode.
+    // eslint-disable-next-line no-console
+    console.error(
+      `[self-merge-notice] emission failed for task ${input.taskId}:`,
+      err,
+    );
+    return 0;
+  }
+}
+
+async function emitSelfMergeNoticeInner(
   input: SelfMergeNoticeInput,
 ): Promise<number> {
   if (input.project.soloMode) return 0;
