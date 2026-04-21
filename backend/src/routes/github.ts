@@ -160,9 +160,11 @@ githubRouter.post(
 
     const body = c.req.valid("json");
 
-    // 1. Find the task. Pull `requireDistinctReviewer` and `githubRepo`
-    // from the project so the distinct-reviewer gate and performPrMerge
-    // can run without extra round-trips.
+    // 1. Find the task. Pull governance fields + `githubRepo` from the
+    // project so the distinct-reviewer / self-merge gates and performPrMerge
+    // can run without extra round-trips. `governanceMode` is the source of
+    // truth; `soloMode` / `requireDistinctReviewer` kept for fallback
+    // derivation on pre-migration rows.
     const task = await prisma.task.findUnique({
       where: { id: body.taskId },
       include: {
@@ -171,6 +173,7 @@ githubRouter.post(
             id: true,
             teamId: true,
             githubRepo: true,
+            governanceMode: true,
             requireDistinctReviewer: true,
             soloMode: true,
           },
@@ -286,10 +289,7 @@ githubRouter.post(
     // isn't in soloMode, the work-claim holder cannot be the one calling
     // merge. Narrower than the DR gate above — catches the retry case the
     // DR gate deliberately skips.
-    const selfMerge = checkSelfMergeGate(task, actor, {
-      requireDistinctReviewer: task.project.requireDistinctReviewer,
-      soloMode: task.project.soloMode,
-    });
+    const selfMerge = checkSelfMergeGate(task, actor, task.project);
     if (!selfMerge.allowed) {
       void logAuditEvent({
         action: "task.pr_merged.blocked_self_merge",
@@ -336,10 +336,7 @@ githubRouter.post(
       taskId: body.taskId,
       projectId: task.project.id,
       actor,
-      project: {
-        soloMode: task.project.soloMode,
-        requireDistinctReviewer: task.project.requireDistinctReviewer,
-      },
+      project: task.project,
       mergeSha: mergeResult.sha,
       via: "github_pr_merge",
     });

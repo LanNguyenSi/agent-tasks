@@ -187,8 +187,9 @@ same GitHub delegation path and shares the PR cache: when both
 **Interaction with the webhook path**: GitHub webhooks auto-transition
 tasks on PR merge via a raw `prisma.update` that bypasses the rule
 evaluator entirely (see "What bypasses these gates" above). In the
-default workflow the webhook lands the task in `review` (soloMode
-and custom-workflow tasks still go to `done`; see
+default workflow the webhook lands the task in `review` (AUTONOMOUS
+projects — formerly `soloMode=true` — and custom-workflow tasks still
+go to `done`; see
 [review-automation-policy.md](review-automation-policy.md)). The
 `prMerged` rule only matters for manual/agent-driven transitions
 where the webhook hasn't arrived yet, or when the task's `prNumber`
@@ -370,7 +371,7 @@ merge-and-transition in a single call. Two modes:
 
 ### Mode A — Solo work-claim merge
 
-Requires `project.soloMode = true`. A single agent can take a task from
+Requires `project.governanceMode = AUTONOMOUS` (legacy: `soloMode=true`). A single agent can take a task from
 `open` to `done` without a distinct reviewer:
 
 ```
@@ -384,7 +385,7 @@ and transitions the task atomically. No review signal is emitted.
 
 ### Mode B — Reviewer-triggered merge
 
-Does NOT require `soloMode`. A distinct reviewer calls:
+Does NOT require `AUTONOMOUS` mode (legacy: `soloMode`). A distinct reviewer calls:
 
 ```
 task_finish { outcome: "approve", autoMerge: true }

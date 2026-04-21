@@ -163,6 +163,46 @@ describe("emitSelfMergeNoticeIfApplicable", () => {
     expect(prismaMocks.signalCreate).not.toHaveBeenCalled();
   });
 
+  it("respects governanceMode when set (enum wins over legacy flags)", async () => {
+    prismaMocks.teamMemberFindMany.mockResolvedValue([{ userId: "u1" }]);
+
+    // Legacy flags say AUTONOMOUS (soloMode=true) but the enum says
+    // AWAITS_CONFIRMATION — the enum must win.
+    const n = await emitSelfMergeNoticeIfApplicable({
+      taskId: "task-1",
+      projectId: "proj-1",
+      actor: agentActor,
+      project: {
+        governanceMode: "AWAITS_CONFIRMATION",
+        soloMode: true,
+        requireDistinctReviewer: false,
+      },
+      via: "task_merge",
+    });
+
+    expect(n).toBe(1);
+    expect(prismaMocks.signalCreate).toHaveBeenCalled();
+  });
+
+  it("does not emit when governanceMode is AUTONOMOUS even if legacy flags would suggest otherwise", async () => {
+    prismaMocks.teamMemberFindMany.mockResolvedValue([{ userId: "u1" }]);
+
+    const n = await emitSelfMergeNoticeIfApplicable({
+      taskId: "task-1",
+      projectId: "proj-1",
+      actor: agentActor,
+      project: {
+        governanceMode: "AUTONOMOUS",
+        soloMode: false,
+        requireDistinctReviewer: false,
+      },
+      via: "task_merge",
+    });
+
+    expect(n).toBe(0);
+    expect(prismaMocks.signalCreate).not.toHaveBeenCalled();
+  });
+
   it("is best-effort: swallows internal errors and returns 0 instead of throwing", async () => {
     prismaMocks.teamMemberFindMany.mockRejectedValue(
       new Error("DB connection refused"),

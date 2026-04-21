@@ -469,8 +469,13 @@ export default function DashboardPage() {
   const [settingsFieldConstraints, setSettingsFieldConstraints] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsPresets, setSettingsPresets] = useState<TemplatePreset[]>([]);
-  const [settingsRequireDistinctReviewer, setSettingsRequireDistinctReviewer] = useState(false);
-  const [settingsSoloMode, setSettingsSoloMode] = useState(false);
+  // Governance mode replaces the legacy (requireDistinctReviewer, soloMode)
+  // flag pair with a single three-valued enum. See `backend/src/lib/governance-mode.ts`
+  // for the derivation rules. Default: AWAITS_CONFIRMATION — safe middle tier
+  // for new projects that don't explicitly want dual-control or autonomy.
+  const [settingsGovernanceMode, setSettingsGovernanceMode] = useState<
+    "REQUIRES_DISTINCT_REVIEWER" | "AWAITS_CONFIRMATION" | "AUTONOMOUS"
+  >("AWAITS_CONFIRMATION");
 
   function closeNewTaskModal() {
     setShowNewTask(false);
@@ -712,8 +717,14 @@ export default function DashboardPage() {
                   setSettingsFieldContext(tpl?.fields?.context ?? true);
                   setSettingsFieldConstraints(tpl?.fields?.constraints ?? true);
                   setSettingsPresets(tpl?.presets?.length ? [...tpl.presets] : DEFAULT_PRESETS.map((p) => ({ ...p })));
-                  setSettingsRequireDistinctReviewer(proj?.requireDistinctReviewer ?? false);
-                  setSettingsSoloMode(proj?.soloMode ?? false);
+                  setSettingsGovernanceMode(
+                    proj?.governanceMode ??
+                      (proj?.soloMode
+                        ? "AUTONOMOUS"
+                        : proj?.requireDistinctReviewer
+                          ? "REQUIRES_DISTINCT_REVIEWER"
+                          : "AWAITS_CONFIRMATION"),
+                  );
                   setShowProjectSettings(true);
                 }}
               >
@@ -1125,37 +1136,46 @@ export default function DashboardPage() {
         </div>
 
         <div style={{ marginBottom: "0.75rem", paddingBottom: "0.75rem", borderBottom: "1px solid var(--border)" }}>
-          <label style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", fontSize: "var(--text-sm)", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={settingsRequireDistinctReviewer}
-              onChange={(e) => setSettingsRequireDistinctReviewer(e.target.checked)}
-              style={{ marginTop: "0.2rem" }}
-            />
-            <span>
-              Require a distinct reviewer
-              <span style={{ display: "block", color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.15rem" }}>
-                When enabled, <code>review → done</code> transitions require that a different user or agent than the task&apos;s claimant has formally taken the review lock (via <code>POST /tasks/:id/review/claim</code>). Prevents agents from self-approving their own work. Team admins can still bypass with a forced transition.
-              </span>
-            </span>
-          </label>
-        </div>
-
-        <div style={{ marginBottom: "0.75rem", paddingBottom: "0.75rem", borderBottom: "1px solid var(--border)" }}>
-          <label style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", fontSize: "var(--text-sm)", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={settingsSoloMode}
-              onChange={(e) => setSettingsSoloMode(e.target.checked)}
-              style={{ marginTop: "0.2rem" }}
-            />
-            <span>
-              Solo mode
-              <span style={{ display: "block", color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.15rem" }}>
-                Allows a single agent to merge its own PRs via <code>task_finish {"{"} autoMerge: true {"}"}</code> without a distinct reviewer. Branch protection rules on GitHub remain the primary safeguard &mdash; do not enable solo mode on repositories without <code>require_pull_request_reviews</code> and at least one required status check.
-              </span>
-            </span>
-          </label>
+          <p style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: "0.4rem" }}>Governance mode</p>
+          <div style={{ display: "grid", gap: "0.5rem" }}>
+            {([
+              [
+                "REQUIRES_DISTINCT_REVIEWER",
+                "Requires distinct reviewer",
+                <>Dual-control. <code>review → done</code> requires a different user or agent than the task&apos;s claimant to hold the review lock (via <code>POST /tasks/:id/review/claim</code>). Self-merge attempts are blocked upstream. Team admins can still bypass with a forced transition.</>,
+              ],
+              [
+                "AWAITS_CONFIRMATION",
+                "Awaits human confirmation",
+                <>Agent may self-merge, but every human on the team receives a <code>self_merge_notice</code> signal when the task reaches <code>done</code>. Gives visibility without blocking the flow. Use this when you trust the agent day-to-day but want a record you can audit asynchronously.</>,
+              ],
+              [
+                "AUTONOMOUS",
+                "Autonomous",
+                <>Single-actor workflow. No gates, no notifications. Merge still moves the task straight to <code>done</code> via the webhook. Branch protection rules on GitHub remain the primary safeguard &mdash; do not enable without <code>require_pull_request_reviews</code> and at least one required status check.</>,
+              ],
+            ] as const).map(([value, label, description]) => (
+              <label
+                key={value}
+                style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", fontSize: "var(--text-sm)", cursor: "pointer" }}
+              >
+                <input
+                  type="radio"
+                  name="governanceMode"
+                  value={value}
+                  checked={settingsGovernanceMode === value}
+                  onChange={() => setSettingsGovernanceMode(value)}
+                  style={{ marginTop: "0.2rem" }}
+                />
+                <span>
+                  {label}
+                  <span style={{ display: "block", color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.15rem" }}>
+                    {description}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
         </div>
 
         {settingsTemplateEnabled && (
@@ -1295,8 +1315,7 @@ export default function DashboardPage() {
               const updated = await updateProject(selectedProjectId, {
                 taskTemplate: tpl,
                 confidenceThreshold: settingsThreshold,
-                requireDistinctReviewer: settingsRequireDistinctReviewer,
-                soloMode: settingsSoloMode,
+                governanceMode: settingsGovernanceMode,
               });
               setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
               setShowProjectSettings(false);

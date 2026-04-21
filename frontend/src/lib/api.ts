@@ -43,8 +43,12 @@ export interface Project {
   githubSyncAt: string | null;
   taskTemplate: TaskTemplate | null;
   confidenceThreshold: number;
+  /** @deprecated prefer governanceMode. Derived from governanceMode server-side through the deprecation window. */
   requireDistinctReviewer: boolean;
+  /** @deprecated prefer governanceMode. Derived from governanceMode server-side through the deprecation window. */
   soloMode: boolean;
+  /** Null only for rows predating the migration; the server derives from legacy flags at read time. Prefer reading this over the old flags. */
+  governanceMode: "REQUIRES_DISTINCT_REVIEWER" | "AWAITS_CONFIRMATION" | "AUTONOMOUS" | null;
   createdAt: string;
 }
 
@@ -368,7 +372,10 @@ export async function updateProject(
     githubRepo?: string;
     taskTemplate?: TaskTemplate | null;
     confidenceThreshold?: number;
+    governanceMode?: "REQUIRES_DISTINCT_REVIEWER" | "AWAITS_CONFIRMATION" | "AUTONOMOUS";
+    /** @deprecated prefer governanceMode. */
     requireDistinctReviewer?: boolean;
+    /** @deprecated prefer governanceMode. */
     soloMode?: boolean;
   },
 ): Promise<Project> {

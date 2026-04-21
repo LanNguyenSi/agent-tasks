@@ -132,9 +132,15 @@ Full API reference: [Swagger UI](/docs) · [OpenAPI JSON](/api/openapi.json)
 
 Tasks below the project's confidence threshold cannot be claimed (422 error). Use `?force=true` to bypass, or check `GET /api/tasks/{id}/instructions` for the score and missing fields.
 
-## Distinct reviewer (opt-in)
+## Governance mode (opt-in)
 
-Projects can enable `requireDistinctReviewer` in the settings modal. When enabled, a `review → done` transition is rejected if the actor attempting it is the task's claimant, or if no review lock is held, or if the review lock is held by the claimant. This prevents a single agent from self-approving its own work by calling `POST /tasks/{id}/transition` directly and bypassing `POST /tasks/{id}/review`.
+Projects set `governanceMode` in the settings modal. Three values:
+
+- `REQUIRES_DISTINCT_REVIEWER` (legacy: `requireDistinctReviewer=true`) — a `review → done` transition is rejected if the actor attempting it is the task's claimant, or if no review lock is held, or if the review lock is held by the claimant. Prevents a single agent from self-approving its own work by calling `POST /tasks/{id}/transition` directly and bypassing `POST /tasks/{id}/review`.
+- `AWAITS_CONFIRMATION` (legacy: both flags false) — self-approval is allowed, but every human on the team receives a `self_merge_notice` signal when the task reaches `done`. Async HITL.
+- `AUTONOMOUS` (legacy: `soloMode=true`) — no gates, no notifications.
+
+The legacy `requireDistinctReviewer` / `soloMode` boolean fields are still readable through the deprecation window; writes from clients that still send the old flags are server-side derived into `governanceMode`.
 
 **Happy path with the flag on:**
 
@@ -169,7 +175,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN_B" -d '{"action":"approve"}' \
 
 **Toggling the flag while a review is in flight** does not affect the in-flight review lock: the lock stays as-is. The gate only fires on the next `review → done` attempt. If a lock gets stranded (e.g. flag flipped ON while the claimant held the lock from before), the claimant can call `POST /tasks/:id/review/release` to clear it, then another actor can call `POST /tasks/:id/review/claim`.
 
-**Only team admins can toggle `requireDistinctReviewer`**, consistent with other governance settings on the project (confidence threshold, task template). Changes to governance fields are audit-logged as `project.updated` with a `changes` payload showing from/to values.
+**Only team admins can toggle `governanceMode`** (and the deprecated `requireDistinctReviewer` / `soloMode` flags), consistent with other governance settings on the project (confidence threshold, task template). Changes to governance fields are audit-logged as `project.updated` with a `changes` payload showing from/to values.
 
 ## Server-side PR lifecycle
 
@@ -197,11 +203,11 @@ curl -X POST -H "Authorization: Bearer $TOKEN_B" \
 
 `task_merge` derives owner/repo/PR number from the task and project — no GitHub metadata to pass. Requires `github:pr_merge` scope and uses the team's GitHub delegation.
 
-**Self-merge rejection.** When `project.requireDistinctReviewer` is on and the project is not in `soloMode`, the caller that holds the work claim cannot merge — the server returns `403 { "error": "self_merge_blocked", ... }` and audits as `task.pr_merged.blocked_self_merge`. Hand the review claim to a different actor and call `task_merge` from there. `soloMode` projects are exempt by design.
+**Self-merge rejection.** When `governanceMode === REQUIRES_DISTINCT_REVIEWER` (legacy: `requireDistinctReviewer=true, soloMode=false`), the caller that holds the work claim cannot merge — the server returns `403 { "error": "self_merge_blocked", ... }` and audits as `task.pr_merged.blocked_self_merge`. Hand the review claim to a different actor and call `task_merge` from there. `AUTONOMOUS` projects are exempt; `AWAITS_CONFIRMATION` projects permit self-merge and emit a `self_merge_notice` signal to the team's humans instead.
 
 The self-merge gate also fires on `task_finish { outcome: "approve", autoMerge: true }` and on the legacy `POST /github/pull-requests/:n/merge` endpoint — all three merge paths share the rule via `services/review-gate.ts`.
 
-**Legacy flow (still supported).** Orgs that prefer not to share a GitHub identity with agent-tasks keep the older pattern: agent runs `gh pr create` / `gh pr merge` with its own token, then calls `task_finish { prUrl, autoMerge: false }` to record the outcome. No `github:*` scope is required for this path; the trade-off is losing the server-side self-merge gate, so this flow is only safe in `soloMode` projects or in orgs with a human reviewer gate upstream of agent-tasks.
+**Legacy flow (still supported).** Orgs that prefer not to share a GitHub identity with agent-tasks keep the older pattern: agent runs `gh pr create` / `gh pr merge` with its own token, then calls `task_finish { prUrl, autoMerge: false }` to record the outcome. No `github:*` scope is required for this path; the trade-off is losing the server-side self-merge gate, so this flow is only safe in `AUTONOMOUS` projects (legacy `soloMode=true`) or in orgs with a human reviewer gate upstream of agent-tasks.
 
 ## Comments and updates
 
