@@ -1385,7 +1385,7 @@ describe("task_finish autoMerge", () => {
     });
     expect(res.status).toBe(403);
     const body = await res.json();
-    expect(body.error).toBe("solo_mode_required");
+    expect(body.error).toBe("autonomous_mode_required");
   });
 
   // Test 2: Mode B happy path — review approve + autoMerge

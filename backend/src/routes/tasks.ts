@@ -19,6 +19,7 @@ import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } 
 import { emitTaskAvailableSignal } from "../services/task-signal.js";
 import { acknowledgeSignalsForTask, type SignalType } from "../services/signal.js";
 import { emitSelfMergeNoticeIfApplicable } from "../services/self-merge-notice.js";
+import { GovernanceMode, resolveGovernanceMode } from "../lib/governance-mode.js";
 
 // Signals that become meaningless once the underlying task is `done`.
 // Outcome-notification signals (`task_approved`, `changes_requested`,
@@ -1160,7 +1161,10 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     // author from the review pool, but an explicit workflow path could place
     // an author into a review state some other way. The PATCH and /transition
     // handlers both check this; v2 task_finish was silently skipping it.
-    if (outcome === "approve" && task.project.requireDistinctReviewer) {
+    if (
+      outcome === "approve" &&
+      resolveGovernanceMode(task.project) === GovernanceMode.REQUIRES_DISTINCT_REVIEWER
+    ) {
       const gate = checkDistinctReviewerGate(task, actor, task.project);
       if (!gate.allowed) {
         void logAuditEvent({
@@ -1478,9 +1482,13 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   // the workflow actually supports in_progress → done (ADR-0010 §2 Mode A).
   let targetStatus: string;
   if (workAutoMerge) {
-    if (!task.project.soloMode) {
+    if (resolveGovernanceMode(task.project) !== GovernanceMode.AUTONOMOUS) {
       return c.json(
-        { error: "solo_mode_required", message: "autoMerge on a work claim requires project.soloMode to be enabled" },
+        {
+          error: "autonomous_mode_required",
+          message:
+            "autoMerge on a work claim requires governanceMode=AUTONOMOUS (formerly soloMode=true)",
+        },
         403,
       );
     }
@@ -2429,9 +2437,13 @@ taskRouter.patch("/tasks/:id", async (c) => {
   if (body.status === "done" && task.status === "review") {
     const project = await prisma.project.findUnique({
       where: { id: task.projectId },
-      select: { requireDistinctReviewer: true },
+      select: {
+        requireDistinctReviewer: true,
+        soloMode: true,
+        governanceMode: true,
+      },
     });
-    if (project?.requireDistinctReviewer) {
+    if (project && resolveGovernanceMode(project) === GovernanceMode.REQUIRES_DISTINCT_REVIEWER) {
       const gate = checkDistinctReviewerGate(task, actor, project);
       if (!gate.allowed) {
         void logAuditEvent({

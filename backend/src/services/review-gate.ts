@@ -151,5 +151,5 @@ export function checkSelfMergeGate(
 }
 
 export function selfMergeRejectionMessage(): string {
-  return "The agent (or user) that claimed this task cannot merge its own PR while requireDistinctReviewer is enabled. Hand the review claim to a different account or agent and call POST /tasks/:id/merge from there. Projects with soloMode=true are exempt by design.";
+  return "The agent (or user) that claimed this task cannot merge its own PR while governanceMode=REQUIRES_DISTINCT_REVIEWER (legacy: requireDistinctReviewer=true). Hand the review claim to a different account or agent and call POST /tasks/:id/merge from there. Projects with governanceMode=AUTONOMOUS (legacy: soloMode=true) or AWAITS_CONFIRMATION are exempt by design.";
 }
