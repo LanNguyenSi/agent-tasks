@@ -13,7 +13,8 @@ export type SignalType =
   | "task_approved"
   | "task_assigned"
   | "task_available"
-  | "task_force_transitioned";
+  | "task_force_transitioned"
+  | "self_merge_notice";
 
 export interface SignalContext {
   taskTitle: string;

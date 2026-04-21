@@ -18,6 +18,7 @@ import { logAuditEvent } from "../services/audit.js";
 import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } from "../services/review-signal.js";
 import { emitTaskAvailableSignal } from "../services/task-signal.js";
 import { acknowledgeSignalsForTask, type SignalType } from "../services/signal.js";
+import { emitSelfMergeNoticeIfApplicable } from "../services/self-merge-notice.js";
 
 // Signals that become meaningless once the underlying task is `done`.
 // Outcome-notification signals (`task_approved`, `changes_requested`,
@@ -1331,6 +1332,19 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
 
     if (outcome === "approve" && isTerminalState(effectiveReviewDefinition, targetStatus)) {
       await acknowledgeSignalsForTask(task.id);
+      if (reviewAutoMergeSha !== null) {
+        void emitSelfMergeNoticeIfApplicable({
+          taskId: task.id,
+          projectId: task.projectId,
+          actor,
+          project: {
+            soloMode: task.project.soloMode,
+            requireDistinctReviewer: task.project.requireDistinctReviewer,
+          },
+          mergeSha: reviewAutoMergeSha,
+          via: "task_finish_auto_merge",
+        });
+      }
     }
 
     const actorId = actor.type === "human" ? actor.userId : actor.tokenId;
@@ -1422,6 +1436,20 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           include: taskInclude,
         });
         await acknowledgeSignalsForTask(task.id);
+        // Mid-flight recovery: the merge happened in a prior request that
+        // never got to emit the notice. Emit it now so the human-visibility
+        // path isn't skipped on retries.
+        void emitSelfMergeNoticeIfApplicable({
+          taskId: task.id,
+          projectId: task.projectId,
+          actor,
+          project: {
+            soloMode: task.project.soloMode,
+            requireDistinctReviewer: task.project.requireDistinctReviewer,
+          },
+          mergeSha: task.autoMergeSha,
+          via: "task_finish_auto_merge",
+        });
         void logAuditEvent({
           action: "task.transitioned",
           actorId: actor.type === "human" ? actor.userId : undefined,
@@ -1630,6 +1658,24 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
 
   if (isTerminalState(effectiveDefinition, targetStatus)) {
     await acknowledgeSignalsForTask(task.id);
+    if (workAutoMergeSha !== null) {
+      // Currently only reachable from soloMode projects (work-finish
+      // autoMerge is gated on soloMode further up), so the helper will
+      // short-circuit. Kept as a symmetric call site with the other
+      // merge-to-done paths; if the soloMode gate is ever relaxed on the
+      // work-finish branch, the notice will fire automatically.
+      void emitSelfMergeNoticeIfApplicable({
+        taskId: task.id,
+        projectId: task.projectId,
+        actor,
+        project: {
+          soloMode: task.project.soloMode,
+          requireDistinctReviewer: task.project.requireDistinctReviewer,
+        },
+        mergeSha: workAutoMergeSha,
+        via: "task_finish_auto_merge",
+      });
+    }
   }
 
   void logAuditEvent({
@@ -2154,6 +2200,17 @@ taskRouter.post(
     });
 
     await acknowledgeSignalsForTask(task.id);
+    void emitSelfMergeNoticeIfApplicable({
+      taskId: task.id,
+      projectId: task.projectId,
+      actor,
+      project: {
+        soloMode: task.project.soloMode,
+        requireDistinctReviewer: task.project.requireDistinctReviewer,
+      },
+      mergeSha: mergeResult.sha,
+      via: "task_merge",
+    });
 
     void logAuditEvent({
       action: "task.merged",
