@@ -5,6 +5,168 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-04-21
+
+**Headline: Three-tier governance collapses `soloMode` +
+`requireDistinctReviewer` into a single `governanceMode` enum with
+intentionally distinct tiers, the identity broker lets project-pilot
+provision users from a GitHub OAuth token, and the signal queue finally
+cleans up after itself on terminal transitions.**
+
+The governance-mode change is the load-bearing piece. The previous
+two-boolean encoding permitted a nonsensical combo
+(`soloMode=true + requireDistinctReviewer=true`) and forced the
+frontend to hand-code mutual exclusion. After `self_merge_notice`
+landed in #182 the middle tier grew a real identity of its own, so the
+schema and UI now match the policy. Legacy columns stay readable
+through one deprecation window — `resolveGovernanceMode` derives from
+them when the enum column is null — but new code reads the enum.
+Operators don't need to run a data migration; see **Migration** below.
+
+### Added
+
+#### Three-tier governance model (#182, #183)
+
+- **New `GovernanceMode` enum**: `AUTONOMOUS`, `AWAITS_CONFIRMATION`,
+  `REQUIRES_DISTINCT_REVIEWER`. Replaces the `soloMode` +
+  `requireDistinctReviewer` pair throughout backend/frontend/docs. The
+  middle tier (`AWAITS_CONFIRMATION`) is no longer just
+  "requireDistinctReviewer turned off" — it has its own notification
+  semantics (see `self_merge_notice` below).
+- **Nullable `governanceMode` column** on `Project`
+  (`backend/prisma/schema.prisma`). Existing rows stay on `null` until
+  next write; `resolveGovernanceMode` (`backend/src/lib/governance-mode.ts`)
+  derives from the legacy flags when null so the runtime is
+  self-healing. Writes via the projects PATCH route update both the
+  enum and the legacy columns in lockstep.
+- **New `self_merge_notice` signal type** (#182). Emitted by
+  `emitSelfMergeNoticeIfApplicable` when an `AWAITS_CONFIRMATION`
+  project self-merges: every human team member (except the merging
+  human) gets one signal, audit-logged as
+  `task.self_merge_notice.emitted`. Solo mode and distinct-reviewer
+  projects short-circuit the helper. This is what makes the middle
+  tier meaningfully different from `AUTONOMOUS`.
+- **New helper API** in `backend/src/lib/governance-mode.ts`:
+  `resolveGovernanceMode`, `deriveGovernanceModeFromFlags`,
+  `legacyFlagsFromGovernanceMode`, `governanceFlags`. Call-sites use
+  these instead of reading the legacy flags directly so the
+  deprecation ends as a single file change.
+
+#### Identity broker — `register-from-project-pilot` (#176, #177, #178, #179)
+
+- **New `POST /api/auth/register-from-project-pilot`**: accepts
+  `{ githubAccessToken, githubLogin? }`, re-verifies the token
+  against `api.github.com/user` (so a compromised broker cannot
+  impersonate users), and returns `{ apiToken, userId, githubLogin }`
+  where `apiToken` is a session JWT minted through the existing 7-day
+  session machinery. Bearer middleware extended to accept either
+  `AgentToken` or a session JWT (a revoked agent token cannot fall
+  through to be re-interpreted as a session). GitHub network failures
+  surface as `503` so the broker can retry without forcing a user
+  re-auth.
+- **Optional GitHub-login allowlist** via `ALLOWED_GITHUB_LOGINS` env
+  (comma-separated). Empty / unset preserves accept-any back-compat.
+  When set, `register-from-project-pilot` rejects unverified logins
+  with `403 forbidden_github_login`. Stop-gap mirroring deploy-panel
+  #57 while team-scoping is hardened for brand-new OAuth arrivals.
+- **`docker-compose.prod.yml`** forwards `ALLOWED_GITHUB_LOGINS` into
+  the backend container (defaulting to empty).
+- **Single-team teamId auto-default** — `services/team-access.ts::
+  resolveTeamId` centralises team resolution across `GET /api/projects`,
+  `/projects/available`, `/projects/by-slug`, `/tasks/claimable`, and
+  `/api/agent-tokens`. Session-based humans with exactly one team
+  membership no longer need to pass `?teamId=`; zero or multiple
+  memberships return `400` with the team list. Fixes "API error:
+  400" on the tasks page right after sign-in via the broker.
+
+### Changed
+
+- **Self-review guard respects governance mode** (#181). The three
+  inline self-review checks in `routes/tasks.ts` (task_start v2
+  review-claim, legacy `/tasks/:id/review`,
+  `/tasks/:id/review/claim`) all now delegate to
+  `checkDistinctReviewerGate`, which learned a `soloMode` bypass
+  mirroring the existing `checkSelfMergeGate` escape hatch. Before:
+  solo projects returned `403 "Cannot review your own task"`,
+  stranding the task in `review`. After: solo projects can re-claim
+  the review as the author, consistent with the rest of the gate
+  story.
+- **Signal auto-ack on terminal transitions** (#180).
+  `acknowledgeSignalsForTask(taskId)` is now called on every path
+  that moves a task to `done`: `/finish` (both work and approve-review
+  outcomes with a terminal target), `PATCH /tasks/:id` with
+  `status=done`, and the GitHub webhook's `issues.closed` /
+  `pull_request.closed → done` paths (solo + custom-workflow).
+  `task_pickup` additionally filters out signals whose underlying
+  task is `done` as defence-in-depth.
+
+### Deprecated
+
+- **`Project.soloMode` and `Project.requireDistinctReviewer`** —
+  marked `@deprecated` in `schema.prisma`; kept readable for one
+  release cycle so dashboards and external clients can migrate. Code
+  paths that read these directly should switch to
+  `resolveGovernanceMode(project)`. Planned removal: v0.9.0.
+
+### Documentation
+
+- `docs/agent-workflow.md`, `docs/api-contract.md`,
+  `docs/review-automation-policy.md`, `docs/signal-payload-design.md`,
+  `docs/workflow-preconditions.md` all updated to the new
+  `governanceMode` vocabulary.
+
+### Migration
+
+Operators running agent-tasks in production should read this before
+rolling out.
+
+1. **No data migration required** for `governanceMode`. The new column
+   is nullable, and `resolveGovernanceMode` derives the right answer
+   from the legacy `soloMode` / `requireDistinctReviewer` flags when
+   the enum is null. The mapping is:
+
+   | Legacy flags                                      | `governanceMode`              |
+   | ------------------------------------------------- | ----------------------------- |
+   | `soloMode=true` (either DR value — DR was a no-op) | `AUTONOMOUS`                  |
+   | `soloMode=false`, `requireDistinctReviewer=true`  | `REQUIRES_DISTINCT_REVIEWER`  |
+   | `soloMode=false`, `requireDistinctReviewer=false` | `AWAITS_CONFIRMATION`         |
+
+   Rows get the column populated on next write via the projects PATCH
+   route (which keeps both representations in sync). External clients
+   reading the `soloMode` / `requireDistinctReviewer` booleans
+   continue to work unchanged through the deprecation window.
+
+2. **Async HITL projects now emit `self_merge_notice` signals.** Any
+   project with `soloMode=false, requireDistinctReviewer=false`
+   (= `AWAITS_CONFIRMATION`) will, on self-merge, emit one
+   `self_merge_notice` signal per human team member (excluding the
+   merger). If your signal consumers weren't prepared for a new
+   signal `type`, extend them accordingly; unknown types are
+   currently safe to ignore.
+
+3. **Set `ALLOWED_GITHUB_LOGINS` if you run the identity broker.**
+   `POST /api/auth/register-from-project-pilot` is reachable by any
+   verified GitHub user when the env var is empty/unset. For
+   production instances, set a comma-separated allowlist in `.env`;
+   `docker-compose.prod.yml` already forwards it. Leaving it unset
+   preserves the old accept-any behaviour for development.
+
+4. **Session JWTs are now accepted on Bearer.** The auth middleware
+   previously treated `Authorization: Bearer …` as agent-token only.
+   Any upstream proxy that used that distinction to route traffic
+   needs to be aware that a session JWT may now arrive via the same
+   header.
+
+### Internals
+
+- 555 backend tests passing (up from 493 at v0.7.0) — governance-mode
+  derivation, self-merge-notice dispatch, review-lock bypass, PR-merge
+  target picker, and signal-ack paths all have inline coverage.
+- No schema-breaking changes. The `GovernanceMode` enum and
+  `governanceMode` column are additive; legacy columns unchanged.
+- MCP packages unchanged this release — `mcp-server` + `mcp-bridge`
+  remain at 0.4.0 (tagged separately under #175).
+
 ## [0.7.0] - 2026-04-18
 
 **Headline: Typed artifacts pipeline stages can hand to each other,
