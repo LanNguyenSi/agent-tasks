@@ -43,7 +43,7 @@ Operators don't need to run a data migration; see **Migration** below.
   `emitSelfMergeNoticeIfApplicable` when an `AWAITS_CONFIRMATION`
   project self-merges: every human team member (except the merging
   human) gets one signal, audit-logged as
-  `task.self_merge_notice.emitted`. Solo mode and distinct-reviewer
+  `task.self_merge_notice_emitted`. Solo mode and distinct-reviewer
   projects short-circuit the helper. This is what makes the middle
   tier meaningfully different from `AUTONOMOUS`.
 - **New helper API** in `backend/src/lib/governance-mode.ts`:
@@ -99,6 +99,13 @@ Operators don't need to run a data migration; see **Migration** below.
   `pull_request.closed → done` paths (solo + custom-workflow).
   `task_pickup` additionally filters out signals whose underlying
   task is `done` as defence-in-depth.
+- **Project-update audit payload extended** (#183). `PATCH
+  /api/projects/:id` continues to emit `project.updated`, but the
+  `payload.changes` object now includes a `governanceMode: { from, to }`
+  entry whenever the enum changes (alongside the existing
+  `soloMode` / `requireDistinctReviewer` entries that fire when the
+  legacy flags are written directly). Audit consumers grouping on
+  `payload.changes` keys should expect the new field.
 
 ### Deprecated
 
@@ -159,7 +166,7 @@ rolling out.
 
 ### Internals
 
-- 555 backend tests passing (up from 493 at v0.7.0) — governance-mode
+- 555 backend tests passing (up from 495 at v0.7.0) — governance-mode
   derivation, self-merge-notice dispatch, review-lock bypass, PR-merge
   target picker, and signal-ack paths all have inline coverage.
 - No schema-breaking changes. The `GovernanceMode` enum and
