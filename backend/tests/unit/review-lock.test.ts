@@ -554,5 +554,40 @@ describe("distinct-reviewer gate on review→done transition", () => {
       expect(result.allowed).toBe(true);
       expect(result.reason).toBeUndefined();
     });
+
+    it("governanceMode wins over legacy flags when explicitly set", () => {
+      const agentClaimant: BackendActor = {
+        type: "agent",
+        tokenId: "agent-worker",
+        teamId: "team-x",
+        scopes: [],
+      };
+      // Legacy flags say REQUIRES_DISTINCT_REVIEWER, enum says AUTONOMOUS.
+      // Enum wins — gate allows.
+      const allowed = checkDistinctReviewerGate(
+        baseTask,
+        agentClaimant,
+        {
+          governanceMode: "AUTONOMOUS",
+          soloMode: false,
+          requireDistinctReviewer: true,
+        },
+      );
+      expect(allowed.allowed).toBe(true);
+
+      // Reverse: legacy flags say AUTONOMOUS (soloMode=true), enum says
+      // REQUIRES_DISTINCT_REVIEWER. Enum wins — gate blocks.
+      const blocked = checkDistinctReviewerGate(
+        baseTask,
+        agentClaimant,
+        {
+          governanceMode: "REQUIRES_DISTINCT_REVIEWER",
+          soloMode: true,
+          requireDistinctReviewer: false,
+        },
+      );
+      expect(blocked.allowed).toBe(false);
+      expect(blocked.reason).toBe("self_review");
+    });
   });
 });

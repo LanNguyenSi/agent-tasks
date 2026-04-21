@@ -16,6 +16,11 @@
  * (`force: true` + admin check in the route handler), not in this gate.
  */
 import type { Actor } from "../types/auth.js";
+import {
+  GovernanceMode,
+  resolveGovernanceMode,
+  type GovernanceFlagsLike,
+} from "../lib/governance-mode.js";
 
 export type DistinctReviewerRejection =
   | "self_review"
@@ -29,10 +34,9 @@ export interface GateTask {
   reviewClaimedByAgentId: string | null;
 }
 
-export interface GateProject {
-  requireDistinctReviewer: boolean;
-  soloMode?: boolean;
-}
+// Accepts either the new governanceMode column, the legacy flags, or both.
+// resolveGovernanceMode picks whichever is available.
+export type GateProject = GovernanceFlagsLike;
 
 export interface GateResult {
   allowed: boolean;
@@ -55,10 +59,11 @@ export function checkDistinctReviewerGate(
   actor: Actor,
   project: GateProject,
 ): GateResult {
-  if (project.soloMode) {
-    return { allowed: true };
-  }
-  if (!project.requireDistinctReviewer) {
+  const mode = resolveGovernanceMode(project);
+  if (mode !== GovernanceMode.REQUIRES_DISTINCT_REVIEWER) {
+    // AUTONOMOUS and AWAITS_CONFIRMATION both permit self-review. The
+    // notification for the middle tier fires from the self-merge path, not
+    // from the review gate.
     return { allowed: true };
   }
 
@@ -110,10 +115,7 @@ export function distinctReviewerRejectionMessage(): string {
 
 export type SelfMergeRejection = "self_merge_blocked";
 
-export interface SelfMergeGateProject {
-  requireDistinctReviewer: boolean;
-  soloMode: boolean;
-}
+export type SelfMergeGateProject = GovernanceFlagsLike;
 
 export interface SelfMergeGateTask {
   claimedByUserId: string | null;
@@ -130,15 +132,14 @@ export function checkSelfMergeGate(
   actor: Actor,
   project: SelfMergeGateProject,
 ): SelfMergeGateResult {
-  // soloMode is the explicit escape hatch for single-agent workflows that
-  // have no second reviewer by design. If a project opts in, self-merge is
-  // allowed regardless of the distinct-reviewer flag.
-  if (project.soloMode) return { allowed: true };
+  const mode = resolveGovernanceMode(project);
 
-  // Projects that don't require a distinct reviewer don't care about
-  // self-merge either. Backwards-compatible with the existing permissive
-  // default.
-  if (!project.requireDistinctReviewer) return { allowed: true };
+  // Only REQUIRES_DISTINCT_REVIEWER enforces the block. AUTONOMOUS has no
+  // counterparty and AWAITS_CONFIRMATION is deliberately permissive (the
+  // async notice carries the governance signal instead of a hard block).
+  if (mode !== GovernanceMode.REQUIRES_DISTINCT_REVIEWER) {
+    return { allowed: true };
+  }
 
   const actorIsClaimant =
     (actor.type === "human" && task.claimedByUserId === actor.userId) ||

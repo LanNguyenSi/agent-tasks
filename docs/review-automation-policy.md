@@ -39,8 +39,12 @@ Changes requested is an unambiguous signal that the task needs more work. Sendin
 In the default workflow `review → done` is a real gate: the reviewer — human or agent via `task_finish({ outcome: "approve" })` — signs off on more than just the code landing. A merged PR means the code shipped, not that the task is approved, so the webhook hands the task off for explicit review instead of closing it. Tasks already in `review` stay in `review` (no self-approval from a merge event).
 
 Two escape hatches preserve the old "merge ⇒ done" shortcut where it matches intent:
-- **`soloMode` projects** (ADR-0010) opt out of review-gating entirely. A merge still moves solo tasks straight to `done`.
+- **`governanceMode: AUTONOMOUS` projects** (formerly `soloMode: true`, ADR-0010) opt out of review-gating entirely. A merge still moves the task straight to `done`, and no `self_merge_notice` is emitted since there's no counterparty to notify.
 - **Tasks bound to a custom workflow** fall back to `done` for now, because the webhook doesn't know which custom state corresponds to "ready for review". Proper custom-workflow handling is tracked under `webhookPolicy` (below).
+
+Projects with `governanceMode: AWAITS_CONFIRMATION` (formerly the ambiguous `soloMode=false, requireDistinctReviewer=false` combo) follow the default "merge ⇒ review" path above, AND emit a `self_merge_notice` signal to every human team member when the task subsequently reaches `done` via a self-merge. See `signal-payload-design.md#self_merge_notice`.
+
+Projects with `governanceMode: REQUIRES_DISTINCT_REVIEWER` (formerly `requireDistinctReviewer: true`) additionally block self-merge attempts upstream via `checkSelfMergeGate`.
 
 **Why no auto-transition on PR closed without merge?**
 Closing a PR without merging is ambiguous — it could mean the approach was abandoned, replaced by another PR, or accidentally closed. The task should not silently move to `done`. A timeline entry alerts the assignee.

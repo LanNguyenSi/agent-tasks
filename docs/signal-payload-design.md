@@ -55,19 +55,24 @@ prevent the transition from persisting. The audit log
 
 ### `self_merge_notice`
 
-Fired when a task lands on `done` via a self-merge in the "async
-human-in-the-loop" governance tier — a project with
-`soloMode: false` and `requireDistinctReviewer: false`. The three-tier
-policy model is:
+Fired when a task lands on `done` via a self-merge in the async
+human-in-the-loop governance tier (`governanceMode: AWAITS_CONFIRMATION`).
+The three-tier policy model is:
 
-- `soloMode: true` — autonomous, no notifications. Single-actor
-  projects have no counterparty to notify.
-- `soloMode: false, requireDistinctReviewer: false` — agent may
-  self-merge, but every human on the team gets a `self_merge_notice`
-  so the merge is visible without gating the flow.
-- `soloMode: false, requireDistinctReviewer: true` — dual-control. The
-  merge is blocked by `checkSelfMergeGate` before it can happen, so no
-  notice is emitted.
+- `AUTONOMOUS` — single-actor project, no gates, no notifications.
+  Replaces the legacy `soloMode: true` flag.
+- `AWAITS_CONFIRMATION` — agent may self-merge, but every human on the
+  team gets a `self_merge_notice` so the merge is visible without
+  gating the flow. Replaces `soloMode=false, requireDistinctReviewer=false`.
+- `REQUIRES_DISTINCT_REVIEWER` — dual-control. The merge is blocked
+  upstream by `checkSelfMergeGate`, so no notice is emitted. Replaces
+  `requireDistinctReviewer: true`.
+
+The legacy `soloMode` / `requireDistinctReviewer` boolean columns are
+still readable through the deprecation window but new code should go
+through `resolveGovernanceMode` (`backend/src/lib/governance-mode.ts`),
+which prefers the enum column and falls back to the flags when it's
+null.
 
 Recipients are every `teamMember` of the project's team, excluding the
 merging human (if the actor is human). Agents do not receive this

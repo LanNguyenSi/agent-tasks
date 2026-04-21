@@ -171,8 +171,9 @@ model Project {
   githubSyncAt            DateTime?
   taskTemplate            Json? // { fields: { goal: bool, acceptanceCriteria: bool, context: bool, constraints: bool } }
   confidenceThreshold     Int       @default(60) // 0-100, minimum confidence score for agent claims
-  requireDistinctReviewer Boolean   @default(false) // When true, review→done requires a review lock held by an actor distinct from the claimant
-  soloMode                Boolean   @default(false) // When true, a single agent can merge its own PRs via task_finish { autoMerge }
+  requireDistinctReviewer Boolean   @default(false) /// @deprecated use governanceMode. Kept readable through one release cycle for dashboards + external clients. Runtime still derives an answer when governanceMode is null. Remove once no client references it.
+  soloMode                Boolean   @default(false) /// @deprecated use governanceMode. See requireDistinctReviewer.
+  governanceMode          GovernanceMode? // Null only for rows predating the migration; runtime derives from the legacy flags when null. New writes always set this; new code should read this.
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
 
@@ -318,6 +319,19 @@ model TaskArtifact {
   @@index([taskId, type])
   @@index([createdByAgentId])
   @@map("task_artifacts")
+}
+
+enum GovernanceMode {
+  // Dual-control. The claimant cannot also be the merger. checkSelfMergeGate
+  // blocks a self-merge attempt upstream. Replaces requireDistinctReviewer=true.
+  REQUIRES_DISTINCT_REVIEWER
+  // Async HITL. Agent may self-merge, but every human team member gets a
+  // `self_merge_notice` signal so the merge is visible without gating. Replaces
+  // (soloMode=false, requireDistinctReviewer=false) — the previously-ambiguous
+  // middle tier that now has a distinct identity.
+  AWAITS_CONFIRMATION
+  // Single-actor project. No gates, no notifications. Replaces soloMode=true.
+  AUTONOMOUS
 }
 
 enum TaskPriority {

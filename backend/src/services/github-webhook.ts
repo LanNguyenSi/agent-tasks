@@ -11,6 +11,11 @@ import { createHmac } from "node:crypto";
 import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
 import { acknowledgeSignalsForTask } from "./signal.js";
+import {
+  GovernanceMode,
+  resolveGovernanceMode,
+  type GovernanceFlagsLike,
+} from "../lib/governance-mode.js";
 
 export type GitHubWebhookEvent = "push" | "issues" | "pull_request" | "pull_request_review" | "ping";
 
@@ -203,22 +208,22 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
  * was merged. Returns null to mean "no transition" (idempotent or explicit
  * approval still required).
  *
- * - soloMode → always target `done` (preserves ADR-0010 auto-merge semantics).
+ * - AUTONOMOUS → always target `done` (preserves ADR-0010 auto-merge semantics).
  * - Custom workflows (task.workflowId set) → legacy `done` until
  *   custom-workflow webhook policy lands, since we can't safely pick a
  *   target state machine we don't know.
- * - Default workflow, non-solo:
+ * - AWAITS_CONFIRMATION / REQUIRES_DISTINCT_REVIEWER, default workflow:
  *     - `review` or `done` → no transition (explicit approval required).
  *     - anything else (open/in_progress) → `review` to hand off for review.
  */
 export function pickMergeTargetStatus(input: {
-  soloMode: boolean;
+  project: GovernanceFlagsLike;
   hasCustomWorkflow: boolean;
   currentStatus: string;
 }): string | null {
-  const { soloMode, hasCustomWorkflow, currentStatus } = input;
+  const { project, hasCustomWorkflow, currentStatus } = input;
   if (currentStatus === "done") return null;
-  if (soloMode) return "done";
+  if (resolveGovernanceMode(project) === GovernanceMode.AUTONOMOUS) return "done";
   if (hasCustomWorkflow) return "done";
   if (currentStatus === "review") return null;
   return "review";
@@ -230,7 +235,12 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
 
   const projects = await prisma.project.findMany({
     where: { githubRepo: repoFullName },
-    select: { id: true, soloMode: true },
+    select: {
+      id: true,
+      soloMode: true,
+      requireDistinctReviewer: true,
+      governanceMode: true,
+    },
   });
 
   if (projects.length === 0) return;
@@ -281,7 +291,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
         const mergedBy = payload.pull_request.merged_by?.login ?? "unknown";
         for (const task of tasks) {
           const toStatus = pickMergeTargetStatus({
-            soloMode: project.soloMode,
+            project,
             hasCustomWorkflow: task.workflowId !== null,
             currentStatus: task.status,
           });

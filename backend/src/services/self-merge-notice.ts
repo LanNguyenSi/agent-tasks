@@ -23,14 +23,23 @@ import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
 import { createSignal, type SignalContext } from "./signal.js";
 import type { Actor } from "../types/auth.js";
+import {
+  GovernanceMode,
+  resolveGovernanceMode,
+  type GovernanceFlagsLike,
+} from "../lib/governance-mode.js";
 
 export interface SelfMergeNoticeInput {
   taskId: string;
   projectId: string;
   /** Actor who performed the merge. */
   actor: Actor;
-  /** Mode flags resolved at call-site so the helper stays pure. */
-  project: { soloMode: boolean; requireDistinctReviewer: boolean };
+  /**
+   * Governance mode for the project (new) or the legacy flags (old). Either
+   * shape is accepted — `resolveGovernanceMode` picks the new column when
+   * available and falls back to the legacy flags otherwise.
+   */
+  project: GovernanceFlagsLike;
   /** SHA returned by the merge (for traceability). Omit if unavailable. */
   mergeSha?: string | null;
   /** Which code path fired: task_merge verb, /github/.../merge REST, webhook, task_finish autoMerge. */
@@ -73,8 +82,13 @@ export async function emitSelfMergeNoticeIfApplicable(
 async function emitSelfMergeNoticeInner(
   input: SelfMergeNoticeInput,
 ): Promise<number> {
-  if (input.project.soloMode) return 0;
-  if (input.project.requireDistinctReviewer) return 0;
+  // Only AWAITS_CONFIRMATION emits. AUTONOMOUS has no counterparty to
+  // notify; REQUIRES_DISTINCT_REVIEWER blocks the merge upstream in the
+  // self-merge gate, so this helper never reaches the emission path in
+  // that mode.
+  if (resolveGovernanceMode(input.project) !== GovernanceMode.AWAITS_CONFIRMATION) {
+    return 0;
+  }
 
   const task = await prisma.task.findUnique({
     where: { id: input.taskId },

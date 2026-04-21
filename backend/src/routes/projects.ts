@@ -10,6 +10,11 @@ import { ensureDefaultBoardForProject } from "../services/board-default.js";
 import { taskTemplateSchema } from "../lib/confidence.js";
 import { isProjectAdmin, resolveTeamId, resolveTeamIdErrorBody } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
+import {
+  GovernanceMode,
+  deriveGovernanceModeFromFlags,
+  legacyFlagsFromGovernanceMode,
+} from "../lib/governance-mode.js";
 
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -31,7 +36,12 @@ const createProjectSchema = z.object({
 const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, slug: true }).extend({
   taskTemplate: taskTemplateSchema.nullable().optional(),
   confidenceThreshold: z.number().int().min(0).max(100).optional(),
+  governanceMode: z
+    .enum(["REQUIRES_DISTINCT_REVIEWER", "AWAITS_CONFIRMATION", "AUTONOMOUS"])
+    .optional(),
+  /** @deprecated prefer `governanceMode`. Kept for backward compatibility. */
   requireDistinctReviewer: z.boolean().optional(),
+  /** @deprecated prefer `governanceMode`. Kept for backward compatibility. */
   soloMode: z.boolean().optional(),
 });
 
@@ -206,6 +216,33 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
   if (taskTemplate !== undefined) {
     data.taskTemplate = taskTemplate === null ? Prisma.JsonNull : taskTemplate;
   }
+
+  // Governance-mode writes always keep the legacy columns in sync so
+  // dashboards still reading them stay accurate through the deprecation
+  // window. If the client sends both, `governanceMode` wins and the legacy
+  // fields in the payload are overwritten by the derivation.
+  if (body.governanceMode !== undefined) {
+    const mode = body.governanceMode as GovernanceMode;
+    const legacy = legacyFlagsFromGovernanceMode(mode);
+    data.governanceMode = mode;
+    data.soloMode = legacy.soloMode;
+    data.requireDistinctReviewer = legacy.requireDistinctReviewer;
+  } else if (
+    body.soloMode !== undefined ||
+    body.requireDistinctReviewer !== undefined
+  ) {
+    // Legacy-only write: derive governanceMode so new readers see a
+    // consistent value. Missing legacy flags fall back to the existing
+    // row values.
+    const soloMode = body.soloMode ?? project.soloMode;
+    const requireDistinctReviewer =
+      body.requireDistinctReviewer ?? project.requireDistinctReviewer;
+    data.governanceMode = deriveGovernanceModeFromFlags({
+      soloMode,
+      requireDistinctReviewer,
+    });
+  }
+
   const updated = await prisma.project.update({
     where: { id: project.id },
     data,
@@ -231,6 +268,12 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
     governanceChange.soloMode = {
       from: project.soloMode,
       to: body.soloMode,
+    };
+  }
+  if (body.governanceMode !== undefined && body.governanceMode !== project.governanceMode) {
+    governanceChange.governanceMode = {
+      from: project.governanceMode,
+      to: body.governanceMode,
     };
   }
   if (Object.keys(governanceChange).length > 0) {
