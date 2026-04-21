@@ -7,6 +7,7 @@ import { prisma } from "../lib/prisma.js";
 import { findDelegationUser } from "../services/github-delegation.js";
 import { logAuditEvent } from "../services/audit.js";
 import { acknowledgeSignalsForTask } from "../services/signal.js";
+import { emitSelfMergeNoticeIfApplicable } from "../services/self-merge-notice.js";
 import { requireScope } from "../middleware/auth.js";
 import {
   checkDistinctReviewerGate,
@@ -331,6 +332,17 @@ githubRouter.post(
       data: { status: "done" },
     });
     await acknowledgeSignalsForTask(body.taskId);
+    await emitSelfMergeNoticeIfApplicable({
+      taskId: body.taskId,
+      projectId: task.project.id,
+      actor,
+      project: {
+        soloMode: task.project.soloMode,
+        requireDistinctReviewer: task.project.requireDistinctReviewer,
+      },
+      mergeSha: mergeResult.sha,
+      via: "github_pr_merge",
+    });
 
     return c.json({
       merged: true,

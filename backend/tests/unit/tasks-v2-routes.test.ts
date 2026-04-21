@@ -69,6 +69,7 @@ const signalEmitters = vi.hoisted(() => ({
   emitTaskApprovedSignal: vi.fn().mockResolvedValue(undefined),
   emitTaskAvailableSignal: vi.fn().mockResolvedValue(undefined),
   emitForceTransitionedSignal: vi.fn().mockResolvedValue(undefined),
+  emitSelfMergeNoticeIfApplicable: vi.fn().mockResolvedValue(0),
 }));
 
 vi.mock("../../src/services/review-signal.js", () => ({
@@ -81,6 +82,9 @@ vi.mock("../../src/services/task-signal.js", () => ({
 }));
 vi.mock("../../src/services/force-transition-signal.js", () => ({
   emitForceTransitionedSignal: signalEmitters.emitForceTransitionedSignal,
+}));
+vi.mock("../../src/services/self-merge-notice.js", () => ({
+  emitSelfMergeNoticeIfApplicable: signalEmitters.emitSelfMergeNoticeIfApplicable,
 }));
 
 vi.mock("../../src/services/audit.js", () => ({

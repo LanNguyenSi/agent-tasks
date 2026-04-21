@@ -67,6 +67,9 @@ vi.mock("../../src/services/task-signal.js", () => ({ emitTaskAvailableSignal: v
 vi.mock("../../src/services/force-transition-signal.js", () => ({
   emitForceTransitionedSignal: vi.fn(),
 }));
+vi.mock("../../src/services/self-merge-notice.js", () => ({
+  emitSelfMergeNoticeIfApplicable: vi.fn().mockResolvedValue(0),
+}));
 vi.mock("../../src/services/github-delegation.js", () => ({
   findDelegationUser: vi.fn().mockResolvedValue(null),
 }));
