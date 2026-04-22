@@ -2924,9 +2924,17 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
   // githubRepo) so branchPresent / ciGreen etc. get enforced on this
   // path too — previously this handler silently bypassed every
   // workflow-level precondition that MCP `task_start` enforces.
+  //
+  // `workflow: true` is required for task-level workflowId routing:
+  // `resolveEffectiveDefinition` only honors the task-attached
+  // workflow when `task.workflow` is populated. Without this include,
+  // tasks with an explicit workflowId silently fall through to the
+  // project-default definition — the exact parity-gap bug the `/start`
+  // handler (line 647-664) already guards against.
   const task = await prisma.task.findUnique({
     where: { id: c.req.param("id") },
     include: {
+      workflow: true,
       project: {
         select: {
           teamId: true,
