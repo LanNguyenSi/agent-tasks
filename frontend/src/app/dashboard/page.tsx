@@ -214,8 +214,8 @@ const TaskCard = memo(function TaskCard({
         marginBottom: "0.4rem",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.25rem" }}>
-        <p style={{ fontWeight: 600, fontSize: "var(--text-base)", lineHeight: 1.35, color: "var(--text)", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.25rem", minWidth: 0 }}>
+        <p style={{ fontWeight: 600, fontSize: "var(--text-base)", lineHeight: 1.35, color: "var(--text)", display: "flex", alignItems: "center", gap: "0.4rem", minWidth: 0, overflowWrap: "anywhere", wordBreak: "break-word" }}>
           <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: STATUS_COLORS[task.status] ?? "var(--muted)", flexShrink: 0 }} />
           {task.title}
         </p>
@@ -242,6 +242,8 @@ const TaskCard = memo(function TaskCard({
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",
             overflow: "hidden",
+            overflowWrap: "anywhere",
+            wordBreak: "break-word",
           }}
         >
           {task.description}
