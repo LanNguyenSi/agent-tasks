@@ -73,15 +73,23 @@ interface WidgetProps {
   title: string;
   tasks: EnrichedTask[];
   teamId: string;
+  scope: string;
   emptyText: string;
 }
 
-function TaskWidget({ title, tasks, teamId, emptyText }: WidgetProps) {
+function TaskWidget({ title, tasks, teamId, scope, emptyText }: WidgetProps) {
+  const listHref = `/tasks?teamId=${teamId}&scope=${scope}`;
   return (
     <Card style={{ marginBottom: "0.75rem" }} padding="sm">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-        <h2 style={{ fontSize: "var(--text-base)", fontWeight: 600 }}>{title}</h2>
-        <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{tasks.length} total</span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", gap: "0.5rem" }}>
+        <Link href={listHref} style={{ textDecoration: "none", color: "inherit", flex: 1, minWidth: 0 }}>
+          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {title}
+          </h2>
+        </Link>
+        <Link href={listHref} style={{ color: "var(--muted)", fontSize: "var(--text-xs)", textDecoration: "none", flexShrink: 0 }}>
+          {tasks.length} total →
+        </Link>
       </div>
       {tasks.length === 0 ? (
         <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", padding: "0.25rem 0" }}>{emptyText}</p>
@@ -93,8 +101,10 @@ function TaskWidget({ title, tasks, teamId, emptyText }: WidgetProps) {
             ))}
           </div>
           {tasks.length > WIDGET_LIMIT && (
-            <p style={{ textAlign: "right", marginTop: "0.4rem", color: "var(--muted)", fontSize: "var(--text-xs)" }}>
-              +{tasks.length - WIDGET_LIMIT} more
+            <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
+              <Link href={listHref} style={{ color: "var(--primary)", textDecoration: "none" }}>
+                +{tasks.length - WIDGET_LIMIT} more →
+              </Link>
             </p>
           )}
         </>
@@ -204,11 +214,11 @@ export default function HomeDashboardPage() {
 
       {selectedTeam && (
         <div className="home-widgets-grid">
-          <TaskWidget title="Open Tasks" tasks={openTasks} teamId={selectedTeam.id} emptyText="No open tasks." />
-          <TaskWidget title="My Tasks" tasks={myTasks} teamId={selectedTeam.id} emptyText="No tasks assigned to you." />
-          <TaskWidget title="Priority (High / Critical)" tasks={priorityTasks} teamId={selectedTeam.id} emptyText="No high-priority tasks." />
-          <TaskWidget title="In Review" tasks={inReviewTasks} teamId={selectedTeam.id} emptyText="Nothing in review." />
-          <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} emptyText="No completed tasks yet." />
+          <TaskWidget title="Open Tasks" tasks={openTasks} teamId={selectedTeam.id} scope="open" emptyText="No open tasks." />
+          <TaskWidget title="My Tasks" tasks={myTasks} teamId={selectedTeam.id} scope="mine" emptyText="No tasks assigned to you." />
+          <TaskWidget title="Priority (High / Critical)" tasks={priorityTasks} teamId={selectedTeam.id} scope="priority" emptyText="No high-priority tasks." />
+          <TaskWidget title="In Review" tasks={inReviewTasks} teamId={selectedTeam.id} scope="review" emptyText="Nothing in review." />
+          <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} scope="done" emptyText="No completed tasks yet." />
         </div>
       )}
     </main>
