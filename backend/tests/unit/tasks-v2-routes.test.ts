@@ -478,6 +478,111 @@ describe("POST /tasks/:id/start — gate enforcement (parity with task_finish)",
   });
 });
 
+// ── /tasks/:id/claim ─────────────────────────────────────────────────────────
+
+describe("POST /tasks/:id/claim — gate enforcement (REST parity with MCP task_start)", () => {
+  // Regression coverage for the smoke-test finding that /claim silently
+  // bypassed every transition-rule gate MCP `task_start` enforces.
+  // Reproduces the exact pattern from the `/tasks/:id/start` suite above
+  // so parity is obvious from a diff. `taskFindFirst` is NOT used by
+  // this handler (no one-active-claim check) — keep the mock queue
+  // clean by not setting it.
+
+  it("rejects claim with 422 when a custom workflow requires branchPresent and no branch is set", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: null, // fails branchPresent
+      workflowId: "wf-1",
+      workflow: {
+        definition: {
+          initialState: "open",
+          states: [
+            { name: "open", terminal: false },
+            { name: "in_progress", terminal: false },
+          ],
+          transitions: [
+            { from: "open", to: "in_progress", requires: ["branchPresent"] },
+          ],
+        },
+      },
+    });
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as {
+      error: string;
+      failed: { rule: string }[];
+      canForce: boolean;
+    };
+    expect(body.error).toBe("precondition_failed");
+    expect(body.failed.map((f) => f.rule)).toContain("branchPresent");
+    expect(body.canForce).toBe(false);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("accepts claim when the custom workflow's gate passes", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: "feat/pre-set",
+      workflowId: "wf-1",
+      workflow: {
+        definition: {
+          initialState: "open",
+          states: [
+            { name: "open", terminal: false },
+            { name: "in_progress", terminal: false },
+          ],
+          transitions: [
+            { from: "open", to: "in_progress", requires: ["branchPresent"] },
+          ],
+        },
+      },
+    });
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("in_progress");
+    expect(updateCall.data.claimedByAgentId).toBe("agent-1");
+  });
+
+  it("default workflow: claim on a branchless open task passes (gate relaxed on this edge)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: null,
+      workflowId: null,
+      workflow: null,
+    });
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("in_progress");
+  });
+
+  it("already-claimed task returns 409 before the gate evaluates (existing behaviour)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      claimedByAgentId: "agent-other",
+      branchName: null,
+      workflowId: null,
+      workflow: null,
+    });
+
+    const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBe(409);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+});
+
 // ── /tasks/:id/finish ────────────────────────────────────────────────────────
 
 describe("POST /tasks/:id/finish (work claim)", () => {
