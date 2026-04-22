@@ -104,6 +104,32 @@ const openApiSpec = {
         },
         required: ["error", "message", "details"],
       },
+      PreconditionFailedError: {
+        type: "object",
+        description: "Returned when one or more workflow transition rules (branchPresent, prPresent, ciGreen, prMerged) block the state change requested by the caller.",
+        properties: {
+          error: { type: "string", example: "precondition_failed" },
+          message: { type: "string", example: "Transition blocked — No branch recorded on this task. PATCH /api/tasks/:id with branchName first." },
+          failed: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                rule: { type: "string", example: "branchPresent" },
+                message: { type: "string", example: "No branch recorded on this task. PATCH /api/tasks/:id with branchName first." },
+                error: { type: "string", nullable: true, description: "Populated when the rule evaluator itself errored (e.g. GitHub API unreachable for ciGreen)." },
+              },
+              required: ["rule", "message"],
+            },
+          },
+          canForce: {
+            type: "boolean",
+            example: false,
+            description: "Whether this route accepts a force=true query parameter to bypass the gate. /tasks/:id/claim does NOT; use /tasks/:id/start with force=true + forceReason when an admin-level bypass is needed.",
+          },
+        },
+        required: ["error", "message", "failed", "canForce"],
+      },
       Project: {
         type: "object",
         properties: {
@@ -724,7 +750,7 @@ const openApiSpec = {
       post: {
         tags: ["Tasks"],
         summary: "Claim task",
-        description: "Agent tokens require scope: tasks:claim. Claimed task is moved to in_progress. For agents, the task must meet the project's confidence threshold — otherwise a 422 is returned with the score, missing fields, and threshold. Use ?force=true to bypass the confidence check.",
+        description: "Agent tokens require scope: tasks:claim. Claimed task is moved to in_progress. Two gates can return 422: (1) confidence — task description incomplete for agent claiming (use ?force=true to bypass); (2) workflow preconditions — branchPresent/prPresent/ciGreen/prMerged rules on the open→in_progress transition of the project's workflow (no force bypass here; use /tasks/:id/start with force=true + forceReason when a bypass is required).",
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -771,10 +797,16 @@ const openApiSpec = {
             },
           },
           "422": {
-            description: "Task confidence score is below the project threshold. Only returned for agent callers (humans are not blocked). The response includes the current score, missing fields, and the threshold so the agent knows what to fill in.",
+            description: "Either (a) the task's confidence score is below the project threshold (agents only; ?force=true bypasses), or (b) a workflow transition-rule precondition failed on the open→in_progress edge (branchPresent, prPresent, ciGreen, prMerged). Mirrors the gate stack enforced by /tasks/:id/start (v2). Distinguish via the `error` field: `low_confidence` vs `precondition_failed`.",
             content: {
               "application/json": {
-                schema: { $ref: "#/components/schemas/LowConfidenceError" },
+                schema: {
+                  oneOf: [
+                    { $ref: "#/components/schemas/LowConfidenceError" },
+                    { $ref: "#/components/schemas/PreconditionFailedError" },
+                  ],
+                  discriminator: { propertyName: "error" },
+                },
               },
             },
           },

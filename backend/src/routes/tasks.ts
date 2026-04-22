@@ -2920,10 +2920,29 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     return forbidden(c, "Missing scope: tasks:claim");
   }
 
+  // Project fields needed by the transition-gate evaluator (teamId,
+  // githubRepo) so branchPresent / ciGreen etc. get enforced on this
+  // path too — previously this handler silently bypassed every
+  // workflow-level precondition that MCP `task_start` enforces.
+  //
+  // `workflow: true` is required for task-level workflowId routing:
+  // `resolveEffectiveDefinition` only honors the task-attached
+  // workflow when `task.workflow` is populated. Without this include,
+  // tasks with an explicit workflowId silently fall through to the
+  // project-default definition — the exact parity-gap bug the `/start`
+  // handler (line 647-664) already guards against.
   const task = await prisma.task.findUnique({
     where: { id: c.req.param("id") },
     include: {
-      project: { select: { confidenceThreshold: true, taskTemplate: true } },
+      workflow: true,
+      project: {
+        select: {
+          teamId: true,
+          githubRepo: true,
+          confidenceThreshold: true,
+          taskTemplate: true,
+        },
+      },
     },
   });
   if (!task) return notFound(c);
@@ -2967,6 +2986,58 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
   }
 
   const effectiveDef = await resolveEffectiveDefinition(task, prisma);
+  const startTarget =
+    firstTransitionTarget(effectiveDef, effectiveDef.initialState) ?? "in_progress";
+
+  // Transition-rule gates (branchPresent / prPresent / ciGreen / prMerged).
+  // Before this block, /claim silently bypassed every workflow gate —
+  // MCP `task_start` enforced them but any caller hitting REST directly
+  // (CLI tools, webhooks, the web UI, automation) could put a task into
+  // `in_progress` with branchName:null, breaking downstream assumptions
+  // (PR creation expects branchName; merge reads branchName).
+  //
+  // Shape matches the /tasks/:id/start handler at line 757 so parity is
+  // visible from a diff. Force-bypass is intentionally NOT exposed here:
+  // this route predates v2 and adding it is a separate decision. Use
+  // /tasks/:id/start with `force=true` + forceReason when you need the
+  // bypass.
+  const gateResult = await evaluateV2TransitionGates(
+    task,
+    { branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber },
+    startTarget,
+    actor,
+    effectiveDef,
+  );
+  if (!gateResult.ok) {
+    if (gateResult.kind === "no_transition") {
+      return c.json({ error: "bad_request", message: gateResult.message }, 400);
+    }
+    if (gateResult.kind === "forbidden_role") {
+      return forbidden(c, `Requires role: ${gateResult.requiredRole}`);
+    }
+    if (gateResult.kind === "precondition") {
+      const { failed, ruleErrors } = gateResult;
+      return c.json(
+        {
+          error: "precondition_failed",
+          message: `Transition blocked — ${failed
+            .map((r) =>
+              ruleErrors[r] ? `${RULE_MESSAGES[r]} (${ruleErrors[r]})` : RULE_MESSAGES[r],
+            )
+            .join(" ")}`,
+          failed: failed.map((r) => ({
+            rule: r,
+            message: RULE_MESSAGES[r],
+            ...(ruleErrors[r] ? { error: ruleErrors[r] } : {}),
+          })),
+          canForce: false,
+        },
+        422,
+      );
+    }
+    const _exhaustive: never = gateResult;
+    return _exhaustive;
+  }
 
   const updated = await prisma.task.update({
     where: { id: task.id },
@@ -2974,7 +3045,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
       claimedByUserId: actor.type === "human" ? actor.userId : null,
       claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
       claimedAt: new Date(),
-      status: firstTransitionTarget(effectiveDef, effectiveDef.initialState) ?? "in_progress",
+      status: startTarget,
     },
     include: taskInclude,
   });
