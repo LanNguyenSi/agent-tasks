@@ -367,12 +367,7 @@ ssoAdminRouter.put("/teams/:teamId/sso", zValidator("json", upsertSchema), async
     invalidateDiscovery(prior.issuer);
   }
 
-  let saved;
-  try {
-    saved = await upsertSsoConnection(teamId, body);
-  } catch (err) {
-    return c.json({ error: "bad_request", message: (err as Error).message }, 400);
-  }
+  const saved = await upsertSsoConnection(teamId, body);
   invalidateDiscovery(body.issuer);
   return c.json({ connection: publicSsoConnection(saved) });
 });

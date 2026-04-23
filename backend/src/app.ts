@@ -18,6 +18,7 @@ import { docsRouter } from "./routes/docs.js";
 import { ssoLoginRouter, ssoAdminRouter } from "./routes/sso.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { rateLimit } from "./middleware/rate-limit.js";
+import { appErrorHandler } from "./lib/error-handler.js";
 import type { AppVariables } from "./types/hono.js";
 
 export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }> {
@@ -108,14 +109,8 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   // 404
   app.notFound((c) => c.json({ error: "not_found", message: "Route not found" }, 404));
 
-  // Global error handler — prevents uncaught exceptions from crashing the server
-  app.onError((err, c) => {
-    console.error(`[${c.req.method}] ${c.req.path} — unhandled error:`, err.message);
-    return c.json(
-      { error: "internal_error", message: "An unexpected error occurred" },
-      500,
-    );
-  });
+  // Global error handler — see `lib/error-handler.ts`.
+  app.onError(appErrorHandler);
 
   return app;
 }
