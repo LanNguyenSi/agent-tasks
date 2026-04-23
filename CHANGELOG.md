@@ -5,6 +5,105 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-04-23
+
+**Headline: The `/tasks` list view lands as a first-class navigation
+target, the REST `/claim` route finally enforces the same transition
+rules the MCP `task_start` verb already did, the backend error surface
+gets a typed `AppError` hierarchy with a central handler, and the
+`/api/mcp` endpoint gets a per-IP rate limit to cap AgentToken
+brute-force risk.**
+
+Nothing in this release requires an operator migration. The AppError
+refactor deliberately preserves the `{error, message, details?}`
+response envelope so MCP clients, the CLI, and the frontend see no
+wire change; the new typed codes (`not_found`, `forbidden`,
+`conflict`, `unauthorized`, `validation_error`) map byte-identically
+to what the existing Hono helpers in `middleware/error.ts` already
+emit.
+
+### Added
+
+#### `/tasks` list view + home widgets (#187)
+
+- **New `/tasks` route** in the frontend — a first-class list view
+  with filtering, grouping by project, and direct deep-links into
+  each task's detail page. The home page's summary widgets now link
+  into this view instead of the project-scoped board, so users land
+  on a cross-project backlog in one click.
+
+#### Rate limit on `/api/mcp` (#189)
+
+- **300 req/min per IP** on `/api/mcp` (applies to all methods). The MCP endpoint is an
+  AgentToken brute-force target: tokens are long opaque strings, and
+  until now a bad-token burst would hit the DB lookup in
+  `authMiddleware` unthrottled. 300/min is comfortably above a
+  legitimate agent's cadence (`task_pickup → start → note → finish`
+  is ~5 calls/logical-op) while still dampening blind token sweeps.
+- Response carries the standard `X-RateLimit-Limit` /
+  `X-RateLimit-Remaining` / `X-RateLimit-Reset` headers on every
+  200/401/429. Limit is configurable via the existing
+  `rateLimit({ windowMs, max })` middleware — no new env var.
+
+#### Typed `AppError` hierarchy (#188)
+
+- **New `backend/src/lib/errors.ts`**: `AppError` base + `NotFound`
+  (404), `Unauthorized` (401), `Forbidden` (403), `Validation` (400),
+  `Conflict` (409). Ported verbatim from the boardflow codebase
+  before its archive. Throws map to the right HTTP status and the
+  existing `{error, message}` envelope via a central
+  `appErrorHandler` wired into `app.onError` (`lib/error-handler.ts`).
+- **ZodError** now surfaces as `400 validation_error` with
+  `details: [{path, message}]` instead of falling through to the
+  generic 500 handler.
+- **Migrated callers**: `WorkflowConflictError` in
+  `routes/workflows.ts` now extends `ConflictError`; three ad-hoc
+  `throw new Error(...)` in `services/sso.ts` domain validation now
+  throw typed `ValidationError` / `ConflictError`; the blanket
+  try/catch in `routes/sso.ts::PUT /teams/:teamId/sso` that
+  mis-categorized infra errors as `400 bad_request` has been
+  removed — real infra failures now correctly surface as 500 while
+  typed validation/conflict errors still land as 400/409.
+
+### Fixed
+
+#### REST `/claim` now enforces MCP `task_start` gates (#185)
+
+- **Closed a bypass**: until this release, the REST `POST
+  /api/tasks/:id/claim` route did not run the full transition-rule
+  stack that MCP `task_start` already did. A client could claim a
+  task through REST that MCP would have rejected
+  (branch-present precondition, confidence threshold, self-review
+  guard). The route is now re-routed through `runTransitionRules` so
+  both paths are gate-equivalent.
+
+#### Dashboard card title overflow (#186)
+
+- Long task titles no longer overflow the board-card width. Fixed
+  with a `min-width: 0` + `truncate` pair on the card header; full
+  title remains available via `title=` tooltip.
+
+### Changed
+
+- `routes/sso.ts::PUT /teams/:teamId/sso` no longer maps every thrown
+  error to `400 bad_request`. Typed errors land as 400/409; untyped
+  errors correctly reach the generic 500 handler. **API-visible
+  behavior change**: infra failures (DB, crypto) that previously
+  appeared as 400 now appear as 500 — a miscategorization fix, not a
+  new failure mode.
+
+### Dogfood
+
+- **In-session MCP flow** (`task_pickup` / `task_start` / `task_finish`
+  / `pull_requests_merge`) exercised end-to-end against the deployed
+  backend today — verifies #185 transition-rule gates and #188
+  AppError envelope stability on the currently-deployed surface.
+- **Live HTTP probes** confirmed `/tasks` returns 200 on the frontend,
+  `/api/health` is green, and the 404 path emits the `{error,
+  message}` envelope unchanged from v0.8.0. The `X-RateLimit-*`
+  headers on `/api/mcp` land with the post-tag redeploy (the live
+  deployment is still pre-#189 at the time of tag cut).
+
 ## [0.8.0] - 2026-04-21
 
 **Headline: Three-tier governance collapses `soloMode` +
