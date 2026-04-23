@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma.js";
 import { hasProjectAccess, isProjectAdmin } from "../services/team-access.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
+import { ConflictError } from "../lib/errors.js";
 import {
   defaultWorkflowDefinition,
   type WorkflowDefinitionShape,
@@ -254,9 +255,10 @@ workflowRouter.post("/projects/:projectId/workflow/customize", async (c) => {
   }
 });
 
-class WorkflowConflictError extends Error {
+class WorkflowConflictError extends ConflictError {
   constructor(public workflowId: string) {
-    super("Workflow already customized");
+    super("This project already has a custom workflow");
+    this.name = "WorkflowConflictError";
   }
 }
 

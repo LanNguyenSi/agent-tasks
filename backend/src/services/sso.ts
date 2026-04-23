@@ -9,6 +9,7 @@ import { prisma } from "../lib/prisma.js";
 import { config } from "../config/index.js";
 import { decryptSecret, encryptSecret } from "./sso-crypto.js";
 import type { OidcIdTokenClaims } from "./oidc.js";
+import { ConflictError, ValidationError } from "../lib/errors.js";
 
 export interface SsoConnectionInput {
   displayName: string;
@@ -47,11 +48,13 @@ const BLOCKED_DOMAINS = new Set([
 
 function validateDomain(domain: string): void {
   if (BLOCKED_DOMAINS.has(domain)) {
-    throw new Error(`Domain "${domain}" is a public mail provider and cannot be claimed`);
+    throw new ValidationError(
+      `Domain "${domain}" is a public mail provider and cannot be claimed`,
+    );
   }
   // Must look like a registrable domain — at least one dot, valid label chars.
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain)) {
-    throw new Error(`"${domain}" is not a valid domain`);
+    throw new ValidationError(`"${domain}" is not a valid domain`);
   }
 }
 
@@ -72,7 +75,7 @@ async function ensureDomainsUnclaimed(teamId: string, domains: string[]): Promis
         if (domains.includes(d)) claimed.add(d);
       }
     }
-    throw new Error(
+    throw new ConflictError(
       `Domain(s) already claimed by another team: ${Array.from(claimed).join(", ")}`,
     );
   }
