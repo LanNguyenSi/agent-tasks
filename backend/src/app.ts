@@ -51,6 +51,11 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.use("/api/auth/github/*", rateLimit({ windowMs: 60_000, max: 10 }));
   app.use("/api/auth/sso/*", rateLimit({ windowMs: 60_000, max: 20 }));
   app.use("/api/sso/whoami", rateLimit({ windowMs: 60_000, max: 20 }));
+  // Per-IP ceiling on MCP so a burst of bad AgentTokens can't DoS the DB
+  // lookup in `authMiddleware`. 300/min allows a logical `task_pickup →
+  // start → note → finish` sequence (~5 calls) every second per agent —
+  // far above legitimate cadence, still enough to dampen a brute-force run.
+  app.use("/api/mcp", rateLimit({ windowMs: 60_000, max: 300 }));
 
   // Public
   app.route("/api/health", healthRouter);
