@@ -51,6 +51,15 @@ describe("registry contents", () => {
       expect(gate.appliesTo.length).toBeGreaterThan(0);
     }
   });
+
+  // Invariant: each GateCode appears at most once in the registry. Without
+  // this, a duplicate would silently clobber the first entry inside
+  // computeEffectiveGates (second-write-wins on the Record). Fails loudly
+  // at import time if a future change breaks the invariant.
+  it("gate codes are unique across the registry", () => {
+    const codes = registry.map((g) => g.code);
+    expect(new Set(codes).size).toBe(codes.length);
+  });
 });
 
 describe("distinct-reviewer gate.describe()", () => {

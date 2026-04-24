@@ -204,4 +204,50 @@ describe("GET /api/projects/:id/effective-gates", () => {
     );
     expect(res.status).toBe(403);
   });
+
+  it("accepts an agent actor whose teamId matches, without hitting teamMember", async () => {
+    // Agent actors skip the DB lookup — assertMembership compares
+    // actor.teamId to project.teamId directly. Verify this path still
+    // works for the new endpoint.
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      teamId: "team-1",
+      githubRepo: null,
+      governanceMode: GovernanceMode.AUTONOMOUS,
+      soloMode: true,
+      requireDistinctReviewer: false,
+    });
+
+    const agent: Actor = {
+      type: "agent",
+      tokenId: "agent-1",
+      teamId: "team-1",
+      scopes: [],
+    };
+    const res = await makeApp(agent).request(
+      `/projects/${PROJECT_ID}/effective-gates`,
+    );
+    expect(res.status).toBe(200);
+    expect(prismaMocks.teamMemberFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("403s an agent actor whose teamId does NOT match the project", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      teamId: "team-1",
+      githubRepo: null,
+      governanceMode: GovernanceMode.AUTONOMOUS,
+      soloMode: true,
+      requireDistinctReviewer: false,
+    });
+
+    const wrongTeamAgent: Actor = {
+      type: "agent",
+      tokenId: "agent-1",
+      teamId: "team-other",
+      scopes: [],
+    };
+    const res = await makeApp(wrongTeamAgent).request(
+      `/projects/${PROJECT_ID}/effective-gates`,
+    );
+    expect(res.status).toBe(403);
+  });
 });
