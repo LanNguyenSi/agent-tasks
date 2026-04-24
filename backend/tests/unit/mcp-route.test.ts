@@ -139,7 +139,7 @@ describe("POST /api/mcp — tool registration", () => {
     ({ app } = makeTestApp());
   });
 
-  it("tools/list returns the full set of 20 tools", async () => {
+  it("tools/list returns the full set of 21 tools", async () => {
     const res = await mcpRequest(
       app,
       { jsonrpc: "2.0", id: 1, method: "tools/list" },
@@ -153,6 +153,7 @@ describe("POST /api/mcp — tool registration", () => {
     expect(names).toEqual(
       [
         "projects_get",
+        "projects_get_effective_gates",
         "projects_list",
         "pull_requests_comment",
         "pull_requests_create",

@@ -180,7 +180,7 @@ function buildServer(token: string): McpServer {
     "projects_get",
     {
       description:
-        "Fetch a single project by slug or id. Accepts either a UUID or a slug — the tool routes to the correct endpoint automatically. Returns the full project record (id, slug, name, GitHub repo, team members, workflow info).",
+        "Fetch a single project by slug or id. Accepts either a UUID or a slug — the tool routes to the correct endpoint automatically. Returns the full project record plus `effectiveGates` — the set of gates that would fire on this project and under what conditions (use it to preempt 4xx responses instead of discovering preconditions by tripping them).",
       inputSchema: { slugOrId: z.string().min(1) },
     },
     async ({ slugOrId }) => {
@@ -193,6 +193,27 @@ function buildServer(token: string): McpServer {
           ? `/api/projects/${slugOrId}`
           : `/api/projects/by-slug/${encodeURIComponent(slugOrId)}`;
         const r = await callSelf(path, { method: "GET" }, token);
+        return textResult(r);
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "projects_get_effective_gates",
+    {
+      description:
+        "Return the gate map for a project — identical to the `effectiveGates` field on `projects_get`, but without the rest of the project payload. Keyed by `GateCode`; each entry carries `active`, `because`, `appliesTo`. Use this to answer 'will this verb be rejected?' before you call it.",
+      inputSchema: { projectId: uuid() },
+    },
+    async ({ projectId }) => {
+      try {
+        const r = await callSelf(
+          `/api/projects/${projectId}/effective-gates`,
+          { method: "GET" },
+          token,
+        );
         return textResult(r);
       } catch (e) {
         return errorResult(e);

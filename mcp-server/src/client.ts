@@ -73,6 +73,13 @@ export class AgentTasksClient {
     return this.request<unknown>("GET", path);
   }
 
+  getProjectEffectiveGates(projectId: string) {
+    return this.request<unknown>(
+      "GET",
+      `/api/projects/${projectId}/effective-gates`,
+    );
+  }
+
   listClaimableTasks(params?: { limit?: number }) {
     const qs =
       params?.limit !== undefined ? `?limit=${params.limit}` : "";
