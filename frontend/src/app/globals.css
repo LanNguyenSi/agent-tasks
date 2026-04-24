@@ -1128,6 +1128,13 @@ input[type="checkbox"] {
   }
 }
 
+/* ── Text utilities ───────────────────────────────────────────── */
+
+.text-break-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 /* ── Markdown Prose (dark theme) ──────────────────────────────── */
 
 .prose-markdown {
