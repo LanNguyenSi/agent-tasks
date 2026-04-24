@@ -17,8 +17,15 @@ import {
 } from "../services/review-gate.js";
 import { performPrMerge } from "../services/github-merge.js";
 import { SCOPES } from "../services/scopes.js";
+import { withIdempotency } from "../services/idempotency.js";
 
 export const githubRouter = new Hono<{ Variables: AppVariables }>();
+
+// Opt-in idempotency key for side-effect verbs. A retry with the same
+// (projectId, verb, key) returns the stored 2xx response instead of
+// re-calling GitHub. Same key + different payload → 409. See
+// services/idempotency.ts.
+const idempotencyKeySchema = z.string().trim().min(1).max(255).optional();
 
 const createPrSchema = z.object({
   taskId: z.string().uuid(),
@@ -28,6 +35,7 @@ const createPrSchema = z.object({
   base: z.string().min(1).default("main"),
   title: z.string().min(1),
   body: z.string().optional(),
+  idempotencyKey: idempotencyKeySchema,
 });
 
 githubRouter.post(
@@ -63,73 +71,111 @@ githubRouter.post(
       );
     }
 
-    // 3. Call GitHub API to create PR
-    const ghResponse = await fetch(`https://api.github.com/repos/${body.owner}/${body.repo}/pulls`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${delegationUser.githubAccessToken}`,
-        Accept: "application/vnd.github+json",
-        "User-Agent": "agent-tasks-bot",
-        "Content-Type": "application/json",
+    // Everything below is the side-effect block: GitHub write + task update
+    // + audit log. Wrapped so a caller that retries with the same
+    // `idempotencyKey` after a network timeout gets the stored 2xx response
+    // and does NOT create a second PR on GitHub. Gate checks above run on
+    // every retry (they're pure + cheap; the caller learns the current
+    // answer, not a stale one).
+    const outcome = await withIdempotency<unknown>(
+      {
+        projectId: task.project.id,
+        verb: "pull_requests_create",
+        idempotencyKey: body.idempotencyKey,
+        payload: body,
       },
-      body: JSON.stringify({
-        title: body.title,
-        body: body.body ?? "",
-        head: body.head,
-        base: body.base,
-      }),
-    });
+      async () => {
+        const ghResponse = await fetch(
+          `https://api.github.com/repos/${body.owner}/${body.repo}/pulls`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${delegationUser.githubAccessToken}`,
+              Accept: "application/vnd.github+json",
+              "User-Agent": "agent-tasks-bot",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              title: body.title,
+              body: body.body ?? "",
+              head: body.head,
+              base: body.base,
+            }),
+          },
+        );
 
-    if (!ghResponse.ok) {
-      const ghError = await ghResponse.json().catch(() => ({ message: "Unknown GitHub error" })) as { message?: string };
-      return c.json(
-        { error: "github_error", message: `GitHub API error: ${ghError.message ?? ghResponse.statusText}` },
-        ghResponse.status as 400 | 403 | 404 | 422 | 500,
-      );
+        if (!ghResponse.ok) {
+          const ghError = (await ghResponse
+            .json()
+            .catch(() => ({ message: "Unknown GitHub error" }))) as {
+            message?: string;
+          };
+          return {
+            status: ghResponse.status,
+            body: {
+              error: "github_error",
+              message: `GitHub API error: ${ghError.message ?? ghResponse.statusText}`,
+            } as const,
+          };
+        }
+
+        const pr = (await ghResponse.json()) as {
+          number: number;
+          html_url: string;
+          title: string;
+        };
+
+        await prisma.task.update({
+          where: { id: body.taskId },
+          data: {
+            branchName: body.head,
+            prUrl: pr.html_url,
+            prNumber: pr.number,
+          },
+        });
+
+        await logAuditEvent({
+          action: "github.pr_created",
+          actorId: delegationUser.userId,
+          projectId: task.project.id,
+          taskId: task.id,
+          payload: {
+            agentTokenId: actor.tokenId,
+            delegatedUserId: delegationUser.userId,
+            delegatedUserLogin: delegationUser.login,
+            owner: body.owner,
+            repo: body.repo,
+            prNumber: pr.number,
+            prUrl: pr.html_url,
+          },
+        });
+
+        return {
+          status: 201,
+          body: {
+            pullRequest: {
+              number: pr.number,
+              url: pr.html_url,
+              title: pr.title,
+            },
+            task: {
+              id: task.id,
+              branchName: body.head,
+              prUrl: pr.html_url,
+              prNumber: pr.number,
+            },
+          },
+        };
+      },
+    );
+
+    if (outcome.replayed) {
+      c.header("X-Idempotent-Replay", "true");
     }
-
-    const pr = await ghResponse.json() as { number: number; html_url: string; title: string };
-
-    // 4. Update task with PR metadata
-    await prisma.task.update({
-      where: { id: body.taskId },
-      data: {
-        branchName: body.head,
-        prUrl: pr.html_url,
-        prNumber: pr.number,
-      },
-    });
-
-    // 5. Audit log
-    await logAuditEvent({
-      action: "github.pr_created",
-      actorId: delegationUser.userId,
-      projectId: task.project.id,
-      taskId: task.id,
-      payload: {
-        agentTokenId: actor.tokenId,
-        delegatedUserId: delegationUser.userId,
-        delegatedUserLogin: delegationUser.login,
-        owner: body.owner,
-        repo: body.repo,
-        prNumber: pr.number,
-        prUrl: pr.html_url,
-      },
-    });
-
-    return c.json({
-      pullRequest: {
-        number: pr.number,
-        url: pr.html_url,
-        title: pr.title,
-      },
-      task: {
-        id: task.id,
-        branchName: body.head,
-        prUrl: pr.html_url,
-        prNumber: pr.number,
-      },
-    }, 201);
+    return c.json(
+      outcome.body,
+      outcome.status as 201 | 400 | 403 | 404 | 422 | 500,
+    );
   },
 );
 
@@ -140,6 +186,7 @@ const mergePrSchema = z.object({
   owner: z.string().min(1),
   repo: z.string().min(1),
   merge_method: z.enum(["merge", "squash", "rebase"]).default("squash"),
+  idempotencyKey: idempotencyKeySchema,
 });
 
 githubRouter.post(
@@ -309,47 +356,81 @@ githubRouter.post(
       );
     }
 
-    // 2. Call shared merge helper — derives owner/repo from
-    // task.project.githubRepo (cross-repo hardening, ADR-0010 §5b).
-    // Body-supplied owner/repo fields are intentionally ignored.
-    const mergeResult = await performPrMerge(
-      { ...task, prNumber: task.prNumber ?? prNumber },
-      body.merge_method,
-      actor,
+    // Side-effect block: GitHub merge + DB status bump + signal ack +
+    // notice emission. Wrapped for idempotency so a retry after a network
+    // timeout doesn't double-run `performPrMerge` or double-emit the
+    // self-merge notice. Gate checks above (task-status, distinct-reviewer,
+    // self-merge) already run on every retry — they're the invariants, not
+    // the side effect.
+    const outcome = await withIdempotency<unknown>(
+      {
+        projectId: task.project.id,
+        verb: "pull_requests_merge",
+        idempotencyKey: body.idempotencyKey,
+        payload: body,
+      },
+      async () => {
+        // Shared merge helper — derives owner/repo from
+        // task.project.githubRepo (cross-repo hardening, ADR-0010 §5b).
+        // Body-supplied owner/repo fields are intentionally ignored.
+        const mergeResult = await performPrMerge(
+          { ...task, prNumber: task.prNumber ?? prNumber },
+          body.merge_method,
+          actor,
+        );
+
+        if (!mergeResult.ok) {
+          const status =
+            mergeResult.error === "no_delegation"
+              ? 403
+              : (mergeResult.status ?? 502);
+          return {
+            status,
+            body: {
+              error: mergeResult.error,
+              message: mergeResult.message,
+            } as const,
+          };
+        }
+
+        await prisma.task.update({
+          where: { id: body.taskId },
+          data: { status: "done" },
+        });
+        await acknowledgeSignalsForTask(body.taskId);
+        void emitSelfMergeNoticeIfApplicable({
+          taskId: body.taskId,
+          projectId: task.project.id,
+          actor,
+          project: task.project,
+          mergeSha: mergeResult.sha,
+          via: "github_pr_merge",
+        });
+
+        return {
+          status: 200,
+          body: {
+            merged: true,
+            sha: mergeResult.sha,
+            message: mergeResult.alreadyMerged
+              ? "Already merged"
+              : "Pull request successfully merged",
+            task: {
+              id: task.id,
+              status: "done",
+            },
+          },
+        };
+      },
     );
 
-    if (!mergeResult.ok) {
-      const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
-      return c.json(
-        { error: mergeResult.error, message: mergeResult.message },
-        status as 400 | 403 | 404 | 405 | 409 | 422 | 500 | 502,
-      );
+    if (outcome.replayed) {
+      c.header("X-Idempotent-Replay", "true");
     }
-
-    // 3. Update task status to done
-    await prisma.task.update({
-      where: { id: body.taskId },
-      data: { status: "done" },
-    });
-    await acknowledgeSignalsForTask(body.taskId);
-    void emitSelfMergeNoticeIfApplicable({
-      taskId: body.taskId,
-      projectId: task.project.id,
-      actor,
-      project: task.project,
-      mergeSha: mergeResult.sha,
-      via: "github_pr_merge",
-    });
-
-    return c.json({
-      merged: true,
-      sha: mergeResult.sha,
-      message: mergeResult.alreadyMerged ? "Already merged" : "Pull request successfully merged",
-      task: {
-        id: task.id,
-        status: "done",
-      },
-    });
+    return c.json(
+      outcome.body,
+      outcome.status as 200 | 400 | 403 | 404 | 405 | 409 | 422 | 500 | 502,
+    );
   },
 );
 
@@ -360,6 +441,7 @@ const commentPrSchema = z.object({
   owner: z.string().min(1),
   repo: z.string().min(1),
   body: z.string().min(1),
+  idempotencyKey: idempotencyKeySchema,
 });
 
 githubRouter.post(
@@ -399,52 +481,90 @@ githubRouter.post(
       );
     }
 
-    // 3. Call GitHub API to post comment (issues API works for PR comments)
-    const ghResponse = await fetch(`https://api.github.com/repos/${body.owner}/${body.repo}/issues/${prNumber}/comments`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${delegationUser.githubAccessToken}`,
-        Accept: "application/vnd.github+json",
-        "User-Agent": "agent-tasks-bot",
-        "Content-Type": "application/json",
+    // Side-effect block: POST to GitHub issues API + audit log. Wrapped
+    // for idempotency so a retry after timeout doesn't post the comment
+    // twice. GitHub itself does NOT de-dupe comments — two successful
+    // creates produce two visible comments on the PR — so without this the
+    // retry-after-timeout path genuinely duplicates user-facing content.
+    const outcome = await withIdempotency<unknown>(
+      {
+        projectId: task.project.id,
+        verb: "pull_requests_comment",
+        idempotencyKey: body.idempotencyKey,
+        payload: { ...body, prNumber },
       },
-      body: JSON.stringify({ body: body.body }),
-    });
+      async () => {
+        const ghResponse = await fetch(
+          `https://api.github.com/repos/${body.owner}/${body.repo}/issues/${prNumber}/comments`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${delegationUser.githubAccessToken}`,
+              Accept: "application/vnd.github+json",
+              "User-Agent": "agent-tasks-bot",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ body: body.body }),
+          },
+        );
 
-    if (!ghResponse.ok) {
-      const ghError = await ghResponse.json().catch(() => ({ message: "Unknown GitHub error" })) as { message?: string };
-      return c.json(
-        { error: "github_error", message: `GitHub API error: ${ghError.message ?? ghResponse.statusText}` },
-        ghResponse.status as 400 | 403 | 404 | 422 | 500,
-      );
+        if (!ghResponse.ok) {
+          const ghError = (await ghResponse
+            .json()
+            .catch(() => ({ message: "Unknown GitHub error" }))) as {
+            message?: string;
+          };
+          return {
+            status: ghResponse.status,
+            body: {
+              error: "github_error",
+              message: `GitHub API error: ${ghError.message ?? ghResponse.statusText}`,
+            } as const,
+          };
+        }
+
+        const comment = (await ghResponse.json()) as {
+          id: number;
+          html_url: string;
+          body: string;
+        };
+
+        await logAuditEvent({
+          action: "github.pr_commented",
+          actorId: delegationUser.userId,
+          projectId: task.project.id,
+          taskId: task.id,
+          payload: {
+            agentTokenId: actor.tokenId,
+            delegatedUserId: delegationUser.userId,
+            delegatedUserLogin: delegationUser.login,
+            owner: body.owner,
+            repo: body.repo,
+            prNumber,
+            commentId: comment.id,
+            commentUrl: comment.html_url,
+          },
+        });
+
+        return {
+          status: 201,
+          body: {
+            comment: {
+              id: comment.id,
+              url: comment.html_url,
+              body: comment.body,
+            },
+          },
+        };
+      },
+    );
+
+    if (outcome.replayed) {
+      c.header("X-Idempotent-Replay", "true");
     }
-
-    const comment = await ghResponse.json() as { id: number; html_url: string; body: string };
-
-    // 4. Audit log
-    await logAuditEvent({
-      action: "github.pr_commented",
-      actorId: delegationUser.userId,
-      projectId: task.project.id,
-      taskId: task.id,
-      payload: {
-        agentTokenId: actor.tokenId,
-        delegatedUserId: delegationUser.userId,
-        delegatedUserLogin: delegationUser.login,
-        owner: body.owner,
-        repo: body.repo,
-        prNumber,
-        commentId: comment.id,
-        commentUrl: comment.html_url,
-      },
-    });
-
-    return c.json({
-      comment: {
-        id: comment.id,
-        url: comment.html_url,
-        body: comment.body,
-      },
-    }, 201);
+    return c.json(
+      outcome.body,
+      outcome.status as 201 | 400 | 403 | 404 | 422 | 500,
+    );
   },
 );

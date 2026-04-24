@@ -563,6 +563,7 @@ function buildServer(token: string): McpServer {
         base: z.string().min(1).optional(),
         title: z.string().min(1),
         body: z.string().optional(),
+        idempotencyKey: z.string().trim().min(1).max(255).optional(),
       },
     },
     async (args) => {
@@ -590,6 +591,7 @@ function buildServer(token: string): McpServer {
         repo: z.string().min(1),
         prNumber: z.number().int().positive(),
         mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
+        idempotencyKey: z.string().trim().min(1).max(255).optional(),
       },
     },
     async ({ prNumber, mergeMethod, ...rest }) => {
@@ -623,6 +625,7 @@ function buildServer(token: string): McpServer {
         repo: z.string().min(1),
         prNumber: z.number().int().positive(),
         body: z.string().min(1),
+        idempotencyKey: z.string().trim().min(1).max(255).optional(),
       },
     },
     async ({ prNumber, ...rest }) => {

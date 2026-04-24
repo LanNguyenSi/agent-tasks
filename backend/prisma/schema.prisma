@@ -147,13 +147,13 @@ model AgentToken {
   lastUsedAt  DateTime?
   createdAt   DateTime  @default(now())
 
-  team      Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  createdBy User      @relation(fields: [createdById], references: [id])
-  tasks     Task[]    @relation("TaskAgentCreator")
-  claims    Task[]    @relation("TaskAgentClaimant")
-  reviews   Task[]    @relation("TaskAgentReviewer")
-  signals   Signal[]  @relation("SignalRecipientAgent")
-  comments  Comment[] @relation("CommentAgentAuthor")
+  team      Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdBy User           @relation(fields: [createdById], references: [id])
+  tasks     Task[]         @relation("TaskAgentCreator")
+  claims    Task[]         @relation("TaskAgentClaimant")
+  reviews   Task[]         @relation("TaskAgentReviewer")
+  signals   Signal[]       @relation("SignalRecipientAgent")
+  comments  Comment[]      @relation("CommentAgentAuthor")
   artifacts TaskArtifact[] @relation("ArtifactAgentCreator")
 
   @@map("agent_tokens")
@@ -162,7 +162,7 @@ model AgentToken {
 // ── Projects ─────────────────────────────────────────────────────────────────
 
 model Project {
-  id                      String    @id @default(uuid())
+  id                      String          @id @default(uuid())
   teamId                  String
   name                    String
   slug                    String
@@ -170,19 +170,20 @@ model Project {
   githubRepo              String? // "owner/repo" if synced from GitHub
   githubSyncAt            DateTime?
   taskTemplate            Json? // { fields: { goal: bool, acceptanceCriteria: bool, context: bool, constraints: bool } }
-  confidenceThreshold     Int       @default(60) // 0-100, minimum confidence score for agent claims
-  requireDistinctReviewer Boolean   @default(false) /// @deprecated use governanceMode. Kept readable through one release cycle for dashboards + external clients. Runtime still derives an answer when governanceMode is null. Remove once no client references it.
-  soloMode                Boolean   @default(false) /// @deprecated use governanceMode. See requireDistinctReviewer.
+  confidenceThreshold     Int             @default(60) // 0-100, minimum confidence score for agent claims
+  requireDistinctReviewer Boolean         @default(false) /// @deprecated use governanceMode. Kept readable through one release cycle for dashboards + external clients. Runtime still derives an answer when governanceMode is null. Remove once no client references it.
+  soloMode                Boolean         @default(false) /// @deprecated use governanceMode. See requireDistinctReviewer.
   governanceMode          GovernanceMode? // Null only for rows predating the migration; runtime derives from the legacy flags when null. New writes always set this; new code should read this.
-  createdAt               DateTime  @default(now())
-  updatedAt               DateTime  @updatedAt
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
 
-  team      Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  tasks     Task[]
-  workflows Workflow[]
-  boards    Board[]
-  signals   Signal[]
-  auditLogs AuditLog[]
+  team            Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  tasks           Task[]
+  workflows       Workflow[]
+  boards          Board[]
+  signals         Signal[]
+  auditLogs       AuditLog[]
+  toolInvocations ToolInvocation[]
 
   @@unique([teamId, slug])
   @@map("projects")
@@ -418,4 +419,38 @@ model AuditLog {
   @@index([taskId])
   @@index([actorId])
   @@map("audit_logs")
+}
+
+// ── Tool Invocations ─────────────────────────────────────────────────────────
+//
+// Idempotency log for side-effect MCP verbs (pull_requests_create, _merge,
+// _comment, …). A client that wants at-most-once execution passes
+// `idempotencyKey`; a retried call with the same (projectId, verb, key)
+// replays the stored response instead of re-executing. A different payload
+// under the same key is rejected with 409 to surface caller bugs instead of
+// silently returning a stale response.
+//
+// v1 limitation: the row is inserted AFTER the side-effect executes, so two
+// truly concurrent requests with the same key may still both run once before
+// one loses the unique-constraint race. This covers the common case
+// (retry-after-timeout) but not the pathological one. A later iteration can
+// add an insert-first/execute-then-update pattern if the concurrent case
+// ever becomes relevant.
+model ToolInvocation {
+  id             String   @id @default(uuid())
+  projectId      String
+  verb           String   @db.VarChar(64)
+  idempotencyKey String   @db.VarChar(255)
+  // sha256 hex of the canonicalized request payload (sans idempotencyKey).
+  // Used to reject reuse of the same key with a different payload.
+  payloadHash    String   @db.Char(64)
+  responseBody   Json
+  statusCode     Int
+  createdAt      DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, verb, idempotencyKey])
+  @@index([createdAt]) // for TTL sweeps
+  @@map("tool_invocations")
 }

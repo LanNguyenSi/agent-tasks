@@ -251,6 +251,7 @@ export class AgentTasksClient {
     base?: string;
     title: string;
     body?: string;
+    idempotencyKey?: string;
   }) {
     return this.request<unknown>("POST", "/api/github/pull-requests", input);
   }
@@ -261,6 +262,7 @@ export class AgentTasksClient {
     repo: string;
     prNumber: number;
     merge_method?: "merge" | "squash" | "rebase";
+    idempotencyKey?: string;
   }) {
     const { prNumber, ...body } = input;
     return this.request<unknown>(
@@ -276,6 +278,7 @@ export class AgentTasksClient {
     repo: string;
     prNumber: number;
     body: string;
+    idempotencyKey?: string;
   }) {
     const { prNumber, ...rest } = input;
     return this.request<unknown>(
