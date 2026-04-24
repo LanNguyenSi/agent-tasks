@@ -311,7 +311,7 @@ export default function TaskDetailModal({
             </>
           ) : (
             <>
-              <h2 style={{ fontSize: "var(--text-md)", fontWeight: 700, color: "var(--text)", marginBottom: "0.5rem", lineHeight: 1.3 }}>
+              <h2 className="text-break-anywhere" style={{ fontSize: "var(--text-md)", fontWeight: 700, color: "var(--text)", marginBottom: "0.5rem", lineHeight: 1.3 }}>
                 {task.title}
               </h2>
               {/* Metadata chip row */}

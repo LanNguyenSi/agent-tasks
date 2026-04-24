@@ -215,7 +215,7 @@ const TaskCard = memo(function TaskCard({
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.25rem", minWidth: 0 }}>
-        <p style={{ fontWeight: 600, fontSize: "var(--text-base)", lineHeight: 1.35, color: "var(--text)", display: "flex", alignItems: "center", gap: "0.4rem", minWidth: 0, overflowWrap: "anywhere", wordBreak: "break-word" }}>
+        <p className="text-break-anywhere" style={{ fontWeight: 600, fontSize: "var(--text-base)", lineHeight: 1.35, color: "var(--text)", display: "flex", alignItems: "center", gap: "0.4rem", minWidth: 0 }}>
           <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: STATUS_COLORS[task.status] ?? "var(--muted)", flexShrink: 0 }} />
           {task.title}
         </p>
@@ -233,6 +233,7 @@ const TaskCard = memo(function TaskCard({
       </div>
       {task.description && (
         <p
+          className="text-break-anywhere"
           style={{
             color: "var(--muted)",
             fontSize: "var(--text-xs)",
@@ -242,8 +243,6 @@ const TaskCard = memo(function TaskCard({
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",
             overflow: "hidden",
-            overflowWrap: "anywhere",
-            wordBreak: "break-word",
           }}
         >
           {task.description}
@@ -252,12 +251,12 @@ const TaskCard = memo(function TaskCard({
       {(task.externalRef || (task.labels && task.labels.length > 0)) && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem", marginBottom: "0.35rem", minWidth: 0 }}>
           {task.externalRef && (
-            <span title={task.externalRef} style={{ fontSize: "var(--text-xs)", color: "var(--primary)", background: "var(--primary-muted)", borderRadius: "4px", padding: "0.1rem 0.35rem", fontWeight: 600, fontFamily: "monospace", maxWidth: "100%", overflowWrap: "anywhere" }}>
+            <span className="text-break-anywhere" title={task.externalRef} style={{ fontSize: "var(--text-xs)", color: "var(--primary)", background: "var(--primary-muted)", borderRadius: "4px", padding: "0.1rem 0.35rem", fontWeight: 600, fontFamily: "monospace", maxWidth: "100%" }}>
               {task.externalRef}
             </span>
           )}
           {task.labels?.map((label) => (
-            <span key={label} title={label} style={{ fontSize: "var(--text-xs)", color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 15%, transparent)", borderRadius: "4px", padding: "0.1rem 0.35rem", maxWidth: "100%", overflowWrap: "anywhere" }}>
+            <span key={label} className="text-break-anywhere" title={label} style={{ fontSize: "var(--text-xs)", color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 15%, transparent)", borderRadius: "4px", padding: "0.1rem 0.35rem", maxWidth: "100%" }}>
               {label}
             </span>
           ))}
