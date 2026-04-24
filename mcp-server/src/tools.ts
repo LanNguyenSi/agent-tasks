@@ -391,7 +391,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "pull_requests_create",
       description:
-        "Create a pull request on behalf of a team member with GitHub connected. Requires `github:pr_create` scope for agent callers plus an operator who has opted in via 'Allow agents to create PRs' in Settings. The task is updated with `branchName`, `prUrl`, `prNumber` on success. The historic alternative — agents running `gh pr create` themselves and passing the URL into `task_finish { prUrl }` — still works and remains a supported fallback for orgs that prefer not to share a GitHub identity with agent-tasks.",
+        "Create a pull request on behalf of a team member with GitHub connected. Requires `github:pr_create` scope for agent callers plus an operator who has opted in via 'Allow agents to create PRs' in Settings. The task is updated with `branchName`, `prUrl`, `prNumber` on success. The historic alternative — agents running `gh pr create` themselves and passing the URL into `task_finish { prUrl }` — still works and remains a supported fallback for orgs that prefer not to share a GitHub identity with agent-tasks. Pass `idempotencyKey` (client-generated, any unique string ≤255 chars) to make the call safe to retry after a network timeout — the backend replays the stored 2xx response on subsequent calls with the same key, and rejects the same key + different payload with 409.",
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),
@@ -400,19 +400,21 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         base: z.string().min(1).optional(),
         title: z.string().min(1),
         body: z.string().optional(),
+        idempotencyKey: z.string().trim().min(1).max(255).optional(),
       },
       handler: async (input) => wrap(() => client.createPullRequest(input)),
     }),
     def({
       name: "pull_requests_merge",
       description:
-        "GitHub-identifier merge variant (taskId + owner + repo + prNumber). Prefer `task_merge` when you already hold the taskId — it derives owner/repo/PR number from the task, enforces the same self-merge gate, and avoids having to pass GitHub metadata around. Requires `github:pr_merge` scope for agent callers.",
+        "GitHub-identifier merge variant (taskId + owner + repo + prNumber). Prefer `task_merge` when you already hold the taskId — it derives owner/repo/PR number from the task, enforces the same self-merge gate, and avoids having to pass GitHub metadata around. Requires `github:pr_merge` scope for agent callers. Supports `idempotencyKey` (see `pull_requests_create`) for retry-safety across network timeouts.",
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),
         repo: z.string().min(1),
         prNumber: z.number().int().positive(),
         mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
+        idempotencyKey: z.string().trim().min(1).max(255).optional(),
       },
       handler: async ({ mergeMethod, ...rest }) =>
         wrap(() =>
@@ -430,13 +432,14 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       name: "pull_requests_comment",
       description:
         DEPRECATED +
-        "Use `gh pr comment` directly or leave the note on the task via task_note.",
+        "Use `gh pr comment` directly or leave the note on the task via task_note. Supports `idempotencyKey` (see `pull_requests_create`) — GitHub does NOT de-dupe comments, so retries without the key genuinely post the comment twice.",
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),
         repo: z.string().min(1),
         prNumber: z.number().int().positive(),
         body: z.string().min(1),
+        idempotencyKey: z.string().trim().min(1).max(255).optional(),
       },
       handler: async (input) =>
         wrap(() => client.commentOnPullRequest(input)),
