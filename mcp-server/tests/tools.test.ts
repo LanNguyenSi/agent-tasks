@@ -35,6 +35,7 @@ describe("buildTools", () => {
     expect(names).toEqual(
       [
         "projects_get",
+        "projects_get_effective_gates",
         "projects_list",
         "pull_requests_comment",
         "pull_requests_create",

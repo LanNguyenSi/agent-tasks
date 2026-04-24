@@ -54,7 +54,9 @@ import {
   distinctReviewerRejectionMessage,
   checkSelfMergeGate,
   selfMergeRejectionMessage,
-} from "../services/review-gate.js";
+  checkPrRepoMatchesProject,
+  prRepoMatchesProjectRejectionMessage,
+} from "../services/gates/index.js";
 import { SCOPES } from "../services/scopes.js";
 
 
@@ -1497,22 +1499,22 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     targetStatus = expectedFinishStateFromDefinition(effectiveDefinition);
   }
 
-  // Cross-repo validation on prUrl payload (ADR-0010 §5b).
-  if (prUrl && task.project.githubRepo) {
-    const projectRepo = parseOwnerRepo(task.project.githubRepo);
-    const prMatch = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\//);
-    if (projectRepo && prMatch) {
-      const prOwner = prMatch[1].toLowerCase();
-      const prRepo = prMatch[2].toLowerCase();
-      if (prOwner !== projectRepo.owner.toLowerCase() || prRepo !== projectRepo.repo.toLowerCase()) {
-        return c.json(
-          {
-            error: "cross_repo_pr_rejected",
-            message: `PR belongs to ${prMatch[1]}/${prMatch[2]} but this task's project is linked to ${task.project.githubRepo}`,
-          },
-          400,
-        );
-      }
+  // Cross-repo validation on prUrl payload (ADR-0010 §5b). Shared gate —
+  // same logic is used by submit-pr below. See services/gates/.
+  if (prUrl) {
+    const crossRepo = checkPrRepoMatchesProject(prUrl, task.project);
+    if (!crossRepo.ok) {
+      return c.json(
+        {
+          error: "cross_repo_pr_rejected",
+          message: prRepoMatchesProjectRejectionMessage(
+            crossRepo.prOwner,
+            crossRepo.prRepo,
+            crossRepo.projectRepo,
+          ),
+        },
+        400,
+      );
     }
   }
 
@@ -1827,27 +1829,21 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
   }
   const { branchName, prUrl, prNumber } = parsed.data;
 
-  // Cross-repo hardening (ADR-0010 §5b): reject prUrls that point at a
-  // different repo than the task's project.
-  if (task.project.githubRepo) {
-    const projectRepo = parseOwnerRepo(task.project.githubRepo);
-    const prMatch = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\//);
-    if (projectRepo && prMatch) {
-      const prOwner = prMatch[1].toLowerCase();
-      const prRepo = prMatch[2].toLowerCase();
-      if (
-        prOwner !== projectRepo.owner.toLowerCase() ||
-        prRepo !== projectRepo.repo.toLowerCase()
-      ) {
-        return c.json(
-          {
-            error: "cross_repo_pr_rejected",
-            message: `PR belongs to ${prMatch[1]}/${prMatch[2]} but this task's project is linked to ${task.project.githubRepo}`,
-          },
-          400,
-        );
-      }
-    }
+  // Cross-repo hardening (ADR-0010 §5b). Same gate as the task_finish
+  // branch above — see services/gates/pr-repo-matches-project.ts.
+  const crossRepo = checkPrRepoMatchesProject(prUrl, task.project);
+  if (!crossRepo.ok) {
+    return c.json(
+      {
+        error: "cross_repo_pr_rejected",
+        message: prRepoMatchesProjectRejectionMessage(
+          crossRepo.prOwner,
+          crossRepo.prRepo,
+          crossRepo.projectRepo,
+        ),
+      },
+      400,
+    );
   }
 
   // Authorship verification (defense-in-depth, ADR-0010 §7 follow-up):

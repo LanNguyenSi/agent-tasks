@@ -14,7 +14,9 @@ import {
   distinctReviewerRejectionMessage,
   checkSelfMergeGate,
   selfMergeRejectionMessage,
-} from "../services/review-gate.js";
+  checkTaskStatusForMerge,
+  taskStatusForMergeRejectionMessage,
+} from "../services/gates/index.js";
 import { performPrMerge } from "../services/github-merge.js";
 import { SCOPES } from "../services/scopes.js";
 import { withIdempotency } from "../services/idempotency.js";
@@ -232,7 +234,7 @@ githubRouter.post(
       return c.json({ error: "not_found", message: "Task not found" }, 404);
     }
 
-    // Governance gate: merging drives the task to `done`, so the same
+    // Task-status gate. Merging drives the task to `done`, so the same
     // review→done invariants the /transition handler enforces must also
     // apply here. Previously this endpoint wrote `status: "done"`
     // directly no matter what the task's current status was — which meant
@@ -241,21 +243,24 @@ githubRouter.post(
     // every workflow precondition, every review lock, and every
     // distinct-reviewer check.
     //
-    // Two legal entry states:
+    // Legal entry states:
     //   - `review`: normal happy path, apply the distinct-reviewer gate
-    //   - `done`: idempotent re-try against an already-merged PR; the gate
-    //     was evaluated when the task first reached `done` and does not
-    //     need to run again (re-checking would spuriously reject
-    //     admin-force-transitioned tasks that never held a review lock).
+    //   - `done`: idempotent re-try against an already-merged PR; the
+    //     distinct-reviewer gate was evaluated when the task first
+    //     reached `done` and does not need to run again (re-checking
+    //     would spuriously reject admin-force-transitioned tasks that
+    //     never held a review lock).
     //
     // Admin escape hatch: admins who need to bypass this gate use
-    // `POST /tasks/:id/transition` with `force: true` + `forceReason` first
-    // (that endpoint's existing admin-gated force path), which moves the
-    // task to `done`, and THEN call this merge endpoint to perform the
-    // actual GitHub merge. The escape hatch lives in exactly one place —
-    // the transition handler — instead of being duplicated here where the
+    // `POST /tasks/:id/transition` with `force: true` + `forceReason`
+    // first, which moves the task to `done`, and THEN call this merge
+    // endpoint. The escape hatch lives in exactly one place — the
+    // transition handler — instead of being duplicated here where the
     // actor is always an agent and can never satisfy `isProjectAdmin`.
-    if (task.status === "open" || task.status === "in_progress") {
+    const statusGate = checkTaskStatusForMerge(task);
+    if (!statusGate.ok) {
+      const isKnownBadStatus =
+        task.status === "open" || task.status === "in_progress";
       void logAuditEvent({
         action: "task.merge_rejected_bad_status",
         projectId: task.project.id,
@@ -266,37 +271,13 @@ githubRouter.post(
           owner: body.owner,
           repo: body.repo,
           prNumber,
+          ...(isKnownBadStatus ? {} : { unknown: true }),
         },
       });
       return c.json(
         {
           error: "forbidden",
-          message: `Cannot merge: task is in '${task.status}', expected 'review'. Transition the task to 'review' first (POST /tasks/:id/transition) — or, if you need to bypass the review flow entirely, force-transition to 'done' as an admin and then re-run this merge.`,
-        },
-        403,
-      );
-    }
-    if (task.status !== "review" && task.status !== "done") {
-      // Any future status other than open/in_progress/review/done falls
-      // through here. Fail closed and audit so the unknown-status attempt
-      // is visible in the timeline.
-      void logAuditEvent({
-        action: "task.merge_rejected_bad_status",
-        projectId: task.project.id,
-        taskId: task.id,
-        payload: {
-          status: task.status,
-          agentTokenId: actor.tokenId,
-          owner: body.owner,
-          repo: body.repo,
-          prNumber,
-          unknown: true,
-        },
-      });
-      return c.json(
-        {
-          error: "forbidden",
-          message: `Cannot merge: task is in '${task.status}', expected 'review' or 'done'.`,
+          message: taskStatusForMergeRejectionMessage(statusGate.currentStatus),
         },
         403,
       );

@@ -15,6 +15,7 @@ import {
   deriveGovernanceModeFromFlags,
   legacyFlagsFromGovernanceMode,
 } from "../lib/governance-mode.js";
+import { computeEffectiveGates } from "../services/gates/index.js";
 
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -185,7 +186,35 @@ projectRouter.get("/projects/:id", async (c) => {
     return forbidden(c, "Access denied");
   }
 
-  return c.json({ project });
+  // `effectiveGates` is a per-project projection of the gate registry:
+  // for each registered gate, whether it would evaluate on this project
+  // and why. Lets clients (agents, UI, external integrations) learn the
+  // invariant surface BEFORE tripping a 4xx. See services/gates/.
+  return c.json({ project, effectiveGates: computeEffectiveGates(project) });
+});
+
+// Dedicated discovery endpoint — same data as `GET /projects/:id` but
+// without the project payload, for clients that only need the gate map.
+projectRouter.get("/projects/:id/effective-gates", async (c) => {
+  const actor = c.get("actor");
+  const project = await prisma.project.findUnique({
+    where: { id: c.req.param("id") },
+    select: {
+      teamId: true,
+      githubRepo: true,
+      governanceMode: true,
+      soloMode: true,
+      requireDistinctReviewer: true,
+    },
+  });
+
+  if (!project) return notFound(c);
+
+  if (!(await assertMembership(actor, project.teamId))) {
+    return forbidden(c, "Access denied");
+  }
+
+  return c.json({ effectiveGates: computeEffectiveGates(project) });
 });
 
 // ── Update project ────────────────────────────────────────────────────────────

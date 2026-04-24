@@ -220,9 +220,17 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       name: "projects_get",
       description:
         DEPRECATED +
-        "Fetch a single project by slug or id. Project browsing is not an agent concern under v2.",
+        "Fetch a single project by slug or id. Project browsing is not an agent concern under v2. The non-deprecated use is the `effectiveGates` field in the response — call `projects_get_effective_gates` for a leaner payload.",
       inputShape: { slugOrId: z.string().min(1) },
       handler: async ({ slugOrId }) => wrap(() => client.getProject(slugOrId)),
+    }),
+    def({
+      name: "projects_get_effective_gates",
+      description:
+        "Return the gate map for a project. Each entry is keyed by `GateCode` (e.g. `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) and carries `active` (whether this gate would evaluate on this project), `because` (why — e.g. governance mode, project binding), and `appliesTo` (the verb names the gate can reject). Use it to answer 'will this verb be blocked?' BEFORE making the call, instead of discovering preconditions by tripping a 4xx.",
+      inputShape: { projectId: uuid() },
+      handler: async ({ projectId }) =>
+        wrap(() => client.getProjectEffectiveGates(projectId)),
     }),
     def({
       name: "tasks_list",
