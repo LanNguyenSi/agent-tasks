@@ -238,8 +238,14 @@ describe("pull_requests_create idempotency", () => {
       body: JSON.stringify(body),
     });
     expect(second.status).toBe(201);
-    const secondJson = (await second.json()) as { pullRequest: { number: number } };
-    expect(secondJson).toEqual(firstJson);
+    const secondJson = (await second.json()) as {
+      pullRequest: { number: number };
+      _idempotent_replay?: boolean;
+    };
+    expect(secondJson.pullRequest).toEqual(firstJson.pullRequest);
+    // Body-level replay marker for MCP clients that don't see headers.
+    expect(secondJson._idempotent_replay).toBe(true);
+    // And the header for REST clients.
     expect(second.headers.get("X-Idempotent-Replay")).toBe("true");
 
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -412,10 +418,65 @@ describe("pull_requests_merge idempotency", () => {
       body: JSON.stringify(body),
     });
     expect(second.status).toBe(200);
-    const secondJson = (await second.json()) as { merged: boolean; sha: string };
-    expect(secondJson).toEqual(firstJson);
+    const secondJson = (await second.json()) as {
+      merged: boolean;
+      sha: string;
+      _idempotent_replay?: boolean;
+    };
+    expect(secondJson.merged).toBe(firstJson.merged);
+    expect(secondJson.sha).toBe(firstJson.sha);
+    expect(secondJson._idempotent_replay).toBe(true);
     expect(second.headers.get("X-Idempotent-Replay")).toBe("true");
 
     expect(performPrMergeMock).toHaveBeenCalledOnce();
+  });
+
+  it("reusing the merge key against a different URL prNumber does NOT replay", async () => {
+    // Reviewer finding: prNumber is a URL param, not in the body. Before
+    // the fix it was excluded from the idempotency payload hash, so a
+    // caller that reused the same key for PR 42 and then PR 99 (on a
+    // task whose task.prNumber is null and falls back to the URL param)
+    // would replay the first merge. After the fix, prNumber is part of
+    // the hash and the second call hits the collision guard → 409.
+    prismaMocks.taskFindUnique.mockResolvedValue({
+      id: TASK_ID,
+      projectId: "proj-1",
+      status: "review",
+      prNumber: null, // forces performPrMerge to fall back to URL prNumber
+      claimedByUserId: null,
+      claimedByAgentId: "agent-claimant",
+      reviewClaimedByUserId: null,
+      reviewClaimedByAgentId: "agent-reviewer",
+      project: {
+        id: "proj-1",
+        teamId: "team-1",
+        githubRepo: "acme/thing",
+        requireDistinctReviewer: false,
+        soloMode: true,
+      },
+    });
+
+    const app = makeApp(MERGE_ACTOR);
+    const shared = {
+      taskId: TASK_ID,
+      owner: "acme",
+      repo: "thing",
+      merge_method: "squash" as const,
+      idempotencyKey: "reused-across-prs",
+    };
+
+    const first = await app.request("/pull-requests/42/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(shared),
+    });
+    expect(first.status).toBe(200);
+
+    const second = await app.request("/pull-requests/99/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(shared),
+    });
+    expect(second.status).toBe(409);
   });
 });

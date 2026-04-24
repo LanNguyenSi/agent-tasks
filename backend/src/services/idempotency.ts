@@ -64,10 +64,16 @@ export async function withIdempotency<T>(
           `verb "${args.verb}" with a different payload`,
       );
     }
+    // Inject a replay marker into the body when it's a plain object. The
+    // REST callers can rely on the `X-Idempotent-Replay` header, but MCP
+    // clients (HTTP bridge + stdio) go through callSelf/request helpers
+    // that strip response headers and only return the parsed JSON. Without
+    // this body-level signal those callers cannot distinguish a fresh
+    // execution from a replay.
     return {
       kind: "replay",
       status: existing.statusCode,
-      body: existing.responseBody as T,
+      body: injectReplayMarker(existing.responseBody) as T,
       replayed: true,
     };
   }
@@ -98,6 +104,13 @@ export async function withIdempotency<T>(
   }
 
   return { kind: "ok", ...result, replayed: false };
+}
+
+function injectReplayMarker(body: unknown): unknown {
+  if (body !== null && typeof body === "object" && !Array.isArray(body)) {
+    return { ...(body as Record<string, unknown>), _idempotent_replay: true };
+  }
+  return body;
 }
 
 function hashPayload(payload: unknown): string {

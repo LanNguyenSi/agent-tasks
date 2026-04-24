@@ -123,7 +123,9 @@ describe("withIdempotency", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(result.replayed).toBe(true);
     expect(result.status).toBe(201);
-    expect(result.body).toEqual(storedBody);
+    // Replay injects the marker so MCP clients (which only see the body,
+    // not response headers) can still detect the replay.
+    expect(result.body).toEqual({ ...storedBody, _idempotent_replay: true });
     expect(prismaMocks.create).not.toHaveBeenCalled();
   });
 

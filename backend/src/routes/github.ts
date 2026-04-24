@@ -367,7 +367,12 @@ githubRouter.post(
         projectId: task.project.id,
         verb: "pull_requests_merge",
         idempotencyKey: body.idempotencyKey,
-        payload: body,
+        // prNumber is a URL param, not a body field. Include it in the
+        // hash so reusing the same key against a different PR number
+        // doesn't accidentally replay an earlier merge — matters for
+        // tasks whose task.prNumber is null and performPrMerge falls
+        // back to the URL-supplied value.
+        payload: { ...body, prNumber },
       },
       async () => {
         // Shared merge helper — derives owner/repo from
