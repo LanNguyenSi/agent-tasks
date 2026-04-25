@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { ZodError } from "zod";
 import { AppError, errorCodeForName } from "./errors.js";
+import { logger } from "./logger.js";
 
 /**
  * Global Hono `onError` handler. Kept in `lib/` so tests can mount it on
@@ -30,7 +31,7 @@ export function appErrorHandler(err: Error, c: Context): Response {
     );
   }
 
-  console.error(`[${c.req.method}] ${c.req.path} — unhandled error:`, err);
+  logger.error({ err, errMessage: err.message }, "unhandled error");
   return c.json(
     { error: "internal_error", message: "An unexpected error occurred" },
     500,

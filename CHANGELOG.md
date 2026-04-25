@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+#### Structured logging with stable per-request fields
+
+- Replaces ad-hoc `console.log/warn/error` calls with a Pino logger
+  (`backend/src/lib/logger.ts`). JSON output in production, pretty
+  output in dev/test. Log level is configurable via `LOG_LEVEL` (default
+  `info` in prod, `debug` elsewhere).
+- An AsyncLocalStorage-backed context, seeded by the new
+  `requestContextMiddleware`, surfaces these fields on **every** log line
+  emitted within a request scope: `requestId`, `method`, `path`,
+  `actorId`, `actorType` (stamped by `authMiddleware` BEFORE the handler
+  runs, so handler-emitted logs inherit them), `verb` (MCP tool name),
+  `rpcMethod` (other JSON-RPC methods like `initialize` / `tools/list` —
+  separate field so tool-traffic dashboards aren't polluted by protocol
+  traffic), `taskId` and `projectId` (auto-populated from `:id` /
+  `:projectId` path params on `/api/tasks/...` and `/api/projects/...`).
+- The middleware mints a UUID `requestId` per request, honors a 100-char
+  inbound `X-Request-Id` header for trace propagation, and echoes the
+  value back as a response header. Inbound IDs are validated against
+  `[A-Za-z0-9._-]{1,100}` to block log/header injection — values outside
+  the charset are dropped and a fresh UUID is minted.
+- One access log per request (`durationMs`, `status`). Status-class
+  routing: 5xx → `error`, **401/403 → `warn` (kept visible for
+  brute-force detection and security audits)**, other 4xx → `debug`,
+  2xx/3xx → `info`. `/api/health` 2xx are suppressed entirely (k8s
+  liveness probes would otherwise drown info logs); 5xx on `/api/health`
+  still logs.
+- Acceptance criteria from the originating task are met:
+  `docker logs agent-tasks-backend | jq 'select(.taskId == "<id>")'`
+  surfaces every line in a request flow, and any cross-route correlation
+  (MCP entry → REST self-dispatch → DB write → audit log) is grep-able
+  by `requestId`.
+- Out of v1: the stdio `mcp-server` package keeps its lone
+  `console.error` fatal handler unchanged; OpenTelemetry / Jaeger /
+  log-aggregation infra was deliberately not pulled in. Boot-time
+  config validation still uses `console.error` because the logger
+  itself isn't initialised yet at that point.
+
 #### `dependsOn` on task creation
 
 - `POST /projects/:projectId/tasks` and the MCP `task_create` /

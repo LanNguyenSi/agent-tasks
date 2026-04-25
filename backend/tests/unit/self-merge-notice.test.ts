@@ -24,6 +24,7 @@ vi.mock("../../src/services/audit.js", () => ({
 }));
 
 import { emitSelfMergeNoticeIfApplicable } from "../../src/services/self-merge-notice.js";
+import { logger } from "../../src/lib/logger.js";
 
 const agentActor: Actor = {
   type: "agent",
@@ -207,7 +208,7 @@ describe("emitSelfMergeNoticeIfApplicable", () => {
     prismaMocks.teamMemberFindMany.mockRejectedValue(
       new Error("DB connection refused"),
     );
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
 
     const n = await emitSelfMergeNoticeIfApplicable({
       taskId: "task-1",
@@ -218,10 +219,11 @@ describe("emitSelfMergeNoticeIfApplicable", () => {
     });
 
     expect(n).toBe(0);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("task task-1"),
-      expect.any(Error),
-    );
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls[0]?.[0]).toMatchObject({
+      component: "self-merge-notice",
+      taskId: "task-1",
+    });
     errorSpy.mockRestore();
   });
 

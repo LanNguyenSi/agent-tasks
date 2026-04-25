@@ -18,6 +18,7 @@ import { prisma } from "../lib/prisma.js";
 import { config } from "../config/index.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
+import { logger } from "../lib/logger.js";
 import { hashToken } from "../middleware/auth.js";
 import type { Actor } from "../types/auth.js";
 import {
@@ -133,7 +134,7 @@ ssoLoginRouter.get("/sso/:teamSlug", async (c) => {
     c.header("Set-Cookie", buildCookie(PKCE_COOKIE, pkce.verifier, COOKIE_TTL, isSecure), { append: true });
     return c.redirect(url);
   } catch (err) {
-    console.error("SSO authorize error:", (err as Error).message);
+    logger.error({ component: "sso", phase: "authorize", errMessage: (err as Error).message }, "SSO authorize error");
     return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=sso_unavailable`);
   }
 });
@@ -221,7 +222,7 @@ ssoLoginRouter.get("/sso/:teamSlug/callback", async (c) => {
   } catch (err) {
     // Never include the raw error (may contain token-exchange response body) —
     // log the message alone and fall through to a generic reason.
-    console.error("SSO callback error:", (err as Error).message);
+    logger.error({ component: "sso", phase: "callback", errMessage: (err as Error).message }, "SSO callback error");
     return c.redirect(`${config.FRONTEND_URL}/auth/error?reason=sso_failed`);
   }
 });

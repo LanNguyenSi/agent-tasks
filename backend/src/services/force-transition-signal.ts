@@ -23,6 +23,7 @@
 
 import { prisma } from "../lib/prisma.js";
 import { createSignal, type SignalContext } from "./signal.js";
+import { logger } from "../lib/logger.js";
 
 export interface ForceTransitionSignalInput {
   taskId: string;
@@ -113,9 +114,14 @@ export async function emitForceTransitionedSignal(
         });
         written++;
       } catch (err) {
-        console.error(
-          `[force-signal] failed for task=${input.taskId} recipient=${key}:`,
-          (err as Error).message,
+        logger.error(
+          {
+            component: "force-signal",
+            taskId: input.taskId,
+            recipient: key,
+            errMessage: (err as Error).message,
+          },
+          "force-signal recipient write failed",
         );
       }
     }
@@ -124,9 +130,13 @@ export async function emitForceTransitionedSignal(
   } catch (err) {
     // Signal emission is supplementary. A failure must not prevent the
     // transition from landing — match the audit-log error posture.
-    console.error(
-      `[force-signal] failed to emit force-transition signal for task=${input.taskId}:`,
-      (err as Error).message,
+    logger.error(
+      {
+        component: "force-signal",
+        taskId: input.taskId,
+        errMessage: (err as Error).message,
+      },
+      "failed to emit force-transition signal",
     );
     return 0;
   }

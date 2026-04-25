@@ -5,6 +5,22 @@ import { createHash } from "node:crypto";
 import type { Actor } from "../types/auth.js";
 import { verifySessionToken, extractSessionCookie } from "../services/session.js";
 import { config } from "../config/index.js";
+import { setLogContext } from "../lib/logger.js";
+
+/**
+ * Set the actor on the Hono context AND stamp it into the active log
+ * context so every log line emitted by downstream handlers inherits
+ * `actorId` / `actorType`. Doing this here (before `next()`) instead of
+ * post-handler in request-context middleware is the only way handler logs
+ * — which run during `next()` — get the actor fields.
+ */
+function setActor(c: Context<{ Variables: AppVariables }>, actor: Actor): void {
+  c.set("actor", actor);
+  setLogContext({
+    actorId: actor.type === "agent" ? actor.tokenId : actor.userId,
+    actorType: actor.type,
+  });
+}
 
 /**
  * Extracts and validates the actor from the request.
@@ -43,7 +59,7 @@ export async function authMiddleware(c: Context<{ Variables: AppVariables }>, ne
         teamId: token.teamId,
         scopes: token.scopes,
       };
-      c.set("actor", actor);
+      setActor(c, actor);
       return next();
     }
 
@@ -51,7 +67,7 @@ export async function authMiddleware(c: Context<{ Variables: AppVariables }>, ne
     const session = await verifySessionToken(rawToken, config.SESSION_SECRET);
     if (session) {
       const actor: Actor = { type: "human", userId: session.userId };
-      c.set("actor", actor);
+      setActor(c, actor);
       return next();
     }
 
@@ -64,7 +80,7 @@ export async function authMiddleware(c: Context<{ Variables: AppVariables }>, ne
     const session = await verifySessionToken(sessionToken, config.SESSION_SECRET);
     if (session) {
       const actor: Actor = { type: "human", userId: session.userId };
-      c.set("actor", actor);
+      setActor(c, actor);
       return next();
     }
   }

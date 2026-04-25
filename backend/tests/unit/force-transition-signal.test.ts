@@ -7,6 +7,7 @@
  * regression would require a conscious change.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { logger } from "../../src/lib/logger.js";
 
 // Mock the prisma module BEFORE importing the service under test.
 const findUniqueTaskMock = vi.fn();
@@ -196,7 +197,7 @@ describe("emitForceTransitionedSignal", () => {
     createSignalMock
       .mockResolvedValueOnce({})
       .mockRejectedValueOnce(new Error("unique constraint violation"));
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
     const count = await emitForceTransitionedSignal({
       taskId: "task-1",
       projectId: "proj-1",
@@ -208,8 +209,12 @@ describe("emitForceTransitionedSignal", () => {
     expect(count).toBe(1);
     expect(createSignalMock).toHaveBeenCalledTimes(2);
     expect(errSpy).toHaveBeenCalledTimes(1);
-    const logLine = String(errSpy.mock.calls[0]?.[0] ?? "");
-    expect(logLine).toContain("[force-signal] failed for task=task-1 recipient=");
+    const payload = errSpy.mock.calls[0]?.[0] as { component?: string; taskId?: string; recipient?: string };
+    expect(payload).toMatchObject({
+      component: "force-signal",
+      taskId: "task-1",
+    });
+    expect(typeof payload.recipient).toBe("string");
     errSpy.mockRestore();
   });
 
@@ -218,7 +223,7 @@ describe("emitForceTransitionedSignal", () => {
       fakeTask({ claimedByUserId: "alice", reviewClaimedByUserId: "bob" }),
     );
     createSignalMock.mockRejectedValue(new Error("db down"));
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
     const count = await emitForceTransitionedSignal({
       taskId: "task-1",
       projectId: "proj-1",

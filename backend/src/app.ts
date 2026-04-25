@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { logger } from "hono/logger";
+import { requestContextMiddleware } from "./middleware/request-context.js";
 import { healthRouter } from "./routes/health.js";
 import { authRouter } from "./routes/auth.js";
 import { agentTokenRouter } from "./routes/agent-tokens.js";
@@ -24,7 +24,12 @@ import type { AppVariables } from "./types/hono.js";
 export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }> {
   const app = new Hono<{ Variables: AppVariables }>();
 
-  app.use("*", logger());
+  // Structured logger w/ AsyncLocalStorage-backed per-request context.
+  // Replaces Hono's built-in `logger()` middleware; emits JSON in prod and
+  // pretty in dev. Every line within the request scope inherits requestId,
+  // method, path — plus actorId/actorType (after auth) and verb (in
+  // /api/mcp). See lib/logger.ts and middleware/request-context.ts.
+  app.use("*", requestContextMiddleware);
 
   // Security headers
   app.use("*", async (c, next) => {

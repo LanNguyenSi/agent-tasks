@@ -37,6 +37,7 @@
 // the dynamic `await import("ioredis")` inside `getRedisClient` only
 // when REDIS_URL is configured.
 import type { Redis as RedisClient } from "ioredis";
+import { logger } from "../lib/logger.js";
 
 // NOTE: this module intentionally reads Redis env vars directly via
 // `process.env` instead of importing `config/index.js`. The config
@@ -197,8 +198,7 @@ export class RedisCache<T> implements Cache<T> {
 
 function defaultLog(err: unknown, op: string): void {
   const message = err instanceof Error ? err.message : String(err);
-  // eslint-disable-next-line no-console
-  console.warn(`[cache] ${op} failed: ${message}`);
+  logger.warn({ component: "cache", op, errMessage: message }, "cache op failed");
 }
 
 // ── Factory ────────────────────────────────────────────────────────────────

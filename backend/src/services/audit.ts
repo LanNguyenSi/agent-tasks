@@ -6,6 +6,7 @@
  * Audit logs are immutable — never deleted, never edited.
  */
 import { prisma } from "../lib/prisma.js";
+import { logger } from "../lib/logger.js";
 
 export type AuditAction =
   | "task.created"
@@ -77,9 +78,16 @@ export async function logAuditEvent(opts: {
       },
     });
   } catch (err) {
-    console.error(
-      `[audit] failed to write ${opts.action} for actor=${opts.actorId ?? "-"} project=${opts.projectId ?? "-"} task=${opts.taskId ?? "-"}:`,
-      (err as Error).message,
+    logger.error(
+      {
+        component: "audit",
+        action: opts.action,
+        actorId: opts.actorId ?? null,
+        projectId: opts.projectId ?? null,
+        taskId: opts.taskId ?? null,
+        errMessage: (err as Error).message,
+      },
+      "audit log write failed",
     );
   }
 }

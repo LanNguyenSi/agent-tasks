@@ -20,6 +20,7 @@ import { emitTaskAvailableSignal } from "../services/task-signal.js";
 import { acknowledgeSignalsForTask, type SignalType } from "../services/signal.js";
 import { emitSelfMergeNoticeIfApplicable } from "../services/self-merge-notice.js";
 import { GovernanceMode, resolveGovernanceMode } from "../lib/governance-mode.js";
+import { logger, setLogContext } from "../lib/logger.js";
 
 // Signals that become meaningless once the underlying task is `done`.
 // Outcome-notification signals (`task_approved`, `changes_requested`,
@@ -61,6 +62,21 @@ import { SCOPES } from "../services/scopes.js";
 
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
+
+// Surface taskId / projectId from the path on every log line emitted within
+// these routes — meets the acceptance criterion that
+// `docker logs … | jq 'select(.taskId == "<id>")'` returns the full request
+// trace without route handlers having to thread context manually.
+taskRouter.use("/tasks/:id/*", async (c, next) => {
+  const id = c.req.param("id");
+  if (id) setLogContext({ taskId: id });
+  await next();
+});
+taskRouter.use("/projects/:projectId/*", async (c, next) => {
+  const projectId = c.req.param("projectId");
+  if (projectId) setLogContext({ projectId });
+  await next();
+});
 
 const taskInclude = {
   attachments: { orderBy: { createdAt: "desc" as const } },
@@ -1122,8 +1138,9 @@ async function evaluateV2TransitionGates(task: {
   }
 
   if (unknown.length > 0) {
-    console.warn(
-      `[workflow] v2 transition references unknown rules: ${unknown.join(", ")}`,
+    logger.warn(
+      { component: "workflow", unknown },
+      "v2 transition references unknown rules",
     );
   }
 
@@ -1931,15 +1948,25 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
           }
           // Non-ok responses (404, 403, etc.) → fail open, log for visibility
           if (!ghRes.ok) {
-            console.warn(
-              `[authorship-check] GitHub API ${ghRes.status} for PR #${prNumber} on ${task.project.githubRepo} — skipping authorship check`,
+            logger.warn(
+              {
+                component: "authorship-check",
+                ghStatus: ghRes.status,
+                prNumber,
+                repo: task.project.githubRepo,
+              },
+              "GitHub API non-ok — skipping authorship check",
             );
           }
         } catch (err) {
           // Network error → fail open
-          console.warn(
-            `[authorship-check] GitHub API unreachable for PR #${prNumber} — skipping authorship check:`,
-            err instanceof Error ? err.message : err,
+          logger.warn(
+            {
+              component: "authorship-check",
+              prNumber,
+              errMessage: err instanceof Error ? err.message : String(err),
+            },
+            "GitHub API unreachable — skipping authorship check",
           );
         }
       }
@@ -3289,8 +3316,9 @@ taskRouter.post(
     }
 
     if (unknown.length > 0) {
-      console.warn(
-        `[workflow] task ${task.id} transition ${task.status}→${status} references unknown rules: ${unknown.join(", ")}`,
+      logger.warn(
+        { component: "workflow", taskId: task.id, fromStatus: task.status, toStatus: status, unknown },
+        "task transition references unknown rules",
       );
     }
 
