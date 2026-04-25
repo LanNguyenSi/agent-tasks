@@ -139,6 +139,11 @@ const createTaskSchema = z.object({
   templateData: templateDataSchema.optional(),
   externalRef: z.string().trim().min(1).max(255).optional(),
   labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+  // Task IDs (same project) that must complete before this task is pickable.
+  // Informational + gating: task_pickup already filters tasks whose blockers
+  // aren't `done`. Post-create dep management lives on the
+  // /tasks/:id/dependencies endpoints (human-only).
+  dependsOn: z.array(z.string().uuid()).max(50).optional(),
 });
 
 const updateTaskSchema = z.object({
@@ -279,6 +284,28 @@ taskRouter.post(
       return forbidden(c, "Missing scope: tasks:create");
     }
 
+    // Validate dependsOn before create: every blocker must exist in the same
+    // project. A new task has no incoming edges yet, so no cycle is possible.
+    if (body.dependsOn && body.dependsOn.length > 0) {
+      const unique = Array.from(new Set(body.dependsOn));
+      const blockers = await prisma.task.findMany({
+        where: { id: { in: unique }, projectId },
+        select: { id: true },
+      });
+      if (blockers.length !== unique.length) {
+        const found = new Set(blockers.map((b) => b.id));
+        const missing = unique.filter((id) => !found.has(id));
+        return c.json(
+          {
+            error: "bad_request",
+            message: "One or more dependsOn task IDs are missing or not in this project",
+            missing,
+          },
+          400,
+        );
+      }
+    }
+
     let task;
     try {
       task = await prisma.task.create({
@@ -293,6 +320,9 @@ taskRouter.post(
           ...(body.templateData !== undefined ? { templateData: body.templateData } : {}),
           ...(body.externalRef !== undefined ? { externalRef: body.externalRef } : {}),
           ...(body.labels !== undefined ? { labels: body.labels } : {}),
+          ...(body.dependsOn && body.dependsOn.length > 0
+            ? { blockedBy: { connect: Array.from(new Set(body.dependsOn)).map((id) => ({ id })) } }
+            : {}),
           createdByUserId: actor.type === "human" ? actor.userId : null,
           createdByAgentId: actor.type === "agent" ? actor.tokenId : null,
         },
@@ -320,7 +350,12 @@ taskRouter.post(
 
 // ── Batch import tasks ──────────────────────────────────────────────────────
 
-const importTaskSchema = createTaskSchema.omit({ workflowId: true }).extend({
+// Batch import deliberately drops `dependsOn`: the field references task IDs
+// that the importer can't reasonably know up front, and the partial-failure
+// semantics of import (per-row try/catch) don't compose cleanly with the
+// "validate all blockers before any insert" rule of the single-create path.
+// Set dependencies in a follow-up pass via /tasks/:id/dependencies.
+const importTaskSchema = createTaskSchema.omit({ workflowId: true, dependsOn: true }).extend({
   description: z.string().max(50_000).optional(),
 });
 
