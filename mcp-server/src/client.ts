@@ -104,6 +104,7 @@ export class AgentTasksClient {
       dueAt?: string;
       externalRef?: string;
       labels?: string[];
+      dependsOn?: string[];
     },
   ) {
     return this.request<unknown>(

@@ -92,7 +92,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_create",
       description:
-        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef).",
+        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done.",
       inputShape: {
         projectId: uuid(),
         title: z.string().min(1).max(255),
@@ -102,6 +102,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         dueAt: z.string().datetime().optional(),
         externalRef: z.string().trim().min(1).max(255).optional(),
         labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+        dependsOn: z.array(uuid()).max(50).optional(),
       },
       handler: async ({ projectId, ...input }) =>
         wrap(() => client.createTask(projectId, input)),

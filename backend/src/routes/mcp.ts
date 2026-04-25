@@ -278,7 +278,7 @@ function buildServer(token: string): McpServer {
     "tasks_create",
     {
       description:
-        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef).",
+        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done.",
       inputSchema: {
         projectId: uuid(),
         title: z.string().min(1).max(255),
@@ -288,6 +288,7 @@ function buildServer(token: string): McpServer {
         dueAt: z.string().datetime().optional(),
         externalRef: z.string().trim().min(1).max(255).optional(),
         labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+        dependsOn: z.array(uuid()).max(50).optional(),
       },
     },
     async ({ projectId, ...body }) => {

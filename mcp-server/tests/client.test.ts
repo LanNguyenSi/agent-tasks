@@ -71,6 +71,22 @@ describe("AgentTasksClient", () => {
     expect(JSON.parse(init.body)).toEqual({ title: "Hello" });
   });
 
+  it("forwards dependsOn through createTask body", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
+    const client = new AgentTasksClient(config);
+    const blockerA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const blockerB = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    await client.createTask("proj1", {
+      title: "Child",
+      dependsOn: [blockerA, blockerB],
+    });
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      title: "Child",
+      dependsOn: [blockerA, blockerB],
+    });
+  });
+
   it("throws AgentTasksApiError with status and body on non-2xx", async () => {
     fetchMock.mockResolvedValue(err(403, { message: "forbidden" }));
     const client = new AgentTasksClient(config);

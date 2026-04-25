@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+#### `dependsOn` on task creation
+
+- `POST /projects/:projectId/tasks` and the MCP `task_create` /
+  `tasks_create` verbs now accept `dependsOn: TaskId[]` (max 50) — an
+  array of task IDs in the same project that must reach `done` before
+  the new task is pickable. The blockers connect via the existing
+  `Task.blockedBy` relation, so `task_pickup`'s blocker-skip filter
+  applies automatically with no further wiring. Validation rejects
+  IDs that don't exist in the project (400 `bad_request`,
+  `missing: [...]`); the field is optional and pure-additive — every
+  existing `task_create` call continues to work unchanged.
+- Cycle detection is not run at create-time on purpose: a brand-new
+  task has no incoming edges, so it can't be part of a cycle. The
+  existing `POST /tasks/:id/dependencies` endpoint keeps its DFS
+  cycle guard for post-create dep changes.
+- Post-create dep management remains on the human-only
+  `/tasks/:id/dependencies` endpoints; agents express dependencies
+  at create-time, which covers the documented use cases (stacked
+  PRs, batch setup→children, post-merge cleanup).
+
 ## [0.9.0] - 2026-04-23
 
 **Headline: The `/tasks` list view lands as a first-class navigation
