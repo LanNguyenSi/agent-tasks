@@ -26,6 +26,7 @@ import {
 } from "../services/user.js";
 import { verifyPassword } from "../services/password.js";
 import { getTokenHealth } from "../services/github-health.js";
+import { logger } from "../lib/logger.js";
 import { logAuditEvent } from "../services/audit.js";
 import { prisma } from "../lib/prisma.js";
 
@@ -244,7 +245,10 @@ authRouter.get("/github/callback", async (c) => {
 
     return c.redirect(`${config.FRONTEND_URL}/teams`);
   } catch (err) {
-    console.error("OAuth callback error:", err);
+    logger.error(
+      { component: "oauth", err, errMessage: err instanceof Error ? err.message : String(err) },
+      "OAuth callback error",
+    );
     clearOAuthCookies(c);
     return c.redirect(`${config.FRONTEND_URL}/auth/error`);
   }

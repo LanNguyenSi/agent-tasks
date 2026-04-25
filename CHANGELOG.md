@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+#### Structured logging with stable per-request fields
+
+- Replaces ad-hoc `console.log/warn/error` calls with a Pino logger
+  (`backend/src/lib/logger.ts`). JSON output in production, pretty
+  output in dev/test. Log level is configurable via `LOG_LEVEL` (default
+  `info` in prod, `debug` elsewhere).
+- An AsyncLocalStorage-backed context, seeded by the new
+  `requestContextMiddleware`, surfaces these fields on **every** log line
+  emitted within a request scope: `requestId`, `method`, `path`,
+  `actorId`, `actorType` (after auth runs), `verb` (for `/api/mcp`
+  requests, derived from the JSON-RPC body), `taskId` and `projectId`
+  (auto-populated from `:id` / `:projectId` path params on
+  `/api/tasks/...` and `/api/projects/...` routes).
+- The middleware mints a UUID `requestId` per request, honors a 100-char
+  inbound `X-Request-Id` header for trace propagation, echoes the value
+  back as a response header, and emits one access log per request
+  (`durationMs`, `status`). Status-conditional level: 5xx → `error`,
+  4xx → `debug` (drive-by traffic stays out of prod info logs), 2xx/3xx
+  → `info`.
+- Acceptance criteria from the originating task are met:
+  `docker logs agent-tasks-backend | jq 'select(.taskId == "<id>")'`
+  surfaces every line in a request flow, and any cross-route correlation
+  (MCP entry → REST self-dispatch → DB write → audit log) is grep-able
+  by `requestId`.
+- Out of v1: the stdio `mcp-server` package keeps its lone
+  `console.error` fatal handler unchanged; OpenTelemetry / Jaeger /
+  log-aggregation infra was deliberately not pulled in. Boot-time
+  config validation still uses `console.error` because the logger
+  itself isn't initialised yet at that point.
+
 #### `dependsOn` on task creation
 
 - `POST /projects/:projectId/tasks` and the MCP `task_create` /

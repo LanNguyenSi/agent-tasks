@@ -23,6 +23,7 @@ import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
 import { createSignal, type SignalContext } from "./signal.js";
 import type { Actor } from "../types/auth.js";
+import { logger } from "../lib/logger.js";
 import {
   GovernanceMode,
   resolveGovernanceMode,
@@ -67,13 +68,17 @@ export async function emitSelfMergeNoticeIfApplicable(
   try {
     return await emitSelfMergeNoticeInner(input);
   } catch (err) {
-    // Swallow — best-effort contract. Log to console so the failure is
-    // still grep-able in production logs; the audit system is intentionally
-    // not used here because writing to it could itself be the failure mode.
-    // eslint-disable-next-line no-console
-    console.error(
-      `[self-merge-notice] emission failed for task ${input.taskId}:`,
-      err,
+    // Swallow — best-effort contract. Log so the failure is still grep-able
+    // in production logs; the audit system is intentionally not used here
+    // because writing to it could itself be the failure mode.
+    logger.error(
+      {
+        component: "self-merge-notice",
+        taskId: input.taskId,
+        err,
+        errMessage: err instanceof Error ? err.message : String(err),
+      },
+      "self-merge-notice emission failed",
     );
     return 0;
   }

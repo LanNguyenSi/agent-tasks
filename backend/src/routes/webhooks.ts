@@ -9,6 +9,7 @@ import {
   type GitHubPullRequestPayload,
   type GitHubPullRequestReviewPayload,
 } from "../services/github-webhook.js";
+import { logger } from "../lib/logger.js";
 
 const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET ?? "";
 const REQUIRE_WEBHOOK_SECRET = process.env.NODE_ENV === "production";
@@ -23,11 +24,11 @@ webhookRouter.post("/github", async (c) => {
   if (!WEBHOOK_SECRET) {
     if (REQUIRE_WEBHOOK_SECRET) {
       // In production: reject all unsigned payloads
-      console.error("[webhook] GITHUB_WEBHOOK_SECRET is not configured — rejecting request");
+      logger.error({ component: "webhook" }, "GITHUB_WEBHOOK_SECRET is not configured — rejecting request");
       return c.json({ error: "unauthorized", message: "Webhook secret not configured" }, 401);
     }
     // In development: warn and proceed (allows testing without secret)
-    console.warn("[webhook] GITHUB_WEBHOOK_SECRET not set — accepting unsigned payload (dev mode)");
+    logger.warn({ component: "webhook" }, "GITHUB_WEBHOOK_SECRET not set — accepting unsigned payload (dev mode)");
   } else if (!verifyWebhookSignature(rawBody, signature, WEBHOOK_SECRET)) {
     return c.json({ error: "unauthorized", message: "Invalid webhook signature" }, 401);
   }
@@ -72,7 +73,10 @@ webhookRouter.post("/github", async (c) => {
           break;
       }
     } catch (err) {
-      console.error(`[webhook] Error processing ${event} event:`, err);
+      logger.error(
+        { err, errMessage: err instanceof Error ? err.message : String(err), component: "webhook", event },
+        "error processing webhook event",
+      );
     }
   })();
 

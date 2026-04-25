@@ -44,6 +44,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import type { AppVariables } from "../types/hono.js";
+import { setLogContext } from "../lib/logger.js";
 
 type HonoApp = Hono<{ Variables: AppVariables }>;
 
@@ -699,6 +700,28 @@ mcpRouter.post("/", async (c) => {
     );
   }
   const token = match[1];
+
+  // Peek at the JSON-RPC body to surface the tool name as `verb` on every
+  // log line emitted by the inner handler (and by the self-dispatched REST
+  // route). The SDK consumes the original `c.req.raw`, which is still
+  // readable because we read the cloned body — `Request#clone()` does not
+  // disturb the source stream. Failures to parse are non-fatal: the verb
+  // is observability-only and the SDK will surface its own JSON-RPC error
+  // for malformed payloads.
+  try {
+    const peek = (await c.req.raw.clone().json()) as {
+      method?: unknown;
+      params?: { name?: unknown };
+    };
+    const toolName = peek?.params?.name;
+    if (peek.method === "tools/call" && typeof toolName === "string") {
+      setLogContext({ verb: toolName });
+    } else if (typeof peek.method === "string") {
+      setLogContext({ verb: peek.method });
+    }
+  } catch {
+    // Body unreadable / not JSON — let the SDK handle the error response.
+  }
 
   const server = buildServer(token);
   const transport = new WebStandardStreamableHTTPServerTransport({
