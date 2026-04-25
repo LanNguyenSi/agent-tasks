@@ -1,13 +1,25 @@
 import type { MiddlewareHandler } from "hono";
 import { randomUUID } from "node:crypto";
-import { logger, withLogContext, setLogContext } from "../lib/logger.js";
-import type { Actor } from "../types/auth.js";
+import { logger, withLogContext } from "../lib/logger.js";
+
+// Allowed shape for an inbound X-Request-Id. Restricting to a sane charset
+// blocks header-injection attempts (CR/LF/quote/control chars) on both the
+// log line and the echoed response header.
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,100}$/;
+
+// Endpoints whose 200s are pure noise: they fire on every health probe (k8s
+// liveness/readiness, docker-compose, uptime monitors). The middleware still
+// wraps them in an ALS scope so any error inside the handler logs cleanly —
+// only the per-request access summary is suppressed.
+const SILENT_ACCESS_PATHS = new Set(["/api/health"]);
 
 /**
  * Generates a per-request `requestId` and runs the rest of the request
  * inside an AsyncLocalStorage scope. Every `logger.info(...)` call within
  * the request automatically picks up `requestId`, `method`, `path` — plus
- * any `actorId` / `verb` / `taskId` that downstream middleware enrich.
+ * any `actorId` / `actorType` (stamped by the auth middleware), `verb`
+ * (stamped by the MCP route), and `taskId` / `projectId` (stamped by the
+ * task router) that downstream middleware enrich.
  *
  * Honors an inbound `X-Request-Id` header so callers (or upstream proxies)
  * can correlate their own request log with our backend log line; otherwise
@@ -15,9 +27,7 @@ import type { Actor } from "../types/auth.js";
  */
 export const requestContextMiddleware: MiddlewareHandler = async (c, next) => {
   const inbound = c.req.header("x-request-id");
-  // Length cap defends against header-stuffing — a 100-char ID is more than
-  // enough for any sane tracing scheme and keeps the log line bounded.
-  const requestId = inbound && inbound.length > 0 && inbound.length <= 100
+  const requestId = inbound && REQUEST_ID_PATTERN.test(inbound)
     ? inbound
     : randomUUID();
   c.header("X-Request-Id", requestId);
@@ -27,25 +37,30 @@ export const requestContextMiddleware: MiddlewareHandler = async (c, next) => {
   await withLogContext(
     { requestId, method: c.req.method, path: c.req.path },
     async () => {
-      // After downstream middleware runs, the actor context is set; copy
-      // actorId/actorType into the log scope so the access line below and
-      // any handler logs land with the actor stamped on them.
       await next();
 
-      const actor = c.get("actor") as Actor | undefined;
-      if (actor) {
-        setLogContext({
-          actorId: actor.type === "agent" ? actor.tokenId : actor.userId,
-          actorType: actor.type,
-        });
+      if (SILENT_ACCESS_PATHS.has(c.req.path) && c.res.status < 500) {
+        return;
       }
 
       const durationMs = Date.now() - startedAt;
       const status = c.res.status;
-      // 4xx is noisy on a public endpoint (bad tokens, malformed JSON);
-      // demote to debug so prod logs aren't spammed by drive-by traffic.
-      // 5xx and 2xx/3xx stay at info so the access trail is readable.
-      const level = status >= 500 ? "error" : status >= 400 ? "debug" : "info";
+      // Status-class routing keeps prod info logs readable while preserving
+      // security-relevant signal:
+      //   5xx       → error (real problems)
+      //   401/403   → warn  (auth/authz failures — needed for brute-force
+      //                       detection and security audits)
+      //   other 4xx → debug (404/422 drive-by traffic; toggled on via
+      //                       LOG_LEVEL=debug when you actually need them)
+      //   2xx/3xx   → info  (the access trail callers grep)
+      const level =
+        status >= 500
+          ? "error"
+          : status === 401 || status === 403
+            ? "warn"
+            : status >= 400
+              ? "debug"
+              : "info";
       logger[level]({ status, durationMs }, "request");
     },
   );

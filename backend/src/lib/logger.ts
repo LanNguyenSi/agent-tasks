@@ -13,7 +13,12 @@ type LogContext = {
   path?: string;
   actorId?: string;
   actorType?: "human" | "agent";
+  // MCP tool name (e.g. "task_pickup"), populated only when the JSON-RPC
+  // body's `method` is `tools/call`. Other JSON-RPC methods (initialize,
+  // tools/list, notifications/initialized) go into `rpcMethod` so dashboards
+  // can keep tool traffic separate from protocol traffic.
   verb?: string;
+  rpcMethod?: string;
   taskId?: string;
   projectId?: string;
 };

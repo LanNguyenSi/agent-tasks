@@ -17,7 +17,6 @@ import {
 } from "../../src/lib/logger.js";
 import { requestContextMiddleware } from "../../src/middleware/request-context.js";
 import type { AppVariables } from "../../src/types/hono.js";
-import type { Actor } from "../../src/types/auth.js";
 
 describe("logger context (AsyncLocalStorage)", () => {
   it("withLogContext exposes seeded fields via getLogContext", () => {
@@ -115,54 +114,99 @@ describe("requestContextMiddleware", () => {
     expect(res.headers.get("X-Request-Id")).toBe(captured);
   });
 
-  it("captures actorId/actorType from c.get('actor') after handler runs", async () => {
+  it("rejects an inbound X-Request-Id whose chars fall outside [A-Za-z0-9._-]", async () => {
+    let captured: string | undefined;
+    const app = makeApp((c) => {
+      captured = getLogContext().requestId;
+      return c.json({ ok: true });
+    });
+
+    // Header values with CR/LF are blocked by the fetch runtime itself; what
+    // reaches the middleware is anything that's a *valid* header but still
+    // surprising in a log line — angle brackets, spaces, semicolons, etc.
+    const surprising = "abc<script>def";
+    const res = await app.request("/x", {
+      headers: { "X-Request-Id": surprising },
+    });
+    expect(captured).not.toBe(surprising);
+    expect(captured).toMatch(/^[0-9a-f-]{36}$/);
+    expect(res.headers.get("X-Request-Id")).toBe(captured);
+  });
+
+  it("propagates actorId stamped by upstream middleware to the handler scope", async () => {
     const app = new Hono<{ Variables: AppVariables }>();
     app.use("*", requestContextMiddleware);
-    app.use("*", async (c, next) => {
-      const actor: Actor = {
-        type: "agent",
-        tokenId: "agent-42",
-        teamId: "team-1",
-        scopes: [],
-      };
-      c.set("actor", actor);
+    // Stand-in for the real authMiddleware: stamps the log context BEFORE
+    // calling next() so handler-emitted logs see the actor fields. This is
+    // the exact ordering authMiddleware now uses (post-review fix to PR
+    // #196 finding 1).
+    app.use("*", async (_c, next) => {
+      setLogContext({ actorId: "agent-42", actorType: "agent" });
       await next();
     });
 
-    const accessSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
-    app.get("/x", (c) => c.json({ ok: true }));
+    let captured: { actorId?: string; actorType?: string } | undefined;
+    app.get("/x", (c) => {
+      captured = getLogContext();
+      return c.json({ ok: true });
+    });
 
-    await app.request("/x");
-    // The middleware emits exactly one access log line per request.
-    expect(accessSpy).toHaveBeenCalledTimes(1);
-    const [fields, msg] = accessSpy.mock.calls[0]!;
-    expect(msg).toBe("request");
-    expect(fields).toMatchObject({ status: 200 });
-    accessSpy.mockRestore();
+    const res = await app.request("/x");
+    expect(res.status).toBe(200);
+    expect(captured).toMatchObject({ actorId: "agent-42", actorType: "agent" });
   });
 
-  it("emits the access line at debug level for 4xx and error level for 5xx", async () => {
+  it("routes the access line by status class (5xx→error, 401/403→warn, other 4xx→debug, 2xx→info)", async () => {
     const app = new Hono<{ Variables: AppVariables }>();
     app.use("*", requestContextMiddleware);
 
     const debugSpy = vi.spyOn(logger, "debug").mockImplementation(() => logger);
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => logger);
     const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
     const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
 
-    app.get("/clientErr", (c) => c.json({ error: "bad" }, 400));
+    app.get("/notFound", (c) => c.json({ error: "missing" }, 404));
+    app.get("/unauthed", (c) => c.json({ error: "auth" }, 401));
+    app.get("/forbidden", (c) => c.json({ error: "no" }, 403));
     app.get("/serverErr", (c) => c.json({ error: "boom" }, 500));
     app.get("/ok", (c) => c.json({ ok: true }));
 
-    await app.request("/clientErr");
+    await app.request("/notFound");
+    await app.request("/unauthed");
+    await app.request("/forbidden");
     await app.request("/serverErr");
     await app.request("/ok");
 
-    expect(debugSpy).toHaveBeenCalledTimes(1);
-    expect(errorSpy).toHaveBeenCalledTimes(1);
-    expect(infoSpy).toHaveBeenCalledTimes(1);
+    expect(debugSpy).toHaveBeenCalledTimes(1); // 404
+    expect(warnSpy).toHaveBeenCalledTimes(2); // 401 + 403
+    expect(errorSpy).toHaveBeenCalledTimes(1); // 500
+    expect(infoSpy).toHaveBeenCalledTimes(1); // 200
 
     debugSpy.mockRestore();
+    warnSpy.mockRestore();
     errorSpy.mockRestore();
     infoSpy.mockRestore();
+  });
+
+  it("suppresses access logging for /api/health on 2xx but still logs on 5xx", async () => {
+    const app = new Hono<{ Variables: AppVariables }>();
+    app.use("*", requestContextMiddleware);
+
+    const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
+
+    app.get("/api/health", (c) => c.json({ ok: true }));
+    app.get("/api/healthBroken", (c) => c.json({ err: 1 }, 500));
+
+    await app.request("/api/health"); // suppressed
+    // A 500 from a route happens to share the prefix to prove the silence
+    // logic is path-equality, not prefix-based.
+    await app.request("/api/healthBroken");
+
+    expect(infoSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+
+    infoSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 });

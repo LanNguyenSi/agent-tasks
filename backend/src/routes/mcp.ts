@@ -44,7 +44,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import type { AppVariables } from "../types/hono.js";
-import { setLogContext } from "../lib/logger.js";
+import { logger, setLogContext } from "../lib/logger.js";
 
 type HonoApp = Hono<{ Variables: AppVariables }>;
 
@@ -701,13 +701,17 @@ mcpRouter.post("/", async (c) => {
   }
   const token = match[1];
 
-  // Peek at the JSON-RPC body to surface the tool name as `verb` on every
-  // log line emitted by the inner handler (and by the self-dispatched REST
-  // route). The SDK consumes the original `c.req.raw`, which is still
-  // readable because we read the cloned body — `Request#clone()` does not
-  // disturb the source stream. Failures to parse are non-fatal: the verb
-  // is observability-only and the SDK will surface its own JSON-RPC error
-  // for malformed payloads.
+  // Peek at the JSON-RPC body to surface the tool name on every log line
+  // emitted by the inner handler (and by the self-dispatched REST route).
+  // `Request#clone()` returns a fresh body stream per the fetch spec, so
+  // the SDK still sees an unread `c.req.raw` below. Failures are
+  // non-fatal: observability-only, and the SDK will surface its own
+  // JSON-RPC error for malformed payloads.
+  //
+  // Tool calls land in the `verb` field (e.g. "task_pickup"); other
+  // JSON-RPC methods (`initialize`, `notifications/initialized`,
+  // `tools/list`) land in `rpcMethod` so log dashboards don't conflate
+  // protocol traffic with tool traffic.
   try {
     const peek = (await c.req.raw.clone().json()) as {
       method?: unknown;
@@ -717,10 +721,15 @@ mcpRouter.post("/", async (c) => {
     if (peek.method === "tools/call" && typeof toolName === "string") {
       setLogContext({ verb: toolName });
     } else if (typeof peek.method === "string") {
-      setLogContext({ verb: peek.method });
+      setLogContext({ rpcMethod: peek.method });
     }
-  } catch {
-    // Body unreadable / not JSON — let the SDK handle the error response.
+  } catch (err) {
+    // Visible at debug level so a malformed-payload spike is observable
+    // without being on by default in prod.
+    logger.debug(
+      { component: "mcp", errMessage: err instanceof Error ? err.message : String(err) },
+      "MCP body peek failed",
+    );
   }
 
   const server = buildServer(token);
