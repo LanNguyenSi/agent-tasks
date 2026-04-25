@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `/tasks/:id/dependencies` endpoints; agents express dependencies
   at create-time, which covers the documented use cases (stacked
   PRs, batch setup→children, post-merge cleanup).
+- The batch import endpoint (`POST /projects/:projectId/tasks/import`)
+  does **not** accept `dependsOn` — set deps in a follow-up pass via
+  the per-task dependencies endpoints. Per-row try/catch in the
+  importer doesn't compose with the all-or-nothing blocker
+  validation of the single-create path.
 
 ## [0.9.0] - 2026-04-23
 

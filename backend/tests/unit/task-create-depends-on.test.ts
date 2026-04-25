@@ -155,6 +155,42 @@ describe("POST /projects/:projectId/tasks — dependsOn", () => {
     expect(prismaMocks.taskCreate).not.toHaveBeenCalled();
   });
 
+  it("rejects a blocker that exists in a different project (projectId filter is load-bearing)", async () => {
+    // Simulate Prisma honoring the `projectId` filter: STRANGER is a real
+    // task elsewhere in the DB, but the `where: { id, projectId }` clause
+    // returns only same-project rows. The handler must treat it as missing.
+    prismaMocks.taskFindMany.mockImplementation(({ where }: { where: { id: { in: string[] }; projectId: string } }) => {
+      const sameProject = where.id.in.filter((id) => id === BLOCKER_A);
+      return Promise.resolve(sameProject.map((id) => ({ id })));
+    });
+
+    const res = await postCreate({
+      title: "Child",
+      dependsOn: [BLOCKER_A, STRANGER],
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; missing: string[] };
+    expect(body.missing).toEqual([STRANGER]);
+    expect(prismaMocks.taskFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ projectId: PROJECT_ID }) }),
+    );
+    expect(prismaMocks.taskCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not query blockers when project access is denied", async () => {
+    accessMocks.hasProjectAccess.mockResolvedValue(false);
+
+    const res = await postCreate({
+      title: "Child",
+      dependsOn: [BLOCKER_A],
+    });
+
+    expect(res.status).toBe(403);
+    expect(prismaMocks.taskFindMany).not.toHaveBeenCalled();
+    expect(prismaMocks.taskCreate).not.toHaveBeenCalled();
+  });
+
   it("omits the blockedBy connect when dependsOn is absent", async () => {
     const res = await postCreate({ title: "Solo" });
 
