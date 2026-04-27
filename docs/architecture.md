@@ -111,6 +111,6 @@ agent-tasks/
 | `/onboarding` | First team creation |
 | `/teams` | Project management, GitHub sync |
 | `/dashboard` | Board + list view, task CRUD |
-| `/projects/workflows` | Workflow editor (states, transitions, agent instructions) |
+| `/projects/workflow` | Workflow editor (states, transitions, agent instructions) |
 | `/settings` | Account, GitHub connection, API tokens |
 | `/docs` | Interactive Swagger UI (served by backend) |
