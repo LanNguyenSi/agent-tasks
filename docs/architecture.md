@@ -71,3 +71,46 @@ Langfristig:
 
 - Systemarchitektur: `../diagrams/architecture-overview.mmd`
 - Domänenübersicht: `../diagrams/domain-overview.mmd`
+
+## Repository layout
+
+```
+agent-tasks/
+├── backend/          # Hono API (port 3001)
+│   ├── src/
+│   │   ├── routes/        # HTTP handlers
+│   │   ├── services/      # Domain / authz logic
+│   │   ├── repositories/  # Persistence access
+│   │   ├── middleware/    # Auth, error handling
+│   │   └── config/        # Env config
+│   └── prisma/            # Schema + migrations
+├── frontend/         # Next.js app (port 3000)
+│   └── src/
+│       ├── app/           # App Router pages
+│       └── lib/           # API client
+├── mcp-server/       # @agent-tasks/mcp-server, stdio MCP wrapper for agents
+│   └── src/
+│       ├── client.ts      # Bearer-auth HTTP client for the REST API
+│       ├── server.ts      # Library entry (createServer / runStdioServer)
+│       └── tools.ts       # Tool definitions (projects, tasks, signals)
+├── mcp-bridge/       # @agent-tasks/mcp-bridge, npx-distributable bridge
+│   └── src/                #   with keychain login, wraps mcp-server
+│       ├── cli.ts         # CLI entry (serve | login | logout | status)
+│       ├── login.ts       # Token prompt + backend validation
+│       └── token-store.ts # env / keychain / file fallback
+├── docs/             # Specs (this directory)
+└── .github/          # CI workflows
+```
+
+## Surface map (UI pages)
+
+| Route | Purpose |
+|-------|---------|
+| `/` | Landing page |
+| `/auth` | Login / Register |
+| `/onboarding` | First team creation |
+| `/teams` | Project management, GitHub sync |
+| `/dashboard` | Board + list view, task CRUD |
+| `/projects/workflow` | Workflow editor (states, transitions, agent instructions) |
+| `/settings` | Account, GitHub connection, API tokens |
+| `/docs` | Interactive Swagger UI (served by backend) |
