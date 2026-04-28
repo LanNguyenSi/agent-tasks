@@ -54,6 +54,15 @@ locking the schema does.
   literal — `task_abandon` continues to release the claim and reset to
   initial state without writing a status name.
 
+**Operator preflight.** The `Dockerfile.migrate` runs the normalization
+script before `prisma db push`, but for sites that deploy via a
+different path: BEFORE merging this image, ensure (1) every task has a
+status in the 4-state set, and (2) every `Workflow` row's definition
+references only those state names. The normalization script handles
+both, including deleting offending Workflow rows and nulling out
+`task.workflowId` on the dependent tasks (so they fall back to the
+built-in default). Re-running the script is idempotent.
+
 **Out of scope (phase 2 follow-up):** deleting the `Workflow` and
 `WorkflowTransition` tables, dropping `Task.workflowId`, removing
 `default-workflow.ts` helpers that read the workflow definition.

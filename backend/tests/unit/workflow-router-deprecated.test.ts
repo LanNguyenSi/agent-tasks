@@ -52,8 +52,13 @@ const MUTATING_ROUTES: Array<{ method: string; path: string; body?: unknown }> =
   { method: "DELETE", path: `/projects/${PROJECT_ID}/workflow` },
   {
     method: "POST",
-    path: "/workflows",
-    body: { projectId: PROJECT_ID, name: "x", definition: {} },
+    path: `/projects/${PROJECT_ID}/workflows`,
+    body: { name: "x", definition: {} },
+  },
+  {
+    method: "POST",
+    path: `/workflows/${WORKFLOW_ID}/validate-transition`,
+    body: { from: "open", to: "in_progress" },
   },
   {
     method: "PUT",
