@@ -101,6 +101,26 @@ vi.mock("../../src/services/github-delegation.js", () => ({
   findDelegationUser: findDelegationUserMock,
 }));
 
+// GroundingClient mock. Every test gets a fresh `start` mock that defaults
+// to returning `null` (the failure-soft Phase 1 fallback). Tests that want
+// the Phase 2 happy path (session auto-started) call
+// `groundingClientMock.start.mockResolvedValueOnce(...)` inline.
+//
+// We follow the same `vi.hoisted` pattern as the prisma mocks above: no
+// `mockResolvedValueOnce` queues at module scope (those are not drained by
+// `vi.clearAllMocks` and bleed across tests).
+const groundingClientMock = vi.hoisted(() => ({
+  start: vi.fn().mockResolvedValue(null),
+}));
+vi.mock("../../src/services/grounding-client.js", () => ({
+  getGroundingClient: () => groundingClientMock,
+  // Keep the class names exported so the route module's type imports
+  // resolve. They are unused at runtime in the route tests.
+  RealGroundingClient: class {},
+  NullGroundingClient: class {},
+  __resetGroundingClientCacheForTests: () => {},
+}));
+
 import { taskRouter } from "../../src/routes/tasks.js";
 import { logAuditEvent } from "../../src/services/audit.js";
 
@@ -183,6 +203,10 @@ beforeEach(() => {
     ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
       Promise.resolve({ ...baseTask, id: where.id, ...data }),
   );
+  // Reset the grounding client mock to the failure-soft default. Every
+  // test that wants the Phase 2 happy path overrides this explicitly.
+  groundingClientMock.start.mockReset();
+  groundingClientMock.start.mockResolvedValue(null);
 });
 
 // ── /tasks/pickup ────────────────────────────────────────────────────────────
@@ -2134,6 +2158,173 @@ describe("debug-flavor detection on pickup + start", () => {
       status: "in_progress",
       metadata: { debugFlavor: true },
     });
+  });
+
+  // ── Phase 2: grounding session auto-start ─────────────────────────────────
+  //
+  // The previous tests in this describe assert Phase 1 advisory-hint
+  // behavior. They keep passing because the default mock for
+  // `groundingClientMock.start` resolves to null, which falls back to the
+  // Phase 1 advisory hint inside `deriveDebugFlavor`. The four tests below
+  // exercise the Phase 2 branches.
+
+  it("Phase 2 happy path: session auto-started, hint surfaces session fields, metadata persists state", async () => {
+    const fakeSessionState = {
+      id: "sess-abc",
+      keyword: "agent-tasks",
+      problem: "fix login bug",
+      current_phase: "scope-resolution",
+      mandatory_sequence: ["domain-router", "readme-resolver"],
+      active_guardrails: ["no-root-cause-before-readme"],
+    };
+    groundingClientMock.start.mockResolvedValueOnce({
+      sessionId: "sess-abc",
+      currentPhase: "scope-resolution",
+      mandatorySequence: ["domain-router", "readme-resolver"],
+      activeGuardrails: ["no-root-cause-before-readme"],
+      sessionState: fakeSessionState,
+    });
+
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null) // hard-limit ok
+      .mockResolvedValueOnce(null) // no review task
+      .mockResolvedValueOnce({
+        ...baseTask,
+        title: "fix login bug",
+        labels: [],
+        metadata: null,
+      });
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      kind: string;
+      groundingHint?: {
+        debugFlavor: boolean;
+        sessionId?: string;
+        currentPhase?: string;
+        mandatorySequence?: string[];
+        activeGuardrails?: string[];
+        mcpToolHint: string;
+      };
+    };
+    expect(body.kind).toBe("work");
+    expect(body.groundingHint?.debugFlavor).toBe(true);
+    expect(body.groundingHint?.sessionId).toBe("sess-abc");
+    expect(body.groundingHint?.currentPhase).toBe("scope-resolution");
+    expect(body.groundingHint?.mandatorySequence).toEqual([
+      "domain-router",
+      "readme-resolver",
+    ]);
+    expect(body.groundingHint?.activeGuardrails).toEqual([
+      "no-root-cause-before-readme",
+    ]);
+    expect(body.groundingHint?.mcpToolHint).toContain("grounding_advance");
+    expect(body.groundingHint?.mcpToolHint).toContain('sessionId="sess-abc"');
+
+    expect(groundingClientMock.start).toHaveBeenCalledWith({
+      keyword: "agent-tasks",
+      problem: "fix login bug",
+      taskId: "task-1",
+      projectSlug: "agent-tasks",
+    });
+    expect(prismaMocks.taskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: {
+        metadata: {
+          debugFlavor: true,
+          groundingSessionId: "sess-abc",
+          groundingSessionState: fakeSessionState,
+        },
+      },
+    });
+  });
+
+  it("Phase 2 wrapper failure is soft: client.start returns null → Phase 1 advisory hint, no session fields persisted", async () => {
+    groundingClientMock.start.mockResolvedValueOnce(null);
+
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        ...baseTask,
+        title: "fix login bug",
+        labels: [],
+        metadata: null,
+      });
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      groundingHint?: {
+        debugFlavor: boolean;
+        sessionId?: string;
+        mcpToolHint: string;
+      };
+    };
+    expect(body.groundingHint?.debugFlavor).toBe(true);
+    expect(body.groundingHint?.sessionId).toBeUndefined();
+    // Phase 1 advisory hint references grounding_start, not grounding_advance.
+    expect(body.groundingHint?.mcpToolHint).toContain("grounding_start");
+
+    expect(prismaMocks.taskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { metadata: { debugFlavor: true } },
+    });
+  });
+
+  it("Phase 2 idempotent: stored groundingSessionId means no second client.start call", async () => {
+    const storedState = {
+      id: "sess-stored",
+      current_phase: "doc-reading",
+      mandatory_sequence: ["readme-resolver"],
+      active_guardrails: ["no-architecture-claim-before-docs"],
+    };
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        ...baseTask,
+        title: "fix login bug",
+        labels: [],
+        metadata: {
+          debugFlavor: true,
+          groundingSessionId: "sess-stored",
+          groundingSessionState: storedState,
+        },
+      });
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      groundingHint?: { sessionId?: string; currentPhase?: string };
+    };
+    expect(body.groundingHint?.sessionId).toBe("sess-stored");
+    expect(body.groundingHint?.currentPhase).toBe("doc-reading");
+
+    expect(groundingClientMock.start).not.toHaveBeenCalled();
+    // No re-classification → no metadata write.
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("Phase 2: non-debug task does not invoke the grounding client at all", async () => {
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        ...baseTask,
+        title: "add user-profile feature",
+        labels: [],
+        metadata: null,
+      });
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(groundingClientMock.start).not.toHaveBeenCalled();
   });
 
   it("label-only debug detection works when title and description are neutral", async () => {

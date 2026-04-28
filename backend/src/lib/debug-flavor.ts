@@ -73,6 +73,13 @@ export interface GroundingHint {
   debugFlavor: true;
   recommendedAction: string;
   mcpToolHint: string;
+  // Phase 2 additions, only set when the backend successfully started a
+  // session via the GroundingClient. Phase 1 fallback hints leave them
+  // undefined.
+  sessionId?: string;
+  currentPhase?: string;
+  mandatorySequence?: string[];
+  activeGuardrails?: string[];
 }
 
 // Escape characters that would break a single-line MCP-tool-hint string
@@ -97,9 +104,39 @@ export function buildGroundingHint(task: { title: string; project: { slug: strin
   };
 }
 
+// Shape we accept for the `session` parameter. Kept independent of
+// `GroundingStartResult` in services/grounding-client to avoid a layering
+// cycle between the lib (used by routes) and services.
+export interface GroundingSessionFields {
+  sessionId: string;
+  currentPhase: string;
+  mandatorySequence: string[];
+  activeGuardrails: string[];
+}
+
+// Phase 2: produce a hint that surfaces the session that the backend just
+// initialized via the GroundingClient. The agent uses these fields to
+// advance the session via `mcp__grounding__grounding_advance`.
+export function buildGroundingHintWithSession(
+  _task: { title: string; project: { slug: string } },
+  session: GroundingSessionFields,
+): GroundingHint {
+  return {
+    debugFlavor: true,
+    recommendedAction:
+      "This task looks like a bug, incident, or investigation. The backend has already started a grounding session for you. Advance through the mandatory sequence before claiming a root cause.",
+    mcpToolHint: `mcp__grounding__grounding_advance(sessionId="${escapeForToolHint(session.sessionId)}")`,
+    sessionId: session.sessionId,
+    currentPhase: session.currentPhase,
+    mandatorySequence: session.mandatorySequence,
+    activeGuardrails: session.activeGuardrails,
+  };
+}
+
 export interface TaskMetadata {
   debugFlavor?: boolean;
   groundingSessionId?: string;
+  groundingSessionState?: unknown;
 }
 
 export function readMetadata(value: unknown): TaskMetadata {

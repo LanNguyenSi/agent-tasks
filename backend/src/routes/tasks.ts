@@ -24,9 +24,16 @@ import { logger, setLogContext } from "../lib/logger.js";
 import {
   detectDebugFlavor,
   buildGroundingHint,
+  buildGroundingHintWithSession,
   readMetadata,
+  type GroundingHint,
   type TaskMetadata,
 } from "../lib/debug-flavor.js";
+import {
+  getGroundingClient,
+  type GroundingClient,
+  type GroundingStartResult,
+} from "../services/grounding-client.js";
 
 // Signals that become meaningless once the underlying task is `done`.
 // Outcome-notification signals (`task_approved`, `changes_requested`,
@@ -539,24 +546,67 @@ taskRouter.get("/tasks/claimable", async (c) => {
   return c.json({ tasks });
 });
 
-// Derive the debug-flavor for a task. Pure: no DB write. Callers persist
+// Best-effort attempt to recover Phase 2 session fields from previously
+// persisted `groundingSessionState`. The wrapper's session shape uses
+// snake_case (id / current_phase / mandatory_sequence / active_guardrails).
+// If the stored blob doesn't match that shape we return null and the
+// caller falls back to the Phase 1 advisory hint.
+function reconstructSessionFromMetadata(
+  meta: TaskMetadata,
+): GroundingStartResult | null {
+  if (!meta.groundingSessionId) return null;
+  const state = meta.groundingSessionState;
+  if (state && typeof state === "object" && !Array.isArray(state)) {
+    const s = state as Record<string, unknown>;
+    const currentPhase = typeof s.current_phase === "string" ? s.current_phase : null;
+    const mandatorySequence = Array.isArray(s.mandatory_sequence)
+      ? s.mandatory_sequence.filter((v): v is string => typeof v === "string")
+      : null;
+    const activeGuardrails = Array.isArray(s.active_guardrails)
+      ? s.active_guardrails.filter((v): v is string => typeof v === "string")
+      : null;
+    if (currentPhase && mandatorySequence && activeGuardrails) {
+      return {
+        sessionId: meta.groundingSessionId,
+        currentPhase,
+        mandatorySequence,
+        activeGuardrails,
+        sessionState: state,
+      };
+    }
+  }
+  return null;
+}
+
+// Derive the debug-flavor for a task. No DB write; callers persist
 // `mergedMetadata` either via a dedicated update (pickup) or by folding it
 // into the same update they were already going to issue (start).
 //
 // `isFresh` distinguishes "we just classified this task" from "the flag was
 // already set" so callers can skip the metadata write on subsequent calls.
-function deriveDebugFlavor<T extends {
+//
+// Phase 2: when an optional `client` is provided AND this is a fresh
+// debug-flavored task, the function calls `client.start(...)` to spin up a
+// grounding session. The session fields land in `mergedMetadata` (so a
+// future request reconstructs the same hint) and on the returned
+// `groundingHint`. Any failure (client returns null, throws, etc.) collapses
+// to the Phase 1 advisory hint without blocking pickup.
+async function deriveDebugFlavor<T extends {
+  id: string;
   title: string;
   description: string | null;
   labels: string[] | null;
   metadata: unknown;
   project: { slug: string };
-}>(task: T): {
+}>(
+  task: T,
+  client?: GroundingClient,
+): Promise<{
   debugFlavor: boolean;
   isFresh: boolean;
   mergedMetadata: TaskMetadata;
-  groundingHint: ReturnType<typeof buildGroundingHint> | null;
-} {
+  groundingHint: GroundingHint | null;
+}> {
   const meta = readMetadata(task.metadata);
   const isFresh = meta.debugFlavor === undefined;
   const debugFlavor = isFresh
@@ -566,11 +616,60 @@ function deriveDebugFlavor<T extends {
         labels: task.labels,
       })
     : meta.debugFlavor === true;
+
+  const mergedMetadata: TaskMetadata = { ...meta, debugFlavor };
+
+  if (!debugFlavor) {
+    return { debugFlavor, isFresh, mergedMetadata, groundingHint: null };
+  }
+
+  // Idempotent path: a session was already started on a prior request.
+  // Reconstruct the hint from the persisted state if possible, else fall
+  // back to the advisory hint. Either way: no second client.start call.
+  if (meta.groundingSessionId !== undefined) {
+    const reconstructed = reconstructSessionFromMetadata(meta);
+    if (reconstructed) {
+      return {
+        debugFlavor,
+        isFresh,
+        mergedMetadata,
+        groundingHint: buildGroundingHintWithSession(task, reconstructed),
+      };
+    }
+    return {
+      debugFlavor,
+      isFresh,
+      mergedMetadata,
+      groundingHint: buildGroundingHint(task),
+    };
+  }
+
+  // Fresh debug-flavored task, no stored session: try to start one.
+  if (client) {
+    const session = await client.start({
+      keyword: task.project.slug,
+      problem: task.title,
+      taskId: task.id,
+      projectSlug: task.project.slug,
+    });
+    if (session) {
+      mergedMetadata.groundingSessionId = session.sessionId;
+      mergedMetadata.groundingSessionState = session.sessionState;
+      return {
+        debugFlavor,
+        isFresh,
+        mergedMetadata,
+        groundingHint: buildGroundingHintWithSession(task, session),
+      };
+    }
+  }
+
+  // No client provided, or client returned null: Phase 1 advisory hint.
   return {
     debugFlavor,
     isFresh,
-    mergedMetadata: { ...meta, debugFlavor },
-    groundingHint: debugFlavor ? buildGroundingHint(task) : null,
+    mergedMetadata,
+    groundingHint: buildGroundingHint(task),
   };
 }
 
@@ -703,7 +802,10 @@ taskRouter.post("/tasks/pickup", async (c) => {
     },
   });
   if (workTask) {
-    const { isFresh, mergedMetadata, groundingHint } = deriveDebugFlavor(workTask);
+    const { isFresh, mergedMetadata, groundingHint } = await deriveDebugFlavor(
+      workTask,
+      getGroundingClient(),
+    );
     if (isFresh) {
       await prisma.task.update({
         where: { id: workTask.id },
@@ -895,7 +997,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       return _exhaustive;
     }
 
-    const flavor = deriveDebugFlavor(task);
+    const flavor = await deriveDebugFlavor(task, getGroundingClient());
     const updated = await prisma.task.update({
       where: { id: task.id },
       data: {
