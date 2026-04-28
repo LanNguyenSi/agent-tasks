@@ -22,6 +22,12 @@ import { inlineInput, linkButton, td, th } from "./styles";
 export interface StatesTableProps {
   def: WorkflowDefinition;
   canEdit: boolean;
+  // The state vocabulary is fixed system-wide: {open, in_progress,
+  // review, done}. Add / rename / remove / set-initial / toggle-terminal
+  // are all gated off independently of `canEdit`. Per-state `label` and
+  // `agentInstructions` stay editable when `canEdit` is true — they are
+  // display customization, not structural.
+  statesLocked: boolean;
   saving: boolean;
   expandedInstructions: Set<number>;
   onAddState: () => void;
@@ -38,6 +44,7 @@ export interface StatesTableProps {
 export function StatesTable({
   def,
   canEdit,
+  statesLocked,
   saving,
   expandedInstructions,
   onAddState,
@@ -46,6 +53,7 @@ export function StatesTable({
   onSetInitialState,
   onToggleInstructionsExpanded,
 }: StatesTableProps) {
+  const canEditStateStructure = canEdit && !statesLocked;
   return (
     <Card style={{ marginTop: "var(--space-4)" }}>
       <div
@@ -57,12 +65,19 @@ export function StatesTable({
         }}
       >
         <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700 }}>States</h2>
-        {canEdit && (
+        {canEditStateStructure && (
           <Button type="button" variant="secondary" onClick={onAddState} disabled={saving}>
             + Add state
           </Button>
         )}
       </div>
+
+      {statesLocked && (
+        <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginBottom: "var(--space-3)" }}>
+          The state vocabulary is fixed system-wide ({def.states.map((s) => s.name).join(", ")}).
+          Add, rename, and remove are not available. Labels and agent instructions stay editable.
+        </p>
+      )}
 
       <div style={{ marginBottom: "var(--space-3)" }}>
         <label
@@ -70,7 +85,7 @@ export function StatesTable({
         >
           Initial state:
         </label>
-        {canEdit ? (
+        {canEditStateStructure ? (
           <select
             value={def.initialState}
             onChange={(e) => onSetInitialState(e.target.value)}
@@ -96,7 +111,7 @@ export function StatesTable({
               <th style={th}>Label</th>
               <th style={th}>Terminal</th>
               <th style={th}>Agent instructions</th>
-              {canEdit && <th style={th}></th>}
+              {canEditStateStructure && <th style={th}></th>}
             </tr>
           </thead>
           <tbody>
@@ -108,7 +123,7 @@ export function StatesTable({
                   style={{ borderBottom: "1px solid var(--border)" }}
                 >
                   <td style={td}>
-                    {canEdit ? (
+                    {canEditStateStructure ? (
                       <input
                         type="text"
                         value={s.name}
@@ -134,7 +149,7 @@ export function StatesTable({
                     )}
                   </td>
                   <td style={td}>
-                    {canEdit ? (
+                    {canEditStateStructure ? (
                       <input
                         type="checkbox"
                         checked={s.terminal}
@@ -193,7 +208,7 @@ export function StatesTable({
                       </span>
                     )}
                   </td>
-                  {canEdit && (
+                  {canEditStateStructure && (
                     <td style={{ ...td, width: "1%", whiteSpace: "nowrap" }}>
                       <button
                         type="button"

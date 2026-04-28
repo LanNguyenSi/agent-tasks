@@ -9,63 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-#### Task states locked to a fixed 4-state vocabulary (BREAKING)
+#### Workflow state vocabulary is fixed: open / in_progress / review / done
 
-agent-tasks now uses exactly four task states, with no customization:
-`open`, `in_progress`, `review`, `done`. Custom-workflow editing is
-removed; transitions / gates / role requirements stay configurable per
-project, only the state vocabulary is locked.
+`workflowDefinitionSchema` now rejects any workflow whose state set is
+not exactly `{open, in_progress, review, done}`, whose `initialState` is
+not `open`, or whose `terminal` flag for any state disagrees with the
+lock-in (only `done` may be terminal). The schema runs server-side on
+every workflow create / update path, so direct API callers cannot
+bypass the editor.
 
-**Why:** the previous free-form `task.status` column let users persist
-arbitrary state names (`shipping`, `complete`, `done` mid-pipeline) that
-silently broke ~25 hardcoded literal-status checks in the engine — the
-merge gate, the webhook PR-binding, dependency gating, the
-distinct-reviewer guard, `task_pickup`'s claimable filter, etc. The
-audit on 2026-04-28 catalogued silent-bypass and silent-corruption
-failure modes that no amount of save-time validation could close;
-locking the schema does.
+The editor itself stays fully functional for everything that matters in
+practice: transitions, gates, role requirements, and per-state `label` /
+`agentInstructions` are all still editable. The states table hides the
+add / rename / remove / set-initial / toggle-terminal affordances and
+shows a notice that the vocabulary is fixed.
 
-**What changes:**
+The `coding-agent` workflow template (7 stages: backlog → spec → plan →
+implement → test → review → done) was retired — its state names would
+fail the new validation. The template registry stays in place; future
+templates that vary only transitions / gates / labels (within the fixed
+state set) are still welcome.
 
-- `Task.status` is now a Prisma enum (`TaskStatus { open, in_progress,
-  review, done }`) at the DB level. Foreign values are no longer
-  storable.
-- A one-shot data normalization (`backend/prisma/normalize-task-status.ts`)
-  runs in `Dockerfile.migrate` BEFORE `prisma db push`. It rewrites any
-  task whose status is outside the 4-state set:
-  - `status="abandoned"` → `done` + `metadata.abandoned: true` +
-    `metadata.migratedFrom: "abandoned"`.
-  - any other foreign status → `open` + `metadata.migratedFrom:
-    "<old>"` plus a system comment on the task explaining the rewrite.
-  - Each migration writes one `task.status_migrated` audit event.
-- `workflowRouter` POST/PUT/DELETE return `410 Gone` with a deprecation
-  message. GET routes (effective workflow, project listings, rules
-  catalog) stay live so the read-only editor page keeps rendering.
-- Frontend workflow editor renders read-only with a banner explaining
-  the change. The "AI Coding Agent Pipeline" template was retired from
-  `WORKFLOW_TEMPLATES`.
-- Webhook `pickMergeTargetStatus` lost its `hasCustomWorkflow` branch
-  (was a legacy carve-out that wrote literal `"done"` regardless of
-  whether the workflow had such a state). The function now depends on
-  governance mode + current status only and returns a typed
-  `"review" | "done" | null`.
-- Validation surfaces (`tasks_list` `CLAIMABLE_VALID_STATUSES`,
-  MCP `tasks_list` Zod schema, stdio mcp-server) drop the `abandoned`
-  literal — `task_abandon` continues to release the claim and reset to
-  initial state without writing a status name.
-
-**Operator preflight.** The `Dockerfile.migrate` runs the normalization
-script before `prisma db push`, but for sites that deploy via a
-different path: BEFORE merging this image, ensure (1) every task has a
-status in the 4-state set, and (2) every `Workflow` row's definition
-references only those state names. The normalization script handles
-both, including deleting offending Workflow rows and nulling out
-`task.workflowId` on the dependent tasks (so they fall back to the
-built-in default). Re-running the script is idempotent.
-
-**Out of scope (phase 2 follow-up):** deleting the `Workflow` and
-`WorkflowTransition` tables, dropping `Task.workflowId`, removing
-`default-workflow.ts` helpers that read the workflow definition.
+**Why:** the engine has ~25 hardcoded literal-status checks (merge gate,
+distinct-reviewer guard, dependency gating, webhook PR-binding, the
+new `tasks_list` claimable filter from PR #204) that all assume every
+workflow uses those four state names. Custom state names silently broke
+those checks — see the audit summary in
+[fe0bbbe0](https://github.com/LanNguyenSi/agent-tasks/issues) for the
+full failure-mode catalogue.
 
 #### `tasks_list` / `GET /tasks/claimable` — filters, summary projection, default limit 25
 

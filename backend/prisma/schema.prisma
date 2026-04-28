@@ -221,7 +221,7 @@ model Task {
   workflowId  String?
   title       String
   description String?
-  status      TaskStatus   @default(open)
+  status      String       @default("open")
   priority    TaskPriority @default(MEDIUM)
 
   // Human creator
@@ -353,19 +353,6 @@ enum TaskPriority {
   MEDIUM
   HIGH
   CRITICAL
-}
-
-// Fixed 4-state vocabulary. Custom workflows are no longer supported —
-// `task.status` is locked to one of these names so every literal-status
-// check in the codebase (merge gate, dependency gating, webhook PR
-// binding, distinct-reviewer guard, …) stays correct. `task_abandon`
-// folds into `done` plus `metadata.abandoned: true`. `blocked` is not
-// a state; the existing `blockedBy` relation covers it.
-enum TaskStatus {
-  open
-  in_progress
-  review
-  done
 }
 
 // ── Comments ─────────────────────────────────────────────────────────────────

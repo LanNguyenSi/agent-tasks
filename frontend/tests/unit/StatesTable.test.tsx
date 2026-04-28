@@ -49,6 +49,7 @@ type MockedHandlers = ReturnType<typeof makeHandlers>;
 
 function renderTable(opts: {
   canEdit?: boolean;
+  statesLocked?: boolean;
   saving?: boolean;
   expanded?: Set<number>;
   def?: WorkflowDefinition;
@@ -60,6 +61,7 @@ function renderTable(opts: {
     <StatesTable
       def={def}
       canEdit={opts.canEdit ?? false}
+      statesLocked={opts.statesLocked ?? false}
       saving={opts.saving ?? false}
       expandedInstructions={opts.expanded ?? new Set()}
       {...handlers}
@@ -221,5 +223,39 @@ describe("StatesTable — edit mode", () => {
     }
     expect(screen.getByRole("button", { name: /add state/i })).toBeDisabled();
     expect(screen.getByRole("combobox")).toBeDisabled();
+  });
+
+  it("statesLocked=true hides Add/Remove and renders the name + initialState as read-only", () => {
+    renderTable({ canEdit: true, statesLocked: true });
+    // Add state button is gone
+    expect(screen.queryByRole("button", { name: /add state/i })).toBeNull();
+    // Per-row Remove (✕) buttons are gone — none of the rendered buttons should
+    // expose the remove title attribute.
+    for (const btn of screen.queryAllByRole("button")) {
+      expect(btn.getAttribute("title")).not.toBe("Remove state");
+    }
+    // Initial-state combobox replaced with a code element (read-only)
+    expect(screen.queryByRole("combobox")).toBeNull();
+    // Lock notice present
+    expect(screen.getByText(/state vocabulary is fixed/i)).toBeInTheDocument();
+  });
+
+  it("statesLocked=true keeps label + agentInstructions editable when canEdit is true", async () => {
+    renderTable({ canEdit: true, statesLocked: true, handlers });
+    // Find the label input for the second state (labels are still text inputs).
+    // Name inputs are gone (rendered as <code>), so any textbox is a label or
+    // the agent-instructions textarea — pick the first label-shaped textbox.
+    const inputs = screen.getAllByRole("textbox");
+    expect(inputs.length).toBeGreaterThan(0);
+    await userEvent.clear(inputs[0]!);
+    await userEvent.type(inputs[0]!, "Custom label");
+    // The label-edit handler should fire on every keystroke; we don't assert
+    // the full string here, only that *some* update came through.
+    expect(handlers.onUpdateStateField).toHaveBeenCalled();
+    const lastCall =
+      handlers.onUpdateStateField.mock.calls[
+        handlers.onUpdateStateField.mock.calls.length - 1
+      ];
+    expect(lastCall?.[1]).toBe("label");
   });
 });

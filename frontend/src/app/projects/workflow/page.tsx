@@ -162,16 +162,6 @@ export default function WorkflowEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, saving, validation.errors.length, validation.warnings.length]);
 
-  /** True only when a state in the draft has a different name than the
-   * same row in the canonical workflow, or the row count changed. The
-   * rename warning banner only fires in that case — not for every
-   * gate-toggle or label-edit dirty state. */
-  const hasRename = useMemo(() => {
-    if (!draft || !workflow) return false;
-    if (draft.states.length !== workflow.definition.states.length) return true;
-    return draft.states.some((s, i) => workflow.definition.states[i]?.name !== s.name);
-  }, [draft, workflow]);
-
   // ── Draft mutation helpers ─────────────────────────────────────────────────
 
   /** Apply a mutation to the draft. Clears the draft back to null if the
@@ -469,13 +459,7 @@ export default function WorkflowEditorPage() {
   if (!workflow || !project || !activeDef) return null;
 
   const isDefault = workflow.source === "default";
-  // Workflow editing was removed when agent-tasks locked to the fixed
-  // 4-state model (open / in_progress / review / done). The page stays
-  // mounted so users can still review the effective workflow, but every
-  // edit affordance is hidden — `canEdit` is hard-wired to false and
-  // the backend's workflowRouter returns 410 on any write attempt.
-  const canEdit = false;
-  void isAdmin;
+  const canEdit = !isDefault && isAdmin;
 
   return (
     <>
@@ -513,15 +497,52 @@ export default function WorkflowEditorPage() {
           </p>
         </div>
 
-        <AlertBanner tone="info" title="Workflow editing has been removed">
-          <span>
-            agent-tasks now uses a fixed 4-state model:{" "}
-            <code>open</code> → <code>in_progress</code> → <code>review</code> → <code>done</code>.
-            Custom state names, renames, and add/remove are no longer supported.
-            Transitions, gates, and role requirements stay configurable per project on the
-            transition rows below — only the state vocabulary is locked. The view below is
-            read-only.
-          </span>
+        <AlertBanner
+          tone={isDefault ? "info" : "success"}
+          title={
+            isDefault
+              ? "Using system default"
+              : isDirty
+                ? "Custom workflow — unsaved changes"
+                : "Custom workflow"
+          }
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+            <span>
+              {isDefault
+                ? "This project inherits the built-in default workflow. It applies to every project that hasn't defined its own."
+                : canEdit
+                  ? "Edit states and gates below, then click Save. Use Reset to drop the custom workflow entirely."
+                  : "This project has its own workflow. Only team admins can edit."}
+            </span>
+            {isDefault && isAdmin && (
+              <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
+                <Button type="button" onClick={() => void handleCustomize()} disabled={customizing || applyingTemplate} loading={customizing}>
+                  Customize this workflow
+                </Button>
+                {templates.length > 0 && (
+                  <>
+                    <span style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>or use a template:</span>
+                    {templates.map((tpl) => (
+                      <Button
+                        key={tpl.slug}
+                        type="button"
+                        onClick={() => void handleApplyTemplate(tpl.slug)}
+                        disabled={customizing || applyingTemplate}
+                        loading={applyingTemplate}
+                        title={tpl.description}
+                      >
+                        {tpl.name}
+                      </Button>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+            {isDefault && !isAdmin && (
+              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>Only team admins can customize.</span>
+            )}
+          </div>
         </AlertBanner>
 
         {savedBanner && (
@@ -556,19 +577,14 @@ export default function WorkflowEditorPage() {
           </AlertBanner>
         )}
 
-        {canEdit && hasRename && (
-          <AlertBanner tone="info" title="Rename warning">
-            You renamed or removed at least one state. Existing tasks currently in the
-            old state will have a status string that no longer matches any workflow
-            state. Transition attempts on those tasks will fail until an admin
-            force-transitions or the task is manually re-labeled. Migration is not
-            automatic.
-          </AlertBanner>
-        )}
-
         <StatesTable
           def={activeDef}
           canEdit={canEdit}
+          // The state vocabulary is fixed system-wide. Add / rename /
+          // remove / set-initial / toggle-terminal are all blocked at
+          // the validator and the editor — labels and agent
+          // instructions stay editable when canEdit is true.
+          statesLocked={true}
           saving={saving}
           expandedInstructions={expandedInstructions}
           onAddState={addState}

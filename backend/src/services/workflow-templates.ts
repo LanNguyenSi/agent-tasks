@@ -114,11 +114,12 @@ const codingAgentDefinition: WorkflowDefinitionShape = {
 // ── Template registry ───────────────────────────────────────────────────────
 //
 // The "AI Coding Agent Pipeline" template (backlog → spec → plan →
-// implement → test → review → done) was retired when agent-tasks locked
-// to the fixed 4-state model. Its non-default state names would no
-// longer round-trip through the TaskStatus enum, and applying it would
-// fail at the workflowRouter deprecation gate anyway. The definition is
-// kept above for forensic reference but no longer registered.
+// implement → test → review → done) was retired when the state
+// vocabulary was locked to {open, in_progress, review, done}. Its 7
+// custom state names would now fail `workflowDefinitionSchema` validation.
+// The definition is kept above for reference but no longer registered.
+// Future templates that vary only transitions / gates / labels (within
+// the fixed state set) are still welcome here.
 void codingAgentDefinition;
 
 export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [] as const;
