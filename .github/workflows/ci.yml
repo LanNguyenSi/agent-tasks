@@ -40,6 +40,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify native deps load
+        # Smoke-test better-sqlite3 (transitive via @lannguyensi/evidence-ledger)
+        # before tsc/tests so a broken native binding fails fast with a clear
+        # message instead of mid-suite.
+        run: |
+          cd backend
+          node -e "const el=require('@lannguyensi/evidence-ledger'); const db=el.getDb(':memory:'); console.log('evidence-ledger ok:', el.getSummary(db));"
+
       - name: Generate Prisma client
         env:
           DATABASE_URL: postgresql://agent_tasks:agent_tasks@localhost:5432/agent_tasks_test

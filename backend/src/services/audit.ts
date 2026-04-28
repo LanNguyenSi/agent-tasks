@@ -47,7 +47,12 @@ export type AuditAction =
   | "workflow.customized"
   | "workflow.updated"
   | "workflow.reset"
-  | "workflow.template_applied";
+  | "workflow.template_applied"
+  // Phase 3 grounding finish-gate. Fires on `/tasks/:id/finish` work-claim
+  // path when a debug-flavored task would have hit the gate but the project
+  // is not opted in (`requireGroundingForDebug=false`). Lets operators
+  // retroactively see what would have been blocked.
+  | "task.grounding_gate.bypassed";
 
 export interface AuditPayload {
   [key: string]: unknown;

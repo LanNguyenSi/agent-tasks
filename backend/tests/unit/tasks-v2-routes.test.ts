@@ -111,6 +111,10 @@ vi.mock("../../src/services/github-delegation.js", () => ({
 // `vi.clearAllMocks` and bleed across tests).
 const groundingClientMock = vi.hoisted(() => ({
   start: vi.fn().mockResolvedValue(null),
+  // Phase 3: default to zero entries so the failure-soft semantics
+  // exercised by existing tests still hold (the gate is opt-in via
+  // `requireGroundingForDebug`, defaults false in `baseTask.project`).
+  getLedgerSummary: vi.fn().mockResolvedValue({ entryCount: 0 }),
 }));
 vi.mock("../../src/services/grounding-client.js", () => ({
   getGroundingClient: () => groundingClientMock,
@@ -187,6 +191,9 @@ const baseTask = {
     taskTemplate: null,
     requireDistinctReviewer: false,
     soloMode: false,
+    // Phase 3 grounding finish-gate. Default false matches the schema
+    // default and the multi-host caveat documented in ADR-0002.
+    requireGroundingForDebug: false,
   },
   attachments: [],
   comments: [],
@@ -207,6 +214,8 @@ beforeEach(() => {
   // test that wants the Phase 2 happy path overrides this explicitly.
   groundingClientMock.start.mockReset();
   groundingClientMock.start.mockResolvedValue(null);
+  groundingClientMock.getLedgerSummary.mockReset();
+  groundingClientMock.getLedgerSummary.mockResolvedValue({ entryCount: 0 });
 });
 
 // ── /tasks/pickup ────────────────────────────────────────────────────────────
@@ -710,6 +719,207 @@ describe("POST /tasks/:id/finish (work claim)", () => {
     });
     expect(res.status).toBe(403);
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("task_finish grounding gate (Phase 3)", () => {
+  // The gate fires when:
+  //   project.requireGroundingForDebug === true && task.metadata.debugFlavor === true
+  // Each test sets up a finished-shaped work claim and overrides the two
+  // flags to exercise one branch of the decision table. See
+  // services/gates/grounding-gate.ts for the pure logic.
+
+  const debugSession = {
+    id: "sess-debug-1",
+    keyword: "agent-tasks",
+    problem: "fix login bug",
+    resolved_scope: "agent-tasks",
+    mandatory_sequence: ["scope-resolution", "claim-evaluation"],
+    active_guardrails: ["no-root-cause-before-readme"],
+    phases: ["scope-resolution", "claim-evaluation"],
+    current_phase: "claim-evaluation",
+    steps: [],
+    phase_status: {},
+    started_at: "2026-04-28T00:00:00.000Z",
+    scope_changed: false,
+  };
+
+  function makeFinishableDebugTask(overrides?: {
+    requireGroundingForDebug?: boolean;
+    debugFlavor?: boolean;
+    sessionId?: string | undefined;
+    sessionState?: unknown;
+  }) {
+    const debugFlavor = overrides?.debugFlavor ?? true;
+    return {
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      project: {
+        ...baseTask.project,
+        requireGroundingForDebug: overrides?.requireGroundingForDebug ?? true,
+      },
+      metadata: {
+        debugFlavor,
+        ...(overrides?.sessionId !== undefined ? { groundingSessionId: overrides.sessionId } : {}),
+        ...(overrides?.sessionState !== undefined ? { groundingSessionState: overrides.sessionState } : {}),
+      },
+    };
+  }
+
+  it("happy path: debug + opted-in + 3 entries + claim-evaluation → 200", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(
+      makeFinishableDebugTask({
+        sessionId: "sess-debug-1",
+        sessionState: debugSession,
+      }),
+    );
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+    groundingClientMock.getLedgerSummary.mockResolvedValueOnce({ entryCount: 3 });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
+    });
+    expect(res.status).toBe(200);
+    expect(groundingClientMock.getLedgerSummary).toHaveBeenCalledWith("sess-debug-1");
+    expect(prismaMocks.taskUpdate).toHaveBeenCalled();
+  });
+
+  it("blocks with missing=ledgerEntries when the ledger is empty", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(
+      makeFinishableDebugTask({
+        sessionId: "sess-debug-1",
+        sessionState: debugSession,
+      }),
+    );
+    groundingClientMock.getLedgerSummary.mockResolvedValueOnce({ entryCount: 0 });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; missing: string[]; sessionId: string | null };
+    expect(body.error).toBe("grounding_required");
+    expect(body.missing).toEqual(["ledgerEntries"]);
+    expect(body.sessionId).toBe("sess-debug-1");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("blocks with missing=claimEvaluationPhase when phase is too early", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(
+      makeFinishableDebugTask({
+        sessionId: "sess-debug-1",
+        sessionState: { ...debugSession, current_phase: "scope-resolution" },
+      }),
+    );
+    groundingClientMock.getLedgerSummary.mockResolvedValueOnce({ entryCount: 5 });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; missing: string[]; currentPhase: string };
+    expect(body.error).toBe("grounding_required");
+    expect(body.missing).toEqual(["claimEvaluationPhase"]);
+    expect(body.currentPhase).toBe("scope-resolution");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("blocks with missing=sessionStarted when no session is attached", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(
+      makeFinishableDebugTask({
+        // sessionId / sessionState deliberately omitted
+      }),
+    );
+    // The gate should NOT call getLedgerSummary when there's no sessionId.
+    groundingClientMock.getLedgerSummary.mockResolvedValueOnce({ entryCount: 0 });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; missing: string[]; sessionId: string | null };
+    expect(body.missing).toContain("sessionStarted");
+    expect(body.sessionId).toBeNull();
+    expect(groundingClientMock.getLedgerSummary).not.toHaveBeenCalled();
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("debug + requireGroundingForDebug=false → 200 and audit event fires", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(
+      makeFinishableDebugTask({
+        requireGroundingForDebug: false,
+        sessionId: "sess-debug-1",
+        sessionState: debugSession,
+      }),
+    );
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
+    });
+    expect(res.status).toBe(200);
+    expect(groundingClientMock.getLedgerSummary).not.toHaveBeenCalled();
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.grounding_gate.bypassed" }),
+    );
+  });
+
+  it("non-debug task: gate is not consulted even when project is opted in", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      project: {
+        ...baseTask.project,
+        requireGroundingForDebug: true,
+      },
+      metadata: { debugFlavor: false },
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
+    });
+    expect(res.status).toBe(200);
+    expect(groundingClientMock.getLedgerSummary).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.grounding_gate.bypassed" }),
+    );
+  });
+
+  it("non-debug task with default-false project: gate skipped, no audit", async () => {
+    // Default-shape baseTask: requireGroundingForDebug=false, no metadata.
+    // This is the "did the gate stay out of the way for ordinary tasks?"
+    // canary; existing finish tests already cover this implicitly, but
+    // having an explicit assertion stops a later refactor from accidentally
+    // turning the gate on by default.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
+    });
+    expect(res.status).toBe(200);
+    expect(groundingClientMock.getLedgerSummary).not.toHaveBeenCalled();
   });
 });
 

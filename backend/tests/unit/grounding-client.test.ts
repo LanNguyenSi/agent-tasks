@@ -31,6 +31,10 @@ vi.mock("@lannguyensi/grounding-wrapper", () => ({
   }),
 }));
 
+// Note: the production loader uses `createRequire`, which bypasses vi.mock.
+// Phase 3 tests inject a stub loader through the second `RealGroundingClient`
+// constructor argument instead.
+
 import {
   RealGroundingClient,
   NullGroundingClient,
@@ -140,5 +144,56 @@ describe("RealGroundingClient.start", () => {
 
     const result = await client.start({ keyword: "k", problem: "p" });
     expect(result).toBeNull();
+  });
+});
+
+describe("RealGroundingClient.getLedgerSummary", () => {
+  // The ledger module is loaded via `createRequire`, which bypasses
+  // `vi.mock`. The constructor accepts an optional loader so tests can
+  // inject a stub directly. The injected stub stands in for
+  // `@lannguyensi/evidence-ledger`'s `{ getDb, listEntries }` surface.
+  it("returns the count of entries the ledger reports for the given session", async () => {
+    const fakeDb = { tag: "fake-db" };
+    const getDb = vi.fn().mockReturnValue(fakeDb);
+    const listEntries = vi.fn().mockReturnValue([
+      { id: 1, type: "fact", content: "x", source: null, confidence: "high", session: "sess-1", createdAt: "", updatedAt: "" },
+      { id: 2, type: "hypothesis", content: "y", source: null, confidence: "medium", session: "sess-1", createdAt: "", updatedAt: "" },
+      { id: 3, type: "rejected", content: "z", source: null, confidence: "low", session: "sess-1", createdAt: "", updatedAt: "" },
+    ]);
+    const client = new RealGroundingClient(vi.fn(), () => ({ getDb, listEntries }));
+
+    const result = await client.getLedgerSummary("sess-1");
+    expect(result).toEqual({ entryCount: 3 });
+    expect(getDb).toHaveBeenCalled();
+    expect(listEntries).toHaveBeenCalledWith(fakeDb, { session: "sess-1" });
+  });
+
+  it("returns zero entries (no throw) when the ledger read fails", async () => {
+    const getDb = vi.fn().mockReturnValue({});
+    const listEntries = vi.fn().mockImplementation(() => {
+      throw new Error("sqlite is locked");
+    });
+    const client = new RealGroundingClient(vi.fn(), () => ({ getDb, listEntries }));
+
+    const result = await client.getLedgerSummary("sess-broken");
+    expect(result).toEqual({ entryCount: 0 });
+  });
+
+  it("returns zero entries when the ledger module fails to load", async () => {
+    // Defensive: a deploy without `@lannguyensi/evidence-ledger` should
+    // degrade to "no entries" instead of crashing the gate. The loader
+    // returns null in that case.
+    const client = new RealGroundingClient(vi.fn(), () => null);
+
+    const result = await client.getLedgerSummary("sess-noop");
+    expect(result).toEqual({ entryCount: 0 });
+  });
+});
+
+describe("NullGroundingClient.getLedgerSummary", () => {
+  it("returns zero entries without touching the filesystem", async () => {
+    const client = new NullGroundingClient();
+    const result = await client.getLedgerSummary("any-session");
+    expect(result).toEqual({ entryCount: 0 });
   });
 });

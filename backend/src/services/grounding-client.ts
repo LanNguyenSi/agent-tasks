@@ -43,6 +43,13 @@ export interface GroundingStartResult {
 
 export interface GroundingClient {
   start(input: GroundingStartInput): Promise<GroundingStartResult | null>;
+  // Phase 3: read evidence-ledger entry count for a session. Used by the
+  // grounding finish-gate to confirm the agent logged at least one piece
+  // of evidence before declaring the bug fixed. Returns a degraded value
+  // (`{ entryCount: 0 }`) on any read failure so the gate logic stays
+  // synchronous and structured; the route translates that into a 409 the
+  // operator can act on instead of a 500.
+  getLedgerSummary(sessionId: string): Promise<{ entryCount: number }>;
 }
 
 // Minimal shape we rely on from the wrapper. Kept separate from the wrapper's
@@ -58,8 +65,47 @@ interface WrapperSessionShape {
 
 type InitSessionFn = (input: { keyword: string; problem: string }) => WrapperSessionShape;
 
+// Minimal slice of the evidence-ledger module surface we depend on.
+// Defined here so the wrapper-vs-ledger module load paths are independent.
+interface LedgerModuleShape {
+  getDb: (dbPath?: string) => unknown;
+  listEntries: (db: unknown, opts?: { session?: string }) => unknown[];
+}
+
+// Lazily resolves the evidence-ledger module exactly once per process.
+// The require itself is kept inside the closure so a missing/broken module
+// degrades the ledger read to `{ entryCount: 0 }` instead of crashing the
+// whole client.
+function makeLedgerLoader(): () => LedgerModuleShape | null {
+  let cached: LedgerModuleShape | null | undefined;
+  return () => {
+    if (cached !== undefined) return cached;
+    try {
+      cached = requireFromHere("@lannguyensi/evidence-ledger") as LedgerModuleShape;
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "@lannguyensi/evidence-ledger not loadable; ledger reads will return zero entries",
+      );
+      cached = null;
+    }
+    return cached;
+  };
+}
+
 export class RealGroundingClient implements GroundingClient {
-  constructor(private readonly initSession: InitSessionFn) {}
+  // Loader is per-instance so tests can construct a fresh client without
+  // bleeding a cached load failure across test bodies. Tests can also pass
+  // a stub loader to inject a fake ledger module without going through
+  // `createRequire` (vi.mock does not see the createRequire path).
+  private readonly loadLedger: () => LedgerModuleShape | null;
+
+  constructor(
+    private readonly initSession: InitSessionFn,
+    loadLedger?: () => LedgerModuleShape | null,
+  ) {
+    this.loadLedger = loadLedger ?? makeLedgerLoader();
+  }
 
   async start(input: GroundingStartInput): Promise<GroundingStartResult | null> {
     // The wrapper's `initSession` is synchronous. Wrap it so a future
@@ -87,11 +133,37 @@ export class RealGroundingClient implements GroundingClient {
         return null;
       });
   }
+
+  async getLedgerSummary(sessionId: string): Promise<{ entryCount: number }> {
+    const mod = this.loadLedger();
+    if (!mod) return { entryCount: 0 };
+    try {
+      // `getDb` opens (or creates) the SQLite file at the default location
+      // (~/.evidence-ledger/db.sqlite). We pass no path so the module's
+      // own resolution applies. `listEntries` filters to the session.
+      const db = mod.getDb();
+      const entries = mod.listEntries(db, { session: sessionId });
+      return { entryCount: Array.isArray(entries) ? entries.length : 0 };
+    } catch (err) {
+      logger.warn(
+        {
+          err: err instanceof Error ? err.message : String(err),
+          sessionId,
+        },
+        "evidence-ledger read failed; treating as zero entries",
+      );
+      return { entryCount: 0 };
+    }
+  }
 }
 
 export class NullGroundingClient implements GroundingClient {
   async start(_input: GroundingStartInput): Promise<GroundingStartResult | null> {
     return null;
+  }
+
+  async getLedgerSummary(_sessionId: string): Promise<{ entryCount: number }> {
+    return { entryCount: 0 };
   }
 }
 
