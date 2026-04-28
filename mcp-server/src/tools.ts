@@ -246,8 +246,8 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         projectId: uuid().optional(),
         status: z
           .union([
-            z.enum(["open", "in_progress", "review", "done", "abandoned"]),
-            z.array(z.enum(["open", "in_progress", "review", "done", "abandoned"])).min(1),
+            z.enum(["open", "in_progress", "review", "done"]),
+            z.array(z.enum(["open", "in_progress", "review", "done"])).min(1),
           ])
           .optional(),
         priority: z

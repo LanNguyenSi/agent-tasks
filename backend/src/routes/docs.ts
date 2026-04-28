@@ -599,7 +599,7 @@ const openApiSpec = {
             required: false,
             schema: { type: "string" },
             description:
-              "One value or CSV. Valid: open|in_progress|review|done|abandoned. When set, drops the implicit unclaimed constraint.",
+              "One value or CSV. Valid: open|in_progress|review|done. When set, drops the implicit unclaimed constraint.",
           },
           {
             name: "priority",

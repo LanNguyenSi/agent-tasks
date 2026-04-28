@@ -52,7 +52,13 @@ export type AuditAction =
   // path when a debug-flavored task would have hit the gate but the project
   // is not opted in (`requireGroundingForDebug=false`). Lets operators
   // retroactively see what would have been blocked.
-  | "task.grounding_gate.bypassed";
+  | "task.grounding_gate.bypassed"
+  // One-shot data migration that brought every task's status into the
+  // fixed 4-state set when the `String` column was converted to the
+  // `TaskStatus` enum (PR fe0bbbe0). Records the from/to mapping per
+  // task; payload also includes a `reason` tag so future migrations
+  // don't collide.
+  | "task.status_migrated";
 
 export interface AuditPayload {
   [key: string]: unknown;

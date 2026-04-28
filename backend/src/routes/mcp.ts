@@ -229,7 +229,7 @@ function buildServer(token: string): McpServer {
         "List tasks visible to the authenticated actor.\n\n" +
         "Default behaviour (no filters): claimable tasks only — status=open, not yet claimed, scoped to the actor's team.\n\n" +
         "Filters that broaden the search beyond claimable:\n" +
-        "  • status: one or more of open|in_progress|review|done|abandoned. When set, the implicit 'unclaimed' constraint is dropped so already-claimed tasks are reachable.\n" +
+        "  • status: one or more of open|in_progress|review|done. When set, the implicit 'unclaimed' constraint is dropped so already-claimed tasks are reachable.\n" +
         "  • claimedByAgentId: a UUID, or the magic value 'me' which resolves to the calling agent's tokenId. Drops the unclaimed constraint.\n" +
         "  • priority: one or more of LOW|MEDIUM|HIGH|CRITICAL.\n" +
         "  • labels: AND-match — only tasks carrying every listed label are returned.\n" +
@@ -243,8 +243,8 @@ function buildServer(token: string): McpServer {
         projectId: uuid().optional(),
         status: z
           .union([
-            z.enum(["open", "in_progress", "review", "done", "abandoned"]),
-            z.array(z.enum(["open", "in_progress", "review", "done", "abandoned"])).min(1),
+            z.enum(["open", "in_progress", "review", "done"]),
+            z.array(z.enum(["open", "in_progress", "review", "done"])).min(1),
           ])
           .optional(),
         priority: z
