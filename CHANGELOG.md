@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-04-28
+
+**Headline: The task state vocabulary locks down to `open / in_progress
+/ review / done` (transitions, gates, role requirements, labels, and
+agent instructions stay editable per project), the MCP `tasks_list`
+verb learns filters and a summary projection so the natural call shape
+no longer overflows the harness's tool-result token cap, the grounding
+integration ships in three phases (debug-flavor detection on pickup
+and start, auto-start grounding session on debug-flavored tasks, and
+an opt-in finish-gate), and the backend gains structured per-request
+Pino logging plus `dependsOn` support on task creation.**
+
+Operator note: no migrations required. The state-vocabulary lock is at
+the validation layer — existing custom Workflow rows whose state set
+matches the four allowed names continue to round-trip; foreign names
+will surface as a 400 listing the offending state on the next edit. No
+known production rows depend on foreign state names.
+
 ### Changed
 
 #### Workflow state vocabulary is fixed: open / in_progress / review / done
@@ -124,6 +142,69 @@ full failure-mode catalogue.
   the per-task dependencies endpoints. Per-row try/catch in the
   importer doesn't compose with the all-or-nothing blocker
   validation of the single-create path.
+
+#### Grounding integration — debug-flavor detection, auto-start session, finish-gate
+
+- `task_pickup` and `task_start` now classify each task as
+  debug-flavored or not based on title / description / labels and
+  surface a `groundingHint` on the response (recommendedAction +
+  mcpToolHint + sessionId once a session exists). Phase 1.
+- Debug-flavored tasks auto-start a grounding session via the
+  `@lannguyensi/grounding-wrapper` client on first pickup / start;
+  the resolved session id, current phase, mandatory sequence, and
+  active guardrails are persisted on `task.metadata.groundingSessionState`
+  so subsequent calls reconstruct the same hint without re-issuing.
+  Failure-soft: if the wrapper rejects or the client is null, the
+  hint collapses back to the Phase 1 advisory shape and pickup still
+  proceeds. Phase 2.
+- Project-level opt-in `requireGroundingForDebug` activates a
+  finish-gate on the work-claim path of `task_finish` for
+  debug-flavored tasks: the gate consults `getLedgerSummary` and
+  blocks the finish (precondition_failed) if the ledger has zero
+  entries. Off by default; non-opted projects emit a
+  `task.grounding_gate.bypassed` audit event so operators can
+  retroactively see what would have been blocked. Phase 3.
+
+#### `effectiveGates` discovery surface (gate registry v1)
+
+- New MCP verb `projects_get_effective_gates` and REST endpoint
+  `GET /api/projects/:projectId/effective-gates` return a map keyed
+  by `GateCode` (`distinct_reviewer`, `self_merge`,
+  `task_status_for_merge`, `pr_repo_matches_project`, …). Each entry
+  carries `active` (whether the gate would evaluate on this project),
+  `because` (governance mode, project binding, etc.), and `appliesTo`
+  (the verb names the gate can reject). Lets agents answer "will this
+  verb be blocked?" before tripping a 4xx.
+- The `projects_get` response includes the same `effectiveGates`
+  field for backward compatibility; the dedicated verb is the new
+  preferred path because the payload is leaner.
+
+#### Opt-in `idempotencyKey` on `pull_requests_*` verbs
+
+- `pull_requests_create`, `pull_requests_merge`, and
+  `pull_requests_comment` now accept an optional `idempotencyKey`
+  body field (max 128 chars). Same `(taskId, verb, idempotencyKey)`
+  tuple replays the cached response within a 24-hour window instead
+  of re-issuing the GitHub API call. The key is opt-in — callers
+  that don't supply it see the legacy "fire every time" behaviour
+  unchanged. The cache stores the verb result + status so subsequent
+  hits short-circuit without touching GitHub.
+
+#### `.text-break-anywhere` utility class (frontend)
+
+- Inline `wordBreak: "break-word"` styles on long-string columns in
+  `TaskArtifactsSection` and the connect-agent modal H2 collapsed
+  into a single `.text-break-anywhere` utility class in the global
+  CSS. No behavioural change; the class is now reusable across the
+  frontend.
+
+#### README 60s hook + `docs/` restructure
+
+- Top-level `README.md` rewritten with a 60-second "what is this /
+  why does it exist" hook above the fold, with deeper material moved
+  into a new `docs/` subdirectory. Existing
+  `docs/agent-workflow.md`, `docs/api-contract.md`, and friends move
+  with the rewrite; cross-links updated.
 
 ## [0.9.0] - 2026-04-23
 
