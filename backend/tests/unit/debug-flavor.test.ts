@@ -132,6 +132,19 @@ describe("buildGroundingHint", () => {
     });
     expect(hint.mcpToolHint).toContain('problem="why does \\"X\\" not work"');
   });
+
+  it("escapes backslashes, newlines, carriage returns, and backticks", () => {
+    const hint = buildGroundingHint({
+      title: "weird\\path\nnewline\rcr`tick`",
+      project: { slug: "p" },
+    });
+    expect(hint.mcpToolHint).toContain(
+      'problem="weird\\\\path\\nnewline\\rcr\\`tick\\`"',
+    );
+    // Must not contain a real newline or carriage-return that would split
+    // the tool-hint across lines.
+    expect(hint.mcpToolHint).not.toMatch(/\n|\r/);
+  });
 });
 
 describe("readMetadata", () => {
