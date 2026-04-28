@@ -2027,3 +2027,131 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     });
   });
 });
+
+describe("debug-flavor detection on pickup + start", () => {
+  it("pickup attaches groundingHint and persists metadata.debugFlavor on a debug-flavored work task", async () => {
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null) // hard-limit ok
+      .mockResolvedValueOnce(null) // no review task
+      .mockResolvedValueOnce({
+        ...baseTask,
+        title: "fix login bug",
+        labels: [],
+        metadata: null,
+      });
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      kind: string;
+      task: { id: string };
+      groundingHint?: { debugFlavor: boolean; mcpToolHint: string };
+    };
+    expect(body.kind).toBe("work");
+    expect(body.groundingHint).toBeDefined();
+    expect(body.groundingHint?.debugFlavor).toBe(true);
+    expect(body.groundingHint?.mcpToolHint).toContain('keyword="agent-tasks"');
+
+    expect(prismaMocks.taskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { metadata: { debugFlavor: true } },
+    });
+  });
+
+  it("pickup omits groundingHint on a non-debug work task and still persists debugFlavor:false", async () => {
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        ...baseTask,
+        title: "add user-profile feature",
+        labels: [],
+        metadata: null,
+      });
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { kind: string; groundingHint?: unknown };
+    expect(body.kind).toBe("work");
+    expect(body.groundingHint).toBeUndefined();
+
+    expect(prismaMocks.taskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { metadata: { debugFlavor: false } },
+    });
+  });
+
+  it("pickup does NOT re-run detection or re-persist when metadata.debugFlavor is already set", async () => {
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        ...baseTask,
+        title: "old task that was already classified",
+        labels: [],
+        metadata: { debugFlavor: true },
+      });
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { groundingHint?: { debugFlavor: boolean } };
+    expect(body.groundingHint?.debugFlavor).toBe(true);
+    // No metadata write — only the initial findFirst calls, no task.update
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("task_start surfaces groundingHint when an open task is debug-flavored", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      title: "investigate flaky CI",
+      status: "open",
+      labels: [],
+      metadata: null,
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null); // hard-limit ok
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]); // no blockers
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      kind: string;
+      groundingHint?: { debugFlavor: boolean };
+    };
+    expect(body.kind).toBe("work");
+    expect(body.groundingHint?.debugFlavor).toBe(true);
+
+    // Claim + metadata are folded into a single update so task_start stays
+    // one DB write on the open->in_progress transition.
+    const updateCalls = prismaMocks.taskUpdate.mock.calls.map(
+      (c) => (c[0] as { data: Record<string, unknown> }).data,
+    );
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0]).toMatchObject({
+      status: "in_progress",
+      metadata: { debugFlavor: true },
+    });
+  });
+
+  it("label-only debug detection works when title and description are neutral", async () => {
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        ...baseTask,
+        title: "Cleanup old data",
+        description: "neutral description",
+        labels: ["incident", "backend"],
+        metadata: null,
+      });
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { groundingHint?: { debugFlavor: boolean } };
+    expect(body.groundingHint?.debugFlavor).toBe(true);
+  });
+});
