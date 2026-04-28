@@ -238,6 +238,12 @@ model Task {
   // Template data (structured task info for agents)
   templateData Json? // { goal?, acceptanceCriteria?, context?, constraints? }
 
+  // Free-form per-task metadata, populated by the server. Currently stores
+  // `{ debugFlavor: boolean }` — set on first pickup / start to flag tasks
+  // that should be approached through the grounding stack (see ADR 0008
+  // grounding-hint). Reserved for additional server-side annotations.
+  metadata Json?
+
   // External system reference (e.g. Jira key "PROJ-123", GitHub issue "#42")
   externalRef String?
   // Free-form labels for categorization

@@ -21,6 +21,12 @@ import { acknowledgeSignalsForTask, type SignalType } from "../services/signal.j
 import { emitSelfMergeNoticeIfApplicable } from "../services/self-merge-notice.js";
 import { GovernanceMode, resolveGovernanceMode } from "../lib/governance-mode.js";
 import { logger, setLogContext } from "../lib/logger.js";
+import {
+  detectDebugFlavor,
+  buildGroundingHint,
+  readMetadata,
+  type TaskMetadata,
+} from "../lib/debug-flavor.js";
 
 // Signals that become meaningless once the underlying task is `done`.
 // Outcome-notification signals (`task_approved`, `changes_requested`,
@@ -533,6 +539,41 @@ taskRouter.get("/tasks/claimable", async (c) => {
   return c.json({ tasks });
 });
 
+// Derive the debug-flavor for a task. Pure: no DB write. Callers persist
+// `mergedMetadata` either via a dedicated update (pickup) or by folding it
+// into the same update they were already going to issue (start).
+//
+// `isFresh` distinguishes "we just classified this task" from "the flag was
+// already set" so callers can skip the metadata write on subsequent calls.
+function deriveDebugFlavor<T extends {
+  title: string;
+  description: string | null;
+  labels: string[] | null;
+  metadata: unknown;
+  project: { slug: string };
+}>(task: T): {
+  debugFlavor: boolean;
+  isFresh: boolean;
+  mergedMetadata: TaskMetadata;
+  groundingHint: ReturnType<typeof buildGroundingHint> | null;
+} {
+  const meta = readMetadata(task.metadata);
+  const isFresh = meta.debugFlavor === undefined;
+  const debugFlavor = isFresh
+    ? detectDebugFlavor({
+        title: task.title,
+        description: task.description,
+        labels: task.labels,
+      })
+    : meta.debugFlavor === true;
+  return {
+    debugFlavor,
+    isFresh,
+    mergedMetadata: { ...meta, debugFlavor },
+    groundingHint: debugFlavor ? buildGroundingHint(task) : null,
+  };
+}
+
 // ── Agent pickup (v2 MCP) ────────────────────────────────────────────────────
 //
 // Single "what should I do next?" endpoint for the v2 MCP surface. Resolution:
@@ -662,7 +703,18 @@ taskRouter.post("/tasks/pickup", async (c) => {
     },
   });
   if (workTask) {
-    return c.json({ kind: "work", task: workTask });
+    const { isFresh, mergedMetadata, groundingHint } = deriveDebugFlavor(workTask);
+    if (isFresh) {
+      await prisma.task.update({
+        where: { id: workTask.id },
+        data: { metadata: mergedMetadata as Prisma.InputJsonValue },
+      });
+    }
+    return c.json({
+      kind: "work",
+      task: { ...workTask, metadata: mergedMetadata },
+      ...(groundingHint ? { groundingHint } : {}),
+    });
   }
 
   // ── 4. Idle ───────────────────────────────────────────────────────────────
@@ -843,6 +895,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       return _exhaustive;
     }
 
+    const flavor = deriveDebugFlavor(task);
     const updated = await prisma.task.update({
       where: { id: task.id },
       data: {
@@ -850,6 +903,9 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
         claimedAt: new Date(),
         status: startTarget,
+        ...(flavor.isFresh
+          ? { metadata: flavor.mergedMetadata as Prisma.InputJsonValue }
+          : {}),
       },
       include: taskInclude,
     });
@@ -868,9 +924,10 @@ taskRouter.post("/tasks/:id/start", async (c) => {
 
     return c.json({
       kind: "work",
-      task: updated,
+      task: { ...updated, metadata: flavor.mergedMetadata },
       expectedFinishState,
       project: task.project,
+      ...(flavor.groundingHint ? { groundingHint: flavor.groundingHint } : {}),
     });
   }
 
