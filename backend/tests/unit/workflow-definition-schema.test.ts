@@ -14,11 +14,13 @@ function validDef() {
     states: [
       { name: "open", label: "Open", terminal: false },
       { name: "in_progress", label: "In progress", terminal: false },
+      { name: "review", label: "In review", terminal: false },
       { name: "done", label: "Done", terminal: true },
     ],
     transitions: [
       { from: "open", to: "in_progress" },
-      { from: "in_progress", to: "done" },
+      { from: "in_progress", to: "review" },
+      { from: "review", to: "done" },
     ],
     initialState: "open",
   };
@@ -98,13 +100,69 @@ describe("workflowDefinitionSchema", () => {
     }
   });
 
-  it("accepts a minimal single-state terminal workflow", () => {
+  it("rejects a workflow that omits a required state name", () => {
+    // The state vocabulary is fixed: {open, in_progress, review, done}.
+    // Omitting any of them would leave the engine's hardcoded literal-status
+    // checks (merge gate, distinct-reviewer, dependency gating) unable to
+    // resolve, so the schema rejects it.
     const result = workflowDefinitionSchema.safeParse({
       states: [{ name: "done", label: "Done", terminal: true }],
       transitions: [],
       initialState: "done",
     });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((i) =>
+          /Required state "open"/i.test(i.message),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects a workflow with a state name outside the fixed vocabulary", () => {
+    const d = validDef();
+    d.states.push({ name: "deployed", label: "Deployed", terminal: false });
+    d.transitions.push({ from: "done", to: "deployed" });
+    const result = workflowDefinitionSchema.safeParse(d);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((i) =>
+          /Unknown state name "deployed"/i.test(i.message),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects initialState other than \"open\"", () => {
+    const d = validDef();
+    d.initialState = "in_progress";
+    const result = workflowDefinitionSchema.safeParse(d);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((i) =>
+          /initialState must be "open"/i.test(i.message),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects a state whose terminal flag disagrees with the lock-in", () => {
+    // Only "done" is allowed to be terminal; flipping the flag on any other
+    // state breaks the engine's terminal-state checks.
+    const d = validDef();
+    d.states[0]!.terminal = true; // "open" is NOT terminal
+    const result = workflowDefinitionSchema.safeParse(d);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((i) =>
+          /State "open" terminal flag must be false/i.test(i.message),
+        ),
+      ).toBe(true);
+    }
   });
 
   it("requires at least one state", () => {

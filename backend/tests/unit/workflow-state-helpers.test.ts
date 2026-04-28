@@ -1,6 +1,14 @@
 /**
- * Tests for the workflow state semantic helpers added to support
- * custom workflows in v2 MCP verb handlers.
+ * Tests for the workflow state semantic helpers.
+ *
+ * Two definitions are exercised:
+ *   - the built-in default (open / in_progress / review / done), the
+ *     only definition the engine sees in production now that the state
+ *     vocabulary is locked.
+ *   - a synthetic non-default shape with extra/foreign state names. The
+ *     helpers themselves stay name-agnostic for forensic / migration
+ *     use cases (e.g. evaluating a legacy Workflow row before
+ *     normalization), so the test pins that behaviour.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -17,10 +25,39 @@ import {
   expectedFinishStateFromDefinition,
   type WorkflowDefinitionShape,
 } from "../../src/services/default-workflow.js";
-import { findWorkflowTemplate } from "../../src/services/workflow-templates.js";
 
 const defaultDef = defaultWorkflowDefinition();
-const codingAgentDef = findWorkflowTemplate("coding-agent")!.definition;
+
+// Synthetic non-default definition: backlog → spec → plan → implement →
+// test → review → done. Mirrors the retired AI Coding Agent template
+// shape. Inline so this file does not depend on workflow-templates.ts
+// (which holds an empty registry now that the state vocabulary is
+// locked).
+const codingAgentDef: WorkflowDefinitionShape = {
+  states: [
+    { name: "backlog", label: "Backlog", terminal: false },
+    { name: "spec", label: "Spec", terminal: false },
+    { name: "plan", label: "Plan", terminal: false },
+    { name: "implement", label: "Implement", terminal: false },
+    { name: "test", label: "Test", terminal: false },
+    { name: "review", label: "Review", terminal: false },
+    { name: "done", label: "Done", terminal: true },
+  ],
+  transitions: [
+    { from: "backlog", to: "spec", requiredRole: "any" },
+    { from: "spec", to: "plan", requiredRole: "any" },
+    { from: "spec", to: "backlog", requiredRole: "any" },
+    { from: "plan", to: "implement", requiredRole: "any" },
+    { from: "plan", to: "spec", requiredRole: "any" },
+    { from: "implement", to: "test", requiredRole: "any" },
+    { from: "implement", to: "plan", requiredRole: "any" },
+    { from: "test", to: "review", requiredRole: "any" },
+    { from: "test", to: "implement", requiredRole: "any" },
+    { from: "review", to: "done", requiredRole: "any" },
+    { from: "review", to: "implement", requiredRole: "any" },
+  ],
+  initialState: "backlog",
+};
 
 // ── isInitialState ──────────────────────────────────────────────────────────
 

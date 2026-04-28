@@ -66,13 +66,19 @@ const workflowTransitionSchema = z.object({
   requires: z.array(z.string().min(1)).max(10).optional(),
 });
 
-// The frontend editor enforces these invariants client-side, but clients
-// cannot be trusted — this is the backend's only structural defense
-// against a corrupted workflow graph (duplicate state names, dangling
-// initialState, transitions pointing at states that don't exist). Task
-// router + transition handler assume these hold, so a bypass here would
-// manifest as runtime errors during task operations, not persistence
-// errors at PUT time.
+// State vocabulary is fixed: open / in_progress / review / done. Transitions,
+// gates, role requirements, and per-state label/agentInstructions stay
+// configurable per project — the lock applies only to the state SET, not to
+// how projects move tasks through it. This is enforced server-side so a
+// direct API caller cannot persist a corrupted workflow graph (foreign
+// state names that no engine literal-status check would recognize, an
+// `initialState` other than `open`, transitions referencing made-up
+// states, etc).
+export const FIXED_STATE_NAMES = ["open", "in_progress", "review", "done"] as const;
+const FIXED_STATE_NAME_SET = new Set<string>(FIXED_STATE_NAMES);
+const FIXED_INITIAL_STATE = "open";
+const FIXED_TERMINAL_STATES = new Set<string>(["done"]);
+
 export const workflowDefinitionSchema = z
   .object({
     states: z.array(workflowStateSchema).min(1),
@@ -90,11 +96,45 @@ export const workflowDefinitionSchema = z
         });
       }
       names.add(s.name);
+
+      if (!FIXED_STATE_NAME_SET.has(s.name)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            `Unknown state name "${s.name}". The state vocabulary is fixed: ` +
+            `${FIXED_STATE_NAMES.join(", ")}. Add/rename/remove of states is not supported.`,
+          path: ["states"],
+        });
+      }
+      // Terminal flag must match the lock-in: only "done" is terminal.
+      const shouldBeTerminal = FIXED_TERMINAL_STATES.has(s.name);
+      if (s.terminal !== shouldBeTerminal) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `State "${s.name}" terminal flag must be ${shouldBeTerminal}`,
+          path: ["states"],
+        });
+      }
     }
-    if (!names.has(def.initialState)) {
+
+    // The state set must be exactly the fixed vocabulary — no missing names
+    // either, because the engine has hardcoded literal-status checks
+    // (merge gate, distinct-reviewer guard, dependency gating) that assume
+    // every workflow exposes "open", "in_progress", "review", "done".
+    for (const required of FIXED_STATE_NAMES) {
+      if (!names.has(required)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Required state "${required}" is missing from the workflow`,
+          path: ["states"],
+        });
+      }
+    }
+
+    if (def.initialState !== FIXED_INITIAL_STATE) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `initialState "${def.initialState}" is not in the states list`,
+        message: `initialState must be "${FIXED_INITIAL_STATE}", got "${def.initialState}"`,
         path: ["initialState"],
       });
     }

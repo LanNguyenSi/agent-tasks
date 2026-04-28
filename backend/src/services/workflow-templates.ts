@@ -112,16 +112,17 @@ const codingAgentDefinition: WorkflowDefinitionShape = {
 };
 
 // ── Template registry ───────────────────────────────────────────────────────
+//
+// The "AI Coding Agent Pipeline" template (backlog → spec → plan →
+// implement → test → review → done) was retired when the state
+// vocabulary was locked to {open, in_progress, review, done}. Its 7
+// custom state names would now fail `workflowDefinitionSchema` validation.
+// The definition is kept above for reference but no longer registered.
+// Future templates that vary only transitions / gates / labels (within
+// the fixed state set) are still welcome here.
+void codingAgentDefinition;
 
-export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
-  {
-    slug: "coding-agent",
-    name: "AI Coding Agent Pipeline",
-    description:
-      "7-stage pipeline: backlog → spec → plan → implement → test → review → done. Designed for AI coding agents with gates on branch and PR presence.",
-    definition: codingAgentDefinition,
-  },
-] as const;
+export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [] as const;
 
 export function findWorkflowTemplate(slug: string): WorkflowTemplate | undefined {
   return WORKFLOW_TEMPLATES.find((t) => t.slug === slug);

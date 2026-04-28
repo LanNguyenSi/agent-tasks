@@ -600,6 +600,11 @@ export default function WorkflowEditorPage() {
         <StatesTable
           def={activeDef}
           canEdit={canEdit}
+          // The state vocabulary is fixed system-wide. Add / rename /
+          // remove / set-initial / toggle-terminal are all blocked at
+          // the validator and the editor — labels and agent
+          // instructions stay editable when canEdit is true.
+          statesLocked={true}
           saving={saving}
           expandedInstructions={expandedInstructions}
           onAddState={addState}

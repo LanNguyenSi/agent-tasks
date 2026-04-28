@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+#### Workflow state vocabulary is fixed: open / in_progress / review / done
+
+`workflowDefinitionSchema` now rejects any workflow whose state set is
+not exactly `{open, in_progress, review, done}`, whose `initialState` is
+not `open`, or whose `terminal` flag for any state disagrees with the
+lock-in (only `done` may be terminal). The schema runs server-side on
+every workflow create / update path, so direct API callers cannot
+bypass the editor.
+
+The editor itself stays fully functional for everything that matters in
+practice: transitions, gates, role requirements, and per-state `label` /
+`agentInstructions` are all still editable. The states table hides the
+add / rename / remove / set-initial / toggle-terminal affordances and
+shows a notice that the vocabulary is fixed.
+
+The `coding-agent` workflow template (7 stages: backlog → spec → plan →
+implement → test → review → done) was retired — its state names would
+fail the new validation. The template registry stays in place; future
+templates that vary only transitions / gates / labels (within the fixed
+state set) are still welcome.
+
+**Why:** the engine has ~25 hardcoded literal-status checks (merge gate,
+distinct-reviewer guard, dependency gating, webhook PR-binding, the
+new `tasks_list` claimable filter from PR #204) that all assume every
+workflow uses those four state names. Custom state names silently broke
+those checks — see the audit summary in
+[fe0bbbe0](https://github.com/LanNguyenSi/agent-tasks/issues) for the
+full failure-mode catalogue.
+
 #### `tasks_list` / `GET /tasks/claimable` — filters, summary projection, default limit 25
 
 - Added query-param filters to `/tasks/claimable` and the matching MCP
