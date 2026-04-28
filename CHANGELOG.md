@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+#### Task states locked to a fixed 4-state vocabulary (BREAKING)
+
+agent-tasks now uses exactly four task states, with no customization:
+`open`, `in_progress`, `review`, `done`. Custom-workflow editing is
+removed; transitions / gates / role requirements stay configurable per
+project, only the state vocabulary is locked.
+
+**Why:** the previous free-form `task.status` column let users persist
+arbitrary state names (`shipping`, `complete`, `done` mid-pipeline) that
+silently broke ~25 hardcoded literal-status checks in the engine — the
+merge gate, the webhook PR-binding, dependency gating, the
+distinct-reviewer guard, `task_pickup`'s claimable filter, etc. The
+audit on 2026-04-28 catalogued silent-bypass and silent-corruption
+failure modes that no amount of save-time validation could close;
+locking the schema does.
+
+**What changes:**
+
+- `Task.status` is now a Prisma enum (`TaskStatus { open, in_progress,
+  review, done }`) at the DB level. Foreign values are no longer
+  storable.
+- A one-shot data normalization (`backend/prisma/normalize-task-status.ts`)
+  runs in `Dockerfile.migrate` BEFORE `prisma db push`. It rewrites any
+  task whose status is outside the 4-state set:
+  - `status="abandoned"` → `done` + `metadata.abandoned: true` +
+    `metadata.migratedFrom: "abandoned"`.
+  - any other foreign status → `open` + `metadata.migratedFrom:
+    "<old>"` plus a system comment on the task explaining the rewrite.
+  - Each migration writes one `task.status_migrated` audit event.
+- `workflowRouter` POST/PUT/DELETE return `410 Gone` with a deprecation
+  message. GET routes (effective workflow, project listings, rules
+  catalog) stay live so the read-only editor page keeps rendering.
+- Frontend workflow editor renders read-only with a banner explaining
+  the change. The "AI Coding Agent Pipeline" template was retired from
+  `WORKFLOW_TEMPLATES`.
+- Webhook `pickMergeTargetStatus` lost its `hasCustomWorkflow` branch
+  (was a legacy carve-out that wrote literal `"done"` regardless of
+  whether the workflow had such a state). The function now depends on
+  governance mode + current status only and returns a typed
+  `"review" | "done" | null`.
+- Validation surfaces (`tasks_list` `CLAIMABLE_VALID_STATUSES`,
+  MCP `tasks_list` Zod schema, stdio mcp-server) drop the `abandoned`
+  literal — `task_abandon` continues to release the claim and reset to
+  initial state without writing a status name.
+
+**Operator preflight.** The `Dockerfile.migrate` runs the normalization
+script before `prisma db push`, but for sites that deploy via a
+different path: BEFORE merging this image, ensure (1) every task has a
+status in the 4-state set, and (2) every `Workflow` row's definition
+references only those state names. The normalization script handles
+both, including deleting offending Workflow rows and nulling out
+`task.workflowId` on the dependent tasks (so they fall back to the
+built-in default). Re-running the script is idempotent.
+
+**Out of scope (phase 2 follow-up):** deleting the `Workflow` and
+`WorkflowTransition` tables, dropping `Task.workflowId`, removing
+`default-workflow.ts` helpers that read the workflow definition.
+
 #### `tasks_list` / `GET /tasks/claimable` — filters, summary projection, default limit 25
 
 - Added query-param filters to `/tasks/claimable` and the matching MCP

@@ -40,6 +40,33 @@ export function buildForkedFromDefaultSnapshot(
 
 export const workflowRouter = new Hono<{ Variables: AppVariables }>();
 
+// Custom-workflow editing is deprecated as of the 4-state lock-in. The
+// system now uses a fixed vocabulary {open, in_progress, review, done}
+// and every write endpoint on this router returns 410 Gone. GET routes
+// (read-only effective-workflow / templates / rules / per-project
+// listings) stay live so the existing UI can render the current state.
+//
+// Phase-2 follow-up will delete the table and drop `Task.workflowId`.
+// Until then existing custom Workflow rows continue to read back
+// untouched; the engine no longer differentiates them from the default
+// workflow at write time.
+workflowRouter.use("*", async (c, next) => {
+  const method = c.req.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+    return c.json(
+      {
+        error: "deprecated",
+        message:
+          "Custom workflow editing was removed: agent-tasks now uses a fixed 4-state model (open / in_progress / review / done). " +
+          "Transitions, gates, and role requirements are still configurable per project — only state names are locked. " +
+          "See the agent-tasks CHANGELOG for the migration plan.",
+      },
+      410,
+    );
+  }
+  await next();
+});
+
 // State names must match the task.status storage format: lowercase letters,
 // digits, and underscores only. This mirrors the frontend editor's
 // `STATE_NAME_RE` — enforcing it server-side so a malicious or buggy client

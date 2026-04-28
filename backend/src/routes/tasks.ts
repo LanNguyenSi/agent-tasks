@@ -78,6 +78,16 @@ import { SCOPES } from "../services/scopes.js";
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
+// Workflow-definition fields (initialState, transition.from/to, …) are
+// typed `string` upstream because the Workflow.definition column is JSON.
+// The 4-state lock guarantees these strings are always one of the four
+// TaskStatus enum values at runtime, so this helper is the single place
+// that performs the cast — keeping tsc honest at the data-write boundary.
+type TaskStatusName = "open" | "in_progress" | "review" | "done";
+function asTaskStatus(s: string): TaskStatusName {
+  return s as TaskStatusName;
+}
+
 // Surface taskId / projectId from the path on every log line emitted within
 // these routes — meets the acceptance criterion that
 // `docker logs … | jq 'select(.taskId == "<id>")'` returns the full request
@@ -507,7 +517,10 @@ taskRouter.post(
 // inside the agent's context window. Set `verbose=true` to opt into the full
 // response.
 
-const CLAIMABLE_VALID_STATUSES = ["open", "in_progress", "review", "done", "abandoned"] as const;
+// Mirrors the Prisma `TaskStatus` enum. Kept as a runtime tuple so the Zod
+// validators below and the explicit-CSV parser below can share the source
+// of truth — adding a state means adding it here AND to the schema.
+const CLAIMABLE_VALID_STATUSES = ["open", "in_progress", "review", "done"] as const;
 const CLAIMABLE_VALID_PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 
 const claimableSummarySelect = {
@@ -615,7 +628,10 @@ taskRouter.get("/tasks/claimable", async (c) => {
 
   if (isExplicitSearch) {
     if (statusList) {
-      where.status = statusList.length === 1 ? statusList[0] : { in: statusList };
+      // Validated against CLAIMABLE_VALID_STATUSES above, so this narrow cast
+      // matches the Prisma TaskStatus enum at runtime.
+      const statuses = statusList as ("open" | "in_progress" | "review" | "done")[];
+      where.status = statuses.length === 1 ? statuses[0] : { in: statuses };
     }
     if (claimedByAgentId) {
       where.claimedByAgentId = claimedByAgentId;
@@ -1133,7 +1149,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         claimedByUserId: actor.type === "human" ? actor.userId : null,
         claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
         claimedAt: new Date(),
-        status: startTarget,
+        status: asTaskStatus(startTarget),
         ...(flavor.isFresh
           ? { metadata: flavor.mergedMetadata as Prisma.InputJsonValue }
           : {}),
@@ -1653,7 +1669,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     }
 
     const updateData: Prisma.TaskUncheckedUpdateInput = {
-      status: targetStatus,
+      status: asTaskStatus(targetStatus),
       reviewClaimedByUserId: null,
       reviewClaimedByAgentId: null,
       reviewClaimedAt: null,
@@ -2049,7 +2065,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   }
 
   const updateData: Prisma.TaskUncheckedUpdateInput = {
-    status: targetStatus,
+    status: asTaskStatus(targetStatus),
     ...(prUrl !== undefined ? { prUrl } : {}),
     ...(prNumber !== null ? { prNumber } : {}),
     ...(result !== undefined ? { result } : {}),
@@ -2413,7 +2429,7 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
     // Only reset status to initial when we were in a work state.
     // If the task is already in review, we rejected above.
     if (isWorkState(effectiveDef, task.status)) {
-      updateData.status = effectiveDef.initialState;
+      updateData.status = asTaskStatus(effectiveDef.initialState);
     }
   }
   if (holdsReviewClaim) {
@@ -3455,7 +3471,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
       claimedByUserId: actor.type === "human" ? actor.userId : null,
       claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
       claimedAt: new Date(),
-      status: startTarget,
+      status: asTaskStatus(startTarget),
     },
     include: taskInclude,
   });
@@ -3499,7 +3515,7 @@ taskRouter.post("/tasks/:id/release", async (c) => {
       claimedByUserId: null,
       claimedByAgentId: null,
       claimedAt: null,
-      status: effectiveDef.initialState,
+      status: asTaskStatus(effectiveDef.initialState),
     },
     include: taskInclude,
   });
@@ -3676,7 +3692,7 @@ taskRouter.post(
 
     const updated = await prisma.task.update({
       where: { id: task.id },
-      data: { status, updatedAt: new Date() },
+      data: { status: asTaskStatus(status), updatedAt: new Date() },
       include: taskInclude,
     });
 
