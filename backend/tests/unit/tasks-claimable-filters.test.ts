@@ -242,6 +242,18 @@ describe("GET /tasks/claimable — claimedByAgentId", () => {
     await makeApp().request(`/tasks/claimable?claimedByAgentId=${uuid}`);
     expect(lastFindManyArgs().where.claimedByAgentId).toBe(uuid);
   });
+
+  it("empty claimedByAgentId/status query params do not flip the explicit-search heuristic", async () => {
+    // A stray `?claimedByAgentId=` or `?status=` from a misbehaving client
+    // must NOT turn a plain claimable lookup into a "show me everything in
+    // my team" query. Key on the parsed values, not on the raw presence of
+    // the query string.
+    await makeApp().request("/tasks/claimable?claimedByAgentId=&status=");
+    const where = lastFindManyArgs().where;
+    expect(where.status).toBe("open");
+    expect(where.claimedByUserId).toBeNull();
+    expect(where.claimedByAgentId).toBeNull();
+  });
 });
 
 describe("GET /tasks/claimable — projectId and team scoping", () => {

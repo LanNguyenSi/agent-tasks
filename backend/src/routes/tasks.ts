@@ -605,7 +605,11 @@ taskRouter.get("/tasks/claimable", async (c) => {
   // I claim right now?" call) once they pass `status` or `claimedByAgentId`.
   // In that mode we drop the implicit "status=open + null-claim" default so
   // already-claimed and in-progress/review/done tasks are reachable.
-  const isExplicitSearch = statusList !== undefined || claimedByAgentIdRaw !== undefined;
+  //
+  // Key on the *parsed* values so a stray empty query (`?claimedByAgentId=`,
+  // `?status=`) does not flip the heuristic without actually narrowing the
+  // search — that would broaden the response to every team task.
+  const isExplicitSearch = statusList !== undefined || claimedByAgentId !== undefined;
 
   const where: Prisma.TaskWhereInput = {};
 

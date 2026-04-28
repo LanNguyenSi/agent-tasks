@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+#### `tasks_list` / `GET /tasks/claimable` — filters, summary projection, default limit 25
+
+- Added query-param filters to `/tasks/claimable` and the matching MCP
+  `tasks_list` tool: `status`, `priority`, `labels`, `claimedByAgentId`,
+  `projectId`. `status` and `priority` accept either a scalar or a CSV
+  (`status=open,in_progress`). `labels` is a CSV with AND-match
+  (Prisma `hasEvery`). `claimedByAgentId="me"` resolves to the calling
+  agent's tokenId; passing it for a human actor returns 400.
+- When `status` or `claimedByAgentId` is set, the implicit
+  "status=open + unclaimed" default is dropped so already-claimed and
+  in-progress / review / done tasks are reachable through the same
+  endpoint.
+- Default `limit` lowered from 50 to 25 (max stays 200).
+- Default response is now a summary projection that omits
+  `description`, `comments`, `attachments`, and `artifacts` — the heavy
+  fields that were pushing the MCP tool result past the harness's
+  token cap. `verbose=true` opts back into the full payload (the
+  legacy shape).
+- Existing callers of `/tasks/claimable` that pass no query params still
+  get claimable-only tasks scoped to their team, same semantics, just
+  fewer bytes per task and at most 25 by default. The OpenAPI doc and
+  the stdio `@agent-tasks/mcp-server` client carry the same surface.
+
 ### Added
 
 #### Structured logging with stable per-request fields
