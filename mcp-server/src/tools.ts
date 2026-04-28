@@ -237,12 +237,28 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       name: "tasks_list",
       description:
         DEPRECATED +
-        "List claimable tasks. Use task_pickup instead — it returns one prioritized item.",
+        "List tasks. With no filters: claimable only (status=open, unclaimed) — for that single-prioritized-item case prefer task_pickup. " +
+        "Pass status/priority/labels/claimedByAgentId/projectId to broaden the search; verbose=true switches to the full task payload " +
+        "(default returns a summary projection without descriptions/comments to stay inside the harness's tool-result token cap). " +
+        "claimedByAgentId='me' resolves to the calling agent's tokenId. Default limit 25.",
       inputShape: {
-        limit: z.number().int().positive().max(500).optional(),
+        limit: z.number().int().positive().max(200).optional(),
+        projectId: uuid().optional(),
+        status: z
+          .union([
+            z.enum(["open", "in_progress", "review", "done", "abandoned"]),
+            z.array(z.enum(["open", "in_progress", "review", "done", "abandoned"])).min(1),
+          ])
+          .optional(),
+        priority: z
+          .union([priorityEnum, z.array(priorityEnum).min(1)])
+          .optional(),
+        labels: z.array(z.string().min(1).max(100)).min(1).max(20).optional(),
+        claimedByAgentId: z.union([uuid(), z.literal("me")]).optional(),
+        verbose: z.boolean().optional(),
       },
-      handler: async ({ limit }) =>
-        wrap(() => client.listClaimableTasks({ limit })),
+      handler: async (args) =>
+        wrap(() => client.listClaimableTasks(args)),
     }),
     def({
       name: "tasks_get",

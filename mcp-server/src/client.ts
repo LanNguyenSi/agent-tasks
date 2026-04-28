@@ -80,10 +80,32 @@ export class AgentTasksClient {
     );
   }
 
-  listClaimableTasks(params?: { limit?: number }) {
-    const qs =
-      params?.limit !== undefined ? `?limit=${params.limit}` : "";
-    return this.request<unknown>("GET", `/api/tasks/claimable${qs}`);
+  listClaimableTasks(params?: {
+    limit?: number;
+    projectId?: string;
+    status?: string | string[];
+    priority?: string | string[];
+    labels?: string[];
+    claimedByAgentId?: string;
+    verbose?: boolean;
+  }) {
+    const sp = new URLSearchParams();
+    if (params?.limit !== undefined) sp.set("limit", String(params.limit));
+    if (params?.projectId) sp.set("projectId", params.projectId);
+    if (params?.status !== undefined) {
+      sp.set("status", Array.isArray(params.status) ? params.status.join(",") : params.status);
+    }
+    if (params?.priority !== undefined) {
+      sp.set("priority", Array.isArray(params.priority) ? params.priority.join(",") : params.priority);
+    }
+    if (params?.labels && params.labels.length > 0) sp.set("labels", params.labels.join(","));
+    if (params?.claimedByAgentId) sp.set("claimedByAgentId", params.claimedByAgentId);
+    if (params?.verbose) sp.set("verbose", "true");
+    const qs = sp.toString();
+    return this.request<unknown>(
+      "GET",
+      qs.length > 0 ? `/api/tasks/claimable?${qs}` : `/api/tasks/claimable`,
+    );
   }
 
   getTask(taskId: string) {

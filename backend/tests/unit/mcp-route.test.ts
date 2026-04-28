@@ -236,6 +236,50 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     expect(recorded[0].query).toEqual({});
   });
 
+  it("tasks_list serializes status/priority/labels arrays as CSV", async () => {
+    await callTool("tasks_list", {
+      status: ["open", "in_progress"],
+      priority: ["HIGH", "CRITICAL"],
+      labels: ["mcp", "friction"],
+    });
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].query).toEqual({
+      status: "open,in_progress",
+      priority: "HIGH,CRITICAL",
+      labels: "mcp,friction",
+    });
+  });
+
+  it("tasks_list serializes scalar status/priority verbatim", async () => {
+    await callTool("tasks_list", {
+      status: "in_progress",
+      priority: "HIGH",
+    });
+    expect(recorded[0].query).toEqual({
+      status: "in_progress",
+      priority: "HIGH",
+    });
+  });
+
+  it("tasks_list forwards claimedByAgentId='me' through to the backend", async () => {
+    await callTool("tasks_list", { claimedByAgentId: "me" });
+    expect(recorded[0].query).toEqual({ claimedByAgentId: "me" });
+  });
+
+  it("tasks_list forwards verbose=true and projectId together", async () => {
+    const projectId = "11111111-2222-3333-4444-555555555555";
+    await callTool("tasks_list", { verbose: true, projectId });
+    expect(recorded[0].query).toEqual({
+      verbose: "true",
+      projectId,
+    });
+  });
+
+  it("tasks_list omits verbose when false (default summary projection)", async () => {
+    await callTool("tasks_list", { verbose: false });
+    expect(recorded[0].query).toEqual({});
+  });
+
   it("tasks_create → POST /api/projects/:id/tasks with body", async () => {
     const projectId = "11111111-1111-1111-1111-111111111111";
     await callTool("tasks_create", {

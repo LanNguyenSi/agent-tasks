@@ -60,6 +60,38 @@ describe("AgentTasksClient", () => {
     expect(url).toBe("https://example.test/api/tasks/claimable");
   });
 
+  it("serializes filter params on listClaimableTasks", async () => {
+    fetchMock.mockResolvedValue(ok({ tasks: [] }));
+    const client = new AgentTasksClient(config);
+    await client.listClaimableTasks({
+      status: ["open", "in_progress"],
+      priority: "HIGH",
+      labels: ["mcp", "friction"],
+      claimedByAgentId: "me",
+      verbose: true,
+      projectId: "proj-1",
+      limit: 10,
+    });
+    const [url] = fetchMock.mock.calls[0];
+    const u = new URL(url);
+    expect(u.pathname).toBe("/api/tasks/claimable");
+    expect(u.searchParams.get("status")).toBe("open,in_progress");
+    expect(u.searchParams.get("priority")).toBe("HIGH");
+    expect(u.searchParams.get("labels")).toBe("mcp,friction");
+    expect(u.searchParams.get("claimedByAgentId")).toBe("me");
+    expect(u.searchParams.get("verbose")).toBe("true");
+    expect(u.searchParams.get("projectId")).toBe("proj-1");
+    expect(u.searchParams.get("limit")).toBe("10");
+  });
+
+  it("omits verbose query when false on listClaimableTasks", async () => {
+    fetchMock.mockResolvedValue(ok({ tasks: [] }));
+    const client = new AgentTasksClient(config);
+    await client.listClaimableTasks({ verbose: false });
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://example.test/api/tasks/claimable");
+  });
+
   it("serializes body and sets Content-Type on POST", async () => {
     fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
     const client = new AgentTasksClient(config);

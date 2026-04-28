@@ -567,9 +567,11 @@ const openApiSpec = {
     "/api/tasks/claimable": {
       get: {
         tags: ["Tasks"],
-        summary: "List claimable (open + unclaimed) tasks",
+        summary: "List tasks (defaults to claimable: open + unclaimed)",
         description:
-          "For agents, team scope is inferred from token; optionally narrow by projectId. For humans, provide projectId or teamId.",
+          "For agents, team scope is inferred from token; optionally narrow by projectId. For humans, provide projectId or teamId. " +
+          "Pass status/priority/labels/claimedByAgentId to broaden the search beyond claimable. " +
+          "verbose=false (the default) returns a summary projection without the long-form description, comments, attachments, or artifacts.",
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -589,7 +591,44 @@ const openApiSpec = {
             name: "limit",
             in: "query",
             required: false,
-            schema: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+            schema: { type: "integer", minimum: 1, maximum: 200, default: 25 },
+          },
+          {
+            name: "status",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description:
+              "One value or CSV. Valid: open|in_progress|review|done|abandoned. When set, drops the implicit unclaimed constraint.",
+          },
+          {
+            name: "priority",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "One value or CSV. Valid: LOW|MEDIUM|HIGH|CRITICAL.",
+          },
+          {
+            name: "labels",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Comma-separated list. AND-match: only tasks carrying every listed label are returned.",
+          },
+          {
+            name: "claimedByAgentId",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description:
+              "UUID, or magic value 'me' (agent actors only) which resolves to the calling token's id. Drops the implicit unclaimed constraint.",
+          },
+          {
+            name: "verbose",
+            in: "query",
+            required: false,
+            schema: { type: "boolean", default: false },
+            description: "When true, return the full task payload (description, comments, attachments, artifacts) instead of the summary projection.",
           },
         ],
         responses: {
