@@ -1623,64 +1623,6 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   }
   const { result, prUrl, autoMerge: workAutoMerge, mergeMethod: workMergeMethod } = parsed.data;
 
-  // ── Phase 3 grounding finish-gate (ADR-0002) ─────────────────────────
-  //
-  // Only fires when the project opted in AND the task is debug-flavored.
-  // Three failure modes (sessionStarted / ledgerEntries / claimEvaluationPhase)
-  // collapse into a single 409 with a structured `missing[]` so operators
-  // and clients can see exactly which precondition the task failed.
-  //
-  // Reads of the evidence-ledger db degrade soft (returns 0 entries), see
-  // RealGroundingClient.getLedgerSummary. That keeps the gate deterministic
-  // even when the ledger file is unreadable; the failure surfaces as
-  // `missing: ["ledgerEntries"]` to the operator instead of a 500.
-  {
-    const finishMetadata = readMetadata(task.metadata);
-    if (finishMetadata.debugFlavor === true && task.project.requireGroundingForDebug) {
-      const groundingClient = getGroundingClient();
-      const sessionId = finishMetadata.groundingSessionId;
-      const ledger = sessionId
-        ? await groundingClient.getLedgerSummary(sessionId)
-        : { entryCount: 0 };
-      const phase = getSessionPhase(finishMetadata);
-      const gateResult = evaluateGroundingGate({
-        metadata: finishMetadata,
-        project: { requireGroundingForDebug: task.project.requireGroundingForDebug },
-        ledgerSummary: ledger,
-        currentPhase: phase.currentPhase,
-      });
-      if (!gateResult.allowed) {
-        return c.json(
-          {
-            error: "grounding_required",
-            message: "Debug task requires grounding evidence",
-            missing: gateResult.missing,
-            sessionId: gateResult.sessionId,
-            currentPhase: gateResult.currentPhase,
-            entryCount: gateResult.entryCount,
-          },
-          409,
-        );
-      }
-    } else if (finishMetadata.debugFlavor === true && !task.project.requireGroundingForDebug) {
-      // Bypass-audit. Lets operators retroactively see when the gate WOULD
-      // have fired, e.g. while validating the multi-host-to-single-host
-      // migration story. Scoped to debug-flavored tasks so non-debug work
-      // doesn't drown the audit log.
-      void logAuditEvent({
-        action: "task.grounding_gate.bypassed",
-        actorId: actor.type === "human" ? actor.userId : undefined,
-        projectId: task.projectId,
-        taskId: task.id,
-        payload: {
-          reason: "requireGroundingForDebug=false",
-          sessionId: finishMetadata.groundingSessionId ?? null,
-          actorType: actor.type,
-        },
-      });
-    }
-  }
-
   // ── Retry idempotency (ADR-0010 §8) ──────────────────────────────────
   if (workAutoMerge) {
     // Short-circuit: task already done + autoMergeSha set → return existing.
@@ -1750,6 +1692,69 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       { error: "bad_state", message: `Work finish requires a work state (non-initial, non-terminal), got '${task.status}'` },
       409,
     );
+  }
+
+  // ── Phase 3 grounding finish-gate (ADR-0002) ─────────────────────────
+  //
+  // Placed AFTER the retry-idempotency short-circuit and the isWorkState
+  // guard so a replayed finish on an already-done task hits the terminal
+  // guard first, avoiding (a) unbounded bypass-audit growth and (b) a
+  // misleading `grounding_required` 409 where `bad_state` is the real
+  // answer. Only fires when the project opted in AND the task is
+  // debug-flavored. Three failure modes (sessionStarted / ledgerEntries /
+  // claimEvaluationPhase) collapse into a single 409 with a structured
+  // `missing[]` so operators and clients can see exactly which
+  // precondition the task failed.
+  //
+  // Reads of the evidence-ledger db degrade soft (returns 0 entries), see
+  // RealGroundingClient.getLedgerSummary. That keeps the gate deterministic
+  // even when the ledger file is unreadable; the failure surfaces as
+  // `missing: ["ledgerEntries"]` to the operator instead of a 500.
+  {
+    const finishMetadata = readMetadata(task.metadata);
+    if (finishMetadata.debugFlavor === true && task.project.requireGroundingForDebug) {
+      const groundingClient = getGroundingClient();
+      const sessionId = finishMetadata.groundingSessionId;
+      const ledger = sessionId
+        ? await groundingClient.getLedgerSummary(sessionId)
+        : { entryCount: 0 };
+      const phase = getSessionPhase(finishMetadata);
+      const gateResult = evaluateGroundingGate({
+        metadata: finishMetadata,
+        project: { requireGroundingForDebug: task.project.requireGroundingForDebug },
+        ledgerSummary: ledger,
+        currentPhase: phase.currentPhase,
+      });
+      if (!gateResult.allowed) {
+        return c.json(
+          {
+            error: "grounding_required",
+            message: "Debug task requires grounding evidence",
+            missing: gateResult.missing,
+            sessionId: gateResult.sessionId,
+            currentPhase: gateResult.currentPhase,
+            entryCount: gateResult.entryCount,
+          },
+          409,
+        );
+      }
+    } else if (finishMetadata.debugFlavor === true && !task.project.requireGroundingForDebug) {
+      // Bypass-audit. Lets operators retroactively see when the gate WOULD
+      // have fired, e.g. while validating the multi-host-to-single-host
+      // migration story. Scoped to debug-flavored tasks so non-debug work
+      // doesn't drown the audit log.
+      void logAuditEvent({
+        action: "task.grounding_gate.bypassed",
+        actorId: actor.type === "human" ? actor.userId : undefined,
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: {
+          reason: "requireGroundingForDebug=false",
+          sessionId: finishMetadata.groundingSessionId ?? null,
+          actorType: actor.type,
+        },
+      });
+    }
   }
 
   // When autoMerge is requested, hard-set targetStatus to "done" and verify

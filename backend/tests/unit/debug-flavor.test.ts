@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { detectDebugFlavor, buildGroundingHint, readMetadata } from "../../src/lib/debug-flavor.js";
+import {
+  detectDebugFlavor,
+  buildGroundingHint,
+  getSessionPhase,
+  readMetadata,
+} from "../../src/lib/debug-flavor.js";
 
 describe("detectDebugFlavor", () => {
   describe("title-based detection", () => {
@@ -168,5 +173,70 @@ describe("readMetadata", () => {
       debugFlavor: false,
       groundingSessionId: "abc",
     });
+  });
+});
+
+describe("getSessionPhase", () => {
+  // The gate path on `task_finish` calls getSessionPhase on whatever
+  // metadata is on the task row. If a previous version persisted a
+  // malformed shape (or someone hand-edited metadata), the gate must NOT
+  // throw or surface a half-built phase string. This block pins the
+  // tolerant contract: every malformed input yields `{ currentPhase: null }`.
+  it("returns null phase for empty metadata", () => {
+    expect(getSessionPhase({})).toEqual({ currentPhase: null });
+  });
+
+  it("returns null phase when only debugFlavor is set", () => {
+    expect(getSessionPhase({ debugFlavor: true })).toEqual({ currentPhase: null });
+  });
+
+  it("returns null phase when groundingSessionState is undefined", () => {
+    expect(getSessionPhase({ groundingSessionState: undefined })).toEqual({ currentPhase: null });
+  });
+
+  it("returns null phase when groundingSessionState is null", () => {
+    expect(getSessionPhase({ groundingSessionState: null })).toEqual({ currentPhase: null });
+  });
+
+  it("returns null phase when groundingSessionState is a string", () => {
+    expect(getSessionPhase({ groundingSessionState: "string" })).toEqual({ currentPhase: null });
+  });
+
+  it("returns null phase when groundingSessionState is a number", () => {
+    expect(getSessionPhase({ groundingSessionState: 42 })).toEqual({ currentPhase: null });
+  });
+
+  it("returns null phase when groundingSessionState is an array", () => {
+    expect(getSessionPhase({ groundingSessionState: [] })).toEqual({ currentPhase: null });
+  });
+
+  it("returns null phase when groundingSessionState is an empty object", () => {
+    expect(getSessionPhase({ groundingSessionState: {} })).toEqual({ currentPhase: null });
+  });
+
+  it("returns null phase when current_phase is a non-string", () => {
+    expect(getSessionPhase({ groundingSessionState: { current_phase: 42 } })).toEqual({
+      currentPhase: null,
+    });
+  });
+
+  it("treats an empty current_phase string as missing", () => {
+    expect(getSessionPhase({ groundingSessionState: { current_phase: "" } })).toEqual({
+      currentPhase: null,
+    });
+  });
+
+  it("returns the current_phase when it is a non-empty string", () => {
+    expect(
+      getSessionPhase({ groundingSessionState: { current_phase: "scope-resolution" } }),
+    ).toEqual({ currentPhase: "scope-resolution" });
+  });
+
+  it("ignores unrelated extra fields on groundingSessionState", () => {
+    expect(
+      getSessionPhase({
+        groundingSessionState: { current_phase: "claim-evaluation", other: "extra" },
+      }),
+    ).toEqual({ currentPhase: "claim-evaluation" });
   });
 });
