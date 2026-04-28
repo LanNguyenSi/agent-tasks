@@ -492,29 +492,145 @@ taskRouter.post(
 );
 
 // ── List claimable tasks ─────────────────────────────────────────────────────
+//
+// Despite the URL, this endpoint doubles as the general task-search verb the
+// MCP `tasks_list` tool dispatches to. With no query parameters it preserves
+// the original behaviour (status=open, unclaimed, scoped to the actor's team
+// or an explicit projectId). Pass `status` or `claimedByAgentId` to broaden
+// the search across already-claimed/in-progress/done tasks.
+//
+// `verbose=false` (the default) returns a SUMMARY projection without the
+// long-form `description`, `comments`, `attachments`, or `artifacts`. The
+// untruncated description column dominates the byte budget of the full
+// `taskInclude`, and the MCP harness saves any tool result over its token
+// limit to a side file — defaulting to summary keeps the natural call shape
+// inside the agent's context window. Set `verbose=true` to opt into the full
+// response.
+
+const CLAIMABLE_VALID_STATUSES = ["open", "in_progress", "review", "done", "abandoned"] as const;
+const CLAIMABLE_VALID_PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
+
+const claimableSummarySelect = {
+  id: true,
+  projectId: true,
+  title: true,
+  status: true,
+  priority: true,
+  labels: true,
+  claimedByAgentId: true,
+  claimedByUserId: true,
+  reviewClaimedByAgentId: true,
+  reviewClaimedByUserId: true,
+  branchName: true,
+  prUrl: true,
+  prNumber: true,
+  dueAt: true,
+  createdAt: true,
+  updatedAt: true,
+  project: { select: { id: true, name: true, slug: true } },
+} as const;
+
+function parseCsvParam(raw: string | undefined): string[] | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const items = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  return items.length > 0 ? items : undefined;
+}
 
 taskRouter.get("/tasks/claimable", async (c) => {
   const actor = c.get("actor") as Actor;
   const projectId = c.req.query("projectId");
   const teamIdQuery = c.req.query("teamId");
   const limitRaw = c.req.query("limit");
+  const verboseRaw = c.req.query("verbose");
+  const statusRaw = c.req.query("status");
+  const priorityRaw = c.req.query("priority");
+  const labelsRaw = c.req.query("labels");
+  const claimedByAgentIdRaw = c.req.query("claimedByAgentId");
 
-  const parsedLimit = limitRaw ? Number.parseInt(limitRaw, 10) : 50;
+  const parsedLimit = limitRaw ? Number.parseInt(limitRaw, 10) : 25;
   const limit =
-    Number.isFinite(parsedLimit) && parsedLimit >= 1 && parsedLimit <= 200 ? parsedLimit : 50;
+    Number.isFinite(parsedLimit) && parsedLimit >= 1 && parsedLimit <= 200 ? parsedLimit : 25;
 
-  const where: {
-    status: string;
-    claimedByUserId: null;
-    claimedByAgentId: null;
-    projectId?: string;
-    project?: { teamId: string };
-  } = {
-    status: "open", // TODO: use terminalStates across team workflows — misses coding-agent "backlog" tasks
+  const verbose = verboseRaw === "true" || verboseRaw === "1";
 
-    claimedByUserId: null,
-    claimedByAgentId: null,
-  };
+  const statusList = parseCsvParam(statusRaw);
+  if (statusList) {
+    for (const s of statusList) {
+      if (!(CLAIMABLE_VALID_STATUSES as readonly string[]).includes(s)) {
+        return c.json(
+          {
+            error: "bad_request",
+            message: `invalid status: ${s}; must be one of ${CLAIMABLE_VALID_STATUSES.join(", ")}`,
+          },
+          400,
+        );
+      }
+    }
+  }
+
+  const priorityList = parseCsvParam(priorityRaw);
+  if (priorityList) {
+    for (const p of priorityList) {
+      if (!(CLAIMABLE_VALID_PRIORITIES as readonly string[]).includes(p)) {
+        return c.json(
+          {
+            error: "bad_request",
+            message: `invalid priority: ${p}; must be one of ${CLAIMABLE_VALID_PRIORITIES.join(", ")}`,
+          },
+          400,
+        );
+      }
+    }
+  }
+
+  const labelsList = parseCsvParam(labelsRaw);
+
+  let claimedByAgentId: string | undefined;
+  if (claimedByAgentIdRaw === "me") {
+    if (actor.type !== "agent") {
+      return c.json(
+        {
+          error: "bad_request",
+          message: 'claimedByAgentId="me" is only supported for agent actors',
+        },
+        400,
+      );
+    }
+    claimedByAgentId = actor.tokenId;
+  } else if (claimedByAgentIdRaw) {
+    claimedByAgentId = claimedByAgentIdRaw;
+  }
+
+  // The caller is doing an explicit search (rather than the legacy "what can
+  // I claim right now?" call) once they pass `status` or `claimedByAgentId`.
+  // In that mode we drop the implicit "status=open + null-claim" default so
+  // already-claimed and in-progress/review/done tasks are reachable.
+  const isExplicitSearch = statusList !== undefined || claimedByAgentIdRaw !== undefined;
+
+  const where: Prisma.TaskWhereInput = {};
+
+  if (isExplicitSearch) {
+    if (statusList) {
+      where.status = statusList.length === 1 ? statusList[0] : { in: statusList };
+    }
+    if (claimedByAgentId) {
+      where.claimedByAgentId = claimedByAgentId;
+    }
+  } else {
+    where.status = "open";
+    where.claimedByUserId = null;
+    where.claimedByAgentId = null;
+  }
+
+  if (priorityList) {
+    // Values are validated against CLAIMABLE_VALID_PRIORITIES above, so this
+    // narrow type cast is safe at runtime.
+    const priorities = priorityList as ("LOW" | "MEDIUM" | "HIGH" | "CRITICAL")[];
+    where.priority = priorities.length === 1 ? priorities[0] : { in: priorities };
+  }
+  if (labelsList) {
+    where.labels = { hasEvery: labelsList };
+  }
 
   if (projectId) {
     if (!(await hasProjectAccess(actor, projectId))) {
@@ -535,15 +651,22 @@ taskRouter.get("/tasks/claimable", async (c) => {
     where.project = { teamId: resolved.teamId };
   }
 
-  const tasks = await prisma.task.findMany({
-    where,
-    orderBy: { createdAt: "asc" },
-    take: limit,
-    include: {
-      ...taskInclude,
-      project: { select: { id: true, name: true, slug: true } },
-    },
-  });
+  const tasks = verbose
+    ? await prisma.task.findMany({
+        where,
+        orderBy: { createdAt: "asc" },
+        take: limit,
+        include: {
+          ...taskInclude,
+          project: { select: { id: true, name: true, slug: true } },
+        },
+      })
+    : await prisma.task.findMany({
+        where,
+        orderBy: { createdAt: "asc" },
+        take: limit,
+        select: claimableSummarySelect,
+      });
 
   return c.json({ tasks });
 });

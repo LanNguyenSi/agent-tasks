@@ -226,15 +226,54 @@ function buildServer(token: string): McpServer {
     "tasks_list",
     {
       description:
-        "List tasks that the authenticated actor may claim (status=open, not blocked, not already claimed). Supports an optional limit.",
+        "List tasks visible to the authenticated actor.\n\n" +
+        "Default behaviour (no filters): claimable tasks only — status=open, not yet claimed, scoped to the actor's team.\n\n" +
+        "Filters that broaden the search beyond claimable:\n" +
+        "  • status: one or more of open|in_progress|review|done|abandoned. When set, the implicit 'unclaimed' constraint is dropped so already-claimed tasks are reachable.\n" +
+        "  • claimedByAgentId: a UUID, or the magic value 'me' which resolves to the calling agent's tokenId. Drops the unclaimed constraint.\n" +
+        "  • priority: one or more of LOW|MEDIUM|HIGH|CRITICAL.\n" +
+        "  • labels: AND-match — only tasks carrying every listed label are returned.\n" +
+        "  • projectId: scope to a specific project (otherwise scoped to the actor's team).\n\n" +
+        "Response projection:\n" +
+        "  • verbose=false (the default): summary fields only — id, projectId, title, status, priority, labels, claim refs, branch/PR refs, timestamps, and a small project blob. The long-form description, comments, attachments, and artifacts are omitted because they dominate the byte budget and easily push the tool result past the harness's token cap. Use tasks_get for the full detail of a single task.\n" +
+        "  • verbose=true: the full task payload, equivalent to the legacy response shape.\n\n" +
+        "Default limit is 25 (max 200). Tasks are returned oldest-first by createdAt.",
       inputSchema: {
-        limit: z.number().int().positive().max(500).optional(),
+        limit: z.number().int().positive().max(200).optional(),
+        projectId: uuid().optional(),
+        status: z
+          .union([
+            z.enum(["open", "in_progress", "review", "done", "abandoned"]),
+            z.array(z.enum(["open", "in_progress", "review", "done", "abandoned"])).min(1),
+          ])
+          .optional(),
+        priority: z
+          .union([priorityEnum, z.array(priorityEnum).min(1)])
+          .optional(),
+        labels: z.array(z.string().min(1).max(100)).min(1).max(20).optional(),
+        claimedByAgentId: z
+          .union([uuid(), z.literal("me")])
+          .optional(),
+        verbose: z.boolean().optional(),
       },
     },
-    async ({ limit }) => {
+    async ({ limit, projectId, status, priority, labels, claimedByAgentId, verbose }) => {
       try {
-        const qs = limit !== undefined ? `?limit=${limit}` : "";
-        const r = await callSelf(`/api/tasks/claimable${qs}`, { method: "GET" }, token);
+        const params = new URLSearchParams();
+        if (limit !== undefined) params.set("limit", String(limit));
+        if (projectId) params.set("projectId", projectId);
+        if (status !== undefined) {
+          params.set("status", Array.isArray(status) ? status.join(",") : status);
+        }
+        if (priority !== undefined) {
+          params.set("priority", Array.isArray(priority) ? priority.join(",") : priority);
+        }
+        if (labels && labels.length > 0) params.set("labels", labels.join(","));
+        if (claimedByAgentId) params.set("claimedByAgentId", claimedByAgentId);
+        if (verbose) params.set("verbose", "true");
+        const qs = params.toString();
+        const path = qs.length > 0 ? `/api/tasks/claimable?${qs}` : `/api/tasks/claimable`;
+        const r = await callSelf(path, { method: "GET" }, token);
         return textResult(r);
       } catch (e) {
         return errorResult(e);
