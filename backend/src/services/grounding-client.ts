@@ -23,6 +23,11 @@ const requireFromHere = createRequire(import.meta.url);
 export interface GroundingStartInput {
   keyword: string;
   problem: string;
+  // Optional correlation context. Passed through to the warn log on
+  // wrapper failure so a consistently-broken wrapper in production
+  // produces actionable lines instead of an opaque "initSession failed".
+  taskId?: string;
+  projectSlug?: string;
 }
 
 export interface GroundingStartResult {
@@ -71,7 +76,12 @@ export class RealGroundingClient implements GroundingClient {
       }))
       .catch((err: unknown) => {
         logger.warn(
-          { err: err instanceof Error ? err.message : String(err) },
+          {
+            err: err instanceof Error ? err.message : String(err),
+            taskId: input.taskId,
+            projectSlug: input.projectSlug,
+            keyword: input.keyword,
+          },
           "grounding-wrapper initSession failed; falling back to advisory hint",
         );
         return null;

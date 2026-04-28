@@ -592,6 +592,7 @@ function reconstructSessionFromMetadata(
 // `groundingHint`. Any failure (client returns null, throws, etc.) collapses
 // to the Phase 1 advisory hint without blocking pickup.
 async function deriveDebugFlavor<T extends {
+  id: string;
   title: string;
   description: string | null;
   labels: string[] | null;
@@ -648,6 +649,8 @@ async function deriveDebugFlavor<T extends {
     const session = await client.start({
       keyword: task.project.slug,
       problem: task.title,
+      taskId: task.id,
+      projectSlug: task.project.slug,
     });
     if (session) {
       mergedMetadata.groundingSessionId = session.sessionId;

@@ -2226,6 +2226,8 @@ describe("debug-flavor detection on pickup + start", () => {
     expect(groundingClientMock.start).toHaveBeenCalledWith({
       keyword: "agent-tasks",
       problem: "fix login bug",
+      taskId: "task-1",
+      projectSlug: "agent-tasks",
     });
     expect(prismaMocks.taskUpdate).toHaveBeenCalledWith({
       where: { id: "task-1" },
