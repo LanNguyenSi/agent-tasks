@@ -162,16 +162,6 @@ export default function WorkflowEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, saving, validation.errors.length, validation.warnings.length]);
 
-  /** True only when a state in the draft has a different name than the
-   * same row in the canonical workflow, or the row count changed. The
-   * rename warning banner only fires in that case — not for every
-   * gate-toggle or label-edit dirty state. */
-  const hasRename = useMemo(() => {
-    if (!draft || !workflow) return false;
-    if (draft.states.length !== workflow.definition.states.length) return true;
-    return draft.states.some((s, i) => workflow.definition.states[i]?.name !== s.name);
-  }, [draft, workflow]);
-
   // ── Draft mutation helpers ─────────────────────────────────────────────────
 
   /** Apply a mutation to the draft. Clears the draft back to null if the
@@ -584,16 +574,6 @@ export default function WorkflowEditorPage() {
         {error && (
           <AlertBanner tone="danger" title="Error">
             {error}
-          </AlertBanner>
-        )}
-
-        {canEdit && hasRename && (
-          <AlertBanner tone="info" title="Rename warning">
-            You renamed or removed at least one state. Existing tasks currently in the
-            old state will have a status string that no longer matches any workflow
-            state. Transition attempts on those tasks will fail until an admin
-            force-transitions or the task is manually re-labeled. Migration is not
-            automatic.
           </AlertBanner>
         )}
 
