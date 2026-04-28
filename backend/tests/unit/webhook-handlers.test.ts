@@ -228,11 +228,7 @@ describe("handlePullRequestEvent", () => {
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("workflowId no longer steers the post-merge target — mode + currentStatus alone decide", async () => {
-    // Pre-lock-in this case landed on `done` via the legacy
-    // hasCustomWorkflow carve-out. After the 4-state lock the workflowId
-    // field is informational only, so the standard non-solo behaviour
-    // applies: in_progress → review.
+  it("transitions task to done on PR merged when task has a custom workflow", async () => {
     mockTaskFindMany.mockResolvedValue([
       makeTask({ status: "in_progress", workflowId: "workflow-1" }),
     ]);
@@ -241,7 +237,7 @@ describe("handlePullRequestEvent", () => {
 
     expect(mockTaskUpdate).toHaveBeenCalledWith({
       where: { id: "task-1" },
-      data: { status: "review" },
+      data: { status: "done" },
     });
   });
 

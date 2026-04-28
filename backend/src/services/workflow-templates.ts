@@ -112,16 +112,16 @@ const codingAgentDefinition: WorkflowDefinitionShape = {
 };
 
 // ── Template registry ───────────────────────────────────────────────────────
-//
-// The "AI Coding Agent Pipeline" template (backlog → spec → plan →
-// implement → test → review → done) was retired when agent-tasks locked
-// to the fixed 4-state model. Its non-default state names would no
-// longer round-trip through the TaskStatus enum, and applying it would
-// fail at the workflowRouter deprecation gate anyway. The definition is
-// kept above for forensic reference but no longer registered.
-void codingAgentDefinition;
 
-export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [] as const;
+export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
+  {
+    slug: "coding-agent",
+    name: "AI Coding Agent Pipeline",
+    description:
+      "7-stage pipeline: backlog → spec → plan → implement → test → review → done. Designed for AI coding agents with gates on branch and PR presence.",
+    definition: codingAgentDefinition,
+  },
+] as const;
 
 export function findWorkflowTemplate(slug: string): WorkflowTemplate | undefined {
   return WORKFLOW_TEMPLATES.find((t) => t.slug === slug);

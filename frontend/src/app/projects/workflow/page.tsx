@@ -469,13 +469,7 @@ export default function WorkflowEditorPage() {
   if (!workflow || !project || !activeDef) return null;
 
   const isDefault = workflow.source === "default";
-  // Workflow editing was removed when agent-tasks locked to the fixed
-  // 4-state model (open / in_progress / review / done). The page stays
-  // mounted so users can still review the effective workflow, but every
-  // edit affordance is hidden — `canEdit` is hard-wired to false and
-  // the backend's workflowRouter returns 410 on any write attempt.
-  const canEdit = false;
-  void isAdmin;
+  const canEdit = !isDefault && isAdmin;
 
   return (
     <>
@@ -513,15 +507,52 @@ export default function WorkflowEditorPage() {
           </p>
         </div>
 
-        <AlertBanner tone="info" title="Workflow editing has been removed">
-          <span>
-            agent-tasks now uses a fixed 4-state model:{" "}
-            <code>open</code> → <code>in_progress</code> → <code>review</code> → <code>done</code>.
-            Custom state names, renames, and add/remove are no longer supported.
-            Transitions, gates, and role requirements stay configurable per project on the
-            transition rows below — only the state vocabulary is locked. The view below is
-            read-only.
-          </span>
+        <AlertBanner
+          tone={isDefault ? "info" : "success"}
+          title={
+            isDefault
+              ? "Using system default"
+              : isDirty
+                ? "Custom workflow — unsaved changes"
+                : "Custom workflow"
+          }
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+            <span>
+              {isDefault
+                ? "This project inherits the built-in default workflow. It applies to every project that hasn't defined its own."
+                : canEdit
+                  ? "Edit states and gates below, then click Save. Use Reset to drop the custom workflow entirely."
+                  : "This project has its own workflow. Only team admins can edit."}
+            </span>
+            {isDefault && isAdmin && (
+              <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
+                <Button type="button" onClick={() => void handleCustomize()} disabled={customizing || applyingTemplate} loading={customizing}>
+                  Customize this workflow
+                </Button>
+                {templates.length > 0 && (
+                  <>
+                    <span style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>or use a template:</span>
+                    {templates.map((tpl) => (
+                      <Button
+                        key={tpl.slug}
+                        type="button"
+                        onClick={() => void handleApplyTemplate(tpl.slug)}
+                        disabled={customizing || applyingTemplate}
+                        loading={applyingTemplate}
+                        title={tpl.description}
+                      >
+                        {tpl.name}
+                      </Button>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+            {isDefault && !isAdmin && (
+              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>Only team admins can customize.</span>
+            )}
+          </div>
         </AlertBanner>
 
         {savedBanner && (

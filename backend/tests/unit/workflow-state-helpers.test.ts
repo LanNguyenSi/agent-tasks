@@ -1,14 +1,6 @@
 /**
- * Tests for the workflow state semantic helpers.
- *
- * Two definitions are exercised:
- *   - the built-in default (open / in_progress / review / done), which
- *     after the 4-state lock is the only shape the engine actually
- *     receives in production.
- *   - a synthetic non-default shape to keep the helpers honest as
- *     general-purpose utilities. The phase-2 migration may want to
- *     reuse them against legacy Workflow rows so the helpers must
- *     stay name-agnostic.
+ * Tests for the workflow state semantic helpers added to support
+ * custom workflows in v2 MCP verb handlers.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -25,39 +17,10 @@ import {
   expectedFinishStateFromDefinition,
   type WorkflowDefinitionShape,
 } from "../../src/services/default-workflow.js";
+import { findWorkflowTemplate } from "../../src/services/workflow-templates.js";
 
 const defaultDef = defaultWorkflowDefinition();
-
-// Synthetic non-default definition mirroring the retired AI Coding
-// Agent template (backlog → spec → plan → implement → test → review →
-// done). Kept inline so this file does not depend on
-// workflow-templates.ts (the registry is intentionally empty after the
-// 4-state lock).
-const codingAgentDef: WorkflowDefinitionShape = {
-  states: [
-    { name: "backlog", label: "Backlog", terminal: false },
-    { name: "spec", label: "Spec", terminal: false },
-    { name: "plan", label: "Plan", terminal: false },
-    { name: "implement", label: "Implement", terminal: false },
-    { name: "test", label: "Test", terminal: false },
-    { name: "review", label: "Review", terminal: false },
-    { name: "done", label: "Done", terminal: true },
-  ],
-  transitions: [
-    { from: "backlog", to: "spec", requiredRole: "any" },
-    { from: "spec", to: "plan", requiredRole: "any" },
-    { from: "spec", to: "backlog", requiredRole: "any" },
-    { from: "plan", to: "implement", requiredRole: "any" },
-    { from: "plan", to: "spec", requiredRole: "any" },
-    { from: "implement", to: "test", requiredRole: "any" },
-    { from: "implement", to: "plan", requiredRole: "any" },
-    { from: "test", to: "review", requiredRole: "any" },
-    { from: "test", to: "implement", requiredRole: "any" },
-    { from: "review", to: "done", requiredRole: "any" },
-    { from: "review", to: "implement", requiredRole: "any" },
-  ],
-  initialState: "backlog",
-};
+const codingAgentDef = findWorkflowTemplate("coding-agent")!.definition;
 
 // ── isInitialState ──────────────────────────────────────────────────────────
 

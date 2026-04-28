@@ -209,22 +209,22 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
  * approval still required).
  *
  * - AUTONOMOUS → always target `done` (preserves ADR-0010 auto-merge semantics).
- * - AWAITS_CONFIRMATION / REQUIRES_DISTINCT_REVIEWER:
+ * - Custom workflows (task.workflowId set) → legacy `done` until
+ *   custom-workflow webhook policy lands, since we can't safely pick a
+ *   target state machine we don't know.
+ * - AWAITS_CONFIRMATION / REQUIRES_DISTINCT_REVIEWER, default workflow:
  *     - `review` or `done` → no transition (explicit approval required).
  *     - anything else (open/in_progress) → `review` to hand off for review.
- *
- * The legacy `hasCustomWorkflow → "done"` branch was removed when the
- * 4-state model was locked in: there is no longer a per-project workflow
- * graph that could place an arbitrary state name where `"review"` /
- * `"done"` belong, so the per-mode logic above is the only logic.
  */
 export function pickMergeTargetStatus(input: {
   project: GovernanceFlagsLike;
+  hasCustomWorkflow: boolean;
   currentStatus: string;
-}): "review" | "done" | null {
-  const { project, currentStatus } = input;
+}): string | null {
+  const { project, hasCustomWorkflow, currentStatus } = input;
   if (currentStatus === "done") return null;
   if (resolveGovernanceMode(project) === GovernanceMode.AUTONOMOUS) return "done";
+  if (hasCustomWorkflow) return "done";
   if (currentStatus === "review") return null;
   return "review";
 }
@@ -292,6 +292,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
         for (const task of tasks) {
           const toStatus = pickMergeTargetStatus({
             project,
+            hasCustomWorkflow: task.workflowId !== null,
             currentStatus: task.status,
           });
 
