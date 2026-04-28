@@ -44,6 +44,12 @@ const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, s
   requireDistinctReviewer: z.boolean().optional(),
   /** @deprecated prefer `governanceMode`. Kept for backward compatibility. */
   soloMode: z.boolean().optional(),
+  // Phase 3 of the grounding-hint integration. Default false because the
+  // evidence ledger lives on a single host's filesystem; in multi-host
+  // deployments the backend cannot read what the agent wrote. Power users
+  // in single-host setups can flip it on per-project.
+  // See docs/adr/0002-grounding-finish-gate.md.
+  requireGroundingForDebug: z.boolean().optional(),
 });
 
 async function assertMembership(actor: Actor, teamId: string): Promise<boolean> {
@@ -303,6 +309,15 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
     governanceChange.governanceMode = {
       from: project.governanceMode,
       to: body.governanceMode,
+    };
+  }
+  if (
+    body.requireGroundingForDebug !== undefined &&
+    body.requireGroundingForDebug !== project.requireGroundingForDebug
+  ) {
+    governanceChange.requireGroundingForDebug = {
+      from: project.requireGroundingForDebug,
+      to: body.requireGroundingForDebug,
     };
   }
   if (Object.keys(governanceChange).length > 0) {

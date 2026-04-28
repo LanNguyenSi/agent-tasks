@@ -145,3 +145,23 @@ export function readMetadata(value: unknown): TaskMetadata {
   }
   return {};
 }
+
+// Phase 3: read the grounding session's current phase from the persisted
+// `groundingSessionState` blob. Pure function on top of the metadata we
+// already store: deliberately NOT a method on GroundingClient because that
+// would require reading grounding-mcp's session-store from the backend,
+// which is unworkable in a multi-host deployment where the wrapper runs
+// on the agent's machine. The session JSON we persisted at start time is good
+// enough for this gate; the agent advances the phase in-process and a
+// follow-up `task_advance_phase` (or similar) would push the new state back
+// to the backend.
+export function getSessionPhase(metadata: TaskMetadata): { currentPhase: string | null } {
+  const state = metadata.groundingSessionState;
+  if (state && typeof state === "object" && !Array.isArray(state)) {
+    const phase = (state as Record<string, unknown>).current_phase;
+    if (typeof phase === "string" && phase.length > 0) {
+      return { currentPhase: phase };
+    }
+  }
+  return { currentPhase: null };
+}
