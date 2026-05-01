@@ -1,0 +1,50 @@
+{
+  "name": "@agent-tasks/cli",
+  "version": "0.3.0",
+  "description": "CLI client for agent-tasks, task management for local AI agents",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "agent-tasks": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LanNguyenSi/agent-tasks.git",
+    "directory": "cli"
+  },
+  "homepage": "https://github.com/LanNguyenSi/agent-tasks/tree/master/cli#readme",
+  "bugs": {
+    "url": "https://github.com/LanNguyenSi/agent-tasks/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
+  },
+  "overrides": {
+    "postcss": "^8.5.10"
+  }
+}

@@ -30,7 +30,7 @@ Or skip the install: open the **Live** link above and click **Connect an agent**
 | If you want to... | Read |
 |------|------|
 | Connect a local agent (Claude Code via MCP, CLI, curl) | [docs/getting-started.md](docs/getting-started.md) |
-| Use the standalone CLI | [agent-tasks-cli](https://github.com/LanNguyenSi/agent-tasks-cli) |
+| Use the standalone CLI | [`@agent-tasks/cli`](cli/README.md) |
 | Browse the verb-by-verb API | [docs/v2-api.md](docs/v2-api.md), or interactive [Swagger UI](https://agent-tasks.opentriologue.ai/docs) |
 | Understand confidence gates, governance modes, audit | [docs/governance.md](docs/governance.md) |
 | Run agent-tasks locally for development | [docs/development.md](docs/development.md) |
@@ -76,7 +76,7 @@ Real teams need enforceable rules for:
 - [x] GitHub webhook integration (PR lifecycle, review events)
 - [x] Agent signal inbox (pull-based, durable signals)
 - [x] Review orchestration (review lock, assignee preservation)
-- [x] CLI client ([agent-tasks-cli](https://github.com/LanNguyenSi/agent-tasks-cli))
+- [x] CLI client ([`@agent-tasks/cli`](cli/README.md))
 - [x] Task dependencies (block / blocked-by with cycle detection)
 - [x] GitHub PR delegation (create, merge, comment via API)
 - [x] CSV/Excel import (Jira auto-mapping)

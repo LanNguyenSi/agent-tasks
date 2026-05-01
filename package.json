@@ -1,15 +1,16 @@
 {
   "name": "agent-tasks",
   "private": true,
-  "workspaces": ["backend", "frontend", "mcp-server", "mcp-bridge"],
+  "workspaces": ["backend", "frontend", "mcp-server", "mcp-bridge", "cli"],
   "scripts": {
     "dev:backend": "npm run dev --workspace=backend",
     "dev:frontend": "npm run dev --workspace=frontend",
     "dev:mcp": "npm run dev --workspace=mcp-server",
     "dev:bridge": "npm run dev --workspace=mcp-bridge",
-    "build": "npm run build --workspace=backend && npm run build --workspace=frontend && npm run build --workspace=mcp-server && npm run build --workspace=mcp-bridge",
-    "test": "npm run test --workspace=backend",
-    "typecheck": "npm run typecheck --workspace=backend && npm run typecheck --workspace=frontend && npm run typecheck --workspace=mcp-server && npm run typecheck --workspace=mcp-bridge",
+    "dev:cli": "npm run dev --workspace=@agent-tasks/cli",
+    "build": "npm run build --workspace=backend && npm run build --workspace=frontend && npm run build --workspace=mcp-server && npm run build --workspace=mcp-bridge && npm run build --workspace=@agent-tasks/cli",
+    "test": "npm run test --workspace=backend && npm run test --workspace=@agent-tasks/cli",
+    "typecheck": "npm run typecheck --workspace=backend && npm run typecheck --workspace=frontend && npm run typecheck --workspace=mcp-server && npm run typecheck --workspace=mcp-bridge && npm run typecheck --workspace=@agent-tasks/cli",
     "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend"
   },
   "engines": {
