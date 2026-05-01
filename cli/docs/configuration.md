@@ -1,6 +1,6 @@
 # Configuration
 
-agent-tasks-cli reads its endpoint and token from environment variables, with a JSON config file as fallback. Priority: env vars > config file > error.
+`@agent-tasks/cli` reads its endpoint and token from environment variables, with a JSON config file as fallback. Priority: env vars > config file > error.
 
 ## Environment variables
 

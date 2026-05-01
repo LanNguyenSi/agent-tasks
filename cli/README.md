@@ -85,14 +85,16 @@ agent-tasks tasks list --json | jq -r '.[] | .id'
 
 ## Development
 
+The CLI lives in the [agent-tasks](https://github.com/LanNguyenSi/agent-tasks) monorepo as the `cli/` workspace, alongside `backend`, `frontend`, `mcp-server`, and `mcp-bridge`.
+
 ```bash
-git clone https://github.com/LanNguyenSi/agent-tasks-cli.git
-cd agent-tasks-cli
-npm install
-npm run build           # TypeScript compilation
-npm test                # vitest run
-npm run typecheck       # tsc --noEmit
-npm run dev -- pickup   # run from source without building
+git clone https://github.com/LanNguyenSi/agent-tasks.git
+cd agent-tasks
+npm install                                           # installs all workspaces
+npm run build --workspace=@agent-tasks/cli            # TypeScript compilation
+npm test --workspace=@agent-tasks/cli                 # vitest run
+npm run typecheck --workspace=@agent-tasks/cli        # tsc --noEmit
+npm run dev --workspace=@agent-tasks/cli -- pickup    # run from source without building
 ```
 
 ## License
