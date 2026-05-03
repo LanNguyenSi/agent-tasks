@@ -63,6 +63,10 @@ vi.mock("../../src/services/github-delegation.js", () => ({
   }),
 }));
 
+vi.mock("../../src/services/team-access.js", () => ({
+  hasProjectAccess: vi.fn().mockResolvedValue(true),
+}));
+
 const performPrMergeMock = vi.hoisted(() => vi.fn());
 vi.mock("../../src/services/github-merge.js", () => ({
   performPrMerge: performPrMergeMock,
@@ -117,6 +121,7 @@ const CREATE_ACTOR: Actor = {
   tokenId: "agent-1",
   teamId: "team-1",
   scopes: ["tasks:update", "github:pr_create"],
+  userId: "agent-owner",
 };
 
 const MERGE_ACTOR: Actor = {
@@ -124,6 +129,7 @@ const MERGE_ACTOR: Actor = {
   tokenId: "agent-1",
   teamId: "team-1",
   scopes: ["tasks:transition", "github:pr_merge"],
+  userId: "agent-owner",
 };
 
 const TASK_ID = "00000000-0000-0000-0000-000000000001";

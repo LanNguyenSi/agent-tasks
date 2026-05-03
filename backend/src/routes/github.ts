@@ -5,6 +5,7 @@ import type { AppVariables } from "../types/hono.js";
 import type { Actor } from "../types/auth.js";
 import { prisma } from "../lib/prisma.js";
 import { findDelegationUser } from "../services/github-delegation.js";
+import { hasProjectAccess } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
 import { acknowledgeSignalsForTask } from "../services/signal.js";
 import { emitSelfMergeNoticeIfApplicable } from "../services/self-merge-notice.js";
@@ -61,6 +62,15 @@ githubRouter.post(
 
     if (!task) {
       return c.json({ error: "not_found", message: "Task not found" }, 404);
+    }
+
+    // Project-access gate: agent's team must own the project, OR the
+    // token-owner must hold a per-project grant. Closes the cross-team
+    // path that delegation alone never blocked: pre-Task-1 a token in
+    // team A could trigger PR ops on team B's tasks if any team-B member
+    // had consented. Now the agent must have legitimate project access.
+    if (!(await hasProjectAccess(actor, task.project.id))) {
+      return c.json({ error: "forbidden", message: "Access denied to this project" }, 403);
     }
 
     // 2. Find a user with GitHub connected + allowAgentPrCreate consent.
@@ -235,6 +245,12 @@ githubRouter.post(
 
     if (!task) {
       return c.json({ error: "not_found", message: "Task not found" }, 404);
+    }
+
+    // Project-access gate: same defense as in PR-create. Agent's team must
+    // own the project OR the token-owner holds a per-project grant.
+    if (!(await hasProjectAccess(actor, task.project.id))) {
+      return c.json({ error: "forbidden", message: "Access denied to this project" }, 403);
     }
 
     // Task-status gate. Merging drives the task to `done`, so the same
@@ -458,6 +474,11 @@ githubRouter.post(
 
     if (!task) {
       return c.json({ error: "not_found", message: "Task not found" }, 404);
+    }
+
+    // Project-access gate: same defense as in PR-create / merge.
+    if (!(await hasProjectAccess(actor, task.project.id))) {
+      return c.json({ error: "forbidden", message: "Access denied to this project" }, 403);
     }
 
     // 2. Find a user with comment consent. Prefer the token owner so the
