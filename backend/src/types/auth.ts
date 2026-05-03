@@ -12,6 +12,7 @@ export interface AgentActor {
   tokenId: string;
   teamId: string;
   scopes: string[];
+  userId: string;
 }
 
 export type Actor = HumanActor | AgentActor;

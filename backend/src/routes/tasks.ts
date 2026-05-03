@@ -1406,7 +1406,9 @@ async function evaluateV2TransitionGates(task: {
   const needsGithub =
     resolvedRequires?.some((r) => GITHUB_BACKED_RULES.has(r as never)) ?? false;
   if (needsGithub && task.project.githubRepo) {
-    const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate");
+    const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate", {
+      preferUserId: actor.userId,
+    });
     githubToken = delegate?.githubAccessToken ?? null;
   }
 
@@ -1627,7 +1629,9 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           : false;
 
       if (workflowHadPrMerged) {
-        const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge");
+        const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge", {
+          preferUserId: actor.userId,
+        });
         const postCheck = await evaluateTransitionRules(["prMerged"], {
           branchName: task.branchName,
           prUrl: task.prUrl,
@@ -1761,7 +1765,9 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     if (task.status === "in_progress" && task.autoMergeSha) {
       // The merge succeeded in a prior call but the transition didn't complete.
       // Verify via prMerged rule, then proceed to transition only.
-      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge");
+      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge", {
+        preferUserId: actor.userId,
+      });
       const postCheck = await evaluateTransitionRules(["prMerged"], {
         branchName: task.branchName,
         prUrl: task.prUrl,
@@ -2023,7 +2029,9 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         : false;
 
     if (workflowHadPrMerged) {
-      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge");
+      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge", {
+        preferUserId: actor.userId,
+      });
       const postCheck = await evaluateTransitionRules(["prMerged"], {
         branchName: task.branchName,
         prUrl: prUrl ?? task.prUrl,
@@ -2258,7 +2266,9 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
   if (task.project.githubRepo && task.project.teamId) {
     const projectRepo = parseOwnerRepo(task.project.githubRepo);
     if (projectRepo) {
-      const delegationUser = await findDelegationUser(task.project.teamId, "allowAgentPrCreate");
+      const delegationUser = await findDelegationUser(task.project.teamId, "allowAgentPrCreate", {
+        preferUserId: actor.userId,
+      });
       if (delegationUser) {
         try {
           const ghRes = await fetch(
@@ -3625,7 +3635,9 @@ taskRouter.post(
         GITHUB_BACKED_RULES.has(r as never),
       ) ?? false;
     if (needsGithub && task.project.githubRepo) {
-      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate");
+      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate", {
+        preferUserId: actor.userId,
+      });
       githubToken = delegate?.githubAccessToken ?? null;
     }
 

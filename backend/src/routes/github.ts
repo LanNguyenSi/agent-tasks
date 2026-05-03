@@ -63,8 +63,11 @@ githubRouter.post(
       return c.json({ error: "not_found", message: "Task not found" }, 404);
     }
 
-    // 2. Find a user with GitHub connected + allowAgentPrCreate consent
-    const delegationUser = await findDelegationUser(task.project.teamId, "allowAgentPrCreate");
+    // 2. Find a user with GitHub connected + allowAgentPrCreate consent.
+    //    Prefer the token owner so the PR attributes to the agent's user.
+    const delegationUser = await findDelegationUser(task.project.teamId, "allowAgentPrCreate", {
+      preferUserId: actor.userId,
+    });
 
     if (!delegationUser) {
       return c.json(
@@ -457,8 +460,11 @@ githubRouter.post(
       return c.json({ error: "not_found", message: "Task not found" }, 404);
     }
 
-    // 2. Find a user with comment consent
-    const delegationUser = await findDelegationUser(task.project.teamId, "allowAgentPrComment");
+    // 2. Find a user with comment consent. Prefer the token owner so the
+    //    comment attributes to the agent's user.
+    const delegationUser = await findDelegationUser(task.project.teamId, "allowAgentPrComment", {
+      preferUserId: actor.userId,
+    });
 
     if (!delegationUser) {
       return c.json(
