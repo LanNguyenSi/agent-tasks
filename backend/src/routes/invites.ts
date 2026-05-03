@@ -456,14 +456,21 @@ sharesAdminRouter.get("/project-shares", async (c) => {
     return c.json({ projects: [] });
   }
 
+  const now = new Date();
   const projects = await prisma.project.findMany({
     where: {
       teamId: { in: teamIds },
-      // Only include projects that actually carry sharing state.
-      // Empty-share projects dilute the dashboard.
+      // Only surface projects with active sharing state. The
+      // projectInvites arm is narrowed to pending invites so a project
+      // whose only invites are consumed or expired does NOT clutter the
+      // dashboard with empty rows.
       OR: [
         { projectMembers: { some: {} } },
-        { projectInvites: { some: {} } },
+        {
+          projectInvites: {
+            some: { consumedAt: null, expiresAt: { gt: now } },
+          },
+        },
       ],
     },
     orderBy: { name: "asc" },
@@ -484,7 +491,7 @@ sharesAdminRouter.get("/project-shares", async (c) => {
         orderBy: { createdAt: "asc" },
       },
       projectInvites: {
-        where: { consumedAt: null, expiresAt: { gt: new Date() } },
+        where: { consumedAt: null, expiresAt: { gt: now } },
         select: { id: true },
       },
     },

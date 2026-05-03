@@ -582,4 +582,44 @@ describe("GET /admin/project-shares", () => {
     expect(res.status).toBe(403);
     expect(prismaMocks.teamMemberFindMany).not.toHaveBeenCalled();
   });
+
+  it("includes projects with only pending invites and no members yet", async () => {
+    prismaMocks.teamMemberFindMany.mockResolvedValue([{ teamId: "team-A" }]);
+    prismaMocks.projectFindMany.mockResolvedValue([
+      {
+        id: "p-pending-only",
+        name: "Just Invited",
+        slug: "just-invited",
+        teamId: "team-A",
+        team: { name: "Acme", slug: "acme" },
+        projectMembers: [],
+        projectInvites: [{ id: "inv-1" }],
+      },
+    ]);
+
+    const res = await makeSharesAdminApp(ADMIN).request("/project-shares");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      projects: Array<{ projectId: string; members: unknown[]; pendingInviteCount: number }>;
+    };
+    expect(body.projects[0]?.projectId).toBe("p-pending-only");
+    expect(body.projects[0]?.members).toEqual([]);
+    expect(body.projects[0]?.pendingInviteCount).toBe(1);
+
+    // Assert the OR shape narrows projectInvites to pending only, so a
+    // project with only consumed/expired invites stays out of the result.
+    const where = (prismaMocks.projectFindMany.mock.calls[0]?.[0] as {
+      where: {
+        OR: Array<
+          | { projectMembers: unknown }
+          | { projectInvites: { some: { consumedAt: null; expiresAt: { gt: Date } } } }
+        >;
+      };
+    }).where;
+    const inviteArm = where.OR.find(
+      (clause) => "projectInvites" in clause,
+    ) as { projectInvites: { some: { consumedAt: null; expiresAt: { gt: Date } } } };
+    expect(inviteArm.projectInvites.some.consumedAt).toBeNull();
+    expect(inviteArm.projectInvites.some.expiresAt.gt).toBeInstanceOf(Date);
+  });
 });
