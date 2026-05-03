@@ -28,8 +28,15 @@ vi.mock("../../src/lib/prisma.js", () => ({
   },
 }));
 
+const teamAccessMocks = vi.hoisted(() => ({
+  hasProjectAccess: vi.fn(),
+  getProjectMembership: vi.fn(),
+}));
+
 vi.mock("../../src/services/team-access.js", () => ({
   isProjectAdmin: vi.fn().mockResolvedValue(true),
+  hasProjectAccess: teamAccessMocks.hasProjectAccess,
+  getProjectMembership: teamAccessMocks.getProjectMembership,
   resolveTeamId: vi.fn(),
   resolveTeamIdErrorBody: vi.fn(),
 }));
@@ -84,6 +91,13 @@ beforeEach(() => {
     id: "tm-1",
     teamId: "team-1",
     userId: "u1",
+    role: "HUMAN_MEMBER",
+  });
+  // Default: caller has team-source access. Individual tests override to
+  // simulate not-a-member by returning false / null.
+  teamAccessMocks.hasProjectAccess.mockResolvedValue(true);
+  teamAccessMocks.getProjectMembership.mockResolvedValue({
+    source: "team",
     role: "HUMAN_MEMBER",
   });
 });
@@ -198,6 +212,7 @@ describe("GET /api/projects/:id/effective-gates", () => {
     prismaMocks.teamMemberFindUnique.mockResolvedValue(
       null,
     );
+    teamAccessMocks.hasProjectAccess.mockResolvedValue(false);
 
     const res = await makeApp(HUMAN_ACTOR).request(
       `/projects/${PROJECT_ID}/effective-gates`,
@@ -222,6 +237,7 @@ describe("GET /api/projects/:id/effective-gates", () => {
       tokenId: "agent-1",
       teamId: "team-1",
       scopes: [],
+      userId: "agent-owner",
     };
     const res = await makeApp(agent).request(
       `/projects/${PROJECT_ID}/effective-gates`,
@@ -244,7 +260,9 @@ describe("GET /api/projects/:id/effective-gates", () => {
       tokenId: "agent-1",
       teamId: "team-other",
       scopes: [],
+      userId: "agent-owner-other",
     };
+    teamAccessMocks.hasProjectAccess.mockResolvedValue(false);
     const res = await makeApp(wrongTeamAgent).request(
       `/projects/${PROJECT_ID}/effective-gates`,
     );

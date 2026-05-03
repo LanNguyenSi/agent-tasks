@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { discoverSso, getCurrentUser, getTeams, login, register, type SsoDiscoverResult } from "../../lib/api";
 import AlertBanner from "../../components/ui/AlertBanner";
@@ -11,8 +11,48 @@ import Card from "../../components/ui/Card";
 
 type Mode = "login" | "register";
 
+/**
+ * Validate a `?redirect=` parameter coming back from a deep link
+ * (e.g. /invite/[token]). Allowlist same-origin paths under known
+ * features so an attacker can't craft an auth URL that bounces an
+ * authenticated session to evil.example. The current allowlist
+ * covers only invite landings; extend deliberately when new feature
+ * deep-links need it.
+ */
+function safeRedirect(raw: string | null): string | null {
+  if (!raw) return null;
+  if (!raw.startsWith("/")) return null;
+  if (raw.startsWith("//")) return null;
+  if (raw.startsWith("/invite/")) return raw;
+  return null;
+}
+
+/**
+ * Wraps the inner client component in a Suspense boundary because
+ * `useSearchParams()` opts the page into client-side rendering and
+ * Next.js 15 refuses to statically prerender a route that hits the
+ * search-params hook without a fallback. Without this the production
+ * build fails with "useSearchParams() should be wrapped in a suspense
+ * boundary at page /auth".
+ */
 export default function AuthPage() {
+  return (
+    <Suspense
+      fallback={
+        <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <p style={{ color: "var(--muted)" }}>Loading…</p>
+        </main>
+      }
+    >
+      <AuthPageInner />
+    </Suspense>
+  );
+}
+
+function AuthPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTarget = safeRedirect(searchParams.get("redirect"));
   const [checkingSession, setCheckingSession] = useState(true);
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
@@ -46,13 +86,17 @@ export default function AuthPage() {
     void (async () => {
       const me = await getCurrentUser();
       if (me) {
+        if (redirectTarget) {
+          router.replace(redirectTarget);
+          return;
+        }
         const teams = await getTeams();
         router.replace(teams.length === 0 ? "/onboarding" : "/teams");
         return;
       }
       setCheckingSession(false);
     })();
-  }, [router]);
+  }, [router, redirectTarget]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -63,6 +107,10 @@ export default function AuthPage() {
         await register({ email, password, name: name || undefined });
       } else {
         await login({ email, password });
+      }
+      if (redirectTarget) {
+        router.replace(redirectTarget);
+        return;
       }
       const teams = await getTeams();
       router.replace(teams.length === 0 ? "/onboarding" : "/teams");

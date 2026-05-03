@@ -58,6 +58,7 @@ export async function authMiddleware(c: Context<{ Variables: AppVariables }>, ne
         tokenId: token.id,
         teamId: token.teamId,
         scopes: token.scopes,
+        userId: token.createdById,
       };
       setActor(c, actor);
       return next();

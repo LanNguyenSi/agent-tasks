@@ -63,6 +63,11 @@ vi.mock("../../src/services/github-delegation.js", () => ({
   }),
 }));
 
+const hasProjectAccessMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
+vi.mock("../../src/services/team-access.js", () => ({
+  hasProjectAccess: hasProjectAccessMock,
+}));
+
 const performPrMergeMock = vi.hoisted(() => vi.fn());
 vi.mock("../../src/services/github-merge.js", () => ({
   performPrMerge: performPrMergeMock,
@@ -117,6 +122,7 @@ const CREATE_ACTOR: Actor = {
   tokenId: "agent-1",
   teamId: "team-1",
   scopes: ["tasks:update", "github:pr_create"],
+  userId: "agent-owner",
 };
 
 const MERGE_ACTOR: Actor = {
@@ -124,6 +130,7 @@ const MERGE_ACTOR: Actor = {
   tokenId: "agent-1",
   teamId: "team-1",
   scopes: ["tasks:transition", "github:pr_merge"],
+  userId: "agent-owner",
 };
 
 const TASK_ID = "00000000-0000-0000-0000-000000000001";
@@ -194,6 +201,50 @@ beforeEach(() => {
     ok: true,
     sha: "deadbeef",
     alreadyMerged: false,
+  });
+  hasProjectAccessMock.mockResolvedValue(true);
+});
+
+describe("github-route project-access gate", () => {
+  it("rejects pull_requests_create with 403 when hasProjectAccess returns false", async () => {
+    hasProjectAccessMock.mockResolvedValueOnce(false);
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const res = await makeApp(CREATE_ACTOR).request("/pull-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskId: TASK_ID,
+        owner: "acme",
+        repo: "thing",
+        head: "feat/x",
+        title: "Test",
+        idempotencyKey: "k",
+      }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("rejects pull_requests_merge with 403 when hasProjectAccess returns false", async () => {
+    hasProjectAccessMock.mockResolvedValueOnce(false);
+
+    const res = await makeApp(MERGE_ACTOR).request("/pull-requests/42/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskId: TASK_ID,
+        owner: "acme",
+        repo: "thing",
+        merge_method: "squash",
+        idempotencyKey: "m",
+      }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(performPrMergeMock).not.toHaveBeenCalled();
   });
 });
 

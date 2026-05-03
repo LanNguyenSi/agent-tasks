@@ -52,7 +52,19 @@ export type AuditAction =
   // path when a debug-flavored task would have hit the gate but the project
   // is not opted in (`requireGroundingForDebug=false`). Lets operators
   // retroactively see what would have been blocked.
-  | "task.grounding_gate.bypassed";
+  | "task.grounding_gate.bypassed"
+  // Per-project sharing. Track invite lifecycle and member removal so
+  // the audit trail shows who shared a project with whom and why a
+  // ProjectMember row appeared or vanished.
+  | "project.invite_created"
+  | "project.invite_consumed"
+  | "project.invite_revoked"
+  | "project.member_removed"
+  // Auto-flip emitted by the invite accept-handler when the first
+  // ProjectMember consumes an invite on a previously-soloMode project.
+  // soloMode bypasses the distinct-reviewer gate; once a second human is
+  // in the loop, the gate must become real.
+  | "project.solo_mode_disabled_by_share";
 
 export interface AuditPayload {
   [key: string]: unknown;

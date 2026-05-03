@@ -181,6 +181,24 @@ export interface ApiError {
 
 // ── Core request ──────────────────────────────────────────────────────────────
 
+/**
+ * Error class that preserves the structured `error` code returned by
+ * the backend. The previous shape (`new Error(err.message)`) dropped
+ * the code on the floor, forcing callers to string-match on the
+ * human-readable message — brittle and i18n-unfriendly. Callers can
+ * now branch on `e instanceof ApiRequestError && e.code === "..."`.
+ */
+export class ApiRequestError extends Error {
+  readonly code: string;
+  readonly status: number;
+  constructor(code: string, message: string, status: number) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...init?.headers },
@@ -190,7 +208,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const err = (await res.json().catch(() => ({ message: "Request failed" }))) as ApiError;
-    throw new Error(err.message ?? "Request failed");
+    throw new ApiRequestError(
+      err.error ?? "request_failed",
+      err.message ?? "Request failed",
+      res.status,
+    );
   }
 
   return res.json() as Promise<T>;
@@ -714,4 +736,96 @@ export async function getGitHubDelegationLogs(projectId: string, opts?: { action
     `/api/projects/${projectId}/audit/github-delegation${qs}`,
   );
   return data.logs;
+}
+
+// ── Per-project sharing ─────────────────────────────────────────────────────
+
+export type ProjectMemberRole = "PROJECT_VIEWER" | "PROJECT_CONTRIBUTOR" | "PROJECT_ADMIN";
+
+export interface ProjectInvite {
+  id: string;
+  projectId: string;
+  role: ProjectMemberRole;
+  createdById: string;
+  expiresAt: string;
+  consumedAt: string | null;
+  consumedById: string | null;
+  createdAt: string;
+  status: "pending" | "expired" | "consumed";
+}
+
+export interface CreateInviteResponse {
+  invite: ProjectInvite;
+  plainToken: string;
+}
+
+export interface InvitePreview {
+  projectId: string;
+  projectName: string;
+  projectSlug: string;
+  ownerLogin: string;
+  role: ProjectMemberRole;
+  expiresAt: string;
+}
+
+export async function createProjectInvite(
+  projectId: string,
+  body: { role: ProjectMemberRole; expiresInDays?: number },
+): Promise<CreateInviteResponse> {
+  return request<CreateInviteResponse>(`/api/projects/${projectId}/invites`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function listProjectInvites(projectId: string): Promise<ProjectInvite[]> {
+  const data = await request<{ invites: ProjectInvite[] }>(
+    `/api/projects/${projectId}/invites`,
+  );
+  return data.invites;
+}
+
+export async function revokeProjectInvite(projectId: string, inviteId: string): Promise<void> {
+  await request<{ success: true }>(`/api/projects/${projectId}/invites/${inviteId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function previewInvite(token: string): Promise<InvitePreview> {
+  const data = await request<{ preview: InvitePreview }>(`/api/invites/preview`, {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+  return data.preview;
+}
+
+export async function acceptInvite(token: string): Promise<{
+  projectId: string;
+  role: ProjectMemberRole;
+  soloModeChanged: boolean;
+}> {
+  const data = await request<{
+    success: true;
+    projectId: string;
+    role: ProjectMemberRole;
+    soloModeChanged: boolean;
+  }>(`/api/invites/accept`, {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+  return {
+    projectId: data.projectId,
+    role: data.role,
+    soloModeChanged: data.soloModeChanged,
+  };
+}
+
+export async function removeProjectMember(projectId: string, userId: string): Promise<{
+  claimsReleased: number;
+}> {
+  const data = await request<{ success: true; claimsReleased: number }>(
+    `/api/projects/${projectId}/members/${userId}`,
+    { method: "DELETE" },
+  );
+  return { claimsReleased: data.claimsReleased };
 }

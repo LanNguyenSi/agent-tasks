@@ -51,8 +51,12 @@ export async function performPrMerge(
     };
   }
 
-  // Resolve delegation user with merge consent.
-  const delegationUser = await findDelegationUser(task.project.teamId, "allowAgentPrMerge");
+  // Resolve delegation user with merge consent. Prefer the actor (token
+  // owner for agents, the human themselves for human callers) so GitHub
+  // operations attribute to the user who triggered them.
+  const delegationUser = await findDelegationUser(task.project.teamId, "allowAgentPrMerge", {
+    preferUserId: actor.userId,
+  });
   if (!delegationUser) {
     return {
       ok: false,

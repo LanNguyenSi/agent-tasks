@@ -33,16 +33,20 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  memberships TeamMember[]
-  identities  UserIdentity[]
-  agentTokens AgentToken[]
-  tasks       Task[]         @relation("TaskCreator")
-  claims      Task[]         @relation("TaskClaimant")
-  reviews     Task[]         @relation("TaskReviewer")
-  signals     Signal[]       @relation("SignalRecipientUser")
-  comments    Comment[]      @relation("CommentAuthor")
-  artifacts   TaskArtifact[] @relation("ArtifactCreator")
-  auditLogs   AuditLog[]
+  memberships            TeamMember[]
+  identities             UserIdentity[]
+  agentTokens            AgentToken[]
+  tasks                  Task[]          @relation("TaskCreator")
+  claims                 Task[]          @relation("TaskClaimant")
+  reviews                Task[]          @relation("TaskReviewer")
+  signals                Signal[]        @relation("SignalRecipientUser")
+  comments               Comment[]       @relation("CommentAuthor")
+  artifacts              TaskArtifact[]  @relation("ArtifactCreator")
+  auditLogs              AuditLog[]
+  projectMemberships     ProjectMember[] @relation("ProjectMemberUser")
+  projectMembersInvited  ProjectMember[] @relation("ProjectMemberInviter")
+  projectInvitesCreated  ProjectInvite[] @relation("ProjectInviteCreator")
+  projectInvitesConsumed ProjectInvite[] @relation("ProjectInviteConsumer")
 
   @@map("users")
 }
@@ -162,27 +166,27 @@ model AgentToken {
 // ── Projects ─────────────────────────────────────────────────────────────────
 
 model Project {
-  id                      String          @id @default(uuid())
-  teamId                  String
-  name                    String
-  slug                    String
-  description             String?
-  githubRepo              String? // "owner/repo" if synced from GitHub
-  githubSyncAt            DateTime?
-  taskTemplate            Json? // { fields: { goal: bool, acceptanceCriteria: bool, context: bool, constraints: bool } }
-  confidenceThreshold     Int             @default(60) // 0-100, minimum confidence score for agent claims
-  requireDistinctReviewer Boolean         @default(false) /// @deprecated use governanceMode. Kept readable through one release cycle for dashboards + external clients. Runtime still derives an answer when governanceMode is null. Remove once no client references it.
-  soloMode                Boolean         @default(false) /// @deprecated use governanceMode. See requireDistinctReviewer.
-  governanceMode          GovernanceMode? // Null only for rows predating the migration; runtime derives from the legacy flags when null. New writes always set this; new code should read this.
+  id                       String          @id @default(uuid())
+  teamId                   String
+  name                     String
+  slug                     String
+  description              String?
+  githubRepo               String? // "owner/repo" if synced from GitHub
+  githubSyncAt             DateTime?
+  taskTemplate             Json? // { fields: { goal: bool, acceptanceCriteria: bool, context: bool, constraints: bool } }
+  confidenceThreshold      Int             @default(60) // 0-100, minimum confidence score for agent claims
+  requireDistinctReviewer  Boolean         @default(false) /// @deprecated use governanceMode. Kept readable through one release cycle for dashboards + external clients. Runtime still derives an answer when governanceMode is null. Remove once no client references it.
+  soloMode                 Boolean         @default(false) /// @deprecated use governanceMode. See requireDistinctReviewer.
+  governanceMode           GovernanceMode? // Null only for rows predating the migration; runtime derives from the legacy flags when null. New writes always set this; new code should read this.
   // Phase 3 of the grounding-hint integration. When true, task_finish on a
   // debug-flavored task is gated on an evidence-ledger entry tagged with
   // the grounding session AND the session being at-or-past claim-evaluation.
   // Default false because the ledger lives on the agent's filesystem in
   // the common multi-host deployment; the backend cannot read it from
   // there. See docs/adr/0002-grounding-finish-gate.md.
-  requireGroundingForDebug Boolean        @default(false)
-  createdAt               DateTime        @default(now())
-  updatedAt               DateTime        @updatedAt
+  requireGroundingForDebug Boolean         @default(false)
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
 
   team            Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
   tasks           Task[]
@@ -191,9 +195,62 @@ model Project {
   signals         Signal[]
   auditLogs       AuditLog[]
   toolInvocations ToolInvocation[]
+  projectMembers  ProjectMember[]
+  projectInvites  ProjectInvite[]
 
   @@unique([teamId, slug])
   @@map("projects")
+}
+
+// ── Project-level Sharing ────────────────────────────────────────────────────
+// Per-project membership for users who are NOT in the project's team but
+// have been invited to collaborate on this single project. Layered on top
+// of TeamMember; access checks consider both sources. See
+// services/team-access.ts for the resolution rules.
+
+enum ProjectMemberRole {
+  PROJECT_VIEWER
+  PROJECT_CONTRIBUTOR
+  PROJECT_ADMIN
+}
+
+model ProjectMember {
+  id          String            @id @default(uuid())
+  projectId   String
+  userId      String
+  role        ProjectMemberRole
+  invitedById String
+  createdAt   DateTime          @default(now())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User    @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy User    @relation("ProjectMemberInviter", fields: [invitedById], references: [id])
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@map("project_members")
+}
+
+model ProjectInvite {
+  id           String            @id @default(uuid())
+  projectId    String
+  // sha256 hex digest. Plain token is returned exactly once at creation
+  // time and never persisted; same pattern as agent_tokens.tokenHash.
+  tokenHash    String            @unique
+  role         ProjectMemberRole
+  createdById  String
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  consumedById String?
+  createdAt    DateTime          @default(now())
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy  User    @relation("ProjectInviteCreator", fields: [createdById], references: [id])
+  consumedBy User?   @relation("ProjectInviteConsumer", fields: [consumedById], references: [id])
+
+  @@index([projectId])
+  @@index([expiresAt])
+  @@map("project_invites")
 }
 
 // ── Workflows ────────────────────────────────────────────────────────────────
