@@ -94,50 +94,79 @@ export default function InviteLandingPage() {
   }
 
   return (
-    <div style={{ maxWidth: 520, margin: "4rem auto", padding: "0 1rem" }}>
-      <Card>
-        <h1 style={{ marginTop: 0 }}>Project invitation</h1>
-        {phase.kind === "loading" && <p>Loading invite...</p>}
+    <main
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "var(--space-5)",
+      }}
+    >
+      <div style={{ width: "100%", maxWidth: "520px" }}>
+        <Link
+          href="/"
+          style={{
+            display: "block",
+            textAlign: "center",
+            marginBottom: "var(--space-4)",
+            color: "var(--muted)",
+            fontSize: "var(--text-sm)",
+            textDecoration: "none",
+          }}
+        >
+          ← agent-tasks
+        </Link>
+        <Card>
+          <h1 style={{ marginTop: 0 }}>Project invitation</h1>
+          {phase.kind === "loading" && (
+            <p style={{ color: "var(--muted)" }}>Loading invite...</p>
+          )}
 
-        {phase.kind === "needs-login" && (
-          <>
-            <p>You need to be signed in to accept this invitation.</p>
-            <Link href={`/auth?redirect=/invite/${token}`}>
-              <Button>Sign in to continue</Button>
-            </Link>
-          </>
-        )}
+          {phase.kind === "needs-login" && (
+            <>
+              <p>You need to be signed in to accept this invitation.</p>
+              <Link href={`/auth?redirect=/invite/${token}`}>
+                <Button>Sign in to continue</Button>
+              </Link>
+            </>
+          )}
 
-        {phase.kind === "preview" && (
-          <PreviewBody preview={phase.preview} onAccept={handleAccept} />
-        )}
+          {phase.kind === "preview" && (
+            <PreviewBody preview={phase.preview} onAccept={handleAccept} />
+          )}
 
-        {phase.kind === "accepting" && <p>Accepting invitation...</p>}
+          {phase.kind === "accepting" && (
+            <p style={{ color: "var(--muted)" }}>Accepting invitation...</p>
+          )}
 
-        {phase.kind === "accepted" && (
-          <>
-            <AlertBanner tone="success">
-              Welcome aboard. Role: <strong>{phase.role}</strong>.
-            </AlertBanner>
-            {phase.soloModeChanged && (
-              <AlertBanner tone="info">
-                This was the project&apos;s first invitation. Solo-mode has been
-                disabled and the distinct-reviewer gate is now active for all
-                future tasks.
+          {phase.kind === "accepted" && (
+            <>
+              <AlertBanner tone="success">
+                Welcome aboard. Role: <strong>{phase.role}</strong>.
               </AlertBanner>
-            )}
-            <p style={{ marginTop: "1rem" }}>
-              Redirecting to the project, or{" "}
-              <Link href={`/projects/${phase.projectId}/members`}>go now</Link>.
-            </p>
-          </>
-        )}
+              {phase.soloModeChanged && (
+                <div style={{ marginTop: "var(--space-3)" }}>
+                  <AlertBanner tone="info">
+                    This was the project&apos;s first invitation. Solo-mode has been
+                    disabled and the distinct-reviewer gate is now active for all
+                    future tasks.
+                  </AlertBanner>
+                </div>
+              )}
+              <p style={{ marginTop: "var(--space-4)" }}>
+                Redirecting to the project, or{" "}
+                <Link href={`/projects/${phase.projectId}/members`}>go now</Link>.
+              </p>
+            </>
+          )}
 
-        {phase.kind === "error" && (
-          <ErrorBody code={phase.code} message={phase.message} />
-        )}
-      </Card>
-    </div>
+          {phase.kind === "error" && (
+            <ErrorBody code={phase.code} message={phase.message} />
+          )}
+        </Card>
+      </div>
+    </main>
   );
 }
 
@@ -163,13 +192,15 @@ function PreviewBody({
           Expires: {expiresAtDate.toLocaleString()}
         </li>
       </ul>
-      <p style={{ fontSize: "0.9em", color: "var(--color-text-muted, #666)" }}>
+      <p style={{ fontSize: "var(--text-sm)", color: "var(--muted)" }}>
         Note: project membership grants access to tasks and PR operations on
         agent-tasks. To push code or open PRs in the linked GitHub
         repository you also need GitHub-side collaborator access; ask the
         project owner if you don&apos;t have it yet.
       </p>
-      <Button onClick={onAccept}>Accept invitation</Button>
+      <div style={{ marginTop: "var(--space-3)" }}>
+        <Button onClick={onAccept}>Accept invitation</Button>
+      </div>
     </>
   );
 }
@@ -204,7 +235,13 @@ function ErrorBody({
           leaking internals. The known error codes have headlines
           tailored above. The original message is kept in the parent
           phase state for support diagnostics. */}
-      <p style={{ marginTop: "1rem", fontSize: "0.85em", color: "#888" }}>
+      <p
+        style={{
+          marginTop: "var(--space-4)",
+          fontSize: "var(--text-sm)",
+          color: "var(--muted)",
+        }}
+      >
         Reference: <code>{code}</code>
       </p>
       <p>

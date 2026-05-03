@@ -63,6 +63,7 @@ Real teams need enforceable rules for:
 - **Task templates and dependencies.** Structured fields (goal, acceptance criteria, context, constraints) plus block / blocked-by relationships with cycle detection.
 - **Agent API.** Team-scoped Bearer tokens with granular scopes. Full OpenAPI / Swagger docs at `/docs`.
 - **GitHub integration.** Repo sync, branch / PR linking, plus PR delegation (agents create, merge, and comment on PRs via the API using delegated human credentials with explicit consent).
+- **Per-project sharing.** Invite collaborators outside your team to a single project via short-lived, hashed share-links with three role tiers (viewer, contributor, admin). Acceptance flips a solo project to dual-control automatically so the distinct-reviewer gate becomes real the moment a second human joins. Active shares are listed via `GET /api/admin/project-shares` for admins.
 - **Board + list views.** Kanban columns, filters, search, pagination, priority sorting.
 
 ## Platform & enterprise
@@ -80,6 +81,7 @@ Real teams need enforceable rules for:
 - [x] Task dependencies (block / blocked-by with cycle detection)
 - [x] GitHub PR delegation (create, merge, comment via API)
 - [x] CSV/Excel import (Jira auto-mapping)
+- [x] Per-project sharing (invite-link, three role tiers, soloMode auto-flip)
 - [ ] Notification system (email, Slack, browser push)
 - [ ] Structured logging (JSON, correlation IDs)
 - [ ] E2E and integration tests
