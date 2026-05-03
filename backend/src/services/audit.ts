@@ -52,7 +52,14 @@ export type AuditAction =
   // path when a debug-flavored task would have hit the gate but the project
   // is not opted in (`requireGroundingForDebug=false`). Lets operators
   // retroactively see what would have been blocked.
-  | "task.grounding_gate.bypassed";
+  | "task.grounding_gate.bypassed"
+  // Per-project sharing. Track invite lifecycle and member removal so
+  // the audit trail shows who shared a project with whom and why a
+  // ProjectMember row appeared or vanished.
+  | "project.invite_created"
+  | "project.invite_consumed"
+  | "project.invite_revoked"
+  | "project.member_removed";
 
 export interface AuditPayload {
   [key: string]: unknown;

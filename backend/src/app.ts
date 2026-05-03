@@ -13,6 +13,7 @@ import { teamRouter } from "./routes/teams.js";
 import { webhookRouter } from "./routes/webhooks.js";
 import { signalRouter } from "./routes/signals.js";
 import { githubRouter } from "./routes/github.js";
+import { projectInviteAdminRouter, inviteAcceptRouter } from "./routes/invites.js";
 import { mcpRouter, setApp as setMcpApp } from "./routes/mcp.js";
 import { docsRouter } from "./routes/docs.js";
 import { ssoLoginRouter, ssoAdminRouter } from "./routes/sso.js";
@@ -85,6 +86,7 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.use("/api/agent/signals/*", authMiddleware);
   app.use("/api/agent/signals", authMiddleware);
   app.use("/api/projects/*", authMiddleware);
+  app.use("/api/invites/*", authMiddleware);
   app.use("/api/github/*", authMiddleware);
   // `/api/mcp` is exact-match for POST, and the mcpRouter also has
   // 405 handlers for GET/DELETE. Both need the outer authMiddleware
@@ -103,6 +105,8 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.route("/api", teamRouter);
   app.route("/api/agent-tokens", agentTokenRouter);
   app.route("/api", projectRouter);
+  app.route("/api", projectInviteAdminRouter);
+  app.route("/api/invites", inviteAcceptRouter);
   app.route("/api", taskRouter);
   app.route("/api", workflowRouter);
   app.route("/api", boardRouter);
