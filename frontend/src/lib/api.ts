@@ -181,6 +181,24 @@ export interface ApiError {
 
 // ── Core request ──────────────────────────────────────────────────────────────
 
+/**
+ * Error class that preserves the structured `error` code returned by
+ * the backend. The previous shape (`new Error(err.message)`) dropped
+ * the code on the floor, forcing callers to string-match on the
+ * human-readable message — brittle and i18n-unfriendly. Callers can
+ * now branch on `e instanceof ApiRequestError && e.code === "..."`.
+ */
+export class ApiRequestError extends Error {
+  readonly code: string;
+  readonly status: number;
+  constructor(code: string, message: string, status: number) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...init?.headers },
@@ -190,7 +208,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const err = (await res.json().catch(() => ({ message: "Request failed" }))) as ApiError;
-    throw new Error(err.message ?? "Request failed");
+    throw new ApiRequestError(
+      err.error ?? "request_failed",
+      err.message ?? "Request failed",
+      res.status,
+    );
   }
 
   return res.json() as Promise<T>;

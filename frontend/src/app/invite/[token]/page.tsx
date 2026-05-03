@@ -5,10 +5,10 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   acceptInvite,
+  ApiRequestError,
   getCurrentUser,
   previewInvite,
   type InvitePreview,
-  type User,
 } from "../../../lib/api";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
@@ -43,7 +43,6 @@ export default function InviteLandingPage() {
   const router = useRouter();
   const token = params.token;
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
-  const [, setUser] = useState<User | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,7 +50,6 @@ export default function InviteLandingPage() {
       try {
         const me = await getCurrentUser();
         if (cancelled) return;
-        setUser(me);
         if (!me) {
           setPhase({ kind: "needs-login" });
           return;
@@ -62,17 +60,11 @@ export default function InviteLandingPage() {
           setPhase({ kind: "preview", preview });
         } catch (err) {
           if (cancelled) return;
-          const message = err instanceof Error ? err.message : String(err);
-          const code = inferErrorCode(message);
-          setPhase({ kind: "error", code, message });
+          setPhase(toErrorPhase(err));
         }
       } catch (err) {
         if (cancelled) return;
-        setPhase({
-          kind: "error",
-          code: "unknown",
-          message: err instanceof Error ? err.message : String(err),
-        });
+        setPhase(toErrorPhase(err));
       }
     })();
     return () => {
@@ -86,14 +78,13 @@ export default function InviteLandingPage() {
       const result = await acceptInvite(token);
       setPhase({ kind: "accepted", projectId: result.projectId, role: result.role });
       // Soft auto-redirect after a short pause so the user sees the
-      // confirmation. Hard redirect is also reachable via the manual link.
+      // confirmation. The accept response carries projectId, route the
+      // user straight to the project they just gained access to.
       setTimeout(() => {
-        router.push("/dashboard");
+        router.push(`/projects/${result.projectId}/members`);
       }, 1500);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const code = inferErrorCode(message);
-      setPhase({ kind: "error", code, message });
+      setPhase(toErrorPhase(err));
     }
   }
 
@@ -190,30 +181,43 @@ function ErrorBody({
       case "already_member":
         return "You already have access to this project.";
       default:
-        return "Something went wrong.";
+        return "Something went wrong, please try again.";
     }
   })();
   return (
     <>
       <AlertBanner tone={tone}>{headline}</AlertBanner>
-      {code === "unknown" && <p style={{ fontSize: "0.85em", color: "#888" }}>{message}</p>}
-      <p style={{ marginTop: "1rem" }}>
+      {/* Suppress the raw message on `unknown` errors. A 5xx tends to
+          carry stack-trace fragments that don't help the user and risk
+          leaking internals. The known error codes have headlines
+          tailored above. The original message is kept in the parent
+          phase state for support diagnostics. */}
+      <p style={{ marginTop: "1rem", fontSize: "0.85em", color: "#888" }}>
+        Reference: <code>{code}</code>
+      </p>
+      <p>
         <Link href="/dashboard">Back to dashboard</Link>
       </p>
     </>
   );
 }
 
-function inferErrorCode(message: string):
-  | "invalid_token"
-  | "consumed"
-  | "expired"
-  | "already_member"
-  | "unknown" {
-  const m = message.toLowerCase();
-  if (m.includes("not found") || m.includes("invalid")) return "invalid_token";
-  if (m.includes("already used")) return "consumed";
-  if (m.includes("expired")) return "expired";
-  if (m.includes("already have access") || m.includes("already_member")) return "already_member";
-  return "unknown";
+type ErrorCode = "invalid_token" | "consumed" | "expired" | "already_member" | "unknown";
+
+function toErrorPhase(err: unknown): { kind: "error"; code: ErrorCode; message: string } {
+  if (err instanceof ApiRequestError) {
+    const code: ErrorCode =
+      err.code === "invalid_token" ||
+      err.code === "consumed" ||
+      err.code === "expired" ||
+      err.code === "already_member"
+        ? err.code
+        : "unknown";
+    return { kind: "error", code, message: err.message };
+  }
+  return {
+    kind: "error",
+    code: "unknown",
+    message: err instanceof Error ? err.message : String(err),
+  };
 }

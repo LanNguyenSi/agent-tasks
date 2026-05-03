@@ -50,6 +50,7 @@ export default function ProjectMembersPage() {
     plainToken: string;
     shareUrl: string;
   } | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   async function refresh() {
     try {
@@ -99,9 +100,20 @@ export default function ProjectMembersPage() {
     }
   }
 
-  function copyShareUrl() {
+  async function copyShareUrl() {
     if (!freshInvite) return;
-    void navigator.clipboard.writeText(freshInvite.shareUrl);
+    setCopyState("idle");
+    try {
+      // navigator.clipboard requires a secure context (HTTPS / localhost).
+      // The catch handles browsers/environments where it's undefined or
+      // the promise rejects so the user gets explicit "copy failed" UX
+      // instead of silently believing the link was copied.
+      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(freshInvite.shareUrl);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
   }
 
   return (
@@ -132,8 +144,18 @@ export default function ProjectMembersPage() {
           >
             {freshInvite.shareUrl}
           </pre>
-          <Button onClick={copyShareUrl}>Copy share link</Button>{" "}
-          <Button onClick={() => setFreshInvite(null)}>Dismiss</Button>
+          <Button onClick={() => void copyShareUrl()}>Copy share link</Button>{" "}
+          <Button onClick={() => { setFreshInvite(null); setCopyState("idle"); }}>Dismiss</Button>
+          {copyState === "copied" && (
+            <p style={{ marginTop: "0.5rem", color: "#0a0", fontSize: "0.85em" }}>
+              Copied to clipboard.
+            </p>
+          )}
+          {copyState === "failed" && (
+            <p style={{ marginTop: "0.5rem", color: "#a00", fontSize: "0.85em" }}>
+              Copy failed. Select the link above manually (Ctrl+A in the box, Ctrl+C).
+            </p>
+          )}
         </Card>
       )}
 
