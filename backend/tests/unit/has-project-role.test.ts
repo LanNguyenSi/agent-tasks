@@ -10,10 +10,12 @@ import type { Actor } from "../../src/types/auth.js";
 
 const getProjectTeamIdMock = vi.fn();
 const getUserRoleInTeamMock = vi.fn();
+const getUserRoleInProjectMock = vi.fn();
 
 vi.mock("../../src/repositories/team-repository.js", () => ({
   getProjectTeamId: (...args: unknown[]) => getProjectTeamIdMock(...args),
   getUserRoleInTeam: (...args: unknown[]) => getUserRoleInTeamMock(...args),
+  getUserRoleInProject: (...args: unknown[]) => getUserRoleInProjectMock(...args),
 }));
 
 const { hasProjectRole, isProjectAdmin } = await import(
@@ -27,18 +29,22 @@ const agentSameTeam: Actor = {
   tokenId: "tok-1",
   teamId: "team-1",
   scopes: [],
+  userId: "agent-owner-1",
 };
 const agentOtherTeam: Actor = {
   type: "agent",
   tokenId: "tok-2",
   teamId: "team-2",
   scopes: [],
+  userId: "agent-owner-2",
 };
 
 describe("hasProjectRole", () => {
   beforeEach(() => {
     getProjectTeamIdMock.mockReset();
     getUserRoleInTeamMock.mockReset();
+    getUserRoleInProjectMock.mockReset();
+    getUserRoleInProjectMock.mockResolvedValue(null);
   });
 
   describe("role === 'any'", () => {
@@ -109,12 +115,74 @@ describe("hasProjectRole", () => {
       expect(getUserRoleInTeamMock).not.toHaveBeenCalled();
     });
   });
+
+  describe("project-role to team-role mapping", () => {
+    it("PROJECT_ADMIN satisfies ADMIN", async () => {
+      getProjectTeamIdMock.mockResolvedValue("team-1");
+      getUserRoleInTeamMock.mockResolvedValue(null);
+      getUserRoleInProjectMock.mockResolvedValue("PROJECT_ADMIN");
+      expect(await hasProjectRole(humanAlice, "proj-1", "ADMIN")).toBe(true);
+    });
+
+    it("PROJECT_ADMIN satisfies HUMAN_MEMBER", async () => {
+      getProjectTeamIdMock.mockResolvedValue("team-1");
+      getUserRoleInTeamMock.mockResolvedValue(null);
+      getUserRoleInProjectMock.mockResolvedValue("PROJECT_ADMIN");
+      expect(await hasProjectRole(humanAlice, "proj-1", "HUMAN_MEMBER")).toBe(true);
+    });
+
+    it("PROJECT_ADMIN satisfies REVIEWER", async () => {
+      getProjectTeamIdMock.mockResolvedValue("team-1");
+      getUserRoleInTeamMock.mockResolvedValue(null);
+      getUserRoleInProjectMock.mockResolvedValue("PROJECT_ADMIN");
+      expect(await hasProjectRole(humanAlice, "proj-1", "REVIEWER")).toBe(true);
+    });
+
+    it("PROJECT_CONTRIBUTOR satisfies HUMAN_MEMBER", async () => {
+      getProjectTeamIdMock.mockResolvedValue("team-1");
+      getUserRoleInTeamMock.mockResolvedValue(null);
+      getUserRoleInProjectMock.mockResolvedValue("PROJECT_CONTRIBUTOR");
+      expect(await hasProjectRole(humanAlice, "proj-1", "HUMAN_MEMBER")).toBe(true);
+    });
+
+    it("PROJECT_CONTRIBUTOR satisfies REVIEWER", async () => {
+      getProjectTeamIdMock.mockResolvedValue("team-1");
+      getUserRoleInTeamMock.mockResolvedValue(null);
+      getUserRoleInProjectMock.mockResolvedValue("PROJECT_CONTRIBUTOR");
+      expect(await hasProjectRole(humanAlice, "proj-1", "REVIEWER")).toBe(true);
+    });
+
+    it("PROJECT_CONTRIBUTOR does NOT satisfy ADMIN", async () => {
+      getProjectTeamIdMock.mockResolvedValue("team-1");
+      getUserRoleInTeamMock.mockResolvedValue(null);
+      getUserRoleInProjectMock.mockResolvedValue("PROJECT_CONTRIBUTOR");
+      expect(await hasProjectRole(humanAlice, "proj-1", "ADMIN")).toBe(false);
+    });
+
+    it("PROJECT_VIEWER does not satisfy any concrete role", async () => {
+      getProjectTeamIdMock.mockResolvedValue("team-1");
+      getUserRoleInTeamMock.mockResolvedValue(null);
+      getUserRoleInProjectMock.mockResolvedValue("PROJECT_VIEWER");
+      expect(await hasProjectRole(humanAlice, "proj-1", "ADMIN")).toBe(false);
+      expect(await hasProjectRole(humanAlice, "proj-1", "HUMAN_MEMBER")).toBe(false);
+      expect(await hasProjectRole(humanAlice, "proj-1", "REVIEWER")).toBe(false);
+    });
+
+    it("PROJECT_VIEWER passes role==='any' (membership grants read access)", async () => {
+      getProjectTeamIdMock.mockResolvedValue("team-1");
+      getUserRoleInTeamMock.mockResolvedValue(null);
+      getUserRoleInProjectMock.mockResolvedValue("PROJECT_VIEWER");
+      expect(await hasProjectRole(humanAlice, "proj-1", "any")).toBe(true);
+    });
+  });
 });
 
 describe("isProjectAdmin (delegates to hasProjectRole)", () => {
   beforeEach(() => {
     getProjectTeamIdMock.mockReset();
     getUserRoleInTeamMock.mockReset();
+    getUserRoleInProjectMock.mockReset();
+    getUserRoleInProjectMock.mockResolvedValue(null);
   });
 
   it("returns true for a human admin", async () => {

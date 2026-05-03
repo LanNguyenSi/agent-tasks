@@ -8,10 +8,12 @@ import type { Actor } from "../../src/types/auth.js";
 
 const getProjectTeamIdMock = vi.fn();
 const getUserRoleInTeamMock = vi.fn();
+const getUserRoleInProjectMock = vi.fn();
 
 vi.mock("../../src/repositories/team-repository.js", () => ({
   getProjectTeamId: (...args: unknown[]) => getProjectTeamIdMock(...args),
   getUserRoleInTeam: (...args: unknown[]) => getUserRoleInTeamMock(...args),
+  getUserRoleInProject: (...args: unknown[]) => getUserRoleInProjectMock(...args),
 }));
 
 const { isProjectAdmin } = await import("../../src/services/team-access.js");
@@ -23,12 +25,15 @@ const agent: Actor = {
   tokenId: "tok-1",
   teamId: "team-1",
   scopes: [],
+  userId: "agent-owner",
 };
 
 describe("isProjectAdmin", () => {
   beforeEach(() => {
     getProjectTeamIdMock.mockReset();
     getUserRoleInTeamMock.mockReset();
+    getUserRoleInProjectMock.mockReset();
+    getUserRoleInProjectMock.mockResolvedValue(null);
   });
 
   it("returns true for a human admin of the owning team", async () => {
@@ -68,5 +73,29 @@ describe("isProjectAdmin", () => {
     expect(await isProjectAdmin(agent, "proj-1")).toBe(false);
     // Short-circuits before any team lookup.
     expect(getProjectTeamIdMock).not.toHaveBeenCalled();
+  });
+
+  it("returns true for a human PROJECT_ADMIN with no team membership", async () => {
+    // Per-project admin grants admin authority on this project even when
+    // the user is not in the owning team. This is the per-project sharing
+    // path: an invited user with PROJECT_ADMIN role.
+    getProjectTeamIdMock.mockResolvedValue("team-1");
+    getUserRoleInTeamMock.mockResolvedValue(null);
+    getUserRoleInProjectMock.mockResolvedValue("PROJECT_ADMIN");
+    expect(await isProjectAdmin(humanAlice, "proj-1")).toBe(true);
+  });
+
+  it("returns false for a human PROJECT_CONTRIBUTOR (not admin)", async () => {
+    getProjectTeamIdMock.mockResolvedValue("team-1");
+    getUserRoleInTeamMock.mockResolvedValue(null);
+    getUserRoleInProjectMock.mockResolvedValue("PROJECT_CONTRIBUTOR");
+    expect(await isProjectAdmin(humanAlice, "proj-1")).toBe(false);
+  });
+
+  it("returns false for a human PROJECT_VIEWER", async () => {
+    getProjectTeamIdMock.mockResolvedValue("team-1");
+    getUserRoleInTeamMock.mockResolvedValue(null);
+    getUserRoleInProjectMock.mockResolvedValue("PROJECT_VIEWER");
+    expect(await isProjectAdmin(humanAlice, "proj-1")).toBe(false);
   });
 });
