@@ -50,6 +50,12 @@ export interface Project {
   /** Null only for rows predating the migration; the server derives from legacy flags at read time. Prefer reading this over the old flags. */
   governanceMode: "REQUIRES_DISTINCT_REVIEWER" | "AWAITS_CONFIRMATION" | "AUTONOMOUS" | null;
   createdAt: string;
+  /** Source of the user's access to this project. `"team"` means the
+   * project is in a team the user is a member of; `"project"` means
+   * access is granted via a per-project share (ProjectMember row).
+   * Optional because some legacy API responses may omit it; treat
+   * `undefined` as `"team"` for backward-compatibility. */
+  accessSource?: "team" | "project";
 }
 
 export interface TemplateData {
