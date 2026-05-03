@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { discoverSso, getCurrentUser, getTeams, login, register, type SsoDiscoverResult } from "../../lib/api";
@@ -27,7 +27,29 @@ function safeRedirect(raw: string | null): string | null {
   return null;
 }
 
+/**
+ * Wraps the inner client component in a Suspense boundary because
+ * `useSearchParams()` opts the page into client-side rendering and
+ * Next.js 15 refuses to statically prerender a route that hits the
+ * search-params hook without a fallback. Without this the production
+ * build fails with "useSearchParams() should be wrapped in a suspense
+ * boundary at page /auth".
+ */
 export default function AuthPage() {
+  return (
+    <Suspense
+      fallback={
+        <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <p style={{ color: "var(--muted)" }}>Loading…</p>
+        </main>
+      }
+    >
+      <AuthPageInner />
+    </Suspense>
+  );
+}
+
+function AuthPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTarget = safeRedirect(searchParams.get("redirect"));
