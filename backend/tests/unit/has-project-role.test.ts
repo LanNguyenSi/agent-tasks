@@ -10,10 +10,12 @@ import type { Actor } from "../../src/types/auth.js";
 
 const getProjectTeamIdMock = vi.fn();
 const getUserRoleInTeamMock = vi.fn();
+const getUserRoleInProjectMock = vi.fn();
 
 vi.mock("../../src/repositories/team-repository.js", () => ({
   getProjectTeamId: (...args: unknown[]) => getProjectTeamIdMock(...args),
   getUserRoleInTeam: (...args: unknown[]) => getUserRoleInTeamMock(...args),
+  getUserRoleInProject: (...args: unknown[]) => getUserRoleInProjectMock(...args),
 }));
 
 const { hasProjectRole, isProjectAdmin } = await import(
@@ -27,18 +29,22 @@ const agentSameTeam: Actor = {
   tokenId: "tok-1",
   teamId: "team-1",
   scopes: [],
+  userId: "agent-owner-1",
 };
 const agentOtherTeam: Actor = {
   type: "agent",
   tokenId: "tok-2",
   teamId: "team-2",
   scopes: [],
+  userId: "agent-owner-2",
 };
 
 describe("hasProjectRole", () => {
   beforeEach(() => {
     getProjectTeamIdMock.mockReset();
     getUserRoleInTeamMock.mockReset();
+    getUserRoleInProjectMock.mockReset();
+    getUserRoleInProjectMock.mockResolvedValue(null);
   });
 
   describe("role === 'any'", () => {
@@ -115,6 +121,8 @@ describe("isProjectAdmin (delegates to hasProjectRole)", () => {
   beforeEach(() => {
     getProjectTeamIdMock.mockReset();
     getUserRoleInTeamMock.mockReset();
+    getUserRoleInProjectMock.mockReset();
+    getUserRoleInProjectMock.mockResolvedValue(null);
   });
 
   it("returns true for a human admin", async () => {
