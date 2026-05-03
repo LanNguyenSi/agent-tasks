@@ -327,6 +327,33 @@ describe("POST /accept", () => {
     expect(res.status).toBe(409);
     expect(prismaMocks.$transaction).not.toHaveBeenCalled();
   });
+
+  it("409s on a P2002 race (user gained access between hasProjectAccess and $transaction)", async () => {
+    prismaMocks.projectInviteFindUnique.mockResolvedValue({
+      id: "i-3",
+      projectId: PROJECT_ID,
+      role: "PROJECT_VIEWER",
+      createdById: "owner",
+      consumedAt: null,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+    const { Prisma } = await import("@prisma/client");
+    prismaMocks.$transaction.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "5.22.0",
+      }),
+    );
+
+    const res = await makeAcceptApp(OTHER_USER).request("/accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: "inv_race" }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe("already_member");
+  });
 });
 
 describe("DELETE /projects/:id/members/:userId", () => {
