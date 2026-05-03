@@ -8,7 +8,13 @@ import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import { ensureDefaultBoardForProject } from "../services/board-default.js";
 import { taskTemplateSchema } from "../lib/confidence.js";
-import { isProjectAdmin, resolveTeamId, resolveTeamIdErrorBody } from "../services/team-access.js";
+import {
+  hasProjectAccess,
+  isProjectAdmin,
+  resolveTeamId,
+  resolveTeamIdErrorBody,
+  getProjectMembership,
+} from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
 import {
   GovernanceMode,
@@ -52,7 +58,14 @@ const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, s
   requireGroundingForDebug: z.boolean().optional(),
 });
 
-async function assertMembership(actor: Actor, teamId: string): Promise<boolean> {
+/**
+ * Team-only membership check. Used for routes that genuinely need team
+ * scope (project creation, since per-project shares can't bootstrap a
+ * project in a team the user is not in). All other reads/writes use
+ * `hasProjectAccess` / `isProjectAdmin` from services/team-access.ts so
+ * ProjectMember grants are honored.
+ */
+async function assertTeamMembership(actor: Actor, teamId: string): Promise<boolean> {
   if (actor.type === "agent") {
     return actor.teamId === teamId;
   }
@@ -74,12 +87,34 @@ projectRouter.get("/projects", async (c) => {
     );
   }
 
+  // Humans see team projects PLUS any project they have a per-project
+  // grant on (shared via invite from another team). Agents see team-only;
+  // their per-project access is exercised through specific project IDs,
+  // not through this listing.
   const projects = await prisma.project.findMany({
-    where: { teamId: resolved.teamId },
+    where:
+      actor.type === "human"
+        ? {
+            OR: [
+              { teamId: resolved.teamId },
+              { projectMembers: { some: { userId: actor.userId } } },
+            ],
+          }
+        : { teamId: resolved.teamId },
     orderBy: { createdAt: "desc" },
   });
 
-  return c.json({ projects });
+  // Annotate each project with `accessSource` so the UI can mark shared
+  // projects. For agents this is always "team" by construction.
+  const projectsAnnotated =
+    actor.type === "human"
+      ? projects.map((p) => ({
+          ...p,
+          accessSource: p.teamId === resolved.teamId ? "team" : "project",
+        }))
+      : projects.map((p) => ({ ...p, accessSource: "team" as const }));
+
+  return c.json({ projects: projectsAnnotated });
 });
 
 // ── List token-available projects (agent-friendly) ──────────────────────────
@@ -94,11 +129,22 @@ projectRouter.get("/projects/available", async (c) => {
     );
   }
 
+  // Same access expansion as `/projects`: humans see team projects plus
+  // shared projects.
   const projects = await prisma.project.findMany({
-    where: { teamId: resolved.teamId },
+    where:
+      actor.type === "human"
+        ? {
+            OR: [
+              { teamId: resolved.teamId },
+              { projectMembers: { some: { userId: actor.userId } } },
+            ],
+          }
+        : { teamId: resolved.teamId },
     orderBy: { name: "asc" },
     select: {
       id: true,
+      teamId: true,
       name: true,
       slug: true,
       description: true,
@@ -112,6 +158,10 @@ projectRouter.get("/projects/available", async (c) => {
     projects: projects.map((project) => ({
       ...project,
       displayName: `${project.name} (${project.slug})`,
+      accessSource:
+        actor.type === "human" && project.teamId !== resolved.teamId
+          ? ("project" as const)
+          : ("team" as const),
     })),
   });
 });
@@ -151,7 +201,7 @@ projectRouter.post("/projects", zValidator("json", createProjectSchema), async (
     return forbidden(c, "Agents cannot create projects");
   }
 
-  if (!(await assertMembership(actor, body.teamId))) {
+  if (!(await assertTeamMembership(actor, body.teamId))) {
     return forbidden(c, "Access denied to this team");
   }
 
@@ -188,7 +238,8 @@ projectRouter.get("/projects/:id", async (c) => {
 
   if (!project) return notFound(c);
 
-  if (!(await assertMembership(actor, project.teamId))) {
+  const membership = await getProjectMembership(actor, project.id);
+  if (!membership) {
     return forbidden(c, "Access denied");
   }
 
@@ -196,7 +247,10 @@ projectRouter.get("/projects/:id", async (c) => {
   // for each registered gate, whether it would evaluate on this project
   // and why. Lets clients (agents, UI, external integrations) learn the
   // invariant surface BEFORE tripping a 4xx. See services/gates/.
-  return c.json({ project, effectiveGates: computeEffectiveGates(project) });
+  return c.json({
+    project: { ...project, accessSource: membership.source },
+    effectiveGates: computeEffectiveGates(project),
+  });
 });
 
 // Dedicated discovery endpoint — same data as `GET /projects/:id` but
@@ -216,7 +270,7 @@ projectRouter.get("/projects/:id/effective-gates", async (c) => {
 
   if (!project) return notFound(c);
 
-  if (!(await assertMembership(actor, project.teamId))) {
+  if (!(await hasProjectAccess(actor, c.req.param("id")))) {
     return forbidden(c, "Access denied");
   }
 
@@ -344,8 +398,11 @@ projectRouter.delete("/projects/:id", async (c) => {
   const project = await prisma.project.findUnique({ where: { id: c.req.param("id") } });
   if (!project) return notFound(c);
 
-  if (!(await assertMembership(actor, project.teamId))) {
-    return forbidden(c, "Access denied");
+  // Project deletion is destructive; require admin authority. Matches the
+  // PATCH guard that was tightened for governance fields. Prior code only
+  // checked team membership — any HUMAN_MEMBER could delete the project.
+  if (!(await isProjectAdmin(actor, project.id))) {
+    return forbidden(c, "Only project admins can delete projects");
   }
 
   await prisma.project.delete({ where: { id: project.id } });
@@ -365,7 +422,7 @@ projectRouter.post("/projects/:id/sync", async (c) => {
   const project = await prisma.project.findUnique({ where: { id: c.req.param("id") } });
   if (!project) return notFound(c);
 
-  if (!(await assertMembership(actor, project.teamId))) {
+  if (!(await hasProjectAccess(actor, project.id))) {
     return forbidden(c, "Access denied");
   }
 
