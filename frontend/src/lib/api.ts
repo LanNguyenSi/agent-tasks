@@ -802,16 +802,22 @@ export async function previewInvite(token: string): Promise<InvitePreview> {
 export async function acceptInvite(token: string): Promise<{
   projectId: string;
   role: ProjectMemberRole;
+  soloModeChanged: boolean;
 }> {
   const data = await request<{
     success: true;
     projectId: string;
     role: ProjectMemberRole;
+    soloModeChanged: boolean;
   }>(`/api/invites/accept`, {
     method: "POST",
     body: JSON.stringify({ token }),
   });
-  return { projectId: data.projectId, role: data.role };
+  return {
+    projectId: data.projectId,
+    role: data.role,
+    soloModeChanged: data.soloModeChanged,
+  };
 }
 
 export async function removeProjectMember(projectId: string, userId: string): Promise<{

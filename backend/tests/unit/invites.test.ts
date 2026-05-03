@@ -15,6 +15,7 @@ import type { Actor } from "../../src/types/auth.js";
 
 const prismaMocks = vi.hoisted(() => ({
   projectFindUnique: vi.fn(),
+  projectUpdate: vi.fn(),
   projectInviteCreate: vi.fn(),
   projectInviteFindUnique: vi.fn(),
   projectInviteFindMany: vi.fn(),
@@ -28,7 +29,10 @@ const prismaMocks = vi.hoisted(() => ({
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
-    project: { findUnique: prismaMocks.projectFindUnique },
+    project: {
+      findUnique: prismaMocks.projectFindUnique,
+      update: prismaMocks.projectUpdate,
+    },
     projectInvite: {
       create: prismaMocks.projectInviteCreate,
       findUnique: prismaMocks.projectInviteFindUnique,
@@ -295,6 +299,11 @@ describe("POST /accept", () => {
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
     prismaMocks.$transaction.mockResolvedValue([{}, {}]);
+    // Default for non-flip tests: project was already non-solo.
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      soloMode: false,
+      _count: { projectMembers: 5 },
+    });
 
     const res = await makeAcceptApp(OTHER_USER).request("/accept", {
       method: "POST",
@@ -303,8 +312,80 @@ describe("POST /accept", () => {
     });
 
     expect(res.status).toBe(201);
+    const body = (await res.json()) as { soloModeChanged: boolean };
+    expect(body.soloModeChanged).toBe(false);
     expect(prismaMocks.$transaction).toHaveBeenCalled();
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "project.invite_consumed" }));
+    expect(prismaMocks.projectUpdate).not.toHaveBeenCalled();
+  });
+
+  it("flips soloMode off when the first ProjectMember accepts", async () => {
+    prismaMocks.projectInviteFindUnique.mockResolvedValue({
+      id: "i-flip",
+      projectId: PROJECT_ID,
+      role: "PROJECT_CONTRIBUTOR",
+      createdById: "owner",
+      consumedAt: null,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+    prismaMocks.$transaction.mockResolvedValue([{}, {}]);
+    // After the transaction the count is exactly 1 (the first member
+    // just got created); soloMode was true.
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      soloMode: true,
+      _count: { projectMembers: 1 },
+    });
+    prismaMocks.projectUpdate.mockResolvedValue({});
+
+    const res = await makeAcceptApp(OTHER_USER).request("/accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: "inv_flip" }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { soloModeChanged: boolean };
+    expect(body.soloModeChanged).toBe(true);
+    expect(prismaMocks.projectUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          soloMode: false,
+          requireDistinctReviewer: true,
+          governanceMode: "REQUIRES_DISTINCT_REVIEWER",
+        }),
+      }),
+    );
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "project.solo_mode_disabled_by_share" }),
+    );
+  });
+
+  it("does NOT flip soloMode on subsequent invites (idempotent)", async () => {
+    prismaMocks.projectInviteFindUnique.mockResolvedValue({
+      id: "i-2nd",
+      projectId: PROJECT_ID,
+      role: "PROJECT_VIEWER",
+      createdById: "owner",
+      consumedAt: null,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+    prismaMocks.$transaction.mockResolvedValue([{}, {}]);
+    // Second member joins; soloMode was already turned off by the first.
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      soloMode: false,
+      _count: { projectMembers: 2 },
+    });
+
+    const res = await makeAcceptApp(OTHER_USER).request("/accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: "inv_2nd" }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { soloModeChanged: boolean };
+    expect(body.soloModeChanged).toBe(false);
+    expect(prismaMocks.projectUpdate).not.toHaveBeenCalled();
   });
 
   it("409s when the user already has access", async () => {

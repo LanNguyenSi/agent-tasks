@@ -165,6 +165,14 @@ export default function ProjectMembersPage() {
           Generates a one-time link. The recipient signs in and accepts to gain
           per-project access.
         </p>
+        {project?.soloMode && (
+          <AlertBanner tone="warning">
+            This project is currently in solo-mode (no distinct-reviewer
+            gate). Accepting the first invite will switch the project to
+            dual-control automatically — agents will be required to find a
+            different reviewer before merging.
+          </AlertBanner>
+        )}
         <div style={{ display: "flex", gap: "1rem", alignItems: "flex-end", flexWrap: "wrap" }}>
           <label>
             Role

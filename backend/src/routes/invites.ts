@@ -380,11 +380,47 @@ inviteAcceptRouter.post(
       payload: { inviteId: invite.id, role: invite.role },
     });
 
+    // soloMode auto-flip. A project marked soloMode (governanceMode
+    // AUTONOMOUS) bypasses the distinct-reviewer gate; that's the right
+    // default for one-person setups but wrong the moment a second human
+    // joins via a per-project share. When this acceptance brings the
+    // ProjectMember count from 0 to 1, flip the project to dual-control.
+    // Idempotent: subsequent invitees see the already-non-solo state and
+    // this branch is a no-op.
+    let soloModeChanged = false;
+    const projectState = await prisma.project.findUnique({
+      where: { id: invite.projectId },
+      select: { soloMode: true, _count: { select: { projectMembers: true } } },
+    });
+    if (projectState?.soloMode && projectState._count.projectMembers === 1) {
+      // The just-consumed invite produced the first ProjectMember row, so
+      // _count is exactly 1 here.
+      await prisma.project.update({
+        where: { id: invite.projectId },
+        data: {
+          soloMode: false,
+          requireDistinctReviewer: true,
+          governanceMode: "REQUIRES_DISTINCT_REVIEWER",
+        },
+      });
+      soloModeChanged = true;
+      void logAuditEvent({
+        action: "project.solo_mode_disabled_by_share",
+        actorId: actor.userId,
+        projectId: invite.projectId,
+        payload: {
+          inviteId: invite.id,
+          newGovernanceMode: "REQUIRES_DISTINCT_REVIEWER",
+        },
+      });
+    }
+
     return c.json(
       {
         success: true,
         projectId: invite.projectId,
         role: invite.role,
+        soloModeChanged,
       },
       201,
     );
