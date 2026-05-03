@@ -19,7 +19,7 @@ type Phase =
   | { kind: "needs-login" }
   | { kind: "preview"; preview: InvitePreview }
   | { kind: "accepting" }
-  | { kind: "accepted"; projectId: string; role: string }
+  | { kind: "accepted"; projectId: string; role: string; soloModeChanged: boolean }
   | { kind: "error"; code: "invalid_token" | "consumed" | "expired" | "already_member" | "unknown"; message: string };
 
 /**
@@ -76,7 +76,12 @@ export default function InviteLandingPage() {
     setPhase({ kind: "accepting" });
     try {
       const result = await acceptInvite(token);
-      setPhase({ kind: "accepted", projectId: result.projectId, role: result.role });
+      setPhase({
+        kind: "accepted",
+        projectId: result.projectId,
+        role: result.role,
+        soloModeChanged: result.soloModeChanged,
+      });
       // Soft auto-redirect after a short pause so the user sees the
       // confirmation. The accept response carries projectId, route the
       // user straight to the project they just gained access to.
@@ -114,9 +119,16 @@ export default function InviteLandingPage() {
             <AlertBanner tone="success">
               Welcome aboard. Role: <strong>{phase.role}</strong>.
             </AlertBanner>
+            {phase.soloModeChanged && (
+              <AlertBanner tone="info">
+                This was the project&apos;s first invitation. Solo-mode has been
+                disabled and the distinct-reviewer gate is now active for all
+                future tasks.
+              </AlertBanner>
+            )}
             <p style={{ marginTop: "1rem" }}>
-              Redirecting to your dashboard, or{" "}
-              <Link href="/dashboard">go now</Link>.
+              Redirecting to the project, or{" "}
+              <Link href={`/projects/${phase.projectId}/members`}>go now</Link>.
             </p>
           </>
         )}

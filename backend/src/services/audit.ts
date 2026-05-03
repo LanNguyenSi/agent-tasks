@@ -59,7 +59,12 @@ export type AuditAction =
   | "project.invite_created"
   | "project.invite_consumed"
   | "project.invite_revoked"
-  | "project.member_removed";
+  | "project.member_removed"
+  // Auto-flip emitted by the invite accept-handler when the first
+  // ProjectMember consumes an invite on a previously-soloMode project.
+  // soloMode bypasses the distinct-reviewer gate; once a second human is
+  // in the loop, the gate must become real.
+  | "project.solo_mode_disabled_by_share";
 
 export interface AuditPayload {
   [key: string]: unknown;
