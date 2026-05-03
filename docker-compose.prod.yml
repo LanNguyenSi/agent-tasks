@@ -13,6 +13,11 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
+    # Idle ~36M; cap protects the host from a runaway query plan or
+    # vacuum spike. Postgres scales connection pool / shared buffers
+    # off this so 512M is comfortable for our workload (single-tenant,
+    # small dataset). Bump if pg_stat_activity ever shows pressure.
+    mem_limit: 512m
     networks:
       - internal
 
@@ -28,6 +33,11 @@ services:
     networks:
       - internal
     restart: "no"
+    # One-shot prisma db push container; lives only for the duration
+    # of the schema sync. 512M is far above what a single push uses,
+    # leaving headroom for a future migrate-deploy that would need
+    # more.
+    mem_limit: 512m
 
   backend:
     build:
@@ -51,6 +61,10 @@ services:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+    # Idle ~92M, request-burst peak observed ~250M. 768M caps without
+    # constraining normal traffic and prevents a runaway request
+    # handler from eating the whole host on a memory-leak regression.
+    mem_limit: 768m
     networks:
       - internal
       - traefik
@@ -74,6 +88,12 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    # Next.js production server. Idle ~152M but the SSR path can spike
+    # briefly under traffic; 1G keeps that headroom while still
+    # capping a runaway worker. Combined with the other caps above the
+    # whole stack tops out at ~2.8G under normal operation, leaving
+    # ample room for the build process during deploy on a 7.7G host.
+    mem_limit: 1g
     networks:
       - internal
       - traefik

@@ -2,7 +2,22 @@ name: agent-tasks
 health: /api/health
 compose_file: docker-compose.prod.yml
 pre_update:
-  - docker compose -f docker-compose.prod.yml build --no-cache
-post_update:
-  - docker compose -f docker-compose.prod.yml exec backend npx prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+  # `--pull` refreshes upstream base images each deploy; the layer
+  # cache stays valid for any layer whose inputs (lockfile, source
+  # contents) haven't changed. We deliberately do NOT pass
+  # --no-cache: a full rebuild peaks at ~3-4 GB RAM for this stack
+  # and on a 7.7 GB host shared with ~25 containers that's enough to
+  # push the OOM-killer into a kernel-level lockup (incident
+  # 2026-05-03). Dependency drift is detected through the COPY
+  # package-lock.json invalidation chain, so cache reuse is safe.
+  #
+  # For the rare hard-rebuild case (base-image security advisory)
+  # do it interactively from the VPS, not in the automatic hook.
+  - docker compose -f docker-compose.prod.yml build --pull
+# post_update intentionally absent: the `migrate` service in
+# docker-compose.prod.yml runs `prisma db push` as a one-shot init
+# container with `service_completed_successfully` as a dependency on
+# `backend`. The old post_update step (`docker compose exec backend
+# npx prisma db push`) was a redundant second push that could race
+# the still-finalising init container.
 rollback: true
