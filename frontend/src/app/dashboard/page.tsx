@@ -705,15 +705,10 @@ export default function DashboardPage() {
                   gap: "var(--space-2)",
                 }}
               >
-                {(() => {
-                  const proj = projects.find((p) => p.id === selectedProjectId);
-                  return (
-                    <>
-                      {proj?.accessSource === "project" && <ShareIcon title="Shared with you" />}
-                      {proj?.name ?? "Select a project"}
-                    </>
-                  );
-                })()}
+                {selectedProject?.accessSource === "project" && (
+                  <ShareIcon title="Shared with you" />
+                )}
+                {selectedProject?.name ?? "Select a project"}
               </span>
               <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{projectMenuOpen ? "▲" : "▼"}</span>
             </button>
