@@ -7,6 +7,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-05-03
+
+**Headline: per-project sharing ships end-to-end (schema + access checks +
+invite/accept flow + members management page + dashboard share-marker),
+the home and `/tasks` list pages stop fanning out one HTTP request per
+project (a single team-scoped aggregation endpoint replaces the loop),
+and the agent-tasks-cli is folded into the monorepo as a `cli/`
+workspace alongside backend / frontend / mcp-server / mcp-bridge.**
+
+Operator note: PR #217 added two new tables (`project_members`,
+`project_invites`). The schema change rolls out via the deploy init
+container's existing `prisma db push` step, so the upgrade requires
+no extra operator action beyond the usual deploy. The new aggregation
+endpoint `GET /api/teams/:teamId/tasks` is additive, mounted next to
+the existing `/api/projects/:projectId/tasks` (which stays in place
+for the board's per-project view). No client breakage; existing REST
+and MCP callers continue to work.
+
+### Added
+
+#### Per-project sharing (PR #217)
+
+A team admin can invite a user to a single project without adding them
+to the project's team. The data layer:
+
+- `ProjectMember(projectId, userId, role, invitedById)` with a unique
+  `(projectId, userId)`. Role enum:
+  `PROJECT_ADMIN | PROJECT_CONTRIBUTOR | PROJECT_VIEWER`.
+- `ProjectInvite(projectId, tokenHash, role, expiresAt, consumed*)`
+  with sha256-hashed tokens (same pattern as `agent_tokens.tokenHash`,
+  plain token returned exactly once at creation).
+
+Access expansion:
+
+- `hasProjectAccess` now passes when the actor has either a
+  `TeamMember` or a `ProjectMember` grant. Agent actors honor their
+  token-owner's `ProjectMember` grant when the token's team doesn't
+  own the project (matches the github-delegation attribution
+  principle: an agent acts as its creator's user).
+- New `getProjectMembership(actor, projectId)` returns the access
+  source (`team` | `project`) plus the concrete role, for UI marking
+  and per-project listings.
+- `hasProjectRole` / `isProjectAdmin` recognise `PROJECT_ADMIN` as
+  satisfying the `ADMIN` gate. `PROJECT_CONTRIBUTOR` satisfies
+  `HUMAN_MEMBER` and `REVIEWER`. `PROJECT_VIEWER` is read-only and
+  passes only the `"any"` membership check (does not unlock writes).
+
+Frontend:
+
+- New `/projects/[id]/members` page for team admins to view, invite,
+  and remove per-project members.
+- New `/invite/[token]` page for accepting a project invite (shared
+  surface with the team-invite flow: validate token, sign in if
+  needed, accept, redirect into the project).
+- `GET /api/projects` listing for humans now expands to
+  `OR(team-owned, projectMembers.some)` so shared projects appear in
+  pickers; each row is annotated with `accessSource: "team" | "project"`.
+- Dashboard project picker shows a share-marker on shared rows, plus
+  a "Members" link on the project detail surface and a banner on
+  shared projects so the user knows which team actually owns it
+  (PR #220).
+
+GitHub delegation refactor (PR #210, folded into #217): `AgentActor`
+gains `userId` (sourced from `AgentToken.createdById`); `findDelegationUser`
+prefers the token owner over the legacy team-pool fallback. The
+authorship check in `task_submit_pr` now expects the PR author to
+match the token owner when eligible, tightening defense-in-depth in
+multi-user teams.
+
+#### `agent-tasks-cli` imported as `cli/` workspace (PR #208)
+
+The standalone `agent-tasks-cli` repo is folded into the monorepo as a
+top-level `cli/` workspace alongside `backend`, `frontend`,
+`mcp-server`, `mcp-bridge`. Single source of truth, single CI run,
+single `npm install`. PR #209 follows up to retarget the README's
+Development block at the new monorepo paths.
+
+### Changed
+
+#### Single roundtrip for the home and `/tasks` list pages (PR #221)
+
+`GET /api/teams/:teamId/tasks` aggregates tasks across every
+team-accessible project (team-owned + per-project shares) in one
+request, plus a small projects map so the client can decorate each
+task with its project name without a second roundtrip. The frontend
+home and `/tasks` pages drop their `Promise.all(projects.map(getTasks))`
+loop and call the new endpoint once. Polling cadences unchanged
+(home: 15s; `/tasks`: 30s).
+
+Why: PR #217 added a third DB query to `hasProjectAccess` for the new
+per-project membership lookup. Combined with the per-project HTTP
+fan-out, a 40-project user incurred roughly 160 DB queries per home
+render every 15s. The new endpoint executes one projects query plus
+one task query (with `projectId IN (...)` over the resolved set), so
+the access check happens once at the team-resolution boundary instead
+of N times.
+
+The endpoint accepts `?status=`, `?priority=`, `?labels=`, and
+`?limit=` (default 500, hard max 1000); responses are ordered by
+`updatedAt desc`. The `/tasks` page requests the hard max and
+surfaces a banner when the cap is hit so users with very large teams
+know to narrow with filters. The existing
+`/api/projects/:projectId/tasks` endpoint stays in place for the
+single-project board view.
+
+### Fixed
+
+#### `agent-relay` deploy: drop `--no-cache`, add per-service `mem_limit` (PR #219)
+
+The post-merge relay redeploy hook was burning a fresh build context
+on every push, which combined with the box's available RAM produced
+intermittent OOM kills on the build container itself. `--no-cache`
+removed; per-service `mem_limit` lines added so the OS can no longer
+starve other services if a single one balloons. No app behavior
+change; deploy reliability win.
+
 ## [0.10.0] - 2026-04-28
 
 **Headline: The task state vocabulary locks down to `open / in_progress
