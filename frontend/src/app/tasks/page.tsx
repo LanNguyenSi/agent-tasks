@@ -5,12 +5,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getCurrentUser,
-  getProjects,
-  getTasks,
+  getTeamTasks,
   getTeams,
-  type Project,
   type Task,
   type Team,
+  type TeamTasksProject,
   type User,
 } from "../../lib/api";
 import { formatAbsoluteDate, formatRelativeTime } from "../../lib/time";
@@ -169,7 +168,7 @@ function TasksPageInner() {
 
   const [user, setUser] = useState<User | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<TeamTasksProject[]>([]);
   const [allTasks, setAllTasks] = useState<EnrichedTask[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -211,37 +210,45 @@ function TasksPageInner() {
       const teamIdParam = searchParams.get("teamId");
       const team = teams.find((t) => t.id === teamIdParam) ?? teams[0]!;
       setSelectedTeam(team);
-
-      const teamProjects = await getProjects(team.id);
-      setProjects(teamProjects);
       setLoading(false);
     })();
     // searchParams.get is fine to omit from deps; we only bootstrap once
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
+  // Single aggregation roundtrip: the server-side endpoint returns the
+  // union of tasks across all team-accessible projects plus a small
+  // projects map (id, name, slug, accessSource). Replaces the previous
+  // per-project fan-out that issued one HTTP request per project.
   useEffect(() => {
-    if (projects.length === 0) {
+    if (!selectedTeam) {
       setAllTasks([]);
+      setProjects([]);
       return;
     }
     let cancelled = false;
 
-    async function fetchAll() {
-      const collected: EnrichedTask[] = [];
-      await Promise.all(
-        projects.map(async (p) => {
-          const tasks = await getTasks(p.id);
-          for (const t of tasks) collected.push({ ...t, projectName: p.name });
-        }),
-      );
-      if (!cancelled) setAllTasks(collected);
+    async function fetchAll(teamId: string) {
+      // Take the server's hard-max (1000): the /tasks page is the
+      // dedicated full-list view and can absorb the larger payload, vs
+      // the home dashboard which is fine with the 500 default. If a team
+      // ever exceeds 1000 tasks the truncation banner below surfaces the
+      // cap so users know they need to narrow with filters.
+      const r = await getTeamTasks(teamId, { limit: 1000 });
+      if (cancelled) return;
+      setProjects(r.projects);
+      const projectName = new Map(r.projects.map((p) => [p.id, p.name]));
+      const enriched: EnrichedTask[] = r.tasks.map((t) => ({
+        ...t,
+        projectName: projectName.get(t.projectId) ?? "(unknown)",
+      }));
+      setAllTasks(enriched);
     }
 
-    void fetchAll();
-    const interval = setInterval(() => void fetchAll(), 30_000);
+    void fetchAll(selectedTeam.id);
+    const interval = setInterval(() => void fetchAll(selectedTeam.id), 30_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [projects]);
+  }, [selectedTeam]);
 
   function updateParams(patch: Record<string, string | null>, resetPage = true): void {
     const next = new URLSearchParams(searchParams.toString());
@@ -340,6 +347,15 @@ function TasksPageInner() {
           </Link>
         </div>
       </Card>
+
+      {allTasks.length >= 1000 && (
+        <Card padding="sm" style={{ marginBottom: "var(--space-3)", background: "var(--warning-muted)", border: "1px solid var(--warning)" }}>
+          <p style={{ fontSize: "var(--text-xs)", color: "var(--warning)" }}>
+            Showing the 1000 most recently updated tasks. Use the scope or filter
+            controls to narrow the view if you need older tasks.
+          </p>
+        </Card>
+      )}
 
       {/* Scope chips */}
       <div className="scope-chip-row">

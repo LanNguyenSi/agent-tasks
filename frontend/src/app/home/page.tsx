@@ -6,11 +6,9 @@ import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
   getTeams,
-  getProjects,
-  getTasks,
+  getTeamTasks,
   type User,
   type Team,
-  type Project,
   type Task,
 } from "../../lib/api";
 import { formatRelativeTime } from "../../lib/time";
@@ -117,7 +115,7 @@ export default function HomeDashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [firstProjectId, setFirstProjectId] = useState<string | null>(null);
   const [allTasks, setAllTasks] = useState<EnrichedTask[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -132,37 +130,39 @@ export default function HomeDashboardPage() {
 
       const team = teams[0]!;
       setSelectedTeam(team);
-
-      const teamProjects = await getProjects(team.id);
-      setProjects(teamProjects);
       setLoading(false);
     })();
   }, [router]);
 
+  // Single aggregation roundtrip per refresh: server returns the union of
+  // tasks across every team-accessible project (team-owned + per-project
+  // shares) plus a projects map for the project-name decoration. Replaces
+  // the previous fan-out that issued one HTTP request per project (with
+  // 40 projects this was ~40 parallel requests, each carrying its own
+  // 3-query ACL — see the perf regression ticket for details).
   useEffect(() => {
-    if (projects.length === 0) return;
+    if (!selectedTeam) return;
     let cancelled = false;
 
-    async function fetchAllTasks() {
-      const collected: EnrichedTask[] = [];
-      await Promise.all(
-        projects.map(async (p) => {
-          const tasks = await getTasks(p.id);
-          for (const t of tasks) {
-            collected.push({ ...t, projectName: p.name });
-          }
-        }),
-      );
-      if (!cancelled) {
-        collected.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-        setAllTasks(collected);
+    async function fetchTeamTasks(teamId: string) {
+      const r = await getTeamTasks(teamId);
+      if (cancelled) return;
+      const projectName = new Map(r.projects.map((p) => [p.id, p.name]));
+      const enriched: EnrichedTask[] = r.tasks.map((t) => ({
+        ...t,
+        projectName: projectName.get(t.projectId) ?? "(unknown)",
+      }));
+      // Server orders by updatedAt desc; preserve that here.
+      setAllTasks(enriched);
+      if (r.projects.length > 0) {
+        setFirstProjectId((prev) => prev ?? r.projects[0]!.id);
       }
     }
 
-    void fetchAllTasks();
-    const interval = setInterval(() => void fetchAllTasks(), 15_000);
+    void fetchTeamTasks(selectedTeam.id);
+    const interval = setInterval(() => void fetchTeamTasks(selectedTeam.id), 15_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [projects]);
+  }, [selectedTeam]);
 
   const openTasks = useMemo(
     () => allTasks.filter((t) => t.status === "open" || t.status === "in_progress"),
@@ -197,8 +197,8 @@ export default function HomeDashboardPage() {
     );
   }
 
-  const boardHref = selectedTeam && projects[0]
-    ? `/dashboard?teamId=${selectedTeam.id}&projectId=${projects[0].id}`
+  const boardHref = selectedTeam && firstProjectId
+    ? `/dashboard?teamId=${selectedTeam.id}&projectId=${firstProjectId}`
     : "/dashboard";
 
   return (
