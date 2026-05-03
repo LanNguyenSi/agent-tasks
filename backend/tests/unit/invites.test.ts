@@ -15,6 +15,7 @@ import type { Actor } from "../../src/types/auth.js";
 
 const prismaMocks = vi.hoisted(() => ({
   projectFindUnique: vi.fn(),
+  projectFindMany: vi.fn(),
   projectUpdate: vi.fn(),
   projectInviteCreate: vi.fn(),
   projectInviteFindUnique: vi.fn(),
@@ -23,6 +24,7 @@ const prismaMocks = vi.hoisted(() => ({
   projectMemberFindUnique: vi.fn(),
   projectMemberCreate: vi.fn(),
   projectMemberDelete: vi.fn(),
+  teamMemberFindMany: vi.fn(),
   taskUpdateMany: vi.fn(),
   $transaction: vi.fn(),
 }));
@@ -31,6 +33,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
     project: {
       findUnique: prismaMocks.projectFindUnique,
+      findMany: prismaMocks.projectFindMany,
       update: prismaMocks.projectUpdate,
     },
     projectInvite: {
@@ -44,6 +47,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
       create: prismaMocks.projectMemberCreate,
       delete: prismaMocks.projectMemberDelete,
     },
+    teamMember: { findMany: prismaMocks.teamMemberFindMany },
     task: { updateMany: prismaMocks.taskUpdateMany },
     $transaction: prismaMocks.$transaction,
   },
@@ -75,6 +79,7 @@ vi.mock("../../src/services/audit.js", () => ({
 import {
   projectInviteAdminRouter,
   inviteAcceptRouter,
+  sharesAdminRouter,
 } from "../../src/routes/invites.js";
 
 const PROJECT_ID = "00000000-0000-0000-0000-000000000001";
@@ -98,6 +103,16 @@ function makeAcceptApp(actor: Actor) {
     await next();
   });
   app.route("/", inviteAcceptRouter);
+  return app;
+}
+
+function makeSharesAdminApp(actor: Actor) {
+  const app = new Hono<{ Variables: AppVariables }>();
+  app.use("*", async (c, next) => {
+    c.set("actor", actor);
+    await next();
+  });
+  app.route("/", sharesAdminRouter);
   return app;
 }
 
@@ -491,5 +506,80 @@ describe("DELETE /projects/:id/members/:userId", () => {
     );
     expect(res.status).toBe(403);
     expect(prismaMocks.projectMemberDelete).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /admin/project-shares", () => {
+  it("returns empty list when caller has no team-ADMIN memberships", async () => {
+    prismaMocks.teamMemberFindMany.mockResolvedValue([]);
+
+    const res = await makeSharesAdminApp(ADMIN).request("/project-shares");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { projects: unknown[] };
+    expect(body.projects).toEqual([]);
+    // Avoid wasted DB call when caller has no admin authority anywhere.
+    expect(prismaMocks.projectFindMany).not.toHaveBeenCalled();
+  });
+
+  it("scopes results to projects in the caller's admin teams", async () => {
+    prismaMocks.teamMemberFindMany.mockResolvedValue([
+      { teamId: "team-A" },
+      { teamId: "team-B" },
+    ]);
+    prismaMocks.projectFindMany.mockResolvedValue([
+      {
+        id: "p-1",
+        name: "Shared",
+        slug: "shared",
+        teamId: "team-A",
+        team: { name: "Acme", slug: "acme" },
+        projectMembers: [
+          {
+            userId: "u-2",
+            role: "PROJECT_CONTRIBUTOR",
+            createdAt: new Date(),
+            user: { login: "alice" },
+            invitedBy: { login: "owner" },
+          },
+        ],
+        projectInvites: [{ id: "inv-pending-1" }, { id: "inv-pending-2" }],
+      },
+    ]);
+
+    const res = await makeSharesAdminApp(ADMIN).request("/project-shares");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      projects: Array<{
+        projectId: string;
+        teamId: string;
+        members: Array<{ userLogin: string; addedByLogin: string }>;
+        pendingInviteCount: number;
+      }>;
+    };
+
+    expect(body.projects).toHaveLength(1);
+    expect(body.projects[0]?.projectId).toBe("p-1");
+    expect(body.projects[0]?.members[0]?.userLogin).toBe("alice");
+    expect(body.projects[0]?.members[0]?.addedByLogin).toBe("owner");
+    expect(body.projects[0]?.pendingInviteCount).toBe(2);
+
+    const where = (prismaMocks.projectFindMany.mock.calls[0]?.[0] as {
+      where: { teamId: { in: string[] } };
+    }).where;
+    expect(where.teamId.in).toEqual(["team-A", "team-B"]);
+  });
+
+  it("rejects agent actors", async () => {
+    const agent: Actor = {
+      type: "agent",
+      tokenId: "tok",
+      teamId: "team-A",
+      scopes: [],
+      userId: "u-agent",
+    };
+
+    const res = await makeSharesAdminApp(agent).request("/project-shares");
+    expect(res.status).toBe(403);
+    expect(prismaMocks.teamMemberFindMany).not.toHaveBeenCalled();
   });
 });

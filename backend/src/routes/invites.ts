@@ -35,6 +35,7 @@ import { logAuditEvent } from "../services/audit.js";
 
 export const projectInviteAdminRouter = new Hono<{ Variables: AppVariables }>();
 export const inviteAcceptRouter = new Hono<{ Variables: AppVariables }>();
+export const sharesAdminRouter = new Hono<{ Variables: AppVariables }>();
 
 const PROJECT_ROLES = ["PROJECT_VIEWER", "PROJECT_CONTRIBUTOR", "PROJECT_ADMIN"] as const;
 const DEFAULT_TTL_DAYS = 7;
@@ -426,3 +427,85 @@ inviteAcceptRouter.post(
     );
   },
 );
+
+// ── Cross-team share visibility (admin) ──────────────────────────────────────
+//
+// GET /admin/project-shares lists ProjectMember + ProjectInvite state for
+// every project where the calling user holds a team-ADMIN role. Scoped to
+// the user's admin teams rather than globally because there is no
+// "superadmin" concept in this system: a user's authority comes from being
+// ADMIN of a specific team. Ops dashboards that need cross-team visibility
+// run with a dedicated agent token whose owner is admin of every team
+// being aggregated.
+//
+// Agents are rejected up front since they don't carry a per-user team role
+// and per-team ADMIN authority is the entire authz contract here.
+
+sharesAdminRouter.get("/project-shares", async (c) => {
+  const actor = c.get("actor") as Actor;
+  if (actor.type !== "human") {
+    return forbidden(c, "Only human team admins can read share state");
+  }
+
+  const adminMemberships = await prisma.teamMember.findMany({
+    where: { userId: actor.userId, role: "ADMIN" },
+    select: { teamId: true },
+  });
+  const teamIds = adminMemberships.map((m) => m.teamId);
+  if (teamIds.length === 0) {
+    return c.json({ projects: [] });
+  }
+
+  const projects = await prisma.project.findMany({
+    where: {
+      teamId: { in: teamIds },
+      // Only include projects that actually carry sharing state.
+      // Empty-share projects dilute the dashboard.
+      OR: [
+        { projectMembers: { some: {} } },
+        { projectInvites: { some: {} } },
+      ],
+    },
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      teamId: true,
+      team: { select: { name: true, slug: true } },
+      projectMembers: {
+        select: {
+          userId: true,
+          role: true,
+          createdAt: true,
+          user: { select: { login: true } },
+          invitedBy: { select: { login: true } },
+        },
+        orderBy: { createdAt: "asc" },
+      },
+      projectInvites: {
+        where: { consumedAt: null, expiresAt: { gt: new Date() } },
+        select: { id: true },
+      },
+    },
+  });
+
+  return c.json({
+    projects: projects.map((p) => ({
+      projectId: p.id,
+      projectName: p.name,
+      projectSlug: p.slug,
+      teamId: p.teamId,
+      teamName: p.team.name,
+      teamSlug: p.team.slug,
+      members: p.projectMembers.map((m) => ({
+        userId: m.userId,
+        userLogin: m.user.login,
+        role: m.role,
+        addedAt: m.createdAt,
+        addedByLogin: m.invitedBy.login,
+      })),
+      pendingInviteCount: p.projectInvites.length,
+    })),
+  });
+});
