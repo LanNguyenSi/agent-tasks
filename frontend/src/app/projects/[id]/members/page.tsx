@@ -51,12 +51,10 @@ export default function ProjectMembersPage() {
   const [ttlDays, setTtlDays] = useState("7");
   const [creating, setCreating] = useState(false);
 
-  // Last-created invite to show plainToken once
-  const [freshInvite, setFreshInvite] = useState<{
-    inviteId: string;
-    plainToken: string;
-    shareUrl: string;
-  } | null>(null);
+  // Last-created invite to show plainToken once. We only render the
+  // share URL; the bare plainToken and inviteId are not needed
+  // post-creation, so the state is intentionally narrow.
+  const [freshInvite, setFreshInvite] = useState<{ shareUrl: string } | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   async function refresh() {
@@ -90,11 +88,7 @@ export default function ProjectMembersPage() {
         expiresInDays: parseInt(ttlDays, 10),
       });
       const shareUrl = `${window.location.origin}/invite/${result.plainToken}`;
-      setFreshInvite({
-        inviteId: result.invite.id,
-        plainToken: result.plainToken,
-        shareUrl,
-      });
+      setFreshInvite({ shareUrl });
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -330,13 +324,18 @@ export default function ProjectMembersPage() {
   );
 }
 
-function InviteStatusBadge({ status }: { status: "pending" | "expired" | "consumed" }) {
+function InviteStatusBadge({ status }: { status: ProjectInvite["status"] }) {
+  // Pending is neutral-positive (awaiting action, no problem yet) so we
+  // pick `--primary` instead of `--success` to avoid misreading the
+  // badge as "good to go". Expired escalates to `--danger` because that
+  // invite is unusable and the operator should typically revoke +
+  // recreate. Consumed stays `--muted` (history, no action needed).
   const tone = (() => {
     switch (status) {
       case "pending":
-        return "var(--success)";
+        return "var(--primary)";
       case "expired":
-        return "var(--warning)";
+        return "var(--danger)";
       case "consumed":
         return "var(--muted)";
     }
