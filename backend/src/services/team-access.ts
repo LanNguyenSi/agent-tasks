@@ -126,9 +126,13 @@ export async function hasProjectAccess(actor: Actor, projectId: string): Promise
  * via team membership or via a per-project invite", e.g. to mark UI rows
  * or to scope which projects appear on the user's project list.
  *
- * Returns `null` when the actor has no access to the project. Agents that
- * pass via team-only see `{ source: "team", role: null }` because agent
- * actors don't carry a per-user team role; humans see their concrete role.
+ * Returns `null` when the actor has NO access. The "no access" answer is
+ * always the literal `null`. A successful return always includes both
+ * `source` and `role`, where `role: null` is reserved for the agent-via-
+ * team case (agent actors don't carry a per-user team role and the
+ * project-id-based access alone is the relevant fact). Distinguishing
+ * "no access" from "agent in team": check the outer return shape, not the
+ * `role` field.
  */
 export async function getProjectMembership(
   actor: Actor,
@@ -180,7 +184,7 @@ export type ProjectRole = "ADMIN" | "HUMAN_MEMBER" | "REVIEWER" | "any";
 
 /**
  * True iff the actor holds `role` in the team that owns `projectId`,
- * or holds the equivalent PROJECT_-level role via per-project invite.
+ * or holds an equivalent PROJECT_-level role via per-project invite.
  *
  * - `role === "any"` means "any membership"; delegates to `hasProjectAccess`
  *   so agents in the owning team also pass (matches the legacy semantics
@@ -188,18 +192,32 @@ export type ProjectRole = "ADMIN" | "HUMAN_MEMBER" | "REVIEWER" | "any";
  *   gate entirely for any actor that had already cleared project access).
  * - Concrete roles are human-only: agents always return false without a
  *   DB lookup, because the membership model assigns roles to users.
- * - For `role === "ADMIN"`: also satisfied by ProjectMember.PROJECT_ADMIN,
- *   so a per-project admin can perform project-admin actions on a shared
- *   project even without team membership.
- * - Other concrete roles (HUMAN_MEMBER, REVIEWER) are NOT auto-mapped to
- *   any ProjectMemberRole; ProjectMember has its own role taxonomy and
- *   route handlers (Task 3) decide which PROJECT_-level role satisfies
- *   which write operation. Keeping this strict here prevents a stale
- *   "REVIEWER" role check from silently accepting PROJECT_VIEWER, etc.
  * - Missing project returns false.
  *
- * Use this for every project-scoped role gate. `isProjectAdmin` is a thin
- * wrapper for the common `role === "ADMIN"` case.
+ * ## Project-role to team-role mapping
+ *
+ * Workflow transitions are gated on the Team-side role taxonomy
+ * (ADMIN / HUMAN_MEMBER / REVIEWER), but per-project members hold the
+ * Project-side taxonomy (PROJECT_ADMIN / PROJECT_CONTRIBUTOR / VIEWER).
+ * To let a shared project's collaborators pass team-role gates without
+ * forcing every gate-aware route to know two taxonomies, this helper
+ * maps:
+ *
+ *   PROJECT_ADMIN       → satisfies ADMIN, HUMAN_MEMBER, REVIEWER
+ *   PROJECT_CONTRIBUTOR → satisfies HUMAN_MEMBER, REVIEWER
+ *   PROJECT_VIEWER      → satisfies none of the role gates (read-only;
+ *                         only the `"any"` membership check passes)
+ *
+ * Rationale: PROJECT_ADMIN is the most-privileged actor on a shared
+ * project and must clear every per-project gate, otherwise an invited
+ * admin would be locked out of transitions a team REVIEWER could make.
+ * PROJECT_CONTRIBUTOR is the "claim + transition + review" tier.
+ * PROJECT_VIEWER is read-only and intentionally does NOT clear write
+ * gates. Routes that want a finer split should check the project-side
+ * role directly via `getProjectMembership`.
+ *
+ * `isProjectAdmin` is a thin wrapper for the common `role === "ADMIN"`
+ * case.
  */
 export async function hasProjectRole(
   actor: Actor,
@@ -214,9 +232,13 @@ export async function hasProjectRole(
   if (!teamId) return false;
   const userRole = await getUserRoleInTeam(teamId, actor.userId);
   if (userRole === role) return true;
-  if (role === "ADMIN") {
-    const projectRole = await getUserRoleInProject(projectId, actor.userId);
-    if (projectRole === "PROJECT_ADMIN") return true;
+
+  const projectRole = await getUserRoleInProject(projectId, actor.userId);
+  if (projectRole === null) return false;
+
+  if (role === "ADMIN") return projectRole === "PROJECT_ADMIN";
+  if (role === "HUMAN_MEMBER" || role === "REVIEWER") {
+    return projectRole === "PROJECT_ADMIN" || projectRole === "PROJECT_CONTRIBUTOR";
   }
   return false;
 }
