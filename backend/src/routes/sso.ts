@@ -295,6 +295,7 @@ async function ssoAdminGuard(
     tokenId: token.id,
     teamId: token.teamId,
     scopes: token.scopes,
+    userId: token.createdById,
   };
   c.set("actor", actor);
   return next();

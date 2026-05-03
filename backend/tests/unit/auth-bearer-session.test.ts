@@ -93,6 +93,7 @@ describe("authMiddleware Bearer auth", () => {
       id: "t1",
       tokenHash: "x",
       teamId: "team-1",
+      createdById: "user-owner",
       scopes: ["read"],
       revokedAt: null,
       expiresAt: null,
@@ -104,8 +105,9 @@ describe("authMiddleware Bearer auth", () => {
     });
 
     expect(res.status).toBe(200);
-    const actor = (await res.json()) as { type: string; tokenId?: string };
+    const actor = (await res.json()) as { type: string; tokenId?: string; userId?: string };
     expect(actor.type).toBe("agent");
     expect(actor.tokenId).toBe("t1");
+    expect(actor.userId).toBe("user-owner");
   });
 });
