@@ -256,6 +256,117 @@ const createArtifactSchema = z
     path: ["content"],
   });
 
+// ── List tasks across all team-accessible projects ──────────────────────────
+//
+// Aggregation endpoint introduced 2026-05-03 to fix the home-page fan-out
+// regression: the home dashboard previously made one HTTP request per
+// project (`/projects/:id/tasks`), which after PR #217 added a third DB
+// query to `hasProjectAccess` for per-project sharing grants meant a 40-
+// project user incurred ~160 DB queries per home render, polled every 15s.
+//
+// Single-roundtrip alternative: server resolves accessible projects once,
+// then issues a single `Task.findMany` keyed on `projectId IN (...)`. ACL
+// is enforced at the project-resolution boundary; per-task access is
+// implicitly correct because we only query within the resolved project
+// set.
+//
+// Response shape co-locates the projects map so the client can decorate
+// each task with its project name without a second roundtrip.
+taskRouter.get("/teams/:teamId/tasks", async (c) => {
+  const actor = c.get("actor") as Actor;
+  const teamIdParam = c.req.param("teamId");
+
+  const resolved = await resolveTeamId(actor, teamIdParam);
+  if (!resolved.ok) {
+    return c.json(resolveTeamIdErrorBody(resolved), resolved.status);
+  }
+
+  // Same access expansion as `/api/projects` (routes/projects.ts:80-118):
+  // humans see team projects PLUS any project they have a per-project
+  // grant on; agents stay team-scoped (their per-project access is
+  // exercised through specific project IDs, not aggregations).
+  const projects = await prisma.project.findMany({
+    where:
+      actor.type === "human"
+        ? {
+            OR: [
+              { teamId: resolved.teamId },
+              { projectMembers: { some: { userId: actor.userId } } },
+            ],
+          }
+        : { teamId: resolved.teamId },
+    // Stable order: matches /api/projects (createdAt desc) so callers
+    // that pick projects[0] (e.g. home page boardHref CTA) see the same
+    // first row across both endpoints.
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      teamId: true,
+      name: true,
+      slug: true,
+    },
+  });
+
+  if (projects.length === 0) {
+    return c.json({ tasks: [], projects: [] });
+  }
+
+  const projectIds = projects.map((p) => p.id);
+  const where: Record<string, unknown> = { projectId: { in: projectIds } };
+
+  const statusFilter = c.req.query("status");
+  if (statusFilter) {
+    const parsed = statusFilter.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parsed.length > 0) where.status = { in: parsed };
+  }
+
+  const labelFilter = c.req.query("labels");
+  if (labelFilter) {
+    const parsed = labelFilter.split(",").map((l) => l.trim()).filter(Boolean);
+    if (parsed.length > 0) where.labels = { hasSome: parsed };
+  }
+
+  const priorityFilter = c.req.query("priority");
+  if (priorityFilter) {
+    const parsed = priorityFilter
+      .split(",")
+      .map((p) => p.trim().toUpperCase())
+      .filter((p) => p === "LOW" || p === "MEDIUM" || p === "HIGH" || p === "CRITICAL");
+    if (parsed.length > 0) where.priority = { in: parsed };
+  }
+
+  // Hard cap to keep the response bounded even if a caller forgets a sane
+  // limit. 500 is enough for the home dashboard (5 widgets × 10 rows + a
+  // generous buffer) without ballooning paint time.
+  const DEFAULT_LIMIT = 500;
+  const HARD_MAX_LIMIT = 1000;
+  const limitParam = c.req.query("limit");
+  const limit = (() => {
+    const n = limitParam ? parseInt(limitParam, 10) : DEFAULT_LIMIT;
+    if (!Number.isFinite(n) || n <= 0) return DEFAULT_LIMIT;
+    return Math.min(n, HARD_MAX_LIMIT);
+  })();
+
+  const tasks = await prisma.task.findMany({
+    where,
+    include: taskListInclude,
+    orderBy: { updatedAt: "desc" },
+    take: limit,
+  });
+
+  const projectsAnnotated = projects.map((p) => ({
+    id: p.id,
+    name: p.name,
+    slug: p.slug,
+    accessSource:
+      actor.type === "human" && p.teamId !== resolved.teamId
+        ? ("project" as const)
+        : ("team" as const),
+  }));
+
+  return c.json({ tasks, projects: projectsAnnotated });
+});
+
 // ── List tasks for a project ─────────────────────────────────────────────────
 
 taskRouter.get("/projects/:projectId/tasks", async (c) => {

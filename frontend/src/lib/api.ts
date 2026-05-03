@@ -441,6 +441,39 @@ export async function getTasks(projectId: string): Promise<Task[]> {
   return data.tasks;
 }
 
+export interface TeamTasksProject {
+  id: string;
+  name: string;
+  slug: string;
+  accessSource: "team" | "project";
+}
+
+export interface TeamTasksResponse {
+  tasks: Task[];
+  projects: TeamTasksProject[];
+}
+
+/**
+ * Aggregation endpoint for the home dashboard: returns tasks across all
+ * team-accessible projects in a single roundtrip plus a small projects
+ * map so callers can decorate each task with its project name without a
+ * second request. Replaces the per-project fan-out the home page used to
+ * do.
+ */
+export async function getTeamTasks(
+  teamId: string,
+  opts: { status?: string; priority?: string; labels?: string; limit?: number } = {},
+): Promise<TeamTasksResponse> {
+  const params = new URLSearchParams();
+  if (opts.status) params.set("status", opts.status);
+  if (opts.priority) params.set("priority", opts.priority);
+  if (opts.labels) params.set("labels", opts.labels);
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  const path = `/api/teams/${teamId}/tasks${qs ? `?${qs}` : ""}`;
+  return request<TeamTasksResponse>(path);
+}
+
 export async function getTask(taskId: string): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/tasks/${taskId}`);
   return data.task;
