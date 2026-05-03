@@ -63,8 +63,9 @@ vi.mock("../../src/services/github-delegation.js", () => ({
   }),
 }));
 
+const hasProjectAccessMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 vi.mock("../../src/services/team-access.js", () => ({
-  hasProjectAccess: vi.fn().mockResolvedValue(true),
+  hasProjectAccess: hasProjectAccessMock,
 }));
 
 const performPrMergeMock = vi.hoisted(() => vi.fn());
@@ -200,6 +201,50 @@ beforeEach(() => {
     ok: true,
     sha: "deadbeef",
     alreadyMerged: false,
+  });
+  hasProjectAccessMock.mockResolvedValue(true);
+});
+
+describe("github-route project-access gate", () => {
+  it("rejects pull_requests_create with 403 when hasProjectAccess returns false", async () => {
+    hasProjectAccessMock.mockResolvedValueOnce(false);
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const res = await makeApp(CREATE_ACTOR).request("/pull-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskId: TASK_ID,
+        owner: "acme",
+        repo: "thing",
+        head: "feat/x",
+        title: "Test",
+        idempotencyKey: "k",
+      }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("rejects pull_requests_merge with 403 when hasProjectAccess returns false", async () => {
+    hasProjectAccessMock.mockResolvedValueOnce(false);
+
+    const res = await makeApp(MERGE_ACTOR).request("/pull-requests/42/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskId: TASK_ID,
+        owner: "acme",
+        repo: "thing",
+        merge_method: "squash",
+        idempotencyKey: "m",
+      }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(performPrMergeMock).not.toHaveBeenCalled();
   });
 });
 
