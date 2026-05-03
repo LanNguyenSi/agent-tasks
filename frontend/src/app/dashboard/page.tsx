@@ -650,6 +650,16 @@ export default function DashboardPage() {
         boardHref={selectedTeamId && selectedProjectId ? `/dashboard?teamId=${selectedTeamId}&projectId=${selectedProjectId}` : "/dashboard"}
       />
 
+      {selectedProject?.accessSource === "project" && (
+        <div style={{ marginBottom: "var(--space-3)" }}>
+          <AlertBanner tone="info">
+            This project is shared with you. You access it through a per-project
+            invite, not via the team. PR operations on the linked GitHub
+            repository require your own collaborator-level access on the repo.
+          </AlertBanner>
+        </div>
+      )}
+
       <section
         className="dashboard-select-grid"
         style={{
@@ -685,8 +695,25 @@ export default function DashboardPage() {
               aria-haspopup="menu"
               aria-expanded={projectMenuOpen}
             >
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {projects.find((project) => project.id === selectedProjectId)?.name ?? "Select a project"}
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "var(--space-2)",
+                }}
+              >
+                {(() => {
+                  const proj = projects.find((p) => p.id === selectedProjectId);
+                  return (
+                    <>
+                      {proj?.accessSource === "project" && <ShareIcon title="Shared with you" />}
+                      {proj?.name ?? "Select a project"}
+                    </>
+                  );
+                })()}
               </span>
               <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{projectMenuOpen ? "▲" : "▼"}</span>
             </button>
@@ -701,6 +728,19 @@ export default function DashboardPage() {
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="8" cy="8" r="2.5" />
                   <path d="M6.83 2.17a.5.5 0 0 1 .49-.4h1.36a.5.5 0 0 1 .49.4l.2 1.1a4.5 4.5 0 0 1 1.09.63l1.05-.35a.5.5 0 0 1 .58.2l.68 1.18a.5.5 0 0 1-.1.6l-.84.75a4.5 4.5 0 0 1 0 1.26l.84.75a.5.5 0 0 1 .1.6l-.68 1.18a.5.5 0 0 1-.58.2l-1.05-.35a4.5 4.5 0 0 1-1.09.63l-.2 1.1a.5.5 0 0 1-.49.4H7.32a.5.5 0 0 1-.49-.4l-.2-1.1a4.5 4.5 0 0 1-1.09-.63l-1.05.35a.5.5 0 0 1-.58-.2l-.68-1.18a.5.5 0 0 1 .1-.6l.84-.75a4.5 4.5 0 0 1 0-1.26l-.84-.75a.5.5 0 0 1-.1-.6l.68-1.18a.5.5 0 0 1 .58-.2l1.05.35a4.5 4.5 0 0 1 1.09-.63l.2-1.1z" />
+                </svg>
+              </Link>
+              <Link
+                href={`/projects/${selectedProjectId}/members`}
+                className="project-settings-icon"
+                aria-label="Project members"
+                title="Project members & invites"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="6" cy="6" r="2.5" />
+                  <path d="M2 13a4 4 0 0 1 8 0" />
+                  <circle cx="11.5" cy="5" r="1.8" />
+                  <path d="M9.5 12.5a3 3 0 0 1 5 0" />
                 </svg>
               </Link>
               <button
@@ -761,9 +801,13 @@ export default function DashboardPage() {
                         void handleProjectChange(project.id);
                       }
                     }}
-                    title={project.name}
+                    title={project.accessSource === "project" ? `${project.name} (shared)` : project.name}
+                    style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}
                   >
-                    {project.name}
+                    {project.accessSource === "project" && <ShareIcon title="Shared" />}
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {project.name}
+                    </span>
                   </button>
                 );
               })}
@@ -1331,5 +1375,39 @@ export default function DashboardPage() {
         </Button>
       </Modal>
     </main>
+  );
+}
+
+/**
+ * Inline share marker rendered next to a project's name when the user
+ * accesses the project via a per-project invite (`accessSource: "project"`)
+ * rather than full team membership. Sized to align with adjacent text in
+ * the project picker; tone follows the `--primary` token used elsewhere
+ * for "info" affordances.
+ */
+function ShareIcon({ title }: { title: string }) {
+  return (
+    <span
+      title={title}
+      aria-label={title}
+      role="img"
+      style={{ color: "var(--primary)", display: "inline-flex" }}
+    >
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="3.5" cy="8" r="2" />
+        <circle cx="12" cy="3.5" r="2" />
+        <circle cx="12" cy="12.5" r="2" />
+        <path d="M5.2 7.1l5.2-2.5M5.2 8.9l5.2 2.5" />
+      </svg>
+    </span>
   );
 }
