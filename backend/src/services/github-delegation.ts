@@ -6,9 +6,10 @@
  *
  * Resolution order:
  *   1. `opts.preferUserId` if that user is a team member with the
- *      required consent and a connected GitHub. This is the actor-aware
- *      path: the user who owns the agent token (or the human actor
- *      themselves) acts under their own GitHub identity.
+ *      required consent and a connected GitHub. The actor-aware path:
+ *      pass the actor's user (token-owner for agents, the human
+ *      themselves for sessions) so GitHub operations attribute to the
+ *      person who triggered them.
  *   2. Team-wide pool fallback: any team member with the required
  *      consent and a connected GitHub. Admins are preferred over regular
  *      members. This preserves the legacy behavior so workflows where

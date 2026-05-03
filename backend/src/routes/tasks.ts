@@ -2262,7 +2262,14 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
   // Check that the PR was created by the delegation user. A compromised
   // agent token in the correct repo could otherwise submit someone else's
   // PR and later autoMerge it. Fail-open on GitHub API errors (this is
-  // belt-and-braces, not the primary wall — branch protection is).
+  // belt-and-braces, not the primary wall, branch protection is).
+  //
+  // The "delegation user" is now the token-owner when eligible (see
+  // findDelegationUser in services/github-delegation.ts). Multi-user teams
+  // therefore tie each agent token to its owner's GitHub identity: PRs
+  // submitted via this token must be authored by that user. This is a
+  // tightening of the prior pool-based behavior, where any pool-admin's
+  // login would match. Solo-mode setups are unaffected (one user).
   if (task.project.githubRepo && task.project.teamId) {
     const projectRepo = parseOwnerRepo(task.project.githubRepo);
     if (projectRepo) {
