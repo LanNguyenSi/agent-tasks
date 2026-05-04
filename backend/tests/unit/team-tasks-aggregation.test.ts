@@ -13,11 +13,17 @@ import type { AgentActor, HumanActor } from "../../src/types/auth.js";
 const prismaMocks = vi.hoisted(() => ({
   taskFindMany: vi.fn(),
   projectFindMany: vi.fn(),
+  taskGroupBy: vi.fn(),
+  taskCount: vi.fn(),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
-    task: { findMany: prismaMocks.taskFindMany },
+    task: {
+      findMany: prismaMocks.taskFindMany,
+      groupBy: prismaMocks.taskGroupBy,
+      count: prismaMocks.taskCount,
+    },
     project: { findMany: prismaMocks.projectFindMany },
   },
 }));
@@ -95,6 +101,17 @@ beforeEach(() => {
     { id: "t-1", projectId: "p-1", title: "Task 1", status: "open", priority: "HIGH", labels: [], updatedAt: new Date() },
     { id: "t-2", projectId: "p-2", title: "Task 2", status: "review", priority: "LOW", labels: [], updatedAt: new Date() },
   ]);
+  // Default count-stack: groupBy returns one row per status; count() is
+  // used twice (priority, mine) — first call resolves to the priority
+  // count, second to the mine count. Tests that need other shapes call
+  // .mockReset() and re-prime explicitly.
+  prismaMocks.taskGroupBy.mockResolvedValue([
+    { status: "open", _count: { _all: 70 } },
+    { status: "in_progress", _count: { _all: 5 } },
+    { status: "review", _count: { _all: 1 } },
+    { status: "done", _count: { _all: 778 } },
+  ]);
+  prismaMocks.taskCount.mockResolvedValueOnce(12).mockResolvedValueOnce(3);
 });
 
 describe("GET /teams/:teamId/tasks (aggregation)", () => {
@@ -165,10 +182,17 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
     prismaMocks.projectFindMany.mockResolvedValueOnce([]);
     const res = await makeApp(HUMAN).request("/teams/team-A/tasks");
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { tasks: unknown[]; projects: unknown[] };
+    const body = (await res.json()) as {
+      tasks: unknown[];
+      projects: unknown[];
+      counts: { total: number; done: number };
+    };
     expect(body.tasks).toEqual([]);
     expect(body.projects).toEqual([]);
+    expect(body.counts).toEqual({ open: 0, review: 0, done: 0, priority: 0, mine: 0, total: 0 });
     expect(prismaMocks.taskFindMany).not.toHaveBeenCalled();
+    expect(prismaMocks.taskGroupBy).not.toHaveBeenCalled();
+    expect(prismaMocks.taskCount).not.toHaveBeenCalled();
   });
 
   it("annotates shared projects with accessSource:'project' for humans", async () => {
@@ -203,5 +227,83 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
     await makeApp(HUMAN).request("/teams/team-A/tasks");
     const args = prismaMocks.taskFindMany.mock.calls[0]![0]!;
     expect(args.orderBy).toEqual({ updatedAt: "desc" });
+  });
+
+  describe("counts block", () => {
+    it("returns per-bucket counts derived from groupBy + targeted counts", async () => {
+      const res = await makeApp(HUMAN).request("/teams/team-A/tasks");
+      const body = (await res.json()) as {
+        counts: {
+          open: number;
+          review: number;
+          done: number;
+          priority: number;
+          mine: number;
+          total: number;
+        };
+      };
+      // open widget bucket = open + in_progress = 70 + 5
+      expect(body.counts.open).toBe(75);
+      expect(body.counts.review).toBe(1);
+      expect(body.counts.done).toBe(778);
+      // priority + mine come from the two count() calls (12 then 3)
+      expect(body.counts.priority).toBe(12);
+      expect(body.counts.mine).toBe(3);
+      // total is the sum of every status bucket from groupBy
+      expect(body.counts.total).toBe(70 + 5 + 1 + 778);
+    });
+
+    it("counts query is unaffected by ?status / ?priority / ?labels filters (badges show team-wide totals)", async () => {
+      await makeApp(HUMAN).request(
+        "/teams/team-A/tasks?status=open&priority=high&labels=foo",
+      );
+      const groupByWhere = prismaMocks.taskGroupBy.mock.calls[0]![0]!.where;
+      // No status / priority / labels narrowing on the count base —
+      // only the projectId scope.
+      expect(groupByWhere).toEqual({ projectId: { in: ["p-1", "p-2"] } });
+    });
+
+    it("priority count is HIGH|CRITICAL AND status != done", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks");
+      const priorityWhere = prismaMocks.taskCount.mock.calls[0]![0]!.where;
+      expect(priorityWhere).toEqual({
+        projectId: { in: ["p-1", "p-2"] },
+        priority: { in: ["HIGH", "CRITICAL"] },
+        status: { not: "done" },
+      });
+    });
+
+    it("mine count is scoped to actor.userId AND status != done", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks");
+      const mineWhere = prismaMocks.taskCount.mock.calls[1]![0]!.where;
+      expect(mineWhere).toEqual({
+        projectId: { in: ["p-1", "p-2"] },
+        claimedByUserId: "u-1",
+        status: { not: "done" },
+      });
+    });
+
+    it("mine count uses the agent actor's userId for agent callers", async () => {
+      await makeApp(AGENT).request("/teams/team-A/tasks");
+      const mineWhere = prismaMocks.taskCount.mock.calls[1]![0]!.where;
+      expect(mineWhere).toMatchObject({ claimedByUserId: "agent-owner" });
+    });
+
+    it("falls back to zero buckets when groupBy returns no rows", async () => {
+      prismaMocks.taskGroupBy.mockReset();
+      prismaMocks.taskGroupBy.mockResolvedValue([]);
+      prismaMocks.taskCount.mockReset();
+      prismaMocks.taskCount.mockResolvedValueOnce(0).mockResolvedValueOnce(0);
+      const res = await makeApp(HUMAN).request("/teams/team-A/tasks");
+      const body = (await res.json()) as { counts: Record<string, number> };
+      expect(body.counts).toEqual({
+        open: 0,
+        review: 0,
+        done: 0,
+        priority: 0,
+        mine: 0,
+        total: 0,
+      });
+    });
   });
 });
