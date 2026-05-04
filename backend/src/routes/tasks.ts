@@ -308,7 +308,11 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
   });
 
   if (projects.length === 0) {
-    return c.json({ tasks: [], projects: [] });
+    return c.json({
+      tasks: [],
+      projects: [],
+      counts: { open: 0, review: 0, done: 0, priority: 0, mine: 0, total: 0 },
+    });
   }
 
   const projectIds = projects.map((p) => p.id);
@@ -336,8 +340,10 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
   }
 
   // Hard cap to keep the response bounded even if a caller forgets a sane
-  // limit. 500 is enough for the home dashboard (5 widgets × 10 rows + a
-  // generous buffer) without ballooning paint time.
+  // limit. 500 is enough to feed the dashboard widgets' 10-row preview
+  // each; the per-status `counts` block below carries the true totals so
+  // the widget badges don't drift when a team's task volume crosses the
+  // page size.
   const DEFAULT_LIMIT = 500;
   const HARD_MAX_LIMIT = 1000;
   const limitParam = c.req.query("limit");
@@ -347,12 +353,52 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
     return Math.min(n, HARD_MAX_LIMIT);
   })();
 
-  const tasks = await prisma.task.findMany({
-    where,
-    include: taskListInclude,
-    orderBy: { updatedAt: "desc" },
-    take: limit,
-  });
+  // Counts are computed over the team's full task set, independent of the
+  // ?status / ?priority / ?labels filter (which only narrows the row
+  // slice). The home dashboard widgets need the team-wide totals; if we
+  // applied the filter here, a `?status=done` call would zero out every
+  // other widget's badge.
+  const countWhere = { projectId: { in: projectIds } } as const;
+
+  const [tasks, statusGroups, priorityCount, mineCount] = await Promise.all([
+    prisma.task.findMany({
+      where,
+      include: taskListInclude,
+      orderBy: { updatedAt: "desc" },
+      take: limit,
+    }),
+    prisma.task.groupBy({
+      by: ["status"],
+      where: countWhere,
+      _count: { _all: true },
+    }),
+    prisma.task.count({
+      where: {
+        ...countWhere,
+        priority: { in: ["HIGH", "CRITICAL"] },
+        status: { not: "done" },
+      },
+    }),
+    prisma.task.count({
+      where: {
+        ...countWhere,
+        claimedByUserId: actor.userId,
+        status: { not: "done" },
+      },
+    }),
+  ]);
+
+  const byStatus: Record<string, number> = Object.fromEntries(
+    statusGroups.map((g) => [g.status, g._count._all]),
+  );
+  const counts = {
+    open: (byStatus.open ?? 0) + (byStatus.in_progress ?? 0),
+    review: byStatus.review ?? 0,
+    done: byStatus.done ?? 0,
+    priority: priorityCount,
+    mine: mineCount,
+    total: statusGroups.reduce((s, g) => s + g._count._all, 0),
+  };
 
   const projectsAnnotated = projects.map((p) => ({
     id: p.id,
@@ -364,7 +410,7 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
         : ("team" as const),
   }));
 
-  return c.json({ tasks, projects: projectsAnnotated });
+  return c.json({ tasks, projects: projectsAnnotated, counts });
 });
 
 // ── List tasks for a project ─────────────────────────────────────────────────

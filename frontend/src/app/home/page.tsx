@@ -10,6 +10,7 @@ import {
   type User,
   type Team,
   type Task,
+  type TeamTasksCounts,
 } from "../../lib/api";
 import { formatRelativeTime } from "../../lib/time";
 import AppHeader from "../../components/AppHeader";
@@ -73,10 +74,18 @@ interface WidgetProps {
   teamId: string;
   scope: string;
   emptyText: string;
+  // Team-wide total for this scope, sourced from the server-side counts
+  // block. Falls back to the loaded slice length when the backend hasn't
+  // been redeployed yet (forward-compat). Use this for badges and "+N
+  // more" so the numbers don't drift once the team's task count exceeds
+  // the row-fetch page size.
+  total?: number;
 }
 
-function TaskWidget({ title, tasks, teamId, scope, emptyText }: WidgetProps) {
+function TaskWidget({ title, tasks, teamId, scope, emptyText, total }: WidgetProps) {
   const listHref = `/tasks?teamId=${teamId}&scope=${scope}`;
+  const displayTotal = total ?? tasks.length;
+  const moreCount = Math.max(0, displayTotal - WIDGET_LIMIT);
   return (
     <Card style={{ marginBottom: "0.75rem" }} padding="sm">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", gap: "0.5rem" }}>
@@ -86,10 +95,10 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText }: WidgetProps) {
           </h2>
         </Link>
         <Link href={listHref} style={{ color: "var(--muted)", fontSize: "var(--text-xs)", textDecoration: "none", flexShrink: 0 }}>
-          {tasks.length} total →
+          {displayTotal} total →
         </Link>
       </div>
-      {tasks.length === 0 ? (
+      {displayTotal === 0 ? (
         <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", padding: "0.25rem 0" }}>{emptyText}</p>
       ) : (
         <>
@@ -98,10 +107,10 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText }: WidgetProps) {
               <TaskRow key={task.id} task={task} teamId={teamId} />
             ))}
           </div>
-          {tasks.length > WIDGET_LIMIT && (
+          {moreCount > 0 && (
             <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
               <Link href={listHref} style={{ color: "var(--primary)", textDecoration: "none" }}>
-                +{tasks.length - WIDGET_LIMIT} more →
+                +{moreCount} more →
               </Link>
             </p>
           )}
@@ -117,6 +126,7 @@ export default function HomeDashboardPage() {
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [firstProjectId, setFirstProjectId] = useState<string | null>(null);
   const [allTasks, setAllTasks] = useState<EnrichedTask[]>([]);
+  const [counts, setCounts] = useState<TeamTasksCounts | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -154,6 +164,10 @@ export default function HomeDashboardPage() {
       }));
       // Server orders by updatedAt desc; preserve that here.
       setAllTasks(enriched);
+      // counts is optional during the rollout window; null means
+      // TaskWidget will fall back to `tasks.length` (the legacy
+      // off-by-page-size behavior).
+      setCounts(r.counts ?? null);
       if (r.projects.length > 0) {
         setFirstProjectId((prev) => prev ?? r.projects[0]!.id);
       }
@@ -214,11 +228,11 @@ export default function HomeDashboardPage() {
 
       {selectedTeam && (
         <div className="home-widgets-grid">
-          <TaskWidget title="Open Tasks" tasks={openTasks} teamId={selectedTeam.id} scope="open" emptyText="No open tasks." />
-          <TaskWidget title="My Tasks" tasks={myTasks} teamId={selectedTeam.id} scope="mine" emptyText="No tasks assigned to you." />
-          <TaskWidget title="Priority (High / Critical)" tasks={priorityTasks} teamId={selectedTeam.id} scope="priority" emptyText="No high-priority tasks." />
-          <TaskWidget title="In Review" tasks={inReviewTasks} teamId={selectedTeam.id} scope="review" emptyText="Nothing in review." />
-          <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} scope="done" emptyText="No completed tasks yet." />
+          <TaskWidget title="Open Tasks" tasks={openTasks} teamId={selectedTeam.id} scope="open" emptyText="No open tasks." total={counts?.open} />
+          <TaskWidget title="My Tasks" tasks={myTasks} teamId={selectedTeam.id} scope="mine" emptyText="No tasks assigned to you." total={counts?.mine} />
+          <TaskWidget title="Priority (High / Critical)" tasks={priorityTasks} teamId={selectedTeam.id} scope="priority" emptyText="No high-priority tasks." total={counts?.priority} />
+          <TaskWidget title="In Review" tasks={inReviewTasks} teamId={selectedTeam.id} scope="review" emptyText="Nothing in review." total={counts?.review} />
+          <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} scope="done" emptyText="No completed tasks yet." total={counts?.done} />
         </div>
       )}
     </main>

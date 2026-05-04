@@ -448,9 +448,21 @@ export interface TeamTasksProject {
   accessSource: "team" | "project";
 }
 
+export interface TeamTasksCounts {
+  open: number;
+  review: number;
+  done: number;
+  priority: number;
+  mine: number;
+  total: number;
+}
+
 export interface TeamTasksResponse {
   tasks: Task[];
   projects: TeamTasksProject[];
+  // Optional for forward-compat: a backend predating the counts rollout
+  // will simply omit this; callers should fall back to `tasks.length`.
+  counts?: TeamTasksCounts;
 }
 
 /**
