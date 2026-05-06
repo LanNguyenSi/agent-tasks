@@ -43,7 +43,7 @@ These run on every state-write path (transition, PATCH `{ status }`, `task_finis
 |---|---|---|---|
 | `AUTONOMOUS` | allowed | allowed | none |
 | `AWAITS_CONFIRMATION` | allowed | allowed | `self_merge_notice` signal to every human team member |
-| `REQUIRES_DISTINCT_REVIEWER` | rejected with `403 forbidden (reason: self_review)` | rejected with `403 self_merge_blocked` | none |
+| `REQUIRES_DISTINCT_REVIEWER` | rejected with `403 forbidden` (audit `task.review_rejected_self_reviewer`) | rejected with `403 self_merge_blocked` (audit `task.pr_merged.blocked_self_merge`) | none |
 
 `AWAITS_CONFIRMATION` is the async-HITL middle ground: the agent is not blocked, but every human on the team gets a notification they can act on.
 
@@ -70,6 +70,6 @@ A task whose description does not score above `Project.confidenceThreshold` (def
 
 ## Further reading
 
-- [`workflow-preconditions.md`](workflow-preconditions.md) — full reference for the precondition rule layer.
-- [`governance.md`](governance.md) — confidence scoring, governance modes, audit behaviour.
-- [`events.md`](events.md) — every audit action + signal type emitted on these state changes.
+- [`workflow-preconditions.md`](workflow-preconditions.md), full reference for the precondition rule layer.
+- [`governance.md`](governance.md), confidence scoring, governance modes, audit behaviour.
+- [`events.md`](events.md), every audit action + signal type emitted on these state changes.

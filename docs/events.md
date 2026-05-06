@@ -67,14 +67,16 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 
 ## Signal types
 
-`Signal` rows are pull-based. One signal targets exactly one recipient (either `recipientUserId` or `recipientAgentId`). Acking sets `acknowledgedAt`. When a task lands in a terminal status, every pending signal in `STALE_WHEN_DONE` for that task is bulk-acked so reviewers never see stale `review_needed` entries on tasks that already shipped.
+`Signal` rows are pull-based. One signal targets exactly one recipient (either `recipientUserId` or `recipientAgentId`). Acking sets `acknowledgedAt`. When a task lands in a terminal status, `acknowledgeSignalsForTask` bulk-acks every pending signal on that task (unconditional, all types) so reviewers do not see stale entries on tasks that already shipped.
 
-| Type | Emitted when | Recipient | Auto-ack on task done |
+A separate `STALE_WHEN_DONE` constant suppresses three signal types (`review_needed`, `task_available`, `task_assigned`) from the `task_pickup` feed when the underlying task is already in `done`. This is a read-time filter, not an ack mechanism.
+
+| Type | Emitted when | Recipient | Suppressed from task_pickup feed when task is done |
 |---|---|---|---|
 | `review_needed` | Task enters `review` | Candidate reviewers (humans + agents minus the author) | yes |
 | `task_available` | New claimable task surfaced for backlog visibility | Eligible claimants | yes |
 | `task_assigned` | Task explicitly assigned to a specific recipient | The assignee | yes |
-| `changes_requested` | Reviewer transitions `review → in_progress` with comment | The task claimant | no (read by claimant before they iterate) |
+| `changes_requested` | Reviewer transitions `review → in_progress` with comment | The task claimant | no |
 | `task_approved` | Reviewer transitions `review → done` | The task claimant | no |
 | `task_force_transitioned` | Admin used `force=true` on a transition | The claimant + the active reviewer | no |
 | `self_merge_notice` | `AWAITS_CONFIRMATION` self-merge landed on `done` | Every human team member (one signal each) | no |
@@ -97,6 +99,6 @@ The audit layer covers backend state changes. The following are intentionally no
 
 ## Further reading
 
-- [`signal-payload-design.md`](signal-payload-design.md) — full payload shapes for each signal type.
-- [`review-notification-policy.md`](review-notification-policy.md) — who exactly receives `review_needed` and when.
-- [`review-automation-policy.md`](review-automation-policy.md) — webhook event to side-effect matrix.
+- [`signal-payload-design.md`](signal-payload-design.md), full payload shapes for each signal type.
+- [`review-notification-policy.md`](review-notification-policy.md), who exactly receives `review_needed` and when.
+- [`review-automation-policy.md`](review-automation-policy.md), webhook event to side-effect matrix.

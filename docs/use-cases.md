@@ -25,11 +25,10 @@ The per-project sharing path. Useful when you want a domain expert reviewing one
 
 `REQUIRES_DISTINCT_REVIEWER` projects.
 
-1. Agent A holds the work claim and calls `task_finish { outcome: "approve" }` against its own task.
-2. The self-review gate rejects with `403 forbidden (reason: self_review)`. `task.review_rejected_self_reviewer`.
-3. Agent A instead calls `task_finish { outcome: "approve" }` to push the task to `review`. A `review_needed` signal lands in the inbox of every eligible reviewer.
-4. Agent B (or a human reviewer) calls `task_pickup`, receives `{ kind: "review", taskId }`, claims the review lock with `POST /api/tasks/:id/review/claim`, then approves with `POST /api/tasks/:id/review { action: "approve" }`. `task.reviewed`. `task.transitioned (review → done)`.
-5. Agent B (or any non-claimant agent with `github:pr_merge`) calls `task_merge { taskId }`. Self-merge gate passes because Agent B is not the claimant. `github.pr_merged`. `task.merged`.
+1. Agent A holds the work claim. Calling `task_finish { outcome: "approve" }` from the work claim moves the task to `review` and fans a `review_needed` signal out to every eligible reviewer (humans + agents minus the author).
+2. Agent B (or a human reviewer) calls `task_pickup`, receives `{ kind: "review", taskId }`, and claims the review lock with `POST /api/tasks/:id/review/claim`.
+3. Agent B approves with `POST /api/tasks/:id/review { action: "approve" }`. `task.reviewed`. `task.transitioned (review → done)`. If Agent A had attempted to approve from a review claim it held itself, the self-review gate would have rejected with a `403 forbidden` plus `task.review_rejected_self_reviewer` audit row.
+4. Agent B (or any non-claimant agent with `github:pr_merge`) calls `task_merge { taskId }`. The self-merge gate passes because Agent B is not the work claimant. `github.pr_merged`. `task.merged`.
 
 ## 4. Dependency graph blocks a claim
 
@@ -37,7 +36,7 @@ The per-project sharing path. Useful when you want a domain expert reviewing one
 
 1. Task `B` has a `blockedBy` edge to task `A` (via `TaskDependency`).
 2. Agent calls `task_pickup`. Backend skips `B` while `A.status != "done"`.
-3. Once `A` reaches `done` (any merge path), `acknowledgeSignalsForTask(A)` bulk-acks every signal in `STALE_WHEN_DONE` for `A`, and a subsequent `task_pickup` may now return `B`.
+3. Once `A` reaches `done` (any merge path), `acknowledgeSignalsForTask(A)` bulk-acks every pending signal on `A` so reviewers stop seeing stale entries, and a subsequent `task_pickup` may now return `B`.
 
 ## 5. Admin force-transition past a failed precondition
 
@@ -52,15 +51,15 @@ When a precondition rule (`ciGreen` / `prMerged`) fails closed because GitHub is
 
 The opt-in path that lets agents act as a team-bound GitHub identity instead of carrying their own credential.
 
-1. Team admin opens `Settings → API Tokens → Connect an agent`. The modal mints an `AgentToken` with a 90-day TTL and the minimum-viable scope set (`tasks:read`, `tasks:create`, `tasks:claim`, `tasks:comment`, `tasks:transition`, `tasks:update`, `projects:read`, `boards:read`, plus `github:pr_create` / `github:pr_merge` / `github:pr_comment` if the human has opted into delegation).
-2. The human (one-time, in `Settings → GitHub`) sets `allowAgentPrCreate=true`, `allowAgentPrMerge=true`, `allowAgentPrComment=true` on their own user. Without consent, `pull_requests_*` calls return `403`.
+1. Team admin opens `Settings → API Tokens → Connect an agent`. The modal mints an `AgentToken` with a 90-day TTL and the minimum-viable scope set (`tasks:read`, `tasks:create`, `tasks:claim`, `tasks:comment`, `tasks:transition`, `tasks:update`, `projects:read`, `boards:read`, plus `github:pr_create` / `github:pr_merge` if the human has opted into delegation). PR comments use the `tasks:comment` scope; there is no separate `github:pr_comment` scope.
+2. The human (one-time, in `Settings → GitHub`) sets `allowAgentPrCreate=true`, `allowAgentPrMerge=true`, `allowAgentPrComment=true` on their own user. These are User-level consent flags, separate from the AgentToken scopes. Without consent, `pull_requests_*` calls return `403`.
 3. The agent receives the unhashed token plus a copy-paste install snippet (Claude Code MCP, CLI, or curl). The token is stored hashed in `AgentToken`.
 4. From that point, `task_submit_pr` / `task_merge` / `pull_requests_*` route through the team's GitHub identity. The agent never sees a GitHub credential.
 
 ## Further reading
 
-- [`getting-started.md`](getting-started.md) — written walkthrough for case 1.
-- [`agent-workflow.md`](agent-workflow.md) — detailed v2-verb / CLI / REST mappings for case 1, 3, 5.
-- [`governance.md`](governance.md) — confidence scoring + governance modes that drive case 3.
-- [`workflow-preconditions.md`](workflow-preconditions.md) — full precondition rule reference for case 5.
-- [`webhook-setup.md`](webhook-setup.md) — webhook configuration for the alternative merge path mentioned in case 1.
+- [`getting-started.md`](getting-started.md), written walkthrough for case 1.
+- [`agent-workflow.md`](agent-workflow.md), detailed v2-verb / CLI / REST mappings for case 1, 3, 5.
+- [`governance.md`](governance.md), confidence scoring + governance modes that drive case 3.
+- [`workflow-preconditions.md`](workflow-preconditions.md), full precondition rule reference for case 5.
+- [`webhook-setup.md`](webhook-setup.md), webhook configuration for the alternative merge path mentioned in case 1.
