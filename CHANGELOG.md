@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-05-06
+
+**Headline: docs cleanup + audit-driven rewrites.** The repo's docs
+landscape grew over months of feature work and the April-2026
+bootstrap drafts had drifted out of sync with the live Prisma schema
+and v2 verb surface. This release deletes the bootstrap-output
+folders (`.planforge/`, `scaffold/`) and seven orphaned historical
+docs, refreshes the agent-facing API surface for v2 verbs and the
+REST-vs-webhook merge divergence, redraws the two sequence diagrams
+against the actual default-workflow states, and rewrites the
+domain / state / events / contract / use-cases layer end-to-end
+against the source of truth.
+
+Operator note: no source-code changes, no schema changes, no API
+contract changes. Workspace `package.json` versions are not bumped
+(convention since v0.9.0). Container deploys are not affected;
+upstream the new docs into any read-side mirror you maintain.
+
 ### Documentation
 - Rewrote the domain / state / events / contract layer flagged as
   Rewrite by the PR #225 audit. Six artefacts now match the Prisma
