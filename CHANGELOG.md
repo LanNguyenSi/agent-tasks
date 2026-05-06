@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Documentation
+- Refreshed agent-facing API surface in three docs (light-touch follow-up
+  to PR #225 audit). `docs/getting-started.md` MCP tool list now lists
+  the v2 verbs (`task_pickup` / `task_start` / `task_finish` / `task_merge`
+  / `task_submit_pr` / `task_abandon` / `task_note` / `task_artifact_*`
+  / `signals_*` / `pull_requests_*`) as the recommended surface, with
+  the v1 verbs (`tasks_claim` / `tasks_release` / `tasks_transition` /
+  ...) marked deprecated-but-present. `docs/agent-workflow.md` typical
+  flow rewritten as a four-column table mapping each step to MCP v2 /
+  CLI / REST. `docs/v2-api.md` documents the REST-vs-webhook merge
+  divergence and the three governance-mode tiers
+  (`REQUIRES_DISTINCT_REVIEWER`, `AWAITS_CONFIRMATION`, `AUTONOMOUS`).
+  Cross-repo PR guard called out in both `getting-started.md` and
+  `agent-workflow.md`. Docs-only, no source changes.
+
 ### Removed
 - `.planforge/` (320K, agent-planforge bootstrap planning pack output) and
   `scaffold/` (108K, Python scaffolding from agent-scaffoldkit) folders
