@@ -50,9 +50,9 @@ agent-tasks signals
 ## Option B: MCP server (for MCP-capable clients)
 
 If your client speaks MCP (Claude Code, Cursor, Cline, triologue, …), wire up
-[`@agent-tasks/mcp-server`](../mcp-server/README.md) — a stdio server that
-exposes the full API as 12 MCP tools. No shell-out, no REST boilerplate; the
-agent calls tools directly and governance stays enforced server-side.
+[`@agent-tasks/mcp-server`](../mcp-server/README.md), a stdio server that
+exposes the API as MCP tools. No shell-out, no REST boilerplate; the agent
+calls tools directly and governance stays enforced server-side.
 
 ```bash
 claude mcp add agent-tasks --scope user \
@@ -60,11 +60,42 @@ claude mcp add agent-tasks --scope user \
   -- npx -y @agent-tasks/mcp-server
 ```
 
-Tools available: `projects_list`, `tasks_list`, `tasks_get`,
+**v2 agent surface (recommended).** These verbs encode the full
+claim-to-merge flow as one tool call each, with governance state baked in:
+
+| Verb | Purpose |
+|---|---|
+| `task_pickup` | Find the next claimable task with confidence over threshold |
+| `task_start` | Atomic claim + transition to `in_progress` |
+| `task_note` | Add a comment / progress note |
+| `task_submit_pr` | Open a PR through GitHub delegation, bind it to the task |
+| `task_finish` | Move the task to `review` or `done` depending on governance mode |
+| `task_merge` | Merge the bound PR via GitHub delegation; honours self-merge gate |
+| `task_abandon` | Release the claim with a reason |
+| `task_create` | Create a new task in a project |
+| `task_artifact_create` / `task_artifact_list` / `task_artifact_get` | Attach and read structured artifacts on a task |
+| `signals_poll` / `signals_ack` | Pull-based signal inbox + acknowledgement |
+| `pull_requests_create` / `pull_requests_merge` / `pull_requests_comment` | Lower-level GitHub-identifier verbs |
+| `projects_list` | Discover accessible projects |
+
+**v1 surface (deprecated, still present).** `tasks_list`, `tasks_get`,
 `tasks_instructions`, `tasks_create`, `tasks_claim`, `tasks_release`,
-`tasks_transition`, `tasks_update`, `tasks_comment`, `signals_poll`,
-`signals_ack`. See [`mcp-server/README.md`](../mcp-server/README.md) for the
-full reference.
+`tasks_transition`, `tasks_update`, `tasks_comment` still work for older
+clients but new code should use the v2 verbs above.
+
+See [`mcp-server/README.md`](../mcp-server/README.md) for the full reference.
+
+> **Cross-repo PR guard.** `task_finish` and `task_submit_pr` reject a
+> `prUrl` whose owner/repo does not match `project.githubRepo`. Bind the
+> task to the right project before opening the PR.
+
+> **Merge endpoint and task status.** Both `task_merge` and the lower-level
+> `pull_requests_merge` go through the REST endpoint
+> `POST /api/github/pull-requests/:n/merge`, which lands the task on `done`
+> on success regardless of project governance mode. The same project may
+> see PR-merge events arrive via the GitHub webhook path instead, in which
+> case non-soloMode default-workflow tasks land in `review` and need an
+> explicit `task_finish { outcome: "approve" }` to reach `done`.
 
 ## Option C: Direct API (curl / SDK)
 

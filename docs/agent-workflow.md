@@ -31,16 +31,23 @@ Existing tokens do not automatically gain the GitHub scopes. Re-mint a token wit
 
 ## Typical flow
 
-```
-1. Check inbox      agent-tasks signals                    GET  /api/agent/signals
-2. Find work        agent-tasks tasks list                 GET  /api/tasks/claimable
-3. Claim task       agent-tasks tasks claim <id>           POST /api/tasks/{id}/claim
-4. Read instructions agent-tasks tasks instructions <id>   GET  /api/tasks/{id}/instructions
-5. Do the work      (branch, code, commit, push, create PR)
-6. Update task      agent-tasks tasks update <id> ...      PATCH /api/tasks/{id}
-7. Submit for review agent-tasks tasks status <id> review  POST /api/tasks/{id}/transition
-8. Done             (auto via webhook, or manual)
-```
+| Step | MCP v2 verb | CLI | REST |
+|---|---|---|---|
+| Check inbox | `signals_poll` | `agent-tasks signals` | `GET /api/agent/signals` |
+| Find work | `task_pickup` | `agent-tasks tasks list` | `GET /api/tasks/claimable` |
+| Claim a task | `task_start` | `agent-tasks tasks claim <id>` | `POST /api/tasks/{id}/claim` |
+| Read instructions | (returned by `task_start`) | `agent-tasks tasks instructions <id>` | `GET /api/tasks/{id}/instructions` |
+| Do the work | (branch, code, commit, push) | (same) | (same) |
+| Open PR | `task_submit_pr` | `agent-tasks tasks submit-pr <id> ...` | `POST /api/github/pull-requests` |
+| Submit for review / approve | `task_finish` | `agent-tasks tasks finish <id> ...` | `POST /api/tasks/{id}/transition` |
+| Merge | `task_merge` | `agent-tasks tasks merge <id>` | `POST /api/tasks/{id}/merge` |
+| Done | (auto on `task_merge`, or webhook) | (same) | (same) |
+
+The MCP v2 verbs are the recommended surface for new agent code. They wrap
+the same REST endpoints the CLI hits, with governance state and the
+self-merge gate baked into each call. The v1 verbs (`tasks_claim`,
+`tasks_release`, raw `tasks_transition`) are still present for legacy
+clients but new code should target v2.
 
 ### Step by step
 
@@ -108,6 +115,21 @@ Always set `branchName` and `prNumber` on your task so webhooks can reliably mat
 2. **`prUrl`** — set via PATCH
 3. **`branchName`** — matches PR's `head.ref`
 4. **title pattern** — fallback, matches `[PR #N]`
+
+**Cross-repo PR guard.** `task_finish` (and `task_submit_pr`) reject a
+`prUrl` whose `owner/repo` does not match the bound `project.githubRepo`.
+If the agent opens a PR in the wrong repo by accident, the call fails
+fast with `400 cross_repo_pr_rejected` instead of letting the binding
+silently drift. Verify `project.githubRepo` before opening the PR.
+
+**Two merge-event paths land tasks in different states.** Calling
+`task_merge` (or `pull_requests_merge`) hits the REST endpoint
+`POST /api/github/pull-requests/:n/merge`, which lands the task on `done`
+directly. A PR merged through the GitHub UI or `gh pr merge` arrives via
+the webhook path, where non-soloMode default-workflow tasks land in
+`review` and need an explicit `task_finish { outcome: "approve" }` to
+reach `done`. soloMode (legacy `AUTONOMOUS`) projects always land on
+`done` regardless of merge path.
 
 ## Key endpoints
 

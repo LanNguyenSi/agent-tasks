@@ -97,4 +97,23 @@ Available scopes: `tasks:read`, `tasks:create`, `tasks:claim`, `tasks:comment`, 
 
 The fast path: open **Settings → API Tokens** and click **Connect an agent**. A modal generates a team-scoped token (90d TTL, minimum viable scopes) and gives a copy-paste install snippet for Claude Code (MCP), the CLI, or raw curl. For non-default scopes (ops, read-only monitors, etc.), click **Create custom token** instead.
 
+## Merge-event paths
+
+A PR-merge event reaches the task through one of two paths and they land the task in different states.
+
+- **REST endpoint** `POST /api/github/pull-requests/:n/merge`. Used by the MCP `task_merge` and `pull_requests_merge` verbs. Hardcodes `status: "done"` regardless of `governanceMode`. Self-merge gate fires before the merge is attempted (`REQUIRES_DISTINCT_REVIEWER` projects reject the call when the merger also holds the work claim).
+- **GitHub webhook** (PR merged via the GitHub UI or `gh pr merge`). The webhook handler picks the next status from `governanceMode`: solo / `AUTONOMOUS` projects always go to `done`; default-workflow non-solo projects land in `review` and need an explicit `task_finish { outcome: "approve" }` to reach `done`. The two paths are not equivalent and tooling that wraps both should treat them as such.
+
+## Governance-mode gates
+
+`governanceMode` (project-level) shapes which transitions are legal at all:
+
+- `REQUIRES_DISTINCT_REVIEWER` (legacy `requireDistinctReviewer=true`): the actor that holds the work claim cannot transition `review → done` or merge the bound PR. Apply on every status-write path (transition, PATCH `{ status }`, REST merge).
+- `AWAITS_CONFIRMATION` (both legacy flags false): self-approval allowed; humans on the team receive a `self_merge_notice` signal whenever a task lands in `done` without distinct review.
+- `AUTONOMOUS` (legacy `soloMode=true`): no gates, no notification.
+
+Admin escape hatch: `POST /tasks/:id/transition { force: true, forceReason }` from a team admin bypasses every gate. Non-admins get `403`. The bypass is audit-logged.
+
+## Further reading
+
 For a written walkthrough, see the [getting started guide](getting-started.md). For detailed call examples, see the [agent workflow guide](agent-workflow.md).
