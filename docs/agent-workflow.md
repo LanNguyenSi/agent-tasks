@@ -119,8 +119,8 @@ Always set `branchName` and `prNumber` on your task so webhooks can reliably mat
 **Cross-repo PR guard.** `task_finish` (and `task_submit_pr`) reject a
 `prUrl` whose `owner/repo` does not match the bound `project.githubRepo`.
 If the agent opens a PR in the wrong repo by accident, the call fails
-fast with `400 cross_repo_pr` instead of letting the binding silently
-drift. Verify `project.githubRepo` before opening the PR.
+fast with `400 cross_repo_pr_rejected` instead of letting the binding
+silently drift. Verify `project.githubRepo` before opening the PR.
 
 **Two merge-event paths land tasks in different states.** Calling
 `task_merge` (or `pull_requests_merge`) hits the REST endpoint
