@@ -27,8 +27,8 @@ upstream the new docs into any read-side mirror you maintain.
 
 ### Documentation
 - Rewrote the domain / state / events / contract layer flagged as
-  Rewrite by the PR #225 audit. Six artefacts now match the Prisma
-  schema and the live API surface:
+  Rewrite by the PR #225 audit (delivered by PR #228). Six artefacts
+  now match the Prisma schema and the live API surface:
   `docs/domain-model.md` enumerates every entity (User, Team,
   TeamMember, AgentToken, SsoConnection, Project, ProjectMember,
   ProjectInvite, Workflow, Board, Task, TaskDependency,
@@ -61,7 +61,8 @@ upstream the new docs into any read-side mirror you maintain.
   the entities above, with relations and governance-field
   annotations on `Project`.
 - Redrew the two sequence diagrams flagged as Rewrite by the PR #225
-  audit. `diagrams/sequence-agent-create-claim.mmd` now shows the v2
+  audit (delivered by PR #227). `diagrams/sequence-agent-create-claim.mmd`
+  now shows the v2
   agent surface (`signals_poll`, `task_pickup`, `task_start` returning
   instructions) and the confidence gate. `diagrams/sequence-review-
   deploy.mmd` drops the imagined `in_review` / `ready_to_deploy` states
@@ -73,7 +74,8 @@ upstream the new docs into any read-side mirror you maintain.
   state change, scope is the source of truth, webhooks are
   idempotent).
 - Refreshed agent-facing API surface in three docs (light-touch follow-up
-  to PR #225 audit). `docs/getting-started.md` MCP tool list now lists
+  to PR #225 audit, delivered by PR #226). `docs/getting-started.md` MCP
+  tool list now lists
   the v2 verbs (`task_pickup` / `task_start` / `task_finish` / `task_merge`
   / `task_submit_pr` / `task_abandon` / `task_note` / `task_artifact_*`
   / `signals_*` / `pull_requests_*`) as the recommended surface, with
