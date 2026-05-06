@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+- `.planforge/` (320K, agent-planforge bootstrap planning pack output) and
+  `scaffold/` (108K, Python scaffolding from agent-scaffoldkit) folders
+  deleted. Both were dormant since 2026-04-14 and superseded by the live
+  Node/TypeScript monorepo + `docs/architecture.md` + ADRs. The only
+  active reference (`Makefile` `hooks:` target reading
+  `.planforge/.husky-pre-commit`) was preserved by moving the script to
+  `tools/husky-pre-commit`. Defensive `.dockerignore` entries dropped.
+- Seven historical-only docs deleted after a triage pass:
+  `docs/restructure-merge-plan.md`, `docs/backlog.md`, `docs/glossary.md`,
+  `docs/implementation-guidelines.md`, `docs/open-questions.md`,
+  `docs/roadmap.md`, `docs/vision.md`. Each was a planforge-era artefact
+  with no in-repo cross-references and no current value (the live roadmap
+  lives in `README.md`, vision in `README.md` + `docs/governance.md`).
+
+### Documentation
+- Audit pass classified the remaining 22 docs and 5 diagrams into Keep,
+  Light touch, and Rewrite buckets. No rewrites land in this PR; the
+  three follow-up rewrite bundles (agent-facing API surface refresh,
+  domain/state/events refresh, sequence diagrams refresh) are filed as
+  separate tasks.
+
 ## [0.11.0] - 2026-05-03
 
 **Headline: per-project sharing ships end-to-end (schema + access checks +

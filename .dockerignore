@@ -3,8 +3,6 @@ backend/node_modules
 frontend/node_modules
 .git
 .github
-.planforge
-scaffold
 .next
 frontend/.next
 backend/dist
