@@ -437,7 +437,8 @@ export default function WorkflowEditorPage() {
 
   if (loading) {
     return (
-      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <main className="page-shell">
+        <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
         <p style={{ color: "var(--muted)" }}>Loading workflow…</p>
       </main>
     );
@@ -445,14 +446,12 @@ export default function WorkflowEditorPage() {
 
   if (error && !workflow) {
     return (
-      <>
+      <main className="page-shell">
         <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
-        <main style={{ maxWidth: "720px", margin: "0 auto", padding: "var(--space-6) var(--space-4)" }}>
-          <AlertBanner tone="danger" title="Could not load workflow">
-            {error}
-          </AlertBanner>
-        </main>
-      </>
+        <AlertBanner tone="danger" title="Could not load workflow">
+          {error}
+        </AlertBanner>
+      </main>
     );
   }
 
@@ -462,212 +461,208 @@ export default function WorkflowEditorPage() {
   const canEdit = !isDefault && isAdmin;
 
   return (
-    <>
+    <main className="page-shell">
       <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
-      <main style={{ maxWidth: "960px", margin: "0 auto", padding: "var(--space-6) var(--space-4)" }}>
-        <div style={{ marginBottom: "var(--space-4)" }}>
-          <Link
-            // Back to the project board (i.e. /dashboard with both
-            // teamId and projectId), not to /home — the workflow
-            // editor sits "inside" a specific project so the back link
-            // should restore that context instead of dropping the user
-            // back to the global team picker. Mirrors the
-            // /dashboard?teamId&projectId pattern used by the home
-            // page's own board link.
-            href={`/dashboard?teamId=${project.teamId}&projectId=${project.id}`}
-            style={{ color: "var(--muted)", fontSize: "var(--text-sm)", textDecoration: "none" }}
-          >
-            ← {project.name}
-          </Link>
-          <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginTop: "var(--space-2)" }}>
-            Workflow &amp; Gates
-          </h1>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-            Defines which task state transitions are allowed for this project and which
-            preconditions (gates) must be satisfied before each one. See{" "}
-            <a
-              href="https://github.com/LanNguyenSi/agent-tasks/blob/master/docs/workflow-preconditions.md"
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: "var(--primary, #3b82f6)" }}
-            >
-              workflow-preconditions.md
-            </a>{" "}
-            for background.
-          </p>
-        </div>
 
-        <AlertBanner
-          tone={isDefault ? "info" : "success"}
-          title={
-            isDefault
-              ? "Using system default"
-              : isDirty
-                ? "Custom workflow — unsaved changes"
-                : "Custom workflow"
-          }
+      <p style={{ fontSize: "var(--text-sm)", marginBottom: "var(--space-3)" }}>
+        <Link
+          // Back to the project board (i.e. /dashboard with both
+          // teamId and projectId), not to /home — the workflow
+          // editor sits "inside" a specific project so the back link
+          // should restore that context instead of dropping the user
+          // back to the global team picker.
+          href={`/dashboard?teamId=${project.teamId}&projectId=${project.id}`}
+          style={{ color: "var(--muted)" }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <span>
-              {isDefault
-                ? "This project inherits the built-in default workflow. It applies to every project that hasn't defined its own."
-                : canEdit
-                  ? "Edit states and gates below, then click Save. Use Reset to drop the custom workflow entirely."
-                  : "This project has its own workflow. Only team admins can edit."}
-            </span>
-            {isDefault && isAdmin && (
-              <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
-                <Button type="button" onClick={() => void handleCustomize()} disabled={customizing || applyingTemplate} loading={customizing}>
-                  Customize this workflow
-                </Button>
-                {templates.length > 0 && (
-                  <>
-                    <span style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>or use a template:</span>
-                    {templates.map((tpl) => (
-                      <Button
-                        key={tpl.slug}
-                        type="button"
-                        onClick={() => void handleApplyTemplate(tpl.slug)}
-                        disabled={customizing || applyingTemplate}
-                        loading={applyingTemplate}
-                        title={tpl.description}
-                      >
-                        {tpl.name}
-                      </Button>
-                    ))}
-                  </>
-                )}
-              </div>
-            )}
-            {isDefault && !isAdmin && (
-              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>Only team admins can customize.</span>
-            )}
-          </div>
-        </AlertBanner>
+          ← {project.name}
+        </Link>
+      </p>
 
-        {savedBanner && (
-          <AlertBanner tone="success" title="Saved">
-            Workflow changes have been persisted.
-          </AlertBanner>
-        )}
+      <h1 style={{ marginBottom: "var(--space-2)" }}>Workflow &amp; Gates</h1>
+      <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "var(--space-5)" }}>
+        Defines which task state transitions are allowed for this project and which
+        preconditions (gates) must be satisfied before each one. See{" "}
+        <a
+          href="https://github.com/LanNguyenSi/agent-tasks/blob/master/docs/workflow-preconditions.md"
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: "var(--primary, #3b82f6)" }}
+        >
+          workflow-preconditions.md
+        </a>{" "}
+        for background.
+      </p>
 
-        {canEdit && isDirty && validation.errors.length > 0 && (
-          <AlertBanner tone="danger" title={`Validation errors (${validation.errors.length})`}>
-            <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
-              {validation.errors.map((e, i) => (
-                <li key={i}>{e}</li>
-              ))}
-            </ul>
-          </AlertBanner>
-        )}
-
-        {canEdit && isDirty && validation.warnings.length > 0 && (
-          <AlertBanner tone="warning" title={`Warnings (${validation.warnings.length})`}>
-            <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
-              {validation.warnings.map((w, i) => (
-                <li key={i}>{w}</li>
-              ))}
-            </ul>
-          </AlertBanner>
-        )}
-
-        {error && (
-          <AlertBanner tone="danger" title="Error">
-            {error}
-          </AlertBanner>
-        )}
-
-        <StatesTable
-          def={activeDef}
-          canEdit={canEdit}
-          // The state vocabulary is fixed system-wide. Add / rename /
-          // remove / set-initial / toggle-terminal are all blocked at
-          // the validator and the editor — labels and agent
-          // instructions stay editable when canEdit is true.
-          statesLocked={true}
-          saving={saving}
-          expandedInstructions={expandedInstructions}
-          onAddState={addState}
-          onRemoveState={removeState}
-          onUpdateStateField={updateStateField}
-          onSetInitialState={setInitialState}
-          onToggleInstructionsExpanded={toggleInstructionsExpanded}
-        />
-
-        <TransitionsTable
-          def={activeDef}
-          rules={rules}
-          ruleLabelById={ruleLabelById}
-          canEdit={canEdit}
-          saving={saving}
-          onAddTransition={addTransition}
-          onRemoveTransition={removeTransition}
-          onUpdateTransitionField={updateTransitionField}
-          onToggleRule={toggleRule}
-        />
-
-        {/* ── Action bar ───────────────────────────────────────────────── */}
-        {canEdit && (
-          <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-4)", flexWrap: "wrap", alignItems: "center" }}>
-            <Button
-              type="button"
-              onClick={() => void handleSave()}
-              disabled={!isDirty || saving || validation.errors.length > 0}
-              loading={saving}
-            >
-              Save changes
-            </Button>
-            <Button type="button" variant="secondary" onClick={handleCancel} disabled={!isDirty || saving}>
-              Cancel
-            </Button>
-            <div style={{ flex: 1 }} />
-            {!confirmingReset ? (
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setConfirmingReset(true)}
-                disabled={saving || resetting}
-              >
-                Reset to default
+      <AlertBanner
+        tone={isDefault ? "info" : "success"}
+        title={
+          isDefault
+            ? "Using system default"
+            : isDirty
+              ? "Custom workflow — unsaved changes"
+              : "Custom workflow"
+        }
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+          <span>
+            {isDefault
+              ? "This project inherits the built-in default workflow. It applies to every project that hasn't defined its own."
+              : canEdit
+                ? "Edit states and gates below, then click Save. Use Reset to drop the custom workflow entirely."
+                : "This project has its own workflow. Only team admins can edit."}
+          </span>
+          {isDefault && isAdmin && (
+            <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
+              <Button type="button" onClick={() => void handleCustomize()} disabled={customizing || applyingTemplate} loading={customizing}>
+                Customize this workflow
               </Button>
-            ) : (
-              <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-                <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
-                  Drop the custom workflow and revert to the system default?
-                  {isDirty && " Unsaved edits will be lost."}
-                </span>
-                <Button type="button" onClick={() => void handleReset()} disabled={resetting} loading={resetting}>
-                  Yes, reset
-                </Button>
-                <Button type="button" variant="secondary" onClick={() => setConfirmingReset(false)} disabled={resetting}>
-                  No
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
+              {templates.length > 0 && (
+                <>
+                  <span style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>or use a template:</span>
+                  {templates.map((tpl) => (
+                    <Button
+                      key={tpl.slug}
+                      type="button"
+                      onClick={() => void handleApplyTemplate(tpl.slug)}
+                      disabled={customizing || applyingTemplate}
+                      loading={applyingTemplate}
+                      title={tpl.description}
+                    >
+                      {tpl.name}
+                    </Button>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+          {isDefault && !isAdmin && (
+            <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>Only team admins can customize.</span>
+          )}
+        </div>
+      </AlertBanner>
 
-        {/* ── Gate reference ───────────────────────────────────────────── */}
-        <Card style={{ marginTop: "var(--space-4)" }}>
-          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "var(--space-2)" }}>
-            Available gates
-          </h2>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "var(--space-3)" }}>
-            Built-in precondition rules the backend knows about. Toggle them per transition
-            in the table above (admin + custom workflow required).
-          </p>
+      {savedBanner && (
+        <AlertBanner tone="success" title="Saved">
+          Workflow changes have been persisted.
+        </AlertBanner>
+      )}
+
+      {canEdit && isDirty && validation.errors.length > 0 && (
+        <AlertBanner tone="danger" title={`Validation errors (${validation.errors.length})`}>
           <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
-            {rules.map((r) => (
-              <li key={r.id} style={{ marginBottom: "var(--space-2)" }}>
-                <strong>{r.label}</strong>{" "}
-                <code style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>({r.id})</code>
-                <div style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{r.description}</div>
-              </li>
+            {validation.errors.map((e, i) => (
+              <li key={i}>{e}</li>
             ))}
           </ul>
-        </Card>
-      </main>
-    </>
+        </AlertBanner>
+      )}
+
+      {canEdit && isDirty && validation.warnings.length > 0 && (
+        <AlertBanner tone="warning" title={`Warnings (${validation.warnings.length})`}>
+          <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
+            {validation.warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </AlertBanner>
+      )}
+
+      {error && (
+        <AlertBanner tone="danger" title="Error">
+          {error}
+        </AlertBanner>
+      )}
+
+      <StatesTable
+        def={activeDef}
+        canEdit={canEdit}
+        // The state vocabulary is fixed system-wide. Add / rename /
+        // remove / set-initial / toggle-terminal are all blocked at
+        // the validator and the editor — labels and agent
+        // instructions stay editable when canEdit is true.
+        statesLocked={true}
+        saving={saving}
+        expandedInstructions={expandedInstructions}
+        onAddState={addState}
+        onRemoveState={removeState}
+        onUpdateStateField={updateStateField}
+        onSetInitialState={setInitialState}
+        onToggleInstructionsExpanded={toggleInstructionsExpanded}
+      />
+
+      <TransitionsTable
+        def={activeDef}
+        rules={rules}
+        ruleLabelById={ruleLabelById}
+        canEdit={canEdit}
+        saving={saving}
+        onAddTransition={addTransition}
+        onRemoveTransition={removeTransition}
+        onUpdateTransitionField={updateTransitionField}
+        onToggleRule={toggleRule}
+      />
+
+      {/* ── Action bar ───────────────────────────────────────────────── */}
+      {canEdit && (
+        <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-4)", flexWrap: "wrap", alignItems: "center" }}>
+          <Button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={!isDirty || saving || validation.errors.length > 0}
+            loading={saving}
+          >
+            Save changes
+          </Button>
+          <Button type="button" variant="secondary" onClick={handleCancel} disabled={!isDirty || saving}>
+            Cancel
+          </Button>
+          <div style={{ flex: 1 }} />
+          {!confirmingReset ? (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setConfirmingReset(true)}
+              disabled={saving || resetting}
+            >
+              Reset to default
+            </Button>
+          ) : (
+            <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
+                Drop the custom workflow and revert to the system default?
+                {isDirty && " Unsaved edits will be lost."}
+              </span>
+              <Button type="button" onClick={() => void handleReset()} disabled={resetting} loading={resetting}>
+                Yes, reset
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => setConfirmingReset(false)} disabled={resetting}>
+                No
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Gate reference ───────────────────────────────────────────── */}
+      <Card style={{ marginTop: "var(--space-4)" }}>
+        <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "var(--space-2)" }}>
+          Available gates
+        </h2>
+        <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "var(--space-3)" }}>
+          Built-in precondition rules the backend knows about. Toggle them per transition
+          in the table above (admin + custom workflow required).
+        </p>
+        <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
+          {rules.map((r) => (
+            <li key={r.id} style={{ marginBottom: "var(--space-2)" }}>
+              <strong>{r.label}</strong>{" "}
+              <code style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>({r.id})</code>
+              <div style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{r.description}</div>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </main>
   );
 }
 
