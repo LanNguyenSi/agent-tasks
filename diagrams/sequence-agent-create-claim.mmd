@@ -13,10 +13,9 @@ sequenceDiagram
     end
 
     Note over Agent,Audit: 2. Agent picks up work
-    Agent->>API: signals_poll
-    API-->>Agent: pending signals (if any)
     Agent->>API: task_pickup
-    API-->>Agent: next claimable task (confidence over threshold)
+    API-->>Agent: { kind: "signal" | "review" | "work" | "idle", ... }
+    Note right of API: v2 inlines pending signals + reviews<br/>into one call; signals_poll is legacy-only
 
     Note over Agent,Audit: 3. Agent claims + reads instructions
     Agent->>API: task_start { taskId }

@@ -16,36 +16,36 @@ sequenceDiagram
     Agent->>API: task_finish { outcome: "approve" }
     API->>Gate: governanceMode + claimant check
     alt REQUIRES_DISTINCT_REVIEWER and self-review
-        Gate-->>API: 403 self_review_blocked
+        Gate-->>API: 403 forbidden (reason: self_review)
     else gate passes
         API->>Audit: task.transitioned (in_progress to review)
         API->>Inbox: emit review_needed signal
     end
 
     Note over Reviewer,Inbox: 2. Reviewer approves and merges
-    Reviewer->>API: signals_poll
-    API-->>Reviewer: review_needed
+    Inbox-->>Reviewer: review_needed (UI poll or task_pickup)
     Reviewer->>API: task_merge { taskId } (or pull_requests_merge)
 
-    Note over Reviewer,Audit: 3a. REST merge path<br/>POST /api/github/pull-requests/:n/merge
-    API->>Gate: self-merge gate
-    alt self-merge blocked
-        Gate-->>API: 403 self_merge_blocked
-    else gate passes
-        API->>GH: merge PR (delegated)
-        GH-->>API: merged
-        API->>API: status = "done" (hardcoded)
-        API->>Audit: task.pr_merged
+    Note over Reviewer,Audit: 3. PR merge (mutually exclusive paths)
+    alt 3a. REST merge path<br/>POST /api/github/pull-requests/:n/merge
+        API->>Gate: self-merge gate
+        alt self-merge blocked
+            Gate-->>API: 403 self_merge_blocked
+        else gate passes
+            API->>GH: merge PR (delegated)
+            GH-->>API: merged
+            API->>API: status = "done" (hardcoded)
+            API->>Audit: task.pr_merged
+        end
+    else 3b. Webhook merge path<br/>(PR merged via GitHub UI / gh pr merge)
+        GH-->>Hook: pull_request closed { merged: true }
+        Hook->>Hook: pickMergeTargetStatus(governanceMode)
+        alt AUTONOMOUS or custom workflow
+            Hook->>API: status = "done"
+        else default workflow, non-soloMode
+            Hook->>API: status = "review"
+            API->>Inbox: emit review_needed signal
+            Note right of API: explicit task_finish<br/>required to reach done
+        end
+        API->>Audit: task.pr_merged (webhook)
     end
-
-    Note over GH,Inbox: 3b. Webhook merge path<br/>(PR merged via GitHub UI / gh pr merge)
-    GH-->>Hook: pull_request closed { merged: true }
-    Hook->>Hook: pickMergeTargetStatus(governanceMode)
-    alt AUTONOMOUS or custom workflow
-        Hook->>API: status = "done"
-    else default workflow, non-soloMode
-        Hook->>API: status = "review"
-        API->>Inbox: emit review_needed signal
-        Note right of API: explicit task_finish<br/>required to reach done
-    end
-    API->>Audit: task.pr_merged (webhook)
