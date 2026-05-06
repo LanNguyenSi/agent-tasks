@@ -1,28 +1,28 @@
 sequenceDiagram
+    actor Human
     actor Agent
-    participant API
-    participant Auth as Token Auth
-    participant Task as Task Service
-    participant Claim as Claim Service
-    participant Workflow as Workflow Engine
-    participant Audit as Audit Log
-    participant DB
+    participant API as agent-tasks API
+    participant Inbox as Signal inbox
+    participant Audit as Audit log
 
-    Agent->>API: POST /tasks
-    API->>Auth: Validate agent token
-    Auth-->>API: Token valid, scopes OK
-    API->>Task: Create task
-    Task->>DB: Save task
-    Task->>Audit: Record task created
-    Audit->>DB: Save event
+    Note over Human,Audit: 1. Human creates a task
+    Human->>API: POST /api/projects/{id}/tasks
+    API->>Audit: task.created
+    opt task is review-bound or assigned
+        API->>Inbox: emit task_assigned signal
+    end
 
-    Agent->>API: POST /tasks/{id}/claim
-    API->>Auth: Validate token + claim scope
-    Auth-->>API: Allowed
-    API->>Claim: Claim task
-    Claim->>Workflow: Check claim rules
-    Workflow-->>Claim: Claim allowed
-    Claim->>DB: Save claim
-    Claim->>Audit: Record claim event
-    Audit->>DB: Save event
-    API-->>Agent: Task claimed
+    Note over Agent,Audit: 2. Agent picks up work
+    Agent->>API: task_pickup
+    API-->>Agent: { kind: "signal" | "review" | "work" | "idle", ... }
+    Note right of API: v2 inlines pending signals + reviews<br/>into one call; signals_poll is legacy-only
+
+    Note over Agent,Audit: 3. Agent claims + reads instructions
+    Agent->>API: task_start { taskId }
+    API->>API: confidence + dependency gates
+    alt below threshold
+        API-->>Agent: 422 confidence_below_threshold
+    else gates pass
+        API->>Audit: task.transitioned (open to in_progress)
+        API-->>Agent: { task, instructions, allowedTransitions }
+    end
