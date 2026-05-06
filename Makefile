@@ -16,7 +16,7 @@ setup: ## Prepare local development (.env + Prisma client)
 
 hooks: ## Set up Git pre-commit hooks (Husky + lint-staged)
 	npx husky init
-	cp .planforge/.husky-pre-commit .husky/pre-commit
+	cp tools/husky-pre-commit .husky/pre-commit
 	chmod +x .husky/pre-commit
 
 db-generate: ## Generate Prisma client
