@@ -7,10 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-05-06
+
+**Headline: docs cleanup + audit-driven rewrites.** The repo's docs
+landscape grew over months of feature work and the April-2026
+bootstrap drafts had drifted out of sync with the live Prisma schema
+and v2 verb surface. This release deletes the bootstrap-output
+folders (`.planforge/`, `scaffold/`) and seven orphaned historical
+docs, refreshes the agent-facing API surface for v2 verbs and the
+REST-vs-webhook merge divergence, redraws the two sequence diagrams
+against the actual default-workflow states, and rewrites the
+domain / state / events / contract / use-cases layer end-to-end
+against the source of truth.
+
+Operator note: no source-code changes, no schema changes, no API
+contract changes. Workspace `package.json` versions are not bumped
+(convention since v0.9.0). Container deploys are not affected;
+upstream the new docs into any read-side mirror you maintain.
+
 ### Documentation
 - Rewrote the domain / state / events / contract layer flagged as
-  Rewrite by the PR #225 audit. Six artefacts now match the Prisma
-  schema and the live API surface:
+  Rewrite by the PR #225 audit (delivered by PR #228). Six artefacts
+  now match the Prisma schema and the live API surface:
   `docs/domain-model.md` enumerates every entity (User, Team,
   TeamMember, AgentToken, SsoConnection, Project, ProjectMember,
   ProjectInvite, Workflow, Board, Task, TaskDependency,
@@ -43,7 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the entities above, with relations and governance-field
   annotations on `Project`.
 - Redrew the two sequence diagrams flagged as Rewrite by the PR #225
-  audit. `diagrams/sequence-agent-create-claim.mmd` now shows the v2
+  audit (delivered by PR #227). `diagrams/sequence-agent-create-claim.mmd`
+  now shows the v2
   agent surface (`signals_poll`, `task_pickup`, `task_start` returning
   instructions) and the confidence gate. `diagrams/sequence-review-
   deploy.mmd` drops the imagined `in_review` / `ready_to_deploy` states
@@ -55,7 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   state change, scope is the source of truth, webhooks are
   idempotent).
 - Refreshed agent-facing API surface in three docs (light-touch follow-up
-  to PR #225 audit). `docs/getting-started.md` MCP tool list now lists
+  to PR #225 audit, delivered by PR #226). `docs/getting-started.md` MCP
+  tool list now lists
   the v2 verbs (`task_pickup` / `task_start` / `task_finish` / `task_merge`
   / `task_submit_pr` / `task_abandon` / `task_note` / `task_artifact_*`
   / `signals_*` / `pull_requests_*`) as the recommended surface, with
