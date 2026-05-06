@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Documentation
+- Redrew the two sequence diagrams flagged as Rewrite by the PR #225
+  audit. `diagrams/sequence-agent-create-claim.mmd` now shows the v2
+  agent surface (`signals_poll`, `task_pickup`, `task_start` returning
+  instructions) and the confidence gate. `diagrams/sequence-review-
+  deploy.mmd` drops the imagined `in_review` / `ready_to_deploy` states
+  and the deploy-policy component, then explicitly contrasts the REST
+  merge path (hardcoded `done`) with the webhook path (status picked
+  by `governanceMode`, non-soloMode default workflows land in
+  `review`). `docs/sequence-flows.md` rewritten as an English thin
+  index with the cross-cutting invariants preserved (audit on every
+  state change, scope is the source of truth, webhooks are
+  idempotent).
 - Refreshed agent-facing API surface in three docs (light-touch follow-up
   to PR #225 audit). `docs/getting-started.md` MCP tool list now lists
   the v2 verbs (`task_pickup` / `task_start` / `task_finish` / `task_merge`

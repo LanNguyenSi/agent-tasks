@@ -1,18 +1,15 @@
-# Sequence Flows
+# Sequence flows
 
-## Übersicht
-Dieses Dokument beschreibt die wichtigsten dynamischen Abläufe im System.
+Index of the runtime flows worth drawing. Each diagram is schematic, not exhaustive; the canonical contract lives in `backend/src/routes/` and the Swagger UI at `/docs`.
 
-## 1. GitHub OAuth und initialer Project Sync
-Siehe: `../diagrams/sequence-github-oauth-sync.mmd`
+| Flow | Diagram |
+|------|---------|
+| GitHub OAuth + initial project sync | [`../diagrams/sequence-github-oauth-sync.mmd`](../diagrams/sequence-github-oauth-sync.mmd) |
+| Agent picks up + claims a task (v2 verbs) | [`../diagrams/sequence-agent-create-claim.mmd`](../diagrams/sequence-agent-create-claim.mmd) |
+| Submit for review + merge (REST vs webhook) | [`../diagrams/sequence-review-deploy.mmd`](../diagrams/sequence-review-deploy.mmd) |
 
-## 2. Agent erstellt und claimt Task
-Siehe: `../diagrams/sequence-agent-create-claim.mmd`
+## Cross-cutting invariants
 
-## 3. Handoff zu Review und Deploy-Entscheidung
-Siehe: `../diagrams/sequence-review-deploy.mmd`
-
-## Hinweise
-- Alle Flows müssen Audit-Events erzeugen
-- Alle sicherheitsrelevanten Aktionen müssen Rechte/Scopes prüfen
-- Wiederholte Webhooks und Sync-Events müssen idempotent behandelt werden
+- Every state-change flow emits an audit event. Callers cannot opt out.
+- Every privileged action validates the actor's scope server-side. Token scope is the source of truth, not the client claim.
+- Webhook handlers and sync workers are idempotent on retry. Replays of the same event do not double-write.
