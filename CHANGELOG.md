@@ -8,6 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Documentation
+- Rewrote the domain / state / events / contract layer flagged as
+  Rewrite by the PR #225 audit. Six artefacts now match the Prisma
+  schema and the live API surface:
+  `docs/domain-model.md` enumerates every entity (User, Team,
+  TeamMember, AgentToken, SsoConnection, Project, ProjectMember,
+  ProjectInvite, Workflow, Board, Task, TaskDependency,
+  TaskAttachment, TaskArtifact, Comment, Signal, AuditLog,
+  ToolInvocation) with the governance fields called out and the
+  deprecated boolean flags marked.
+  `docs/state-machines.md` documents the four valid statuses
+  (`open` / `in_progress` / `review` / `done`), the canonical
+  default-workflow transitions with their precondition
+  decorations (`branchPresent`, `prPresent`, `ciGreen`,
+  `prMerged`), the three governance-tier gates
+  (`AUTONOMOUS` / `AWAITS_CONFIRMATION` /
+  `REQUIRES_DISTINCT_REVIEWER`), and the REST-vs-webhook merge
+  divergence.
+  `docs/events.md` is a full audit-action catalog grouped by
+  family (identity / token, project, workflow, task, github),
+  plus the seven signal types
+  (`review_needed`, `task_available`, `task_assigned`,
+  `changes_requested`, `task_approved`, `task_force_transitioned`,
+  `self_merge_notice`).
+  `docs/use-cases.md` replaces the German handoff-era stub with
+  six end-to-end flows: agent picks up + finishes; per-project
+  invite + soloMode auto-flip; distinct-reviewer dual-control
+  merge; dependency graph blocks a claim; admin force-transition;
+  agent token + GitHub delegation.
+  `docs/api-contract.md` is now a thin pointer to OpenAPI /
+  Swagger UI / `mcp-server/src/tools.ts` / `v2-api.md` instead of
+  a parallel German API draft.
+  `diagrams/domain-overview.mmd` redrawn as a `classDiagram` over
+  the entities above, with relations and governance-field
+  annotations on `Project`.
 - Redrew the two sequence diagrams flagged as Rewrite by the PR #225
   audit. `diagrams/sequence-agent-create-claim.mmd` now shows the v2
   agent surface (`signals_poll`, `task_pickup`, `task_start` returning
