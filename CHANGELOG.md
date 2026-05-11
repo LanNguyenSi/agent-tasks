@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-05-11
+
+**Headline: project-scoped task browsing across CLI and MCP, plus governance
+polish.** Closes a long-standing gap: the deprecated `tasks_list` MCP verb
+returned only the global claimable slice and `task_pickup` returned one item,
+so "what is open in project X?" was a web-UI-only question. This release
+adds a backend route extension, a new CLI subcommand surface, and a
+dedicated MCP verb that all answer the question consistently. The release
+also rolls up a Dependabot fix and a workflow-page layout tweak.
+
+Operator note: a new CLI entry point `at tasks list --project <slug>` is now
+available alongside the existing claimable behavior (browse-only flags
+require `--project` and exit 1 without it, instead of being silently
+ignored). A new MCP verb `project_tasks` is published in `@agent-tasks/mcp-server`
+0.5.0 and `@agent-tasks/mcp-bridge` 0.5.0; clients pinning the older 0.4.0
+package must update to see it. The backend `GET /api/projects/:id/tasks`
+endpoint stays unbounded by default so the frontend dashboard contract is
+preserved; new browse-style callers should pass `?limit=` for safety.
+
+### Added
+- `GET /api/projects/:projectId/tasks` accepts new query params: `priority`
+  (CSV of `LOW|MEDIUM|HIGH|CRITICAL`), `unclaimed` (boolean), `limit`
+  (positive integer, clamped to 500). The existing `status`, `labels`, and
+  `externalRef` filters continue to work; `status` now validates against
+  the enum and returns 400 on unknown values instead of forwarding an
+  arbitrary string to Prisma. (#232)
+- CLI `tasks list` gains `--project`, `--status`, `--priority`, `--labels`,
+  `--unclaimed`, `--limit` flags. Without `--project` the command keeps its
+  global-claimable behavior; passing a browse-only flag without `--project`
+  exits 1 with a clear message. Slug or UUID accepted for `--project`. (#232)
+- MCP verb `project_tasks` registered in `@agent-tasks/mcp-server` 0.5.0,
+  with slug-or-UUID resolution and the same filter surface as the CLI.
+  Wraps the new backend endpoint as a thin client. (#233)
+
+### Changed
+- Workflow page layout aligned with the project members and settings
+  pages for visual consistency. (#231)
+- MCP `tasks_list` deprecation note now points at `project_tasks` for
+  browse-style use cases. (#233)
+- `@agent-tasks/mcp-server` bumped 0.4.0 → 0.5.0 (new verb).
+- `@agent-tasks/mcp-bridge` bumped 0.4.0 → 0.5.0 (re-pinned against 0.5.0
+  of mcp-server).
+
+### Security
+- Override transitive `ip-address` dependency to `^10.1.1`, clearing the
+  MEDIUM Dependabot alert #21. (#230)
+
 ## [0.12.0] - 2026-05-06
 
 **Headline: docs cleanup + audit-driven rewrites.** The repo's docs
