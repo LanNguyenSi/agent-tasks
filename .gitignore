@@ -12,6 +12,7 @@ build/
 out/
 coverage/
 .nyc_output/
+*.tsbuildinfo
 
 # Environment and secrets
 .env
