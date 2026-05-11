@@ -272,6 +272,7 @@ export default function TaskArtifactsSection({
                       {state && state !== "loading" ? (
                         <div style={{ marginTop: "0.4rem" }}>
                           <pre
+                            className="text-break-anywhere"
                             style={{
                               margin: 0,
                               padding: "0.5rem",
@@ -282,7 +283,6 @@ export default function TaskArtifactsSection({
                               maxHeight: "20rem",
                               overflow: "auto",
                               whiteSpace: "pre-wrap",
-                              wordBreak: "break-word",
                             }}
                           >
                             {state.content ?? "(no inline content)"}
