@@ -415,6 +415,20 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
 
 // ── List tasks for a project ─────────────────────────────────────────────────
 
+// Project-scoped task browser. Accepts CSV filters for status, priority,
+// labels, plus `unclaimed` and `limit` for the browse case (CLI `tasks list
+// --project`, MCP `project_tasks`). When `limit` is omitted the route stays
+// unbounded so the frontend dashboard (which fetches every project task
+// without query params) keeps working; when supplied, limit is clamped to a
+// 500 ceiling.
+const PROJECT_TASK_STATUSES = ["open", "in_progress", "review", "done", "abandoned"] as const;
+const PROJECT_TASK_PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
+
+function parseCsv(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw.split(",").map((v) => v.trim()).filter(Boolean);
+}
+
 taskRouter.get("/projects/:projectId/tasks", async (c) => {
   const actor = c.get("actor") as Actor;
   const projectId = c.req.param("projectId");
@@ -423,32 +437,78 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
     return forbidden(c, "Access denied to this project");
   }
 
-  const labelFilter = c.req.query("labels");
   const externalRefFilter = c.req.query("externalRef");
-  const statusFilter = c.req.query("status");
   const detail = c.req.query("detail");
 
-  const where: Record<string, unknown> = { projectId };
-  if (labelFilter) {
-    const parsed = labelFilter.split(",").map((l) => l.trim()).filter(Boolean);
-    if (parsed.length > 0) {
-      where.labels = { hasSome: parsed };
+  const statuses = parseCsv(c.req.query("status"));
+  const invalidStatus = statuses.find(
+    (s) => !PROJECT_TASK_STATUSES.includes(s as (typeof PROJECT_TASK_STATUSES)[number]),
+  );
+  if (invalidStatus) {
+    return c.json(
+      {
+        error: "bad_request",
+        message: `Invalid status '${invalidStatus}'. Expected one of: ${PROJECT_TASK_STATUSES.join(", ")}`,
+      },
+      400,
+    );
+  }
+
+  const priorities = parseCsv(c.req.query("priority"));
+  const invalidPriority = priorities.find(
+    (p) => !PROJECT_TASK_PRIORITIES.includes(p as (typeof PROJECT_TASK_PRIORITIES)[number]),
+  );
+  if (invalidPriority) {
+    return c.json(
+      {
+        error: "bad_request",
+        message: `Invalid priority '${invalidPriority}'. Expected one of: ${PROJECT_TASK_PRIORITIES.join(", ")}`,
+      },
+      400,
+    );
+  }
+
+  const labels = parseCsv(c.req.query("labels"));
+  const unclaimed = c.req.query("unclaimed") === "true";
+
+  const rawLimit = c.req.query("limit");
+  let limit: number | undefined;
+  if (rawLimit !== undefined) {
+    const parsed = Number(rawLimit);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      return c.json(
+        { error: "bad_request", message: "limit must be a positive integer" },
+        400,
+      );
     }
+    limit = Math.min(parsed, 500);
+  }
+
+  const where: Record<string, unknown> = { projectId };
+  if (labels.length > 0) {
+    where.labels = { hasSome: labels };
   }
   if (externalRefFilter && externalRefFilter.length <= 255) {
     where.externalRef = externalRefFilter;
   }
-  if (statusFilter) {
-    const parsed = statusFilter.split(",").map((s) => s.trim()).filter(Boolean);
-    if (parsed.length > 0) {
-      where.status = { in: parsed };
-    }
+  if (statuses.length > 0) {
+    where.status = { in: statuses };
+  }
+  if (priorities.length > 0) {
+    where.priority = { in: priorities };
+  }
+  if (unclaimed) {
+    // Unclaimed === no active claim by either actor type. Matches the way
+    // `tasks pickup` decides whether a task is up for grabs.
+    where.claimedByAgentId = null;
+    where.claimedByUserId = null;
   }
 
   const tasks = await prisma.task.findMany({
     where,
     include: detail === "full" ? taskInclude : taskListInclude,
     orderBy: { createdAt: "desc" },
+    ...(limit !== undefined ? { take: limit } : {}),
   });
   return c.json({ tasks });
 });

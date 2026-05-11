@@ -110,6 +110,41 @@ export async function getClaimableTasks(config: Config): Promise<Task[]> {
   return tasks;
 }
 
+export interface ProjectTasksFilters {
+  status?: string[];
+  priority?: string[];
+  labels?: string[];
+  unclaimed?: boolean;
+  limit?: number;
+}
+
+export async function listProjectTasks(
+  config: Config,
+  projectId: string,
+  filters: ProjectTasksFilters = {},
+): Promise<Task[]> {
+  const params = new URLSearchParams();
+  if (filters.status && filters.status.length > 0) {
+    params.set("status", filters.status.join(","));
+  }
+  if (filters.priority && filters.priority.length > 0) {
+    params.set("priority", filters.priority.join(","));
+  }
+  if (filters.labels && filters.labels.length > 0) {
+    params.set("labels", filters.labels.join(","));
+  }
+  if (filters.unclaimed) {
+    params.set("unclaimed", "true");
+  }
+  if (filters.limit !== undefined) {
+    params.set("limit", String(filters.limit));
+  }
+  const qs = params.toString();
+  const path = `/api/projects/${projectId}/tasks${qs ? `?${qs}` : ""}`;
+  const { tasks } = await request<{ tasks: Task[] }>(config, path);
+  return tasks;
+}
+
 export async function getTask(config: Config, taskId: string): Promise<Task> {
   const { task } = await request<{ task: Task }>(
     config,

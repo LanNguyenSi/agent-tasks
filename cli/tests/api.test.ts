@@ -7,6 +7,7 @@ import {
   taskAbandon,
   submitPr,
   getEffectiveGates,
+  listProjectTasks,
 } from "../src/api.js";
 import type { Config } from "../src/config.js";
 
@@ -177,5 +178,48 @@ describe("getEffectiveGates", () => {
     expect(fetchMock.mock.calls[0]![0]).toBe(
       "http://api.test/api/projects/p1/effective-gates",
     );
+  });
+});
+
+describe("listProjectTasks", () => {
+  it("GETs /api/projects/:id/tasks without query when no filters are passed", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks: [] }));
+    await listProjectTasks(config, "p1");
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      "http://api.test/api/projects/p1/tasks",
+    );
+  });
+
+  it("encodes filters as comma-separated query params", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks: [] }));
+    await listProjectTasks(config, "p1", {
+      status: ["open", "in_progress"],
+      priority: ["HIGH", "CRITICAL"],
+      labels: ["mcp", "dx"],
+      unclaimed: true,
+      limit: 25,
+    });
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toContain("status=open%2Cin_progress");
+    expect(url).toContain("priority=HIGH%2CCRITICAL");
+    expect(url).toContain("labels=mcp%2Cdx");
+    expect(url).toContain("unclaimed=true");
+    expect(url).toContain("limit=25");
+  });
+
+  it("omits unclaimed=true when unclaimed is false or absent", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks: [] }));
+    await listProjectTasks(config, "p1", { unclaimed: false });
+    expect(fetchMock.mock.calls[0]![0]).not.toContain("unclaimed");
+  });
+
+  it("returns the tasks array unwrapped from the envelope", async () => {
+    const tasks = [
+      { id: "t1", title: "one", status: "open", priority: "LOW" },
+      { id: "t2", title: "two", status: "open", priority: "HIGH" },
+    ];
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks }));
+    const result = await listProjectTasks(config, "p1");
+    expect(result).toEqual(tasks);
   });
 });
