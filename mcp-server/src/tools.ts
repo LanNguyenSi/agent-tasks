@@ -234,10 +234,45 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         wrap(() => client.getProjectEffectiveGates(projectId)),
     }),
     def({
+      name: "project_tasks",
+      description:
+        "Browse tasks scoped to a single project. Use this when you want to answer 'what is open in project X?' (the question task_pickup and the deprecated tasks_list cannot reliably answer — pickup returns one item, tasks_list returns only the claimable slice). " +
+        "`project` accepts a slug ('agent-tasks') or a UUID; slugs are resolved server-side so you do not need to chain projects_get first. " +
+        "Filters (status, priority, labels, unclaimed) combine with AND semantics; status and priority accept either a single value or an array. limit defaults to unbounded on the backend, but clamps to 500 if supplied — pass an explicit limit when calling from an LLM harness so the response stays inside the tool-result token cap.",
+      inputShape: {
+        project: z.string().min(1),
+        status: z
+          .union([
+            z.enum(["open", "in_progress", "review", "done", "abandoned"]),
+            z
+              .array(z.enum(["open", "in_progress", "review", "done", "abandoned"]))
+              .min(1),
+          ])
+          .optional(),
+        priority: z
+          .union([priorityEnum, z.array(priorityEnum).min(1)])
+          .optional(),
+        labels: z.array(z.string().min(1).max(100)).min(1).max(20).optional(),
+        unclaimed: z.boolean().optional(),
+        limit: z.number().int().positive().max(500).optional(),
+      },
+      handler: async ({ project, status, priority, labels, unclaimed, limit }) =>
+        wrap(() =>
+          client.listProjectTasks(project, {
+            status,
+            priority,
+            labels,
+            unclaimed,
+            limit,
+          }),
+        ),
+    }),
+    def({
       name: "tasks_list",
       description:
         DEPRECATED +
         "List tasks. With no filters: claimable only (status=open, unclaimed) — for that single-prioritized-item case prefer task_pickup. " +
+        "For 'what is open in project X' use project_tasks (the browse-scoped verb). " +
         "Pass status/priority/labels/claimedByAgentId/projectId to broaden the search; verbose=true switches to the full task payload " +
         "(default returns a summary projection without descriptions/comments to stay inside the harness's tool-result token cap). " +
         "claimedByAgentId='me' resolves to the calling agent's tokenId. Default limit 25.",

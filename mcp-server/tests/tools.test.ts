@@ -34,6 +34,7 @@ describe("buildTools", () => {
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
       [
+        "project_tasks",
         "projects_get",
         "projects_get_effective_gates",
         "projects_list",
@@ -283,6 +284,44 @@ describe("buildTools", () => {
     await tool("projects_get").handler({ slugOrId: "agent tasks" });
     const [url] = fetchMock.mock.calls[0];
     expect(url).toBe("https://example.test/api/projects/by-slug/agent%20tasks");
+  });
+
+  // ── project_tasks ──────────────────────────────────────────────────
+
+  it("project_tasks accepts a slug and forwards filters to GET /projects/:id/tasks", async () => {
+    fetchMock
+      .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+      .mockResolvedValueOnce(ok({ tasks: [] }));
+    await tool("project_tasks").handler({
+      project: "agent-tasks",
+      status: ["open"],
+      priority: "HIGH",
+      labels: ["mcp", "dx"],
+      unclaimed: true,
+      limit: 25,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.test/api/projects/by-slug/agent-tasks",
+    );
+    const url = fetchMock.mock.calls[1][0] as string;
+    expect(url.startsWith("https://example.test/api/projects/p1/tasks?")).toBe(true);
+    expect(url).toContain("status=open");
+    expect(url).toContain("priority=HIGH");
+    expect(url).toContain("labels=mcp%2Cdx");
+    expect(url).toContain("unclaimed=true");
+    expect(url).toContain("limit=25");
+  });
+
+  it("project_tasks skips the slug round-trip when given a UUID", async () => {
+    fetchMock.mockResolvedValueOnce(ok({ tasks: [] }));
+    await tool("project_tasks").handler({
+      project: "00000000-0000-0000-0000-000000000001",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.test/api/projects/00000000-0000-0000-0000-000000000001/tasks",
+    );
   });
 
   // ── review_* ───────────────────────────────────────────────────────

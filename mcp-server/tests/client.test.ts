@@ -173,4 +173,71 @@ describe("AgentTasksClient", () => {
     expect(init.method).toBe("POST");
     expect(init.body).toBeUndefined();
   });
+
+  describe("listProjectTasks", () => {
+    it("passes UUID through without a slug-lookup round-trip", async () => {
+      fetchMock.mockResolvedValueOnce(ok({ tasks: [] }));
+      const client = new AgentTasksClient(config);
+      await client.listProjectTasks("00000000-0000-0000-0000-000000000001");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url] = fetchMock.mock.calls[0];
+      expect(url).toBe(
+        "https://example.test/api/projects/00000000-0000-0000-0000-000000000001/tasks",
+      );
+    });
+
+    it("resolves a slug via /projects/by-slug before hitting the tasks endpoint", async () => {
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+        .mockResolvedValueOnce(ok({ tasks: [] }));
+      const client = new AgentTasksClient(config);
+      await client.listProjectTasks("agent-tasks");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://example.test/api/projects/by-slug/agent-tasks",
+      );
+      expect(fetchMock.mock.calls[1][0]).toBe(
+        "https://example.test/api/projects/p1/tasks",
+      );
+    });
+
+    it("encodes filters as comma-separated query params", async () => {
+      fetchMock.mockResolvedValueOnce(ok({ tasks: [] }));
+      const client = new AgentTasksClient(config);
+      await client.listProjectTasks("00000000-0000-0000-0000-000000000001", {
+        status: ["open", "in_progress"],
+        priority: "HIGH",
+        labels: ["mcp", "dx"],
+        unclaimed: true,
+        limit: 25,
+      });
+      const url = fetchMock.mock.calls[0][0] as string;
+      expect(url).toContain("status=open%2Cin_progress");
+      expect(url).toContain("priority=HIGH");
+      expect(url).toContain("labels=mcp%2Cdx");
+      expect(url).toContain("unclaimed=true");
+      expect(url).toContain("limit=25");
+    });
+
+    it("omits unclaimed when not set", async () => {
+      fetchMock.mockResolvedValueOnce(ok({ tasks: [] }));
+      const client = new AgentTasksClient(config);
+      await client.listProjectTasks("00000000-0000-0000-0000-000000000001", {});
+      expect(fetchMock.mock.calls[0][0]).not.toContain("unclaimed");
+    });
+
+    it("URL-encodes slugs containing special characters", async () => {
+      // The server's slug regex is [a-z0-9-], so a slash should never appear
+      // in practice; encodeURIComponent is still the right hammer so a stray
+      // value 404s on the literal path rather than escaping the segment.
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+        .mockResolvedValueOnce(ok({ tasks: [] }));
+      const client = new AgentTasksClient(config);
+      await client.listProjectTasks("weird/slug");
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://example.test/api/projects/by-slug/weird%2Fslug",
+      );
+    });
+  });
 });

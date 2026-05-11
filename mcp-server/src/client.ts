@@ -108,6 +108,66 @@ export class AgentTasksClient {
     );
   }
 
+  // Browse tasks scoped to a single project. Accepts slug or UUID for
+  // `project`; if a slug is passed we resolve it to a UUID first via the
+  // existing by-slug lookup so callers don't have to chain projects_get
+  // themselves. Mirrors the filter surface of the CLI's `tasks list
+  // --project` flow and forwards to GET /api/projects/:id/tasks.
+  async listProjectTasks(
+    project: string,
+    params?: {
+      status?: string | string[];
+      priority?: string | string[];
+      labels?: string[];
+      unclaimed?: boolean;
+      limit?: number;
+    },
+  ) {
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        project,
+      );
+    let projectId: string;
+    if (isUuid) {
+      projectId = project;
+    } else {
+      const resolved = (await this.request<{ project: { id: string } }>(
+        "GET",
+        `/api/projects/by-slug/${encodeURIComponent(project)}`,
+      )).project;
+      projectId = resolved.id;
+    }
+
+    const sp = new URLSearchParams();
+    if (params?.status !== undefined) {
+      sp.set(
+        "status",
+        Array.isArray(params.status) ? params.status.join(",") : params.status,
+      );
+    }
+    if (params?.priority !== undefined) {
+      sp.set(
+        "priority",
+        Array.isArray(params.priority)
+          ? params.priority.join(",")
+          : params.priority,
+      );
+    }
+    if (params?.labels && params.labels.length > 0) {
+      sp.set("labels", params.labels.join(","));
+    }
+    if (params?.unclaimed) sp.set("unclaimed", "true");
+    if (params?.limit !== undefined) sp.set("limit", String(params.limit));
+
+    const qs = sp.toString();
+    return this.request<unknown>(
+      "GET",
+      qs.length > 0
+        ? `/api/projects/${projectId}/tasks?${qs}`
+        : `/api/projects/${projectId}/tasks`,
+    );
+  }
+
   getTask(taskId: string) {
     return this.request<unknown>("GET", `/api/tasks/${taskId}`);
   }
