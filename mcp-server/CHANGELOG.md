@@ -2,6 +2,22 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## 0.5.0
+
+### Added
+
+- `project_tasks` verb. Browse tasks scoped to a single project; answers the
+  "what is open in project X?" question that `task_pickup` (single item) and
+  the deprecated `tasks_list` (global claimable slice) cannot. Accepts slug
+  or UUID for `project` and resolves slugs server-side. Filter surface:
+  `status` (single or array), `priority`, `labels`, `unclaimed`, `limit`.
+  Wraps `GET /api/projects/:id/tasks`.
+
+### Changed
+
+- `tasks_list` deprecation note now points at `project_tasks` for
+  browse-style use cases.
+
 ## 0.3.1
 
 ### Added — v2 verb-oriented workflow tools (ADR 0008)
