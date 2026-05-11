@@ -88,3 +88,46 @@ describe("tasks submit-pr argument validation", () => {
     expect(res.stderr).toContain("--pr-number must be a positive integer");
   });
 });
+
+describe("tasks list browse-mode argument validation", () => {
+  // These checks all run before the first network call, so we don't need a
+  // backend stub: a successful exit means we'd hit the network, a non-zero
+  // exit with the expected stderr means the guard fired.
+
+  it("rejects --status without --project", () => {
+    const res = run(["tasks", "list", "--status", "open"]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("--status");
+    expect(res.stderr).toContain("require --project");
+  });
+
+  it("rejects --priority without --project", () => {
+    const res = run(["tasks", "list", "--priority", "HIGH"]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("--priority");
+  });
+
+  it("rejects --unclaimed without --project", () => {
+    const res = run(["tasks", "list", "--unclaimed"]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("--unclaimed");
+  });
+
+  it("rejects an invalid --status value in browse mode", () => {
+    const res = run(["tasks", "list", "--project", "agent-tasks", "--status", "banana"]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("invalid status 'banana'");
+  });
+
+  it("rejects an invalid --priority value (uppercase enum)", () => {
+    const res = run(["tasks", "list", "--project", "agent-tasks", "--priority", "high"]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("invalid priority 'high'");
+  });
+
+  it("rejects a non-positive --limit", () => {
+    const res = run(["tasks", "list", "--project", "agent-tasks", "--limit", "0"]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("--limit must be a positive integer");
+  });
+});

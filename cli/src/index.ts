@@ -198,12 +198,126 @@ tasks
 
 tasks
   .command("list")
-  .description("List claimable tasks")
+  .description(
+    "List tasks. Without --project: the global claimable slice. With --project: every task in that project that matches the filters.",
+  )
+  .option("-p, --project <slug-or-id>", "Restrict to one project (slug or UUID). Switches to browse mode.")
+  .option(
+    "-s, --status <csv>",
+    "Filter by status (browse mode only). CSV of: open, in_progress, review, done, abandoned.",
+  )
+  .option(
+    "--priority <csv>",
+    "Filter by priority (browse mode only). CSV of: LOW, MEDIUM, HIGH, CRITICAL.",
+  )
+  .option(
+    "-l, --labels <csv>",
+    "Filter by labels (browse mode only). Matches tasks tagged with ANY of the listed labels.",
+  )
+  .option(
+    "--unclaimed",
+    "Only tasks with no active claim (browse mode only).",
+  )
+  .option("--limit <n>", "Max tasks to return (browse mode only, default 50, max 500)")
   .option("--json", "JSON output")
   .option("--quiet", "Only task IDs")
   .action(async (opts) => {
     const config = loadConfig();
-    const taskList = await api.getClaimableTasks(config);
+
+    if (!opts.project) {
+      // Reject browse-only flags up front so they fail loudly instead of
+      // silently being ignored; easier to diagnose than "I passed --status
+      // and it returned everything anyway".
+      const stray = [
+        opts.status && "--status",
+        opts.priority && "--priority",
+        opts.labels && "--labels",
+        opts.unclaimed && "--unclaimed",
+        opts.limit && "--limit",
+      ].filter(Boolean);
+      if (stray.length > 0) {
+        console.error(
+          `Error: ${stray.join(", ")} require --project. Without --project, 'tasks list' returns the global claimable slice.`,
+        );
+        process.exit(1);
+      }
+      const taskList = await api.getClaimableTasks(config);
+      console.log(formatTasks(taskList, getMode(opts)));
+      return;
+    }
+
+    // Browse mode. Validate enum-shaped filters before the network round-trip
+    // so a typo fails fast.
+    const splitCsv = (raw: string): string[] =>
+      raw.split(",").map((v) => v.trim()).filter(Boolean);
+
+    const statuses = opts.status ? splitCsv(opts.status) : undefined;
+    if (statuses) {
+      const validStatuses = ["open", "in_progress", "review", "done", "abandoned"];
+      const bad = statuses.find((s) => !validStatuses.includes(s));
+      if (bad) {
+        console.error(
+          `Error: invalid status '${bad}'. Expected one of: ${validStatuses.join(", ")}`,
+        );
+        process.exit(1);
+      }
+    }
+
+    const priorities = opts.priority ? splitCsv(opts.priority) : undefined;
+    if (priorities) {
+      const validPriorities = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+      const bad = priorities.find((p) => !validPriorities.includes(p));
+      if (bad) {
+        console.error(
+          `Error: invalid priority '${bad}'. Expected one of: ${validPriorities.join(", ")} (case-sensitive)`,
+        );
+        process.exit(1);
+      }
+    }
+
+    const labels = opts.labels ? splitCsv(opts.labels) : undefined;
+
+    // CLI-side default: in browse mode we want a sane cap so an accidental
+    // `at tasks list --project huge-project` doesn't dump thousands of rows.
+    // The backend stays unbounded by default for the frontend dashboard's
+    // sake; only the CLI opts in to the 50-row default.
+    let limit = 50;
+    if (opts.limit !== undefined) {
+      const parsed = Number(opts.limit);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        console.error(`Error: --limit must be a positive integer (got: ${opts.limit})`);
+        process.exit(1);
+      }
+      limit = parsed;
+    }
+
+    // Accept slug or UUID. Slug resolution mirrors `tasks create` so the
+    // failure mode for an unknown slug is a clean "project not found" rather
+    // than a confusing 403/404 from the tasks endpoint.
+    let projectId: string;
+    if (api.isUuid(opts.project)) {
+      projectId = opts.project;
+    } else {
+      try {
+        projectId = (await api.getProject(config, opts.project)).id;
+      } catch (err) {
+        if (err instanceof api.ApiError && err.status === 404) {
+          console.error(
+            `Error: project '${opts.project}' not found (no match for slug or id).`,
+          );
+          process.exit(1);
+        }
+        throw err;
+      }
+    }
+
+    const taskList = await api.listProjectTasks(config, projectId, {
+      status: statuses,
+      priority: priorities,
+      labels,
+      unclaimed: opts.unclaimed,
+      limit,
+    });
     console.log(formatTasks(taskList, getMode(opts)));
   });
 
