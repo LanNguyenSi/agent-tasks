@@ -3,8 +3,20 @@ name: CI
 on:
   push:
     branches: [master, main, develop, "release/*"]
+    paths-ignore:
+      - "**.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
+      - "LICENSE"
+      - "docs/**"
   pull_request:
     branches: [master, main, develop]
+    paths-ignore:
+      - "**.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
+      - "LICENSE"
+      - "docs/**"
   workflow_call:
   workflow_dispatch:
 
