@@ -6,7 +6,7 @@ import { runLogin, runLogout, runStatus } from "./login.js";
 // Single source of truth for the version string emitted by `--version`.
 // Bump alongside package.json on release; the cli-version vitest reads
 // package.json#version and asserts spawnSync stdout matches.
-export const PACKAGE_VERSION = "0.5.0";
+export const PACKAGE_VERSION = "0.6.0";
 
 const USAGE = `agent-tasks-mcp-bridge — zero-setup MCP bridge for agent-tasks
 
