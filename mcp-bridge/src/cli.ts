@@ -3,6 +3,11 @@ import { runStdioServer, DEFAULT_BASE_URL } from "@agent-tasks/mcp-server";
 import { resolveTokenStore } from "./token-store.js";
 import { runLogin, runLogout, runStatus } from "./login.js";
 
+// Single source of truth for the version string emitted by `--version`.
+// Bump alongside package.json on release; the cli-version vitest reads
+// package.json#version and asserts spawnSync stdout matches.
+export const PACKAGE_VERSION = "0.5.0";
+
 const USAGE = `agent-tasks-mcp-bridge — zero-setup MCP bridge for agent-tasks
 
 Usage:
@@ -11,6 +16,7 @@ Usage:
                                     Store a token in the OS keychain (or file fallback)
   agent-tasks-mcp-bridge logout     Remove the stored token
   agent-tasks-mcp-bridge status     Validate the stored token against the backend
+  agent-tasks-mcp-bridge --version  Print the package version and exit
   agent-tasks-mcp-bridge --help     Show this help
 
 Environment:
@@ -19,7 +25,7 @@ Environment:
 `;
 
 interface ParsedArgs {
-  command: "serve" | "login" | "logout" | "status" | "help";
+  command: "serve" | "login" | "logout" | "status" | "help" | "version";
   tokenFlag?: string;
 }
 
@@ -28,6 +34,9 @@ function parseArgs(argv: string[]): ParsedArgs {
   const [first, ...rest] = argv;
   if (first === "--help" || first === "-h" || first === "help") {
     return { command: "help" };
+  }
+  if (first === "--version" || first === "-v" || first === "version") {
+    return { command: "version" };
   }
   if (first === "login") {
     let tokenFlag: string | undefined;
@@ -52,6 +61,13 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.command === "help") {
     process.stdout.write(USAGE);
+    return;
+  }
+  if (args.command === "version") {
+    // Fast-exit before token-store resolution and any network attempt.
+    // Tooling that probes installed MCP binaries (e.g. `harness doctor`'s
+    // `tools.mcp[]` `min_version` check) otherwise hits its probe timeout.
+    process.stdout.write(`${PACKAGE_VERSION}\n`);
     return;
   }
 

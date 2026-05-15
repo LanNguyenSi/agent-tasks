@@ -24,6 +24,7 @@
     "build": "tsc",
     "dev": "npm run build --workspace=mcp-server --prefix .. && tsx src/cli.ts",
     "start": "node dist/cli.js",
+    "pretest": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
