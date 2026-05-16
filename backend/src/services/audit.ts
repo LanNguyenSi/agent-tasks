@@ -64,7 +64,13 @@ export type AuditAction =
   // ProjectMember consumes an invite on a previously-soloMode project.
   // soloMode bypasses the distinct-reviewer gate; once a second human is
   // in the loop, the gate must become real.
-  | "project.solo_mode_disabled_by_share";
+  | "project.solo_mode_disabled_by_share"
+  // ADR-0011 confidence-gate events. Blocked: agent claim refused
+  // because score < threshold. Override: agent claim allowed via
+  // ?force=true + forceReason where the score would have been blocked.
+  // Override-with-passing-score is NOT recorded (force is a no-op).
+  | "task.claim_blocked_low_readiness"
+  | "task.claim_override_used";
 
 export interface AuditPayload {
   [key: string]: unknown;

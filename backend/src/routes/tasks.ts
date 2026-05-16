@@ -5,7 +5,7 @@ import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { Prisma } from "@prisma/client";
-import { forbidden, notFound, conflict, lowConfidence } from "../middleware/error.js";
+import { forbidden, notFound, conflict } from "../middleware/error.js";
 import {
   hasProjectAccess,
   hasProjectRole,
@@ -43,6 +43,7 @@ import {
 // emitted against terminal tasks by design and must still reach recipients.
 const STALE_WHEN_DONE: SignalType[] = ["review_needed", "task_available", "task_assigned"];
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
+import { evaluateConfidenceGate } from "../services/confidence-gate.js";
 import {
   DEFAULT_TRANSITIONS,
   findDefaultTransition,
@@ -1276,20 +1277,10 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       );
     }
 
-    // Confidence gate — mirrors v1 /claim behavior
-    if (actor.type === "agent" && c.req.query("force") !== "true") {
-      const threshold = task.project.confidenceThreshold;
-      const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
-      const confidence = calculateConfidence({
-        title: task.title,
-        description: task.description,
-        templateData: task.templateData as TemplateData | null,
-        templateFields: tpl?.fields ?? null,
-      });
-      if (confidence.score < threshold) {
-        return lowConfidence(c, { ...confidence, threshold });
-      }
-    }
+    // Confidence gate (ADR-0011). Emits audit events on block / override,
+    // validates force=true requires forceReason (>=10 chars).
+    const gate = await evaluateConfidenceGate(c, task, actor, "start");
+    if (!gate.ok) return gate.response;
 
     // Transition-rule gates (branchPresent / prPresent / ciGreen / prMerged).
     // Mirrors the b459be3 fix for task_finish. Before this change, task_start
@@ -3616,20 +3607,11 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     }, 409);
   }
 
-  // Confidence gate — only blocks agents (humans get a UI warning instead)
-  if (actor.type === "agent" && c.req.query("force") !== "true") {
-    const threshold = task.project.confidenceThreshold;
-    const claimTpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
-    const confidence = calculateConfidence({
-      title: task.title,
-      description: task.description,
-      templateData: task.templateData as TemplateData | null,
-      templateFields: claimTpl?.fields ?? null,
-    });
-    if (confidence.score < threshold) {
-      return lowConfidence(c, { ...confidence, threshold });
-    }
-  }
+  // Confidence gate (ADR-0011). Emits audit events on block / override,
+  // validates force=true requires forceReason (>=10 chars). See
+  // services/confidence-gate.ts.
+  const gate = await evaluateConfidenceGate(c, task, actor, "claim");
+  if (!gate.ok) return gate.response;
 
   const effectiveDef = await resolveEffectiveDefinition(task, prisma);
   const startTarget =
