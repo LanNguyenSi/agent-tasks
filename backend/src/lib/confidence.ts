@@ -2,6 +2,21 @@ import { z } from "zod";
 
 // ── Zod Schemas ─────────────────────────────────────────────────────────────
 
+// Bridge to Milestone 2 (per overlay §"Task-Type-Aware Scoring"). Presets
+// can declare a semantic kind; tasks created from a preset copy it into
+// `templateData.taskType`. Scoring is unchanged in this iteration; future
+// PRs add per-type required-signals and per-type thresholds.
+export const taskTypeSchema = z.enum([
+  "bugfix",
+  "feature",
+  "refactoring",
+  "security",
+  "migration",
+  "docs",
+]);
+
+export type TaskType = z.infer<typeof taskTypeSchema>;
+
 export const templatePresetSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().optional(),
@@ -9,6 +24,7 @@ export const templatePresetSchema = z.object({
   acceptanceCriteria: z.string().optional(),
   context: z.string().optional(),
   constraints: z.string().optional(),
+  taskType: taskTypeSchema.optional(),
 });
 
 export type TemplatePreset = z.infer<typeof templatePresetSchema>;
@@ -30,6 +46,7 @@ export const templateDataSchema = z.object({
   acceptanceCriteria: z.string().optional(),
   context: z.string().optional(),
   constraints: z.string().optional(),
+  taskType: taskTypeSchema.optional(),
 });
 
 export type TemplateData = z.infer<typeof templateDataSchema>;
@@ -145,6 +162,11 @@ interface ConfidenceResult {
   missing: string[];
   subscores: TaskQualitySubscores;
   findings: QualityFinding[];
+  // Bridge to Milestone 2. Echoed from `templateData.taskType` when the task
+  // was created from a typed preset. Scoring is unchanged in this iteration;
+  // future PRs use this to apply per-type required-signals and per-type
+  // thresholds.
+  inferredTaskType?: TaskType;
 }
 
 interface Rule {
@@ -474,5 +496,11 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
     );
   }
 
-  return { score: cappedScore, missing, subscores, findings };
+  return {
+    score: cappedScore,
+    missing,
+    subscores,
+    findings,
+    inferredTaskType: input.templateData?.taskType,
+  };
 }
