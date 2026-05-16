@@ -329,6 +329,92 @@ function buildFindings(missing: string[], subscores: TaskQualitySubscores, descP
   return findings;
 }
 
+// Verification signal: anything that gives an agent or reviewer a way to
+// know the task is done. AC presence already counts; the regex catches the
+// common "verification path in prose" patterns.
+const VERIFICATION_SIGNAL_PATTERN = /\b(test|run|curl|check|verify|green|CI)\b/i;
+
+interface CapRule {
+  cap: number;
+  applies: boolean;
+  code: string;
+  dimension: QualityDimension;
+  message: string;
+}
+
+// Deterministic score caps from overlay §"Important: Add Score Caps".
+// Each cap is an upper bound on the final score; the strictest applicable
+// cap wins, but every triggering cap is surfaced as a finding.
+function applyScoreCaps(
+  rawScore: number,
+  input: ConfidenceInput,
+  subscores: TaskQualitySubscores,
+): { cappedScore: number; capFindings: QualityFinding[] } {
+  const desc = (input.description ?? "").trim();
+  const td = input.templateData;
+  const tf = input.templateFields;
+
+  const has = (v?: string | null) => (v?.trim().length ?? 0) > 0;
+  const titlePresent = input.title.trim().length > 0;
+  const descPresent = desc.length > 0;
+  const goalPresent = has(td?.goal);
+  const acPresent = has(td?.acceptanceCriteria);
+  const consPresent = has(td?.constraints);
+
+  const verificationSignal = acPresent || (descPresent && VERIFICATION_SIGNAL_PATTERN.test(desc));
+  const ambiguityHits = descPresent ? (desc.match(VAGUE_TERM_PATTERN) ?? []).length : 0;
+  const hasConcrete = subscores.concreteness > 0;
+
+  const rules: CapRule[] = [
+    {
+      cap: 30, applies: !titlePresent,
+      code: "missing_title", dimension: "completeness",
+      message: "Score capped at 30: title is empty.",
+    },
+    {
+      cap: 40, applies: !descPresent,
+      code: "missing_or_thin_description", dimension: "structure",
+      message: "Score capped at 40: description is empty.",
+    },
+    {
+      cap: 70, applies: tf?.goal === true && !goalPresent,
+      code: "missing_goal", dimension: "completeness",
+      message: "Score capped at 70: goal is missing.",
+    },
+    {
+      cap: 80, applies: tf?.acceptanceCriteria === true && !acPresent,
+      code: "missing_acceptance_criteria", dimension: "testability",
+      message: "Score capped at 80: acceptance criteria are missing.",
+    },
+    {
+      cap: 85, applies: !acPresent && !consPresent && !verificationSignal,
+      code: "missing_verification", dimension: "testability",
+      message: "Score capped at 85: no verification path (no acceptance criteria, no constraints, no test/run/curl/check/verify/CI signal in description).",
+    },
+    {
+      cap: 75, applies: ambiguityHits >= 3 && !hasConcrete,
+      code: "ambiguous_scope", dimension: "ambiguityRisk",
+      message: `Score capped at 75: ${ambiguityHits} vague terms with no concrete anchors (file path, URL, inline code, or number).`,
+    },
+  ];
+
+  const triggered = rules.filter((r) => r.applies);
+  if (triggered.length === 0) return { cappedScore: rawScore, capFindings: [] };
+
+  const strictest = Math.min(...triggered.map((r) => r.cap));
+  const cappedScore = Math.min(rawScore, strictest);
+
+  const capFindings: QualityFinding[] = triggered.map((r) => ({
+    code: r.code,
+    severity: "warning",
+    dimension: r.dimension,
+    message: r.message,
+    suggestion: `Add the missing element to lift this cap (current ceiling ${r.cap}/100).`,
+  }));
+
+  return { cappedScore, capFindings };
+}
+
 export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const activeRules = RULES.filter((rule) => {
     if (!rule.templateField) return true;
@@ -354,9 +440,39 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
     }
   }
 
-  const score = maxPossible > 0 ? Math.round((earned / maxPossible) * 100) : 100;
+  const rawScore = maxPossible > 0 ? Math.round((earned / maxPossible) * 100) : 100;
   const subscores = computeSubscores(input);
   const findings = buildFindings(missing, subscores, (input.description?.trim().length ?? 0) > 0);
 
-  return { score, missing, subscores, findings };
+  const { cappedScore, capFindings } = applyScoreCaps(rawScore, input, subscores);
+
+  // Merge cap findings into the rule-driven list. When a code already
+  // exists (e.g. rule-driven `missing_acceptance_criteria` is `blocking`
+  // and the cap also fires `missing_acceptance_criteria` as `warning`),
+  // keep the higher-severity rule entry but enrich its suggestion with
+  // the cap ceiling so the consumer still sees the score-cap info.
+  const byCode = new Map(findings.map((f) => [f.code, f] as const));
+  for (const cf of capFindings) {
+    const existing = byCode.get(cf.code);
+    if (!existing) {
+      findings.push(cf);
+      byCode.set(cf.code, cf);
+    } else if (cf.suggestion && !existing.suggestion?.includes(cf.suggestion)) {
+      existing.suggestion = existing.suggestion
+        ? `${existing.suggestion} ${cf.suggestion}`
+        : cf.suggestion;
+    }
+  }
+
+  // Ops visibility: emit a single info-level line when a cap actually
+  // lowered the additive score. Structured-ish so ops can grep + parse.
+  // Full audit-event wiring (claim_blocked_low_readiness etc.) is owned
+  // by follow-up 180e5655.
+  if (cappedScore < rawScore) {
+    console.info(
+      `confidence.score_capped raw=${rawScore} capped=${cappedScore} caps=[${capFindings.map((f) => f.code).join(",")}]`,
+    );
+  }
+
+  return { score: cappedScore, missing, subscores, findings };
 }
