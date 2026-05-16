@@ -307,7 +307,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       name: "tasks_instructions",
       description:
         DEPRECATED +
-        "Fetch agent-facing instructions. v2 folds this into the task_start response.",
+        "Fetch agent-facing instructions. v2 folds this into the task_start response. Response carries `confidence.inferredTaskType` (`bugfix | feature | refactoring | security | migration | docs`) when the task was created from a typed preset; future Milestone-2 work uses it to drive per-type required-signals + thresholds.",
       inputShape: { taskId: uuid() },
       handler: async ({ taskId }) =>
         wrap(() => client.getTaskInstructions(taskId)),

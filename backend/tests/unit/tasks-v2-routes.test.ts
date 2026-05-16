@@ -2774,6 +2774,29 @@ describe("GET /tasks/:id/instructions: confidence shape", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it("response.confidence surfaces inferredTaskType when templateData.taskType is set", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...LOW_SCORE_TASK,
+      templateData: { taskType: "bugfix" },
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/instructions");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { confidence: { inferredTaskType?: string } };
+    expect(body.confidence.inferredTaskType).toBe("bugfix");
+  });
+
+  it("response.confidence omits inferredTaskType when templateData has none", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(LOW_SCORE_TASK);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/instructions");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { confidence: { inferredTaskType?: string } };
+    expect(body.confidence.inferredTaskType).toBeUndefined();
+  });
+
   it("response.confidence carries score, missing, threshold, subscores, findings", async () => {
     prismaMocks.taskFindUnique.mockResolvedValueOnce({
       ...LOW_SCORE_TASK,

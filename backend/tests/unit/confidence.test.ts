@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   descriptionQuality,
   calculateConfidence,
+  templateDataSchema,
   type TaskQualitySubscores,
 } from "../../src/lib/confidence.js";
 
@@ -333,6 +334,66 @@ describe("calculateConfidence — subscores", () => {
     expect(subs({
       description: "fix improve optimize clean up somehow quickly simple modernize fix improve optimize clean up",
     }).ambiguityRisk).toBe(0);
+  });
+});
+
+describe("calculateConfidence — inferredTaskType (M2 bridge)", () => {
+  beforeEach(() => vi.spyOn(console, "info").mockImplementation(() => {}));
+  afterEach(() => vi.restoreAllMocks());
+
+  it("returns inferredTaskType when templateData.taskType is set", () => {
+    const result = calculateConfidence({
+      title: "Fix crash on signup",
+      description: "Decent description with `code` and src/file.ts anchor that meets quality",
+      templateData: { ...ALL_FILLED, taskType: "bugfix" },
+      templateFields: FULL_FIELDS,
+    });
+    expect(result.inferredTaskType).toBe("bugfix");
+  });
+
+  it("returns undefined when templateData has no taskType", () => {
+    const result = calculateConfidence({
+      title: "Some task",
+      description: "Decent description with `code` and src/file.ts anchor that meets quality",
+      templateData: ALL_FILLED,
+      templateFields: FULL_FIELDS,
+    });
+    expect(result.inferredTaskType).toBeUndefined();
+  });
+
+  it("does not affect score or findings (scoring-neutral bridge)", () => {
+    const withType = calculateConfidence({
+      title: "ok",
+      description: "ok ok ok",
+      templateData: { ...ALL_FILLED, taskType: "security" },
+      templateFields: FULL_FIELDS,
+    });
+    const withoutType = calculateConfidence({
+      title: "ok",
+      description: "ok ok ok",
+      templateData: ALL_FILLED,
+      templateFields: FULL_FIELDS,
+    });
+    expect(withType.score).toBe(withoutType.score);
+    expect(withType.findings).toEqual(withoutType.findings);
+    expect(withType.subscores).toEqual(withoutType.subscores);
+  });
+});
+
+describe("templateDataSchema — taskType", () => {
+  it("accepts known taskType values", () => {
+    for (const t of ["bugfix", "feature", "refactoring", "security", "migration", "docs"] as const) {
+      expect(templateDataSchema.safeParse({ taskType: t }).success).toBe(true);
+    }
+  });
+
+  it("rejects unknown taskType values", () => {
+    expect(templateDataSchema.safeParse({ taskType: "random" }).success).toBe(false);
+  });
+
+  it("accepts payloads without taskType (BC)", () => {
+    expect(templateDataSchema.safeParse({ goal: "g" }).success).toBe(true);
+    expect(templateDataSchema.safeParse({}).success).toBe(true);
   });
 });
 
