@@ -1,7 +1,7 @@
 # ADR 0011: Split confidence scoring into Task Quality Analysis and Claim Policy Evaluation
 
 ## Status
-Proposed
+Accepted
 
 ## Context
 
@@ -10,11 +10,11 @@ function:
 
 1. It *measures* the description of a task and produces a numeric score
    plus a `missing[]` array.
-2. It is the de-facto *gate decision*: every call site (`/tasks/:id/start`
-   at backend/src/routes/tasks.ts:1063, the legacy `/claim` route at
-   line 3383, and the read-only `tasks_instructions` MCP verb at line
-   2711) inlines `score < project.confidenceThreshold` and refuses the
-   claim when the comparison is true.
+2. It is the de-facto *gate decision*: every call site (the
+   `/tasks/:id/start` handler, the legacy `/claim` POST handler, and
+   the `tasks_instructions` response builder, all in
+   `backend/src/routes/tasks.ts`) inlines `score < project.confidenceThreshold`
+   and refuses the claim when the comparison is true.
 
 The two concerns drift together but answer different questions:
 
@@ -92,6 +92,10 @@ type TaskQualityReport = {
   strengths: QualityFinding[];
 };
 
+// Note: the inlined task literal is the minimum field set today's
+// implementation needs. The overlay's `analyze(task, options)` second
+// argument is deferred; follow-up `527310ef` may widen the signature
+// when subscores need configuration.
 interface TaskQualityAnalyzer {
   analyze(task: {
     title: string;
@@ -204,6 +208,12 @@ for the hard gate:
 - This ADR does not, by itself, change behaviour. Until the follow-up
   tasks ship, `confidence.ts` keeps doing both jobs and the routes
   keep inlining the comparison.
+- **Open question deferred to follow-up `180e5655`:** who is
+  authorised to use an override (`claim_override_used`) and who can
+  change a project threshold (`confidence_threshold_changed`). The
+  `actor` field on the evaluator input is the only signal this ADR
+  introduces; the authorisation rules and the event payload shapes
+  are owned by the structured-422 + audit-events task.
 
 ## Alternatives considered
 
