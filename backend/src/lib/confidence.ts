@@ -111,9 +111,40 @@ interface ConfidenceInput {
   templateFields?: TemplateFields | null;
 }
 
+// ── Quality Report types (ADR-0011, additive) ──────────────────────────────
+
+export type QualityDimension =
+  | "completeness"
+  | "concreteness"
+  | "testability"
+  | "scopeClarity"
+  | "contextQuality"
+  | "structure"
+  | "ambiguityRisk";
+
+export interface QualityFinding {
+  code: string;
+  severity: "info" | "warning" | "blocking";
+  dimension: QualityDimension;
+  message: string;
+  suggestion?: string;
+}
+
+export interface TaskQualitySubscores {
+  completeness: number;
+  concreteness: number;
+  testability: number;
+  scopeClarity: number;
+  contextQuality: number;
+  structure: number;
+  ambiguityRisk: number;
+}
+
 interface ConfidenceResult {
   score: number;
   missing: string[];
+  subscores: TaskQualitySubscores;
+  findings: QualityFinding[];
 }
 
 interface Rule {
@@ -160,6 +191,144 @@ const RULES: Rule[] = [
   },
 ];
 
+// Vague terms used by ambiguityRisk (overlay §"Ambiguity Risk").
+// Hits lower the subscore (start 100, -10 per hit, floor 0).
+const VAGUE_TERMS = [
+  "fix", "improve", "optimize", "clean up",
+  "somehow", "quickly", "simple", "modernize",
+];
+
+const VAGUE_TERM_PATTERN = new RegExp(
+  "\\b(" + VAGUE_TERMS.map((t) => t.replace(/\s+/g, "\\s+")).join("|") + ")\\b",
+  "gi",
+);
+
+// Heuristics that drive subscores. None of these are perfect; calibration
+// is owned by Milestone 5. Each dimension returns 0..100.
+function computeSubscores(input: ConfidenceInput): TaskQualitySubscores {
+  const desc = (input.description ?? "").trim();
+  const td = input.templateData;
+  const hasField = (v?: string | null) => (v?.trim().length ?? 0) > 0;
+
+  const titlePresent = input.title.trim().length > 0;
+  const goalPresent = hasField(td?.goal);
+  const acPresent = hasField(td?.acceptanceCriteria);
+  const ctxPresent = hasField(td?.context);
+  const consPresent = hasField(td?.constraints);
+  const descPresent = desc.length > 0;
+
+  // ── completeness: ratio of present required fields
+  const requiredFlags = [
+    titlePresent,
+    descPresent,
+    input.templateFields?.goal ? goalPresent : null,
+    input.templateFields?.acceptanceCriteria ? acPresent : null,
+    input.templateFields?.context ? ctxPresent : null,
+    input.templateFields?.constraints ? consPresent : null,
+  ].filter((v) => v !== null) as boolean[];
+  const completeness = requiredFlags.length === 0
+    ? 100
+    : Math.round((requiredFlags.filter(Boolean).length / requiredFlags.length) * 100);
+
+  // ── concreteness: count concrete anchors in description
+  let anchors = 0;
+  if (/[a-zA-Z_][a-zA-Z0-9_]*\.[a-z]{1,4}\b/.test(desc)) anchors++; // file refs
+  if (/\/[a-zA-Z_]/.test(desc)) anchors++;                          // paths
+  if (/`[^`]+`/.test(desc)) anchors++;                              // inline code
+  if (/https?:\/\//.test(desc)) anchors++;                          // URLs
+  if (/\d{2,}/.test(desc)) anchors++;                               // numbers
+  const concreteness = Math.min(anchors * 25, 100);
+
+  // ── testability: AC present → 100, else partial credit for test-flavoured language
+  let testability = 0;
+  if (acPresent) testability = 100;
+  else if (/\b(test|verify|expect|assert|should|given|when|then)\b/i.test(desc)) testability = 60;
+
+  // ── scopeClarity: constraints present → 100, else partial for scope markers
+  let scopeClarity = 0;
+  if (consPresent) scopeClarity = 100;
+  else if (/\b(in scope|out of scope|do not|only|keep|non-goal|don't change)\b/i.test(desc)) scopeClarity = 60;
+
+  // ── contextQuality: context present → 100, else ramp on description length
+  let contextQuality = 0;
+  if (ctxPresent) contextQuality = 100;
+  else if (descPresent) contextQuality = Math.min(Math.round((desc.length / 300) * 70), 70);
+
+  // ── structure: description's line count + list markers
+  let structure = 0;
+  if (descPresent) {
+    const lines = desc.split("\n").filter((l) => l.trim().length > 0);
+    if (lines.length >= 2) structure += 30;
+    if (lines.length >= 4) structure += 25;
+    if (/^[\s]*[-*•]\s/m.test(desc)) structure += 20;
+    if (/^[\s]*\d+[.)]\s/m.test(desc)) structure += 15;
+    if (/^#+\s/m.test(desc)) structure += 10;
+    structure = Math.min(structure, 100);
+  }
+
+  // ── ambiguityRisk: start 100, -10 per vague hit, floor 0.
+  //    Higher = less risky. The subscore is the *inverse* of risk: 100 = no
+  //    vague terms, 0 = many. Naming follows the overlay (subscore "score",
+  //    where more = better, even though the dimension is called *Risk*).
+  const hits = descPresent ? (desc.match(VAGUE_TERM_PATTERN) ?? []).length : 0;
+  const ambiguityRisk = Math.max(100 - hits * 10, 0);
+
+  return {
+    completeness,
+    concreteness,
+    testability,
+    scopeClarity,
+    contextQuality,
+    structure,
+    ambiguityRisk,
+  };
+}
+
+// Mapping from rule field misses to QualityFinding shape. Codes come from
+// overlay §"Example Finding Codes"; messages/suggestions are short and stable
+// so the 422-response task (180e5655) can surface them as-is.
+const MISS_FINDINGS: Record<string, { code: string; dimension: QualityDimension; message: string; suggestion: string }> = {
+  title:              { code: "missing_title",                dimension: "completeness",   message: "Title is empty.",                                  suggestion: "Add a short imperative title naming the change." },
+  description:        { code: "missing_or_thin_description",  dimension: "structure",      message: "Description is missing or below quality threshold.", suggestion: "Add a short Context and Goal section with concrete anchors." },
+  goal:               { code: "missing_goal",                 dimension: "completeness",   message: "Goal is missing.",                                  suggestion: "Add a one-line Goal stating the intended outcome." },
+  acceptanceCriteria: { code: "missing_acceptance_criteria",  dimension: "testability",    message: "Acceptance criteria are missing.",                  suggestion: "Add 2-5 bullets describing observable completion conditions." },
+  context:            { code: "missing_context",              dimension: "contextQuality", message: "Context is missing.",                               suggestion: "Add the user impact, related incident, or business reason." },
+  constraints:        { code: "missing_constraints",          dimension: "scopeClarity",   message: "Constraints / scope boundary are missing.",         suggestion: "Add 'in scope', 'out of scope', or 'do not change ...' lines." },
+};
+
+function buildFindings(missing: string[], subscores: TaskQualitySubscores, descPresent: boolean): QualityFinding[] {
+  const findings: QualityFinding[] = [];
+  for (const field of missing) {
+    const tpl = MISS_FINDINGS[field];
+    if (tpl) {
+      findings.push({ code: tpl.code, severity: "blocking", dimension: tpl.dimension, message: tpl.message, suggestion: tpl.suggestion });
+    }
+  }
+  // Subscore-driven warnings, only when the description exists (otherwise
+  // missing_or_thin_description already covers it).
+  if (descPresent) {
+    if (subscores.ambiguityRisk < 70) {
+      findings.push({
+        code: "vague_language",
+        severity: "warning",
+        dimension: "ambiguityRisk",
+        message: "Description contains vague terms an agent cannot act on directly.",
+        suggestion: `Replace generic verbs (e.g. ${VAGUE_TERMS.slice(0, 4).join(", ")}) with the concrete change you want.`,
+      });
+    }
+    if (subscores.concreteness === 0) {
+      findings.push({
+        code: "no_concrete_anchors",
+        severity: "warning",
+        dimension: "concreteness",
+        message: "Description has no file paths, code references, URLs, or numbers.",
+        suggestion: "Anchor the change to a specific file, function, route, or commit.",
+      });
+    }
+  }
+  return findings;
+}
+
 export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const activeRules = RULES.filter((rule) => {
     if (!rule.templateField) return true;
@@ -186,6 +355,8 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   }
 
   const score = maxPossible > 0 ? Math.round((earned / maxPossible) * 100) : 100;
+  const subscores = computeSubscores(input);
+  const findings = buildFindings(missing, subscores, (input.description?.trim().length ?? 0) > 0);
 
-  return { score, missing };
+  return { score, missing, subscores, findings };
 }
