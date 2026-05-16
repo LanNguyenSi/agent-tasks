@@ -2,6 +2,18 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## 0.6.0
+
+### Changed
+
+- `tasks_instructions` tool description now names the ADR-0011 confidence
+  surface that the backend response carries: `confidence.inferredTaskType`
+  (`bugfix | feature | refactoring | security | migration | docs`), set when
+  the task was created from a typed preset. The new field is the bridge to
+  Milestone 2 per-type required-signals and per-type thresholds. The tool's
+  inputs and runtime behaviour are unchanged; this is a description-only
+  release so MCP catalogues regenerate against the new shape hint.
+
 ## 0.5.0
 
 ### Added

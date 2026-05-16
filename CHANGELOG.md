@@ -7,6 +7,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-05-16
+
+**Headline: Confidence scoring is now explainable, capped, and auditable
+(ADR-0011 Milestone 1).** The confidence gate stops being a single opaque
+number plus a flat `missing[]` list. It now produces a structured
+`TaskQualityReport` with seven named subscores, deterministic ceilings
+that prevent long-but-vacuous tasks from passing, a typed `findings[]`
+catalogue with actionable suggestions, an ordered `nextActions[]` for
+agents and humans to consume, and two new audit events covering every
+block and every force-override. The split between *measurement* and
+*decision* is codified in ADR-0011, with `TaskQualityAnalyzer` and
+`ClaimPolicyEvaluator` as named components so the four follow-up
+milestones (task-type-aware readiness, policy engine, human improvement
+loop, empirical calibration) build against a contract instead of a
+function.
+
+Operator note: there is one breaking change. Agents calling
+`?force=true` against `/tasks/:id/start` or the legacy `/claim` must now
+also pass `?forceReason=...` (>=10 chars), else they receive 400
+`bad_request`. Previously the gate was silently bypassed, leaving no
+audit trail for overrides. No internal callers used the old behaviour
+(verified across tests and routes). The rest of the surface is
+backwards-compatible: existing 422 consumers reading only
+`details.score`, `details.missing`, and `details.threshold` keep
+working; `subscores`, `findings`, `nextActions`, and `inferredTaskType`
+ride alongside. Score may decrease for cap-eligible tasks (e.g. strong
+description without acceptance criteria caps at 80 instead of reaching
+~90); the default 60 threshold is unaffected for typical tasks.
+
+### Added
+
+- **ADR-0011** at `docs/adr/0011-split-confidence-scoring-into-quality-analysis-and-claim-policy.md`,
+  defining `TaskQualityAnalyzer`, `TaskQualityReport`, `QualityFinding`,
+  `ClaimReadinessScore`, `ClaimPolicyEvaluator`, `ClaimDecision`, the
+  responsibilities matrix, the new audit event names, and the additive
+  BC plan. Non-Goals copied verbatim from the design overlay. (#242)
+- Seven named subscores on every confidence report: `completeness`,
+  `concreteness`, `testability`, `scopeClarity`, `contextQuality`,
+  `structure`, `ambiguityRisk` (inverse-of-risk: 100 = no vague terms).
+  Each in 0..100; heuristic, no LLM. (#243)
+- `QualityFinding[]` catalogue on every confidence report: `code`,
+  `severity` (`info | warning | blocking`), `dimension`, `message`,
+  optional `suggestion`. Codes include `missing_acceptance_criteria`,
+  `missing_verification`, `missing_goal`, `missing_context`,
+  `missing_constraints`, `vague_language`, `no_concrete_anchors`,
+  `ambiguous_scope`. (#243, #245)
+- Six deterministic score caps from the overlay's "Important: Add Score
+  Caps" section: empty title (30), empty description (40), missing goal
+  (70), missing acceptance criteria (80), no verification path (85),
+  ambiguity >= 3 with no concrete anchors (75). Strictest applicable
+  cap wins; every triggered cap surfaces as a finding. Suggestion
+  enrichment when a cap collides with an existing blocking rule. A
+  grep-friendly `console.info` line fires exactly when a cap lowers
+  the score. (#244)
+- Structured 422 body on blocked claims: response now carries
+  `details.findings[]` plus `details.nextActions[]` alongside the
+  existing `details.{score, missing, threshold}`. `nextActions` is the
+  deduped, blocking-first, 5-cap prioritised list of suggestion
+  strings, designed for direct agent + UI consumption. (#245)
+- New `evaluateConfidenceGate` helper in
+  `backend/src/services/confidence-gate.ts`. Extracted from inline gate
+  code at `/tasks/:id/start` and the legacy `/claim` so the two routes
+  stay in lockstep and the future `ClaimPolicyEvaluator` extraction
+  (Milestone 3) is a clean refactor. (#245)
+- Two new audit actions (`backend/src/services/audit.ts`):
+  `task.claim_blocked_low_readiness` (every 422, payload carries
+  `route`, `score`, `threshold`, `findings`, `actorType`) and
+  `task.claim_override_used` (only when `?force=true` rescues a
+  would-be-blocked claim, payload includes `forceReason`). Surface on
+  the existing `GET /tasks/:taskId/audit` and
+  `GET /projects/:projectId/audit` endpoints automatically. (#245)
+- Test coverage on the confidence library: 30 unit tests in
+  `backend/tests/unit/confidence.test.ts` covering description-quality
+  bins, rule activation per `templateFields`, all six score caps, all
+  seven subscore dimensions, finding emission per code, and the
+  cap-collision suggestion enrichment. 6 tests for the
+  `deriveNextActions` helper in `confidence-gate.test.ts`. Coverage on
+  `backend/src/lib/confidence.ts`: 99.29% lines, 90.71% branches. (#246)
+- 9 route tests in `backend/tests/unit/tasks-v2-routes.test.ts` covering
+  the 4-cell gate matrix for both `/start` and the legacy `/claim`
+  (block, force-no-reason 400, override audit, force-noop) plus the
+  `/instructions` confidence shape (all 7 subscores, severity values,
+  `inferredTaskType` present/absent). (#247)
+- `taskType` enum on `templatePresetSchema` and `templateDataSchema`:
+  `bugfix | feature | refactoring | security | migration | docs`.
+  `calculateConfidence()` now returns `inferredTaskType` from
+  `templateData.taskType`. Bridge to Milestone 2 (per-type required
+  signals and per-type thresholds); scoring is unchanged in this
+  release. (#248)
+
+### Changed
+
+- **Breaking:** `?force=true` on `POST /tasks/:id/start` and legacy
+  `POST /claim` now requires `?forceReason` (>=10 chars), else returns
+  400 `bad_request`. Previously the gate was silently bypassed without
+  audit. Migration: pass `?forceReason=<reason>` alongside
+  `?force=true`. No internal callers used the old combo. (#245)
+- `lowConfidence` middleware (`backend/src/middleware/error.ts`)
+  widened to accept extra fields so the 422 details body carries
+  `subscores`, `findings`, and `nextActions` additively. Existing
+  callers reading the three legacy fields keep working. (#243, #245)
+- `tasks_instructions` tool description in `@agent-tasks/mcp-server`
+  0.6.0 names the new `confidence.inferredTaskType` field so MCP
+  catalogues regenerate against the bridge surface. (#248)
+
+### Security
+
+- Bump frontend `next` to `^15.5.18` to clear 13 Dependabot CVEs. (#238)
+- Scope the `postcss` override to `next` so the residual CVE under that
+  scope is cleared without widening the override surface for unrelated
+  consumers. (#239)
+
+### Internal
+
+- CI workflows skip runs on doc-only PRs via `paths-ignore: ["**.md",
+  ".github/ISSUE_TEMPLATE/**"]`. Saves runner minutes; the
+  release-cut path treats doc-only PRs as no-CI by design. (#237)
+- `.gitignore` adds `*.tsbuildinfo` and the incremental build cache is
+  untracked; no more cache churn in diffs. (#236)
+- `frontend/src/components/task/TaskArtifactsSection.tsx` migrates the
+  ad-hoc wordBreak style to the `.text-break-anywhere` utility class
+  for consistency with the rest of the dashboard. (#235)
+- `mcp-bridge` `--version` / `-v` / `version` CLI short-circuit prints
+  the package version and exits 0 within the harness doctor probe
+  budget. Shipped to npm in `@agent-tasks/mcp-bridge` 0.6.0 between
+  cuts (#241); included here for the cross-release rollup. (#240)
+
 ## [0.13.0] - 2026-05-11
 
 **Headline: project-scoped task browsing across CLI and MCP, plus governance
