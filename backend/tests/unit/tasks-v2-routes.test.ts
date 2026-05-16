@@ -12,7 +12,7 @@
  * that has caused cross-test bleed before. Every test sets its own return
  * values explicitly with `mockResolvedValue(...)` or `mockImplementation(...)`.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
 import type { Actor } from "../../src/types/auth.js";
@@ -2554,5 +2554,261 @@ describe("debug-flavor detection on pickup + start", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { groundingHint?: { debugFlavor: boolean } };
     expect(body.groundingHint?.debugFlavor).toBe(true);
+  });
+});
+
+// ── Confidence gate (ADR-0011) ───────────────────────────────────────────────
+//
+// Covers the four-cell matrix at /tasks/:id/start and the legacy /claim:
+//   (block | override | no-op force | 400 missing-reason)
+// plus the read-side /tasks/:id/instructions exposure of subscores + findings.
+//
+// `confidenceThreshold` defaults to 0 in baseTask (gate always passes), so
+// every test here sets it explicitly. Cap logs are silenced per test so the
+// vitest output stays clean.
+
+const LOW_SCORE_TASK = {
+  ...baseTask,
+  status: "open",
+  // Empty description triggers cap 40 + verification cap 85; score lands
+  // around 40, below the threshold below.
+  title: "Fix thing",
+  description: "",
+  templateData: null,
+  project: { ...baseTask.project, confidenceThreshold: 60 },
+};
+
+const PASSING_SCORE_TASK = {
+  ...baseTask,
+  status: "open",
+  title: "Add request-id middleware",
+  description: "Add the middleware in src/middleware/request-id.ts and verify with a curl test against /api/health",
+  templateData: null,
+  project: { ...baseTask.project, confidenceThreshold: 50 },
+};
+
+describe("confidence gate: POST /tasks/:id/start", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("low-score task without force → 422 with findings + nextActions and emits claim_blocked audit", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(LOW_SCORE_TASK);
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as {
+      error: string;
+      details: {
+        score: number;
+        threshold: number;
+        missing: string[];
+        findings: { code: string; severity: string }[];
+        nextActions: string[];
+      };
+    };
+    expect(body.error).toBe("low_confidence");
+    expect(body.details.threshold).toBe(60);
+    expect(body.details.score).toBeLessThan(60);
+    expect(body.details.findings.length).toBeGreaterThan(0);
+    expect(body.details.findings.find((f) => f.code === "missing_or_thin_description")).toBeDefined();
+    expect(body.details.nextActions.length).toBeGreaterThan(0);
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.claim_blocked_low_readiness",
+        taskId: "task-1",
+        projectId: "proj-1",
+        payload: expect.objectContaining({ route: "start", actorType: "agent", threshold: 60 }),
+      }),
+    );
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("force=true without forceReason → 400 bad_request", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(LOW_SCORE_TASK);
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/start?force=true", { method: "POST" });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toMatch(/forceReason/);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_blocked_low_readiness" }),
+    );
+  });
+
+  it("force=true + forceReason on low-score → 200 and emits override audit", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(LOW_SCORE_TASK);
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request(
+      "/tasks/task-1/start?force=true&forceReason=spike-investigation-on-flaky-CI",
+      { method: "POST" },
+    );
+    expect(res.status).toBe(200);
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.claim_override_used",
+        taskId: "task-1",
+        projectId: "proj-1",
+        payload: expect.objectContaining({
+          route: "start",
+          forceReason: "spike-investigation-on-flaky-CI",
+          threshold: 60,
+        }),
+      }),
+    );
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_blocked_low_readiness" }),
+    );
+  });
+
+  it("force=true + forceReason on passing-score → 200 but NO override audit (force is a no-op)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(PASSING_SCORE_TASK);
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request(
+      "/tasks/task-1/start?force=true&forceReason=harmless-explicit-force",
+      { method: "POST" },
+    );
+    expect(res.status).toBe(200);
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_override_used" }),
+    );
+  });
+});
+
+describe("confidence gate: POST /tasks/:id/claim", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("low-score task without force → 422 with findings + nextActions and emits claim_blocked audit", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(LOW_SCORE_TASK);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as {
+      error: string;
+      details: { findings: { code: string }[]; nextActions: string[] };
+    };
+    expect(body.error).toBe("low_confidence");
+    expect(body.details.findings.length).toBeGreaterThan(0);
+    expect(body.details.nextActions.length).toBeGreaterThan(0);
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.claim_blocked_low_readiness",
+        taskId: "task-1",
+        payload: expect.objectContaining({ route: "claim" }),
+      }),
+    );
+  });
+
+  it("force=true without forceReason → 400 bad_request", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(LOW_SCORE_TASK);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/claim?force=true", { method: "POST" });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toMatch(/forceReason/);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_blocked_low_readiness" }),
+    );
+  });
+
+  it("force=true + forceReason on low-score → 200 and emits override audit (route=claim)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(LOW_SCORE_TASK);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request(
+      "/tasks/task-1/claim?force=true&forceReason=spike-investigation-on-flaky-CI",
+      { method: "POST" },
+    );
+    expect(res.status).toBe(200);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.claim_override_used",
+        payload: expect.objectContaining({ route: "claim" }),
+      }),
+    );
+  });
+
+  it("force=true + forceReason on passing-score → 200 but NO override audit", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(PASSING_SCORE_TASK);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request(
+      "/tasks/task-1/claim?force=true&forceReason=harmless-explicit-force",
+      { method: "POST" },
+    );
+    expect(res.status).toBe(200);
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_override_used" }),
+    );
+  });
+});
+
+describe("GET /tasks/:id/instructions: confidence shape", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("response.confidence carries score, missing, threshold, subscores, findings", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...LOW_SCORE_TASK,
+      // Instructions doesn't gate; we want a low-quality task so findings is non-empty.
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/instructions");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      confidence: {
+        score: number;
+        missing: string[];
+        threshold: number;
+        subscores: Record<string, number>;
+        findings: { code: string; severity: string; dimension: string }[];
+      };
+    };
+    expect(body.confidence.threshold).toBe(60);
+    expect(typeof body.confidence.score).toBe("number");
+    expect(Array.isArray(body.confidence.missing)).toBe(true);
+    expect(body.confidence.subscores).toEqual(
+      expect.objectContaining({
+        completeness: expect.any(Number),
+        concreteness: expect.any(Number),
+        testability: expect.any(Number),
+        scopeClarity: expect.any(Number),
+        contextQuality: expect.any(Number),
+        structure: expect.any(Number),
+        ambiguityRisk: expect.any(Number),
+      }),
+    );
+    expect(body.confidence.findings.length).toBeGreaterThan(0);
+    for (const f of body.confidence.findings) {
+      expect(["info", "warning", "blocking"]).toContain(f.severity);
+    }
   });
 });
