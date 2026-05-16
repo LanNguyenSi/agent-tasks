@@ -24,6 +24,12 @@ export function conflict(c: Context, message: string): Response {
   return errorResponse(c, 409, "conflict", message);
 }
 
-export function lowConfidence(c: Context, confidence: { score: number; missing: string[]; threshold: number }): Response {
+// Confidence may carry the extended ADR-0011 fields (subscores, findings).
+// The shape stays additive — existing clients that read `score` / `missing` /
+// `threshold` keep working unchanged.
+export function lowConfidence(
+  c: Context,
+  confidence: { score: number; missing: string[]; threshold: number } & Record<string, unknown>,
+): Response {
   return errorResponse(c, 422, "low_confidence", "Task does not meet confidence threshold for agent claiming", confidence);
 }
