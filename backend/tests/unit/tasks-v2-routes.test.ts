@@ -923,6 +923,28 @@ describe("task_finish grounding gate (Phase 3)", () => {
   });
 });
 
+describe("POST /tasks/:id/finish: no-claim error message (recovery hint)", () => {
+  it("returns 403 with a message that names task_start as the recovery path", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "someone-else",
+      reviewClaimedByAgentId: null,
+    });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/task_start/);
+    expect(body.message).toMatch(/do not hold a claim/i);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /tasks/:id/finish — gate enforcement (regression)", () => {
   // Regression coverage for the pre-existing v2 bug where task_finish
   // silently bypassed every transition-rule gate. The default workflow
@@ -1273,6 +1295,8 @@ describe("POST /tasks/:id/submit-pr", () => {
       body: JSON.stringify(validBody),
     });
     expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/task_start/);
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 
@@ -1490,6 +1514,8 @@ describe("POST /tasks/:id/abandon", () => {
 
     const res = await makeApp().request("/tasks/task-1/abandon", { method: "POST" });
     expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/task_start/);
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 

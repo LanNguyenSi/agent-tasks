@@ -1687,7 +1687,10 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
 
   if (!holdsWorkClaim && !holdsReviewClaim) {
-    return forbidden(c, "You do not hold a claim on this task");
+    return forbidden(
+      c,
+      "You do not hold a claim on this task. Call task_start to claim it before task_finish, even if you just finished an unrelated task in the same session.",
+    );
   }
 
   const rawBody = await c.req.json().catch(() => ({}));
@@ -2390,7 +2393,10 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
     (actor.type === "human" && task.claimedByUserId === actor.userId) ||
     (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
   if (!holdsWorkClaim) {
-    return forbidden(c, "You do not hold a work claim on this task");
+    return forbidden(
+      c,
+      "You do not hold a work claim on this task. Call task_start to claim it before task_submit_pr.",
+    );
   }
 
   // Polymorphic state check. Resolve the effective workflow (custom
@@ -2610,7 +2616,10 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
     (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
 
   if (!holdsWorkClaim && !holdsReviewClaim) {
-    return forbidden(c, "You do not hold a claim on this task");
+    return forbidden(
+      c,
+      "You do not hold a claim on this task. There is nothing to abandon; call task_start first if you intended to pick this task up.",
+    );
   }
 
   const effectiveDef = await resolveEffectiveDefinition(task, prisma);
