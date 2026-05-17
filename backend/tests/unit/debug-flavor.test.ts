@@ -116,6 +116,66 @@ describe("detectDebugFlavor", () => {
       ).toBe(false);
     });
   });
+
+  describe("suppression-label behavior", () => {
+    it.each(["docs", "how-to", "polish", "chore", "refactor", "style", "enhancement", "feature"])(
+      "suppresses keyword match in description when label %j is present",
+      (label) => {
+        expect(
+          detectDebugFlavor({
+            title: "How-To Doc: Custom Policies",
+            description: "Covers how policies behave under broken-state and failing validations.",
+            labels: [label],
+          }),
+        ).toBe(false);
+      },
+    );
+
+    it("suppresses keyword match in title when suppression label is present", () => {
+      expect(
+        detectDebugFlavor({
+          title: "docs: explain hotfix flow",
+          description: null,
+          labels: ["docs"],
+        }),
+      ).toBe(false);
+    });
+
+    it("explicit debug label still wins when both kinds are present", () => {
+      // Mixed labels like [docs, bug] mean a docs task that is itself a bug
+      // (e.g. broken doc example). Explicit human classification wins.
+      expect(
+        detectDebugFlavor({
+          title: "neutral title",
+          description: null,
+          labels: ["docs", "bug"],
+        }),
+      ).toBe(true);
+    });
+
+    it("explicit debug label wins even when title+description+suppression all collide", () => {
+      // Three-way combo: keyword in title AND description AND a suppression
+      // label AND an explicit debug label. Locks the rule "explicit-debug
+      // beats suppression beats keyword" against a future reordering.
+      expect(
+        detectDebugFlavor({
+          title: "fix login bug failing on Safari",
+          description: "Something broken in the auth flow",
+          labels: ["docs", "bug"],
+        }),
+      ).toBe(true);
+    });
+
+    it("suppression label is case-insensitive", () => {
+      expect(
+        detectDebugFlavor({
+          title: "investigation of regression in router",
+          description: null,
+          labels: ["Docs"],
+        }),
+      ).toBe(false);
+    });
+  });
 });
 
 describe("buildGroundingHint", () => {

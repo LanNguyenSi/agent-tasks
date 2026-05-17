@@ -35,6 +35,23 @@ const DEBUG_KEYWORDS = [
 // substring matching wouldn't make sense here.
 const DEBUG_LABELS = ["bug", "incident", "hotfix", "regression"];
 
+// Suppression labels: tasks tagged with one of these are deliberate
+// non-debug work (docs, refactors, polish, features). They override the
+// keyword heuristic so a docs task whose description happens to mention a
+// debug-keyword word (e.g. "this how-to covers broken-state recovery") is
+// not auto-classified as debug-flavored. Explicit DEBUG_LABELS still win,
+// so a task labelled [docs, bug] is still a bug.
+const DEBUG_SUPPRESS_LABELS = [
+  "docs",
+  "how-to",
+  "polish",
+  "chore",
+  "refactor",
+  "style",
+  "enhancement",
+  "feature",
+];
+
 const WORD_BOUNDARY_KEYWORDS = new Set(["bug", "debug", "broken", "failing"]);
 
 // Pre-compile the word-boundary regexes once at module load.
@@ -49,8 +66,22 @@ export interface DebugFlavorInput {
 }
 
 export function detectDebugFlavor(input: DebugFlavorInput): boolean {
-  const text = `${input.title} ${input.description ?? ""}`.toLowerCase();
+  const labels = input.labels ?? [];
+  const labelSet = new Set(labels.map((l) => l.toLowerCase()));
 
+  // Explicit debug labels always win: they are deliberate human classification.
+  for (const label of DEBUG_LABELS) {
+    if (labelSet.has(label)) return true;
+  }
+
+  // Suppression labels (docs/how-to/polish/chore/refactor/style) override
+  // the keyword heuristic, since these tasks are not debug work even when
+  // their descriptions mention debug-keyword'd words.
+  for (const label of DEBUG_SUPPRESS_LABELS) {
+    if (labelSet.has(label)) return false;
+  }
+
+  const text = `${input.title} ${input.description ?? ""}`.toLowerCase();
   for (const keyword of DEBUG_KEYWORDS) {
     const re = WORD_BOUNDARY_REGEXES.get(keyword);
     if (re) {
@@ -58,12 +89,6 @@ export function detectDebugFlavor(input: DebugFlavorInput): boolean {
     } else if (text.includes(keyword)) {
       return true;
     }
-  }
-
-  const labels = input.labels ?? [];
-  const labelSet = new Set(labels.map((l) => l.toLowerCase()));
-  for (const label of DEBUG_LABELS) {
-    if (labelSet.has(label)) return true;
   }
 
   return false;
