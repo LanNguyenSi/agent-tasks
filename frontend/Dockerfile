@@ -5,7 +5,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY backend/package.json backend/package.json
 COPY frontend/package.json frontend/package.json
-RUN npm ci
+# --ignore-scripts: backend's postinstall (prisma generate) fires across all workspaces here, but backend/prisma is not in this build context.
+RUN npm ci --ignore-scripts
 
 FROM base AS dev
 WORKDIR /app
@@ -27,7 +28,7 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 COPY backend/package.json backend/package.json
 COPY frontend/package.json frontend/package.json
-RUN npm ci --omit=dev --workspace=frontend
+RUN npm ci --omit=dev --workspace=frontend --ignore-scripts
 
 COPY --from=build /app/frontend/.next frontend/.next
 COPY --from=build /app/frontend/package.json frontend/package.json
