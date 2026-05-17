@@ -2,6 +2,12 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## 0.6.1
+
+### Changed
+
+- `task_finish` tool description now states the claim precondition explicitly: the caller must hold an active work or review claim on the specific task, and the claim of any prior task that was just finished does not carry over. The note also disambiguates `task_pickup` (discovery-only, does not claim) from `task_start` (the actual claim verb). Description-only release, runtime behaviour unchanged. Backend route returns a matching recovery hint in the 403 body (agent-tasks PR #253).
+
 ## 0.6.0
 
 ### Changed
