@@ -1,5 +1,16 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
+vi.mock("node:fs", async () => {
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  return {
+    ...actual,
+    existsSync: vi.fn(() => false),
+    readFileSync: vi.fn(() => {
+      throw new Error("config file disabled in tests");
+    }),
+  };
+});
+
 describe("loadConfig", () => {
   const origEnv = { ...process.env };
 
