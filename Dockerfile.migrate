@@ -4,6 +4,6 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY backend/package.json backend/package.json
 COPY frontend/package.json frontend/package.json
-RUN npm ci --workspace=backend
+RUN npm ci --workspace=backend --ignore-scripts
 COPY backend/prisma backend/prisma
 CMD ["npx", "prisma", "db", "push", "--schema=/app/backend/prisma/schema.prisma", "--skip-generate", "--accept-data-loss"]
