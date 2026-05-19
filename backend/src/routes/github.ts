@@ -11,7 +11,7 @@ import { acknowledgeSignalsForTask } from "../services/signal.js";
 import { emitSelfMergeNoticeIfApplicable } from "../services/self-merge-notice.js";
 import { requireScope } from "../middleware/auth.js";
 import {
-  checkDistinctReviewerGate,
+  checkReviewApprovalGate,
   distinctReviewerRejectionMessage,
   checkSelfMergeGate,
   selfMergeRejectionMessage,
@@ -307,7 +307,7 @@ githubRouter.post(
     // service from backend/src/services/review-gate.ts keeps this in
     // lockstep with the /transition handler so the rule cannot drift.
     if (task.status === "review") {
-      const gate = checkDistinctReviewerGate(task, actor, task.project);
+      const gate = checkReviewApprovalGate(task, actor, task.project);
       if (!gate.allowed) {
         void logAuditEvent({
           action: "task.review_rejected_self_reviewer",

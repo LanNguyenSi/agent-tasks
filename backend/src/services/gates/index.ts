@@ -31,6 +31,7 @@ export type { EffectiveGate, Gate, GateProjectContext } from "./types.js";
 
 export {
   checkDistinctReviewerGate,
+  checkReviewApprovalGate,
   distinctReviewerGate,
   distinctReviewerRejectionMessage,
 } from "./distinct-reviewer.js";

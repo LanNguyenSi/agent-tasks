@@ -14,7 +14,16 @@
  * the production rule — any change to the gate is observed by the suite.
  */
 import { describe, expect, it } from "vitest";
-import { checkDistinctReviewerGate } from "../../src/services/review-gate.js";
+// The review→done assertions in the upper sections of this file target
+// the approval-time invariants (review lock must exist, lock-holder must
+// not be claimant). Those moved out of the pure-identity
+// `checkDistinctReviewerGate` into `checkReviewApprovalGate` in f3e35ba8.
+// The "production gate" describe block at the bottom continues to import
+// the pure-identity gate to assert its narrow contract directly.
+import {
+  checkDistinctReviewerGate,
+  checkReviewApprovalGate,
+} from "../../src/services/review-gate.js";
 import type { Actor as BackendActor } from "../../src/types/auth.js";
 
 // Simulate the review lock logic as pure functions (extracted from route handler logic)
@@ -82,7 +91,7 @@ function canTransitionReviewToDone(
   const productionActor: BackendActor = actor.type === "human"
     ? { type: "human", userId: actor.userId! }
     : { type: "agent", tokenId: actor.tokenId!, teamId: "team-test", scopes: [] };
-  return checkDistinctReviewerGate(task, productionActor, project);
+  return checkReviewApprovalGate(task, productionActor, project);
 }
 
 const baseTask: TaskReviewState = {
@@ -247,7 +256,7 @@ function mergeDecision(
   const productionActor: BackendActor = actor.type === "human"
     ? { type: "human", userId: actor.userId! }
     : { type: "agent", tokenId: actor.tokenId!, teamId: "team-test", scopes: [] };
-  const gate = checkDistinctReviewerGate(task, productionActor, project);
+  const gate = checkReviewApprovalGate(task, productionActor, project);
   if (!gate.allowed) {
     return { outcome: "reject_gate", reason: gate.reason ?? "unknown" };
   }
@@ -588,6 +597,98 @@ describe("distinct-reviewer gate on review→done transition", () => {
       );
       expect(blocked.allowed).toBe(false);
       expect(blocked.reason).toBe("self_review");
+    });
+
+    // ── f3e35ba8 regression: gate at CLAIM time vs APPROVAL time ─────────
+    //
+    // Before the f3e35ba8 fix, `checkDistinctReviewerGate` enforced two
+    // approval-time invariants (`no_review_lock` + `review_lock_held_by_claimant`)
+    // that always rejected a fresh reviewer at claim time, because by
+    // definition no review lock exists yet. The fix split the gate: the
+    // identity-only check (this function) is safe to call at claim time;
+    // the approval-time invariants live in `checkReviewApprovalGate`.
+
+    it("ALLOWS a distinct reviewer at claim time even when no review lock is set yet (f3e35ba8)", () => {
+      const reviewerActor: BackendActor = {
+        type: "agent",
+        tokenId: "agent-reviewer",
+        teamId: "team-x",
+        scopes: [],
+      };
+      const result = checkDistinctReviewerGate(
+        // baseTask has claimedByAgentId="agent-worker", reviewClaimedByAgentId=null
+        baseTask,
+        reviewerActor,
+        { requireDistinctReviewer: true },
+      );
+      expect(result.allowed).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
+
+    it("ALLOWS a distinct reviewer at claim time for a human reviewer too", () => {
+      const reviewerActor: BackendActor = { type: "human", userId: "user-reviewer" };
+      const result = checkDistinctReviewerGate(
+        { ...baseTask, claimedByAgentId: null, claimedByUserId: "user-worker" },
+        reviewerActor,
+        { requireDistinctReviewer: true },
+      );
+      expect(result.allowed).toBe(true);
+    });
+
+    it("BLOCKS the work claimant from acting as reviewer at any phase (claim or approval)", () => {
+      // Self-review is the only invariant the pure-identity gate enforces.
+      // It must trigger at both claim-time and approval-time with the same
+      // `self_review` reason — that's the contract f3e35ba8 preserved when
+      // splitting the gate.
+      const selfReviewActor: BackendActor = {
+        type: "agent",
+        tokenId: "agent-worker",
+        teamId: "team-x",
+        scopes: [],
+      };
+      const result = checkDistinctReviewerGate(
+        baseTask, // claimedByAgentId === "agent-worker"
+        selfReviewActor,
+        { requireDistinctReviewer: true },
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("self_review");
+    });
+
+    it("approval-time wrapper (checkReviewApprovalGate) still rejects when no review lock is set", () => {
+      // The approval-time invariants live in the wrapper now. Verify the
+      // wrapper rejects a distinct reviewer who tries to approve without
+      // first claiming the review (would skip the audit trail).
+      const reviewerActor: BackendActor = {
+        type: "agent",
+        tokenId: "agent-reviewer",
+        teamId: "team-x",
+        scopes: [],
+      };
+      const result = checkReviewApprovalGate(
+        baseTask, // reviewClaimedByAgentId=null
+        reviewerActor,
+        { requireDistinctReviewer: true },
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("no_review_lock");
+    });
+
+    it("approval-time wrapper rejects review_lock_held_by_claimant (belt-and-suspenders)", () => {
+      const reviewerActor: BackendActor = {
+        type: "agent",
+        tokenId: "agent-reviewer",
+        teamId: "team-x",
+        scopes: [],
+      };
+      const result = checkReviewApprovalGate(
+        // The claimant holds the review lock somehow (schema edit / admin UI race).
+        { ...baseTask, reviewClaimedByAgentId: "agent-worker" },
+        reviewerActor,
+        { requireDistinctReviewer: true },
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("review_lock_held_by_claimant");
     });
   });
 });

@@ -272,20 +272,11 @@ describe("workflow round-trip — distinct-reviewer path (task 47cc3e43)", () =>
     aggregateBytes += finishRes.byteLength;
 
     // ── Step 5: (reviewer) task_start → review-claim ────────────────────
-    // Workaround for agent-tasks task f3e35ba8: `checkDistinctReviewerGate`
-    // is incorrectly called at review-CLAIM time and rejects with
-    // `no_review_lock` when no reviewer is set yet — even though the
-    // CLAIM is what sets the reviewer. Pre-populate `reviewClaimedByAgentId`
-    // so the gate sees `reviewerIsSet=true` and the route's idempotent
-    // `isCurrentReviewer` branch returns the task unchanged.
-    //
-    // When f3e35ba8 ships, this pre-population goes away and the route
-    // genuinely transitions reviewClaimedByAgentId from null → reviewer.
-    currentTask = {
-      ...currentTask,
-      reviewClaimedByAgentId: AGENT_REVIEWER.tokenId,
-      reviewClaimedAt: new Date("2026-05-19T13:00:00Z"),
-    };
+    // Real claim flow: at this point reviewClaimedByAgentId is null and
+    // the route should transition it to AGENT_REVIEWER.tokenId. f3e35ba8
+    // split `checkDistinctReviewerGate` into the pure-identity gate (used
+    // here) and `checkReviewApprovalGate` (used at approval-time), so the
+    // claim no longer false-rejects on `no_review_lock`.
     prismaMocks.agentTokenFindUnique.mockResolvedValue({
       id: "agent-reviewer",
       name: "Reviewer",

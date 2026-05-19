@@ -44,15 +44,23 @@ export interface GateResult {
 }
 
 /**
- * Check whether the given actor is allowed to transition a task from
- * `review` to `done` on behalf of the given project. Returns `allowed: true`
- * when the project has the feature off (backwards-compatible), and
- * `allowed: false` with a structured reason otherwise. Callers handle the
- * `force: true` escape hatch — this function is flag-only.
+ * Pure-identity distinct-reviewer check: rejects the work-claimant from
+ * acting as their own reviewer at ANY phase (claim or approval). Returns
+ * `allowed: true` when the project has the feature off
+ * (backwards-compatible), and `allowed: false, reason: "self_review"`
+ * otherwise. Callers handle the `force: true` escape hatch — this function
+ * is flag-only.
  *
- * `soloMode` is always allowed — by definition there is no second actor to
- * protect against, so a self-review block has no counterparty to defend.
- * This matches `checkSelfMergeGate` below.
+ * `soloMode` (AUTONOMOUS) is always allowed — by definition there is no
+ * second actor to protect against, so a self-review block has no
+ * counterparty to defend. This matches `checkSelfMergeGate` below.
+ *
+ * The approval-time invariants ("a review lock must exist" /
+ * "the review lock must not be held by the claimant") live in
+ * `checkReviewApprovalGate` below. Calling the claim-time routes with the
+ * old wider gate produced false rejections (see agent-tasks task
+ * `f3e35ba8`): at claim time, by definition no review lock has been set
+ * yet — the whole point of the call is to set one.
  */
 export function checkDistinctReviewerGate(
   task: GateTask,
@@ -72,6 +80,45 @@ export function checkDistinctReviewerGate(
     (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
   if (claimantIsActor) {
     return { allowed: false, reason: "self_review" };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Approval-time gate composing the identity check above with two
+ * structural invariants that only make sense at `review → done` (or
+ * `review → merged`):
+ *
+ *   - A review lock MUST already exist. Approvals without a prior
+ *     `/review/claim` are blocked so the audit trail always records who
+ *     took the review role.
+ *   - The review lock MUST NOT be held by the work-claimant.
+ *     Belt-and-suspenders against schema-level edits or admin UI paths
+ *     that could leave the lock pointing at the same actor who owns the
+ *     work claim.
+ *
+ * Use this at every site that decides whether to flip a task from
+ * `review` to `done` (or to call `performPrMerge` on a `review` task).
+ * For claim-time sites (POST `/tasks/:id/start` review-branch, POST
+ * `/tasks/:id/review/claim`), call `checkDistinctReviewerGate` directly
+ * — the lock-related checks below would always reject at claim time.
+ */
+export function checkReviewApprovalGate(
+  task: GateTask,
+  actor: Actor,
+  project: GateProject,
+): GateResult {
+  const identity = checkDistinctReviewerGate(task, actor, project);
+  if (!identity.allowed) return identity;
+
+  // No-op when DR is off — the identity check above already short-circuits
+  // for AUTONOMOUS / AWAITS_CONFIRMATION. Re-resolving here keeps the
+  // function self-contained when the identity check is replaced or
+  // tightened later.
+  const mode = resolveGovernanceMode(project);
+  if (mode !== GovernanceMode.REQUIRES_DISTINCT_REVIEWER) {
+    return { allowed: true };
   }
 
   const reviewerIsSet =

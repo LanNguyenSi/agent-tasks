@@ -83,6 +83,7 @@ vi.mock("../../src/services/self-merge-notice.js", () => ({
 
 vi.mock("../../src/services/review-gate.js", () => ({
   checkDistinctReviewerGate: vi.fn().mockReturnValue({ allowed: true }),
+  checkReviewApprovalGate: vi.fn().mockReturnValue({ allowed: true }),
   distinctReviewerRejectionMessage: vi.fn().mockReturnValue("self-review"),
   checkSelfMergeGate: vi.fn().mockReturnValue({ allowed: true }),
   selfMergeRejectionMessage: vi.fn().mockReturnValue("self-merge"),
