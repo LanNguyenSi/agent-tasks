@@ -38,3 +38,9 @@ For the full stack (backend + frontend + Postgres): `docker compose up`.
 ## Style
 
 Match the surrounding code. Prefer small, reviewable diffs.
+
+## Workflow round-trip test suite
+
+`backend/tests/workflow/` is the regression net for agent-surface workflow ergonomics: response shapes, byte budgets, and the canonical pickup → start → submit_pr → finish → merge composition.
+
+When changing any verb in the agent surface, the workflow suite is where the size + composition regression net lives. Make sure it stays green and update `BYTES_BUDGET` in `backend/tests/workflow/fixtures.ts` only when calibration evidence supports the new size. The agent-tasks task `47cc3e43-05ac-4975-9c86-60b5224ccda4` carries the calibration table behind the current budgets.
