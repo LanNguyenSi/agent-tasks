@@ -68,6 +68,7 @@ import { performPrMerge } from "../services/github-merge.js";
 import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
 import {
   checkDistinctReviewerGate,
+  checkReviewApprovalGate,
   distinctReviewerRejectionMessage,
   checkSelfMergeGate,
   selfMergeRejectionMessage,
@@ -1721,7 +1722,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       outcome === "approve" &&
       resolveGovernanceMode(task.project) === GovernanceMode.REQUIRES_DISTINCT_REVIEWER
     ) {
-      const gate = checkDistinctReviewerGate(task, actor, task.project);
+      const gate = checkReviewApprovalGate(task, actor, task.project);
       if (!gate.allowed) {
         void logAuditEvent({
           action: "task.review_rejected_self_reviewer",
@@ -2802,7 +2803,7 @@ taskRouter.post(
     // self-merge gate above doesn't cover. Only runs on the review→done
     // path; done→done is an idempotent retry where DR has already run.
     if (task.status === "review") {
-      const gate = checkDistinctReviewerGate(task, actor, task.project);
+      const gate = checkReviewApprovalGate(task, actor, task.project);
       if (!gate.allowed) {
         void logAuditEvent({
           action: "task.review_rejected_self_reviewer",
@@ -3091,7 +3092,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
       },
     });
     if (project && resolveGovernanceMode(project) === GovernanceMode.REQUIRES_DISTINCT_REVIEWER) {
-      const gate = checkDistinctReviewerGate(task, actor, project);
+      const gate = checkReviewApprovalGate(task, actor, project);
       if (!gate.allowed) {
         void logAuditEvent({
           action: "task.review_rejected_self_reviewer",
@@ -3812,7 +3813,7 @@ taskRouter.post(
     // prMerged checks). force=true is an admin-only escape hatch and is
     // already verified at the top of the handler.
     if (previousStatus === "review" && status === "done" && !force) {
-      const gate = checkDistinctReviewerGate(task, actor, task.project);
+      const gate = checkReviewApprovalGate(task, actor, task.project);
       if (!gate.allowed) {
         void logAuditEvent({
           action: "task.review_rejected_self_reviewer",
@@ -4003,11 +4004,12 @@ taskRouter.post(
       return c.json({ error: "bad_request", message: "Task must be in review status" }, 400);
     }
 
-    // Reviewer must not be the same as the claimant (no self-review).
+    // Reviewer must not be the same as the claimant (no self-review),
+    // and a review lock must already exist (no skipping `/review/claim`).
     // soloMode and !requireDistinctReviewer projects bypass this — see
-    // checkDistinctReviewerGate in services/review-gate.ts.
+    // checkReviewApprovalGate in services/review-gate.ts.
     {
-      const gate = checkDistinctReviewerGate(task, actor, task.project);
+      const gate = checkReviewApprovalGate(task, actor, task.project);
       if (!gate.allowed) {
         return forbidden(c, "Cannot review your own task");
       }

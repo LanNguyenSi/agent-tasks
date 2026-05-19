@@ -14,12 +14,17 @@ import {
 } from "../../lib/governance-mode.js";
 import {
   checkDistinctReviewerGate,
+  checkReviewApprovalGate,
   distinctReviewerRejectionMessage,
 } from "../review-gate.js";
 import type { Gate } from "./types.js";
 import { GateCode } from "./types.js";
 
-export { checkDistinctReviewerGate, distinctReviewerRejectionMessage };
+export {
+  checkDistinctReviewerGate,
+  checkReviewApprovalGate,
+  distinctReviewerRejectionMessage,
+};
 
 export const distinctReviewerGate: Gate = {
   code: GateCode.DistinctReviewer,
