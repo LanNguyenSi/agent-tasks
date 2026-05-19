@@ -120,27 +120,16 @@ const AGENT_AUTHOR = {
   tokenId: "agent-author",
   teamId: "team-1",
   userId: "user-author",
-  scopes: [
-    "tasks:read",
-    "tasks:create",
-    "tasks:claim",
-    "tasks:transition",
-    "tasks:update",
-  ],
+  scopes: ["tasks:read", "tasks:create", "tasks:claim", "tasks:transition"],
 } satisfies Actor;
-
 const AGENT_REVIEWER = {
   type: "agent" as const,
   tokenId: "agent-reviewer",
   teamId: "team-1",
   userId: "user-reviewer",
-  scopes: [
-    "tasks:read",
-    "tasks:claim",
-    "tasks:transition",
-    "tasks:update",
-    "github:pr_merge",
-  ],
+  // Minimum reviewer scopes. `github:pr_merge` is required for the
+  // task_finish autoMerge branch (re-checked at routes/tasks.ts:1802).
+  scopes: ["tasks:read", "tasks:claim", "tasks:transition", "github:pr_merge"],
 } satisfies Actor;
 
 function makeApp(actor: Actor) {

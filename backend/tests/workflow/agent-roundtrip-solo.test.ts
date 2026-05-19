@@ -128,14 +128,15 @@ const AGENT_AUTHOR = {
   tokenId: "agent-author",
   teamId: "team-1",
   userId: "user-author",
+  // Minimum scope set for the soloMode round-trip including the autoMerge
+  // branch of task_finish, which re-checks `github:pr_merge` at
+  // `routes/tasks.ts:1802` before invoking `performPrMerge`.
   scopes: [
     "tasks:read",
     "tasks:create",
     "tasks:claim",
     "tasks:transition",
-    "tasks:update",
     "github:pr_merge",
-    "github:pr_create",
   ],
 } satisfies Actor;
 

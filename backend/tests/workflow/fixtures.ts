@@ -54,12 +54,6 @@ export const BYTES_BUDGET = {
   taskPickupWithWork: 12_288,
   pullRequestsMerge: 12_288,
 
-  // Listing endpoints — linear in N. Budgets are for N=10 in the summary
-  // projection. Verbose=true would be ~3x; the no-filter call must error
-  // out or stay below the same threshold.
-  tasksListSummaryN10: 10_240,
-  tasksListVerboseN10: 30_720,
-
   // Round-trip aggregate budgets. Captures the "did the whole agent
   // workflow stay inside the harness tool-result cap" question.
   roundtripSolo: 50_000,
