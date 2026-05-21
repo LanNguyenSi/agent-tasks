@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-05-21
+
+**Headline: the first registered workflow template since the
+state-vocabulary lock, plus a master-stability sweep.**
+`branch-pr-merge-gated` ships as a predefined workflow that enforces
+branch-first discipline and a merged PR before any task reaches `done`.
+Alongside it, a batch of build and correctness fixes: fresh checkouts now
+self-heal the Prisma client, the frontend Docker image build is unblocked,
+the review-gate is split so it is safe to call at claim time, no-claim
+403s name their recovery path, and debug-flavor classification stops
+misfiring on docs / refactor / feature tasks.
+
+Operator note: no breaking changes. `@agent-tasks/mcp-server` 0.6.1 and
+`@agent-tasks/mcp-bridge` 0.6.2 were already published from their own
+release PRs (#254, #255) and are included here for the rollup. Backend,
+frontend, and CLI workspace `package.json` versions are not bumped
+(convention since v0.9.0). Fresh local installs now run `prisma generate`
+automatically via a backend `postinstall` hook; the Docker build stages
+that `npm ci` before the Prisma schema is in context pass
+`--ignore-scripts`.
+
+### Added
+
+- **`branch-pr-merge-gated` workflow template**, the first template
+  registered in `WORKFLOW_TEMPLATES` since the state vocabulary was
+  locked to `{open, in_progress, review, done}`. It is the locked
+  four-state workflow with stricter gates than the built-in default:
+  `open → in_progress` requires `branchPresent`, `in_progress → review`
+  and the skip-review `in_progress → done` require `branchPresent` +
+  `prPresent`, and every edge into `done` requires `prMerged` so reaching
+  `done` always means the PR landed. Applied via
+  `POST /api/projects/:id/workflow/apply-template/branch-pr-merge-gated`;
+  documented in `docs/workflow-preconditions.md`. (#258)
+
+### Changed
+
+- The review-gate is split into a pure identity check and an
+  approval-time wrapper. `checkDistinctReviewerGate` now only rejects a
+  self-review (`self_review`) and is safe to call at claim time; the new
+  `checkReviewApprovalGate` composes it with the two approval-time
+  invariants (`no_review_lock`, `review_lock_held_by_claimant`) and is
+  used at every `review → done` / `review → merged` transition. Discovered
+  while building the round-trip suite (#256), which carried a
+  pre-population workaround for exactly this gate. (#257)
+- No-claim 403s on `task_finish`, `task_submit_pr`, and `task_abandon` now
+  name `task_start` as the recovery path, so an agent chaining tasks
+  back-to-back sees how to re-claim. The `task_finish` MCP tool
+  description documents the claim precondition; shipped to agents via
+  `@agent-tasks/mcp-server` 0.6.1 / `@agent-tasks/mcp-bridge` 0.6.2.
+  (#253, #254, #255)
+- `detectDebugFlavor` no longer auto-classifies a task as debug when it
+  carries a `docs`, `how-to`, `polish`, `chore`, `refactor`, `style`,
+  `enhancement`, or `feature` label, even if the title or description
+  contains debug keywords. Explicit debug labels and mixed label sets
+  still classify correctly. (#252)
+
+### Fixed
+
+- Fresh checkouts no longer break on ~30 Prisma-related TypeScript
+  errors: `backend/package.json` gains a `postinstall: "prisma generate"`
+  so the client is regenerated on every `npm install` / `npm ci`. The
+  `backend/Dockerfile` and `Dockerfile.migrate` build stages that
+  `npm ci` before the schema is copied pass `--ignore-scripts`.
+  `cli/tests/config.test.ts` now mocks `node:fs` so
+  it no longer fails on dev machines that have a real
+  `~/.agent-tasks.json`. (#250)
+- `frontend/Dockerfile` passes `--ignore-scripts` to its base-stage
+  `npm ci`, so the backend `postinstall` added in #250 no longer aborts
+  the frontend image build with `prisma/schema.prisma: file not found`.
+  (#251)
+
+### Internal
+
+- New `backend/tests/workflow/` round-trip suite: exercises the canonical
+  agent flow (`task_create → task_start → task_submit_pr → task_finish`)
+  against the real route handlers with mocked Prisma + GitHub, asserting
+  per-verb and aggregate output-byte budgets for the soloMode and
+  distinct-reviewer paths. Catches `tasks_list`-style response-size
+  regressions that per-route unit tests miss. (#256)
+
 ## [0.14.0] - 2026-05-16
 
 **Headline: Confidence scoring is now explainable, capped, and auditable
