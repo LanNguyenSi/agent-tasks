@@ -111,6 +111,107 @@ const codingAgentDefinition: WorkflowDefinitionShape = {
   initialState: "backlog",
 };
 
+// ── Branch / PR / Merge Gated ───────────────────────────────────────────────
+//
+// The locked four-state workflow {open, in_progress, review, done} with
+// stricter precondition gates than the built-in default:
+//
+//   - open → in_progress requires a recorded branch (branchPresent);
+//   - in_progress → review and the skip-review in_progress → done both
+//     require a branch and a PR (branchPresent, prPresent);
+//   - every edge into `done` additionally requires the PR to be merged
+//     (prMerged), so reaching `done` always means the PR landed.
+//
+// Unlike the built-in default — which deliberately leaves open →
+// in_progress ungated so exploratory work can begin before a branch
+// exists — this template enforces branch-first discipline from the very
+// first transition. Projects that adopt it accept that `task_start`
+// returns 422 until `branchName` is recorded; the `open` state's
+// agentInstructions spell that out so the 422 is never a surprise.
+
+const branchPrMergeGatedDefinition: WorkflowDefinitionShape = {
+  states: [
+    {
+      name: "open",
+      label: "Open",
+      terminal: false,
+      agentInstructions:
+        "Read the task. Cut a branch off the latest master and record it on the task with `tasks_update { branchName }`, then transition to in_progress. The open → in_progress transition is gated on branchPresent, so a `task_start` before the branch is recorded returns 422.",
+    },
+    {
+      name: "in_progress",
+      label: "In Progress",
+      terminal: false,
+      agentInstructions:
+        'Implement the change. Before submitting for review, run a rigorous review subagent and fix every finding, then open a pull request with `pull_requests_create` — the PR body must include a Test Plan. Transition to review once the PR is open, or use "Mark done" to skip review once the PR is merged. "Release" returns the task to open.',
+    },
+    {
+      name: "review",
+      label: "Review",
+      terminal: false,
+      agentInstructions:
+        "A pull request is open for this task. If the reviewer found further issues, transition back to in_progress to rework them. Otherwise merge the PR with `pull_requests_merge`.",
+    },
+    {
+      name: "done",
+      label: "Done",
+      terminal: true,
+      agentInstructions:
+        "The task is complete and its pull request is merged. Tagging and deployment are external follow-ups.",
+    },
+  ],
+  transitions: [
+    // open → in_progress: a branch must be recorded first.
+    {
+      from: "open",
+      to: "in_progress",
+      label: "Start",
+      requiredRole: "any",
+      requires: ["branchPresent"],
+    },
+    // in_progress → review: submit work — needs a branch and a PR.
+    {
+      from: "in_progress",
+      to: "review",
+      label: "Submit for review",
+      requiredRole: "any",
+      requires: ["branchPresent", "prPresent"],
+    },
+    // in_progress → done: skip review — additionally needs a merged PR so
+    // the skip path cannot land an unmerged task on `done`.
+    {
+      from: "in_progress",
+      to: "done",
+      label: "Mark done",
+      requiredRole: "any",
+      requires: ["branchPresent", "prPresent", "prMerged"],
+    },
+    // in_progress → open: release the claim — always allowed.
+    {
+      from: "in_progress",
+      to: "open",
+      label: "Release",
+      requiredRole: "any",
+    },
+    // review → in_progress: reviewer found issues — step back, no gate.
+    {
+      from: "review",
+      to: "in_progress",
+      label: "Request changes",
+      requiredRole: "any",
+    },
+    // review → done: approve — the PR must be merged first.
+    {
+      from: "review",
+      to: "done",
+      label: "Approve",
+      requiredRole: "any",
+      requires: ["prMerged"],
+    },
+  ],
+  initialState: "open",
+};
+
 // ── Template registry ───────────────────────────────────────────────────────
 //
 // The "AI Coding Agent Pipeline" template (backlog → spec → plan →
@@ -118,11 +219,19 @@ const codingAgentDefinition: WorkflowDefinitionShape = {
 // vocabulary was locked to {open, in_progress, review, done}. Its 7
 // custom state names would now fail `workflowDefinitionSchema` validation.
 // The definition is kept above for reference but no longer registered.
-// Future templates that vary only transitions / gates / labels (within
-// the fixed state set) are still welcome here.
+// Templates that vary only transitions / gates / labels within the fixed
+// state set are valid — `branch-pr-merge-gated` below is the first one.
 void codingAgentDefinition;
 
-export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [] as const;
+export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
+  {
+    slug: "branch-pr-merge-gated",
+    name: "Branch, PR & Merge Gated",
+    description:
+      "The locked four-state workflow with stricter gates than the default: a branch is required before work starts, a branch and PR before review, and a merged PR before any transition into done.",
+    definition: branchPrMergeGatedDefinition,
+  },
+] as const;
 
 export function findWorkflowTemplate(slug: string): WorkflowTemplate | undefined {
   return WORKFLOW_TEMPLATES.find((t) => t.slug === slug);

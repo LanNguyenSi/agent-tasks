@@ -293,8 +293,8 @@ and the dashboard gear icon. Non-admins see a read-only view.
 
 1. Open the page. The banner shows "Using system default".
 2. Either click **Customize this workflow** to fork the built-in default,
-   or click a **template button** (e.g. "AI Coding Agent Pipeline") to
-   apply a predefined workflow with stages and gates pre-configured.
+   or click a **template button** (e.g. "Branch, PR & Merge Gated") to
+   apply a predefined workflow with transitions and gates pre-configured.
 3. Edit states: inline-edit name/label, toggle terminal, click
    "Add instructions…" to open a textarea for the state's agent
    instructions, use `+ Add state` / the `✕` button per row.
@@ -416,33 +416,37 @@ applied to a project in one click. Templates are defined in code at
 [`backend/src/services/workflow-templates.ts`](../backend/src/services/workflow-templates.ts)
 and are versioned with the backend.
 
-### AI Coding Agent Pipeline (`coding-agent`)
+### Branch, PR & Merge Gated (`branch-pr-merge-gated`)
 
-A 7-stage pipeline designed for AI coding agents:
-
-```
-backlog → spec → plan → implement → test → review → done
-```
+The locked four-state workflow with stricter precondition gates than the
+built-in default. It enforces branch-first discipline and only lets a
+task reach `done` once its pull request is actually merged.
 
 | From | To | Label | Requires |
 | ---- | -- | ----- | -------- |
-| `backlog` | `spec` | Start scoping | *(none)* |
-| `spec` | `plan` | Spec complete | *(none)* |
-| `spec` | `backlog` | Release | *(none)* |
-| `plan` | `implement` | Start implementing | `branchPresent` |
-| `plan` | `spec` | Revisit spec | *(none)* |
-| `implement` | `test` | Ready for testing | *(none)* |
-| `implement` | `plan` | Revisit plan | *(none)* |
-| `test` | `review` | Submit for review | `branchPresent`, `prPresent` |
-| `test` | `implement` | Fix failures | *(none)* |
-| `review` | `done` | Approve | *(none)* |
-| `review` | `implement` | Request changes | *(none)* |
+| `open` | `in_progress` | Start | `branchPresent` |
+| `in_progress` | `review` | Submit for review | `branchPresent`, `prPresent` |
+| `in_progress` | `done` | Mark done | `branchPresent`, `prPresent`, `prMerged` |
+| `in_progress` | `open` | Release | *(none)* |
+| `review` | `in_progress` | Request changes | *(none)* |
+| `review` | `done` | Approve | `prMerged` |
+
+How it differs from the built-in default:
+
+- **`open → in_progress` is gated on `branchPresent`.** The default
+  deliberately leaves this edge ungated so exploratory work can begin
+  before a branch exists; this template instead requires the branch to
+  be recorded first. `task_start` returns `422` until `branchName` is
+  set — the `open` state's `agentInstructions` say so explicitly.
+- **Every edge into `done` requires `prMerged`.** Both the `review →
+  done` approval and the `in_progress → done` skip-review path require
+  the PR to be merged, so reaching `done` always means the PR landed.
 
 Each state includes `agentInstructions` so agents using `task_start`
-know exactly what is expected at each stage. Back-transitions allow
-revisiting earlier stages when assumptions change.
+know what is expected at each stage.
 
 Applying a template replaces the project's custom workflow (or creates
-one if none exists). Existing tasks are not migrated — their `status`
-field stays as-is. Tasks stuck on a state that no longer exists will
-need an admin force-transition.
+one if none exists). Existing tasks are not migrated, but because the
+state vocabulary is fixed (`open`, `in_progress`, `review`, `done`)
+their `status` values stay valid — only the transitions, gates, and
+labels change.
