@@ -36,11 +36,12 @@ const DEBUG_KEYWORDS = [
 const DEBUG_LABELS = ["bug", "incident", "hotfix", "regression"];
 
 // Suppression labels: tasks tagged with one of these are deliberate
-// non-debug work (docs, refactors, polish, features). They override the
-// keyword heuristic so a docs task whose description happens to mention a
-// debug-keyword word (e.g. "this how-to covers broken-state recovery") is
-// not auto-classified as debug-flavored. Explicit DEBUG_LABELS still win,
-// so a task labelled [docs, bug] is still a bug.
+// non-debug work (docs, refactors, polish, features, releases, test
+// scaffolding). They override the keyword heuristic so a docs task whose
+// description happens to mention a debug-keyword word (e.g. "this how-to
+// covers broken-state recovery") is not auto-classified as debug-flavored.
+// Explicit DEBUG_LABELS still win, so a task labelled [docs, bug] is still
+// a bug.
 const DEBUG_SUPPRESS_LABELS = [
   "docs",
   "how-to",
@@ -50,6 +51,8 @@ const DEBUG_SUPPRESS_LABELS = [
   "style",
   "enhancement",
   "feature",
+  "release",
+  "test",
 ];
 
 const WORD_BOUNDARY_KEYWORDS = new Set(["bug", "debug", "broken", "failing"]);
@@ -74,9 +77,9 @@ export function detectDebugFlavor(input: DebugFlavorInput): boolean {
     if (labelSet.has(label)) return true;
   }
 
-  // Suppression labels (docs/how-to/polish/chore/refactor/style) override
-  // the keyword heuristic, since these tasks are not debug work even when
-  // their descriptions mention debug-keyword'd words.
+  // Suppression labels override the keyword heuristic, since these tasks
+  // are not debug work even when their descriptions mention
+  // debug-keyword'd words.
   for (const label of DEBUG_SUPPRESS_LABELS) {
     if (labelSet.has(label)) return false;
   }
