@@ -50,6 +50,8 @@ const DEBUG_SUPPRESS_LABELS = [
   "style",
   "enhancement",
   "feature",
+  "release",
+  "test",
 ];
 
 const WORD_BOUNDARY_KEYWORDS = new Set(["bug", "debug", "broken", "failing"]);

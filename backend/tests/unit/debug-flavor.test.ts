@@ -118,7 +118,18 @@ describe("detectDebugFlavor", () => {
   });
 
   describe("suppression-label behavior", () => {
-    it.each(["docs", "how-to", "polish", "chore", "refactor", "style", "enhancement", "feature"])(
+    it.each([
+      "docs",
+      "how-to",
+      "polish",
+      "chore",
+      "refactor",
+      "style",
+      "enhancement",
+      "feature",
+      "release",
+      "test",
+    ])(
       "suppresses keyword match in description when label %j is present",
       (label) => {
         expect(
