@@ -177,6 +177,18 @@ describe("detectDebugFlavor", () => {
       ).toBe(true);
     });
 
+    it("explicit debug label beats the release/test suppression labels", () => {
+      // Pin the newer release/test suppression labels against a future
+      // reorder: combined with an explicit debug label, the debug
+      // classification must still win.
+      expect(
+        detectDebugFlavor({ title: "neutral title", description: null, labels: ["release", "bug"] }),
+      ).toBe(true);
+      expect(
+        detectDebugFlavor({ title: "neutral title", description: null, labels: ["test", "incident"] }),
+      ).toBe(true);
+    });
+
     it("suppression label is case-insensitive", () => {
       expect(
         detectDebugFlavor({
