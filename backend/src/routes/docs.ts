@@ -333,6 +333,28 @@ const openApiSpec = {
           workflowId: { type: "string", format: "uuid" },
           dueAt: { type: "string", format: "date-time" },
           templateData: { $ref: "#/components/schemas/TemplateData" },
+          externalRef: {
+            type: "string",
+            minLength: 1,
+            maxLength: 255,
+            description: "Idempotency key; the backend dedupes on (projectId, externalRef).",
+          },
+          labels: {
+            type: "array",
+            items: { type: "string", minLength: 1, maxLength: 100 },
+            maxItems: 20,
+            description: "Free-form labels for filtering and classification.",
+          },
+          dependsOn: {
+            type: "array",
+            items: { type: "string", format: "uuid" },
+            maxItems: 50,
+            description: "Blocking task ids in the same project; task pickup skips this task until every blocker is done. Create-time only.",
+          },
+          debugFlavor: {
+            type: "boolean",
+            description: "Explicit debug-flavor opt-in/out. When omitted the backend runs its title/label heuristic at task pickup; when set, the value is persisted verbatim to metadata.debugFlavor.",
+          },
         },
         required: ["title"],
       },
