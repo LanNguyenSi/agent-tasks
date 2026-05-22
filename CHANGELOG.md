@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-05-22
+
+**Headline: explicit `debugFlavor` opt-in/out, end to end.** Task creation
+now accepts an explicit `debugFlavor` boolean across every create surface,
+the REST endpoint, both MCP servers, and the CLI, so a caller who already
+knows a task's flavor sets it deterministically instead of coaxing the
+keyword heuristic; the OpenAPI spec is synced to match. Alongside it, two
+more suppression fixes to the auto-classifier: `release` / `test` labels
+and conventional-commit-typed titles (`feat:`, `chore:`, ...) no longer
+misfire as debug-flavored.
+
+Operator note: no breaking changes. The `debugFlavor` field is additive
+and optional; omitting it preserves the existing auto-detect behaviour
+exactly. Workspace `package.json` versions are not bumped (convention
+since v0.9.0).
+
 ### Added
 
 - **Explicit `debugFlavor` opt-in/out flag on task create.** The task-create
@@ -23,9 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   flavor up front no longer has to coax the heuristic via the title or
   labels. Covered by `task-create-debug-flavor.test.ts`.
 
+- **CLI `tasks create` reaches parity with the REST and MCP create
+  surfaces** (#263). The `@agent-tasks/cli` `tasks create` command gains
+  `--debug-flavor` / `--no-debug-flavor` (a commander tri-state boolean
+  mapping to the optional `debugFlavor` field) and a repeatable
+  `--depends-on <task-id>`. `CreateTaskInput` carries both new fields.
+  Covered by a new `createTask` request-body suite in
+  `cli/tests/api.test.ts`.
+
 ### Fixed
 
+- **`detectDebugFlavor` no longer auto-classifies `release`- or `test`-labelled tasks as debug-flavored** (#260). Extends the suppression-label set introduced in #252: a task carrying a `release` or `test` label is deliberate typed work, so the keyword heuristic is suppressed for it just as it is for `docs` / `chore` / `refactor` / `style` / ... labelled tasks. Explicit debug labels (`bug` / `incident` / ...) still classify correctly.
 - **`detectDebugFlavor` no longer misfires on conventional-commit-typed task titles** (agent-tasks/f4779de0). A task whose title carries a non-debug conventional-commit type prefix (`feat:`, `docs:`, `style:`, `refactor:`, `perf:`, `test:`, `build:`, `ci:`, `chore:`, `release:`, with an optional `(scope)` and `!` breaking marker) is now suppressed from debug-flavor classification, the same way a suppression label is. The prefix is the task author's deliberate type signal: a `chore(deps): regression in the lockfile` task merely mentions a debug keyword while describing typed maintenance work, and should not auto-start a grounding session. `fix:` is deliberately not in the set, so bug-fix tasks stay scannable; explicit debug labels (`bug` / `incident` / ...) still win over the title-shape suppressor. This complements the label-based suppression from #260: a task with neither a suppression label nor a conventional-commit prefix is still keyword-scanned as before. Covered by a new `title-shape suppression` test block in `debug-flavor.test.ts`.
+
+- **The OpenAPI `CreateTaskRequest` schema documents every accepted create-time field** (#264). The hand-written spec in `backend/src/routes/docs.ts` had drifted from the Zod `createTaskSchema`: `debugFlavor`, `dependsOn`, `labels`, and `externalRef` were all accepted by `POST /projects/:id/tasks` but undocumented. All four are now in the spec, with constraints (`minLength` / `maxLength` / `maxItems` / `format`) mirroring the validator. Docs-only, no behaviour change.
 
 ## [0.15.0] - 2026-05-21
 
