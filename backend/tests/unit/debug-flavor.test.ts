@@ -199,6 +199,118 @@ describe("detectDebugFlavor", () => {
       ).toBe(false);
     });
   });
+
+  describe("title-shape suppression", () => {
+    it.each([
+      "feat",
+      "docs",
+      "style",
+      "refactor",
+      "perf",
+      "test",
+      "build",
+      "ci",
+      "chore",
+      "release",
+    ])(
+      "suppresses a keyword-bearing title with the %j conventional-commit prefix",
+      (type) => {
+        // Title carries a debug keyword ("regression"); the type prefix
+        // marks it as typed non-investigation work, so it is suppressed.
+        expect(
+          detectDebugFlavor({
+            title: `${type}: handle the regression path`,
+            description: null,
+            labels: [],
+          }),
+        ).toBe(false);
+      },
+    );
+
+    it("suppresses a prefix carrying a (scope) and a ! breaking marker", () => {
+      expect(
+        detectDebugFlavor({
+          title: "chore(deps)!: bump the broken transitive dep",
+          description: null,
+          labels: [],
+        }),
+      ).toBe(false);
+    });
+
+    it("suppresses a bare ! breaking marker with no (scope)", () => {
+      expect(
+        detectDebugFlavor({
+          title: "feat!: drop the broken legacy auth path",
+          description: null,
+          labels: [],
+        }),
+      ).toBe(false);
+    });
+
+    it("matches the type prefix case-insensitively", () => {
+      expect(
+        detectDebugFlavor({ title: "Feat: investigate-mode toggle", description: null, labels: [] }),
+      ).toBe(false);
+    });
+
+    it("suppresses a description keyword when the title has a type prefix", () => {
+      expect(
+        detectDebugFlavor({
+          title: "refactor: extract the policy evaluator",
+          description: "Touches code paths near the failing-state recovery branch.",
+          labels: [],
+        }),
+      ).toBe(false);
+    });
+
+    it("does NOT suppress a `fix:` prefix — bug-fix tasks stay scannable", () => {
+      expect(
+        detectDebugFlavor({ title: "fix: login bug on Safari", description: null, labels: [] }),
+      ).toBe(true);
+    });
+
+    it("does NOT suppress `hotfix:` — not a conventional-commit type", () => {
+      // `hotfix` is a debug keyword in its own right; the `:` does not
+      // make it a suppressing type prefix.
+      expect(
+        detectDebugFlavor({ title: "hotfix: 500 errors", description: null, labels: [] }),
+      ).toBe(true);
+    });
+
+    it("does NOT suppress a title with a colon but no type token", () => {
+      // A plain colon (e.g. a sprint or phase label) is not a
+      // conventional-commit type prefix.
+      expect(
+        detectDebugFlavor({
+          title: "Sprint 3: fix the broken login flow",
+          description: null,
+          labels: [],
+        }),
+      ).toBe(true);
+    });
+
+    it("does NOT match `feature:` — only the `feat` token is a prefix", () => {
+      // "feat" is not a prefix of "feature" up to the required `:`, so a
+      // keyword in a `feature:`-titled task is still scanned.
+      expect(
+        detectDebugFlavor({
+          title: "feature: dashboard with a regression-tracking panel",
+          description: null,
+          labels: [],
+        }),
+      ).toBe(true);
+    });
+
+    it("explicit debug label beats the title-shape suppressor", () => {
+      expect(
+        detectDebugFlavor({
+          title: "chore: routine cleanup",
+          description: null,
+          labels: ["bug"],
+        }),
+      ).toBe(true);
+    });
+  });
 });
 
 describe("buildGroundingHint", () => {
