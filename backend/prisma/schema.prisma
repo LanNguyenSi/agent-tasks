@@ -303,9 +303,10 @@ model Task {
   templateData Json? // { goal?, acceptanceCriteria?, context?, constraints? }
 
   // Free-form per-task metadata, populated by the server. Currently stores
-  // `{ debugFlavor: boolean }` — set on first pickup / start to flag tasks
-  // that should be approached through the grounding stack. Reserved for
-  // additional server-side annotations.
+  // `{ debugFlavor: boolean }` to flag tasks that should be approached
+  // through the grounding stack — set explicitly via the create-time
+  // `debugFlavor` flag, or otherwise derived heuristically on first pickup /
+  // start. Reserved for additional server-side annotations.
   metadata Json?
 
   // External system reference (e.g. Jira key "PROJ-123", GitHub issue "#42")

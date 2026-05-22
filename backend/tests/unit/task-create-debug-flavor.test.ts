@@ -158,6 +158,23 @@ describe("POST /projects/:projectId/tasks — debugFlavor", () => {
     expect(res.status).toBe(400);
     expect(prismaMocks.taskCreate).not.toHaveBeenCalled();
   });
+
+  it("coexists with templateData and labels without clobbering them", async () => {
+    // metadata, templateData and labels are three distinct Prisma columns;
+    // assert the debugFlavor spread does not displace the others.
+    const res = await postCreate({
+      title: "Add a settings panel",
+      debugFlavor: true,
+      labels: ["feature"],
+      templateData: { goal: "Ship the panel" },
+    });
+
+    expect(res.status).toBe(201);
+    const createArg = prismaMocks.taskCreate.mock.calls[0]![0];
+    expect(createArg.data.metadata).toEqual({ debugFlavor: true });
+    expect(createArg.data.labels).toEqual(["feature"]);
+    expect(createArg.data.templateData).toEqual({ goal: "Ship the panel" });
+  });
 });
 
 describe("POST /projects/:projectId/tasks/import — debugFlavor", () => {
