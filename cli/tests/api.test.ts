@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  createTask,
   taskPickup,
   taskStart,
   taskFinish,
@@ -30,6 +31,49 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("createTask", () => {
+  it("POSTs the input as the body to /api/projects/:id/tasks and returns the task", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" } }),
+    );
+    const task = await createTask(config, "p1", { title: "x" });
+    expect(task).toEqual({ id: "t1", title: "x", status: "open", priority: "MEDIUM" });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://api.test/api/projects/p1/tasks");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ title: "x" });
+  });
+
+  it("forwards debugFlavor and dependsOn when set", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" } }),
+    );
+    await createTask(config, "p1", {
+      title: "x",
+      debugFlavor: false,
+      dependsOn: ["00000000-0000-0000-0000-000000000000"],
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({
+      title: "x",
+      debugFlavor: false,
+      dependsOn: ["00000000-0000-0000-0000-000000000000"],
+    });
+  });
+
+  it("omits debugFlavor and dependsOn from the body when unset", async () => {
+    // The CLI's --debug-flavor guard leaves the field off `input` unless the
+    // flag was passed; the body must then carry no debugFlavor key, so the
+    // backend heuristic stays in charge.
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" } }),
+    );
+    await createTask(config, "p1", { title: "x" });
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
+    expect(body).not.toHaveProperty("debugFlavor");
+    expect(body).not.toHaveProperty("dependsOn");
+  });
 });
 
 describe("taskPickup", () => {

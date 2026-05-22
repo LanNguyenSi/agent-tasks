@@ -72,11 +72,11 @@ describe("tasks finish argument validation", () => {
 });
 
 describe("tasks create option surface", () => {
-  // The create command builds its request body inline in the commander
-  // `.action` callback and only sends it after a successful network call,
-  // so asserting the request body would need a backend stub. This lighter
-  // check verifies the create-time flags are registered: a regression that
-  // drops or renames one of them would fail here.
+  // This subprocess check verifies the create-time flags are registered on
+  // the command; a regression that drops or renames one would fail here.
+  // The api-layer body serialization (debugFlavor / dependsOn reaching the
+  // request body) is covered separately by the `createTask` suite in
+  // api.test.ts.
   it("registers --debug-flavor / --no-debug-flavor / --depends-on", () => {
     const res = run(["tasks", "create", "--help"]);
     expect(res.status).toBe(0);
