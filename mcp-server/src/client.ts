@@ -187,6 +187,7 @@ export class AgentTasksClient {
       externalRef?: string;
       labels?: string[];
       dependsOn?: string[];
+      debugFlavor?: boolean;
     },
   ) {
     return this.request<unknown>(

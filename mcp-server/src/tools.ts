@@ -92,7 +92,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_create",
       description:
-        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that.",
+        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead.",
       inputShape: {
         projectId: uuid(),
         title: z.string().min(1).max(255),
@@ -103,6 +103,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         externalRef: z.string().trim().min(1).max(255).optional(),
         labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
         dependsOn: z.array(uuid()).max(50).optional(),
+        debugFlavor: z.boolean().optional(),
       },
       handler: async ({ projectId, ...input }) =>
         wrap(() => client.createTask(projectId, input)),
@@ -329,6 +330,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
           .array(z.string().trim().min(1).max(100))
           .max(20)
           .optional(),
+        debugFlavor: z.boolean().optional(),
       },
       handler: async ({ projectId, ...input }) =>
         wrap(() => client.createTask(projectId, input)),

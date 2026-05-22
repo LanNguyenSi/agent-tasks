@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Explicit `debugFlavor` opt-in/out flag on task create.** The task-create
+  surface (`task_create` / `tasks_create` MCP verbs and `POST
+  /projects/:id/tasks`, including batch import) now accepts an optional
+  `debugFlavor` boolean. When set, the value is persisted straight into
+  `metadata.debugFlavor` at create time: `true` forces the grounding hint at
+  `task_pickup`, `false` suppresses it. `deriveDebugFlavor` already treats a
+  pre-set `metadata.debugFlavor` as authoritative, so an explicit flag
+  deterministically overrides the title/description/label heuristic
+  (`detectDebugFlavor`) without any pickup-path change. When the flag is
+  omitted the behaviour is unchanged: no metadata is written and the
+  heuristic runs lazily at pickup as before. A caller who knows a task's
+  flavor up front no longer has to coax the heuristic via the title or
+  labels. Covered by `task-create-debug-flavor.test.ts`.
+
 ### Fixed
 
 - **`detectDebugFlavor` no longer misfires on conventional-commit-typed task titles** (agent-tasks/f4779de0). A task whose title carries a non-debug conventional-commit type prefix (`feat:`, `docs:`, `style:`, `refactor:`, `perf:`, `test:`, `build:`, `ci:`, `chore:`, `release:`, with an optional `(scope)` and `!` breaking marker) is now suppressed from debug-flavor classification, the same way a suppression label is. The prefix is the task author's deliberate type signal: a `chore(deps): regression in the lockfile` task merely mentions a debug keyword while describing typed maintenance work, and should not auto-start a grounding session. `fix:` is deliberately not in the set, so bug-fix tasks stay scannable; explicit debug labels (`bug` / `incident` / ...) still win over the title-shape suppressor. This complements the label-based suppression from #260: a task with neither a suppression label nor a conventional-commit prefix is still keyword-scanned as before. Covered by a new `title-shape suppression` test block in `debug-flavor.test.ts`.
