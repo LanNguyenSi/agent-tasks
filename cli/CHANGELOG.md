@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `tasks create` gains `--debug-flavor` / `--no-debug-flavor` and
+  `--depends-on <task-id>` (repeatable), bringing the human CLI to parity
+  with the REST and MCP create surfaces. `--debug-flavor` forces
+  debug-flavor classification (the grounding hint at `task_pickup`),
+  `--no-debug-flavor` suppresses it; with neither flag the backend runs
+  its title/label heuristic as before. `--depends-on` declares blocking
+  task ids in the same project. Both are create-time only.
+
 ## [0.3.0] - 2026-04-27
 
 Adds the v2 verb API surface (mirroring the agent-tasks MCP tools

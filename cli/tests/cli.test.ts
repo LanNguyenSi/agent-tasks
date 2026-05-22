@@ -71,6 +71,21 @@ describe("tasks finish argument validation", () => {
   });
 });
 
+describe("tasks create option surface", () => {
+  // This subprocess check verifies the create-time flags are registered on
+  // the command; a regression that drops or renames one would fail here.
+  // The api-layer body serialization (debugFlavor / dependsOn reaching the
+  // request body) is covered separately by the `createTask` suite in
+  // api.test.ts.
+  it("registers --debug-flavor / --no-debug-flavor / --depends-on", () => {
+    const res = run(["tasks", "create", "--help"]);
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain("--debug-flavor");
+    expect(res.stdout).toContain("--no-debug-flavor");
+    expect(res.stdout).toContain("--depends-on");
+  });
+});
+
 describe("tasks submit-pr argument validation", () => {
   it("rejects a non-integer --pr-number", () => {
     const res = run([

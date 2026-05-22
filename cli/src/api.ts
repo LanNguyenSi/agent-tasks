@@ -161,6 +161,12 @@ export interface CreateTaskInput {
   dueAt?: string;
   externalRef?: string;
   labels?: string[];
+  // Explicit debug-flavor opt-in/out. When omitted the backend runs its
+  // title/label heuristic at task_pickup; when set it persists
+  // metadata.debugFlavor verbatim. See backend createTaskSchema.
+  debugFlavor?: boolean;
+  // Blocking task ids in the same project. Create-time only.
+  dependsOn?: string[];
 }
 
 export async function createTask(

@@ -350,6 +350,14 @@ tasks
     (value: string, acc: string[]) => acc.concat(value),
     [] as string[],
   )
+  .option("--debug-flavor", "Force debug-flavor classification (grounding hint at pickup)")
+  .option("--no-debug-flavor", "Suppress debug-flavor classification (overrides the heuristic)")
+  .option(
+    "--depends-on <task-id>",
+    "Blocking task id in the same project (repeatable)",
+    (value: string, acc: string[]) => acc.concat(value),
+    [] as string[],
+  )
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (projectRef, opts) => {
@@ -394,6 +402,11 @@ tasks
     if (opts.dueAt) input.dueAt = opts.dueAt;
     if (opts.externalRef) input.externalRef = opts.externalRef;
     if (opts.label && opts.label.length > 0) input.labels = opts.label;
+    // commander yields debugFlavor undefined unless --debug-flavor /
+    // --no-debug-flavor was passed, so an unset flag leaves the backend
+    // heuristic in charge.
+    if (opts.debugFlavor !== undefined) input.debugFlavor = opts.debugFlavor;
+    if (opts.dependsOn && opts.dependsOn.length > 0) input.dependsOn = opts.dependsOn;
 
     const task = await api.createTask(config, projectId, input);
     console.log(formatTask(task, getMode(opts)));
