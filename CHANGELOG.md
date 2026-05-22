@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`detectDebugFlavor` no longer misfires on conventional-commit-typed task titles** (agent-tasks/f4779de0). A task whose title carries a non-debug conventional-commit type prefix (`feat:`, `docs:`, `style:`, `refactor:`, `perf:`, `test:`, `build:`, `ci:`, `chore:`, `release:`, with an optional `(scope)` and `!` breaking marker) is now suppressed from debug-flavor classification, the same way a suppression label is. The prefix is the task author's deliberate type signal: a `chore(deps): regression in the lockfile` task merely mentions a debug keyword while describing typed maintenance work, and should not auto-start a grounding session. `fix:` is deliberately not in the set, so bug-fix tasks stay scannable; explicit debug labels (`bug` / `incident` / ...) still win over the title-shape suppressor. This complements the label-based suppression from #260: a task with neither a suppression label nor a conventional-commit prefix is still keyword-scanned as before. Covered by a new `title-shape suppression` test block in `debug-flavor.test.ts`.
+
 ## [0.15.0] - 2026-05-21
 
 **Headline: the first registered workflow template since the

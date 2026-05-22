@@ -55,6 +55,38 @@ const DEBUG_SUPPRESS_LABELS = [
   "test",
 ];
 
+// Conventional-commit-style type prefixes that mark a task as typed,
+// non-investigation work. A title like `chore(deps): regression in the
+// lockfile` merely *mentions* a debug keyword while describing typed
+// maintenance work; the `chore:` prefix is the author's deliberate type
+// signal, the same kind of signal a suppression label is. `fix` is
+// deliberately EXCLUDED — a `fix:` task is bug work and must stay
+// scannable. `revert` is excluded too: reverts often happen mid-incident.
+const SUPPRESS_TITLE_TYPES = [
+  "feat",
+  "docs",
+  "style",
+  "refactor",
+  "perf",
+  "test",
+  "build",
+  "ci",
+  "chore",
+  "release",
+];
+
+// Matches a leading conventional-commit type token, an optional
+// `(scope)`, an optional `!` breaking-change marker, then `:`. Anchored
+// and case-insensitive: a title that merely contains a colon but no type
+// token (e.g. "Phase 7 #2: Action Envelope") is NOT a typed prefix and
+// is not suppressed. `feature:` is likewise not matched — only the
+// conventional `feat` token is, and "feat" is not a prefix of "feature:"
+// up to the required `:`.
+const SUPPRESS_TITLE_PREFIX_RE = new RegExp(
+  `^(?:${SUPPRESS_TITLE_TYPES.join("|")})(?:\\([^)]*\\))?!?:`,
+  "i",
+);
+
 const WORD_BOUNDARY_KEYWORDS = new Set(["bug", "debug", "broken", "failing"]);
 
 // Pre-compile the word-boundary regexes once at module load.
@@ -83,6 +115,13 @@ export function detectDebugFlavor(input: DebugFlavorInput): boolean {
   for (const label of DEBUG_SUPPRESS_LABELS) {
     if (labelSet.has(label)) return false;
   }
+
+  // Title-shape suppression: a conventional-commit non-debug type prefix
+  // (`feat:`, `chore(deps):`, `docs!:`, `release:`, ...) is the author
+  // declaring typed, non-investigation work — the same deliberate signal
+  // a suppression label gives. `fix:` is not in the set, so bug-fix
+  // tasks stay scannable. Explicit DEBUG_LABELS above still win.
+  if (SUPPRESS_TITLE_PREFIX_RE.test(input.title.trimStart())) return false;
 
   const text = `${input.title} ${input.description ?? ""}`.toLowerCase();
   for (const keyword of DEBUG_KEYWORDS) {
