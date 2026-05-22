@@ -177,6 +177,13 @@ const createTaskSchema = z.object({
   // aren't `done`. Post-create dep management lives on the
   // /tasks/:id/dependencies endpoints (human-only).
   dependsOn: z.array(z.string().uuid()).max(50).optional(),
+  // Explicit opt-in/out for debug-flavor classification. When omitted the
+  // backend leaves `metadata.debugFlavor` unset and the title/description/label
+  // heuristic (`detectDebugFlavor`) runs lazily at task_pickup. When set, the
+  // value is persisted into `metadata.debugFlavor` at create time and the
+  // pickup-time heuristic is skipped — `true` forces the grounding hint,
+  // `false` suppresses it deterministically.
+  debugFlavor: z.boolean().optional(),
 });
 
 const updateTaskSchema = z.object({
@@ -570,6 +577,13 @@ taskRouter.post(
           ...(body.templateData !== undefined ? { templateData: body.templateData } : {}),
           ...(body.externalRef !== undefined ? { externalRef: body.externalRef } : {}),
           ...(body.labels !== undefined ? { labels: body.labels } : {}),
+          // An explicit debugFlavor opt-in/out is persisted into metadata at
+          // create time. deriveDebugFlavor at task_pickup treats a pre-set
+          // metadata.debugFlavor as authoritative (its isFresh branch), so
+          // this skips the title/label heuristic.
+          ...(body.debugFlavor !== undefined
+            ? { metadata: { debugFlavor: body.debugFlavor } satisfies TaskMetadata }
+            : {}),
           ...(body.dependsOn && body.dependsOn.length > 0
             ? { blockedBy: { connect: Array.from(new Set(body.dependsOn)).map((id) => ({ id })) } }
             : {}),
@@ -668,6 +682,9 @@ taskRouter.post(
             ...(item.externalRef !== undefined ? { externalRef: item.externalRef } : {}),
             ...(item.labels !== undefined ? { labels: item.labels } : {}),
             ...(item.templateData !== undefined ? { templateData: item.templateData } : {}),
+            ...(item.debugFlavor !== undefined
+              ? { metadata: { debugFlavor: item.debugFlavor } satisfies TaskMetadata }
+              : {}),
             createdByUserId: actor.type === "human" ? actor.userId : null,
             createdByAgentId: actor.type === "agent" ? actor.tokenId : null,
           },

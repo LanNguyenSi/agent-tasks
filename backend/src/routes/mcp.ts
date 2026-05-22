@@ -318,7 +318,7 @@ function buildServer(token: string): McpServer {
     "tasks_create",
     {
       description:
-        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — tasks_update does NOT accept it, and post-create dep changes go through the REST /tasks/:id/dependencies endpoints (currently human-only).",
+        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — tasks_update does NOT accept it, and post-create dep changes go through the REST /tasks/:id/dependencies endpoints (currently human-only). Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead.",
       inputSchema: {
         projectId: uuid(),
         title: z.string().min(1).max(255),
@@ -329,6 +329,7 @@ function buildServer(token: string): McpServer {
         externalRef: z.string().trim().min(1).max(255).optional(),
         labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
         dependsOn: z.array(uuid()).max(50).optional(),
+        debugFlavor: z.boolean().optional(),
       },
     },
     async ({ projectId, ...body }) => {

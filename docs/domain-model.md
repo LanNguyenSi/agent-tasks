@@ -39,7 +39,7 @@ These fields on `Project` shape every state-write path:
 
 | Model | Purpose |
 |---|---|
-| `Task` | The unit of work. `status: String` (free-form, default `"open"`), driven by the `Workflow` definition. Dual `creator` / `claimant` / `reviewer` fields for human + agent. Agent-populated `branchName`, `prUrl`, `prNumber`, `result`, `autoMergeSha`. `templateData` and `metadata` carry structured scaffolding (e.g. `metadata.debugFlavor`). |
+| `Task` | The unit of work. `status: String` (free-form, default `"open"`), driven by the `Workflow` definition. Dual `creator` / `claimant` / `reviewer` fields for human + agent. Agent-populated `branchName`, `prUrl`, `prNumber`, `result`, `autoMergeSha`. `templateData` and `metadata` carry structured scaffolding (e.g. `metadata.debugFlavor`, set explicitly via the optional create-time `debugFlavor` flag, or derived heuristically at `task_pickup` when that flag is omitted). |
 | `TaskDependency` | Many-to-many self-relation on `Task` modelling `blocks` / `blockedBy`. Cycle-checked. `task_pickup` skips a task whose `blockedBy` parents are not all `done`. |
 | `TaskAttachment` | Human-uploaded URL pointer (no semantics). |
 | `TaskArtifact` | Typed agent output (build logs, coverage, code) with inline `content` or external `url`. Authored by `User` or `AgentToken`. Lifecycle audit-logged as `task.artifact.created` / `.deleted`. |
