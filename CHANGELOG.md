@@ -37,7 +37,7 @@ since v0.9.0).
   omitted the behaviour is unchanged: no metadata is written and the
   heuristic runs lazily at pickup as before. A caller who knows a task's
   flavor up front no longer has to coax the heuristic via the title or
-  labels. Covered by `task-create-debug-flavor.test.ts`.
+  labels. Covered by `task-create-debug-flavor.test.ts`. (#262)
 
 - **CLI `tasks create` reaches parity with the REST and MCP create
   surfaces** (#263). The `@agent-tasks/cli` `tasks create` command gains
@@ -50,7 +50,7 @@ since v0.9.0).
 ### Fixed
 
 - **`detectDebugFlavor` no longer auto-classifies `release`- or `test`-labelled tasks as debug-flavored** (#260). Extends the suppression-label set introduced in #252: a task carrying a `release` or `test` label is deliberate typed work, so the keyword heuristic is suppressed for it just as it is for `docs` / `chore` / `refactor` / `style` / ... labelled tasks. Explicit debug labels (`bug` / `incident` / ...) still classify correctly.
-- **`detectDebugFlavor` no longer misfires on conventional-commit-typed task titles** (agent-tasks/f4779de0). A task whose title carries a non-debug conventional-commit type prefix (`feat:`, `docs:`, `style:`, `refactor:`, `perf:`, `test:`, `build:`, `ci:`, `chore:`, `release:`, with an optional `(scope)` and `!` breaking marker) is now suppressed from debug-flavor classification, the same way a suppression label is. The prefix is the task author's deliberate type signal: a `chore(deps): regression in the lockfile` task merely mentions a debug keyword while describing typed maintenance work, and should not auto-start a grounding session. `fix:` is deliberately not in the set, so bug-fix tasks stay scannable; explicit debug labels (`bug` / `incident` / ...) still win over the title-shape suppressor. This complements the label-based suppression from #260: a task with neither a suppression label nor a conventional-commit prefix is still keyword-scanned as before. Covered by a new `title-shape suppression` test block in `debug-flavor.test.ts`.
+- **`detectDebugFlavor` no longer misfires on conventional-commit-typed task titles** (#261). A task whose title carries a non-debug conventional-commit type prefix (`feat:`, `docs:`, `style:`, `refactor:`, `perf:`, `test:`, `build:`, `ci:`, `chore:`, `release:`, with an optional `(scope)` and `!` breaking marker) is now suppressed from debug-flavor classification, the same way a suppression label is. The prefix is the task author's deliberate type signal: a `chore(deps): regression in the lockfile` task merely mentions a debug keyword while describing typed maintenance work, and should not auto-start a grounding session. `fix:` is deliberately not in the set, so bug-fix tasks stay scannable; explicit debug labels (`bug` / `incident` / ...) still win over the title-shape suppressor. This complements the label-based suppression from #260: a task with neither a suppression label nor a conventional-commit prefix is still keyword-scanned as before. Covered by a new `title-shape suppression` test block in `debug-flavor.test.ts`.
 
 - **The OpenAPI `CreateTaskRequest` schema documents every accepted create-time field** (#264). The hand-written spec in `backend/src/routes/docs.ts` had drifted from the Zod `createTaskSchema`: `debugFlavor`, `dependsOn`, `labels`, and `externalRef` were all accepted by `POST /projects/:id/tasks` but undocumented. All four are now in the spec, with constraints (`minLength` / `maxLength` / `maxItems` / `format`) mirroring the validator. Docs-only, no behaviour change.
 
