@@ -71,6 +71,21 @@ describe("tasks finish argument validation", () => {
   });
 });
 
+describe("tasks create option surface", () => {
+  // The create command builds its request body inline in the commander
+  // `.action` callback and only sends it after a successful network call,
+  // so asserting the request body would need a backend stub. This lighter
+  // check verifies the create-time flags are registered: a regression that
+  // drops or renames one of them would fail here.
+  it("registers --debug-flavor / --no-debug-flavor / --depends-on", () => {
+    const res = run(["tasks", "create", "--help"]);
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain("--debug-flavor");
+    expect(res.stdout).toContain("--no-debug-flavor");
+    expect(res.stdout).toContain("--depends-on");
+  });
+});
+
 describe("tasks submit-pr argument validation", () => {
   it("rejects a non-integer --pr-number", () => {
     const res = run([
