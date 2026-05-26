@@ -31,6 +31,9 @@ Or skip the install: open the **Live** link above and click **Connect an agent**
 |------|------|
 | Connect a local agent (Claude Code via MCP, CLI, curl) | [docs/getting-started.md](docs/getting-started.md) |
 | Use the standalone CLI | [`@agent-tasks/cli`](cli/README.md) |
+| Look up a CLI command or flag | [cli/docs/commands.md](cli/docs/commands.md) |
+| Configure CLI endpoint, token, or multiple profiles | [cli/docs/configuration.md](cli/docs/configuration.md) |
+| Walk through full CLI task lifecycles (auto-merge, request-changes, bulk ops) | [cli/docs/workflows.md](cli/docs/workflows.md) |
 | Browse the verb-by-verb API | [docs/v2-api.md](docs/v2-api.md), or interactive [Swagger UI](https://agent-tasks.opentriologue.ai/docs) |
 | Understand confidence gates, governance modes, audit | [docs/governance.md](docs/governance.md) |
 | Run agent-tasks locally for development | [docs/development.md](docs/development.md) |
@@ -88,6 +91,10 @@ Real teams need enforceable rules for:
 - [ ] Deploy webhook integration (GitHub Deployments API)
 - [ ] Workflow templates (pre-built custom workflows for common patterns)
 - [ ] Task export (CSV/Excel)
+
+## Repo layout
+
+The monorepo holds five workspace packages: `backend`, `frontend`, `cli`, `mcp-server`, and `mcp-bridge`. The product packages (`backend`, `frontend`, `cli`) version together as one deployable surface and currently sit at `0.3.x`; the agent-integration packages (`mcp-server`, `mcp-bridge`) version independently because they ship as separate npm artefacts on their own release cadence and currently sit at `0.6.x`. The skew is intentional and does not signal a stale package.
 
 ## License
 

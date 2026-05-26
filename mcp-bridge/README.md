@@ -42,4 +42,4 @@ AGENT_TASKS_BASE_URL=https://staging.example.com npx -y @agent-tasks/mcp-bridge
 
 ## License
 
-Same as the parent repo.
+MIT, see [../LICENSE](../LICENSE).
