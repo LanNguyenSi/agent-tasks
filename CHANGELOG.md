@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-05-27
+
+**Headline: `task_start` accepts an optional `branchName` so projects with the `branchPresent` workflow gate start in one call.** The MCP `task_start` verb and the backing `POST /tasks/:id/start` route now take an optional `branchName` field; when supplied, the value is folded into the same atomic Prisma write that creates the claim, so a `branchPresent` precondition passes without a separate `tasks_update` round-trip. The `task.claimed` audit event records `foldedBranchName` on the same call, distinguishing "branch was already set" from "branch was supplied this call". Alongside it, a CVE-driven `qs` bump and a small docs / metadata polish on `mcp-bridge`.
+
+Operator note: no breaking changes. Existing pre-fix callers that POST `/tasks/:id/start` with no body or that pass only `{ taskId }` to the MCP `task_start` verb keep behaving as before. The MCP surface change in `@agent-tasks/mcp-server` (new optional `branchName` field) will ride to npm via a separate `release(mcp-server): cut v0.7.0` PR, matching the v0.15.0 / v0.16.0 convention. Backend, frontend, and CLI workspace `package.json` versions are not bumped (convention since v0.9.0).
+
+### Added
+
+- **`task_start { taskId, branchName? }` single-call workflow** for projects with a `branchPresent` gate on the `open → in_progress` edge (#268). When `branchName` is supplied AND the task has no branchName yet, the start handler folds the value into the gate input and into the atomic claim write, so the friction documented in `feedback_agent_tasks_branch_precondition` (two MCP calls per task pickup against agent-grounding et al.) collapses to one. Idempotent: when the task already has a branchName, the supplied value is silently ignored (never overwrites). Schema rejects empty strings with 400 before the active-claim check runs. The MCP bridge tool definition exposes the new optional field with a description pointing at the gate. Covered by 7 new cases in `tasks-v2-routes.test.ts`: single-call happy path, idempotent ignore-when-already-set, empty-string reject, backward-compat empty body, review-claim accepts-but-ignores, same-value re-call no-op, sibling `prPresent` gate still blocks.
+- **`task.claimed` audit event records `foldedBranchName`** when the start call also persisted a branch on the same write (#268). For `branchPresent`-gated projects, this lets post-incident review distinguish "branch was already there" from "branch was supplied this call" without needing to cross-reference the prior `task_metadata.updated` events.
+
+### Changed
+
+- **`mcp-bridge` ships an explicit `license: "MIT"` field in its `package.json`** (#267) so the npm registry surfaces it the same way `mcp-server` does. Root README now links the `backend/`, `frontend/`, `cli/`, `mcp-server/`, and `mcp-bridge/` sub-READMEs from the project overview so contributors can navigate the workspace from the landing page.
+
+### Security
+
+- **`qs` bumped to 6.15.2** (#266) to pick up the fix for CVE-2026-8723. Transitive-only dependency; lockfile update.
+
 ## [0.16.0] - 2026-05-22
 
 **Headline: explicit `debugFlavor` opt-in/out, end to end.** Task creation
