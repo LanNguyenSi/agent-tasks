@@ -1214,6 +1214,18 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     }
   }
 
+  // Optional body. The historic no-body form (`POST` with nothing) is
+  // preserved by the `catch(() => ({}))` fallback. When `branchName` is
+  // supplied, it is folded into the open→in_progress branch below so the
+  // `branchPresent` gate sees it and the same atomic Prisma write that
+  // claims the task also persists the branch.
+  const rawStartBody = await c.req.json().catch(() => ({}));
+  const startBody = startTaskSchema.safeParse(rawStartBody);
+  if (!startBody.success) {
+    return c.json({ error: "bad_request", message: startBody.error.message }, 400);
+  }
+  const providedBranchName = startBody.data.branchName;
+
   const task = await prisma.task.findUnique({
     where: { id: c.req.param("id") },
     include: {
@@ -1316,9 +1328,23 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       );
     }
 
+    // If the caller supplied a branchName AND the task has none, fold it
+    // into the gate input so a `branchPresent` precondition passes on the
+    // same call that claims the task. The actual DB write happens in the
+    // taskUpdate below, atomically with the claim — so a failed gate does
+    // NOT leave a stranded branchName on the task.
+    //
+    // If the task already has a branchName, the supplied value is ignored
+    // (idempotent). Overwriting silently would destroy a pre-existing
+    // value; rejecting with 409 would surprise callers that don't track
+    // whether the field was already set. Same-value re-calls stay safe.
+    const effectiveBranchName = task.branchName ?? providedBranchName ?? null;
+    const willPersistBranchName =
+      providedBranchName !== undefined && task.branchName === null;
+
     const gateResult = await evaluateV2TransitionGates(
       task,
-      { branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber },
+      { branchName: effectiveBranchName, prUrl: task.prUrl, prNumber: task.prNumber },
       startTarget,
       actor,
       effectiveDefinition,
@@ -1360,6 +1386,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
         claimedAt: new Date(),
         status: startTarget,
+        ...(willPersistBranchName ? { branchName: providedBranchName } : {}),
         ...(flavor.isFresh
           ? { metadata: flavor.mergedMetadata as Prisma.InputJsonValue }
           : {}),
@@ -1376,6 +1403,10 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         actorType: actor.type,
         actorId: actor.type === "agent" ? actor.tokenId : actor.userId,
         via: "task_start",
+        // Forensic signal: distinguishes "branch was already set" from
+        // "branch was folded into this call". For branchPresent-gated
+        // projects, post-incident review needs to know which path won.
+        ...(willPersistBranchName ? { foldedBranchName: providedBranchName } : {}),
       },
     });
 
@@ -1389,6 +1420,12 @@ taskRouter.post("/tasks/:id/start", async (c) => {
   }
 
   // ── Branch: status=review → review-claim ────────────────────────────────
+  //
+  // `providedBranchName` from the request body is intentionally NOT in
+  // scope on the review path. It is only declared inside the open-state
+  // branch above. The MCP tool description for task_start documents this
+  // contract (review-claim starts accept but ignore the field) so the
+  // test at "ignores branchName on a review-claim start" pins it.
   if (isReviewState(effectiveDefinition, task.status)) {
     // Distinct-reviewer: bypassed in soloMode and when the project opts out
     // of requireDistinctReviewer. Same flag-aware gate the review-finish
@@ -1532,6 +1569,20 @@ const submitPrSchema = z.object({
       "prUrl must be a github.com pull request URL",
     ),
   prNumber: z.number().int().positive(),
+});
+
+// Body shape for /tasks/:id/start. Empty body is valid (the historic
+// no-body form is still supported). When `branchName` is supplied AND
+// the task has no branchName yet, the start handler writes it as part of
+// the same atomic update that creates the claim, so the `branchPresent`
+// gate sees the new value without a separate tasks_update round-trip.
+const startTaskSchema = z.object({
+  branchName: z
+    .string()
+    .trim()
+    .min(1, "branchName must not be empty")
+    .max(255, "branchName must be at most 255 characters")
+    .optional(),
 });
 
 // Result of evaluating workflow transition gates for a v2 `task_finish` call.
