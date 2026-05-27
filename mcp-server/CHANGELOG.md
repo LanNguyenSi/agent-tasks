@@ -2,6 +2,12 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## 0.7.0
+
+### Added
+
+- `task_start` accepts an optional `branchName` argument. When supplied, the backend folds the value into the atomic claim write so projects that enforce the `branchPresent` workflow gate on the `open → in_progress` edge (agent-grounding, agent-planforge, agent-preflight, agent-tasks itself) start in a single MCP call instead of the historic two-call `tasks_update { branchName } → task_start` dance. Idempotent: when the task already has a branchName, the supplied value is silently ignored (never overwrites). Empty strings are rejected by the MCP tool zod schema (in `mcp-server/src/tools.ts`) before the wire. Polymorphic contract documented in the tool description: on a review-claim start the field is accepted but ignored. Pre-v0.17.0 backends ignore the extra body field because the older `/tasks/:id/start` route reads no request body at all, so the gate still fires for branchless tasks against older deployments, the new field only changes behaviour against an `agent-tasks v0.17.0+` backend. Agent-tasks PR #268, root release v0.17.0.
+
 ## 0.6.1
 
 ### Changed
