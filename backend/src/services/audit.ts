@@ -70,7 +70,15 @@ export type AuditAction =
   // ?force=true + forceReason where the score would have been blocked.
   // Override-with-passing-score is NOT recorded (force is a no-op).
   | "task.claim_blocked_low_readiness"
-  | "task.claim_override_used";
+  | "task.claim_override_used"
+  // Outbound Signal-webhook delivery. Fired by
+  // services/notification-webhook.ts after every POST attempt the project's
+  // `notificationWebhookUrl` produces. `delivered` records the final
+  // success (2xx after at most one retry); `failed` records the give-up
+  // after the retry. Both carry the signalId so operators can correlate
+  // with the originating Signal row.
+  | "signal.webhook_delivered"
+  | "signal.webhook_failed";
 
 export interface AuditPayload {
   [key: string]: unknown;

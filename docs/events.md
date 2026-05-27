@@ -71,15 +71,17 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 
 A separate `STALE_WHEN_DONE` constant suppresses three signal types (`review_needed`, `task_available`, `task_assigned`) from the `task_pickup` feed when the underlying task is already in `done`. This is a read-time filter, not an ack mechanism.
 
-| Type | Emitted when | Recipient | Suppressed from task_pickup feed when task is done |
-|---|---|---|---|
-| `review_needed` | Task enters `review` | Candidate reviewers (humans + agents minus the author) | yes |
-| `task_available` | New claimable task surfaced for backlog visibility | Eligible claimants | yes |
-| `task_assigned` | Task explicitly assigned to a specific recipient | The assignee | yes |
-| `changes_requested` | Reviewer transitions `review → in_progress` with comment | The task claimant | no |
-| `task_approved` | Reviewer transitions `review → done` | The task claimant | no |
-| `task_force_transitioned` | Admin used `force=true` on a transition | The claimant + the active reviewer | no |
-| `self_merge_notice` | `AWAITS_CONFIRMATION` self-merge landed on `done` | Every human team member (one signal each) | no |
+| Type | Emitted when | Recipient | Suppressed from task_pickup feed when task is done | Pushed via webhook |
+|---|---|---|---|---|
+| `review_needed` | Task enters `review` | Candidate reviewers (humans + agents minus the author) | yes | yes |
+| `task_available` | New claimable task surfaced for backlog visibility | Eligible claimants | yes | yes |
+| `task_assigned` | Task explicitly assigned to a specific recipient | The assignee | yes | yes |
+| `changes_requested` | Reviewer transitions `review → in_progress` with comment | The task claimant | no | yes |
+| `task_approved` | Reviewer transitions `review → done` | The task claimant | no | yes |
+| `task_force_transitioned` | Admin used `force=true` on a transition | The claimant + the active reviewer | no | yes |
+| `self_merge_notice` | `AWAITS_CONFIRMATION` self-merge landed on `done` | Every human team member (one signal each) | no | yes |
+
+All Signal types are pushed via outbound webhook when the parent project has `notificationWebhookUrl` configured. The push is best-effort with one retry; see [notification-webhooks.md](notification-webhooks.md) for the contract, payload shape, and HMAC verification.
 
 `task_pickup` returns a discriminated union:
 

@@ -249,5 +249,6 @@ agent-tasks review request-changes <task-id> -c "Missing test coverage for edge 
 - [Agent workflow guide](agent-workflow.md) — detailed API examples with curl
 - [Webhook setup](webhook-setup.md) — GitHub webhook configuration
 - [Signal payload design](signal-payload-design.md) — signal structure reference
+- [Notification webhooks](notification-webhooks.md) — outbound push-delivery contract for Signals
 - [Review automation policy](review-automation-policy.md) — webhook event → side-effect matrix
 - [Review notification policy](review-notification-policy.md) — who receives review signals

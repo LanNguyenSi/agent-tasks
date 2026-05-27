@@ -7,9 +7,11 @@ const {
   mockSignalFindUnique,
   mockSignalUpdate,
   mockSignalUpdateMany,
+  mockProjectFindUnique,
+  mockDeliverSignalWebhook,
 } = vi.hoisted(() => ({
   mockSignalCreate: vi.fn().mockImplementation((args: { data: Record<string, unknown> }) =>
-    Promise.resolve({ id: "sig-1", ...args.data, createdAt: new Date().toISOString(), acknowledgedAt: null }),
+    Promise.resolve({ id: "sig-1", ...args.data, createdAt: new Date(), acknowledgedAt: null }),
   ),
   mockSignalCreateMany: vi.fn().mockResolvedValue({ count: 0 }),
   mockSignalFindMany: vi.fn().mockResolvedValue([]),
@@ -18,6 +20,15 @@ const {
     Promise.resolve({ id: "sig-1", ...args.data }),
   ),
   mockSignalUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  // Default: project has no webhook configured — delivery is a no-op so
+  // pre-existing tests assert createSignal's local behavior without caring
+  // about push-delivery. Tests that exercise the integration override this.
+  mockProjectFindUnique: vi.fn().mockResolvedValue({
+    slug: "agent-tasks",
+    notificationWebhookUrl: null,
+    notificationWebhookSecret: null,
+  }),
+  mockDeliverSignalWebhook: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -30,7 +41,12 @@ vi.mock("../../src/lib/prisma.js", () => ({
       update: mockSignalUpdate,
       updateMany: mockSignalUpdateMany,
     },
+    project: { findUnique: mockProjectFindUnique },
   },
+}));
+
+vi.mock("../../src/services/notification-webhook.js", () => ({
+  deliverSignalWebhook: mockDeliverSignalWebhook,
 }));
 
 import {
@@ -93,18 +109,112 @@ describe("createSignal", () => {
 });
 
 describe("createSignals (batch)", () => {
-  it("creates multiple signals in one call", async () => {
+  it("creates one signal per recipient via createSignal (so webhook delivery fires per row)", async () => {
     await createSignals([
       { type: "review_needed", taskId: "t1", projectId: "p1", recipientAgentId: "a1", context: baseContext },
       { type: "review_needed", taskId: "t1", projectId: "p1", recipientAgentId: "a2", context: baseContext },
     ]);
 
-    expect(mockSignalCreateMany).toHaveBeenCalledWith({
-      data: expect.arrayContaining([
-        expect.objectContaining({ recipientAgentId: "a1" }),
-        expect.objectContaining({ recipientAgentId: "a2" }),
-      ]),
+    expect(mockSignalCreate).toHaveBeenCalledTimes(2);
+    expect(mockSignalCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ recipientAgentId: "a1" }),
     });
+    expect(mockSignalCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ recipientAgentId: "a2" }),
+    });
+    // createMany should NOT be used — it can't return generated IDs that
+    // the webhook delivery needs.
+    expect(mockSignalCreateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("createSignal — webhook delivery integration", () => {
+  it("does NOT fire the webhook when the project has no URL configured", async () => {
+    mockProjectFindUnique.mockResolvedValueOnce({
+      slug: "agent-tasks",
+      notificationWebhookUrl: null,
+      notificationWebhookSecret: null,
+    });
+
+    await createSignal({
+      type: "review_needed",
+      taskId: "task-1",
+      projectId: "proj-1",
+      recipientAgentId: "agent-1",
+      context: baseContext,
+    });
+    // Allow microtasks queued by `void maybeDeliverSignalWebhook` to flush.
+    await new Promise((r) => setImmediate(r));
+
+    expect(mockDeliverSignalWebhook).not.toHaveBeenCalled();
+  });
+
+  it("fires the webhook when the project has a URL configured", async () => {
+    mockProjectFindUnique.mockResolvedValueOnce({
+      slug: "agent-tasks",
+      notificationWebhookUrl: "https://hooks.example/inbox",
+      notificationWebhookSecret: null,
+    });
+
+    await createSignal({
+      type: "review_needed",
+      taskId: "task-1",
+      projectId: "proj-1",
+      recipientAgentId: "agent-1",
+      context: baseContext,
+    });
+    await new Promise((r) => setImmediate(r));
+
+    expect(mockDeliverSignalWebhook).toHaveBeenCalledTimes(1);
+    expect(mockDeliverSignalWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signalId: "sig-1",
+        signalType: "review_needed",
+        taskId: "task-1",
+        projectId: "proj-1",
+        projectSlug: "agent-tasks",
+        webhookUrl: "https://hooks.example/inbox",
+        webhookSecret: null,
+      }),
+    );
+  });
+
+  it("passes the project secret through when configured", async () => {
+    mockProjectFindUnique.mockResolvedValueOnce({
+      slug: "agent-tasks",
+      notificationWebhookUrl: "https://hooks.example/inbox",
+      notificationWebhookSecret: "shhhh",
+    });
+
+    await createSignal({
+      type: "task_available",
+      taskId: "task-1",
+      projectId: "proj-1",
+      recipientAgentId: "agent-1",
+      context: baseContext,
+    });
+    await new Promise((r) => setImmediate(r));
+
+    expect(mockDeliverSignalWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({ webhookSecret: "shhhh" }),
+    );
+  });
+
+  it("never throws to the caller if the project lookup blows up", async () => {
+    mockProjectFindUnique.mockRejectedValueOnce(new Error("db down"));
+
+    await expect(
+      createSignal({
+        type: "review_needed",
+        taskId: "task-1",
+        projectId: "proj-1",
+        recipientAgentId: "agent-1",
+        context: baseContext,
+      }),
+    ).resolves.toBeDefined();
+    await new Promise((r) => setImmediate(r));
+
+    expect(mockDeliverSignalWebhook).not.toHaveBeenCalled();
   });
 });
 

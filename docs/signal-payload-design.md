@@ -9,6 +9,21 @@ Defines the structure of signals that local Claude/Codex-style agents consume vi
 - **Small and stable** — payloads should not break when task schema evolves
 - **Typed** — signal type determines the expected payload shape
 
+## Push delivery (opt-in)
+
+The "no webhook to agent" constraint above applies to the **agent process** —
+local Claude/Codex runs have no inbound endpoint. The **project** is a
+different story: each project can opt into an outbound delivery webhook
+(`notificationWebhookUrl` on the Project row) that receives every Signal as
+a POST. A small bridge (Triologue gateway, n8n, Slack relay, …) can turn
+that push into something the local agent's environment can react to (SSE,
+chat message, file drop, …) without exposing the agent itself.
+
+The push payload is the same Signal shape described below plus a top-level
+`signalId` so receivers can dedup against the polling channel. Delivery is
+best-effort with one retry; see [notification-webhooks.md](notification-webhooks.md)
+for the full contract, headers, and HMAC verification.
+
 ## Signal types
 
 | Type | Trigger | Recipient |

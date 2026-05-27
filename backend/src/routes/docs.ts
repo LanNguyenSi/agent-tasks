@@ -146,6 +146,18 @@ const openApiSpec = {
             description: "Template configuration with field toggles and reusable presets",
           },
           confidenceThreshold: { type: "integer", minimum: 0, maximum: 100, default: 60, description: "Minimum confidence score for agent claims" },
+          notificationWebhookUrl: {
+            type: "string",
+            format: "uri",
+            nullable: true,
+            description:
+              "Outbound webhook URL for Signal push delivery. When set, every Signal is POSTed here in addition to the polling channel. See docs/notification-webhooks.md. PATCH with empty string or null to clear.",
+          },
+          hasNotificationWebhookSecret: {
+            type: "boolean",
+            description:
+              "True iff a signing secret is configured for the notification webhook. The raw secret is never returned in responses; PATCH the project with the new value to rotate.",
+          },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" },
         },
