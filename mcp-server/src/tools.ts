@@ -59,9 +59,21 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_start",
       description:
-        "Begin work on a task. Polymorphic by task status: an `open` task is author-claimed and transitioned to in_progress; a `review` task is review-claimed without state change. Response includes the task data, project info, and `expectedFinishState` (the state task_finish will target for a work claim). Fails with 409 if you already hold an active claim.",
-      inputShape: { taskId: uuid() },
-      handler: async ({ taskId }) => wrap(() => client.startTask(taskId)),
+        "Begin work on a task. Polymorphic by task status: an `open` task is author-claimed and transitioned to in_progress; a `review` task is review-claimed without state change. Response includes the task data, project info, and `expectedFinishState` (the state task_finish will target for a work claim). Fails with 409 if you already hold an active claim.\n\nOptional `branchName`: for projects that enforce the `branchPresent` workflow gate on the start edge, pass the branch you intend to work on and the server folds it into the same atomic claim write. Single round-trip, no separate tasks_update needed. Ignored when the task already has a branchName (idempotent, never overwrites). Only meaningful on the open→in_progress branch; on a review-claim start the value is accepted but ignored.",
+      inputShape: {
+        taskId: uuid(),
+        branchName: z
+          .string()
+          .trim()
+          .min(1)
+          .max(255)
+          .optional()
+          .describe(
+            "Optional branch name. When set and the task has no branchName yet, the server writes it as part of the claim transaction so a `branchPresent` precondition passes in one call.",
+          ),
+      },
+      handler: async ({ taskId, branchName }) =>
+        wrap(() => client.startTask(taskId, branchName ? { branchName } : undefined)),
     }),
     def({
       name: "task_note",

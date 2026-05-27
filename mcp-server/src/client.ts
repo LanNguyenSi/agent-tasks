@@ -257,8 +257,8 @@ export class AgentTasksClient {
     return this.request<unknown>("POST", "/api/tasks/pickup");
   }
 
-  startTask(taskId: string) {
-    return this.request<unknown>("POST", `/api/tasks/${taskId}/start`);
+  startTask(taskId: string, input?: { branchName?: string }) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/start`, input);
   }
 
   finishTask(

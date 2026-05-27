@@ -511,6 +511,112 @@ describe("POST /tasks/:id/start — gate enforcement (parity with task_finish)",
   });
 });
 
+describe("POST /tasks/:id/start — optional branchName arg", () => {
+  // Single-call workflow: agents working in a `branchPresent`-gated project
+  // pass the branch name in the same MCP/REST call that claims the task.
+  // Replaces the two-call `tasks_update { branchName } + task_start` dance
+  // that was documented as friction in the original task body.
+
+  function customWorkflowWithBranchPresent() {
+    return {
+      definition: {
+        initialState: "open",
+        states: [
+          { name: "open", terminal: false },
+          { name: "in_progress", terminal: false },
+        ],
+        transitions: [
+          { from: "open", to: "in_progress", requires: ["branchPresent"] },
+        ],
+      },
+    };
+  }
+
+  it("accepts branchName in the body and folds it into the claim transaction", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: null, // would fail branchPresent without the body
+      workflowId: "wf-1",
+      workflow: customWorkflowWithBranchPresent(),
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ branchName: "feat/single-call" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("in_progress");
+    expect(updateCall.data.branchName).toBe("feat/single-call");
+  });
+
+  it("ignores branchName when the task already has one (idempotent, never overwrites)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: "feat/already-set",
+      workflowId: "wf-1",
+      workflow: customWorkflowWithBranchPresent(),
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ branchName: "feat/would-overwrite" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("in_progress");
+    // The persisted branchName must not move; we never overwrite a pre-existing value.
+    expect(updateCall.data.branchName).toBeUndefined();
+  });
+
+  it("rejects an empty branchName string with 400 instead of silently passing the gate", async () => {
+    // No prisma mocks at all — the schema rejection happens before
+    // taskFindUnique. Queueing a `mockResolvedValueOnce` here would leak
+    // into the next test because `vi.clearAllMocks` does not drain
+    // `mockResolvedValueOnce` queues (per memory feedback_vitest_mock_queue).
+
+    const res = await makeApp().request("/tasks/task-1/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ branchName: "" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("backward-compat: empty body still works on a branchless default-workflow project", async () => {
+    // The historic POST-with-no-body form must keep working unchanged so
+    // pre-fix MCP clients (and any direct REST callers) don't regress.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: null,
+      workflowId: null,
+      workflow: null,
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("in_progress");
+    expect(updateCall.data.branchName).toBeUndefined();
+  });
+});
+
 // ── /tasks/:id/claim ─────────────────────────────────────────────────────────
 
 describe("POST /tasks/:id/claim — gate enforcement (REST parity with MCP task_start)", () => {
