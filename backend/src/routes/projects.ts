@@ -56,7 +56,33 @@ const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, s
   // in single-host setups can flip it on per-project.
   // See docs/adr/0002-grounding-finish-gate.md.
   requireGroundingForDebug: z.boolean().optional(),
+  // Outbound Signal-webhook target. See docs/notification-webhooks.md.
+  // Pass an empty string OR null to clear. URL is validated for shape only —
+  // we do not probe reachability here; failed deliveries surface in audit.
+  notificationWebhookUrl: z
+    .union([z.string().url(), z.literal(""), z.null()])
+    .optional(),
+  // Signing secret. Empty string / null clears. Never echoed in responses.
+  notificationWebhookSecret: z
+    .union([z.string().min(1).max(255), z.literal(""), z.null()])
+    .optional(),
 });
+
+/**
+ * Strip the webhook secret from API responses and expose a boolean
+ * indicating whether one is set. Operators can tell the secret exists
+ * (so the UI can show "•••• (set)" with a Replace affordance) without
+ * us round-tripping the value.
+ */
+function redactProject<T extends { notificationWebhookSecret?: string | null }>(
+  project: T,
+): Omit<T, "notificationWebhookSecret"> & { hasNotificationWebhookSecret: boolean } {
+  const { notificationWebhookSecret, ...rest } = project;
+  return {
+    ...rest,
+    hasNotificationWebhookSecret: !!notificationWebhookSecret,
+  };
+}
 
 /**
  * Team-only membership check. Used for routes that genuinely need team
@@ -106,13 +132,17 @@ projectRouter.get("/projects", async (c) => {
 
   // Annotate each project with `accessSource` so the UI can mark shared
   // projects. For agents this is always "team" by construction.
+  // `redactProject` strips notificationWebhookSecret and replaces it with
+  // a boolean — secrets never round-trip on read paths.
   const projectsAnnotated =
     actor.type === "human"
-      ? projects.map((p) => ({
-          ...p,
-          accessSource: p.teamId === resolved.teamId ? "team" : "project",
-        }))
-      : projects.map((p) => ({ ...p, accessSource: "team" as const }));
+      ? projects.map((p) =>
+          redactProject({
+            ...p,
+            accessSource: p.teamId === resolved.teamId ? "team" : "project",
+          }),
+        )
+      : projects.map((p) => redactProject({ ...p, accessSource: "team" as const }));
 
   return c.json({ projects: projectsAnnotated });
 });
@@ -187,7 +217,7 @@ projectRouter.get("/projects/by-slug/:slug", async (c) => {
 
   if (!project) return notFound(c);
 
-  return c.json({ project });
+  return c.json({ project: redactProject(project) });
 });
 
 // ── Create project ────────────────────────────────────────────────────────────
@@ -225,7 +255,7 @@ projectRouter.post("/projects", zValidator("json", createProjectSchema), async (
 
   await ensureDefaultBoardForProject(project.id);
 
-  return c.json({ project }, 201);
+  return c.json({ project: redactProject(project) }, 201);
 });
 
 // ── Get project ───────────────────────────────────────────────────────────────
@@ -248,7 +278,7 @@ projectRouter.get("/projects/:id", async (c) => {
   // and why. Lets clients (agents, UI, external integrations) learn the
   // invariant surface BEFORE tripping a 4xx. See services/gates/.
   return c.json({
-    project: { ...project, accessSource: membership.source },
+    project: redactProject({ ...project, accessSource: membership.source }),
     effectiveGates: computeEffectiveGates(project),
   });
 });
@@ -300,10 +330,18 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
   }
 
   const body = c.req.valid("json");
-  const { taskTemplate, ...rest } = body;
+  const { taskTemplate, notificationWebhookUrl, notificationWebhookSecret, ...rest } = body;
   const data: Prisma.ProjectUpdateInput = { ...rest };
   if (taskTemplate !== undefined) {
     data.taskTemplate = taskTemplate === null ? Prisma.JsonNull : taskTemplate;
+  }
+  // Empty string is the UI's way to clear an optional field — normalize to
+  // null so Prisma writes `NULL` and reads stop returning the old value.
+  if (notificationWebhookUrl !== undefined) {
+    data.notificationWebhookUrl = notificationWebhookUrl === "" ? null : notificationWebhookUrl;
+  }
+  if (notificationWebhookSecret !== undefined) {
+    data.notificationWebhookSecret = notificationWebhookSecret === "" ? null : notificationWebhookSecret;
   }
 
   // Governance-mode writes always keep the legacy columns in sync so
@@ -374,6 +412,34 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
       to: body.requireGroundingForDebug,
     };
   }
+  // Notification-webhook config is ops-sensitive: a flipped URL changes
+  // where Signals are pushed, and a rotated secret invalidates receivers.
+  // Audit URL transitions in plaintext (operators need to see destinations)
+  // and secret changes as set/cleared/rotated booleans — never log the
+  // raw secret value.
+  if (notificationWebhookUrl !== undefined) {
+    const nextUrl = notificationWebhookUrl === "" ? null : notificationWebhookUrl;
+    if (nextUrl !== project.notificationWebhookUrl) {
+      governanceChange.notificationWebhookUrl = {
+        from: project.notificationWebhookUrl,
+        to: nextUrl,
+      };
+    }
+  }
+  if (notificationWebhookSecret !== undefined) {
+    const had = !!project.notificationWebhookSecret;
+    const has = notificationWebhookSecret !== "" && notificationWebhookSecret !== null;
+    // The plaintext compare below works because we read the raw secret
+    // from the DB above. If notificationWebhookSecret ever moves to a
+    // hashed-at-rest model, this comparison silently breaks (raw input
+    // vs hash will never equal) — switch to a hash compare at that point.
+    if (had !== has || (had && has && notificationWebhookSecret !== project.notificationWebhookSecret)) {
+      governanceChange.notificationWebhookSecret = {
+        from: had ? "set" : "unset",
+        to: has ? "set" : "unset",
+      };
+    }
+  }
   if (Object.keys(governanceChange).length > 0) {
     void logAuditEvent({
       action: "project.updated",
@@ -383,7 +449,7 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
     });
   }
 
-  return c.json({ project: updated });
+  return c.json({ project: redactProject(updated) });
 });
 
 // ── Delete project ────────────────────────────────────────────────────────────
@@ -445,5 +511,5 @@ projectRouter.post("/projects/:id/sync", async (c) => {
 
   await ensureDefaultBoardForProject(updated.id);
 
-  return c.json({ project: updated, message: "Sync initiated (Wave 3: full implementation)" });
+  return c.json({ project: redactProject(updated), message: "Sync initiated (Wave 3: full implementation)" });
 });

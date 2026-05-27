@@ -185,6 +185,15 @@ model Project {
   // the common multi-host deployment; the backend cannot read it from
   // there. See docs/adr/0002-grounding-finish-gate.md.
   requireGroundingForDebug Boolean         @default(false)
+  // Outbound push delivery for Signals. When `notificationWebhookUrl` is
+  // set, every successful Signal create also POSTs the payload to that URL
+  // (best-effort, one retry). Optional `notificationWebhookSecret` is used
+  // to sign requests with `X-AgentTasks-Signature: sha256=<hmac>` so the
+  // receiver can verify provenance. The secret is never returned in API
+  // responses — callers see `hasNotificationWebhookSecret: boolean` only.
+  // See docs/notification-webhooks.md.
+  notificationWebhookUrl    String?
+  notificationWebhookSecret String?
   createdAt                DateTime        @default(now())
   updatedAt                DateTime        @updatedAt
 
