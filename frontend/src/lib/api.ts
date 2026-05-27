@@ -49,6 +49,10 @@ export interface Project {
   soloMode: boolean;
   /** Null only for rows predating the migration; the server derives from legacy flags at read time. Prefer reading this over the old flags. */
   governanceMode: "REQUIRES_DISTINCT_REVIEWER" | "AWAITS_CONFIRMATION" | "AUTONOMOUS" | null;
+  /** Outbound webhook target for Signal push-delivery; see docs/notification-webhooks.md. Null when push delivery is off (poll-only). */
+  notificationWebhookUrl: string | null;
+  /** True iff a signing secret is configured. The raw secret is never returned by the API — PATCH with a new value to rotate. */
+  hasNotificationWebhookSecret: boolean;
   createdAt: string;
   /** Source of the user's access to this project. `"team"` means the
    * project is in a team the user is a member of; `"project"` means
@@ -405,6 +409,10 @@ export async function updateProject(
     requireDistinctReviewer?: boolean;
     /** @deprecated prefer governanceMode. */
     soloMode?: boolean;
+    /** Set, replace, or clear the outbound Signal webhook target. Empty string is the wire convention for "clear". */
+    notificationWebhookUrl?: string | null;
+    /** Set, replace, or clear the HMAC signing secret. Never returned on read. Empty string is "clear". */
+    notificationWebhookSecret?: string | null;
   },
 ): Promise<Project> {
   const data = await request<{ project: Project }>(`/api/projects/${id}`, {
