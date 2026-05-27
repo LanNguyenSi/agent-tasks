@@ -92,6 +92,18 @@ describe("NotificationWebhookSection — reveal toggle", () => {
     await user.click(screen.getByRole("button", { name: "Hide signing secret" }));
     expect(input.type).toBe("password");
   });
+
+  it("never allows the browser to autocomplete the secret field", () => {
+    render(<NotificationWebhookSection {...makeProps({ secretDraft: "" })} />);
+    expect(screen.getByLabelText("Signing secret (optional)")).toHaveAttribute("autocomplete", "off");
+  });
+});
+
+describe("NotificationWebhookSection — input types", () => {
+  it("renders the webhook URL field as type='url' so the browser validates it", () => {
+    render(<NotificationWebhookSection {...makeProps()} />);
+    expect(screen.getByLabelText("Webhook URL")).toHaveAttribute("type", "url");
+  });
 });
 
 describe("NotificationWebhookSection — change callbacks", () => {

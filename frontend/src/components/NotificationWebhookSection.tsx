@@ -77,7 +77,15 @@ export function NotificationWebhookSection({
         style={{ width: "100%", fontSize: "var(--text-sm)" }}
       />
       <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginTop: "0.2rem", marginBottom: "0.5rem" }}>
-        We POST every Signal to this URL. See <a href="/docs/notification-webhooks">Notification webhooks docs</a>.
+        We POST every Signal to this URL. See the{" "}
+        <a
+          href="https://github.com/LanNguyenSi/agent-tasks/blob/master/docs/notification-webhooks.md"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Notification webhooks docs
+        </a>
+        .
       </p>
 
       <label
