@@ -34,6 +34,7 @@ import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
 import TaskDetailModal from "../../components/TaskDetailModal";
 import ImportDialog from "../../components/ImportDialog";
+import { NotificationWebhookSection, buildWebhookPatch } from "../../components/NotificationWebhookSection";
 import Select from "@/components/ui/Select";
 
 const DEFAULT_PRESETS: TemplatePreset[] = [
@@ -477,6 +478,13 @@ export default function DashboardPage() {
   const [settingsGovernanceMode, setSettingsGovernanceMode] = useState<
     "REQUIRES_DISTINCT_REVIEWER" | "AWAITS_CONFIRMATION" | "AUTONOMOUS"
   >("AWAITS_CONFIRMATION");
+  // Notification-webhook draft state. `settingsWebhookSecret === null`
+  // means "operator did not touch the secret in this modal session" → omit
+  // from the PATCH so the server-side value is preserved. Empty string
+  // means "clear". See NotificationWebhookSection for the contract.
+  const [settingsWebhookUrl, setSettingsWebhookUrl] = useState("");
+  const [settingsWebhookHasSecret, setSettingsWebhookHasSecret] = useState(false);
+  const [settingsWebhookSecret, setSettingsWebhookSecret] = useState<string | null>(null);
 
   function closeNewTaskModal() {
     setShowNewTask(false);
@@ -761,6 +769,9 @@ export default function DashboardPage() {
                           ? "REQUIRES_DISTINCT_REVIEWER"
                           : "AWAITS_CONFIRMATION"),
                   );
+                  setSettingsWebhookUrl(proj?.notificationWebhookUrl ?? "");
+                  setSettingsWebhookHasSecret(!!proj?.hasNotificationWebhookSecret);
+                  setSettingsWebhookSecret(null);
                   setShowProjectSettings(true);
                 }}
               >
@@ -1218,6 +1229,15 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        <NotificationWebhookSection
+          initialWebhookUrl={selectedProject?.notificationWebhookUrl ?? null}
+          hasSecret={settingsWebhookHasSecret}
+          urlDraft={settingsWebhookUrl}
+          onUrlDraftChange={setSettingsWebhookUrl}
+          secretDraft={settingsWebhookSecret}
+          onSecretDraftChange={setSettingsWebhookSecret}
+        />
+
         {settingsTemplateEnabled && (
           <>
             <div style={{ marginBottom: "0.75rem" }}>
@@ -1352,10 +1372,16 @@ export default function DashboardPage() {
               const tpl: TaskTemplate | null = settingsTemplateEnabled
                 ? { fields: { goal: settingsFieldGoal, acceptanceCriteria: settingsFieldAC, context: settingsFieldContext, constraints: settingsFieldConstraints }, presets: validPresets }
                 : null;
+              const webhookPatch = buildWebhookPatch({
+                initialWebhookUrl: selectedProject?.notificationWebhookUrl ?? null,
+                urlDraft: settingsWebhookUrl,
+                secretDraft: settingsWebhookSecret,
+              });
               const updated = await updateProject(selectedProjectId, {
                 taskTemplate: tpl,
                 confidenceThreshold: settingsThreshold,
                 governanceMode: settingsGovernanceMode,
+                ...webhookPatch,
               });
               setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
               setShowProjectSettings(false);
