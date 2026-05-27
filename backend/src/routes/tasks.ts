@@ -1403,6 +1403,10 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         actorType: actor.type,
         actorId: actor.type === "agent" ? actor.tokenId : actor.userId,
         via: "task_start",
+        // Forensic signal: distinguishes "branch was already set" from
+        // "branch was folded into this call". For branchPresent-gated
+        // projects, post-incident review needs to know which path won.
+        ...(willPersistBranchName ? { foldedBranchName: providedBranchName } : {}),
       },
     });
 
@@ -1416,6 +1420,12 @@ taskRouter.post("/tasks/:id/start", async (c) => {
   }
 
   // ── Branch: status=review → review-claim ────────────────────────────────
+  //
+  // `providedBranchName` from the request body is intentionally NOT in
+  // scope on the review path. It is only declared inside the open-state
+  // branch above. The MCP tool description for task_start documents this
+  // contract (review-claim starts accept but ignore the field) so the
+  // test at "ignores branchName on a review-claim start" pins it.
   if (isReviewState(effectiveDefinition, task.status)) {
     // Distinct-reviewer: bypassed in soloMode and when the project opts out
     // of requireDistinctReviewer. Same flag-aware gate the review-finish

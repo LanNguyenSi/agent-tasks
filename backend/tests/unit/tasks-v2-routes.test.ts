@@ -615,6 +615,114 @@ describe("POST /tasks/:id/start — optional branchName arg", () => {
     expect(updateCall.data.status).toBe("in_progress");
     expect(updateCall.data.branchName).toBeUndefined();
   });
+
+  it("ignores branchName on a review-claim start (only the open→in_progress branch reads it)", async () => {
+    // Documents the polymorphic contract: the MCP tool description
+    // promises the field is accepted-but-ignored on a review-claim start.
+    // A future regression that wires providedBranchName into the review
+    // branch's update would surface here.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      branchName: "feat/already-set-during-work",
+      // Default workflow, review state → review-claim path.
+      workflowId: null,
+      workflow: null,
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ branchName: "feat/would-mutate" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    // The review-claim update sets reviewClaimed* + reviewClaimedAt; it
+    // must NOT set branchName (the field never reaches the review branch).
+    expect(updateCall.data.branchName).toBeUndefined();
+    expect(updateCall.data.status).toBeUndefined(); // review path doesn't transition state
+  });
+
+  it("same-value re-call is idempotent: providedBranchName === task.branchName, no write", async () => {
+    // Edge of the "ignore when already set" contract: the supplied value
+    // matches the persisted value. Must still skip the branchName write
+    // (no-op spread) so the audit payload doesn't emit a misleading
+    // foldedBranchName for a value the agent never folded.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: "feat/same-value",
+      workflowId: "wf-1",
+      workflow: customWorkflowWithBranchPresent(),
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ branchName: "feat/same-value" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.branchName).toBeUndefined();
+  });
+
+  it("supplied branchName satisfies branchPresent but a sibling prPresent gate still blocks", async () => {
+    // Folding the branch in must not short-circuit other unsatisfied
+    // gates. A custom workflow that requires BOTH branchPresent AND
+    // prPresent on the start edge stays blocked when only the branch is
+    // supplied, with no DB write and no claim transition.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: null,
+      prUrl: null,
+      prNumber: null,
+      workflowId: "wf-2",
+      workflow: {
+        definition: {
+          initialState: "open",
+          states: [
+            { name: "open", terminal: false },
+            { name: "in_progress", terminal: false },
+          ],
+          transitions: [
+            {
+              from: "open",
+              to: "in_progress",
+              requires: ["branchPresent", "prPresent"],
+            },
+          ],
+        },
+      },
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ branchName: "feat/branch-but-no-pr" }),
+    });
+
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as {
+      error: string;
+      failed: { rule: string }[];
+    };
+    expect(body.error).toBe("precondition_failed");
+    expect(body.failed.map((f) => f.rule)).toContain("prPresent");
+    // branchPresent must NOT appear in the failed list — the supplied
+    // branch made it pass.
+    expect(body.failed.map((f) => f.rule)).not.toContain("branchPresent");
+    // No DB write because the gate failed.
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
 });
 
 // ── /tasks/:id/claim ─────────────────────────────────────────────────────────
