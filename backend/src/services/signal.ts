@@ -82,8 +82,8 @@ export async function createSignal(input: CreateSignalInput) {
  * Loops createSignal per recipient (instead of a single createMany) so
  * webhook delivery fires per row. Real callers (review-signal,
  * task-signal, force-transition-signal, self-merge-notice) already loop
- * createSignal themselves; this verb is preserved for the rare
- * single-shot fanout case (currently exercised only by tests).
+ * createSignal themselves; this verb is kept as a convenience for
+ * callers that prefer a single batch entry point.
  */
 export async function createSignals(inputs: CreateSignalInput[]) {
   const created = [];

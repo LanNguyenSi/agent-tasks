@@ -198,7 +198,7 @@ describe("deliverSignalWebhook — retry behavior", () => {
         action: "signal.webhook_failed",
         payload: expect.objectContaining({
           attempts: 2,
-          errorMessage: "ETIMEDOUT",
+          errMessage: "ETIMEDOUT",
         }),
       }),
     );

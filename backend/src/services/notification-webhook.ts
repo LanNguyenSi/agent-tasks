@@ -131,7 +131,8 @@ export async function deliverSignalWebhook(input: DeliverSignalWebhookInput): Pr
 
     const startedAt = Date.now();
     let attempts = 0;
-    let last: AttemptResult = { ok: false, errorMessage: "no attempt made" };
+    // Loop always runs ≥1 iteration; `last` is assigned before any read.
+    let last!: AttemptResult;
 
     for (let i = 0; i < 2; i++) {
       attempts++;
@@ -181,7 +182,10 @@ export async function deliverSignalWebhook(input: DeliverSignalWebhookInput): Pr
         signalType: input.signalType,
         url: input.webhookUrl,
         statusCode: last.statusCode,
-        errorMessage: last.errorMessage,
+        // `errMessage` matches the house style used by services/audit.ts
+        // and the safeWarn payload above. Receivers that grep audit JSON
+        // can rely on a single key name across both log + audit surfaces.
+        errMessage: last.errorMessage,
         attempts,
         durationMs,
       },

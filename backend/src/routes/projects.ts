@@ -429,6 +429,10 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
   if (notificationWebhookSecret !== undefined) {
     const had = !!project.notificationWebhookSecret;
     const has = notificationWebhookSecret !== "" && notificationWebhookSecret !== null;
+    // The plaintext compare below works because we read the raw secret
+    // from the DB above. If notificationWebhookSecret ever moves to a
+    // hashed-at-rest model, this comparison silently breaks (raw input
+    // vs hash will never equal) — switch to a hash compare at that point.
     if (had !== has || (had && has && notificationWebhookSecret !== project.notificationWebhookSecret)) {
       governanceChange.notificationWebhookSecret = {
         from: had ? "set" : "unset",

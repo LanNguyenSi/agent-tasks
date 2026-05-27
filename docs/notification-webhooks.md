@@ -18,6 +18,16 @@ all seven Signal types — see [events.md](events.md) and
 
 ## Configuration
 
+> **Operator note (SSRF):** the URL is fetched server-side by the
+> agent-tasks backend. It is validated for URL shape only — there is no
+> denylist for loopback (`http://127.0.0.1/...`), link-local
+> (`http://169.254.169.254/...`), or RFC1918 ranges. Only team admins
+> can write this field, so this is a trust-the-operator surface, not an
+> internet-facing one. If your deployment has agent-tasks on a network
+> that can reach internal services you don't want it POSTing to, run it
+> behind an egress firewall or block those CIDRs at the host level. A
+> server-side denylist may be added in a future release.
+
 PATCH the project to set the URL and (optionally) a signing secret:
 
 ```bash
@@ -151,9 +161,10 @@ but a `failed`-row count spike is the metric to alert on.
       background queue if needed.
 - [ ] Verify `X-AgentTasks-Signature` against the raw body if you set a
       secret. Reject otherwise.
-- [ ] Dedup on `signalId` (set with 24h TTL is fine — Signals are
-      already deduplicated server-side, this protects you only from
-      the retry path).
+- [ ] Dedup on `signalId` (set with 24h TTL is fine — the same Signal
+      row will not be delivered twice except via the retry path; this
+      guard protects you from the rare case where the server's 2xx ack
+      was lost and the retry succeeded).
 - [ ] Filter on `X-AgentTasks-Event` if you only want a subset.
 - [ ] Log unexpected `type` values and continue — new Signal types may
       be added (see "Future candidates" in signal-payload-design.md).
