@@ -16,6 +16,7 @@ import { formatAbsoluteDate, formatRelativeTime } from "../../lib/time";
 import AppHeader from "../../components/AppHeader";
 import Card from "../../components/ui/Card";
 import EmptyState from "../../components/ui/EmptyState";
+import { SkeletonList } from "../../components/ui/Skeleton";
 import Pagination from "../../components/ui/Pagination";
 import Select from "../../components/ui/Select";
 
@@ -316,8 +317,10 @@ function TasksPageInner() {
 
   if (loading) {
     return (
-      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "var(--muted)" }}>Loading...</p>
+      <main style={{ minHeight: "100vh", padding: "var(--space-6) var(--space-4)" }}>
+        <div style={{ maxWidth: 960, margin: "0 auto" }}>
+          <SkeletonList rows={8} rowHeight="3rem" label="Loading tasks" />
+        </div>
       </main>
     );
   }
@@ -382,6 +385,7 @@ function TasksPageInner() {
         <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", alignItems: "center" }}>
           <input
             type="search"
+            aria-label="Search tasks"
             placeholder="Search title, description, labels…"
             value={searchQuery}
             onChange={(e) => updateParams({ q: e.target.value })}
@@ -563,8 +567,10 @@ function TasksPageInner() {
 export default function TasksPage() {
   return (
     <Suspense fallback={
-      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "var(--muted)" }}>Loading...</p>
+      <main style={{ minHeight: "100vh", padding: "var(--space-6) var(--space-4)" }}>
+        <div style={{ maxWidth: 960, margin: "0 auto" }}>
+          <SkeletonList rows={8} rowHeight="3rem" label="Loading tasks" />
+        </div>
       </main>
     }>
       <TasksPageInner />

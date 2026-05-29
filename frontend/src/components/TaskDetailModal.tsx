@@ -169,13 +169,13 @@ export default function TaskDetailModal({
     setIsEditing(false);
   }
 
-  function handleClose() {
+  const handleClose = useCallback(() => {
     if (isEditing && isDirty) {
       setShowDiscardPrompt(true);
     } else {
       onClose();
     }
-  }
+  }, [isEditing, isDirty, onClose]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -187,15 +187,22 @@ export default function TaskDetailModal({
         e.preventDefault();
         startEditing();
       }
-      // Escape to cancel editing
-      if (e.key === "Escape" && isEditing) {
+      // Escape cancels an in-progress edit, otherwise closes the modal
+      // (which itself guards against discarding unsaved changes). This
+      // modal owns its own Escape handling, so it opts the Modal
+      // primitive out via closeOnEscape={false} to avoid double-firing.
+      if (e.key === "Escape") {
         e.preventDefault();
-        cancelEditing();
+        if (isEditing) {
+          cancelEditing();
+        } else {
+          handleClose();
+        }
       }
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isEditing, startEditing, cancelEditing]);
+  }, [isEditing, startEditing, cancelEditing, handleClose]);
 
   async function handleSaveTask() {
     setSavingTask(true);
@@ -269,6 +276,7 @@ export default function TaskDetailModal({
       <Modal
         open
         onClose={handleClose}
+        closeOnEscape={false}
         title="Task Details"
         actions={isEditing ? (
           <div style={{ display: "flex", gap: "0.45rem" }}>

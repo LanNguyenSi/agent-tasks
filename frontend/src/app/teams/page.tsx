@@ -392,6 +392,8 @@ export default function TeamsPage() {
           <Card style={{ marginBottom: "0.9rem" }} padding="sm">
             <div className="teams-filter-bar">
               <input
+                type="search"
+                aria-label="Search projects"
                 value={projectQuery}
                 onChange={(e) => setProjectQuery(e.target.value)}
                 placeholder="Search projects (name, slug, repo)..."
