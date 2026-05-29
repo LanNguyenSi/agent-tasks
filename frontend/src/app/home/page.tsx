@@ -15,6 +15,7 @@ import {
 import { formatRelativeTime } from "../../lib/time";
 import AppHeader from "../../components/AppHeader";
 import Card from "../../components/ui/Card";
+import { SkeletonList } from "../../components/ui/Skeleton";
 
 const STATUS_COLORS: Record<string, string> = {
   open: "var(--muted)",
@@ -205,8 +206,10 @@ export default function HomeDashboardPage() {
 
   if (loading) {
     return (
-      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "var(--muted)" }}>Loading...</p>
+      <main style={{ minHeight: "100vh", padding: "var(--space-6) var(--space-4)" }}>
+        <div style={{ maxWidth: 960, margin: "0 auto" }}>
+          <SkeletonList rows={5} rowHeight="4rem" label="Loading your tasks" />
+        </div>
       </main>
     );
   }

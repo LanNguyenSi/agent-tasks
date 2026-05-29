@@ -947,6 +947,42 @@ input[type="checkbox"] {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Skeleton loaders ─────────────────────────────────────────── */
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--surface) 25%,
+    color-mix(in srgb, var(--surface) 60%, var(--border) 40%) 50%,
+    var(--surface) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+/* ── Screen-reader-only ───────────────────────────────────────── */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ── Project picker ───────────────────────────────────────────── */
 
 .project-picker-menu {

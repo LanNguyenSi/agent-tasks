@@ -32,6 +32,7 @@ import EmptyState from "../../components/ui/EmptyState";
 import FormField from "../../components/ui/FormField";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
+import { SkeletonList } from "../../components/ui/Skeleton";
 import TaskDetailModal from "../../components/TaskDetailModal";
 import ImportDialog from "../../components/ImportDialog";
 import { NotificationWebhookSection, buildWebhookPatch } from "../../components/NotificationWebhookSection";
@@ -974,6 +975,8 @@ export default function DashboardPage() {
       <Card padding="sm" style={{ marginBottom: "0.9rem" }}>
         <div className="board-toolbar">
           <input
+            type="search"
+            aria-label="Search tasks"
             value={taskQuery}
             onChange={(e) => setTaskQuery(e.target.value)}
             placeholder="Search tasks..."
@@ -1041,7 +1044,9 @@ export default function DashboardPage() {
       </Card>
 
       {loading ? (
-        <div style={{ color: "var(--muted)", padding: "2rem", textAlign: "center" }}>Loading…</div>
+        <div style={{ padding: "0.5rem 0" }}>
+          <SkeletonList rows={5} rowHeight="4.5rem" label="Loading tasks" />
+        </div>
       ) : error ? (
         <AlertBanner tone="danger" title="Error">
           {error}
