@@ -40,6 +40,7 @@ const accessMocks = vi.hoisted(() => ({
   hasProjectAccess: vi.fn().mockResolvedValue(true),
   hasProjectRole: vi.fn().mockResolvedValue(false),
   isProjectAdmin: vi.fn().mockResolvedValue(false),
+  requireProjectWrite: vi.fn().mockResolvedValue(true),
 }));
 vi.mock("../../src/services/team-access.js", () => accessMocks);
 

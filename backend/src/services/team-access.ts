@@ -252,3 +252,43 @@ export async function isProjectAdmin(actor: Actor, projectId: string): Promise<b
   return hasProjectRole(actor, projectId, "ADMIN");
 }
 
+/**
+ * True iff the actor may MUTATE task state in `projectId`. This is the
+ * write-tier gate that task-mutating endpoints must use instead of the
+ * mere-membership `hasProjectAccess`.
+ *
+ * The only read-only tier in the access model is the per-project
+ * PROJECT_VIEWER role: a user invited to a shared project as a viewer can
+ * see tasks but must not edit, delete, comment-author, attach, or wire
+ * dependencies. Every other principal that already cleared project access
+ * is write-capable:
+ *
+ *   - Agents: their write authority is gated per-endpoint by token scopes
+ *     (tasks:update / tasks:comment / ...) and the agent model has no
+ *     read-only tier; once `hasProjectAccess` passes they may write.
+ *   - Team members (ADMIN / HUMAN_MEMBER / REVIEWER): all team roles are
+ *     write-capable on tasks; the read-only restriction is project-scoped.
+ *   - Per-project PROJECT_ADMIN / PROJECT_CONTRIBUTOR: write tiers.
+ *
+ * Fails closed: any principal without access, and any human whose only
+ * grant is a PROJECT_VIEWER per-project membership, returns false.
+ */
+export async function requireProjectWrite(actor: Actor, projectId: string): Promise<boolean> {
+  // Must hold at least baseline access first (fail closed on no access).
+  if (!(await hasProjectAccess(actor, projectId))) return false;
+
+  // Agents that cleared access are write-capable (scope-gated elsewhere).
+  if (actor.type !== "human") return true;
+
+  const teamId = await getProjectTeamId(projectId);
+  if (!teamId) return false;
+
+  // Any concrete team role is write-capable.
+  if ((await getUserRoleInTeam(teamId, actor.userId)) !== null) return true;
+
+  // Otherwise the access came via a per-project grant. PROJECT_VIEWER is
+  // read-only; only the write tiers may mutate.
+  const projectRole = await getUserRoleInProject(projectId, actor.userId);
+  return projectRole === "PROJECT_ADMIN" || projectRole === "PROJECT_CONTRIBUTOR";
+}
+

@@ -59,6 +59,7 @@ const accessMocks = vi.hoisted(() => ({
   hasProjectAccess: vi.fn().mockResolvedValue(true),
   hasProjectRole: vi.fn().mockResolvedValue(true),
   isProjectAdmin: vi.fn().mockResolvedValue(true),
+  requireProjectWrite: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("../../src/services/team-access.js", () => accessMocks);
@@ -344,6 +345,17 @@ describe("POST /tasks/:id/start", () => {
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("already_claimed");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a read-only PROJECT_VIEWER with 403 and never claims the task", async () => {
+    // hasProjectAccess passes (viewer is a member) but the write-tier gate
+    // must reject: starting a task is a mutation.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "open" });
+    accessMocks.requireProjectWrite.mockResolvedValueOnce(false);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(403);
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 

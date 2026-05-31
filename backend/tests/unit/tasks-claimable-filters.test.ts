@@ -29,6 +29,7 @@ const accessMocks = vi.hoisted(() => ({
   hasProjectAccess: vi.fn().mockResolvedValue(true),
   hasProjectRole: vi.fn().mockResolvedValue(true),
   isProjectAdmin: vi.fn().mockResolvedValue(true),
+  requireProjectWrite: vi.fn().mockResolvedValue(true),
   resolveTeamId: vi
     .fn()
     .mockResolvedValue({ ok: true, teamId: "team-1" }),

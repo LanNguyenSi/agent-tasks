@@ -10,6 +10,7 @@ import {
   hasProjectAccess,
   hasProjectRole,
   isProjectAdmin,
+  requireProjectWrite,
   resolveTeamId,
   resolveTeamIdErrorBody,
   type ProjectRole,
@@ -541,6 +542,12 @@ taskRouter.post(
       return forbidden(c, "Missing scope: tasks:create");
     }
 
+    // Creating a task is a write. PROJECT_VIEWER is read-only and must not
+    // create tasks. Agents are scope-gated above (tasks:create).
+    if (!(await requireProjectWrite(actor, projectId))) {
+      return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
+    }
+
     // Validate dependsOn before create: every blocker must exist in the same
     // project. A new task has no incoming edges yet, so no cycle is possible.
     if (body.dependsOn && body.dependsOn.length > 0) {
@@ -641,6 +648,12 @@ taskRouter.post(
 
     if (actor.type === "agent" && !actor.scopes.includes("tasks:create")) {
       return forbidden(c, "Missing scope: tasks:create");
+    }
+
+    // Batch import creates tasks: a write. PROJECT_VIEWER is read-only and
+    // must not import tasks. Agents are scope-gated above (tasks:create).
+    if (!(await requireProjectWrite(actor, projectId))) {
+      return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
     }
 
     // Deduplicate within the batch itself (keep first occurrence)
@@ -1250,6 +1263,12 @@ taskRouter.post("/tasks/:id/start", async (c) => {
 
   if (!(await hasProjectAccess(actor, task.projectId))) {
     return forbidden(c, "Access denied to this project");
+  }
+
+  // Starting a task claims it and advances status: a write. PROJECT_VIEWER is
+  // read-only and must not start tasks. Agents are scope-gated above.
+  if (!(await requireProjectWrite(actor, task.projectId))) {
+    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
   }
 
   // Hard-limit: reject if the agent already holds any active claim. Humans
@@ -2797,6 +2816,12 @@ taskRouter.post(
       return forbidden(c, "Access denied to this project");
     }
 
+    // Merging advances task state and merges a PR: a write. PROJECT_VIEWER is
+    // read-only and must not merge. Agents are scope-gated above.
+    if (!(await requireProjectWrite(actor, task.projectId))) {
+      return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
+    }
+
     if (task.status === "open" || task.status === "in_progress") {
       void logAuditEvent({
         action: "task.merge_rejected_bad_status",
@@ -3136,7 +3161,12 @@ taskRouter.patch("/tasks/:id", async (c) => {
     return c.json({ task: updated });
   }
 
-  // Human path — full update
+  // Human path — full update. Write-tier gate: PROJECT_VIEWER is read-only
+  // and must not mutate task fields, even though it cleared hasProjectAccess.
+  if (!(await requireProjectWrite(actor, task.projectId))) {
+    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
+  }
+
   const parsed = updateTaskSchema.safeParse(rawBody);
   if (!parsed.success) {
     return c.json({ error: "bad_request", message: "Validation failed", details: parsed.error.flatten() }, 400);
@@ -3230,8 +3260,8 @@ taskRouter.delete("/tasks/:id", async (c) => {
   const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
   if (!task) return notFound(c);
 
-  if (!(await hasProjectAccess(actor, task.projectId))) {
-    return forbidden(c, "Access denied to this project");
+  if (!(await requireProjectWrite(actor, task.projectId))) {
+    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
   }
 
   await prisma.task.delete({ where: { id: task.id } });
@@ -3249,8 +3279,8 @@ taskRouter.post("/tasks/:id/attachments", zValidator("json", createAttachmentSch
   const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
   if (!task) return notFound(c);
 
-  if (!(await hasProjectAccess(actor, task.projectId))) {
-    return forbidden(c, "Access denied to this project");
+  if (!(await requireProjectWrite(actor, task.projectId))) {
+    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
   }
 
   const body = c.req.valid("json");
@@ -3275,8 +3305,8 @@ taskRouter.delete("/tasks/:id/attachments/:attachmentId", async (c) => {
   const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
   if (!task) return notFound(c);
 
-  if (!(await hasProjectAccess(actor, task.projectId))) {
-    return forbidden(c, "Access denied to this project");
+  if (!(await requireProjectWrite(actor, task.projectId))) {
+    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
   }
 
   const attachment = await prisma.taskAttachment.findUnique({
@@ -3377,6 +3407,12 @@ taskRouter.post("/tasks/:id/artifacts", zValidator("json", createArtifactSchema)
 
   if (!(await hasProjectAccess(actor, task.projectId))) {
     return forbidden(c, "Access denied to this project");
+  }
+
+  // Write-tier gate for humans: PROJECT_VIEWER is read-only. Agents are
+  // already scope-gated above (tasks:update) and have no read-only tier.
+  if (actor.type === "human" && !(await requireProjectWrite(actor, task.projectId))) {
+    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
   }
 
   const body = c.req.valid("json");
@@ -3482,6 +3518,12 @@ taskRouter.post("/tasks/:id/comments", zValidator("json", createCommentSchema), 
     return forbidden(c, "Access denied to this project");
   }
 
+  // Write-tier gate for humans: PROJECT_VIEWER is read-only and may not
+  // author comments. Agents are scope-gated above (tasks:comment).
+  if (actor.type === "human" && !(await requireProjectWrite(actor, task.projectId))) {
+    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
+  }
+
   const { content } = c.req.valid("json");
   const comment = await prisma.comment.create({
     data: {
@@ -3574,8 +3616,8 @@ taskRouter.post("/tasks/:id/dependencies", zValidator("json", dependencySchema),
   });
   if (!task) return notFound(c);
 
-  if (!(await hasProjectAccess(actor, task.projectId))) {
-    return forbidden(c, "Access denied to this project");
+  if (!(await requireProjectWrite(actor, task.projectId))) {
+    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
   }
 
   const { blockedByTaskId } = c.req.valid("json");
@@ -3615,8 +3657,8 @@ taskRouter.delete("/tasks/:id/dependencies/:blockerTaskId", async (c) => {
   const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
   if (!task) return notFound(c);
 
-  if (!(await hasProjectAccess(actor, task.projectId))) {
-    return forbidden(c, "Access denied to this project");
+  if (!(await requireProjectWrite(actor, task.projectId))) {
+    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
   }
 
   await prisma.task.update({
@@ -3665,6 +3707,12 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
 
   if (!(await hasProjectAccess(actor, task.projectId))) {
     return forbidden(c, "Access denied to this project");
+  }
+
+  // Claiming sets the worker and advances status: a write. PROJECT_VIEWER is
+  // read-only and must not claim. Agents are scope-gated above (tasks:claim).
+  if (!(await requireProjectWrite(actor, task.projectId))) {
+    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
   }
 
   // Already claimed
@@ -3866,13 +3914,16 @@ taskRouter.post(
     const resolvedRequires = transition.requires;
     const requiredRole = transition.requiredRole;
 
-    // Hot-path optimization: skip the DB round-trip on the common "any"
-    // case — any actor that already cleared hasProjectAccess upstream is
-    // automatically allowed through the role gate for "any".
+    // A status transition is always a state mutation. Even when the workflow
+    // sets no concrete requiredRole (undefined / "any"), the actor must hold
+    // the write tier: PROJECT_VIEWER is read-only and must not transition
+    // tasks. Agents and every team / project write role still pass.
     if (requiredRole && requiredRole !== "any") {
       if (!(await hasProjectRole(actor, task.projectId, requiredRole as ProjectRole))) {
         return forbidden(c, `Requires role: ${requiredRole}`);
       }
+    } else if (!(await requireProjectWrite(actor, task.projectId))) {
+      return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
     }
 
     // Distinct-reviewer gate. Opt-in per project (default off for backward
@@ -4068,6 +4119,12 @@ taskRouter.post(
       return forbidden(c, "Access denied to this project");
     }
 
+    // Approving / requesting changes transitions task state: a write.
+    // PROJECT_VIEWER is read-only. Agents are scope-gated above.
+    if (!(await requireProjectWrite(actor, task.projectId))) {
+      return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
+    }
+
     if (task.status !== "review") {
       return c.json({ error: "bad_request", message: "Task must be in review status" }, 400);
     }
@@ -4179,6 +4236,12 @@ taskRouter.post("/tasks/:id/review/claim", async (c) => {
 
   if (!(await hasProjectAccess(actor, task.projectId))) {
     return forbidden(c, "Access denied to this project");
+  }
+
+  // Acquiring the review lock is a write. PROJECT_VIEWER is read-only and
+  // must not review. Agents are scope-gated above.
+  if (!(await requireProjectWrite(actor, task.projectId))) {
+    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
   }
 
   if (task.status !== "review") {
