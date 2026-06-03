@@ -7,6 +7,7 @@ import {
   deleteTask,
   claimTask,
   releaseTask,
+  startTask,
   createComment,
   deleteComment,
   addDependency,
@@ -98,6 +99,7 @@ export default function TaskDetailModal({
   const [deletingTask, setDeletingTask] = useState(false);
   const [showDeleteTaskConfirm, setShowDeleteTaskConfirm] = useState(false);
   const [claimBusy, setClaimBusy] = useState(false);
+  const [advanceBusy, setAdvanceBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewComment, setReviewComment] = useState("");
   const [depPickerValue, setDepPickerValue] = useState("");
@@ -269,6 +271,24 @@ export default function TaskDetailModal({
     }
   }
 
+  // Contextual one-click workflow advance (gate-respecting, unlike the
+  // edit-mode status PATCH). `start` claims + moves open → in_progress;
+  // `transition` moves in_progress → review. Both surface gate/precondition
+  // failures via onError rather than swallowing them.
+  async function handleAdvance(action: "start" | "submit_review") {
+    setAdvanceBusy(true);
+    try {
+      const updated = action === "start"
+        ? await startTask(task.id)
+        : await transitionTask(task.id, "review");
+      onUpdate(updated);
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setAdvanceBusy(false);
+    }
+  }
+
   const webhookEvents = (task.comments ?? []).filter((c: Comment) => c.content.startsWith("[webhook]"));
   const userComments = (task.comments ?? []).filter((c: Comment) => !c.content.startsWith("[webhook]"));
 
@@ -289,19 +309,33 @@ export default function TaskDetailModal({
         ) : undefined}
       >
         {/* Header actions */}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.45rem", marginBottom: "var(--space-3)" }}>
-          {!isEditing && (
-            <Button variant="secondary" size="sm" onClick={startEditing}>Edit</Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowDeleteTaskConfirm(true)}
-            disabled={savingTask || deletingTask}
-            style={{ color: "var(--danger)" }}
-          >
-            {deletingTask ? "Deleting…" : "Delete"}
-          </Button>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.45rem", marginBottom: "var(--space-3)" }}>
+          <div style={{ display: "flex", gap: "0.45rem" }}>
+            {!isEditing && task.status === "open" && !task.claimedByUserId && !task.claimedByAgentId && (
+              <Button size="sm" onClick={() => void handleAdvance("start")} disabled={advanceBusy} loading={advanceBusy}>
+                Start
+              </Button>
+            )}
+            {!isEditing && task.status === "in_progress" && task.claimedByUserId === user?.id && task.branchName && task.prUrl && (
+              <Button size="sm" onClick={() => void handleAdvance("submit_review")} disabled={advanceBusy} loading={advanceBusy}>
+                Submit for review
+              </Button>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: "0.45rem" }}>
+            {!isEditing && (
+              <Button variant="secondary" size="sm" onClick={startEditing}>Edit</Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowDeleteTaskConfirm(true)}
+              disabled={savingTask || deletingTask}
+              style={{ color: "var(--danger)" }}
+            >
+              {deletingTask ? "Deleting…" : "Delete"}
+            </Button>
+          </div>
         </div>
 
         {/* ── Overview ──────────────────────────────────────────────── */}
@@ -333,7 +367,7 @@ export default function TaskDetailModal({
                 )}
                 <span className="status-chip" style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
                   {getClaimLabel(task)}
-                  {!task.claimedByUserId && !task.claimedByAgentId && (
+                  {!task.claimedByUserId && !task.claimedByAgentId && task.status !== "open" && (
                     <button
                       type="button"
                       onClick={() => void handleClaim()}
