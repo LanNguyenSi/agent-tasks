@@ -54,7 +54,7 @@ import Select from "@/components/ui/Select";
 const DEFAULT_PRESETS: TemplatePreset[] = [
   {
     name: "Bug Fix",
-    description: "[Bug-Titel]: [Komponente/Datei]\n\nErwartet: [was sollte passieren]\nTatsächlich: [was passiert stattdessen]\nSchritte: [wie reproduzierbar]",
+    description: "[Bug title]: [component/file]\n\nExpected: [what should happen]\nActual: [what happens instead]\nSteps: [how to reproduce]",
     goal: "Fix [describe the bug] in [component/file].\nExpected behavior: [what should happen]\nActual behavior: [what happens instead]",
     acceptanceCriteria: "- Bug is no longer reproducible\n- Root cause is identified and fixed (not just symptoms)\n- Regression test added that covers the exact failure case\n- No unrelated changes",
     context: "- Affected file(s): [path/to/file.ts]\n- How to reproduce: [steps]\n- Related issue/ticket: [link]",
@@ -62,7 +62,7 @@ const DEFAULT_PRESETS: TemplatePreset[] = [
   },
   {
     name: "Feature",
-    description: "[Feature-Name]\n\nWas: [was soll gebaut werden]\nWarum: [welches Problem wird gelöst]\nWie: [grober Ansatz / betroffene Dateien]",
+    description: "[Feature name]\n\nWhat: [what should be built]\nWhy: [which problem it solves]\nHow: [rough approach / affected files]",
     goal: "Implement [feature name].\n\n[Describe what the feature does, who it's for, and why it's needed]",
     acceptanceCriteria: "- [Core behavior works as specified]\n- [Edge cases handled: empty state, errors, loading]\n- Tests written (unit + integration where applicable)\n- Types/interfaces updated",
     context: "- Relevant existing code: [path/to/related.ts]\n- Design/spec: [link or description]\n- Dependencies: [libraries, APIs, other features]",
@@ -70,11 +70,11 @@ const DEFAULT_PRESETS: TemplatePreset[] = [
   },
   {
     name: "Refactoring",
-    description: "[Modul/Komponente] refactoren\n\nMotivation: [warum jetzt]\nZiel: [was wird besser — Lesbarkeit, Performance, Testbarkeit]",
+    description: "Refactor [module/component]\n\nMotivation: [why now]\nGoal: [what improves: readability, performance, testability]",
     goal: "Refactor [component/module] to [improve what exactly].\n\nMotivation: [why this refactoring is needed now]",
     acceptanceCriteria: "- All existing tests still pass\n- No behavior changes (pure refactor)\n- Code is measurably [simpler/faster/more readable]\n- No new tech debt introduced",
     context: "- Files to touch: [list of files]\n- Current pain points: [what makes the current code problematic]\n- Related refactoring: [other planned changes that depend on this]",
-    constraints: "- Pure refactor — zero behavior changes\n- Keep the PR focused, no scope creep\n- If a file isn't broken, don't touch it",
+    constraints: "- Pure refactor, zero behavior changes\n- Keep the PR focused, no scope creep\n- If a file isn't broken, don't touch it",
   },
 ];
 
@@ -354,7 +354,7 @@ function BoardColumns({
                     style={{ width: "100%", marginTop: "0.2rem" }}
                     onClick={() => setShowAllDone((value) => !value)}
                   >
-                    {showAllDone ? "Weniger anzeigen" : `… ${overflowCount} weitere anzeigen`}
+                    {showAllDone ? "Show less" : `… ${overflowCount} more`}
                   </button>
                 )}
               </>
@@ -1076,26 +1076,26 @@ export default function DashboardPage() {
             />
           </div>
           <div className="board-scope-inline">
-            <span>Erledigt</span>
+            <span>Done</span>
             <Select
-              ariaLabel="Erledigt"
+              ariaLabel="Done"
               value={doneVisibility}
               onChange={(v) => setDoneVisibility(v as DoneVisibility)}
               options={[
-                { value: "recent", label: "Aktuell" },
-                { value: "all", label: "Alle" },
-                { value: "none", label: "Keine" },
+                { value: "recent", label: "Recent" },
+                { value: "all", label: "All" },
+                { value: "none", label: "None" },
               ]}
               style={{ minWidth: 110 }}
             />
             {hiddenDoneCount > 0 && doneVisibility !== "all" && (
               <button
                 type="button"
-                title="Alle erledigten Tasks anzeigen"
+                title="Show all done tasks"
                 onClick={() => setDoneVisibility("all")}
                 style={{ background: "none", border: "none", padding: 0, color: "var(--primary)", cursor: "pointer", fontSize: "var(--text-xs)", fontWeight: 600 }}
               >
-                {hiddenDoneCount} ausgeblendet anzeigen
+                Show {hiddenDoneCount} hidden
               </button>
             )}
           </div>
@@ -1106,7 +1106,7 @@ export default function DashboardPage() {
                 ariaLabel="Labels"
                 value={labelFilter ?? ""}
                 onChange={(v) => setLabelFilter(v || null)}
-                options={[{ value: "", label: "Alle Labels" }, ...allLabels.map((label) => ({ value: label, label }))]}
+                options={[{ value: "", label: "All labels" }, ...allLabels.map((label) => ({ value: label, label }))]}
                 style={{ minWidth: 130 }}
               />
             </div>
@@ -1155,7 +1155,7 @@ export default function DashboardPage() {
           <section style={{ minWidth: 0 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem", gap: "0.5rem", flexWrap: "wrap" }}>
               <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-                {filteredTasks.length} / {tasks.length} Tasks
+                {filteredTasks.length} / {tasks.length} tasks
               </p>
               <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
                 {projects.find((project) => project.id === selectedProjectId)?.name}
