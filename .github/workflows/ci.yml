@@ -94,6 +94,9 @@ jobs:
       - name: Type check
         run: npm run typecheck --workspace=frontend
 
+      - name: Lint
+        run: npm run lint --workspace=frontend
+
       - name: Run tests
         run: npm run test --workspace=frontend
 
