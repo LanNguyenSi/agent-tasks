@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -24,6 +24,7 @@ import Card from "../../components/ui/Card";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import FormField from "../../components/ui/FormField";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
+import Modal from "../../components/ui/Modal";
 import Select from "@/components/ui/Select";
 import ConnectAgentModal from "../../components/ConnectAgentModal";
 import ThemePreferenceField from "../../components/ThemePreferenceField";
@@ -60,6 +61,12 @@ const FALLBACK_SCOPES = [
 
 type TokenRecord = AgentToken;
 
+// One-time token reveal: mirror ConnectAgentModal by replacing the secret
+// with a placeholder after a delay so an abandoned tab does not leave it on
+// screen. Revealing again is a deliberate click.
+const REVEAL_MASK_DELAY_MS = 30_000;
+const MASK_PLACEHOLDER = "••••••••";
+
 export default function SettingsPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -68,6 +75,8 @@ export default function SettingsPage() {
   const [tokens, setTokens] = useState<TokenRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [newToken, setNewToken] = useState<string | null>(null);
+  const [tokenMasked, setTokenMasked] = useState(false);
+  const maskTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
 
   const [showConnect, setShowConnect] = useState(false);
@@ -215,31 +224,68 @@ export default function SettingsPage() {
     setTimeout(() => setCopyMessage(null), 2400);
   }
 
+  function revealNewToken() {
+    if (maskTimerRef.current) {
+      clearTimeout(maskTimerRef.current);
+      maskTimerRef.current = null;
+    }
+    setTokenMasked(false);
+  }
+
+  // When a one-time token is shown, start the mask-after-delay timer; the
+  // success banner's role=status announces it. Clear everything on dismiss.
+  useEffect(() => {
+    if (!newToken) {
+      setTokenMasked(false);
+      if (maskTimerRef.current) {
+        clearTimeout(maskTimerRef.current);
+        maskTimerRef.current = null;
+      }
+      return;
+    }
+    setTokenMasked(false);
+    maskTimerRef.current = setTimeout(() => {
+      setTokenMasked(true);
+      maskTimerRef.current = null;
+    }, REVEAL_MASK_DELAY_MS);
+    return () => {
+      if (maskTimerRef.current) {
+        clearTimeout(maskTimerRef.current);
+        maskTimerRef.current = null;
+      }
+    };
+  }, [newToken]);
+
   if (loading) {
     return <FullPageLoader label="Loading settings…" />;
   }
 
   const selectedTeam = teams.find((t) => t.id === selectedTeamId);
+  const isDelegationDirty = user
+    ? delegation.allowAgentPrCreate !== user.allowAgentPrCreate ||
+      delegation.allowAgentPrMerge !== user.allowAgentPrMerge ||
+      delegation.allowAgentPrComment !== user.allowAgentPrComment
+    : false;
 
   return (
     <main className="page-shell">
       <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
 
-      <nav style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", fontSize: "var(--text-sm)" }}>
-        <a href="#account" style={{ color: "var(--muted)" }}>Account</a>
-        <a href="#appearance" style={{ color: "var(--muted)" }}>Appearance</a>
-        <a href="#github" style={{ color: "var(--muted)" }}>GitHub</a>
-        <a href="#sso" style={{ color: "var(--muted)" }}>Enterprise SSO</a>
-        <a href="#delegation" style={{ color: "var(--muted)" }}>Agent Permissions</a>
-        <a href="#api-tokens" style={{ color: "var(--muted)" }}>API Tokens</a>
+      <nav aria-label="Settings sections" style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", fontSize: "var(--text-sm)", flexWrap: "wrap" }}>
+        <a href="#account" className="settings-nav-link">Account</a>
+        <a href="#appearance" className="settings-nav-link">Appearance</a>
+        <a href="#github" className="settings-nav-link">GitHub</a>
+        <a href="#sso" className="settings-nav-link">Enterprise SSO</a>
+        <a href="#delegation" className="settings-nav-link">Agent Permissions</a>
+        <a href="#api-tokens" className="settings-nav-link">API Tokens</a>
       </nav>
 
       <Card style={{ marginBottom: "var(--space-4)" }}>
         <section id="account">
           <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "0.5rem" }}>Account</h2>
           <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.25rem" }}>Login: {user?.login}</p>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.25rem" }}>Name: {user?.name ?? "-"}</p>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>Email: {user?.email ?? "-"}</p>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.25rem" }}>Name: {user?.name ?? "Not set"}</p>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>Email: {user?.email ?? "Not set"}</p>
         </section>
       </Card>
 
@@ -347,12 +393,12 @@ export default function SettingsPage() {
         <section id="delegation">
           <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "0.5rem" }}>Agent Permissions</h2>
           <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.75rem" }}>
-            Allow agents to perform GitHub actions on your behalf. Without explicit consent, delegation endpoints will reject requests.
+            Allow agents to perform GitHub actions on your behalf. Without explicit consent, agent requests are rejected.
           </p>
           {!user?.githubConnected && (
             <div style={{ marginBottom: "0.75rem" }}>
               <AlertBanner tone="warning">
-                Connect GitHub first to enable agent delegation.
+                Connect GitHub first to enable agent permissions.
               </AlertBanner>
             </div>
           )}
@@ -366,6 +412,7 @@ export default function SettingsPage() {
                 <input
                   type="checkbox"
                   checked={delegation[key]}
+                  disabled={!user?.githubConnected}
                   onChange={(e) => setDelegation((prev) => ({ ...prev, [key]: e.target.checked }))}
                 />
                 {label}
@@ -375,15 +422,17 @@ export default function SettingsPage() {
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
             <Button
               size="sm"
-              disabled={!user?.githubConnected || delegationSaving}
+              disabled={!user?.githubConnected || delegationSaving || !isDelegationDirty}
               loading={delegationSaving}
               onClick={() => void handleDelegationSave()}
             >
               Save
             </Button>
-            {delegationSuccess && (
+            {delegationSuccess ? (
               <span style={{ color: "var(--success)", fontSize: "var(--text-sm)" }}>Saved</span>
-            )}
+            ) : isDelegationDirty ? (
+              <span style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>Unsaved changes</span>
+            ) : null}
           </div>
         </section>
       </Card>
@@ -448,9 +497,6 @@ export default function SettingsPage() {
                 style={{ width: "100%", maxWidth: "320px" }}
               />
             </FormField>
-            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.25rem" }}>
-              Active team: {selectedTeam?.name}
-            </p>
           </div>
         )}
 
@@ -528,55 +574,60 @@ export default function SettingsPage() {
         )}
 
         {newToken && (
-          <AlertBanner tone="success" title="Token created - visible once">
+          <AlertBanner tone="success" title="Token created (shown once)">
             <code style={{ display: "block", background: "var(--surface)", padding: "0.625rem 0.75rem", borderRadius: "6px", fontFamily: "monospace", fontSize: "var(--text-sm)", wordBreak: "break-all", color: "var(--text)" }}>
-              {newToken}
+              {tokenMasked ? MASK_PLACEHOLDER : newToken}
             </code>
-            <Button variant="secondary" size="sm" style={{ marginTop: "0.625rem" }} onClick={() => void copyToClipboard(newToken, "Token copied.")}>Copy</Button>
-            <Button variant="ghost" size="sm" style={{ marginTop: "0.625rem", marginLeft: "0.5rem" }} onClick={() => setNewToken(null)}>Dismiss</Button>
+            <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.625rem", flexWrap: "wrap" }}>
+              <Button variant="secondary" size="sm" onClick={() => void copyToClipboard(newToken, "Token copied.")}>Copy</Button>
+              {tokenMasked && (
+                <Button variant="ghost" size="sm" onClick={revealNewToken}>Reveal</Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={() => setNewToken(null)}>Dismiss</Button>
+            </div>
           </AlertBanner>
         )}
 
-        {showCreate && teams.length > 0 && (
-          <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
-            <h3 style={{ fontSize: "var(--text-base)", fontWeight: 600, marginBottom: "1rem" }}>Create Agent Token</h3>
-            <form onSubmit={(e) => void handleCreate(e)}>
-              <div style={{ marginBottom: "0.875rem" }}>
-                <FormField label="Token name">
-                  <input value={tokenName} onChange={(e) => setTokenName(e.target.value)} placeholder="e.g. ci-bot" required style={{ width: "100%", display: "block" }} />
-                </FormField>
-              </div>
-              <div style={{ marginBottom: "1rem" }}>
-                <FormField label="Scopes">
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-                    {availableScopes.map((scope) => (
-                      <label key={scope.id} style={{ display: "flex", alignItems: "center", gap: "0.375rem", cursor: "pointer", fontSize: "var(--text-sm)" }}>
-                        <input
-                          type="checkbox"
-                          checked={selectedScopes.includes(scope.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) setSelectedScopes((s) => [...s, scope.id]);
-                            else setSelectedScopes((s) => s.filter((x) => x !== scope.id));
-                          }}
-                        />
-                        <span style={{ background: "var(--border)", padding: "0.125rem 0.5rem", borderRadius: "4px", fontFamily: "monospace", fontSize: "var(--text-xs)" }}>{scope.id}</span>
-                      </label>
-                    ))}
-                  </div>
-                </FormField>
-              </div>
-              {error && (
-                <AlertBanner tone="danger" title="Failed to create token">
-                  {error}
-                </AlertBanner>
+        <Modal open={showCreate && teams.length > 0} onClose={() => setShowCreate(false)} title="Create Agent Token">
+          <form onSubmit={(e) => void handleCreate(e)}>
+            <div style={{ marginBottom: "0.875rem" }}>
+              <FormField label="Token name">
+                <input value={tokenName} onChange={(e) => setTokenName(e.target.value)} placeholder="e.g. ci-bot" required style={{ width: "100%", display: "block" }} />
+              </FormField>
+            </div>
+            <div style={{ marginBottom: "1rem" }}>
+              <FormField label="Scopes">
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                  {availableScopes.map((scope) => (
+                    <label key={scope.id} style={{ display: "flex", alignItems: "center", gap: "0.375rem", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedScopes.includes(scope.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedScopes((s) => [...s, scope.id]);
+                          else setSelectedScopes((s) => s.filter((x) => x !== scope.id));
+                        }}
+                      />
+                      <span style={{ background: "var(--border)", padding: "0.125rem 0.5rem", borderRadius: "4px", fontFamily: "monospace", fontSize: "var(--text-xs)" }}>{scope.id}</span>
+                    </label>
+                  ))}
+                </div>
+              </FormField>
+              {selectedScopes.length === 0 && (
+                <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.4rem" }}>Select at least one scope.</p>
               )}
-              <div style={{ display: "flex", gap: "0.5rem" }}>
-                <Button type="submit" disabled={creating} loading={creating} size="sm">Create</Button>
-                <Button variant="ghost" size="sm" type="button" onClick={() => setShowCreate(false)}>Cancel</Button>
-              </div>
-            </form>
-          </div>
-        )}
+            </div>
+            {error && (
+              <AlertBanner tone="danger" title="Failed to create token">
+                {error}
+              </AlertBanner>
+            )}
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <Button type="submit" disabled={creating || selectedScopes.length === 0} loading={creating} size="sm">Create</Button>
+              <Button variant="ghost" size="sm" type="button" onClick={() => setShowCreate(false)}>Cancel</Button>
+            </div>
+          </form>
+        </Modal>
 
         {teams.length > 0 && (tokens.length === 0 ? (
           <div style={{ textAlign: "center", padding: "2rem", border: "1px dashed var(--border)", borderRadius: "10px", color: "var(--muted)" }}>
@@ -593,6 +644,11 @@ export default function SettingsPage() {
                       <span key={s} style={{ background: "var(--border)", padding: "0 0.375rem", borderRadius: "4px", fontFamily: "monospace", fontSize: "var(--text-xs)", color: "var(--muted)" }}>{s}</span>
                     ))}
                   </div>
+                  <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.35rem" }}>
+                    Created {formatRelativeTime(token.createdAt)}
+                    {token.lastUsedAt ? ` · last used ${formatRelativeTime(token.lastUsedAt)}` : " · never used"}
+                    {token.expiresAt ? ` · expires ${new Date(token.expiresAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}` : ""}
+                  </p>
                 </div>
                 <Button variant="outline-danger" size="sm" onClick={() => setRevokeTarget({ id: token.id, name: token.name })}>Revoke</Button>
               </div>

@@ -718,6 +718,17 @@ input[type="checkbox"] {
   background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
+/* In-page section nav (settings). Muted by default, accent on hover. */
+.settings-nav-link {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.settings-nav-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
 .alert-info {
   border-color: #2a4c7a;
   background: #102239;
