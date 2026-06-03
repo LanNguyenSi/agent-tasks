@@ -13,6 +13,8 @@ import {
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
+import { SkeletonList } from "../../../components/ui/Skeleton";
+import { roleLabel } from "../../../lib/roleLabel";
 
 type Phase =
   | { kind: "loading" }
@@ -120,15 +122,15 @@ export default function InviteLandingPage() {
         <Card>
           <h1 style={{ marginTop: 0 }}>Project invitation</h1>
           {phase.kind === "loading" && (
-            <p style={{ color: "var(--muted)" }}>Loading invite...</p>
+            <SkeletonList rows={2} rowHeight="1.5rem" label="Loading invitation" />
           )}
 
           {phase.kind === "needs-login" && (
             <>
               <p>You need to be signed in to accept this invitation.</p>
-              <Link href={`/auth?redirect=/invite/${token}`}>
-                <Button>Sign in to continue</Button>
-              </Link>
+              <Button onClick={() => router.push(`/auth?redirect=/invite/${token}`)}>
+                Sign in to continue
+              </Button>
             </>
           )}
 
@@ -137,13 +139,13 @@ export default function InviteLandingPage() {
           )}
 
           {phase.kind === "accepting" && (
-            <p style={{ color: "var(--muted)" }}>Accepting invitation...</p>
+            <p style={{ color: "var(--muted)" }}>Accepting invitation…</p>
           )}
 
           {phase.kind === "accepted" && (
             <>
               <AlertBanner tone="success">
-                Welcome aboard. Role: <strong>{phase.role}</strong>.
+                Welcome aboard. Role: <strong>{roleLabel(phase.role)}</strong>.
               </AlertBanner>
               {phase.soloModeChanged && (
                 <div style={{ marginTop: "var(--space-3)" }}>
@@ -186,7 +188,7 @@ function PreviewBody({
       </p>
       <ul>
         <li>
-          Role: <strong>{preview.role}</strong>
+          Role: <strong>{roleLabel(preview.role)}</strong>
         </li>
         <li>
           Expires: {expiresAtDate.toLocaleString()}
