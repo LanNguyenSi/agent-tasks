@@ -9,6 +9,8 @@ interface AlertBannerProps {
   title?: string;
   children: ReactNode;
   className?: string;
+  /** When provided, renders a dismiss (×) button that calls this. */
+  onDismiss?: () => void;
 }
 
 const TONE_CLASS: Record<AlertTone, string> = {
@@ -34,9 +36,15 @@ export default function AlertBanner({
   title,
   children,
   className,
+  onDismiss,
 }: AlertBannerProps) {
   return (
     <div role={TONE_ROLE[tone]} className={["alert-banner", TONE_CLASS[tone], className].filter(Boolean).join(" ")}>
+      {onDismiss && (
+        <button type="button" className="alert-dismiss" aria-label="Dismiss" onClick={onDismiss}>
+          ×
+        </button>
+      )}
       {title && <p className="alert-title">{title}</p>}
       <div>{children}</div>
     </div>
