@@ -640,6 +640,13 @@ export async function releaseTask(taskId: string): Promise<Task> {
   return data.task;
 }
 
+// Claim + advance an open task to in_progress in one call (the v2 `/start`
+// endpoint). Workflow gates and the dependency gate are enforced server-side.
+export async function startTask(taskId: string): Promise<Task> {
+  const data = await request<{ task: Task }>(`/api/tasks/${taskId}/start`, { method: "POST" });
+  return data.task;
+}
+
 export async function transitionTask(
   taskId: string,
   status: string,
