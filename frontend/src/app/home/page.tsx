@@ -13,6 +13,7 @@ import {
   type TeamTasksCounts,
 } from "../../lib/api";
 import { formatRelativeTime } from "../../lib/time";
+import { isDoneTaskHidden } from "../../lib/dashboardPrefs";
 import AppHeader from "../../components/AppHeader";
 import Card from "../../components/ui/Card";
 import { SkeletonList } from "../../components/ui/Skeleton";
@@ -22,6 +23,13 @@ const STATUS_COLORS: Record<string, string> = {
   in_progress: "var(--primary)",
   review: "var(--warning)",
   done: "var(--success)",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  review: "In Review",
+  done: "Done",
 };
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -40,7 +48,12 @@ function TaskRow({ task, teamId }: { task: EnrichedTask; teamId: string }) {
       style={{ textDecoration: "none", color: "inherit" }}
     >
       <div className="open-task-row" style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.5rem", borderRadius: "var(--radius-base)", transition: "background 0.12s ease" }}>
-        <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: STATUS_COLORS[task.status] ?? "var(--muted)", flexShrink: 0 }} />
+        <span
+          role="img"
+          aria-label={`Status: ${STATUS_LABELS[task.status] ?? task.status}`}
+          title={STATUS_LABELS[task.status] ?? task.status}
+          style={{ width: "7px", height: "7px", borderRadius: "50%", background: STATUS_COLORS[task.status] ?? "var(--muted)", flexShrink: 0 }}
+        />
         {/* `open-task-row-title` keeps the hook that the <480px
            viewport rule in globals.css uses to promote the title
            to its own full-width line. Don't rename without updating
@@ -129,6 +142,10 @@ export default function HomeDashboardPage() {
   const [allTasks, setAllTasks] = useState<EnrichedTask[]>([]);
   const [counts, setCounts] = useState<TeamTasksCounts | null>(null);
   const [loading, setLoading] = useState(true);
+  // Distinct from `loading` (auth/team bootstrap): the task aggregation is a
+  // second roundtrip, so without this the widgets would briefly render their
+  // empty states before the first fetch resolves.
+  const [tasksLoaded, setTasksLoaded] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -156,21 +173,27 @@ export default function HomeDashboardPage() {
     let cancelled = false;
 
     async function fetchTeamTasks(teamId: string) {
-      const r = await getTeamTasks(teamId);
-      if (cancelled) return;
-      const projectName = new Map(r.projects.map((p) => [p.id, p.name]));
-      const enriched: EnrichedTask[] = r.tasks.map((t) => ({
-        ...t,
-        projectName: projectName.get(t.projectId) ?? "(unknown)",
-      }));
-      // Server orders by updatedAt desc; preserve that here.
-      setAllTasks(enriched);
-      // counts is optional during the rollout window; null means
-      // TaskWidget will fall back to `tasks.length` (the legacy
-      // off-by-page-size behavior).
-      setCounts(r.counts ?? null);
-      if (r.projects.length > 0) {
-        setFirstProjectId((prev) => prev ?? r.projects[0]!.id);
+      try {
+        const r = await getTeamTasks(teamId);
+        if (cancelled) return;
+        const projectName = new Map(r.projects.map((p) => [p.id, p.name]));
+        const enriched: EnrichedTask[] = r.tasks.map((t) => ({
+          ...t,
+          projectName: projectName.get(t.projectId) ?? "(unknown)",
+        }));
+        // Server orders by updatedAt desc; preserve that here.
+        setAllTasks(enriched);
+        // counts is optional during the rollout window; null means
+        // TaskWidget will fall back to `tasks.length` (the legacy
+        // off-by-page-size behavior).
+        setCounts(r.counts ?? null);
+        if (r.projects.length > 0) {
+          setFirstProjectId((prev) => prev ?? r.projects[0]!.id);
+        }
+      } finally {
+        // Flip the gate even if the fetch rejects, so a failed request falls
+        // back to the (empty) widget grid instead of hanging on the skeleton.
+        if (!cancelled) setTasksLoaded(true);
       }
     }
 
@@ -194,10 +217,13 @@ export default function HomeDashboardPage() {
     [allTasks],
   );
 
-  const recentlyDone = useMemo(
-    () => allTasks.filter((t) => t.status === "done"),
-    [allTasks],
-  );
+  // Only the genuinely recent completions, matching the dashboard's default
+  // done window (reusing the same predicate). Keeps the widget from claiming
+  // a huge "N total" when the team has accumulated months of done tasks.
+  const recentlyDone = useMemo(() => {
+    const now = Date.now();
+    return allTasks.filter((t) => t.status === "done" && !isDoneTaskHidden("recent", t.updatedAt, now));
+  }, [allTasks]);
 
   const myTasks = useMemo(
     () => allTasks.filter((t) => t.claimedByUserId === user?.id && t.status !== "done"),
@@ -230,13 +256,19 @@ export default function HomeDashboardPage() {
       </Card>
 
       {selectedTeam && (
-        <div className="home-widgets-grid">
-          <TaskWidget title="Open Tasks" tasks={openTasks} teamId={selectedTeam.id} scope="open" emptyText="No open tasks." total={counts?.open} />
-          <TaskWidget title="My Tasks" tasks={myTasks} teamId={selectedTeam.id} scope="mine" emptyText="No tasks assigned to you." total={counts?.mine} />
-          <TaskWidget title="Priority (High / Critical)" tasks={priorityTasks} teamId={selectedTeam.id} scope="priority" emptyText="No high-priority tasks." total={counts?.priority} />
-          <TaskWidget title="In Review" tasks={inReviewTasks} teamId={selectedTeam.id} scope="review" emptyText="Nothing in review." total={counts?.review} />
-          <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} scope="done" emptyText="No completed tasks yet." total={counts?.done} />
-        </div>
+        !tasksLoaded ? (
+          <SkeletonList rows={5} rowHeight="4rem" label="Loading your tasks" />
+        ) : (
+          <div className="home-widgets-grid">
+            <TaskWidget title="Open Tasks" tasks={openTasks} teamId={selectedTeam.id} scope="open" emptyText="No open tasks." total={counts?.open} />
+            <TaskWidget title="My Tasks" tasks={myTasks} teamId={selectedTeam.id} scope="mine" emptyText="No tasks assigned to you." total={counts?.mine} />
+            <TaskWidget title="Priority (High / Critical)" tasks={priorityTasks} teamId={selectedTeam.id} scope="priority" emptyText="No high-priority tasks." total={counts?.priority} />
+            <TaskWidget title="In Review" tasks={inReviewTasks} teamId={selectedTeam.id} scope="review" emptyText="Nothing in review." total={counts?.review} />
+            {/* total is the local 14-day count by design (the /tasks list has no
+                recency filter); the "see all" link still lists every done task. */}
+            <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} scope="done" emptyText="No tasks completed in the last 14 days." total={recentlyDone.length} />
+          </div>
+        )
       )}
     </main>
   );

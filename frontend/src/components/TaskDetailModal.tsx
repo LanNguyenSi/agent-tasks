@@ -19,6 +19,7 @@ import {
   type TemplateData,
 } from "../lib/api";
 import { calculateConfidence } from "../lib/confidence";
+import { formatRelativeTime, formatAbsoluteDate } from "../lib/time";
 import ConfidenceBadge from "./ConfidenceBadge";
 import TaskArtifactsSection from "./TaskArtifactsSection";
 import { Button } from "./ui/Button";
@@ -327,7 +328,9 @@ export default function TaskDetailModal({
                 <span className="status-chip">{STATUS_LABELS[task.status as Status]}</span>
                 <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>{task.priority}</span>
                 <span className="status-chip">{task.dueAt ? `Due ${toDateInputValue(task.dueAt)}` : "No due date"}</span>
-                <span className="status-chip">{isOverdue(task) ? "Overdue" : "On track"}</span>
+                {isOverdue(task) && (
+                  <span className="status-chip" style={{ color: "var(--danger)", borderColor: "color-mix(in srgb, var(--danger) 55%, var(--border) 45%)" }}>Overdue</span>
+                )}
                 <span className="status-chip" style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
                   {getClaimLabel(task)}
                   {!task.claimedByUserId && !task.claimedByAgentId && (
@@ -352,6 +355,11 @@ export default function TaskDetailModal({
                   )}
                 </span>
               </div>
+              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.65rem" }}>
+                <span title={formatAbsoluteDate(task.createdAt)}>Created {formatRelativeTime(task.createdAt)}</span>
+                {" · "}
+                <span title={formatAbsoluteDate(task.updatedAt)}>updated {formatRelativeTime(task.updatedAt)}</span>
+              </p>
               {/* External Ref + Labels */}
               {(task.externalRef || (task.labels && task.labels.length > 0)) && (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginBottom: "0.65rem" }}>
@@ -611,9 +619,9 @@ export default function TaskDetailModal({
               {task.result && (
                 <div style={{ fontSize: "var(--text-sm)" }}>
                   <span style={{ color: "var(--muted)", display: "block", marginBottom: "var(--space-1)" }}>Result</span>
-                  <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-                    {task.result}
-                  </p>
+                  <div className="prose-markdown" style={{ fontSize: "var(--text-sm)" }}>
+                    <ReactMarkdown>{task.result}</ReactMarkdown>
+                  </div>
                 </div>
               )}
             </div>
@@ -732,8 +740,8 @@ export default function TaskDetailModal({
                   <div key={event.id} style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", padding: "0.35rem 0.5rem", fontSize: "var(--text-xs)", color: "var(--text-secondary)", background: "var(--surface)", borderRadius: "6px" }}>
                     <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: dotColor, flexShrink: 0, marginTop: "5px" }} />
                     <span style={{ flex: 1, lineHeight: 1.4 }}>{message}</span>
-                    <span style={{ color: "var(--muted)", whiteSpace: "nowrap", flexShrink: 0 }}>
-                      {new Date(event.createdAt).toLocaleString()}
+                    <span title={formatAbsoluteDate(event.createdAt)} style={{ color: "var(--muted)", whiteSpace: "nowrap", flexShrink: 0 }}>
+                      {formatRelativeTime(event.createdAt)}
                     </span>
                   </div>
                 );
@@ -767,8 +775,8 @@ export default function TaskDetailModal({
                         {authorName}
                       </span>
                       <span style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                        <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
-                          {new Date(comment.createdAt).toLocaleString()}
+                        <span title={formatAbsoluteDate(comment.createdAt)} style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
+                          {formatRelativeTime(comment.createdAt)}
                         </span>
                         {isOwn && (
                           <button
