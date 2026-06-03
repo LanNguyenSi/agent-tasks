@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-06-03
+
+**Headline: the deferred long tail of the 2026-06-03 UI/UX audit, a frontend polish pass across every page (home, dashboard, task modal, tasks list, teams, settings, members/invite, and the auth/onboarding/landing funnel) with a set of new shared design-system primitives, accessibility wins throughout, plus the backend half of the ESLint setup wired into CI.** No backend schema changes.
+
+Operator note: no breaking changes. Per the convention since v0.9.0, workspace `package.json` versions are not bumped. The frontend changes are validated by CI (all jobs green on the release commit), per-PR review, and local build; the live deployment updates separately.
+
+### Added
+
+- **Shared design-system primitives** (#292): a `FullPageLoader` (centered spinner + page-shell skeleton variants, `role="status"`), a `.collapsing-grid` utility for two-column form grids that collapse on phones, and a theme-aware `--shadow-lg` token; plus `Button` `link` / `link-danger` variants for unboxed inline actions (#293) and a shared `roleLabel()` helper for friendly role names (#297).
+- **Remaining German UI strings on home and dashboard translated to English** (#288).
+
+### Changed
+
+- **Home and dashboard polish** (#292): the loading skeleton renders at the page-shell width (no bootstrap jump), a real `<h1>` fronts the widgets, the "older done" reveal link is no longer hidden behind "+N more", `TaskRow` announces a clean `aria-label`, the widget links get a real hit area, board column headers stick while scrolling, and the status summary renders in both views. `AppHeader` and `Select` move off hardcoded sizes and radii onto design tokens.
+- **Task detail modal** (#293): "Submit for review" stays visible (disabled with a hint) when a branch or PR is missing, the review and comment textareas get labels and a Cmd/Ctrl+Enter submit, dates are unified via a shared formatter, the agent-result clamp is driven by measured overflow, and destructive inline actions (delete comment, remove dependency) get an inline confirm.
+- **Tasks list** (#294): the search input is debounced, multi-team accounts get a team switcher, mobile rows get inline field labels, sortable headers announce their sort state, and the 1000-task cap banner is reworded.
+- **Teams and projects** (#295): a team switcher, valid `ProjectCard` markup (the menu button is no longer nested in the card link), a kebab icon with a resting affordance, decoupled sync and delete feedback banners with a dismiss, non-reflowing task-count chips via `Promise.allSettled`, and an app-wide `FormField` label-to-control association (`useId` + `htmlFor` for native inputs, `ariaLabel` for the custom `Select`).
+- **Settings** (#296): the one-time token reveal masks itself after a delay with a Reveal button, the Agent Permissions checkboxes are truly disabled when GitHub is not connected and Save tracks unsaved changes, API token rows show created, last-used, and expiry, the custom-token form becomes a modal, and the SSO delete uses the shared confirm dialog.
+- **Members and invites** (#297): the page is honestly titled "Project invites", revoking an invite is confirmed, the sign-in CTA is valid markup, and loading uses skeletons.
+- **Entry funnel** (#298): the post-auth landing is unified to `/home`, the GitHub OAuth CTAs show a pending state, the landing CTAs and feature grid use design tokens with a two-column tier, the auth heading and the Login/Register toggle are mode-aware and accessible, and "Sign out" uses the POST logout helper.
+- **Shared UI primitives hardened for accessibility** (#289) and **undefined CSS tokens defined plus priority colors de-duplicated** (#290).
+- **Backend ESLint wired into CI** (#299): the backend gains an ESLint 9 flat config (`typescript-eslint` recommended), its eslint devDeps are pinned to ESLint 9 to match the frontend, root `lint` runs both workspaces again, and the backend CI job gains a lint step (0 errors, 7 documented baseline warnings).
+
+### Fixed
+
+- **Silent fetch and delete errors are surfaced** on the home and teams pages instead of failing quietly (#291).
+
+### Notes
+
+- Frontend (`@agent-tasks/frontend`) and backend (`@agent-tasks/backend`) stay at 0.3.0; `@agent-tasks/mcp-server` 0.7.0 and `@agent-tasks/mcp-bridge` 0.6.3 are unchanged. No database schema changes.
+
 ## [0.19.0] - 2026-06-03
 
 **Headline: a frontend usability pass across the dashboard, home, and task detail modal, with age-based done filtering and persisted view preferences, compact filter dropdowns, a one-click status advance, and collapsible modal sections, plus security hardening (write-tier role enforcement on task-mutating endpoints and a vitest CVE bump) and a working ESLint setup wired into CI.** No backend schema changes.
