@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-06-03
+
+**Headline: a frontend usability pass across the dashboard, home, and task detail modal, with age-based done filtering and persisted view preferences, compact filter dropdowns, a one-click status advance, and collapsible modal sections, plus security hardening (write-tier role enforcement on task-mutating endpoints and a vitest CVE bump) and a working ESLint setup wired into CI.** No backend schema changes.
+
+Operator note: no breaking changes. Per the convention since v0.9.0, workspace `package.json` versions are not bumped; `@agent-tasks/mcp-server` 0.7.0 and `@agent-tasks/mcp-bridge` 0.6.3 remain current.
+
+### Added
+
+- **Age-based done filter on the project dashboard, with persisted view preferences** (#278). The binary "Hide done" toggle becomes a three-state control (recent / all / none); the default hides done tasks whose `updatedAt` is older than 14 days. The board's Done column is capped with an expander, and done-visibility, board/list view mode, and sort persist to localStorage. The pure filter and storage logic lives in `frontend/src/lib/dashboardPrefs.ts` with unit tests.
+- **One-click status advance in the task detail modal** (#281). An open, unclaimed task gets a "Start" action (claim and advance to in_progress via the `/start` endpoint); an in_progress task the user owns, with a branch and PR, gets "Submit for review". Both surface workflow-gate failures instead of bypassing them, unlike the edit-mode status PATCH.
+- **Collapsible task-modal sections** (#285). A reusable `CollapsibleSection` collapses the rarely-needed Activity, Artifacts, and (in view mode) Dependencies sections by default, each with a count, so the modal stops sprawling.
+- **Accessibility and loading-states pass** on the frontend (#275).
+
+### Changed
+
+- **Dashboard filter bar consolidated into compact dropdowns** (#279). Scope, done-visibility, and labels are now three `Select` dropdowns in one row instead of a wrapping chip cloud; the shared `Select` gained an optional `ariaLabel` for an accessible name.
+- **Home widgets and task modal polish** (#280). A loading skeleton replaces the flash of empty widgets, the color-only status dot gained an accessible label (home and dashboard), "Recently Done" is scoped to the last 14 days, the modal shows created and updated timestamps, the agent result renders as markdown, Activity and Comment timestamps use the shared relative-time helpers, and the redundant "On track" chip is gone.
+- **Long agent results are clamped in the modal** with a Show more / Show less toggle so a multi-thousand-character result no longer stretches the modal (#282).
+- **Task delete moved out of the view header into edit mode** so an accidental click is harder; the confirm dialog is unchanged (#283).
+- **ESLint 9 flat config wired into CI for the frontend** (#284). The deprecated, interactive `next lint` is replaced by `eslint .` extending `next/core-web-vitals` and `next/typescript`, and the frontend CI job gains a lint step (0 errors, 5 documented baseline warnings).
+
+### Fixed
+
+- **Older done tasks are reachable from the Recently Done home widget** (#286). After the 14-day cap, the widget now surfaces a link to the full done list when older completions exist, so they are no longer hidden behind the recent-only count.
+
+### Security
+
+- **Write-tier role enforced on task-mutating endpoints** (#276), closing a HIGH audit finding where a read-only `PROJECT_VIEWER` could reach mutating routes.
+- **vitest bumped to >=4.1.0** to pick up the fix for CVE-2026-47429 (#277).
+
+### Notes
+
+- Release dogfood (2026-06-03): every PR was green at merge (typecheck with 0 errors, 153 frontend tests, `next build`, and `eslint .` from #284 on); the production build bundle contains the shipped UI strings (`doneVisibility`, "Submit for review", "Show more", the older-done link); `https://agent-tasks.opentriologue.ai/` returns HTTP 200; and the `/start` claim-and-advance path behind #281 was exercised live via the MCP `task_start` verb throughout the session.
+- The frontend ESLint enablement surfaced that the backend `lint` script was never configured (no flat config, no eslint dep). The root `lint` script points at the frontend workspace for now; setting up backend ESLint and re-chaining it is tracked as a follow-up.
+
 ## [0.18.0] - 2026-05-27
 
 **Headline: every `Signal` create can now POST out to a per-project webhook URL, with HMAC-SHA256 signing and a redacted secret round-trip; the project settings modal grows a "Notification webhook" section so operators can wire the receiver from the UI.** Before this release the Signal layer was poll-only via `task_pickup`. This unblocks live wake-up for active Claude Code sessions via a thin bridge (e.g. `triologue-agent-gateway`'s new `/agent-tasks/webhook` route in v0.2.0): the bridge turns each Signal POST into a Triologue room message, the SSE listener on a reviewer's session sees it without polling. Dogfooded end-to-end on 2026-05-27: a real `task_available` Signal landed in the configured Triologue inbox room within seconds of the originating `task_create`.
