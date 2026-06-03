@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -18,6 +18,8 @@ import { PRIORITY_COLORS } from "../../lib/priorityColors";
 import AppHeader from "../../components/AppHeader";
 import Card from "../../components/ui/Card";
 import { SkeletonList } from "../../components/ui/Skeleton";
+import AlertBanner from "../../components/ui/AlertBanner";
+import { Button } from "../../components/ui/Button";
 
 const STATUS_COLORS: Record<string, string> = {
   open: "var(--muted)",
@@ -160,6 +162,12 @@ export default function HomeDashboardPage() {
   // second roundtrip, so without this the widgets would briefly render their
   // empty states before the first fetch resolves.
   const [tasksLoaded, setTasksLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // A background-poll failure while data is already on screen should keep the
+  // stale data and flag a soft hint, not wipe back to empty widgets.
+  const [staleWarning, setStaleWarning] = useState(false);
+  const [refetchKey, setRefetchKey] = useState(0);
+  const hasDataRef = useRef(false);
 
   useEffect(() => {
     void (async () => {
@@ -204,9 +212,23 @@ export default function HomeDashboardPage() {
         if (r.projects.length > 0) {
           setFirstProjectId((prev) => prev ?? r.projects[0]!.id);
         }
+        hasDataRef.current = true;
+        setError(null);
+        setStaleWarning(false);
+      } catch (err) {
+        if (cancelled) return;
+        // First load with nothing on screen yet: surface a real error so the
+        // empty widgets don't read as "you have 0 tasks". A background-poll
+        // failure after data is shown keeps the stale data and only flags a
+        // soft hint (matches the dashboard's silent-poll behavior).
+        if (hasDataRef.current) {
+          setStaleWarning(true);
+        } else {
+          setError((err as Error).message);
+        }
       } finally {
-        // Flip the gate even if the fetch rejects, so a failed request falls
-        // back to the (empty) widget grid instead of hanging on the skeleton.
+        // Flip the gate even if the fetch rejects, so a failed first request
+        // falls back to the error branch instead of hanging on the skeleton.
         if (!cancelled) setTasksLoaded(true);
       }
     }
@@ -214,7 +236,7 @@ export default function HomeDashboardPage() {
     void fetchTeamTasks(selectedTeam.id);
     const interval = setInterval(() => void fetchTeamTasks(selectedTeam.id), 15_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [selectedTeam]);
+  }, [selectedTeam, refetchKey]);
 
   const openTasks = useMemo(
     () => allTasks.filter((t) => t.status === "open" || t.status === "in_progress"),
@@ -279,17 +301,41 @@ export default function HomeDashboardPage() {
       {selectedTeam && (
         !tasksLoaded ? (
           <SkeletonList rows={5} rowHeight="4rem" label="Loading your tasks" />
+        ) : error ? (
+          <AlertBanner tone="danger" title="Couldn't load your tasks">
+            {error}
+            <div style={{ marginTop: "var(--space-3)" }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setError(null);
+                  setTasksLoaded(false);
+                  setRefetchKey((k) => k + 1);
+                }}
+              >
+                Retry
+              </Button>
+            </div>
+          </AlertBanner>
         ) : (
-          <div className="home-widgets-grid">
-            <TaskWidget title="Open Tasks" tasks={openTasks} teamId={selectedTeam.id} scope="open" emptyText="No open tasks." total={counts?.open} />
-            <TaskWidget title="My Tasks" tasks={myTasks} teamId={selectedTeam.id} scope="mine" emptyText="No tasks assigned to you." total={counts?.mine} />
-            <TaskWidget title="Priority (High / Critical)" tasks={priorityTasks} teamId={selectedTeam.id} scope="priority" emptyText="No high-priority tasks." total={counts?.priority} />
-            <TaskWidget title="In Review" tasks={inReviewTasks} teamId={selectedTeam.id} scope="review" emptyText="Nothing in review." total={counts?.review} />
-            {/* total is the local 14-day count by design (the /tasks list has no
-                recency filter); olderCount surfaces a link to the done tasks
-                beyond that window so they stay reachable from here. */}
-            <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} scope="done" emptyText="No tasks completed in the last 14 days." total={recentlyDone.length} olderCount={olderDoneCount} />
-          </div>
+          <>
+            {staleWarning && (
+              <p style={{ color: "var(--warning)", fontSize: "var(--text-xs)", marginBottom: "var(--space-2)" }}>
+                Last update failed; showing the most recent data.
+              </p>
+            )}
+            <div className="home-widgets-grid">
+              <TaskWidget title="Open Tasks" tasks={openTasks} teamId={selectedTeam.id} scope="open" emptyText="No open tasks." total={counts?.open} />
+              <TaskWidget title="My Tasks" tasks={myTasks} teamId={selectedTeam.id} scope="mine" emptyText="No tasks assigned to you." total={counts?.mine} />
+              <TaskWidget title="Priority (High / Critical)" tasks={priorityTasks} teamId={selectedTeam.id} scope="priority" emptyText="No high-priority tasks." total={counts?.priority} />
+              <TaskWidget title="In Review" tasks={inReviewTasks} teamId={selectedTeam.id} scope="review" emptyText="Nothing in review." total={counts?.review} />
+              {/* total is the local 14-day count by design (the /tasks list has no
+                  recency filter); olderCount surfaces a link to the done tasks
+                  beyond that window so they stay reachable from here. */}
+              <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} scope="done" emptyText="No tasks completed in the last 14 days." total={recentlyDone.length} olderCount={olderDoneCount} />
+            </div>
+          </>
         )
       )}
     </main>

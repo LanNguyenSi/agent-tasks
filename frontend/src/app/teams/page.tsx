@@ -195,7 +195,11 @@ export default function TeamsPage() {
       setSyncMessage(`Project "${deleteTarget.name}" deleted.`);
       setDeleteTarget(null);
     } catch (err) {
-      setError((err as Error).message);
+      // Surface delete failures on the page-level banner; the modal-scoped
+      // `error` only renders inside the New Project modal, so a failed delete
+      // with that modal closed would otherwise be invisible.
+      setSyncTone("danger");
+      setSyncMessage((err as Error).message);
     } finally {
       setDeletingProject(false);
     }
