@@ -14,9 +14,11 @@ interface SelectProps {
   placeholder?: string;
   className?: string;
   style?: React.CSSProperties;
+  /** Accessible name for the combobox when no adjacent <label> is wired up. */
+  ariaLabel?: string;
 }
 
-export default function Select({ options, value, onChange, placeholder = "Select...", className = "", style }: SelectProps) {
+export default function Select({ options, value, onChange, placeholder = "Select...", className = "", style, ariaLabel }: SelectProps) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -73,6 +75,7 @@ export default function Select({ options, value, onChange, placeholder = "Select
       <button
         type="button"
         role="combobox"
+        aria-label={ariaLabel}
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-controls={open ? `${id}-list` : undefined}
