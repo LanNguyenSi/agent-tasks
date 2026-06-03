@@ -193,6 +193,11 @@ export default function TaskDetailModal({
   // Keyboard shortcuts
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // When a ConfirmDialog is open it owns Escape (it calls onCancel on
+      // its own document listener), so defer: a single Escape must not fire
+      // both handlers and race (this modal's handler would reopen the
+      // discard prompt the dialog just closed).
+      if (showDiscardPrompt || showDeleteTaskConfirm) return;
       // 'e' to enter edit mode (only when no input/textarea focused)
       if (e.key === "e" && !isEditing) {
         const tag = (e.target as HTMLElement).tagName;
@@ -215,7 +220,7 @@ export default function TaskDetailModal({
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isEditing, startEditing, cancelEditing, handleClose]);
+  }, [isEditing, startEditing, cancelEditing, handleClose, showDiscardPrompt, showDeleteTaskConfirm]);
 
   async function handleSaveTask() {
     setSavingTask(true);

@@ -18,6 +18,17 @@ const TONE_CLASS: Record<AlertTone, string> = {
   danger: "alert-danger",
 };
 
+// Map tone to an ARIA live-region role so a dynamically shown banner is
+// announced. danger/warning are assertive (role=alert); info/success are
+// polite (role=status). role implies the matching aria-live, so no extra
+// attribute is needed.
+const TONE_ROLE: Record<AlertTone, "alert" | "status"> = {
+  info: "status",
+  success: "status",
+  warning: "alert",
+  danger: "alert",
+};
+
 export default function AlertBanner({
   tone = "info",
   title,
@@ -25,7 +36,7 @@ export default function AlertBanner({
   className,
 }: AlertBannerProps) {
   return (
-    <div className={["alert-banner", TONE_CLASS[tone], className].filter(Boolean).join(" ")}>
+    <div role={TONE_ROLE[tone]} className={["alert-banner", TONE_CLASS[tone], className].filter(Boolean).join(" ")}>
       {title && <p className="alert-title">{title}</p>}
       <div>{children}</div>
     </div>
