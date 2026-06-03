@@ -22,6 +22,20 @@ import {
 } from "../../lib/api";
 import { calculateConfidence } from "../../lib/confidence";
 import { formatRelativeTime, formatAbsoluteDate } from "../../lib/time";
+import {
+  DONE_RECENT_DAYS,
+  DONE_BOARD_VISIBLE_LIMIT,
+  DEFAULT_DONE_VISIBILITY,
+  isDoneTaskHidden,
+  readStoredDoneVisibility,
+  storeDoneVisibility,
+  readStoredViewMode,
+  storeViewMode,
+  readStoredSort,
+  storeSort,
+  type DoneVisibility,
+  type DashboardViewMode,
+} from "../../lib/dashboardPrefs";
 import AppHeader from "../../components/AppHeader";
 import ConfidenceBadge from "../../components/ConfidenceBadge";
 import AlertBanner from "../../components/ui/AlertBanner";
@@ -295,10 +309,17 @@ function BoardColumns({
   onSelectTask: (taskId: string) => void;
   templateFields?: { goal?: boolean; acceptanceCriteria?: boolean; context?: boolean; constraints?: boolean } | null;
 }) {
+  // The done column accumulates without bound on an active project; cap
+  // it at DONE_BOARD_VISIBLE_LIMIT cards with an expander so it stops
+  // dominating the board. Other columns are never capped.
+  const [showAllDone, setShowAllDone] = useState(false);
   return (
     <div className="board-columns" style={{ alignItems: "start" }}>
       {STATUSES.map((status) => {
         const columnTasks = sortTasksForBoardColumn(tasks.filter((task) => task.status === status));
+        const capped = status === "done" && !showAllDone && columnTasks.length > DONE_BOARD_VISIBLE_LIMIT;
+        const visibleTasks = capped ? columnTasks.slice(0, DONE_BOARD_VISIBLE_LIMIT) : columnTasks;
+        const overflowCount = columnTasks.length - visibleTasks.length;
         return (
           <section key={status}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
@@ -312,15 +333,27 @@ function BoardColumns({
                 No tasks
               </div>
             ) : (
-              columnTasks.map((task) => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  active={task.id === activeTaskId}
-                  onSelect={onSelectTask}
-                  templateFields={templateFields}
-                />
-              ))
+              <>
+                {visibleTasks.map((task) => (
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    active={task.id === activeTaskId}
+                    onSelect={onSelectTask}
+                    templateFields={templateFields}
+                  />
+                ))}
+                {status === "done" && columnTasks.length > DONE_BOARD_VISIBLE_LIMIT && (
+                  <button
+                    type="button"
+                    className="filter-chip"
+                    style={{ width: "100%", marginTop: "0.2rem" }}
+                    onClick={() => setShowAllDone((value) => !value)}
+                  >
+                    {showAllDone ? "Weniger anzeigen" : `… ${overflowCount} weitere anzeigen`}
+                  </button>
+                )}
+              </>
             )}
           </section>
         );
@@ -356,17 +389,45 @@ export default function DashboardPage() {
   const [newTaskConstraints, setNewTaskConstraints] = useState("");
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
-  const [hideDone, setHideDone] = useState(false);
+  const [doneVisibility, setDoneVisibility] = useState<DoneVisibility>(DEFAULT_DONE_VISIBILITY);
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<"board" | "list">("board");
+  const [viewMode, setViewMode] = useState<DashboardViewMode>("board");
   const [sortState, setSortState] = useState<SortState>({ column: "updated", direction: "desc" });
   const [listPage, setListPage] = useState(1);
+  // View preferences (done visibility, view mode, sort) persist in
+  // localStorage. They load AFTER mount via the effect below to avoid an
+  // SSR/hydration mismatch; `prefsLoaded` then gates the persist effects
+  // so they don't clobber the stored values with the initial defaults.
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
   const projectTriggerRef = useRef<HTMLButtonElement | null>(null);
   const selectedTeam = useMemo(
     () => teams.find((team) => team.id === selectedTeamId) ?? null,
     [teams, selectedTeamId],
   );
+
+  // Restore persisted view preferences once, after mount.
+  useEffect(() => {
+    setDoneVisibility(readStoredDoneVisibility());
+    setViewMode(readStoredViewMode());
+    const storedSort = readStoredSort(Object.keys(NATURAL_SORT_DIR));
+    if (storedSort) {
+      setSortState({ column: storedSort.column as SortColumn, direction: storedSort.direction });
+    }
+    setPrefsLoaded(true);
+  }, []);
+
+  // Persist each preference on change (guarded so the initial defaults
+  // don't overwrite what was just restored above).
+  useEffect(() => {
+    if (prefsLoaded) storeDoneVisibility(doneVisibility);
+  }, [doneVisibility, prefsLoaded]);
+  useEffect(() => {
+    if (prefsLoaded) storeViewMode(viewMode);
+  }, [viewMode, prefsLoaded]);
+  useEffect(() => {
+    if (prefsLoaded) storeSort({ column: sortState.column, direction: sortState.direction });
+  }, [sortState, prefsLoaded]);
 
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [activeTaskDetail, setActiveTaskDetail] = useState<Task | null>(null);
@@ -387,9 +448,10 @@ export default function DashboardPage() {
   const activeTask = activeTaskDetail;
   const filteredTasks = useMemo(() => {
     const normalizedQuery = taskQuery.trim().toLowerCase();
+    const now = Date.now();
 
     return tasks.filter((task) => {
-      if (hideDone && task.status === "done") return false;
+      if (task.status === "done" && isDoneTaskHidden(doneVisibility, task.updatedAt, now)) return false;
       if (taskScope === "mine" && task.claimedByUserId !== user?.id) return false;
       if (taskScope === "unassigned" && (task.claimedByUserId || task.claimedByAgentId)) return false;
       if (taskScope === "overdue" && !isOverdue(task)) return false;
@@ -397,7 +459,17 @@ export default function DashboardPage() {
       if (!normalizedQuery) return true;
       return `${task.title} ${task.description ?? ""} ${task.externalRef ?? ""} ${(task.labels ?? []).join(" ")}`.toLowerCase().includes(normalizedQuery);
     });
-  }, [tasks, taskQuery, taskScope, hideDone, labelFilter, user?.id]);
+  }, [tasks, taskQuery, taskScope, doneVisibility, labelFilter, user?.id]);
+
+  // Count of done tasks the current visibility hides — surfaced as a
+  // one-click reveal so nothing feels silently dropped.
+  const hiddenDoneCount = useMemo(() => {
+    if (doneVisibility === "all") return 0;
+    const now = Date.now();
+    return tasks.filter(
+      (task) => task.status === "done" && isDoneTaskHidden(doneVisibility, task.updatedAt, now),
+    ).length;
+  }, [tasks, doneVisibility]);
 
   const allLabels = useMemo(() => {
     const set = new Set<string>();
@@ -413,7 +485,7 @@ export default function DashboardPage() {
       return acc;
     }, { open: 0, in_progress: 0, review: 0, done: 0 });
   }, [filteredTasks]);
-  const hasActiveFilters = taskQuery.trim().length > 0 || taskScope !== "all" || hideDone || labelFilter !== null;
+  const hasActiveFilters = taskQuery.trim().length > 0 || taskScope !== "all" || doneVisibility !== DEFAULT_DONE_VISIBILITY || labelFilter !== null;
 
   function toggleSort(column: SortColumn) {
     setSortState((prev) => {
@@ -581,7 +653,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setListPage(1);
-  }, [selectedProjectId, taskQuery, taskScope, hideDone, sortState, viewMode]);
+  }, [selectedProjectId, taskQuery, taskScope, doneVisibility, sortState, viewMode]);
 
   async function handleProjectChange(projectId: string) {
     if (!selectedTeamId) return;
@@ -996,9 +1068,38 @@ export default function DashboardPage() {
           <button type="button" className={`filter-chip ${taskScope === "unassigned" ? "filter-chip-active" : ""}`} onClick={() => setTaskScope("unassigned")}>
             Unassigned
           </button>
-          <button type="button" className={`filter-chip ${hideDone ? "filter-chip-active" : ""}`} onClick={() => setHideDone((value) => !value)}>
-            Hide done
-          </button>
+          <div className="board-scope-inline" role="radiogroup" aria-label="Done-Sichtbarkeit">
+            <span>Erledigt</span>
+            <div className="view-toggle">
+              {([
+                ["recent", "Aktuell", `Erledigte der letzten ${DONE_RECENT_DAYS} Tage`],
+                ["all", "Alle", "Alle erledigten Tasks anzeigen"],
+                ["none", "Keine", "Alle erledigten Tasks ausblenden"],
+              ] as [DoneVisibility, string, string][]).map(([value, label, hint]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={doneVisibility === value}
+                  title={hint}
+                  className={doneVisibility === value ? "view-toggle-active" : ""}
+                  onClick={() => setDoneVisibility(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {hiddenDoneCount > 0 && (
+            <button
+              type="button"
+              className="filter-chip"
+              title="Alle erledigten Tasks anzeigen"
+              onClick={() => setDoneVisibility("all")}
+            >
+              +{hiddenDoneCount} {doneVisibility === "recent" ? "ältere erledigte" : "erledigte"} anzeigen
+            </button>
+          )}
           {allLabels.length > 0 && (
             <>
               <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", padding: "0 0.2rem" }}>|</span>
@@ -1024,7 +1125,7 @@ export default function DashboardPage() {
               onClick={() => {
                 setTaskQuery("");
                 setTaskScope("all");
-                setHideDone(false);
+                setDoneVisibility(DEFAULT_DONE_VISIBILITY);
                 setLabelFilter(null);
               }}
             >
