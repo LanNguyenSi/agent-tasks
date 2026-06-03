@@ -23,7 +23,6 @@ import {
 import { calculateConfidence } from "../../lib/confidence";
 import { formatRelativeTime, formatAbsoluteDate } from "../../lib/time";
 import {
-  DONE_RECENT_DAYS,
   DONE_BOARD_VISIBLE_LIMIT,
   DEFAULT_DONE_VISIBILITY,
   isDoneTaskHidden,
@@ -1055,73 +1054,63 @@ export default function DashboardPage() {
             style={{ width: "100%" }}
           />
         </div>
-        <div className="scope-chip-row">
-          <button type="button" className={`filter-chip ${taskScope === "all" ? "filter-chip-active" : ""}`} onClick={() => setTaskScope("all")}>
-            All tasks
-          </button>
-          <button type="button" className={`filter-chip ${taskScope === "mine" ? "filter-chip-active" : ""}`} onClick={() => setTaskScope("mine")}>
-            Assigned to me
-          </button>
-          <button type="button" className={`filter-chip ${taskScope === "overdue" ? "filter-chip-active" : ""}`} onClick={() => setTaskScope("overdue")}>
-            Overdue
-          </button>
-          <button type="button" className={`filter-chip ${taskScope === "unassigned" ? "filter-chip-active" : ""}`} onClick={() => setTaskScope("unassigned")}>
-            Unassigned
-          </button>
-          <div className="board-scope-inline" role="radiogroup" aria-label="Done-Sichtbarkeit">
-            <span>Erledigt</span>
-            <div className="view-toggle">
-              {([
-                ["recent", "Aktuell", `Erledigte der letzten ${DONE_RECENT_DAYS} Tage`],
-                ["all", "Alle", "Alle erledigten Tasks anzeigen"],
-                ["none", "Keine", "Alle erledigten Tasks ausblenden"],
-              ] as [DoneVisibility, string, string][]).map(([value, label, hint]) => (
-                <button
-                  key={value}
-                  type="button"
-                  role="radio"
-                  aria-checked={doneVisibility === value}
-                  title={hint}
-                  className={doneVisibility === value ? "view-toggle-active" : ""}
-                  onClick={() => setDoneVisibility(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+        <div className="scope-chip-row" style={{ alignItems: "center" }}>
+          <div className="board-scope-inline">
+            <span>Scope</span>
+            <Select
+              ariaLabel="Scope"
+              value={taskScope}
+              onChange={(v) => setTaskScope(v as "all" | "mine" | "overdue" | "unassigned")}
+              options={[
+                { value: "all", label: "All tasks" },
+                { value: "mine", label: "Assigned to me" },
+                { value: "overdue", label: "Overdue" },
+                { value: "unassigned", label: "Unassigned" },
+              ]}
+              style={{ minWidth: 150 }}
+            />
           </div>
-          {hiddenDoneCount > 0 && (
-            <button
-              type="button"
-              className="filter-chip"
-              title="Alle erledigten Tasks anzeigen"
-              onClick={() => setDoneVisibility("all")}
-            >
-              +{hiddenDoneCount} {doneVisibility === "recent" ? "ältere erledigte" : "erledigte"} anzeigen
-            </button>
-          )}
+          <div className="board-scope-inline">
+            <span>Erledigt</span>
+            <Select
+              ariaLabel="Erledigt"
+              value={doneVisibility}
+              onChange={(v) => setDoneVisibility(v as DoneVisibility)}
+              options={[
+                { value: "recent", label: "Aktuell" },
+                { value: "all", label: "Alle" },
+                { value: "none", label: "Keine" },
+              ]}
+              style={{ minWidth: 110 }}
+            />
+            {hiddenDoneCount > 0 && doneVisibility !== "all" && (
+              <button
+                type="button"
+                title="Alle erledigten Tasks anzeigen"
+                onClick={() => setDoneVisibility("all")}
+                style={{ background: "none", border: "none", padding: 0, color: "var(--primary)", cursor: "pointer", fontSize: "var(--text-xs)", fontWeight: 600 }}
+              >
+                {hiddenDoneCount} ausgeblendet anzeigen
+              </button>
+            )}
+          </div>
           {allLabels.length > 0 && (
-            <>
-              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", padding: "0 0.2rem" }}>|</span>
-              {allLabels.slice(0, 10).map((label) => (
-                <button
-                  key={label}
-                  type="button"
-                  className={`filter-chip ${labelFilter === label ? "filter-chip-active" : ""}`}
-                  onClick={() => setLabelFilter((prev) => (prev === label ? null : label))}
-                >
-                  {label}
-                </button>
-              ))}
-              {allLabels.length > 10 && (
-                <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>+{allLabels.length - 10}</span>
-              )}
-            </>
+            <div className="board-scope-inline">
+              <span>Labels</span>
+              <Select
+                ariaLabel="Labels"
+                value={labelFilter ?? ""}
+                onChange={(v) => setLabelFilter(v || null)}
+                options={[{ value: "", label: "Alle Labels" }, ...allLabels.map((label) => ({ value: label, label }))]}
+                style={{ minWidth: 130 }}
+              />
+            </div>
           )}
           {hasActiveFilters && (
             <button
               type="button"
               className="filter-chip filter-chip-clear"
+              style={{ marginLeft: "auto" }}
               onClick={() => {
                 setTaskQuery("");
                 setTaskScope("all");
