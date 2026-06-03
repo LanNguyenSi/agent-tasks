@@ -6,6 +6,7 @@ import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
 import FormField from "../../../components/ui/FormField";
+import ConfirmDialog from "../../../components/ui/ConfirmDialog";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -64,6 +65,8 @@ export default function SsoSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const [displayName, setDisplayName] = useState("");
   const [issuer, setIssuer] = useState("");
@@ -145,8 +148,8 @@ export default function SsoSettingsPage() {
 
   async function handleDelete() {
     if (!authorized?.connection) return;
-    if (!confirm("Remove the SSO connection for this team? Existing sessions stay valid.")) return;
     setError(null);
+    setDeleting(true);
     try {
       await ssoFetch(`/api/teams/${authorized.team.id}/sso`, token, { method: "DELETE" });
       setAuthorized({ ...authorized, connection: null });
@@ -155,8 +158,11 @@ export default function SsoSettingsPage() {
       setClientId("");
       setClientSecret("");
       setEmailDomains("");
+      setDeleteConfirmOpen(false);
     } catch (err) {
       setError((err as Error).message);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -318,7 +324,7 @@ export default function SsoSettingsPage() {
                   {authorized.connection ? "Update connection" : "Create connection"}
                 </Button>
                 {authorized.connection && (
-                  <Button type="button" variant="secondary" onClick={() => void handleDelete()}>
+                  <Button type="button" variant="secondary" onClick={() => setDeleteConfirmOpen(true)}>
                     Remove
                   </Button>
                 )}
@@ -327,6 +333,18 @@ export default function SsoSettingsPage() {
           </Card>
         </>
       )}
+
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title="Remove SSO connection?"
+        message="This removes the SSO connection for this team. Existing sessions stay valid."
+        confirmLabel="Remove"
+        cancelLabel="Keep"
+        tone="danger"
+        busy={deleting}
+        onConfirm={() => void handleDelete()}
+        onCancel={() => setDeleteConfirmOpen(false)}
+      />
     </main>
   );
 }
