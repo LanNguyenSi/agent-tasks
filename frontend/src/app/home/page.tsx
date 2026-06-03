@@ -131,17 +131,15 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText, total, olderCount 
               <TaskRow key={task.id} task={task} teamId={teamId} />
             ))}
           </div>
-          {moreCount > 0 && (
+          {/* moreCount = items past the widget cap; olderCount = done tasks
+              outside the 14-day recency window. Both are only reachable via
+              the same unfiltered scope list (listHref has no recency filter),
+              so a single combined link avoids two links to the identical
+              destination. olderCount is 0 for non-done widgets. */}
+          {moreCount + olderCount > 0 && (
             <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
               <Link href={listHref} className="widget-link">
-                +{moreCount} more →
-              </Link>
-            </p>
-          )}
-          {olderCount > 0 && (
-            <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
-              <Link href={listHref} className="widget-link">
-                +{olderCount} older done →
+                +{moreCount + olderCount} more →
               </Link>
             </p>
           )}

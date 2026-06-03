@@ -1204,25 +1204,25 @@ export default function DashboardPage() {
                       }}
                     >
                       <span className="task-list-cell-main">
-                        <span style={{ fontSize: "var(--text-sm)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ fontSize: "var(--text-sm)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
                           {task.title}
                         </span>
                       </span>
-                      <span className="task-list-cell-status">
+                      <span className="task-list-cell-status" data-label="Status">
                         <span className="status-chip" style={{ color: STATUS_COLORS[task.status] }}>
                           {STATUS_LABELS[task.status as Status]}
                         </span>
                       </span>
-                      <span className="task-list-cell-muted">
+                      <span className="task-list-cell-muted" data-label="Assignee" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {getAssigneeName(task)}
                       </span>
-                      <span className="task-list-cell-muted">
+                      <span className="task-list-cell-muted" data-label="Due" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {task.dueAt ? toDateInputValue(task.dueAt) : "No due date"}
                       </span>
                       <span className="task-list-cell-updated" title={formatAbsoluteDate(task.updatedAt)}>
                         {formatRelativeTime(task.updatedAt)}
                       </span>
-                      <span className="task-list-cell-priority">
+                      <span className="task-list-cell-priority" data-label="Priority">
                         <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>
                           {task.priority}
                         </span>
