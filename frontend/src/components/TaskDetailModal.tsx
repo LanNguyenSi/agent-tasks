@@ -47,6 +47,13 @@ const PRIORITY_COLORS: Record<Priority, string> = {
   CRITICAL: "#be123c",
 };
 
+// Agent results can run to thousands of characters; clamp anything longer
+// than this so the modal stays scannable, with a Show more/less toggle.
+const RESULT_CLAMP_CHARS = 600;
+// Fades the clamped content to transparent regardless of the modal's
+// background colour (no overlay element needed).
+const RESULT_FADE_MASK = "linear-gradient(to bottom, #000 70%, transparent)";
+
 function isOverdue(task: Task): boolean {
   if (!task.dueAt || task.status === "done") return false;
   return new Date(task.dueAt).getTime() < Date.now();
@@ -101,6 +108,7 @@ export default function TaskDetailModal({
   const [claimBusy, setClaimBusy] = useState(false);
   const [advanceBusy, setAdvanceBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [resultExpanded, setResultExpanded] = useState(false);
   const [reviewComment, setReviewComment] = useState("");
   const [depPickerValue, setDepPickerValue] = useState("");
   const [commentText, setCommentText] = useState("");
@@ -134,6 +142,7 @@ export default function TaskDetailModal({
     setCommentText("");
     setDepPickerValue("");
     setShowDeleteTaskConfirm(false);
+    setResultExpanded(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.id]);
 
@@ -291,6 +300,9 @@ export default function TaskDetailModal({
 
   const webhookEvents = (task.comments ?? []).filter((c: Comment) => c.content.startsWith("[webhook]"));
   const userComments = (task.comments ?? []).filter((c: Comment) => !c.content.startsWith("[webhook]"));
+
+  const resultIsLong = (task.result?.length ?? 0) > RESULT_CLAMP_CHARS;
+  const resultClamped = resultIsLong && !resultExpanded;
 
   return (
     <>
@@ -653,9 +665,27 @@ export default function TaskDetailModal({
               {task.result && (
                 <div style={{ fontSize: "var(--text-sm)" }}>
                   <span style={{ color: "var(--muted)", display: "block", marginBottom: "var(--space-1)" }}>Result</span>
-                  <div className="prose-markdown" style={{ fontSize: "var(--text-sm)" }}>
+                  <div
+                    className="prose-markdown"
+                    style={{
+                      fontSize: "var(--text-sm)",
+                      maxHeight: resultClamped ? "16rem" : undefined,
+                      overflow: resultClamped ? "hidden" : undefined,
+                      maskImage: resultClamped ? RESULT_FADE_MASK : undefined,
+                      WebkitMaskImage: resultClamped ? RESULT_FADE_MASK : undefined,
+                    }}
+                  >
                     <ReactMarkdown>{task.result}</ReactMarkdown>
                   </div>
+                  {resultIsLong && (
+                    <button
+                      type="button"
+                      onClick={() => setResultExpanded((v) => !v)}
+                      style={{ background: "none", border: "none", padding: "0.25rem 0", color: "var(--primary)", cursor: "pointer", fontSize: "var(--text-xs)", fontWeight: 600 }}
+                    >
+                      {resultExpanded ? "Show less" : "Show more"}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
