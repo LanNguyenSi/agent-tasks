@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -9,6 +9,7 @@ import {
   getTeams,
   type Task,
   type Team,
+  type TeamTasksCounts,
   type TeamTasksProject,
   type User,
 } from "../../lib/api";
@@ -46,20 +47,6 @@ const STATUS_COLORS: Record<string, string> = {
   in_progress: "var(--primary)",
   review: "var(--warning)",
   done: "var(--success)",
-};
-
-const PRIORITY_RANK: Record<Priority, number> = {
-  CRITICAL: 0,
-  HIGH: 1,
-  MEDIUM: 2,
-  LOW: 3,
-};
-
-const STATUS_RANK: Record<string, number> = {
-  open: 0,
-  in_progress: 1,
-  review: 2,
-  done: 3,
 };
 
 const SCOPE_LABELS: Record<Scope, string> = {
@@ -128,35 +115,6 @@ function parseSort(value: string | null): { column: SortColumn; direction: SortD
   return { column: col as SortColumn, direction: dir };
 }
 
-function compareTasks(a: EnrichedTask, b: EnrichedTask, sort: { column: SortColumn; direction: SortDirection }): number {
-  let cmp = 0;
-  switch (sort.column) {
-    case "title":
-      cmp = a.title.localeCompare(b.title);
-      break;
-    case "status":
-      cmp = (STATUS_RANK[a.status] ?? 99) - (STATUS_RANK[b.status] ?? 99);
-      break;
-    case "project":
-      cmp = a.projectName.localeCompare(b.projectName);
-      break;
-    case "due": {
-      const ad = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
-      const bd = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
-      cmp = ad - bd;
-      break;
-    }
-    case "updated":
-      cmp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
-      break;
-    case "priority":
-      cmp = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
-      break;
-  }
-  if (cmp === 0) cmp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
-  return sort.direction === "asc" ? cmp : -cmp;
-}
-
 function TasksPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -165,7 +123,12 @@ function TasksPageInner() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [projects, setProjects] = useState<TeamTasksProject[]>([]);
-  const [allTasks, setAllTasks] = useState<EnrichedTask[]>([]);
+  // The current page of rows, already filtered/sorted/paginated server-side.
+  const [serverTasks, setServerTasks] = useState<EnrichedTask[]>([]);
+  // Total rows matching the active filter (drives pagination) and the
+  // team-wide counts (drives the empty-state copy + done recency chip totals).
+  const [filteredTotal, setFilteredTotal] = useState(0);
+  const [counts, setCounts] = useState<TeamTasksCounts | null>(null);
   const [loading, setLoading] = useState(true);
 
   const scope: Scope = (() => {
@@ -194,6 +157,20 @@ function TasksPageInner() {
     return PAGE_SIZE_OPTIONS.includes(raw) ? raw : DEFAULT_PAGE_SIZE;
   })();
   const page = Math.max(1, Number(searchParams.get("page")) || 1);
+
+  // Done-scope recency window. The done view defaults to Recent (≤14d) — the
+  // scope is literally "Recently Done" — with Older (>14d) / All reachable via
+  // the chips. Other scopes ignore recency entirely.
+  const recency: "recent" | "older" | "all" = (() => {
+    if (scope !== "done") return "all";
+    const raw = searchParams.get("recency");
+    return raw === "older" || raw === "all" ? raw : "recent";
+  })();
+
+  // Stable string keys so the multi-value filters can sit in the fetch
+  // effect's dependency array without tripping the exhaustive-deps lint.
+  const statusKey = statusFilter.join(",");
+  const priorityKey = priorityFilter.join(",");
 
   // Local mirror of the URL `q` param so typing doesn't router.replace on every
   // keystroke; the debounce effect below pushes it to the URL after a pause.
@@ -247,33 +224,45 @@ function TasksPageInner() {
   // per-project fan-out that issued one HTTP request per project.
   useEffect(() => {
     if (!selectedTeam) {
-      setAllTasks([]);
+      setServerTasks([]);
       setProjects([]);
+      setFilteredTotal(0);
+      setCounts(null);
       return;
     }
     let cancelled = false;
 
-    async function fetchAll(teamId: string) {
-      // Take the server's hard-max (1000): the /tasks page is the
-      // dedicated full-list view and can absorb the larger payload, vs
-      // the home dashboard which is fine with the 500 default. If a team
-      // ever exceeds 1000 tasks the truncation banner below surfaces the
-      // cap so users know they need to narrow with filters.
-      const r = await getTeamTasks(teamId, { limit: 1000 });
+    // Server-side filter + sort + pagination: the page requests exactly the
+    // rows it shows, so the full set (incl. done tasks older than the former
+    // 1000-recent fetch cap) is reachable by paging rather than client-slicing.
+    async function fetchPage(teamId: string) {
+      const r = await getTeamTasks(teamId, {
+        status: statusKey || undefined,
+        priority: priorityKey || undefined,
+        projectId: projectIdFilter || undefined,
+        mine: mineOnly || undefined,
+        q: searchQuery.trim() || undefined,
+        sort: `${sort.column}:${sort.direction}`,
+        recency: scope === "done" ? recency : undefined,
+        offset: (page - 1) * pageSize,
+        limit: pageSize,
+      });
       if (cancelled) return;
       setProjects(r.projects);
       const projectName = new Map(r.projects.map((p) => [p.id, p.name]));
-      const enriched: EnrichedTask[] = r.tasks.map((t) => ({
-        ...t,
-        projectName: projectName.get(t.projectId) ?? "(unknown)",
-      }));
-      setAllTasks(enriched);
+      setServerTasks(
+        r.tasks.map((t) => ({ ...t, projectName: projectName.get(t.projectId) ?? "(unknown)" })),
+      );
+      setFilteredTotal(r.filteredTotal ?? r.tasks.length);
+      setCounts(r.counts ?? null);
     }
 
-    void fetchAll(selectedTeam.id);
-    const interval = setInterval(() => void fetchAll(selectedTeam.id), 30_000);
+    void fetchPage(selectedTeam.id);
+    const interval = setInterval(() => void fetchPage(selectedTeam.id), 30_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [selectedTeam]);
+    // statusKey/priorityKey are the stable serialisations of the array filters.
+  }, [selectedTeam, scope, recency, page, pageSize, sort.column, sort.direction,
+      projectIdFilter, mineOnly, searchQuery, statusKey, priorityKey]);
 
   function updateParams(patch: Record<string, string | null>, resetPage = true): void {
     const next = new URLSearchParams(searchParams.toString());
@@ -306,30 +295,23 @@ function TasksPageInner() {
     updateParams({ sort: `${column}:${next}` }, false);
   }
 
-  const filteredTasks = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
-    return allTasks
-      .filter((t) => {
-        if (statusFilter.length > 0 && !statusFilter.includes(t.status as Status)) return false;
-        if (priorityFilter.length > 0 && !priorityFilter.includes(t.priority)) return false;
-        if (projectIdFilter && t.projectId !== projectIdFilter) return false;
-        if (mineOnly && t.claimedByUserId !== user?.id) return false;
-        if (normalizedQuery) {
-          const hay = `${t.title} ${t.description ?? ""} ${t.externalRef ?? ""} ${(t.labels ?? []).join(" ")}`.toLowerCase();
-          if (!hay.includes(normalizedQuery)) return false;
-        }
-        return true;
-      })
-      .sort((a, b) => compareTasks(a, b, sort));
-  }, [allTasks, statusFilter, priorityFilter, projectIdFilter, mineOnly, searchQuery, sort, user?.id]);
-
-  const totalCount = filteredTasks.length;
+  // Rows are already filtered/sorted/paged server-side; render them directly.
+  const totalCount = filteredTotal;
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const currentPage = Math.min(page, totalPages);
-  const pagedTasks = useMemo(
-    () => filteredTasks.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-    [filteredTasks, currentPage, pageSize],
-  );
+  const pagedTasks = serverTasks;
+
+  // If the URL `page` overshoots the filtered set (deep-link, back-nav, or the
+  // poll shrinking the count below the current page), snap it back so the user
+  // sees the last real page instead of a header with no rows. Guard on
+  // filteredTotal > 0 so the genuine empty-state still renders.
+  useEffect(() => {
+    if (filteredTotal > 0 && page > totalPages) {
+      updateParams({ page: null });
+    }
+    // updateParams is a pure URL helper; depending on it would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredTotal, totalPages, page]);
 
   // Count only user-applied overrides (URL-sourced), not preset defaults.
   const activeFilterCount =
@@ -385,16 +367,6 @@ function TasksPageInner() {
         )}
       </Card>
 
-      {allTasks.length >= 1000 && (
-        <Card padding="sm" style={{ marginBottom: "var(--space-3)", background: "var(--warning-muted)", border: "1px solid var(--warning)" }}>
-          <p style={{ fontSize: "var(--text-xs)", color: "var(--warning)" }}>
-            This team has more than 1000 tasks; only the 1000 most recently
-            updated are loaded here. The filters below search within that set;
-            older tasks are not included.
-          </p>
-        </Card>
-      )}
-
       {/* Scope chips */}
       <div className="scope-chip-row">
         {(Object.keys(SCOPE_LABELS) as Scope[]).map((s) => (
@@ -414,6 +386,28 @@ function TasksPageInner() {
           </button>
         ))}
       </div>
+
+      {/* Recency sub-filter for the done scope: Recent (≤14d) / Older (>14d) /
+          All. Counts are the team-wide done split from the server. */}
+      {scope === "done" && (
+        <div className="scope-chip-row">
+          {([
+            ["recent", "Recent (≤14d)", counts?.doneRecent],
+            ["older", "Older (>14d)", counts?.doneOlder],
+            ["all", "All", counts?.done],
+          ] as [typeof recency, string, number | undefined][]).map(([value, label, count]) => (
+            <button
+              key={value}
+              type="button"
+              className={`filter-chip ${recency === value ? "filter-chip-active" : ""}`}
+              onClick={() => updateParams({ recency: value === "recent" ? null : value })}
+            >
+              {label}
+              {typeof count === "number" ? ` · ${count}` : ""}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Filter controls */}
       <Card padding="sm" style={{ marginBottom: "var(--space-3)" }}>
@@ -515,7 +509,7 @@ function TasksPageInner() {
       {totalCount === 0 ? (
         <EmptyState
           message={
-            allTasks.length === 0
+            (counts?.total ?? 0) === 0
               ? "No tasks found for this team yet."
               : "No tasks match the current filters."
           }

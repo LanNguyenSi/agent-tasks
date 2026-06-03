@@ -460,6 +460,10 @@ export interface TeamTasksCounts {
   open: number;
   review: number;
   done: number;
+  // Team-wide done split at the 14-day window (added with the done recency
+  // filter). Optional for forward-compat with a backend predating it.
+  doneRecent?: number;
+  doneOlder?: number;
   priority: number;
   mine: number;
   total: number;
@@ -471,6 +475,9 @@ export interface TeamTasksResponse {
   // Optional for forward-compat: a backend predating the counts rollout
   // will simply omit this; callers should fall back to `tasks.length`.
   counts?: TeamTasksCounts;
+  // Total rows matching the active filter, for server-side pagination.
+  // Optional for forward-compat; callers fall back to `tasks.length`.
+  filteredTotal?: number;
 }
 
 /**
@@ -482,13 +489,31 @@ export interface TeamTasksResponse {
  */
 export async function getTeamTasks(
   teamId: string,
-  opts: { status?: string; priority?: string; labels?: string; limit?: number } = {},
+  opts: {
+    status?: string;
+    priority?: string;
+    labels?: string;
+    limit?: number;
+    // Server-side filter/sort/pagination params for the /tasks browser.
+    recency?: "recent" | "older" | "all";
+    projectId?: string;
+    mine?: boolean;
+    q?: string;
+    sort?: string;
+    offset?: number;
+  } = {},
 ): Promise<TeamTasksResponse> {
   const params = new URLSearchParams();
   if (opts.status) params.set("status", opts.status);
   if (opts.priority) params.set("priority", opts.priority);
   if (opts.labels) params.set("labels", opts.labels);
   if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.recency && opts.recency !== "all") params.set("recency", opts.recency);
+  if (opts.projectId) params.set("projectId", opts.projectId);
+  if (opts.mine) params.set("mine", "1");
+  if (opts.q) params.set("q", opts.q);
+  if (opts.sort) params.set("sort", opts.sort);
+  if (opts.offset) params.set("offset", String(opts.offset));
   const qs = params.toString();
   const path = `/api/teams/${teamId}/tasks${qs ? `?${qs}` : ""}`;
   return request<TeamTasksResponse>(path);

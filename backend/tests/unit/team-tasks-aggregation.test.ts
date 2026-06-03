@@ -103,16 +103,21 @@ beforeEach(() => {
     { id: "t-2", projectId: "p-2", title: "Task 2", status: "review", priority: "LOW", labels: [], updatedAt: new Date() },
   ]);
   // Default count-stack: groupBy returns one row per status; count() is
-  // used twice (priority, mine) — first call resolves to the priority
-  // count, second to the mine count. Tests that need other shapes call
-  // .mockReset() and re-prime explicitly.
+  // invoked five times, in this order — filteredTotal, priority, mine,
+  // doneRecent, doneOlder. Tests that need other shapes call .mockReset()
+  // and re-prime explicitly.
   prismaMocks.taskGroupBy.mockResolvedValue([
     { status: "open", _count: { _all: 70 } },
     { status: "in_progress", _count: { _all: 5 } },
     { status: "review", _count: { _all: 1 } },
     { status: "done", _count: { _all: 778 } },
   ]);
-  prismaMocks.taskCount.mockResolvedValueOnce(12).mockResolvedValueOnce(3);
+  prismaMocks.taskCount
+    .mockResolvedValueOnce(2) // filteredTotal
+    .mockResolvedValueOnce(12) // priority
+    .mockResolvedValueOnce(3) // mine
+    .mockResolvedValueOnce(100) // doneRecent
+    .mockResolvedValueOnce(678); // doneOlder
 });
 
 describe("GET /teams/:teamId/tasks (aggregation)", () => {
@@ -190,7 +195,7 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
     };
     expect(body.tasks).toEqual([]);
     expect(body.projects).toEqual([]);
-    expect(body.counts).toEqual({ open: 0, review: 0, done: 0, priority: 0, mine: 0, total: 0 });
+    expect(body.counts).toEqual({ open: 0, review: 0, done: 0, doneRecent: 0, doneOlder: 0, priority: 0, mine: 0, total: 0 });
     expect(prismaMocks.taskFindMany).not.toHaveBeenCalled();
     expect(prismaMocks.taskGroupBy).not.toHaveBeenCalled();
     expect(prismaMocks.taskCount).not.toHaveBeenCalled();
@@ -266,7 +271,8 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
 
     it("priority count is HIGH|CRITICAL AND status != done", async () => {
       await makeApp(HUMAN).request("/teams/team-A/tasks");
-      const priorityWhere = prismaMocks.taskCount.mock.calls[0]![0]!.where;
+      // calls[0] is the filteredTotal count; priority is the second count.
+      const priorityWhere = prismaMocks.taskCount.mock.calls[1]![0]!.where;
       expect(priorityWhere).toEqual({
         projectId: { in: ["p-1", "p-2"] },
         priority: { in: ["HIGH", "CRITICAL"] },
@@ -276,7 +282,7 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
 
     it("mine count is scoped to actor.userId AND status != done", async () => {
       await makeApp(HUMAN).request("/teams/team-A/tasks");
-      const mineWhere = prismaMocks.taskCount.mock.calls[1]![0]!.where;
+      const mineWhere = prismaMocks.taskCount.mock.calls[2]![0]!.where;
       expect(mineWhere).toEqual({
         projectId: { in: ["p-1", "p-2"] },
         claimedByUserId: "u-1",
@@ -286,7 +292,7 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
 
     it("mine count uses the agent actor's userId for agent callers", async () => {
       await makeApp(AGENT).request("/teams/team-A/tasks");
-      const mineWhere = prismaMocks.taskCount.mock.calls[1]![0]!.where;
+      const mineWhere = prismaMocks.taskCount.mock.calls[2]![0]!.where;
       expect(mineWhere).toMatchObject({ claimedByUserId: "agent-owner" });
     });
 
@@ -294,17 +300,73 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
       prismaMocks.taskGroupBy.mockReset();
       prismaMocks.taskGroupBy.mockResolvedValue([]);
       prismaMocks.taskCount.mockReset();
-      prismaMocks.taskCount.mockResolvedValueOnce(0).mockResolvedValueOnce(0);
+      prismaMocks.taskCount.mockResolvedValue(0);
       const res = await makeApp(HUMAN).request("/teams/team-A/tasks");
       const body = (await res.json()) as { counts: Record<string, number> };
       expect(body.counts).toEqual({
         open: 0,
         review: 0,
         done: 0,
+        doneRecent: 0,
+        doneOlder: 0,
         priority: 0,
         mine: 0,
         total: 0,
       });
+    });
+  });
+
+  describe("done recency filter + pagination", () => {
+    it("recency=recent adds an updatedAt lower bound to the row query", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?recency=recent");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where as {
+        updatedAt?: { gte?: Date; lt?: Date };
+      };
+      expect(where.updatedAt?.gte).toBeInstanceOf(Date);
+      expect(where.updatedAt?.lt).toBeUndefined();
+    });
+
+    it("recency=older adds an updatedAt upper bound to the row query", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?recency=older");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where as {
+        updatedAt?: { gte?: Date; lt?: Date };
+      };
+      expect(where.updatedAt?.lt).toBeInstanceOf(Date);
+      expect(where.updatedAt?.gte).toBeUndefined();
+    });
+
+    it("recency=all (or absent) applies no updatedAt boundary", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?recency=all");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where as {
+        updatedAt?: unknown;
+      };
+      expect(where.updatedAt).toBeUndefined();
+    });
+
+    it("?offset=N becomes the findMany skip for server-side paging", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?offset=50");
+      expect(prismaMocks.taskFindMany.mock.calls[0]![0]!.skip).toBe(50);
+    });
+
+    it("?sort=title:asc maps to an orderBy on the column", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?sort=title:asc");
+      expect(prismaMocks.taskFindMany.mock.calls[0]![0]!.orderBy).toEqual({ title: "asc" });
+    });
+
+    it("?sort=project:asc maps to an orderBy on the related project name", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?sort=project:asc");
+      expect(prismaMocks.taskFindMany.mock.calls[0]![0]!.orderBy).toEqual({ project: { name: "asc" } });
+    });
+
+    it("returns filteredTotal and the doneRecent/doneOlder split", async () => {
+      const res = await makeApp(HUMAN).request("/teams/team-A/tasks");
+      const body = (await res.json()) as {
+        filteredTotal: number;
+        counts: { doneRecent: number; doneOlder: number; done: number };
+      };
+      expect(body.filteredTotal).toBe(2); // first count() in the beforeEach stack
+      expect(body.counts.doneRecent).toBe(100);
+      expect(body.counts.doneOlder).toBe(678);
     });
   });
 });
