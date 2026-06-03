@@ -1220,6 +1220,18 @@ input[type="checkbox"] {
     gap: var(--space-1);
   }
 
+  /* Stacked cells get an inline field label so each value is identifiable
+     once the column header row is hidden. The title (main) cell and the
+     already-hidden updated cell are intentionally not labelled. */
+  .task-list-row [data-label]::before {
+    content: attr(data-label) ": ";
+    color: var(--muted);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-right: 0.4rem;
+  }
+
   .task-list-head {
     display: none;
   }
