@@ -3,11 +3,12 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getCurrentUser, getTeams, createTeam, type User } from "../../lib/api";
+import { getCurrentUser, getTeams, createTeam, logout, type User } from "../../lib/api";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
 import FormField from "../../components/ui/FormField";
+import { FullPageLoader } from "../../components/ui/FullPageLoader";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -19,6 +20,7 @@ export default function OnboardingPage() {
   const [teamName, setTeamName] = useState("");
   const [teamSlug, setTeamSlug] = useState("");
   const [creating, setCreating] = useState(false);
+  const [slugTouched, setSlugTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -33,9 +35,9 @@ export default function OnboardingPage() {
       setLoading(false);
 
       if (existingTeams.length > 0) {
-        // Already has teams — redirect to teams page
+        // Already has teams, send them straight to home.
         setStep("redirect");
-        router.replace("/teams");
+        router.replace("/home");
       } else {
         setStep("create-team");
       }
@@ -45,13 +47,16 @@ export default function OnboardingPage() {
   // Auto-generate slug from name
   function handleNameChange(name: string) {
     setTeamName(name);
-    setTeamSlug(
-      name
-        .toLowerCase()
-        .replace(/[^a-z0-9\s-]/g, "")
-        .replace(/\s+/g, "-")
-        .slice(0, 50),
-    );
+    // Don't clobber a slug the user has hand-edited.
+    if (!slugTouched) {
+      setTeamSlug(
+        name
+          .toLowerCase()
+          .replace(/[^a-z0-9\s-]/g, "")
+          .replace(/\s+/g, "-")
+          .slice(0, 50),
+      );
+    }
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -61,7 +66,7 @@ export default function OnboardingPage() {
     setError(null);
     try {
       await createTeam({ name: teamName.trim(), slug: teamSlug.trim() });
-      router.replace("/teams");
+      router.replace("/home");
     } catch (err) {
       setError((err as Error).message);
       setCreating(false);
@@ -69,11 +74,7 @@ export default function OnboardingPage() {
   }
 
   if (loading || step === "loading" || step === "redirect") {
-    return (
-      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "var(--muted)" }}>Loading…</p>
-      </main>
-    );
+    return <FullPageLoader label="Loading…" />;
   }
 
   return (
@@ -91,9 +92,13 @@ export default function OnboardingPage() {
           <Link href="/" style={{ color: "var(--muted)", fontSize: "var(--text-sm)", textDecoration: "none" }}>
             ← agent-tasks
           </Link>
-          <a href="/api/auth/logout" style={{ color: "var(--muted)", fontSize: "var(--text-sm)", textDecoration: "none" }}>
+          <button
+            type="button"
+            onClick={() => { void logout().then(() => router.replace("/")); }}
+            style={{ background: "none", border: "none", color: "var(--muted)", fontSize: "var(--text-sm)", cursor: "pointer", padding: 0, fontFamily: "inherit" }}
+          >
             Sign out
-          </a>
+          </button>
         </div>
 
         {user && (
@@ -131,14 +136,14 @@ export default function OnboardingPage() {
               <input
                 type="text"
                 value={teamSlug}
-                onChange={(e) => setTeamSlug(e.target.value)}
+                onChange={(e) => { setSlugTouched(true); setTeamSlug(e.target.value); }}
                 placeholder="my-team"
                 pattern="[a-z0-9-]+"
                 required
                 style={{ width: "100%", display: "block", fontFamily: "monospace" }}
               />
               <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "var(--space-1)" }}>
-                Used in URLs. Lowercase, hyphens only.
+                Used in URLs. Lowercase, hyphens only.{!slugTouched && " Auto-generated from the name."}
               </p>
             </FormField>
 

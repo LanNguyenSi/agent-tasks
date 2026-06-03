@@ -4,10 +4,12 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getCurrentUser, getTeams } from "../lib/api";
+import { FullPageLoader } from "../components/ui/FullPageLoader";
 
 export default function HomePage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
+  const [redirectingToGithub, setRedirectingToGithub] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -22,11 +24,7 @@ export default function HomePage() {
   }, [router]);
 
   if (checkingSession) {
-    return (
-      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "var(--muted)" }}>Loading…</p>
-      </main>
-    );
+    return <FullPageLoader label="Loading…" />;
   }
 
   return (
@@ -49,8 +47,13 @@ export default function HomePage() {
             <Link href="/auth" className="landing-cta-primary">
               Sign in with email
             </Link>
-            <a href="/api/auth/github" className="landing-cta-secondary">
-              Continue with GitHub
+            <a
+              href="/api/auth/github"
+              className="landing-cta-secondary"
+              onClick={() => setRedirectingToGithub(true)}
+              style={redirectingToGithub ? { pointerEvents: "none", opacity: 0.7 } : undefined}
+            >
+              {redirectingToGithub ? "Redirecting to GitHub…" : "Continue with GitHub"}
             </a>
           </div>
 
@@ -77,7 +80,7 @@ export default function HomePage() {
             </article>
             <article className="landing-feature">
               <h2>Description Quality</h2>
-              <p>Built-in bullshit meter: measures information density, structure, and concreteness. Not character count - actual signal.</p>
+              <p>Built-in quality meter: measures information density, structure, and concreteness, not just character count.</p>
             </article>
           </div>
         </section>
