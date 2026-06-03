@@ -31,3 +31,17 @@ export function formatAbsoluteDate(iso: string): string {
     minute: "2-digit",
   });
 }
+
+/**
+ * Date-only label for due dates (no time component): "Mar 5", or
+ * "Mar 5, 2027" when the year differs from now. Matches formatRelativeTime's
+ * older-than-a-week day/month style. Rendered in the viewer's local timezone,
+ * consistent with how dueAt is entered (local midnight).
+ */
+export function formatDueDate(iso: string): string {
+  const date = new Date(iso);
+  const month = MONTH_NAMES[date.getMonth()];
+  const day = date.getDate();
+  if (date.getFullYear() === new Date().getFullYear()) return `${month} ${day}`;
+  return `${month} ${day}, ${date.getFullYear()}`;
+}
