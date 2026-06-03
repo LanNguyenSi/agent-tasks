@@ -11,6 +11,7 @@ import {
   type User,
 } from "../lib/api";
 import { Button } from "./ui/Button";
+import CollapsibleSection from "./ui/CollapsibleSection";
 
 const TYPE_LABELS: Record<TaskArtifactType, string> = {
   build_log: "Build logs",
@@ -145,8 +146,7 @@ export default function TaskArtifactsSection({
   };
 
   return (
-    <section>
-      <p className="section-kicker">Artifacts</p>
+    <CollapsibleSection key={taskId} title="Artifacts" count={artifacts.length}>
       {loading && artifacts.length === 0 ? (
         <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>Loading…</p>
       ) : artifacts.length === 0 ? (
@@ -304,6 +304,6 @@ export default function TaskArtifactsSection({
           ))}
         </div>
       )}
-    </section>
+    </CollapsibleSection>
   );
 }
