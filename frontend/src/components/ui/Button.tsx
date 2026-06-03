@@ -47,8 +47,10 @@ export function Button({
         ...style,
       }}
       {...props}
+      aria-busy={loading || undefined}
     >
-      {loading ? "…" : children}
+      {children}
+      {loading && <span className="sr-only">Loading</span>}
     </button>
   );
 }

@@ -41,13 +41,13 @@ export default function AppHeader({ user, boardHref = "/dashboard" }: AppHeaderP
         <Link href="/home" style={{ fontWeight: 700, color: "var(--primary)", textDecoration: "none" }}>
           agent-tasks
         </Link>
-        <Link href="/home" style={{ color: isHome ? "var(--text)" : "var(--muted)", fontSize: "0.85rem", textDecoration: "none" }}>
+        <Link href="/home" aria-current={isHome ? "page" : undefined} style={{ color: isHome ? "var(--text)" : "var(--muted)", fontWeight: isHome ? 600 : 400, fontSize: "0.85rem", textDecoration: "none" }}>
           Home
         </Link>
-        <Link href="/teams" style={{ color: isTeams ? "var(--text)" : "var(--muted)", fontSize: "0.85rem", textDecoration: "none" }}>
+        <Link href="/teams" aria-current={isTeams ? "page" : undefined} style={{ color: isTeams ? "var(--text)" : "var(--muted)", fontWeight: isTeams ? 600 : 400, fontSize: "0.85rem", textDecoration: "none" }}>
           Teams
         </Link>
-        <Link href={boardHref} style={{ color: isDashboard ? "var(--text)" : "var(--muted)", fontSize: "0.85rem", textDecoration: "none" }}>
+        <Link href={boardHref} aria-current={isDashboard ? "page" : undefined} style={{ color: isDashboard ? "var(--text)" : "var(--muted)", fontWeight: isDashboard ? 600 : 400, fontSize: "0.85rem", textDecoration: "none" }}>
           Board
         </Link>
       </div>

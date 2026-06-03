@@ -967,6 +967,8 @@ input[type="checkbox"] {
 
 @media (prefers-reduced-motion: reduce) {
   .skeleton { animation: none; }
+  .modal-overlay,
+  .modal-card { animation: none; }
 }
 
 /* ── Screen-reader-only ───────────────────────────────────────── */
