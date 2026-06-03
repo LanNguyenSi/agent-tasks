@@ -94,9 +94,13 @@ interface WidgetProps {
   // more" so the numbers don't drift once the team's task count exceeds
   // the row-fetch page size.
   total?: number;
+  // "Recently Done" only: count of done tasks beyond the 14-day window. When
+  // set, the widget offers a link to reveal them via the full done list,
+  // since the recent-capped list/count would otherwise hide them.
+  olderCount?: number;
 }
 
-function TaskWidget({ title, tasks, teamId, scope, emptyText, total }: WidgetProps) {
+function TaskWidget({ title, tasks, teamId, scope, emptyText, total, olderCount = 0 }: WidgetProps) {
   const listHref = `/tasks?teamId=${teamId}&scope=${scope}`;
   const displayTotal = total ?? tasks.length;
   const moreCount = Math.max(0, displayTotal - WIDGET_LIMIT);
@@ -113,7 +117,16 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText, total }: WidgetPro
         </Link>
       </div>
       {displayTotal === 0 ? (
-        <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", padding: "0.25rem 0" }}>{emptyText}</p>
+        <>
+          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", padding: "0.25rem 0" }}>{emptyText}</p>
+          {olderCount > 0 && (
+            <p style={{ textAlign: "right", marginTop: "0.2rem", fontSize: "var(--text-xs)" }}>
+              <Link href={listHref} style={{ color: "var(--primary)", textDecoration: "none" }}>
+                Alle {olderCount} erledigten anzeigen →
+              </Link>
+            </p>
+          )}
+        </>
       ) : (
         <>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
@@ -125,6 +138,13 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText, total }: WidgetPro
             <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
               <Link href={listHref} style={{ color: "var(--primary)", textDecoration: "none" }}>
                 +{moreCount} more →
+              </Link>
+            </p>
+          )}
+          {olderCount > 0 && moreCount === 0 && (
+            <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
+              <Link href={listHref} style={{ color: "var(--primary)", textDecoration: "none" }}>
+                +{olderCount} ältere erledigte →
               </Link>
             </p>
           )}
@@ -225,6 +245,13 @@ export default function HomeDashboardPage() {
     return allTasks.filter((t) => t.status === "done" && !isDoneTaskHidden("recent", t.updatedAt, now));
   }, [allTasks]);
 
+  // Done tasks beyond the 14-day window, so the Recently Done widget can offer
+  // a link to reveal them (its list only shows the recent ones).
+  const olderDoneCount = useMemo(() => {
+    const doneTotal = counts?.done ?? allTasks.filter((t) => t.status === "done").length;
+    return Math.max(0, doneTotal - recentlyDone.length);
+  }, [counts, allTasks, recentlyDone]);
+
   const myTasks = useMemo(
     () => allTasks.filter((t) => t.claimedByUserId === user?.id && t.status !== "done"),
     [allTasks, user],
@@ -265,8 +292,9 @@ export default function HomeDashboardPage() {
             <TaskWidget title="Priority (High / Critical)" tasks={priorityTasks} teamId={selectedTeam.id} scope="priority" emptyText="No high-priority tasks." total={counts?.priority} />
             <TaskWidget title="In Review" tasks={inReviewTasks} teamId={selectedTeam.id} scope="review" emptyText="Nothing in review." total={counts?.review} />
             {/* total is the local 14-day count by design (the /tasks list has no
-                recency filter); the "see all" link still lists every done task. */}
-            <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} scope="done" emptyText="No tasks completed in the last 14 days." total={recentlyDone.length} />
+                recency filter); olderCount surfaces a link to the done tasks
+                beyond that window so they stay reachable from here. */}
+            <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} scope="done" emptyText="No tasks completed in the last 14 days." total={recentlyDone.length} olderCount={olderDoneCount} />
           </div>
         )
       )}
