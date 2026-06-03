@@ -441,7 +441,7 @@ export default function TaskDetailModal({
         {isEditing && (
           <section style={{ marginBottom: "0.8rem" }}>
             <p className="section-kicker">Workflow</p>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", marginBottom: "0.5rem" }}>
+            <div className="collapsing-grid" style={{ gap: "0.4rem", marginBottom: "0.5rem" }}>
               <FormField label="Status">
                 <Select value={editStatus} onChange={(v) => setEditStatus(v as Status)} options={STATUSES.map((status) => ({ value: status, label: STATUS_LABELS[status] }))} style={{ width: "100%" }} />
               </FormField>

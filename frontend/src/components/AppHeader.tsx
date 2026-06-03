@@ -41,13 +41,13 @@ export default function AppHeader({ user, boardHref = "/dashboard" }: AppHeaderP
         <Link href="/home" style={{ fontWeight: 700, color: "var(--primary)", textDecoration: "none" }}>
           agent-tasks
         </Link>
-        <Link href="/home" aria-current={isHome ? "page" : undefined} style={{ color: isHome ? "var(--text)" : "var(--muted)", fontWeight: isHome ? 600 : 400, fontSize: "0.85rem", textDecoration: "none" }}>
+        <Link href="/home" aria-current={isHome ? "page" : undefined} style={{ color: isHome ? "var(--text)" : "var(--muted)", fontWeight: isHome ? 600 : 400, fontSize: "var(--text-sm)", textDecoration: "none" }}>
           Home
         </Link>
-        <Link href="/teams" aria-current={isTeams ? "page" : undefined} style={{ color: isTeams ? "var(--text)" : "var(--muted)", fontWeight: isTeams ? 600 : 400, fontSize: "0.85rem", textDecoration: "none" }}>
+        <Link href="/teams" aria-current={isTeams ? "page" : undefined} style={{ color: isTeams ? "var(--text)" : "var(--muted)", fontWeight: isTeams ? 600 : 400, fontSize: "var(--text-sm)", textDecoration: "none" }}>
           Teams
         </Link>
-        <Link href={boardHref} aria-current={isDashboard ? "page" : undefined} style={{ color: isDashboard ? "var(--text)" : "var(--muted)", fontWeight: isDashboard ? 600 : 400, fontSize: "0.85rem", textDecoration: "none" }}>
+        <Link href={boardHref} aria-current={isDashboard ? "page" : undefined} style={{ color: isDashboard ? "var(--text)" : "var(--muted)", fontWeight: isDashboard ? 600 : 400, fontSize: "var(--text-sm)", textDecoration: "none" }}>
           Board
         </Link>
       </div>
@@ -85,15 +85,15 @@ export default function AppHeader({ user, boardHref = "/dashboard" }: AppHeaderP
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontSize: "0.75rem",
+                  fontSize: "var(--text-xs)",
                   fontWeight: 700,
                 }}
               >
                 {user.login.charAt(0).toUpperCase()}
               </span>
             )}
-            <span className="app-user-name" style={{ color: "var(--text)", fontSize: "0.85rem" }}>{user.login}</span>
-            <span style={{ color: "var(--muted)", fontSize: "0.7rem" }}>{menuOpen ? "▲" : "▼"}</span>
+            <span className="app-user-name" style={{ color: "var(--text)", fontSize: "var(--text-sm)" }}>{user.login}</span>
+            <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{menuOpen ? "▲" : "▼"}</span>
           </button>
 
           <DropdownMenu

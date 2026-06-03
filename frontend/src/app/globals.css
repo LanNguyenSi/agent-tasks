@@ -60,6 +60,9 @@ html[data-theme="light"] {
   --radius-lg: 10px;
   --radius-xl: 12px;
 
+  /* Elevation */
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
+
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -531,6 +534,59 @@ input[type="checkbox"] {
 @media (max-width: 768px) {
   .home-widgets-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Two-column form grid that collapses to a single column on narrow
+   viewports. Shared by the create-invite Role/Expires pair and the task
+   modal's Status/Priority pair so they stop cramping on phones. */
+.collapsing-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+@media (max-width: 560px) {
+  .collapsing-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Compact text links inside the home widgets ("N total", "+N more",
+   "older done"). Given a real hit area and the accent colour so they read
+   as the affordances they are, with an underline on hover. */
+.widget-link {
+  display: inline-block;
+  padding: 0.2rem 0.15rem;
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+
+.widget-link:hover {
+  text-decoration: underline;
+}
+
+/* Indeterminate loading spinner used by FullPageLoader. Holds still under
+   reduced-motion. */
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spinner-rotate 0.7s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
   }
 }
 
@@ -1299,6 +1355,8 @@ html[data-theme="light"] {
   --warning: #b36b00;
   --danger: #d1323e;
   --danger-strong: #a10e30;
+
+  --shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.14);
 }
 
 html[data-theme="light"] body {

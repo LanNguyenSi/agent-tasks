@@ -23,6 +23,7 @@ import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import DropdownMenu from "../../components/ui/DropdownMenu";
 import EmptyState from "../../components/ui/EmptyState";
 import FormField from "../../components/ui/FormField";
+import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
 import Select from "@/components/ui/Select";
@@ -259,11 +260,7 @@ export default function TeamsPage() {
   );
 
   if (loading) {
-    return (
-      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "var(--muted)" }}>Loading…</p>
-      </main>
-    );
+    return <FullPageLoader label="Loading teams…" />;
   }
 
   return (

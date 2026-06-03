@@ -18,6 +18,7 @@ import { PRIORITY_COLORS } from "../../lib/priorityColors";
 import AppHeader from "../../components/AppHeader";
 import Card from "../../components/ui/Card";
 import { SkeletonList } from "../../components/ui/Skeleton";
+import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 
@@ -41,12 +42,12 @@ function TaskRow({ task, teamId }: { task: EnrichedTask; teamId: string }) {
   return (
     <Link
       href={`/dashboard?teamId=${teamId}&projectId=${task.projectId}&taskId=${task.id}`}
+      aria-label={`${task.title}, ${task.projectName}, ${STATUS_LABELS[task.status] ?? task.status}, ${task.priority} priority`}
       style={{ textDecoration: "none", color: "inherit" }}
     >
       <div className="open-task-row" style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.5rem", borderRadius: "var(--radius-base)", transition: "background 0.12s ease" }}>
         <span
-          role="img"
-          aria-label={`Status: ${STATUS_LABELS[task.status] ?? task.status}`}
+          aria-hidden="true"
           title={STATUS_LABELS[task.status] ?? task.status}
           style={{ width: "7px", height: "7px", borderRadius: "50%", background: STATUS_COLORS[task.status] ?? "var(--muted)", flexShrink: 0 }}
         />
@@ -108,7 +109,7 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText, total, olderCount 
             {title}
           </h2>
         </Link>
-        <Link href={listHref} style={{ color: "var(--muted)", fontSize: "var(--text-xs)", textDecoration: "none", flexShrink: 0 }}>
+        <Link href={listHref} className="widget-link" style={{ fontSize: "var(--text-xs)", flexShrink: 0 }}>
           {displayTotal} total →
         </Link>
       </div>
@@ -117,7 +118,7 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText, total, olderCount 
           <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", padding: "0.25rem 0" }}>{emptyText}</p>
           {olderCount > 0 && (
             <p style={{ textAlign: "right", marginTop: "0.2rem", fontSize: "var(--text-xs)" }}>
-              <Link href={listHref} style={{ color: "var(--primary)", textDecoration: "none" }}>
+              <Link href={listHref} className="widget-link">
                 Show all {olderCount} done →
               </Link>
             </p>
@@ -132,14 +133,14 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText, total, olderCount 
           </div>
           {moreCount > 0 && (
             <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
-              <Link href={listHref} style={{ color: "var(--primary)", textDecoration: "none" }}>
+              <Link href={listHref} className="widget-link">
                 +{moreCount} more →
               </Link>
             </p>
           )}
-          {olderCount > 0 && moreCount === 0 && (
+          {olderCount > 0 && (
             <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
-              <Link href={listHref} style={{ color: "var(--primary)", textDecoration: "none" }}>
+              <Link href={listHref} className="widget-link">
                 +{olderCount} older done →
               </Link>
             </p>
@@ -274,13 +275,7 @@ export default function HomeDashboardPage() {
   );
 
   if (loading) {
-    return (
-      <main style={{ minHeight: "100vh", padding: "var(--space-6) var(--space-4)" }}>
-        <div style={{ maxWidth: 960, margin: "0 auto" }}>
-          <SkeletonList rows={5} rowHeight="4rem" label="Loading your tasks" />
-        </div>
-      </main>
-    );
+    return <FullPageLoader variant="shell" label="Loading your tasks" />;
   }
 
   const boardHref = selectedTeam && firstProjectId
@@ -294,8 +289,9 @@ export default function HomeDashboardPage() {
         boardHref={boardHref}
       />
 
-      <Card padding="sm" style={{ marginBottom: "var(--space-4)", color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-        Your task overview across all projects.
+      <Card padding="sm" style={{ marginBottom: "var(--space-4)" }}>
+        <h1 style={{ fontSize: "var(--text-lg)", fontWeight: 700, color: "var(--text)" }}>Your task overview</h1>
+        <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginTop: "var(--space-1)" }}>Across all your projects.</p>
       </Card>
 
       {selectedTeam && (
