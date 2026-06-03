@@ -338,15 +338,19 @@ export default function TaskDetailModal({
             {!isEditing && (
               <Button variant="secondary" size="sm" onClick={startEditing}>Edit</Button>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowDeleteTaskConfirm(true)}
-              disabled={savingTask || deletingTask}
-              style={{ color: "var(--danger)" }}
-            >
-              {deletingTask ? "Deleting…" : "Delete"}
-            </Button>
+            {/* Delete is intentionally only reachable from edit mode, so the
+                view header can't trigger a destructive action by accident. */}
+            {isEditing && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowDeleteTaskConfirm(true)}
+                disabled={savingTask || deletingTask}
+                style={{ color: "var(--danger)" }}
+              >
+                {deletingTask ? "Deleting…" : "Delete"}
+              </Button>
+            )}
           </div>
         </div>
 
