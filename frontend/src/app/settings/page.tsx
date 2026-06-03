@@ -23,6 +23,7 @@ import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import FormField from "../../components/ui/FormField";
+import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import Select from "@/components/ui/Select";
 import ConnectAgentModal from "../../components/ConnectAgentModal";
 import ThemePreferenceField from "../../components/ThemePreferenceField";
@@ -215,11 +216,7 @@ export default function SettingsPage() {
   }
 
   if (loading) {
-    return (
-      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "var(--muted)" }}>Loading…</p>
-      </main>
-    );
+    return <FullPageLoader label="Loading settings…" />;
   }
 
   const selectedTeam = teams.find((t) => t.id === selectedTeamId);

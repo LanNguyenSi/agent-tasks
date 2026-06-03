@@ -320,7 +320,7 @@ function BoardColumns({
         const overflowCount = columnTasks.length - visibleTasks.length;
         return (
           <section key={status}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+            <div style={{ position: "sticky", top: 0, zIndex: 2, background: "var(--bg)", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", paddingBottom: "0.35rem", borderBottom: "1px solid var(--border)" }}>
               <h3 style={{ fontSize: "var(--text-xs)", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--muted)" }}>
                 {STATUS_LABELS[status]}
               </h3>
@@ -1121,15 +1121,16 @@ export default function DashboardPage() {
             </button>
           )}
         </div>
-        {viewMode === "list" && (
-          <div className="status-summary">
-            {STATUSES.map((status) => (
-              <span key={status} className="status-chip">
-                {STATUS_LABELS[status]}: {statusSummary[status]}
-              </span>
-            ))}
-          </div>
-        )}
+        {/* Rendered in both list and board views so the toolbar height
+            stays stable across the view toggle (no reflow). In board view
+            it duplicates the per-column counts, an accepted trade-off. */}
+        <div className="status-summary">
+          {STATUSES.map((status) => (
+            <span key={status} className="status-chip">
+              {STATUS_LABELS[status]}: {statusSummary[status]}
+            </span>
+          ))}
+        </div>
       </Card>
 
       {loading ? (

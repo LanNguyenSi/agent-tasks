@@ -220,7 +220,7 @@ export default function ProjectMembersPage() {
             </AlertBanner>
           </div>
         )}
-        <div style={{ display: "grid", gap: "var(--space-3)", gridTemplateColumns: "1fr 1fr", maxWidth: "480px" }}>
+        <div className="collapsing-grid" style={{ gap: "var(--space-3)", maxWidth: "480px" }}>
           <FormField label="Role">
             <Select
               value={role}
