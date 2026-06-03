@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { PRIORITY_COLORS } from "../lib/priorityColors";
 import {
   updateTask,
   deleteTask,
@@ -39,13 +40,6 @@ const STATUS_LABELS: Record<Status, string> = {
   in_progress: "In Progress",
   review: "In Review",
   done: "Done",
-};
-
-const PRIORITY_COLORS: Record<Priority, string> = {
-  LOW: "#8d99ab",
-  MEDIUM: "#f59e0b",
-  HIGH: "#ef4444",
-  CRITICAL: "#be123c",
 };
 
 // Agent results can run to thousands of characters; clamp anything longer

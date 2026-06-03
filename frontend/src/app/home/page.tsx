@@ -14,6 +14,7 @@ import {
 } from "../../lib/api";
 import { formatRelativeTime } from "../../lib/time";
 import { isDoneTaskHidden } from "../../lib/dashboardPrefs";
+import { PRIORITY_COLORS } from "../../lib/priorityColors";
 import AppHeader from "../../components/AppHeader";
 import Card from "../../components/ui/Card";
 import { SkeletonList } from "../../components/ui/Skeleton";
@@ -30,13 +31,6 @@ const STATUS_LABELS: Record<string, string> = {
   in_progress: "In Progress",
   review: "In Review",
   done: "Done",
-};
-
-const PRIORITY_COLORS: Record<string, string> = {
-  LOW: "#6b7280",
-  MEDIUM: "#f59e0b",
-  HIGH: "#ef4444",
-  CRITICAL: "#be123c",
 };
 
 type EnrichedTask = Task & { projectName: string };
@@ -69,7 +63,7 @@ function TaskRow({ task, teamId }: { task: EnrichedTask; teamId: string }) {
             {task.externalRef}
           </span>
         )}
-        <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] ?? "#6b7280", fontSize: "var(--text-xs)", flexShrink: 0 }}>
+        <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] ?? "var(--muted)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
           {task.priority}
         </span>
         <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
