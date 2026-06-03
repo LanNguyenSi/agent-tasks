@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 
-type Variant = "primary" | "secondary" | "danger" | "outline-danger" | "ghost";
+type Variant = "primary" | "secondary" | "danger" | "outline-danger" | "ghost" | "link" | "link-danger";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
@@ -15,6 +15,8 @@ const variantClass: Record<Variant, string> = {
   danger: "btn-danger",
   "outline-danger": "btn-outline-danger",
   ghost: "btn-ghost",
+  link: "btn-link",
+  "link-danger": "btn-link btn-link-danger",
 };
 
 const sizeStyles: Record<string, CSSProperties> = {
@@ -33,17 +35,22 @@ export function Button({
   className,
   ...props
 }: ButtonProps) {
+  // The link / link-danger variants render as unboxed inline text (no
+  // padding, background, or radius) so they sit inside chips and metadata
+  // rows without looking like a button. Colour + underline come from the
+  // .btn-link CSS class.
+  const isLink = variant === "link" || variant === "link-danger";
   return (
     <button
       disabled={disabled || loading}
       className={[variantClass[variant], className].filter(Boolean).join(" ")}
       style={{
-        borderRadius: "var(--radius-base, 6px)",
-        fontWeight: 600,
         cursor: disabled || loading ? "not-allowed" : "pointer",
         opacity: disabled || loading ? 0.4 : 1,
         fontFamily: "inherit",
-        ...sizeStyles[size],
+        ...(isLink
+          ? { background: "none", border: "none", padding: 0, fontWeight: 600 }
+          : { borderRadius: "var(--radius-base, 6px)", fontWeight: 600, ...sizeStyles[size] }),
         ...style,
       }}
       {...props}

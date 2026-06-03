@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { PRIORITY_COLORS } from "../lib/priorityColors";
 import {
@@ -21,7 +21,7 @@ import {
   type TemplateData,
 } from "../lib/api";
 import { calculateConfidence } from "../lib/confidence";
-import { formatRelativeTime, formatAbsoluteDate } from "../lib/time";
+import { formatRelativeTime, formatAbsoluteDate, formatDueDate } from "../lib/time";
 import ConfidenceBadge from "./ConfidenceBadge";
 import TaskArtifactsSection from "./TaskArtifactsSection";
 import { Button } from "./ui/Button";
@@ -42,9 +42,10 @@ const STATUS_LABELS: Record<Status, string> = {
   done: "Done",
 };
 
-// Agent results can run to thousands of characters; clamp anything longer
-// than this so the modal stays scannable, with a Show more/less toggle.
-const RESULT_CLAMP_CHARS = 600;
+// Agent results can run to thousands of characters; clamp the collapsed box
+// to this height and measure whether the content actually overflows so the
+// Show more/less toggle only appears when it does something.
+const RESULT_CLAMP_HEIGHT = "16rem";
 // Fades the clamped content to transparent regardless of the modal's
 // background colour (no overlay element needed).
 const RESULT_FADE_MASK = "linear-gradient(to bottom, #000 70%, transparent)";
@@ -108,6 +109,11 @@ export default function TaskDetailModal({
   const [depPickerValue, setDepPickerValue] = useState("");
   const [commentText, setCommentText] = useState("");
   const [submittingComment, setSubmittingComment] = useState(false);
+  const [confirmRemoveDepId, setConfirmRemoveDepId] = useState<string | null>(null);
+  const [confirmDeleteCommentId, setConfirmDeleteCommentId] = useState<string | null>(null);
+  const [resultOverflows, setResultOverflows] = useState(false);
+  const resultRef = useRef<HTMLDivElement>(null);
+  const reviewSectionRef = useRef<HTMLElement>(null);
 
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -138,8 +144,74 @@ export default function TaskDetailModal({
     setDepPickerValue("");
     setShowDeleteTaskConfirm(false);
     setResultExpanded(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setConfirmRemoveDepId(null);
+    setConfirmDeleteCommentId(null);
   }, [task.id]);
+
+  // Only show the result Show-more toggle when the collapsed box actually
+  // overflows, instead of guessing from a character count that doesn't track
+  // rendered height.
+  useEffect(() => {
+    const el = resultRef.current;
+    if (!el || resultExpanded) return;
+    setResultOverflows(el.scrollHeight > el.clientHeight + 4);
+  }, [task.result, task.id, resultExpanded]);
+
+  const submitReview = useCallback(
+    async (outcome: "approve" | "request_changes") => {
+      setReviewBusy(true);
+      try {
+        const updated = await reviewTask(task.id, outcome, reviewComment);
+        onUpdate(updated);
+        setReviewComment("");
+      } catch (err) {
+        onError((err as Error).message);
+      } finally {
+        setReviewBusy(false);
+      }
+    },
+    [task.id, reviewComment, onUpdate, onError],
+  );
+
+  const submitComment = useCallback(async () => {
+    if (!commentText.trim() || submittingComment) return;
+    setSubmittingComment(true);
+    try {
+      const newComment = await createComment(task.id, commentText.trim());
+      onUpdate({ ...task, comments: [...(task.comments ?? []), newComment] });
+      setCommentText("");
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setSubmittingComment(false);
+    }
+  }, [commentText, submittingComment, task, onUpdate, onError]);
+
+  const deleteCommentConfirmed = useCallback(
+    async (commentId: string) => {
+      try {
+        await deleteComment(task.id, commentId);
+        onUpdate({ ...task, comments: task.comments?.filter((co) => co.id !== commentId) });
+        setConfirmDeleteCommentId(null);
+      } catch (err) {
+        onError((err as Error).message);
+      }
+    },
+    [task, onUpdate, onError],
+  );
+
+  const removeDependencyConfirmed = useCallback(
+    async (depId: string) => {
+      try {
+        await removeDependency(task.id, depId);
+        onUpdate({ ...task, blockedBy: task.blockedBy?.filter((d) => d.id !== depId) });
+        setConfirmRemoveDepId(null);
+      } catch (err) {
+        onError((err as Error).message);
+      }
+    },
+    [task, onUpdate, onError],
+  );
 
   const [showDiscardPrompt, setShowDiscardPrompt] = useState(false);
 
@@ -301,8 +373,11 @@ export default function TaskDetailModal({
   const webhookEvents = (task.comments ?? []).filter((c: Comment) => c.content.startsWith("[webhook]"));
   const userComments = (task.comments ?? []).filter((c: Comment) => !c.content.startsWith("[webhook]"));
 
-  const resultIsLong = (task.result?.length ?? 0) > RESULT_CLAMP_CHARS;
-  const resultClamped = resultIsLong && !resultExpanded;
+  // The result box is clamped whenever it isn't expanded; the fade mask and
+  // the Show more/less toggle only appear when the measured content overflows.
+  const resultClamped = !resultExpanded;
+  const showResultToggle = resultOverflows || resultExpanded;
+  const canSubmitReview = Boolean(task.branchName && task.prUrl);
 
   return (
     <>
@@ -328,10 +403,32 @@ export default function TaskDetailModal({
                 Start
               </Button>
             )}
-            {!isEditing && task.status === "in_progress" && task.claimedByUserId === user?.id && task.branchName && task.prUrl && (
-              <Button size="sm" onClick={() => void handleAdvance("submit_review")} disabled={advanceBusy} loading={advanceBusy}>
-                Submit for review
-              </Button>
+            {!isEditing && task.status === "in_progress" && task.claimedByUserId === user?.id && (
+              <>
+                <Button
+                  size="sm"
+                  onClick={() => void handleAdvance("submit_review")}
+                  disabled={advanceBusy || !canSubmitReview}
+                  loading={advanceBusy}
+                  title={!canSubmitReview ? "Record a branch and PR before submitting for review" : undefined}
+                >
+                  Submit for review
+                </Button>
+                {!canSubmitReview && (
+                  <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", alignSelf: "center" }}>
+                    Add a branch and PR first
+                  </span>
+                )}
+              </>
+            )}
+            {!isEditing && task.status === "review" && (
+              <button
+                type="button"
+                onClick={() => reviewSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                style={{ background: "var(--warning-muted)", border: "1px solid color-mix(in srgb, var(--warning) 40%, var(--border) 60%)", borderRadius: "var(--radius-base)", color: "var(--warning)", cursor: "pointer", fontSize: "var(--text-xs)", fontWeight: 600, padding: "0.35rem 0.6rem" }}
+              >
+                Jump to review ↓
+              </button>
             )}
           </div>
           <div style={{ display: "flex", gap: "0.45rem" }}>
@@ -377,31 +474,21 @@ export default function TaskDetailModal({
               <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.65rem" }}>
                 <span className="status-chip">{STATUS_LABELS[task.status as Status]}</span>
                 <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>{task.priority}</span>
-                <span className="status-chip">{task.dueAt ? `Due ${toDateInputValue(task.dueAt)}` : "No due date"}</span>
+                <span className="status-chip">{task.dueAt ? `Due ${formatDueDate(task.dueAt)}` : "No due date"}</span>
                 {isOverdue(task) && (
                   <span className="status-chip" style={{ color: "var(--danger)", borderColor: "color-mix(in srgb, var(--danger) 55%, var(--border) 45%)" }}>Overdue</span>
                 )}
                 <span className="status-chip" style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
                   {getClaimLabel(task)}
                   {!task.claimedByUserId && !task.claimedByAgentId && task.status !== "open" && (
-                    <button
-                      type="button"
-                      onClick={() => void handleClaim()}
-                      disabled={claimBusy}
-                      style={{ background: "none", border: "none", color: "var(--primary)", cursor: "pointer", fontSize: "var(--text-xs)", padding: 0, fontWeight: 600 }}
-                    >
-                      {claimBusy ? "…" : "Claim"}
-                    </button>
+                    <Button variant="link" size="sm" onClick={() => void handleClaim()} disabled={claimBusy} loading={claimBusy} style={{ fontSize: "var(--text-xs)" }}>
+                      Claim
+                    </Button>
                   )}
                   {task.claimedByUserId === user?.id && (
-                    <button
-                      type="button"
-                      onClick={() => void handleRelease()}
-                      disabled={claimBusy}
-                      style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", fontSize: "var(--text-xs)", padding: 0, fontWeight: 600 }}
-                    >
-                      {claimBusy ? "…" : "Release"}
-                    </button>
+                    <Button variant="link-danger" size="sm" onClick={() => void handleRelease()} disabled={claimBusy} loading={claimBusy} style={{ fontSize: "var(--text-xs)" }}>
+                      Release
+                    </Button>
                   )}
                 </span>
               </div>
@@ -465,26 +552,19 @@ export default function TaskDetailModal({
               <div style={{ display: "grid", gap: "0.3rem", marginBottom: "0.4rem" }}>
                 {task.blockedBy?.map((dep) => (
                   <div key={dep.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "var(--text-sm)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem" }}>
-                    <span>
-                      <span style={{ color: dep.status === "done" ? "var(--success, #22c55e)" : "var(--danger)" }}>
-                        {dep.status === "done" ? "done" : "blocks this"}
-                      </span>
-                      {" "}{dep.title}
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                      <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: dep.status === "done" ? "var(--success, #22c55e)" : "var(--danger)", flexShrink: 0 }} />
+                      <span style={{ color: "var(--text)" }}>{dep.title}</span>
+                      <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>({dep.status})</span>
                     </span>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          await removeDependency(task.id, dep.id);
-                          onUpdate({ ...task, blockedBy: task.blockedBy?.filter((d) => d.id !== dep.id) });
-                        } catch (err) {
-                          onError((err as Error).message);
-                        }
-                      }}
-                      style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: "var(--text-xs)" }}
-                    >
-                      Remove
-                    </button>
+                    {confirmRemoveDepId === dep.id ? (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                        <Button variant="link-danger" size="sm" onClick={() => void removeDependencyConfirmed(dep.id)} style={{ fontSize: "var(--text-xs)" }}>Confirm?</Button>
+                        <Button variant="link" size="sm" onClick={() => setConfirmRemoveDepId(null)} style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Cancel</Button>
+                      </span>
+                    ) : (
+                      <Button variant="link" size="sm" onClick={() => setConfirmRemoveDepId(dep.id)} style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Remove</Button>
+                    )}
                   </div>
                 ))}
                 {task.blocks?.map((dep) => (
@@ -657,10 +737,10 @@ export default function TaskDetailModal({
                     href={task.prUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ fontSize: "var(--text-sm)" }}
+                    style={{ fontSize: "var(--text-sm)", wordBreak: "break-all" }}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {task.prNumber ? `#${task.prNumber}` : task.prUrl}
+                    {task.prNumber ? `#${task.prNumber}` : "Open PR"}
                   </a>
                 </div>
               )}
@@ -668,18 +748,19 @@ export default function TaskDetailModal({
                 <div style={{ fontSize: "var(--text-sm)" }}>
                   <span style={{ color: "var(--muted)", display: "block", marginBottom: "var(--space-1)" }}>Result</span>
                   <div
+                    ref={resultRef}
                     className="prose-markdown"
                     style={{
                       fontSize: "var(--text-sm)",
-                      maxHeight: resultClamped ? "16rem" : undefined,
+                      maxHeight: resultClamped ? RESULT_CLAMP_HEIGHT : undefined,
                       overflow: resultClamped ? "hidden" : undefined,
-                      maskImage: resultClamped ? RESULT_FADE_MASK : undefined,
-                      WebkitMaskImage: resultClamped ? RESULT_FADE_MASK : undefined,
+                      maskImage: resultClamped && resultOverflows ? RESULT_FADE_MASK : undefined,
+                      WebkitMaskImage: resultClamped && resultOverflows ? RESULT_FADE_MASK : undefined,
                     }}
                   >
                     <ReactMarkdown>{task.result}</ReactMarkdown>
                   </div>
-                  {resultIsLong && (
+                  {showResultToggle && (
                     <button
                       type="button"
                       onClick={() => setResultExpanded((v) => !v)}
@@ -699,7 +780,7 @@ export default function TaskDetailModal({
 
         {/* ── Review ──────────────────────────────────────────────── */}
         {task.status === "review" && task.claimedByUserId === user?.id && (
-          <section style={{ marginBottom: "0.8rem" }}>
+          <section ref={reviewSectionRef} style={{ marginBottom: "0.8rem" }}>
             <p className="section-kicker">Review</p>
             {requireDistinctReviewer ? (
               <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>
@@ -737,55 +818,30 @@ export default function TaskDetailModal({
         )}
 
         {task.status === "review" && task.claimedByUserId !== user?.id && (
-          <section style={{ marginBottom: "0.8rem" }}>
+          <section ref={reviewSectionRef} style={{ marginBottom: "0.8rem" }}>
             <p className="section-kicker">Review</p>
             <div style={{ marginBottom: "0.4rem" }}>
               <textarea
                 value={reviewComment}
                 onChange={(e) => setReviewComment(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !reviewBusy) {
+                    e.preventDefault();
+                    void submitReview("approve");
+                  }
+                }}
+                aria-label="Review feedback"
                 placeholder="Review feedback (optional)"
                 rows={2}
                 style={{ width: "100%", resize: "vertical", fontSize: "var(--text-sm)" }}
               />
             </div>
+            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", margin: "0 0 0.4rem" }}>⌘/Ctrl+Enter to approve</p>
             <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-              <Button
-                size="sm"
-                disabled={reviewBusy}
-                loading={reviewBusy}
-                onClick={async () => {
-                  setReviewBusy(true);
-                  try {
-                    const updated = await reviewTask(task.id, "approve", reviewComment);
-                    onUpdate(updated);
-                    setReviewComment("");
-                  } catch (err) {
-                    onError((err as Error).message);
-                  } finally {
-                    setReviewBusy(false);
-                  }
-                }}
-              >
+              <Button size="sm" disabled={reviewBusy} loading={reviewBusy} onClick={() => void submitReview("approve")}>
                 Approve
               </Button>
-              <Button
-                variant="outline-danger"
-                size="sm"
-                disabled={reviewBusy}
-                loading={reviewBusy}
-                onClick={async () => {
-                  setReviewBusy(true);
-                  try {
-                    const updated = await reviewTask(task.id, "request_changes", reviewComment);
-                    onUpdate(updated);
-                    setReviewComment("");
-                  } catch (err) {
-                    onError((err as Error).message);
-                  } finally {
-                    setReviewBusy(false);
-                  }
-                }}
-              >
+              <Button variant="outline-danger" size="sm" disabled={reviewBusy} loading={reviewBusy} onClick={() => void submitReview("request_changes")}>
                 Request Changes
               </Button>
             </div>
@@ -844,20 +900,14 @@ export default function TaskDetailModal({
                           {formatRelativeTime(comment.createdAt)}
                         </span>
                         {isOwn && (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              try {
-                                await deleteComment(task.id, comment.id);
-                                onUpdate({ ...task, comments: task.comments?.filter((co) => co.id !== comment.id) });
-                              } catch (err) {
-                                onError((err as Error).message);
-                              }
-                            }}
-                            style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", fontSize: "var(--text-xs)", padding: "0" }}
-                          >
-                            Delete
-                          </button>
+                          confirmDeleteCommentId === comment.id ? (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                              <Button variant="link-danger" size="sm" onClick={() => void deleteCommentConfirmed(comment.id)} style={{ fontSize: "var(--text-xs)" }}>Confirm?</Button>
+                              <Button variant="link" size="sm" onClick={() => setConfirmDeleteCommentId(null)} style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Cancel</Button>
+                            </span>
+                          ) : (
+                            <Button variant="link-danger" size="sm" onClick={() => setConfirmDeleteCommentId(comment.id)} style={{ fontSize: "var(--text-xs)" }}>Delete</Button>
+                          )
                         )}
                       </span>
                     </div>
@@ -867,34 +917,32 @@ export default function TaskDetailModal({
               })}
             </div>
           )}
-          <div style={{ display: "flex", gap: "0.4rem" }}>
-            <textarea
-              value={commentText}
-              onChange={(e) => setCommentText(e.target.value)}
-              placeholder="Write a comment..."
-              rows={2}
-              style={{ flex: 1, resize: "vertical", fontSize: "var(--text-sm)" }}
-            />
-            <Button
-              size="sm"
-              disabled={!commentText.trim() || submittingComment}
-              loading={submittingComment}
-              onClick={async () => {
-                if (!commentText.trim()) return;
-                setSubmittingComment(true);
-                try {
-                  const newComment = await createComment(task.id, commentText.trim());
-                  onUpdate({ ...task, comments: [...(task.comments ?? []), newComment] });
-                  setCommentText("");
-                } catch (err) {
-                  onError((err as Error).message);
-                } finally {
-                  setSubmittingComment(false);
-                }
-              }}
-            >
-              Send
-            </Button>
+          <div>
+            <div style={{ display: "flex", gap: "0.4rem" }}>
+              <textarea
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    void submitComment();
+                  }
+                }}
+                aria-label="Write a comment"
+                placeholder="Write a comment..."
+                rows={2}
+                style={{ flex: 1, resize: "vertical", fontSize: "var(--text-sm)" }}
+              />
+              <Button
+                size="sm"
+                disabled={!commentText.trim() || submittingComment}
+                loading={submittingComment}
+                onClick={() => void submitComment()}
+              >
+                Send
+              </Button>
+            </div>
+            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", margin: "0.25rem 0 0" }}>⌘/Ctrl+Enter to send</p>
           </div>
         </section>
       </Modal>

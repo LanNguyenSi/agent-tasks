@@ -204,6 +204,24 @@ button:active:not(:disabled) {
   color: var(--text);
 }
 
+/* Inline text-link button: no box, accent colour, underline on hover.
+   Used for compact in-row actions (Claim, Release, Remove, Delete). The
+   unboxed layout is set inline by the Button component for the link
+   variants; this only carries colour + the hover underline. */
+.btn-link {
+  color: var(--link);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+.btn-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.btn-link-danger {
+  color: var(--danger);
+}
+
 /* ── Form controls ────────────────────────────────────────────── */
 
 input, textarea, select {
