@@ -13,6 +13,7 @@ import {
   type User,
 } from "../../lib/api";
 import { formatAbsoluteDate, formatRelativeTime } from "../../lib/time";
+import { PRIORITY_COLORS } from "../../lib/priorityColors";
 import AppHeader from "../../components/AppHeader";
 import Card from "../../components/ui/Card";
 import EmptyState from "../../components/ui/EmptyState";
@@ -45,13 +46,6 @@ const STATUS_COLORS: Record<string, string> = {
   in_progress: "var(--primary)",
   review: "var(--warning)",
   done: "var(--success)",
-};
-
-const PRIORITY_COLORS: Record<Priority, string> = {
-  LOW: "#8d99ab",
-  MEDIUM: "#f59e0b",
-  HIGH: "#ef4444",
-  CRITICAL: "#be123c",
 };
 
 const PRIORITY_RANK: Record<Priority, number> = {

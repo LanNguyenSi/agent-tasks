@@ -29,6 +29,13 @@ html[data-theme="light"] {
   --success: #34c759;
   --warning: #ffb649;
   --danger: #ff4757;
+  --danger-strong: #be123c;
+
+  /* Link color, derived from --primary so it tracks the active theme. */
+  --link: var(--primary);
+  /* Muted warning fill for banners; color-mixed from theme vars so it
+     adapts per theme without a separate light-theme override. */
+  --warning-muted: color-mix(in srgb, var(--warning) 14%, var(--surface) 86%);
 
   /* Typography scale */
   --text-xs: 0.75rem;
@@ -1291,6 +1298,7 @@ html[data-theme="light"] {
   --success: #0f9d58;
   --warning: #b36b00;
   --danger: #d1323e;
+  --danger-strong: #a10e30;
 }
 
 html[data-theme="light"] body {

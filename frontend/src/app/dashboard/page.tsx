@@ -21,6 +21,7 @@ import {
   type TemplatePreset,
 } from "../../lib/api";
 import { calculateConfidence } from "../../lib/confidence";
+import { PRIORITY_COLORS } from "../../lib/priorityColors";
 import { formatRelativeTime, formatAbsoluteDate } from "../../lib/time";
 import {
   DONE_BOARD_VISIBLE_LIMIT,
@@ -98,13 +99,6 @@ const STATUS_COLORS: Record<string, string> = {
   in_progress: "var(--primary)",
   review: "var(--warning)",
   done: "var(--success)",
-};
-
-const PRIORITY_COLORS: Record<Priority, string> = {
-  LOW: "#8d99ab",
-  MEDIUM: "#f59e0b",
-  HIGH: "#ef4444",
-  CRITICAL: "#be123c",
 };
 
 const PRIORITY_RANK: Record<Priority, number> = {
@@ -222,8 +216,8 @@ const TaskCard = memo(function TaskCard({
       style={{
         width: "100%",
         textAlign: "left",
-        background: active ? "#202b3d" : "var(--surface)",
-        border: `1px solid ${active ? "#30435f" : "var(--border)"}`,
+        background: active ? "var(--primary-muted)" : "var(--surface)",
+        border: `1px solid ${active ? "var(--primary)" : "var(--border)"}`,
         borderRadius: "10px",
         padding: "0.6rem 0.7rem",
         marginBottom: "0.4rem",
