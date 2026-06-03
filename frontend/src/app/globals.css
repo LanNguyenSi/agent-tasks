@@ -906,7 +906,17 @@ input[type="checkbox"] {
   background: var(--primary-muted);
 }
 
-.task-list-cell-main {
+/* Every cell is a grid item; grid items default to min-width: auto
+   (= min-content), so an unbreakable long string (e.g. a long project
+   name) refuses to shrink and forces its track wider than its fr share.
+   That overflows the row and shoves the flexible title track, making the
+   title overlap its neighbours. min-width: 0 on all cells lets every
+   track shrink to its fr share so the title clips inside its own cell. */
+.task-list-cell-main,
+.task-list-cell-status,
+.task-list-cell-muted,
+.task-list-cell-updated,
+.task-list-cell-priority {
   min-width: 0;
 }
 

@@ -577,7 +577,7 @@ function TasksPageInner() {
                 <span className="task-list-cell-muted" data-label="Project" title={task.projectName} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {task.projectName}
                 </span>
-                <span className="task-list-cell-muted" data-label="Due">
+                <span className="task-list-cell-muted" data-label="Due" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {task.dueAt ? formatDueDate(task.dueAt) : "No due date"}
                 </span>
                 <span className="task-list-cell-updated" title={formatAbsoluteDate(task.updatedAt)}>
