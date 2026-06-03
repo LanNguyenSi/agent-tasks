@@ -516,14 +516,11 @@ input[type="checkbox"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border: none;
-  background: transparent;
+  background: color-mix(in srgb, var(--border) 45%, transparent);
   color: var(--muted);
-  font-size: var(--text-base);
-  font-weight: 700;
-  letter-spacing: 1px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   flex-shrink: 0;
@@ -684,6 +681,7 @@ input[type="checkbox"] {
 /* ── Alert banner ─────────────────────────────────────────────── */
 
 .alert-banner {
+  position: relative;
   border-radius: var(--radius-lg);
   border: 1px solid;
   padding: var(--space-3) var(--space-4);
@@ -694,6 +692,30 @@ input[type="checkbox"] {
 .alert-title {
   font-weight: 700;
   margin-bottom: var(--space-1);
+}
+
+.alert-dismiss {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.65;
+  border-radius: var(--radius-sm);
+}
+
+.alert-dismiss:hover {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
 .alert-info {
