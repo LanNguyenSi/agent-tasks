@@ -361,8 +361,9 @@ input[type="checkbox"] {
 }
 
 .auth-tab-active {
-  background: var(--border);
-  border-color: var(--border-hover);
+  background: var(--primary-muted);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 .landing-shell {
@@ -423,28 +424,28 @@ input[type="checkbox"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 9px;
+  border-radius: var(--radius-base);
   padding: 0.55rem 0.95rem;
-  font-weight: 650;
+  font-weight: 600;
   text-decoration: none;
   transition: all 0.12s ease;
 }
 
 .landing-cta-primary {
-  border: 1px solid color-mix(in srgb, var(--primary) 66%, transparent);
-  background: color-mix(in srgb, var(--primary) 24%, #0f1b31 76%);
-  color: #edf3ff;
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, transparent);
+  background: var(--primary);
+  color: #ffffff;
 }
 
 .landing-cta-primary:hover {
-  background: color-mix(in srgb, var(--primary) 32%, #0f1b31 68%);
-  box-shadow: 0 4px 12px rgba(79, 131, 255, 0.2);
+  background: var(--primary-hover);
+  box-shadow: 0 4px 12px rgba(79, 131, 255, 0.22);
   text-decoration: none;
 }
 
 .landing-cta-secondary {
   border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface) 83%, #0a111d 17%);
+  background: var(--surface);
   color: var(--text);
 }
 
@@ -458,6 +459,12 @@ input[type="checkbox"] {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-3);
+}
+
+@media (max-width: 1024px) {
+  .landing-feature-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .landing-feature {
@@ -480,8 +487,8 @@ input[type="checkbox"] {
 }
 
 .landing-feature > p {
-  font-size: var(--text-xs);
-  color: var(--muted);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 
 /* ── Dashboard layout ─────────────────────────────────────────── */

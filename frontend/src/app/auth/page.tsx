@@ -8,6 +8,7 @@ import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import FormField from "../../components/ui/FormField";
 import Card from "../../components/ui/Card";
+import { FullPageLoader } from "../../components/ui/FullPageLoader";
 
 type Mode = "login" | "register";
 
@@ -38,11 +39,7 @@ function safeRedirect(raw: string | null): string | null {
 export default function AuthPage() {
   return (
     <Suspense
-      fallback={
-        <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <p style={{ color: "var(--muted)" }}>Loading…</p>
-        </main>
-      }
+      fallback={<FullPageLoader label="Loading…" />}
     >
       <AuthPageInner />
     </Suspense>
@@ -61,6 +58,7 @@ function AuthPageInner() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ssoMatch, setSsoMatch] = useState<SsoDiscoverResult | null>(null);
+  const [redirectingToGithub, setRedirectingToGithub] = useState(false);
 
   // SSO domain discovery is triggered on blur (below) rather than on every
   // keystroke, to avoid sending partial emails to the backend. It only runs
@@ -91,7 +89,7 @@ function AuthPageInner() {
           return;
         }
         const teams = await getTeams();
-        router.replace(teams.length === 0 ? "/onboarding" : "/teams");
+        router.replace(teams.length === 0 ? "/onboarding" : "/home");
         return;
       }
       setCheckingSession(false);
@@ -113,7 +111,7 @@ function AuthPageInner() {
         return;
       }
       const teams = await getTeams();
-      router.replace(teams.length === 0 ? "/onboarding" : "/teams");
+      router.replace(teams.length === 0 ? "/onboarding" : "/home");
     } catch (err) {
       setError((err as Error).message);
       setSubmitting(false);
@@ -121,11 +119,7 @@ function AuthPageInner() {
   }
 
   if (checkingSession) {
-    return (
-      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "var(--muted)" }}>Loading…</p>
-      </main>
-    );
+    return <FullPageLoader label="Loading…" />;
   }
 
   return (
@@ -144,9 +138,13 @@ function AuthPageInner() {
         </Link>
 
         <div style={{ textAlign: "center", marginBottom: "var(--space-4)" }}>
-          <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: "var(--space-2)" }}>Sign in to agent-tasks</h1>
+          <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: "var(--space-2)" }}>
+            {mode === "register" ? "Create your account" : "Sign in to agent-tasks"}
+          </h1>
           <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-            Use email/password or GitHub — or enter your work email to sign in with your company SSO.
+            {mode === "register"
+              ? "Sign up with email and password, or continue with GitHub."
+              : "Use email/password or GitHub, or enter your work email to sign in with your company SSO."}
           </p>
         </div>
 
@@ -156,6 +154,7 @@ function AuthPageInner() {
               className={`auth-tab${mode === "login" ? " auth-tab-active" : ""}`}
               onClick={() => setMode("login")}
               type="button"
+              aria-pressed={mode === "login"}
             >
               Login
             </button>
@@ -163,6 +162,7 @@ function AuthPageInner() {
               className={`auth-tab${mode === "register" ? " auth-tab-active" : ""}`}
               onClick={() => setMode("register")}
               type="button"
+              aria-pressed={mode === "register"}
             >
               Register
             </button>
@@ -202,6 +202,12 @@ function AuthPageInner() {
                 style={{ width: "100%", display: "block" }}
               />
             </FormField>
+
+            {mode === "login" && (
+              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "calc(-1 * var(--space-1))", marginBottom: "var(--space-2)" }}>
+                Forgot your password? Contact your workspace admin to reset it.
+              </p>
+            )}
 
             {ssoMatch && (
               <AlertBanner tone="info" title={`${ssoMatch.teamName} uses single sign-on`}>
@@ -245,6 +251,7 @@ function AuthPageInner() {
           <a
             href="/api/auth/github"
             className="btn-secondary"
+            onClick={() => setRedirectingToGithub(true)}
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -254,9 +261,10 @@ function AuthPageInner() {
               padding: "0.625rem 1rem",
               textDecoration: "none",
               fontWeight: 600,
+              ...(redirectingToGithub ? { pointerEvents: "none", opacity: 0.7 } : {}),
             }}
           >
-            Continue with GitHub
+            {redirectingToGithub ? "Redirecting to GitHub…" : "Continue with GitHub"}
           </a>
         </Card>
       </div>
