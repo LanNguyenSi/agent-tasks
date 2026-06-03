@@ -321,7 +321,8 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
     return c.json({
       tasks: [],
       projects: [],
-      counts: { open: 0, review: 0, done: 0, priority: 0, mine: 0, total: 0 },
+      counts: { open: 0, review: 0, done: 0, doneRecent: 0, doneOlder: 0, priority: 0, mine: 0, total: 0 },
+      filteredTotal: 0,
     });
   }
 
@@ -349,6 +350,44 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
     if (parsed.length > 0) where.priority = { in: parsed };
   }
 
+  // Recency window for the done view (Recent ≤14d vs Older >14d), applied as
+  // an updatedAt boundary so the /tasks done scope can page recent vs older
+  // completions server-side instead of client-slicing a capped fetch. `all`
+  // (or absent) leaves the window open. Mirrors DONE_RECENT_DAYS on the
+  // frontend (lib/dashboardPrefs.ts).
+  const RECENT_DONE_DAYS = 14;
+  const recency = c.req.query("recency");
+  if (recency === "recent" || recency === "older") {
+    const boundary = new Date(Date.now() - RECENT_DONE_DAYS * 24 * 60 * 60 * 1000);
+    where.updatedAt = recency === "recent" ? { gte: boundary } : { lt: boundary };
+  }
+
+  // Single-project narrowing — only honoured for a project the actor can
+  // already see, so the filter never widens access.
+  const projectIdParam = c.req.query("projectId");
+  if (projectIdParam && projectIds.includes(projectIdParam)) {
+    where.projectId = projectIdParam;
+  }
+
+  // "Mine" = tasks claimed by the calling actor. Keys on actor.userId so the
+  // row filter agrees with the team-wide `mine` count below (which uses the
+  // same field) for every actor type.
+  if (c.req.query("mine") === "1") {
+    where.claimedByUserId = actor.userId;
+  }
+
+  // Search across the human-meaningful string fields. Labels match exactly
+  // (clicking a label chip); the rest are case-insensitive substrings.
+  const q = c.req.query("q")?.trim();
+  if (q) {
+    where.OR = [
+      { title: { contains: q, mode: "insensitive" } },
+      { description: { contains: q, mode: "insensitive" } },
+      { externalRef: { contains: q, mode: "insensitive" } },
+      { labels: { has: q } },
+    ];
+  }
+
   // Hard cap to keep the response bounded even if a caller forgets a sane
   // limit. 500 is enough to feed the dashboard widgets' 10-row preview
   // each; the per-status `counts` block below carries the true totals so
@@ -363,6 +402,34 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
     return Math.min(n, HARD_MAX_LIMIT);
   })();
 
+  // Server-side pagination offset (the /tasks browser pages through the full
+  // filtered set rather than slicing a single capped fetch client-side).
+  const offsetParam = c.req.query("offset");
+  const offset = (() => {
+    const n = offsetParam ? parseInt(offsetParam, 10) : 0;
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  })();
+
+  // Column sort for the /tasks browser; defaults to most-recently-updated.
+  // `project` sorts on the related project name, the rest are task columns.
+  // Unknown columns fall back to the default.
+  const SORT_FIELDS: Record<string, string> = {
+    title: "title",
+    status: "status",
+    due: "dueAt",
+    updated: "updatedAt",
+    priority: "priority",
+  };
+  const orderBy = (() => {
+    const raw = c.req.query("sort");
+    if (!raw) return { updatedAt: "desc" } as Record<string, unknown>;
+    const [col, dirRaw] = raw.split(":");
+    const dir = dirRaw === "asc" ? "asc" : "desc";
+    if (col === "project") return { project: { name: dir } } as Record<string, unknown>;
+    const field = SORT_FIELDS[col ?? ""];
+    return (field ? { [field]: dir } : { updatedAt: "desc" }) as Record<string, unknown>;
+  })();
+
   // Counts are computed over the team's full task set, independent of the
   // ?status / ?priority / ?labels filter (which only narrows the row
   // slice). The home dashboard widgets need the team-wide totals; if we
@@ -370,33 +437,50 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
   // other widget's badge.
   const countWhere = { projectId: { in: projectIds } } as const;
 
-  const [tasks, statusGroups, priorityCount, mineCount] = await Promise.all([
-    prisma.task.findMany({
-      where,
-      include: taskListInclude,
-      orderBy: { updatedAt: "desc" },
-      take: limit,
-    }),
-    prisma.task.groupBy({
-      by: ["status"],
-      where: countWhere,
-      _count: { _all: true },
-    }),
-    prisma.task.count({
-      where: {
-        ...countWhere,
-        priority: { in: ["HIGH", "CRITICAL"] },
-        status: { not: "done" },
-      },
-    }),
-    prisma.task.count({
-      where: {
-        ...countWhere,
-        claimedByUserId: actor.userId,
-        status: { not: "done" },
-      },
-    }),
-  ]);
+  const doneBoundary = new Date(Date.now() - RECENT_DONE_DAYS * 24 * 60 * 60 * 1000);
+
+  const [tasks, filteredTotal, statusGroups, priorityCount, mineCount, doneRecent, doneOlder] =
+    await Promise.all([
+      prisma.task.findMany({
+        where,
+        include: taskListInclude,
+        orderBy,
+        skip: offset,
+        take: limit,
+      }),
+      // Total rows matching the active filter (status/recency/search/…) —
+      // drives server-side pagination so the page count is exact rather than
+      // bounded by the row-fetch cap.
+      prisma.task.count({ where }),
+      prisma.task.groupBy({
+        by: ["status"],
+        where: countWhere,
+        _count: { _all: true },
+      }),
+      prisma.task.count({
+        where: {
+          ...countWhere,
+          priority: { in: ["HIGH", "CRITICAL"] },
+          status: { not: "done" },
+        },
+      }),
+      prisma.task.count({
+        where: {
+          ...countWhere,
+          claimedByUserId: actor.userId,
+          status: { not: "done" },
+        },
+      }),
+      // Team-wide done split at the 14-day window, so the home "Recently
+      // Done" widget can label its two links authoritatively instead of
+      // deriving the counts from a client-side slice.
+      prisma.task.count({
+        where: { ...countWhere, status: "done", updatedAt: { gte: doneBoundary } },
+      }),
+      prisma.task.count({
+        where: { ...countWhere, status: "done", updatedAt: { lt: doneBoundary } },
+      }),
+    ]);
 
   const byStatus: Record<string, number> = Object.fromEntries(
     statusGroups.map((g) => [g.status, g._count._all]),
@@ -405,6 +489,8 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
     open: (byStatus.open ?? 0) + (byStatus.in_progress ?? 0),
     review: byStatus.review ?? 0,
     done: byStatus.done ?? 0,
+    doneRecent,
+    doneOlder,
     priority: priorityCount,
     mine: mineCount,
     total: statusGroups.reduce((s, g) => s + g._count._all, 0),
@@ -420,7 +506,7 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
         : ("team" as const),
   }));
 
-  return c.json({ tasks, projects: projectsAnnotated, counts });
+  return c.json({ tasks, projects: projectsAnnotated, counts, filteredTotal });
 });
 
 // ── List tasks for a project ─────────────────────────────────────────────────

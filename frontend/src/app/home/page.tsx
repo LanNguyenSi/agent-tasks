@@ -99,17 +99,24 @@ interface WidgetProps {
 
 function TaskWidget({ title, tasks, teamId, scope, emptyText, total, olderCount = 0 }: WidgetProps) {
   const listHref = `/tasks?teamId=${teamId}&scope=${scope}`;
+  // The Recently Done widget previews recent (≤14d) completions: its title /
+  // total / "more" links stay inside the recent window, while "older done"
+  // deep-links to the >14d slice. The /tasks done view now filters by recency,
+  // so the two links land on genuinely different, pre-filtered lists. Non-done
+  // widgets have olderCount=0 and use the plain scope href.
+  const moreHref = scope === "done" ? `${listHref}&recency=recent` : listHref;
+  const olderHref = `/tasks?teamId=${teamId}&scope=done&recency=older`;
   const displayTotal = total ?? tasks.length;
   const moreCount = Math.max(0, displayTotal - WIDGET_LIMIT);
   return (
     <Card style={{ marginBottom: "0.75rem" }} padding="sm">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", gap: "0.5rem" }}>
-        <Link href={listHref} style={{ textDecoration: "none", color: "inherit", flex: 1, minWidth: 0 }}>
+        <Link href={moreHref} style={{ textDecoration: "none", color: "inherit", flex: 1, minWidth: 0 }}>
           <h2 style={{ fontSize: "var(--text-base)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {title}
           </h2>
         </Link>
-        <Link href={listHref} className="widget-link" style={{ fontSize: "var(--text-xs)", flexShrink: 0 }}>
+        <Link href={moreHref} className="widget-link" style={{ fontSize: "var(--text-xs)", flexShrink: 0 }}>
           {displayTotal} total →
         </Link>
       </div>
@@ -118,8 +125,8 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText, total, olderCount 
           <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", padding: "0.25rem 0" }}>{emptyText}</p>
           {olderCount > 0 && (
             <p style={{ textAlign: "right", marginTop: "0.2rem", fontSize: "var(--text-xs)" }}>
-              <Link href={listHref} className="widget-link">
-                Show all {olderCount} done →
+              <Link href={olderHref} className="widget-link">
+                Show {olderCount} older done →
               </Link>
             </p>
           )}
@@ -131,15 +138,17 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText, total, olderCount 
               <TaskRow key={task.id} task={task} teamId={teamId} />
             ))}
           </div>
-          {/* moreCount = items past the widget cap; olderCount = done tasks
-              outside the 14-day recency window. Both are only reachable via
-              the same unfiltered scope list (listHref has no recency filter),
-              so a single combined link avoids two links to the identical
-              destination. olderCount is 0 for non-done widgets. */}
-          {moreCount + olderCount > 0 && (
+          {moreCount > 0 && (
             <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
-              <Link href={listHref} className="widget-link">
-                +{moreCount + olderCount} more →
+              <Link href={moreHref} className="widget-link">
+                +{moreCount} more →
+              </Link>
+            </p>
+          )}
+          {olderCount > 0 && (
+            <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
+              <Link href={olderHref} className="widget-link">
+                +{olderCount} older done →
               </Link>
             </p>
           )}
@@ -263,6 +272,10 @@ export default function HomeDashboardPage() {
   // Done tasks beyond the 14-day window, so the Recently Done widget can offer
   // a link to reveal them (its list only shows the recent ones).
   const olderDoneCount = useMemo(() => {
+    // Prefer the server's authoritative >14d done count; fall back to deriving
+    // it from the team-wide done total minus the recent slice for a backend
+    // predating the doneOlder count.
+    if (typeof counts?.doneOlder === "number") return counts.doneOlder;
     const doneTotal = counts?.done ?? allTasks.filter((t) => t.status === "done").length;
     return Math.max(0, doneTotal - recentlyDone.length);
   }, [counts, allTasks, recentlyDone]);
@@ -324,10 +337,11 @@ export default function HomeDashboardPage() {
               <TaskWidget title="My Tasks" tasks={myTasks} teamId={selectedTeam.id} scope="mine" emptyText="No tasks assigned to you." total={counts?.mine} />
               <TaskWidget title="Priority (High / Critical)" tasks={priorityTasks} teamId={selectedTeam.id} scope="priority" emptyText="No high-priority tasks." total={counts?.priority} />
               <TaskWidget title="In Review" tasks={inReviewTasks} teamId={selectedTeam.id} scope="review" emptyText="Nothing in review." total={counts?.review} />
-              {/* total is the local 14-day count by design (the /tasks list has no
-                  recency filter); olderCount surfaces a link to the done tasks
-                  beyond that window so they stay reachable from here. */}
-              <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} scope="done" emptyText="No tasks completed in the last 14 days." total={recentlyDone.length} olderCount={olderDoneCount} />
+              {/* total = the server's recent (≤14d) done count; olderCount =
+                  the >14d count. The widget's "more" link stays in the recent
+                  window and "older done" deep-links to the >14d slice, both now
+                  pre-filtered by the /tasks done recency view. */}
+              <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} scope="done" emptyText="No tasks completed in the last 14 days." total={counts?.doneRecent ?? recentlyDone.length} olderCount={olderDoneCount} />
             </div>
           </>
         )
