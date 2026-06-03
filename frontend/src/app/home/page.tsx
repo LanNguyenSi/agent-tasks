@@ -122,7 +122,7 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText, total, olderCount 
           {olderCount > 0 && (
             <p style={{ textAlign: "right", marginTop: "0.2rem", fontSize: "var(--text-xs)" }}>
               <Link href={listHref} style={{ color: "var(--primary)", textDecoration: "none" }}>
-                Alle {olderCount} erledigten anzeigen →
+                Show all {olderCount} done →
               </Link>
             </p>
           )}
@@ -144,7 +144,7 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText, total, olderCount 
           {olderCount > 0 && moreCount === 0 && (
             <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
               <Link href={listHref} style={{ color: "var(--primary)", textDecoration: "none" }}>
-                +{olderCount} ältere erledigte →
+                +{olderCount} older done →
               </Link>
             </p>
           )}
