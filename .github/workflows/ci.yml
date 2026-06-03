@@ -68,6 +68,9 @@ jobs:
       - name: Type check
         run: npm run typecheck --workspace=backend
 
+      - name: Lint
+        run: npm run lint --workspace=backend
+
       - name: Run tests
         env:
           DATABASE_URL: postgresql://agent_tasks:agent_tasks@localhost:5432/agent_tasks_test
