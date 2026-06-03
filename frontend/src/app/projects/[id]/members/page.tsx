@@ -18,8 +18,11 @@ import AppHeader from "../../../../components/AppHeader";
 import AlertBanner from "../../../../components/ui/AlertBanner";
 import { Button } from "../../../../components/ui/Button";
 import Card from "../../../../components/ui/Card";
+import ConfirmDialog from "../../../../components/ui/ConfirmDialog";
 import FormField from "../../../../components/ui/FormField";
 import Select from "../../../../components/ui/Select";
+import { SkeletonList } from "../../../../components/ui/Skeleton";
+import { roleLabel } from "../../../../lib/roleLabel";
 
 /**
  * Project members + invites admin surface.
@@ -56,6 +59,8 @@ export default function ProjectMembersPage() {
   // post-creation, so the state is intentionally narrow.
   const [freshInvite, setFreshInvite] = useState<{ shareUrl: string } | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [revokeTarget, setRevokeTarget] = useState<{ id: string } | null>(null);
+  const [revoking, setRevoking] = useState(false);
 
   async function refresh() {
     try {
@@ -98,11 +103,15 @@ export default function ProjectMembersPage() {
   }
 
   async function handleRevoke(inviteId: string) {
+    setRevoking(true);
     try {
       await revokeProjectInvite(projectId, inviteId);
       await refresh();
+      setRevokeTarget(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRevoking(false);
     }
   }
 
@@ -126,13 +135,18 @@ export default function ProjectMembersPage() {
     <main className="page-shell">
       <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
 
-      <p style={{ fontSize: "var(--text-sm)", marginBottom: "var(--space-3)" }}>
+      <nav aria-label="Breadcrumb" style={{ fontSize: "var(--text-sm)", marginBottom: "var(--space-3)", display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
         <Link href="/dashboard" style={{ color: "var(--muted)" }}>
           ← Back to dashboard
         </Link>
-      </p>
+        {project && (
+          <Link href={`/dashboard?teamId=${project.teamId}&projectId=${projectId}`} style={{ color: "var(--muted)" }}>
+            Project board
+          </Link>
+        )}
+      </nav>
 
-      <h1 style={{ marginBottom: "var(--space-2)" }}>Project members</h1>
+      <h1 style={{ marginBottom: "var(--space-2)" }}>Project invites</h1>
       {project && (
         <p style={{ color: "var(--muted)", marginBottom: "var(--space-5)" }}>
           {project.name} ({project.slug})
@@ -144,8 +158,6 @@ export default function ProjectMembersPage() {
           <AlertBanner tone="danger">{error}</AlertBanner>
         </div>
       )}
-      {loading && <p style={{ color: "var(--muted)" }}>Loading...</p>}
-
       {freshInvite && (
         <Card style={{ marginBottom: "var(--space-4)" }}>
           <h2 style={{ marginTop: 0 }}>Invite link generated</h2>
@@ -210,7 +222,7 @@ export default function ProjectMembersPage() {
           Generates a one-time link. The recipient signs in and accepts to
           gain per-project access.
         </p>
-        {project?.governanceMode === "AUTONOMOUS" && (
+        {(project?.governanceMode === "AUTONOMOUS" || (project?.governanceMode == null && project?.soloMode === true)) && (
           <div style={{ marginBottom: "var(--space-3)" }}>
             <AlertBanner tone="warning">
               This project is currently autonomous (no distinct-reviewer
@@ -245,15 +257,17 @@ export default function ProjectMembersPage() {
           </FormField>
         </div>
         <div style={{ marginTop: "var(--space-3)" }}>
-          <Button onClick={() => void handleCreate()} disabled={creating}>
-            {creating ? "Creating..." : "Generate invite"}
+          <Button onClick={() => void handleCreate()} loading={creating}>
+            Generate invite
           </Button>
         </div>
       </Card>
 
       <Card>
         <h2 style={{ marginTop: 0 }}>Invites</h2>
-        {!invites || invites.length === 0 ? (
+        {loading ? (
+          <SkeletonList rows={3} rowHeight="2.5rem" label="Loading invites" />
+        ) : !invites || invites.length === 0 ? (
           <div
             style={{
               textAlign: "center",
@@ -293,7 +307,7 @@ export default function ProjectMembersPage() {
                       marginBottom: "var(--space-1)",
                     }}
                   >
-                    {inv.role}
+                    {roleLabel(inv.role)}
                   </p>
                   <p
                     style={{
@@ -310,7 +324,7 @@ export default function ProjectMembersPage() {
                   <Button
                     variant="outline-danger"
                     size="sm"
-                    onClick={() => void handleRevoke(inv.id)}
+                    onClick={() => setRevokeTarget({ id: inv.id })}
                   >
                     Revoke
                   </Button>
@@ -320,6 +334,18 @@ export default function ProjectMembersPage() {
           </div>
         )}
       </Card>
+
+      <ConfirmDialog
+        open={Boolean(revokeTarget)}
+        title="Revoke invite?"
+        message="This invite link will stop working immediately."
+        confirmLabel="Revoke"
+        cancelLabel="Keep"
+        tone="danger"
+        busy={revoking}
+        onConfirm={() => { if (revokeTarget) void handleRevoke(revokeTarget.id); }}
+        onCancel={() => { if (!revoking) setRevokeTarget(null); }}
+      />
     </main>
   );
 }
