@@ -12,7 +12,7 @@ import {
   type TeamTasksProject,
   type User,
 } from "../../lib/api";
-import { formatAbsoluteDate, formatRelativeTime } from "../../lib/time";
+import { formatAbsoluteDate, formatRelativeTime, formatDueDate } from "../../lib/time";
 import { PRIORITY_COLORS } from "../../lib/priorityColors";
 import AppHeader from "../../components/AppHeader";
 import Card from "../../components/ui/Card";
@@ -162,6 +162,7 @@ function TasksPageInner() {
   const searchParams = useSearchParams();
 
   const [user, setUser] = useState<User | null>(null);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [projects, setProjects] = useState<TeamTasksProject[]>([]);
   const [allTasks, setAllTasks] = useState<EnrichedTask[]>([]);
@@ -181,6 +182,7 @@ function TasksPageInner() {
   const statusFilter = statusState.values;
   const priorityFilter = priorityState.values;
   const projectIdFilter = searchParams.get("projectId") ?? "";
+  const teamIdParam = searchParams.get("teamId");
   const searchQuery = searchParams.get("q") ?? "";
   // Tri-state: `mine=1` forces on, `mine=0` forces off, absent = preset.
   const mineParam = searchParams.get("mine");
@@ -193,23 +195,51 @@ function TasksPageInner() {
   })();
   const page = Math.max(1, Number(searchParams.get("page")) || 1);
 
+  // Local mirror of the URL `q` param so typing doesn't router.replace on every
+  // keystroke; the debounce effect below pushes it to the URL after a pause.
+  const [searchInput, setSearchInput] = useState(searchQuery);
+
   useEffect(() => {
     void (async () => {
       const me = await getCurrentUser();
       if (!me) { router.replace("/auth"); return; }
       setUser(me);
 
-      const teams = await getTeams();
-      if (teams.length === 0) { router.replace("/onboarding"); return; }
-
-      const teamIdParam = searchParams.get("teamId");
-      const team = teams.find((t) => t.id === teamIdParam) ?? teams[0]!;
+      const fetchedTeams = await getTeams();
+      if (fetchedTeams.length === 0) { router.replace("/onboarding"); return; }
+      setTeams(fetchedTeams);
+      const team = fetchedTeams.find((t) => t.id === searchParams.get("teamId")) ?? fetchedTeams[0]!;
       setSelectedTeam(team);
       setLoading(false);
     })();
     // searchParams.get is fine to omit from deps; we only bootstrap once
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
+
+  // Keep selectedTeam in sync when the teamId param changes (team switcher,
+  // back/forward nav) after the initial bootstrap.
+  useEffect(() => {
+    if (teams.length === 0) return;
+    setSelectedTeam(teams.find((t) => t.id === teamIdParam) ?? teams[0]!);
+  }, [teams, teamIdParam]);
+
+  // Re-sync the search box when the URL query changes from outside (scope
+  // switch, clear-filters, back nav).
+  useEffect(() => {
+    setSearchInput(searchQuery);
+  }, [searchQuery]);
+
+  // Debounce search writes so each keystroke doesn't router.replace + reset
+  // pagination; the URL updates ~250ms after the user pauses. Deps are
+  // [searchInput] only: searchQuery is read just for the no-op guard and
+  // updateParams is a pure helper, so excluding them is intentional (the
+  // guard makes the post-write re-run a no-op, avoiding a loop).
+  useEffect(() => {
+    if (searchInput === searchQuery) return;
+    const id = setTimeout(() => updateParams({ q: searchInput || null }), 250);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput]);
 
   // Single aggregation roundtrip: the server-side endpoint returns the
   // union of tasks across all team-accessible projects plus a small
@@ -343,13 +373,24 @@ function TasksPageInner() {
             ← Back to Home
           </Link>
         </div>
+        {teams.length > 1 && (
+          <div style={{ marginTop: "0.6rem", maxWidth: "240px" }}>
+            <Select
+              ariaLabel="Switch team"
+              value={selectedTeam?.id ?? ""}
+              onChange={(v) => updateParams({ teamId: v, projectId: null })}
+              options={teams.map((t) => ({ value: t.id, label: t.name }))}
+            />
+          </div>
+        )}
       </Card>
 
       {allTasks.length >= 1000 && (
         <Card padding="sm" style={{ marginBottom: "var(--space-3)", background: "var(--warning-muted)", border: "1px solid var(--warning)" }}>
           <p style={{ fontSize: "var(--text-xs)", color: "var(--warning)" }}>
-            Showing the 1000 most recently updated tasks. Use the scope or filter
-            controls to narrow the view if you need older tasks.
+            This team has more than 1000 tasks; only the 1000 most recently
+            updated are loaded here. The filters below search within that set;
+            older tasks are not included.
           </p>
         </Card>
       )}
@@ -381,15 +422,15 @@ function TasksPageInner() {
             type="search"
             aria-label="Search tasks"
             placeholder="Search title, description, labels…"
-            value={searchQuery}
-            onChange={(e) => updateParams({ q: e.target.value })}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             style={{
               flex: "1 1 240px",
               minWidth: 0,
-              padding: "0.42rem 0.6rem",
+              padding: "0.45rem 0.625rem",
               background: "var(--surface)",
               border: "1px solid var(--border)",
-              borderRadius: "var(--radius-base)",
+              borderRadius: "var(--radius-lg)",
               color: "var(--text)",
               fontSize: "var(--text-sm)",
             }}
@@ -496,10 +537,15 @@ function TasksPageInner() {
                   type="button"
                   className={sort.column === col ? "sort-active" : ""}
                   onClick={() => toggleSort(col)}
+                  aria-label={
+                    sort.column === col
+                      ? `Sort by ${label}, currently sorted ${sort.direction === "asc" ? "ascending" : "descending"}`
+                      : `Sort by ${label}`
+                  }
                 >
                   {label}
                   {sort.column === col && (
-                    <span style={{ color: "var(--primary)", marginLeft: "0.25rem" }}>
+                    <span aria-hidden="true" style={{ color: "var(--primary)", marginLeft: "0.25rem" }}>
                       {sort.direction === "asc" ? "▲" : "▼"}
                     </span>
                   )}
@@ -523,21 +569,21 @@ function TasksPageInner() {
                     {task.title}
                   </span>
                 </span>
-                <span className="task-list-cell-status">
+                <span className="task-list-cell-status" data-label="Status">
                   <span className="status-chip" style={{ color: STATUS_COLORS[task.status] }}>
                     {STATUS_LABELS[task.status as Status] ?? task.status}
                   </span>
                 </span>
-                <span className="task-list-cell-muted" title={task.projectName} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span className="task-list-cell-muted" data-label="Project" title={task.projectName} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {task.projectName}
                 </span>
-                <span className="task-list-cell-muted">
-                  {task.dueAt ? task.dueAt.slice(0, 10) : "—"}
+                <span className="task-list-cell-muted" data-label="Due">
+                  {task.dueAt ? formatDueDate(task.dueAt) : "No due date"}
                 </span>
                 <span className="task-list-cell-updated" title={formatAbsoluteDate(task.updatedAt)}>
                   {formatRelativeTime(task.updatedAt)}
                 </span>
-                <span className="task-list-cell-priority">
+                <span className="task-list-cell-priority" data-label="Priority">
                   <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>
                     {task.priority}
                   </span>
