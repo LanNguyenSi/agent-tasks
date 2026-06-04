@@ -14,6 +14,14 @@ export interface User {
   allowAgentPrComment: boolean;
 }
 
+export type TaskType =
+  | "bugfix"
+  | "feature"
+  | "refactoring"
+  | "security"
+  | "migration"
+  | "docs";
+
 export interface TemplatePreset {
   name: string;
   description?: string;
@@ -21,6 +29,7 @@ export interface TemplatePreset {
   acceptanceCriteria?: string;
   context?: string;
   constraints?: string;
+  taskType?: TaskType;
 }
 
 export interface TaskTemplate {
@@ -67,6 +76,7 @@ export interface TemplateData {
   acceptanceCriteria?: string;
   context?: string;
   constraints?: string;
+  taskType?: TaskType;
 }
 
 export interface Task {

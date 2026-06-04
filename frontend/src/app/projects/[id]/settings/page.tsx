@@ -10,6 +10,7 @@ import {
   type User,
   type Project,
   type TaskTemplate,
+  type TaskType,
   type TemplatePreset,
 } from "../../../../lib/api";
 import AppHeader from "../../../../components/AppHeader";
@@ -17,6 +18,7 @@ import AlertBanner from "../../../../components/ui/AlertBanner";
 import { Button } from "../../../../components/ui/Button";
 import Card from "../../../../components/ui/Card";
 import FormField from "../../../../components/ui/FormField";
+import Select from "../../../../components/ui/Select";
 import {
   NotificationWebhookSection,
   buildWebhookPatch,
@@ -27,6 +29,7 @@ import {
 const DEFAULT_PRESETS: TemplatePreset[] = [
   {
     name: "Bug Fix",
+    taskType: "bugfix",
     description: "[Bug title]: [component/file]\n\nExpected: [what should happen]\nActual: [what happens instead]\nSteps: [how to reproduce]",
     goal: "Fix [describe the bug] in [component/file].\nExpected behavior: [what should happen]\nActual behavior: [what happens instead]",
     acceptanceCriteria: "- Bug is no longer reproducible\n- Root cause is identified and fixed (not just symptoms)\n- Regression test added that covers the exact failure case\n- No unrelated changes",
@@ -35,6 +38,7 @@ const DEFAULT_PRESETS: TemplatePreset[] = [
   },
   {
     name: "Feature",
+    taskType: "feature",
     description: "[Feature name]\n\nWhat: [what should be built]\nWhy: [which problem it solves]\nHow: [rough approach / affected files]",
     goal: "Implement [feature name].\n\n[Describe what the feature does, who it's for, and why it's needed]",
     acceptanceCriteria: "- [Core behavior works as specified]\n- [Edge cases handled: empty state, errors, loading]\n- Tests written (unit + integration where applicable)\n- Types/interfaces updated",
@@ -43,12 +47,23 @@ const DEFAULT_PRESETS: TemplatePreset[] = [
   },
   {
     name: "Refactoring",
+    taskType: "refactoring",
     description: "Refactor [module/component]\n\nMotivation: [why now]\nGoal: [what improves: readability, performance, testability]",
     goal: "Refactor [component/module] to [improve what exactly].\n\nMotivation: [why this refactoring is needed now]",
     acceptanceCriteria: "- All existing tests still pass\n- No behavior changes (pure refactor)\n- Code is measurably [simpler/faster/more readable]\n- No new tech debt introduced",
     context: "- Files to touch: [list of files]\n- Current pain points: [what makes the current code problematic]\n- Related refactoring: [other planned changes that depend on this]",
     constraints: "- Pure refactor, zero behavior changes\n- Keep the PR focused, no scope creep\n- If a file isn't broken, don't touch it",
   },
+];
+
+const TASK_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "No task type" },
+  { value: "bugfix", label: "Bug fix" },
+  { value: "feature", label: "Feature" },
+  { value: "refactoring", label: "Refactoring" },
+  { value: "security", label: "Security" },
+  { value: "migration", label: "Migration" },
+  { value: "docs", label: "Docs" },
 ];
 
 type GovernanceMode =
@@ -349,6 +364,20 @@ export default function ProjectSettingsPage() {
                       </button>
                     </div>
                     <div style={{ display: "grid", gap: "0.3rem" }}>
+                      <Select
+                        value={preset.taskType ?? ""}
+                        onChange={(value) => {
+                          const next = [...settingsPresets];
+                          next[idx] = {
+                            ...next[idx],
+                            taskType: value ? (value as TaskType) : undefined,
+                          };
+                          setSettingsPresets(next);
+                        }}
+                        options={TASK_TYPE_OPTIONS}
+                        ariaLabel={`Preset ${preset.name || idx + 1} task type`}
+                        style={{ width: "100%", fontSize: "var(--text-xs)" }}
+                      />
                       <textarea
                         value={preset.description ?? ""}
                         onChange={(e) => { const next = [...settingsPresets]; next[idx] = { ...next[idx], description: e.target.value }; setSettingsPresets(next); }}

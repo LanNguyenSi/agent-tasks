@@ -19,6 +19,7 @@ import {
   type User,
   type Task,
   type Comment,
+  type TaskType,
   type TemplateData,
 } from "../lib/api";
 import { calculateConfidence } from "../lib/confidence";
@@ -43,6 +44,16 @@ const STATUS_LABELS: Record<Status, string> = {
   review: "In Review",
   done: "Done",
 };
+
+const TASK_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "No task type" },
+  { value: "bugfix", label: "Bug fix" },
+  { value: "feature", label: "Feature" },
+  { value: "refactoring", label: "Refactoring" },
+  { value: "security", label: "Security" },
+  { value: "migration", label: "Migration" },
+  { value: "docs", label: "Docs" },
+];
 
 // Agent results can run to thousands of characters; clamp the collapsed box
 // to this height and measure whether the content actually overflows so the
@@ -134,6 +145,7 @@ export default function TaskDetail({
   const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState("");
   const [editContext, setEditContext] = useState("");
   const [editConstraints, setEditConstraints] = useState("");
+  const [editTaskType, setEditTaskType] = useState<TaskType | "">("");
 
   const initEditState = useCallback(() => {
     setEditTitle(task.title);
@@ -145,6 +157,7 @@ export default function TaskDetail({
     setEditAcceptanceCriteria(task.templateData?.acceptanceCriteria ?? "");
     setEditContext(task.templateData?.context ?? "");
     setEditConstraints(task.templateData?.constraints ?? "");
+    setEditTaskType(task.templateData?.taskType ?? "");
   }, [task]);
 
   // Reset modal state when switching to a different task (not on every poll refresh)
@@ -236,9 +249,10 @@ export default function TaskDetail({
       editGoal !== (task.templateData?.goal ?? "") ||
       editAcceptanceCriteria !== (task.templateData?.acceptanceCriteria ?? "") ||
       editContext !== (task.templateData?.context ?? "") ||
-      editConstraints !== (task.templateData?.constraints ?? "")
+      editConstraints !== (task.templateData?.constraints ?? "") ||
+      editTaskType !== (task.templateData?.taskType ?? "")
     );
-  }, [isEditing, editTitle, editDescription, editPriority, editStatus, editDueAt, editGoal, editAcceptanceCriteria, editContext, editConstraints, task]);
+  }, [isEditing, editTitle, editDescription, editPriority, editStatus, editDueAt, editGoal, editAcceptanceCriteria, editContext, editConstraints, editTaskType, task]);
 
   const startEditing = useCallback(() => {
     initEditState();
@@ -304,11 +318,17 @@ export default function TaskDetail({
   async function handleSaveTask() {
     setSavingTask(true);
     try {
-      const editTplData: TemplateData = {};
+      const editTplData: TemplateData = { ...(task.templateData ?? {}) };
       if (editGoal.trim()) editTplData.goal = editGoal.trim();
+      else delete editTplData.goal;
       if (editAcceptanceCriteria.trim()) editTplData.acceptanceCriteria = editAcceptanceCriteria.trim();
+      else delete editTplData.acceptanceCriteria;
       if (editContext.trim()) editTplData.context = editContext.trim();
+      else delete editTplData.context;
       if (editConstraints.trim()) editTplData.constraints = editConstraints.trim();
+      else delete editTplData.constraints;
+      if (editTaskType) editTplData.taskType = editTaskType;
+      else delete editTplData.taskType;
 
       const updated = await updateTask(task.id, {
         title: editTitle.trim(),
@@ -641,7 +661,14 @@ export default function TaskDetail({
                 title: isEditing ? editTitle : task.title,
                 description: isEditing ? (editDescription || null) : (task.description ?? null),
                 templateData: isEditing
-                  ? { goal: editGoal || undefined, acceptanceCriteria: editAcceptanceCriteria || undefined, context: editContext || undefined, constraints: editConstraints || undefined }
+                  ? {
+                      ...(task.templateData ?? {}),
+                      goal: editGoal || undefined,
+                      acceptanceCriteria: editAcceptanceCriteria || undefined,
+                      context: editContext || undefined,
+                      constraints: editConstraints || undefined,
+                      taskType: editTaskType || undefined,
+                    }
                   : task.templateData,
                 templateFields,
               });
@@ -665,6 +692,16 @@ export default function TaskDetail({
             })()}
             {isEditing ? (
               <>
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <FormField label="Task Type">
+                    <Select
+                      value={editTaskType}
+                      onChange={(value) => setEditTaskType(value as TaskType | "")}
+                      options={TASK_TYPE_OPTIONS}
+                      style={{ width: "100%" }}
+                    />
+                  </FormField>
+                </div>
                 {templateFields.goal && (
                   <div style={{ marginBottom: "0.5rem" }}>
                     <FormField label="Goal">
@@ -696,6 +733,14 @@ export default function TaskDetail({
               </>
             ) : (
               <div style={{ display: "grid", gap: "0.5rem" }}>
+                {task.templateData?.taskType && (
+                  <div>
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Task Type</span>
+                    <div style={{ marginTop: "0.15rem", fontSize: "var(--text-sm)", color: "var(--text)" }}>
+                      {TASK_TYPE_OPTIONS.find((opt) => opt.value === task.templateData?.taskType)?.label ?? task.templateData.taskType}
+                    </div>
+                  </div>
+                )}
                 {templateFields.goal && task.templateData?.goal && (
                   <div>
                     <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Goal</span>

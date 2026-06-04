@@ -1,8 +1,11 @@
+import type { TaskType } from "./api";
+
 export interface TemplateData {
   goal?: string;
   acceptanceCriteria?: string;
   context?: string;
   constraints?: string;
+  taskType?: TaskType;
 }
 
 export interface TemplateFields {

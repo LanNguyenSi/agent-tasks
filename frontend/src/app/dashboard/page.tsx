@@ -15,6 +15,7 @@ import {
   type Team,
   type Project,
   type Task,
+  type TaskType,
   type TemplateData,
 } from "../../lib/api";
 import { calculateConfidence } from "../../lib/confidence";
@@ -69,6 +70,16 @@ const STATUS_COLORS: Record<string, string> = {
   review: "var(--warning)",
   done: "var(--success)",
 };
+
+const TASK_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "No task type" },
+  { value: "bugfix", label: "Bug fix" },
+  { value: "feature", label: "Feature" },
+  { value: "refactoring", label: "Refactoring" },
+  { value: "security", label: "Security" },
+  { value: "migration", label: "Migration" },
+  { value: "docs", label: "Docs" },
+];
 
 const PRIORITY_RANK: Record<Priority, number> = {
   CRITICAL: 0,
@@ -354,6 +365,7 @@ export default function DashboardPage() {
   const [newTaskAcceptanceCriteria, setNewTaskAcceptanceCriteria] = useState("");
   const [newTaskContext, setNewTaskContext] = useState("");
   const [newTaskConstraints, setNewTaskConstraints] = useState("");
+  const [newTaskType, setNewTaskType] = useState<TaskType | "">("");
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
   const [doneVisibility, setDoneVisibility] = useState<DoneVisibility>(DEFAULT_DONE_VISIBILITY);
@@ -513,6 +525,7 @@ export default function DashboardPage() {
     setNewTaskAcceptanceCriteria("");
     setNewTaskContext("");
     setNewTaskConstraints("");
+    setNewTaskType("");
   }
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
@@ -627,6 +640,7 @@ export default function DashboardPage() {
       if (newTaskAcceptanceCriteria.trim()) tplData.acceptanceCriteria = newTaskAcceptanceCriteria.trim();
       if (newTaskContext.trim()) tplData.context = newTaskContext.trim();
       if (newTaskConstraints.trim()) tplData.constraints = newTaskConstraints.trim();
+      if (newTaskType) tplData.taskType = newTaskType;
       const hasTemplateData = Object.keys(tplData).length > 0;
 
       let task = await createTask(selectedProjectId, {
@@ -907,6 +921,7 @@ export default function DashboardPage() {
                           if (preset.acceptanceCriteria !== undefined) setNewTaskAcceptanceCriteria(preset.acceptanceCriteria);
                           if (preset.context !== undefined) setNewTaskContext(preset.context);
                           if (preset.constraints !== undefined) setNewTaskConstraints(preset.constraints);
+                          setNewTaskType(preset.taskType ?? "");
                         }}
                       >
                         {preset.name}
@@ -914,6 +929,16 @@ export default function DashboardPage() {
                     ))}
                   </div>
                 )}
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <FormField label="Task Type">
+                    <Select
+                      value={newTaskType}
+                      onChange={(value) => setNewTaskType(value as TaskType | "")}
+                      options={TASK_TYPE_OPTIONS}
+                      style={{ width: "100%" }}
+                    />
+                  </FormField>
+                </div>
                 {templateFields.goal && (
                   <div style={{ marginBottom: "0.5rem" }}>
                     <FormField label="Goal">
@@ -948,7 +973,13 @@ export default function DashboardPage() {
                     score={calculateConfidence({
                       title: newTaskTitle,
                       description: newTaskDescription || null,
-                      templateData: { goal: newTaskGoal || undefined, acceptanceCriteria: newTaskAcceptanceCriteria || undefined, context: newTaskContext || undefined, constraints: newTaskConstraints || undefined },
+                      templateData: {
+                        goal: newTaskGoal || undefined,
+                        acceptanceCriteria: newTaskAcceptanceCriteria || undefined,
+                        context: newTaskContext || undefined,
+                        constraints: newTaskConstraints || undefined,
+                        taskType: newTaskType || undefined,
+                      },
                       templateFields,
                     }).score}
                   />

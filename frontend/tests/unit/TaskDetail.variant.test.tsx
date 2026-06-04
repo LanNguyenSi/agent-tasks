@@ -24,6 +24,7 @@ vi.mock("../../src/lib/api", () => ({
 }));
 
 import TaskDetail from "../../src/components/TaskDetail";
+import { updateTask } from "../../src/lib/api";
 import type { Task } from "../../src/lib/api";
 
 afterEach(cleanup);
@@ -92,5 +93,42 @@ describe("TaskDetail — variant", () => {
     expect(screen.queryByRole("link", { name: "Open as full page" })).toBeNull();
     // The shared detail body still renders (the task title is shown).
     expect(screen.getByText("Fix the thing")).toBeInTheDocument();
+  });
+
+  it("merges existing templateData on save so producer fields are not dropped", async () => {
+    const user = userEvent.setup();
+    const updatedTask = makeTask({
+      templateData: {
+        goal: "Tighten matcher",
+        taskType: "bugfix",
+        producerField: "keep-me",
+      } as unknown as Task["templateData"],
+    });
+    vi.mocked(updateTask).mockResolvedValue(updatedTask);
+
+    render(
+      <TaskDetail
+        task={updatedTask}
+        {...baseProps}
+        templateFields={{ goal: true }}
+      />,
+    );
+
+    await user.keyboard("e");
+    const goalInput = screen.getByLabelText("Goal");
+    await user.clear(goalInput);
+    await user.type(goalInput, "Tighten matcher and logging");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(updateTask).toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        templateData: expect.objectContaining({
+          goal: "Tighten matcher and logging",
+          taskType: "bugfix",
+          producerField: "keep-me",
+        }),
+      }),
+    );
   });
 });
