@@ -127,7 +127,13 @@ export interface TaskAttachment {
   id: string;
   taskId: string;
   name: string;
+  // Uploaded files: /uploads/<uuid>.<ext>. URL pointers: an external http(s) URL.
   url: string;
+  mimeType: string | null;
+  sizeBytes: number;
+  type: "IMAGE" | "DOCUMENT";
+  createdByUserId: string | null;
+  createdByUser?: { id: string; login: string; name: string | null; avatarUrl: string | null } | null;
   createdAt: string;
 }
 
@@ -581,6 +587,49 @@ export async function addTaskAttachment(
 
 export async function deleteTaskAttachment(taskId: string, attachmentId: string): Promise<void> {
   await request(`/api/tasks/${taskId}/attachments/${attachmentId}`, { method: "DELETE" });
+}
+
+/**
+ * Upload an image or text file to a task. Uses FormData and deliberately does
+ * NOT set Content-Type so the browser adds the multipart boundary. Does not go
+ * through `request()` (which forces application/json).
+ */
+export async function uploadTaskAttachmentFile(
+  taskId: string,
+  file: File,
+  name?: string,
+): Promise<TaskAttachment> {
+  const form = new FormData();
+  form.append("file", file);
+  if (name) form.append("name", name);
+
+  const res = await fetch(`${BASE}/api/tasks/${taskId}/attachments/upload`, {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as ApiError;
+    // The upload/raw endpoints return { error: "<reason>" } without a separate
+    // `message`, so fall back to `error` for the human-readable string rather
+    // than stranding the reason (e.g. a magic-byte rejection) in the code slot.
+    const msg = err.message ?? err.error ?? "Upload failed";
+    throw new ApiRequestError(err.error ?? "upload_failed", msg, res.status);
+  }
+  const data = (await res.json()) as { attachment: TaskAttachment };
+  return data.attachment;
+}
+
+/**
+ * Absolute URL of an uploaded attachment's bytes. The endpoint is auth-gated by
+ * the session cookie, so a same-origin `<img src>` or download link works
+ * without a query-string token. NOTE: in split-origin local dev (frontend on
+ * :3000, API on :3001) the browser will not attach the SameSite=Lax session
+ * cookie to these `<img>`/download requests, so thumbnails 401 locally; this
+ * works in same-origin prod (or behind a same-origin dev proxy).
+ */
+export function rawAttachmentUrl(taskId: string, attachmentId: string): string {
+  return `${BASE}/api/tasks/${taskId}/attachments/${attachmentId}/raw`;
 }
 
 // ── Artifacts (typed, agent-produced task outputs) ──────────────────────────

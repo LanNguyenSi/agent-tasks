@@ -25,6 +25,7 @@ import { calculateConfidence } from "../lib/confidence";
 import { formatRelativeTime, formatAbsoluteDate, formatDueDate } from "../lib/time";
 import ConfidenceBadge from "./ConfidenceBadge";
 import TaskArtifactsSection from "./TaskArtifactsSection";
+import TaskAttachmentsSection from "./TaskAttachmentsSection";
 import { Button } from "./ui/Button";
 import CollapsibleSection from "./ui/CollapsibleSection";
 import ConfirmDialog from "./ui/ConfirmDialog";
@@ -882,6 +883,14 @@ export default function TaskDetail({
         <TaskArtifactsSection
           taskId={task.id}
           initial={task.artifacts}
+          user={user}
+          onError={onError}
+        />
+
+        {/* ── Attachments ───────────────────────────────────────── */}
+        <TaskAttachmentsSection
+          taskId={task.id}
+          initial={task.attachments}
           user={user}
           onError={onError}
         />
