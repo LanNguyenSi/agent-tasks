@@ -24,6 +24,12 @@ export const templatePresetSchema = z.object({
   acceptanceCriteria: z.string().optional(),
   context: z.string().optional(),
   constraints: z.string().optional(),
+  // scorer-v2 executability fields (1:1 with the spec-slicer schema)
+  scope: z.string().optional(),
+  outOfScope: z.string().optional(),
+  dependencies: z.string().optional(),
+  risk: z.string().optional(),
+  agentPrompt: z.string().optional(),
   taskType: taskTypeSchema.optional(),
 });
 
@@ -35,17 +41,47 @@ export const taskTemplateSchema = z.object({
     acceptanceCriteria: z.boolean().default(false),
     context: z.boolean().default(false),
     constraints: z.boolean().default(false),
+    // scorer-v2 executability fields. A project can mark them required; scoring
+    // against them lands in a later slice (fields are only stored for now).
+    scope: z.boolean().default(false),
+    outOfScope: z.boolean().default(false),
+    dependencies: z.boolean().default(false),
+    risk: z.boolean().default(false),
+    agentPrompt: z.boolean().default(false),
   }),
   presets: z.array(templatePresetSchema).max(20).default([]),
 });
 
 export type TaskTemplate = z.infer<typeof taskTemplateSchema>;
 
+// Optional, opt-in quality/safety preferences a producer (e.g. the spec-slicer)
+// can declare per task. Bonus-only signals; scoring against them lands in a
+// later slice. Stored on templateData now so the producer schema is complete.
+export const prefersSchema = z.object({
+  testBeforeImplementation: z.boolean().optional(),
+  verticalSlices: z.boolean().optional(),
+  smallDiffs: z.boolean().optional(),
+  explicitStopConditions: z.boolean().optional(),
+  noSpeculativeRefactoring: z.boolean().optional(),
+});
+
+export type Prefers = z.infer<typeof prefersSchema>;
+
 export const templateDataSchema = z.object({
   goal: z.string().optional(),
+  // Canonical wire key for "evals" (the spec-slicer's Evals section). Keep this
+  // single key; "evals" is only an alias at the producer edge, never stored.
   acceptanceCriteria: z.string().optional(),
   context: z.string().optional(),
   constraints: z.string().optional(),
+  // scorer-v2 executability fields (1:1 with the spec-slicer schema). Stored and
+  // round-tripped now; weighting/scoring against them is a later slice.
+  scope: z.string().optional(),
+  outOfScope: z.string().optional(),
+  dependencies: z.string().optional(),
+  risk: z.string().optional(),
+  agentPrompt: z.string().optional(),
+  prefers: prefersSchema.optional(),
   taskType: taskTypeSchema.optional(),
 });
 
@@ -119,6 +155,11 @@ export interface TemplateFields {
   acceptanceCriteria?: boolean;
   context?: boolean;
   constraints?: boolean;
+  scope?: boolean;
+  outOfScope?: boolean;
+  dependencies?: boolean;
+  risk?: boolean;
+  agentPrompt?: boolean;
 }
 
 interface ConfidenceInput {

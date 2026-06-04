@@ -116,6 +116,12 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
         dependsOn: z.array(uuid()).max(50).optional(),
         debugFlavor: z.boolean().optional(),
+        templateData: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            "Structured spec fields, forwarded to the backend which validates + scores them: goal, acceptanceCriteria (the task's evals), context, constraints, scope, outOfScope, dependencies, risk, agentPrompt, taskType, and prefers { testBeforeImplementation, verticalSlices, smallDiffs, explicitStopConditions, noSpeculativeRefactoring }. Populate goal + acceptanceCriteria at minimum so the task is executable.",
+          ),
       },
       handler: async ({ projectId, ...input }) =>
         wrap(() => client.createTask(projectId, input)),
