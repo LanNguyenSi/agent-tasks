@@ -46,6 +46,10 @@ services:
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-dev-client-id}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-dev-client-secret}
       SESSION_SECRET: ${SESSION_SECRET:-change-me-to-a-random-32-char-string!!}
+      # Disk location for human-uploaded task attachments (image + text). The
+      # uploads_data volume mounted below at /app/uploads overlays the repo
+      # bind mount so uploaded files stay out of the working tree.
+      UPLOAD_DIR: /app/uploads
       # Uncomment the block below (and the matching depends_on line
       # further down) to share the GitHub-checks cache across multiple
       # backend instances. The `redis` service above provides the
@@ -60,6 +64,7 @@ services:
     volumes:
       - ./:/app
       - backend_node_modules:/app/node_modules
+      - uploads_data:/app/uploads
     ports:
       - "3001:3001"
     depends_on:
@@ -93,3 +98,6 @@ volumes:
   postgres_data:
   backend_node_modules:
   frontend_node_modules:
+  # Human-uploaded task attachments (image + text), kept out of the repo
+  # working tree by overlaying the backend bind mount at /app/uploads.
+  uploads_data:

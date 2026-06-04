@@ -29,6 +29,11 @@ logs/
 *.sqlite
 *.sqlite3
 
+# Uploaded task attachments (UPLOAD_DIR defaults to ./uploads for bare local
+# runs; in containers it is a named volume).
+uploads/
+backend/uploads/
+
 # Tooling / editor
 .codex
 .vscode/

@@ -16,6 +16,8 @@ import {
   getProjectMembership,
 } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
+import { unlink } from "node:fs/promises";
+import { storedFilePath } from "../services/attachment-files.js";
 import {
   GovernanceMode,
   deriveGovernanceModeFromFlags,
@@ -471,7 +473,17 @@ projectRouter.delete("/projects/:id", async (c) => {
     return forbidden(c, "Only project admins can delete projects");
   }
 
+  // Reclaim disk for uploaded attachments before the Project->Task->Attachment
+  // cascade drops their rows; the cascade never touches the backing files.
+  const attachments = await prisma.taskAttachment.findMany({
+    where: { task: { projectId: project.id } },
+    select: { url: true },
+  });
   await prisma.project.delete({ where: { id: project.id } });
+  for (const a of attachments) {
+    const abs = storedFilePath(a.url);
+    if (abs) await unlink(abs).catch(() => {});
+  }
 
   return c.json({ success: true });
 });

@@ -42,6 +42,7 @@ model User {
   signals                Signal[]        @relation("SignalRecipientUser")
   comments               Comment[]       @relation("CommentAuthor")
   artifacts              TaskArtifact[]  @relation("ArtifactCreator")
+  attachmentsCreated     TaskAttachment[] @relation("AttachmentCreator")
   auditLogs              AuditLog[]
   projectMemberships     ProjectMember[] @relation("ProjectMemberUser")
   projectMembersInvited  ProjectMember[] @relation("ProjectMemberInviter")
@@ -363,14 +364,27 @@ model Task {
 }
 
 model TaskAttachment {
-  id              String   @id @default(uuid())
-  taskId          String
-  name            String
-  url             String
+  id     String @id @default(uuid())
+  taskId String
+  name   String
+  // For uploaded files this is `/uploads/<uuid>.<ext>` and the bytes live on
+  // the UPLOAD_DIR disk volume. For legacy URL-pointer attachments it is an
+  // arbitrary external URL with no bytes stored by agent-tasks.
+  url    String
+  // Sniffed media type of an uploaded file (e.g. `image/png`, `text/markdown`).
+  // Null for URL-pointer attachments.
+  mimeType String?
+  // Byte length of the stored file; `0` for URL-pointer attachments.
+  sizeBytes Int @default(0)
+  // `IMAGE` or `DOCUMENT`, validated in the route. Defaults to DOCUMENT so the
+  // legacy URL-pointer create path and pre-existing rows stay valid after the
+  // additive `prisma db push`.
+  type            String  @default("DOCUMENT")
   createdByUserId String?
   createdAt       DateTime @default(now())
 
-  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task          Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdByUser User? @relation("AttachmentCreator", fields: [createdByUserId], references: [id])
 
   @@index([taskId])
   @@map("task_attachments")
