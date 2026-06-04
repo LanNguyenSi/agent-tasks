@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-06-04
+
+**Headline: the modal and navigation UX pass. The shared Modal primitive gains an accessible X-close, a sticky header over a scrolling body, and thinner scrollbars; the task detail can be maximized from the board modal into a deep-linkable `/tasks/[id]` page; and the Agent Template Settings move out of a dashboard modal onto a dedicated `/projects/[id]/settings` page. Plus list-title clipping fixes and a server-side done-recency filter with pagination so older done tasks are reachable again.** No backend schema changes.
+
+Operator note: no breaking changes. Per the convention since v0.9.0, workspace `package.json` versions are not bumped (frontend and backend stay 0.3.0; `@agent-tasks/mcp-server` 0.7.0 and `@agent-tasks/mcp-bridge` 0.6.3 unchanged). The UI was dogfooded by the operator; CI is green per PR and re-runs on the release tag.
+
+### Added
+
+- **Maximizable task detail with a deep-linkable `/tasks/[id]` page** (#305): the board's task detail modal gains a maximize control that opens the same detail as a full page. A shared `TaskDetail` component (a `variant` prop) renders identically in the modal and on the page, so the two never drift. Save and Cancel stay pinned, Escape-to-close stays modal-only, and the maximize control is hidden while editing so an in-flight edit is never dropped.
+- **Agent Template Settings on a dedicated `/projects/[id]/settings` page** (#306): the settings form (governance mode, notification webhook, template fields, confidence threshold, presets) moves out of the dashboard modal onto its own page reached from the gear icon, so it has room once the template is enabled. The dashboard sheds the modal, its state, and the now-unused imports.
+
+### Changed
+
+- **Modal primitive polish** (#304): the header "Close" text becomes an accessible X icon button; the modal restructures into a sticky header, a scrolling body, and a pinned footer so the scrollbar lives in the body only and never reaches the top edge (scoped to a `modal-card--framed` modifier, so `ConfirmDialog` is untouched); global scrollbars are thinner (8px with a 1px thumb) with Firefox `scrollbar-width` and `scrollbar-color` in both themes, and the modal body reserves its scrollbar gutter to avoid horizontal content shift.
+- **Server-side done-recency filter and pagination on the tasks list** (#303): `GET /teams/:teamId/tasks` gains server-side recency (recent within 14 days, older, or all), plus search, single-project, mine, sort, and offset params, a `filteredTotal` for pagination, and team-wide `doneRecent` / `doneOlder` counts. The `/tasks` page is now paged from the server with Recent / Older / All chips on the done scope, fixing the prior limitation where done tasks older than 14 days (around 500 of them) were unreachable behind the 1000-task client cap. The home "Recently Done" widget links are restored from the authoritative server counts.
+
+### Fixed
+
+- **Long task titles are clipped in the list view** (#301): every `.task-list-cell-*` gets `min-width: 0` so the title's ellipsis clamps inside its own cell instead of overlapping the Status and Project columns; the Due cell is clamped to match.
+- **Dashboard list titles are clipped, with mobile field labels** (#302): the dashboard list title span gets `display: block` so its ellipsis actually clips, the muted cells are clamped the same way, and `data-label` attributes label each value in the stacked mobile layout.
+
+### Notes
+
+- No database schema changes. This release is frontend UX work plus one backend tasks-listing change (#303); the live deployment updates separately.
+
 ## [0.20.0] - 2026-06-03
 
 **Headline: the deferred long tail of the 2026-06-03 UI/UX audit, a frontend polish pass across every page (home, dashboard, task modal, tasks list, teams, settings, members/invite, and the auth/onboarding/landing funnel) with a set of new shared design-system primitives, accessibility wins throughout, plus the backend half of the ESLint setup wired into CI.** No backend schema changes.
