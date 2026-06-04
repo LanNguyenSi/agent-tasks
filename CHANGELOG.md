@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-06-04
+
+**Headline: task file attachments. Humans can upload image and text files to a task (drag-drop or file picker), view image thumbnails with a lightbox and download text files, and delete their own; the bytes live on a disk volume and the database holds metadata only. Agents can read attachments (text excerpt or base64) so a pipeline stage can consume an uploaded spec, document, or screenshot.** Additive schema, applied by the existing `prisma db push` migrate step.
+
+Operator note: a new `agent_tasks_uploads` named volume holds the uploaded files. It is NOT covered by the Postgres backups, add it to the VPS backup scope. The schema change is additive (nullable columns plus a defaulted `type`), so the migrate container's `prisma db push` is safe for existing rows. Released alongside: `@agent-tasks/mcp-server` 0.8.0 (the two new read verbs) and `@agent-tasks/mcp-bridge` 0.7.0 (re-pins the server); the frontend and backend workspace `package.json` versions stay unchanged per the convention since v0.9.0. Backend and frontend were deployed and dogfooded; the human-upload UI path is an operator visual check.
+
+### Added
+
+- **Task file attachments: backend upload, serve, delete** (#308): `POST /api/tasks/{id}/attachments/upload` stores an image (jpeg/png/gif/webp) or text (plain/markdown/csv) file on the `UPLOAD_DIR` disk volume, capped at 5 MiB and validated by a magic-byte sniff so the served type never trusts the client `Content-Type` (no SVG/PDF/JSON). `GET .../{attId}/raw` streams the bytes auth-gated with `X-Content-Type-Options: nosniff` and an inline (image) or attachment (text) disposition, so a same-origin `<img src>` works on the session cookie. Delete is uploader-or-admin and removes the row plus the file; task and project deletion also reclaim the backing files. New audit events `task.attachment.uploaded` / `task.attachment.deleted`. The legacy URL-pointer attachment POST now rejects non-http(s) URLs (a stored-XSS guard).
+- **Task Attachments section in the task detail** (#309): the shared `TaskDetail` (board modal and `/tasks/[id]` page) gains an Attachments section with drag-drop and file-picker upload (client-side type and size pre-check, busy state), an image thumbnail grid with a focus-managed lightbox, text rows with size and a download link, and a two-step inline delete confirm for the uploader.
+- **Agent read of attachments over MCP** (#310): `GET /api/tasks/{id}/attachments` (metadata list) and `GET .../{attId}/content` (a UTF-8 text excerpt for text files, or base64 for images) let agents consume uploaded files, exposed as the `task_attachment_list` and `task_attachment_get` MCP verbs (read-only; agents still cannot upload or delete, they produce artifacts for their own output). Byte caps default 200 KB text / 64 KB base64, clamped at 800 KB / 512 KB.
+
 ## [0.21.0] - 2026-06-04
 
 **Headline: the modal and navigation UX pass. The shared Modal primitive gains an accessible X-close, a sticky header over a scrolling body, and thinner scrollbars; the task detail can be maximized from the board modal into a deep-linkable `/tasks/[id]` page; and the Agent Template Settings move out of a dashboard modal onto a dedicated `/projects/[id]/settings` page. Plus list-title clipping fixes and a server-side done-recency filter with pagination so older done tasks are reachable again.** No backend schema changes.

@@ -2,6 +2,12 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## 0.8.0
+
+### Added
+
+- `task_attachment_list` and `task_attachment_get` verbs: agents can read human-uploaded task attachments (images + text). `task_attachment_list` returns attachment metadata for a task; `task_attachment_get` returns a UTF-8 text excerpt for text files, or base64 for images when `includeBase64` is set, with `textByteLimit` (max 800000) and `base64ByteLimit` (max 512000) caps and a `status` of `ready`/`missing`/`unsupported`/`error`. Read-only by design: agents cannot upload or delete attachments (they produce artifacts for their own output). Requires the `tasks:read` scope. Backs agent-tasks task d0e6fce9, root release v0.22.0.
+
 ## 0.7.0
 
 ### Added
