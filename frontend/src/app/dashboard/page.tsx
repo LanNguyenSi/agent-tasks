@@ -47,7 +47,7 @@ import FormField from "../../components/ui/FormField";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
 import { SkeletonList } from "../../components/ui/Skeleton";
-import TaskDetailModal from "../../components/TaskDetailModal";
+import TaskDetail from "../../components/TaskDetail";
 import ImportDialog from "../../components/ImportDialog";
 import { NotificationWebhookSection, buildWebhookPatch } from "../../components/NotificationWebhookSection";
 import Select from "@/components/ui/Select";
@@ -1244,7 +1244,7 @@ export default function DashboardPage() {
       )}
 
       {activeTask && (
-        <TaskDetailModal
+        <TaskDetail
           task={activeTask}
           tasks={tasks}
           user={user}

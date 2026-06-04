@@ -24,7 +24,7 @@ vi.mock("../../src/lib/api", () => ({
   transitionTask: vi.fn(),
 }));
 
-import TaskDetailModal from "../../src/components/TaskDetailModal";
+import TaskDetail from "../../src/components/TaskDetail";
 import type { Task } from "../../src/lib/api";
 
 afterEach(cleanup);
@@ -61,7 +61,7 @@ function makeTask(over: Partial<Task> = {}): Task {
 
 function renderModal(onClose: () => void) {
   return render(
-    <TaskDetailModal
+    <TaskDetail
       task={makeTask()}
       tasks={[makeTask()]}
       user={null}
