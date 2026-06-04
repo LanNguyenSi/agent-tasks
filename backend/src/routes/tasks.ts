@@ -91,6 +91,7 @@ import {
   ensureUploadDir,
   contentDisposition,
 } from "../services/attachment-files.js";
+import { readAttachmentContent, parseIncludeBase64Flag } from "../services/attachment-content.js";
 
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -3574,6 +3575,75 @@ taskRouter.get("/tasks/:id/attachments/:attachmentId/raw", async (c) => {
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "private, max-age=0, must-revalidate",
     },
+  });
+});
+
+// Metadata list of a task's attachments (most recent first). Bytes are never
+// included; agents read content via the `/content` endpoint below. The full
+// task view ships this list too, but a dedicated endpoint keeps the MCP
+// `task_attachment_list` payload lean (mirrors the artifacts list).
+taskRouter.get("/tasks/:id/attachments", async (c) => {
+  const actor = c.get("actor") as Actor;
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:read")) {
+    return forbidden(c, "Missing scope: tasks:read");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const attachments = await prisma.taskAttachment.findMany({
+    where: { taskId: task.id },
+    orderBy: { createdAt: "desc" },
+    include: { createdByUser: { select: { id: true, login: true, name: true, avatarUrl: true } } },
+  });
+
+  return c.json({ attachments });
+});
+
+// Agent-read of one attachment's content: a UTF-8 text excerpt (text/*) or
+// base64 (image/*, when ?includeBase64=true). Lets a pipeline stage consume a
+// human-uploaded spec, document, or screenshot. ?textByteLimit and
+// ?base64ByteLimit cap the returned slice (see attachment-content.ts).
+taskRouter.get("/tasks/:id/attachments/:attachmentId/content", async (c) => {
+  const actor = c.get("actor") as Actor;
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:read")) {
+    return forbidden(c, "Missing scope: tasks:read");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const attachment = await prisma.taskAttachment.findUnique({
+    where: { id: c.req.param("attachmentId") },
+  });
+  if (!attachment || attachment.taskId !== task.id) return notFound(c);
+
+  // storedFilePath returns null for URL-pointer attachments (no bytes) and for
+  // any path escaping UPLOAD_DIR; readAttachmentContent maps null to "missing".
+  const content = await readAttachmentContent(storedFilePath(attachment.url), attachment.mimeType, {
+    includeBase64: parseIncludeBase64Flag(c.req.query("includeBase64")),
+    textByteLimit: c.req.query("textByteLimit"),
+    base64ByteLimit: c.req.query("base64ByteLimit"),
+  });
+
+  return c.json({
+    attachment: {
+      id: attachment.id,
+      taskId: attachment.taskId,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      type: attachment.type,
+    },
+    content,
   });
 });
 

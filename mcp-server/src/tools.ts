@@ -203,6 +203,39 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         wrap(() => client.getTaskArtifact(taskId, artifactId)),
     }),
 
+    // ── Attachments (read-only) ──────────────────────────────────────────
+    //
+    // Human-uploaded files (images + text). Agents cannot upload or delete
+    // them, but can READ them so a pipeline stage can consume an uploaded
+    // spec, document, or screenshot.
+    def({
+      name: "task_attachment_list",
+      description:
+        "List metadata for a task's human-uploaded attachments (images + text files), most recent first. Bytes are not included — use task_attachment_get to read one attachment's content. Requires the tasks:read scope for agent callers.",
+      inputShape: { taskId: uuid() },
+      handler: async ({ taskId }) => wrap(() => client.listTaskAttachments(taskId)),
+    }),
+    def({
+      name: "task_attachment_get",
+      description:
+        "Read one human-uploaded attachment's content: a UTF-8 text excerpt for text files (text/plain, markdown, csv), or base64 for images (jpeg/png/gif/webp) when `includeBase64` is set. Use this to consume an uploaded spec/document or a screenshot. `textByteLimit` (max 800000, default 200000) and `base64ByteLimit` (max 512000, default 65536) cap the returned slice; values above the max are rejected. The response carries `status` (ready/missing/unsupported/error), `truncated`, `bytesRead`, `fileSize`, and `base64Truncated` — when `base64Truncated` is true and `base64` is null, the image exceeded `base64ByteLimit`, so retry with a higher value. Requires the tasks:read scope for agent callers.",
+      inputShape: {
+        taskId: uuid(),
+        attachmentId: uuid(),
+        includeBase64: z.boolean().optional(),
+        textByteLimit: z.number().int().positive().max(800_000).optional(),
+        base64ByteLimit: z.number().int().positive().max(512_000).optional(),
+      },
+      handler: async ({ taskId, attachmentId, includeBase64, textByteLimit, base64ByteLimit }) =>
+        wrap(() =>
+          client.getTaskAttachmentContent(taskId, attachmentId, {
+            includeBase64,
+            textByteLimit,
+            base64ByteLimit,
+          }),
+        ),
+    }),
+
     // ── PR lifecycle (v2) ────────────────────────────────────────────────
     //
     // Server-side PR create + merge. Pairs with the existing GitHub

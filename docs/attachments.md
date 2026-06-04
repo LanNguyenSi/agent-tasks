@@ -102,11 +102,34 @@ Human-only, requires write access.
 
 Response: `201 { "attachment": { ... } }`
 
+### `GET /api/tasks/{id}/attachments`
+
+List attachment metadata (most-recent first). Agents need `tasks:read`. Bytes
+are never included; use `raw` (download) or `content` (agent-read) for those.
+
 ### `GET /api/tasks/{id}/attachments/{attachmentId}/raw`
 
 Stream the stored bytes of an uploaded attachment. Agents need `tasks:read`.
 Returns `404` for URL-pointer attachments (no bytes), for an attachment that
 belongs to a different task, or when the backing file is missing.
+
+### `GET /api/tasks/{id}/attachments/{attachmentId}/content`
+
+Read an attachment as agent-consumable content rather than raw bytes: a UTF-8
+text excerpt for text files, or base64 for images. Agents need `tasks:read`.
+
+Query params: `includeBase64` (`true`/`1`/`yes`), `textByteLimit` (default
+200000, max 800000), `base64ByteLimit` (default 65536, max 512000).
+
+Response: `200 { "attachment": { id, taskId, name, mimeType, sizeBytes, type }, "content": { ... } }`
+where `content` carries:
+
+- `status`: `ready`, `missing` (URL-pointer or file gone), `unsupported`
+  (mime not in the allowlist), or `error`.
+- `encoding`: `utf-8` for a text excerpt, `base64` for an image, else null.
+- `text` / `excerpt` (text files), `truncated`, `bytesRead`, `fileSize`.
+- `base64` / `base64Included` / `base64Truncated`. Base64 is returned only when
+  `includeBase64` is set and the file is within `base64ByteLimit`.
 
 ### `DELETE /api/tasks/{id}/attachments/{attachmentId}`
 
@@ -118,6 +141,19 @@ the database row and, for uploaded files, the backing file on disk.
 The full task view (`GET /api/tasks/{id}`) includes `attachments` with all
 metadata fields and the `createdByUser` summary, most-recent first. File bytes
 are never inlined in the task payload; fetch them from the `raw` endpoint.
+
+## MCP tools
+
+Agents read attachments through two read-only v2 verbs (no agent upload or
+delete; agents produce `TaskArtifact`s for their own output):
+
+- `task_attachment_list` — attachment metadata for a task.
+- `task_attachment_get` — one attachment's content (text excerpt or, with
+  `includeBase64`, base64), backed by the `content` endpoint above.
+
+Use case: a human uploads a spec or an application document (handy for
+non-GitHub projects), and an agent reads it with `task_attachment_get` to
+process it.
 
 ## Audit log
 

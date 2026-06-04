@@ -323,6 +323,31 @@ export class AgentTasksClient {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/artifacts`, input);
   }
 
+  // ── Attachments (human-uploaded files, read-only for agents) ─────────────
+  //
+  // List returns metadata only; get-content returns a text excerpt (text/*) or
+  // base64 (image/*). Agents cannot upload or delete attachments.
+
+  listTaskAttachments(taskId: string) {
+    return this.request<unknown>("GET", `/api/tasks/${taskId}/attachments`);
+  }
+
+  getTaskAttachmentContent(
+    taskId: string,
+    attachmentId: string,
+    opts: { includeBase64?: boolean; textByteLimit?: number; base64ByteLimit?: number } = {},
+  ) {
+    const qs = new URLSearchParams();
+    if (opts.includeBase64) qs.set("includeBase64", "true");
+    if (opts.textByteLimit !== undefined) qs.set("textByteLimit", String(opts.textByteLimit));
+    if (opts.base64ByteLimit !== undefined) qs.set("base64ByteLimit", String(opts.base64ByteLimit));
+    const q = qs.toString();
+    return this.request<unknown>(
+      "GET",
+      `/api/tasks/${taskId}/attachments/${attachmentId}/content${q ? `?${q}` : ""}`,
+    );
+  }
+
   ackSignal(signalId: string) {
     return this.request<unknown>("POST", `/api/agent/signals/${signalId}/ack`);
   }
