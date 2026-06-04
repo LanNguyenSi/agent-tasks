@@ -185,11 +185,19 @@ describe("calculateConfidence — score caps (ADR-0011)", () => {
   it("caps at 85 when no verification path (no AC, no constraints, no signal regex)", () => {
     const result = calculateConfidence({
       title: "Some title",
-      description: "Decent description with `code` and a src/file.ts anchor that meets quality",
+      // A scope marker ("only"/"keep") and a should-style verb hold scopeClarity
+      // and testability at 60 so the binding cap stays missing_verification (85),
+      // not the stricter subscore caps. "should" is a testability signal but NOT
+      // one of the missing_verification regex words (test/run/curl/check/verify/
+      // green/CI), so the 85 cap still fires.
+      description: "Decent description with `code` and a src/file.ts anchor; only the handler should change, keep the rest",
       templateData: { goal: "ok", acceptanceCriteria: "", context: "ok", constraints: "" },
       templateFields: { goal: true, acceptanceCriteria: false, context: true, constraints: false },
     });
     expect(result.score).toBeLessThanOrEqual(85);
+    // Pin 85 as the BINDING cap: the stricter subscore caps must not fire here.
+    expect(result.findings.find((f) => f.code === "low_testability")).toBeUndefined();
+    expect(result.findings.find((f) => f.code === "low_scope_clarity")).toBeUndefined();
     const finding = result.findings.find((f) => f.code === "missing_verification");
     expect(finding).toBeDefined();
     expect(finding?.severity).toBe("warning");
@@ -249,6 +257,100 @@ describe("calculateConfidence — score caps (ADR-0011)", () => {
       templateFields: FULL_FIELDS,
     });
     expect(infoSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("calculateConfidence — subscore-driven caps (scorer-v2 T1)", () => {
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+  });
+  afterEach(() => infoSpy.mockRestore());
+
+  it("caps at 70 (low_testability) when there is no AC and no test/verify language", () => {
+    const result = calculateConfidence({
+      title: "Add request-id middleware",
+      description: "Add `requestId` middleware in src/middleware/request-id.ts and wire it into app.ts",
+      // AC not graded as a rule here, but the testability subscore still reads it
+      templateData: { goal: "trace requests", context: "debugging is hard", constraints: "no new deps" },
+      templateFields: { goal: true, acceptanceCriteria: false, context: true, constraints: true },
+    });
+    expect(result.subscores.testability).toBe(0);
+    expect(result.score).toBeLessThanOrEqual(70);
+    const finding = result.findings.find((f) => f.code === "low_testability");
+    expect(finding).toBeDefined();
+    expect(finding?.severity).toBe("warning");
+    expect(finding?.dimension).toBe("testability");
+  });
+
+  it("caps at 75 (low_scope_clarity) when there are no constraints and no scope markers", () => {
+    const result = calculateConfidence({
+      title: "Add caching layer",
+      description: "Add an LRU cache in src/cache.ts for the slow lookups",
+      templateData: { goal: "speed up lookups", acceptanceCriteria: "- p99 latency < 50ms", context: "slow queries" },
+      templateFields: { goal: true, acceptanceCriteria: true, context: true, constraints: false },
+    });
+    expect(result.subscores.testability).toBe(100); // AC present → not a testability cap
+    expect(result.subscores.scopeClarity).toBe(0);
+    expect(result.score).toBeLessThanOrEqual(75);
+    expect(result.findings.find((f) => f.code === "low_scope_clarity")?.dimension).toBe("scopeClarity");
+  });
+
+  it("caps at 80 (low_concreteness) when the description has no concrete anchors", () => {
+    const result = calculateConfidence({
+      title: "Rewrite onboarding copy",
+      description: "Rewrite the onboarding welcome text to be friendlier and shorter for brand new people",
+      templateData: { goal: "friendlier onboarding", acceptanceCriteria: "- copy approved by design", context: "users confused", constraints: "do not change layout" },
+      templateFields: FULL_FIELDS,
+    });
+    expect(result.subscores.concreteness).toBe(0);
+    expect(result.score).toBeLessThanOrEqual(80);
+    expect(result.findings.find((f) => f.code === "low_concreteness")?.dimension).toBe("concreteness");
+  });
+
+  it("does NOT apply any subscore cap to a task strong on all three dimensions", () => {
+    const result = calculateConfidence({
+      title: "Add request-id middleware",
+      description: "Add `requestId` in src/middleware/request-id.ts; verify via `curl` that the response carries the header; expect 200",
+      templateData: ALL_FILLED,
+      templateFields: FULL_FIELDS,
+    });
+    for (const code of ["low_testability", "low_scope_clarity", "low_concreteness"]) {
+      expect(result.findings.find((f) => f.code === code), `unexpected ${code}`).toBeUndefined();
+    }
+    expect(result.score).toBeGreaterThan(80);
+  });
+
+  it("AC2: an otherwise-strong but unverifiable task scores measurably lower than the verifiable one", () => {
+    const common = {
+      title: "Add caching layer",
+      description: "Add an LRU cache in src/cache.ts for the slow lookups",
+      templateFields: { goal: true, acceptanceCriteria: false, context: true, constraints: true },
+    } as const;
+    const verifiable = calculateConfidence({
+      ...common,
+      templateData: { goal: "speed up lookups", acceptanceCriteria: "- p99 latency < 50ms", context: "slow queries", constraints: "no new deps" },
+    });
+    const unverifiable = calculateConfidence({
+      ...common,
+      templateData: { goal: "speed up lookups", acceptanceCriteria: "", context: "slow queries", constraints: "no new deps" },
+    });
+    expect(unverifiable.score).toBeLessThan(verifiable.score);
+    expect(unverifiable.score).toBeLessThanOrEqual(70);
+  });
+
+  it("AC3: subscore caps stay at/above the default threshold (60), so they do not newly block at the default", () => {
+    // A task missing only the verification path is capped by low_testability,
+    // but the cap ceiling (70) is above the default confidenceThreshold (60),
+    // so it still passes the default gate — the warn-mode property.
+    const result = calculateConfidence({
+      title: "Add request-id middleware",
+      description: "Add `requestId` middleware in src/middleware/request-id.ts and wire it into app.ts",
+      templateData: { goal: "trace requests", context: "debugging is hard", constraints: "no new deps" },
+      templateFields: { goal: true, acceptanceCriteria: false, context: true, constraints: true },
+    });
+    expect(result.findings.find((f) => f.code === "low_testability")).toBeDefined();
+    expect(result.score).toBeGreaterThanOrEqual(60);
   });
 });
 
