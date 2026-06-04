@@ -54,9 +54,15 @@ services:
       FRONTEND_URL: https://agent-tasks.opentriologue.ai
       CORS_ORIGINS: https://agent-tasks.opentriologue.ai
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
-      # Optional — gates the identity-broker register endpoint. Empty by
+      # Optional: gates the identity-broker register endpoint. Empty by
       # default (back-compat accept-any); set in prod .env to restrict.
       ALLOWED_GITHUB_LOGINS: ${ALLOWED_GITHUB_LOGINS:-}
+      # Disk location for human-uploaded task attachments (image + text). The
+      # bytes live on the agent_tasks_uploads volume; the DB stores only
+      # metadata.
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - agent_tasks_uploads:/app/uploads
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -106,6 +112,9 @@ services:
 
 volumes:
   agent_tasks_postgres:
+  # Human-uploaded task attachments. NOT covered by the Postgres backups: add
+  # this named volume to the VPS backup scope separately.
+  agent_tasks_uploads:
 
 networks:
   internal:

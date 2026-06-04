@@ -183,11 +183,21 @@ const openApiSpec = {
           id: { type: "string", format: "uuid" },
           taskId: { type: "string", format: "uuid" },
           name: { type: "string" },
-          url: { type: "string", format: "uri" },
+          url: {
+            type: "string",
+            description: "Uploaded files use a relative /uploads/<uuid>.<ext> path; URL pointers use an absolute http(s) URL.",
+          },
+          mimeType: {
+            type: "string",
+            nullable: true,
+            description: "Sniffed media type of an uploaded file; null for URL pointers.",
+          },
+          sizeBytes: { type: "integer", description: "Byte length of the stored file; 0 for URL pointers." },
+          type: { type: "string", enum: ["IMAGE", "DOCUMENT"] },
           createdByUserId: { type: "string", format: "uuid", nullable: true },
           createdAt: { type: "string", format: "date-time" },
         },
-        required: ["id", "taskId", "name", "url", "createdAt"],
+        required: ["id", "taskId", "name", "url", "sizeBytes", "type", "createdAt"],
       },
       Task: {
         type: "object",

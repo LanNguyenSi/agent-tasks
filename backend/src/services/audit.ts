@@ -36,6 +36,12 @@ export type AuditAction =
   | "task.imported"
   | "task.artifact.created"
   | "task.artifact.deleted"
+  // Human file-attachment uploads (image + text) and their deletion. The
+  // sibling artifact events use created/deleted; attachments use `uploaded`
+  // to distinguish a disk-backed file upload from the legacy URL-pointer
+  // create path (which emits no audit event).
+  | "task.attachment.uploaded"
+  | "task.attachment.deleted"
   | "task.merged"
   | "task.pr_merged.blocked_self_merge"
   | "task.self_merge_notice_emitted"

@@ -77,6 +77,20 @@ import {
   prRepoMatchesProjectRejectionMessage,
 } from "../services/gates/index.js";
 import { SCOPES } from "../services/scopes.js";
+import { bodyLimit } from "hono/body-limit";
+import { randomUUID } from "node:crypto";
+import { writeFile, readFile, unlink } from "node:fs/promises";
+import path from "node:path";
+import {
+  MAX_ATTACHMENT_BYTES,
+  ATTACHMENT_BODY_LIMIT_BYTES,
+  detectAttachmentType,
+  sanitizeDisplayName,
+  storedFilename,
+  storedFilePath,
+  ensureUploadDir,
+  contentDisposition,
+} from "../services/attachment-files.js";
 
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -97,7 +111,14 @@ taskRouter.use("/projects/:projectId/*", async (c, next) => {
 });
 
 const taskInclude = {
-  attachments: { orderBy: { createdAt: "desc" as const } },
+  attachments: {
+    orderBy: { createdAt: "desc" as const },
+    // Metadata only (no file bytes are stored in the DB). createdByUser gives
+    // the UI the uploader without a second round-trip.
+    include: {
+      createdByUser: { select: { id: true, login: true, name: true, avatarUrl: true } },
+    },
+  },
   artifacts: {
     orderBy: { createdAt: "desc" as const },
     // Omit `content` in the default task view — artifact payloads can be large
@@ -228,7 +249,14 @@ import {
 
 const createAttachmentSchema = z.object({
   name: z.string().min(1).max(255),
-  url: z.string().url(),
+  // Allowlist http(s) at the boundary: z.string().url() alone accepts
+  // javascript:/data:/vbscript: URLs, which become stored-XSS once rendered as
+  // a link in the UI.
+  url: z
+    .string()
+    .url()
+    .max(2048)
+    .refine((u) => /^https?:\/\//i.test(u), "Only http(s) URLs are allowed"),
 });
 
 // ── Artifact config / validation ─────────────────────────────────────────────
@@ -3350,11 +3378,30 @@ taskRouter.delete("/tasks/:id", async (c) => {
     return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
   }
 
+  // Reclaim disk for uploaded attachments before the cascade drops their rows;
+  // the DB cascade never touches the backing files. URL-pointer attachments
+  // have no file (storedFilePath returns null).
+  const attachments = await prisma.taskAttachment.findMany({
+    where: { taskId: task.id },
+    select: { url: true },
+  });
   await prisma.task.delete({ where: { id: task.id } });
+  for (const a of attachments) {
+    const abs = storedFilePath(a.url);
+    if (abs) await unlink(abs).catch(() => {});
+  }
   return c.json({ success: true });
 });
 
 // ── Attachments ───────────────────────────────────────────────────────────────
+//
+// Two create paths exist. The legacy POST below registers a URL-pointer
+// attachment (an external link, no bytes stored). The newer
+// POST .../attachments/upload accepts an actual image or text file, stores the
+// bytes on the UPLOAD_DIR disk volume, and records metadata. Both are
+// human-only; agents produce typed Artifacts instead. See docs/attachments.md.
+
+const ATTACHMENT_FILE_FIELD = "file";
 
 taskRouter.post("/tasks/:id/attachments", zValidator("json", createAttachmentSchema), async (c) => {
   const actor = c.get("actor") as Actor;
@@ -3375,11 +3422,159 @@ taskRouter.post("/tasks/:id/attachments", zValidator("json", createAttachmentSch
       taskId: task.id,
       name: body.name,
       url: body.url,
+      type: "DOCUMENT",
       createdByUserId: actor.userId,
     },
   });
 
   return c.json({ attachment }, 201);
+});
+
+// Multipart upload of an image or text file. The `bodyLimit` guards the whole
+// request before it is buffered; the per-file 5 MiB cap is re-checked after
+// parsing (multipart framing makes the body slightly larger than the file).
+taskRouter.post(
+  "/tasks/:id/attachments/upload",
+  bodyLimit({
+    maxSize: ATTACHMENT_BODY_LIMIT_BYTES,
+    onError: (c) => c.json({ error: `File exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit` }, 413),
+  }),
+  async (c) => {
+    const actor = c.get("actor") as Actor;
+    if (actor.type !== "human") {
+      return forbidden(c, "File upload is human-only; agents produce artifacts");
+    }
+
+    const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+    if (!task) return notFound(c);
+
+    if (!(await requireProjectWrite(actor, task.projectId))) {
+      return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
+    }
+
+    let form: FormData;
+    try {
+      form = await c.req.formData();
+    } catch {
+      return c.json({ error: "Expected a multipart/form-data upload" }, 400);
+    }
+    const file = form.get(ATTACHMENT_FILE_FIELD);
+    if (!(file instanceof File)) {
+      return c.json({ error: `Multipart field '${ATTACHMENT_FILE_FIELD}' (a file) is required` }, 400);
+    }
+
+    const buf = Buffer.from(await file.arrayBuffer());
+    if (buf.byteLength === 0) {
+      return c.json({ error: "Uploaded file is empty" }, 400);
+    }
+    if (buf.byteLength > MAX_ATTACHMENT_BYTES) {
+      return c.json({ error: `File exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit` }, 413);
+    }
+
+    // Sniff the real type from magic bytes; never trust the client Content-Type.
+    const detected = detectAttachmentType(buf, file.type);
+    if (!detected.ok) {
+      return c.json({ error: detected.reason }, 400);
+    }
+
+    const nameField = form.get("name");
+    const displayName = sanitizeDisplayName(
+      typeof nameField === "string" && nameField.length > 0 ? nameField : file.name,
+    );
+
+    // Random UUID filename: prevents collisions and path traversal from the
+    // original name. The display name lives only in the DB.
+    const dir = await ensureUploadDir();
+    const stored = storedFilename(randomUUID(), detected.ext);
+    const abs = path.join(dir, stored);
+    await writeFile(abs, buf);
+
+    let attachment;
+    try {
+      attachment = await prisma.taskAttachment.create({
+        data: {
+          taskId: task.id,
+          name: displayName,
+          url: `/uploads/${stored}`,
+          mimeType: detected.mimeType,
+          sizeBytes: buf.byteLength,
+          type: detected.kind,
+          createdByUserId: actor.userId,
+        },
+        include: {
+          createdByUser: { select: { id: true, login: true, name: true, avatarUrl: true } },
+        },
+      });
+    } catch (err) {
+      // Never leave an orphan file on disk if the metadata write fails.
+      await unlink(abs).catch(() => {});
+      throw err;
+    }
+
+    void logAuditEvent({
+      action: "task.attachment.uploaded",
+      actorId: actor.type === "human" ? actor.userId : undefined,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: {
+        actorType: actor.type,
+        attachmentId: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        type: attachment.type,
+      },
+    });
+
+    return c.json({ attachment }, 201);
+  },
+);
+
+// Stream the stored bytes of an uploaded attachment. Auth-gated like every
+// other task route (session cookie OR Bearer), so a web `<img src>` works with
+// the session cookie alone, no `?token=` needed.
+taskRouter.get("/tasks/:id/attachments/:attachmentId/raw", async (c) => {
+  const actor = c.get("actor") as Actor;
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:read")) {
+    return forbidden(c, "Missing scope: tasks:read");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  const attachment = await prisma.taskAttachment.findUnique({
+    where: { id: c.req.param("attachmentId") },
+  });
+  if (!attachment || attachment.taskId !== task.id) return notFound(c);
+
+  // Only uploaded files have bytes on disk; URL-pointer attachments do not.
+  // storedFilePath also rejects any value that escapes UPLOAD_DIR.
+  const abs = storedFilePath(attachment.url);
+  if (!abs) return notFound(c);
+
+  let bytes: Buffer;
+  try {
+    bytes = await readFile(abs);
+  } catch {
+    // Row exists but the file is gone (manual removal, restore gap): 404 rather
+    // than 500, and don't leak the path.
+    return notFound(c);
+  }
+
+  const kind = attachment.type === "IMAGE" ? "IMAGE" : "DOCUMENT";
+  return new Response(new Uint8Array(bytes), {
+    status: 200,
+    headers: {
+      "Content-Type": attachment.mimeType ?? "application/octet-stream",
+      "Content-Disposition": contentDisposition(kind, attachment.name),
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "private, max-age=0, must-revalidate",
+    },
+  });
 });
 
 taskRouter.delete("/tasks/:id/attachments/:attachmentId", async (c) => {
@@ -3391,19 +3586,40 @@ taskRouter.delete("/tasks/:id/attachments/:attachmentId", async (c) => {
   const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
   if (!task) return notFound(c);
 
-  if (!(await requireProjectWrite(actor, task.projectId))) {
-    return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
   }
 
   const attachment = await prisma.taskAttachment.findUnique({
     where: { id: c.req.param("attachmentId") },
   });
-
   if (!attachment || attachment.taskId !== task.id) {
     return notFound(c);
   }
 
+  // Only the uploader or a project admin may delete (mirrors artifact delete).
+  const isCreator = attachment.createdByUserId !== null && attachment.createdByUserId === actor.userId;
+  const isAdmin = await hasProjectRole(actor, task.projectId, "ADMIN");
+  if (!isCreator && !isAdmin) {
+    return forbidden(c, "Only the uploader or a project admin can delete this attachment");
+  }
+
   await prisma.taskAttachment.delete({ where: { id: attachment.id } });
+
+  // Remove the backing file for uploaded attachments (URL pointers have none).
+  const abs = storedFilePath(attachment.url);
+  if (abs) {
+    await unlink(abs).catch(() => {});
+  }
+
+  void logAuditEvent({
+    action: "task.attachment.deleted",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: { actorType: actor.type, attachmentId: attachment.id, name: attachment.name },
+  });
+
   return c.json({ success: true });
 });
 
