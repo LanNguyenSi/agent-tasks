@@ -53,6 +53,19 @@ describe("Modal — accessibility", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("closes when the X icon button is clicked", async () => {
+    const onClose = vi.fn();
+    render(
+      <Modal open onClose={onClose} title="Has a close button">
+        body
+      </Modal>,
+    );
+    // The close control is an icon button with an accessible name, not
+    // literal "Close" text.
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("does not close on Escape when closeOnEscape is false", async () => {
     const onClose = vi.fn();
     render(
