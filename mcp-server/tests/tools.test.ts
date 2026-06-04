@@ -51,6 +51,8 @@ describe("buildTools", () => {
         "task_artifact_create",
         "task_artifact_get",
         "task_artifact_list",
+        "task_attachment_get",
+        "task_attachment_list",
         "task_create",
         "task_finish",
         "task_merge",
@@ -68,6 +70,47 @@ describe("buildTools", () => {
         "tasks_transition",
         "tasks_update",
       ].sort(),
+    );
+  });
+
+  it("task_attachment_list GETs the task attachments endpoint", async () => {
+    fetchMock.mockResolvedValue(ok({ attachments: [] }));
+    await tool("task_attachment_list").handler({
+      taskId: "11111111-1111-1111-1111-111111111111",
+    } as never);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://example.test/api/tasks/11111111-1111-1111-1111-111111111111/attachments");
+    expect(init.method).toBe("GET");
+  });
+
+  it("task_attachment_get builds the content URL with includeBase64 + byte limits", async () => {
+    fetchMock.mockResolvedValue(ok({ attachment: {}, content: { status: "ready" } }));
+    await tool("task_attachment_get").handler({
+      taskId: "11111111-1111-1111-1111-111111111111",
+      attachmentId: "22222222-2222-2222-2222-222222222222",
+      includeBase64: true,
+      textByteLimit: 1000,
+      base64ByteLimit: 2000,
+    } as never);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain(
+      "/api/tasks/11111111-1111-1111-1111-111111111111/attachments/22222222-2222-2222-2222-222222222222/content",
+    );
+    expect(url).toContain("includeBase64=true");
+    expect(url).toContain("textByteLimit=1000");
+    expect(url).toContain("base64ByteLimit=2000");
+    expect(init.method).toBe("GET");
+  });
+
+  it("task_attachment_get omits the query string when no options are set", async () => {
+    fetchMock.mockResolvedValue(ok({ attachment: {}, content: { status: "ready" } }));
+    await tool("task_attachment_get").handler({
+      taskId: "11111111-1111-1111-1111-111111111111",
+      attachmentId: "22222222-2222-2222-2222-222222222222",
+    } as never);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://example.test/api/tasks/11111111-1111-1111-1111-111111111111/attachments/22222222-2222-2222-2222-222222222222/content",
     );
   });
 
