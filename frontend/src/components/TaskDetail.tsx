@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import { PRIORITY_COLORS } from "../lib/priorityColors";
 import {
@@ -72,7 +73,7 @@ function getClaimLabel(task: Task): string {
   return "Assigned";
 }
 
-export interface TaskDetailModalProps {
+export interface TaskDetailProps {
   task: Task;
   tasks: Task[];
   user: User | null;
@@ -83,9 +84,16 @@ export interface TaskDetailModalProps {
   onDelete: (taskId: string) => void;
   onClose: () => void;
   onError: (message: string) => void;
+  /**
+   * "modal" (default) renders inside the Modal primitive with a maximize
+   * affordance and a pinned footer. "page" renders the bare detail for the
+   * full-page /tasks/[id] route (the page owns its own chrome); Escape no
+   * longer closes, and Save/Cancel sticks to the bottom of the page.
+   */
+  variant?: "modal" | "page";
 }
 
-export default function TaskDetailModal({
+export default function TaskDetail({
   task,
   tasks,
   user,
@@ -96,7 +104,8 @@ export default function TaskDetailModal({
   onDelete,
   onClose,
   onError,
-}: TaskDetailModalProps) {
+  variant = "modal",
+}: TaskDetailProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
   const [deletingTask, setDeletingTask] = useState(false);
@@ -276,17 +285,20 @@ export default function TaskDetailModal({
       // modal owns its own Escape handling, so it opts the Modal
       // primitive out via closeOnEscape={false} to avoid double-firing.
       if (e.key === "Escape") {
-        e.preventDefault();
+        // On the full page there is nothing to close, so Escape only
+        // cancels an in-progress edit; the modal additionally closes.
         if (isEditing) {
+          e.preventDefault();
           cancelEditing();
-        } else {
+        } else if (variant === "modal") {
+          e.preventDefault();
           handleClose();
         }
       }
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isEditing, startEditing, cancelEditing, handleClose, showDiscardPrompt, showDeleteTaskConfirm]);
+  }, [isEditing, startEditing, cancelEditing, handleClose, showDiscardPrompt, showDeleteTaskConfirm, variant]);
 
   async function handleSaveTask() {
     setSavingTask(true);
@@ -379,22 +391,17 @@ export default function TaskDetailModal({
   const showResultToggle = resultOverflows || resultExpanded;
   const canSubmitReview = Boolean(task.branchName && task.prUrl);
 
-  return (
+  const editFooter = isEditing ? (
+    <div style={{ display: "flex", gap: "0.45rem" }}>
+      <Button variant="ghost" size="sm" onClick={cancelEditing} disabled={savingTask}>Cancel</Button>
+      <Button onClick={() => void handleSaveTask()} disabled={savingTask} loading={savingTask} size="sm">
+        {savingTask ? "Saving…" : "Save"}
+      </Button>
+    </div>
+  ) : null;
+
+  const content = (
     <>
-      <Modal
-        open
-        onClose={handleClose}
-        closeOnEscape={false}
-        title="Task Details"
-        actions={isEditing ? (
-          <div style={{ display: "flex", gap: "0.45rem" }}>
-            <Button variant="ghost" size="sm" onClick={cancelEditing} disabled={savingTask}>Cancel</Button>
-            <Button onClick={() => void handleSaveTask()} disabled={savingTask} loading={savingTask} size="sm">
-              {savingTask ? "Saving…" : "Save"}
-            </Button>
-          </div>
-        ) : undefined}
-      >
         {/* Header actions */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.45rem", marginBottom: "var(--space-3)" }}>
           <div style={{ display: "flex", gap: "0.45rem" }}>
@@ -945,7 +952,55 @@ export default function TaskDetailModal({
             <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", margin: "0.25rem 0 0" }}>⌘/Ctrl+Enter to send</p>
           </div>
         </section>
-      </Modal>
+    </>
+  );
+
+  return (
+    <>
+      {variant === "page" ? (
+        <>
+          {content}
+          {editFooter && <div className="task-detail-page-actions">{editFooter}</div>}
+        </>
+      ) : (
+        <Modal
+          open
+          onClose={handleClose}
+          closeOnEscape={false}
+          title="Task Details"
+          actions={editFooter}
+          headerActions={
+            // Hidden while editing: the maximize Link navigates immediately,
+            // and the /tasks/[id] page opens in view mode, so showing it
+            // mid-edit would silently drop unsaved changes — bypassing the
+            // discard guard that the X / backdrop / Escape paths honour.
+            !isEditing ? (
+              <Link
+                href={`/tasks/${task.id}`}
+                className="modal-maximize"
+                aria-label="Open as full page"
+                title="Open as full page"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                </svg>
+              </Link>
+            ) : undefined
+          }
+        >
+          {content}
+        </Modal>
+      )}
 
       <ConfirmDialog
         open={showDiscardPrompt}

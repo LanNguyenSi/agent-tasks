@@ -9,6 +9,12 @@ interface ModalProps {
   children: ReactNode;
   actions?: ReactNode;
   /**
+   * Optional controls rendered in the header to the left of the close
+   * button (e.g. a "maximize to full page" affordance). Kept additive so
+   * existing consumers are unaffected.
+   */
+  headerActions?: ReactNode;
+  /**
    * Close the dialog when Escape is pressed. Default `true`. Set `false`
    * when the consumer owns richer Escape handling (e.g. cancel an inline
    * edit before closing) so the two handlers do not double-fire.
@@ -22,6 +28,7 @@ export default function Modal({
   title,
   children,
   actions,
+  headerActions,
   closeOnEscape = true,
 }: ModalProps) {
   const titleId = useId();
@@ -90,26 +97,29 @@ export default function Modal({
           <h3 className="modal-title" id={titleId}>
             {title}
           </h3>
-          <button
-            type="button"
-            className="modal-close"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+          <div className="modal-header-actions">
+            {headerActions}
+            <button
+              type="button"
+              className="modal-close"
+              onClick={onClose}
+              aria-label="Close"
             >
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
-          </button>
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
         <div className="modal-body">{children}</div>
         {actions && <div className="modal-actions">{actions}</div>}

@@ -1079,9 +1079,20 @@ input[type="checkbox"] {
   font-weight: 700;
 }
 
-/* Compact, square icon-button close control in the header. Mirrors the
-   hover treatment of .project-settings-icon / .project-card-menu-btn. */
-.modal-close {
+/* Header control group: optional consumer actions (e.g. maximize) sit to
+   the left of the close button. */
+.modal-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+/* Compact, square icon-button controls in the header. Mirrors the hover
+   treatment of .project-settings-icon / .project-card-menu-btn.
+   `.modal-maximize` is an anchor, so text-decoration is reset too. */
+.modal-close,
+.modal-maximize {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1092,12 +1103,15 @@ input[type="checkbox"] {
   background: transparent;
   color: var(--muted);
   border-radius: var(--radius-base);
+  text-decoration: none;
   transition: color 0.15s ease, background 0.15s ease;
 }
 
-.modal-close:hover {
+.modal-close:hover,
+.modal-maximize:hover {
   color: var(--text);
   background: var(--primary-muted);
+  text-decoration: none;
 }
 
 .modal-body {
@@ -1120,6 +1134,21 @@ input[type="checkbox"] {
   flex-shrink: 0;
   padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--border);
+}
+
+/* Edit-mode Save/Cancel bar for the maximized task page (variant="page").
+   Sticks to the bottom of the viewport while the long edit form scrolls,
+   mirroring the pinned footer the modal gets via .modal-actions. */
+.task-detail-page-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  margin-top: var(--space-5);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
 }
 
 @keyframes fadeIn {
