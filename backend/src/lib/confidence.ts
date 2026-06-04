@@ -418,6 +418,31 @@ function applyScoreCaps(
       code: "ambiguous_scope", dimension: "ambiguityRisk",
       message: `Score capped at 75: ${ambiguityHits} vague terms with no concrete anchors (file path, URL, inline code, or number).`,
     },
+    // ── Subscore-driven caps (scorer-v2, T1) ────────────────────────────────
+    // computeSubscores already derives testability / scopeClarity /
+    // concreteness, but until now those numbers were descriptive only and never
+    // moved the score. Promote them into the cap layer so an un-verifiable,
+    // unscoped, or unanchored task is held below the top band — the signal a
+    // weak agent needs. Ceilings sit at/above the default confidenceThreshold
+    // (60), so a task that already passed at the default does NOT newly fail;
+    // a project on a higher threshold sees the stricter bar by design.
+    // Per-project warn/block enforcement is a later slice; here the effect is a
+    // lower score plus a surfaced finding (observability).
+    {
+      cap: 70, applies: subscores.testability < 60,
+      code: "low_testability", dimension: "testability",
+      message: "Score capped at 70: low testability — no acceptance criteria and no test/verify/expect/assert/should/given/when/then language, so there is no way to know the task is done.",
+    },
+    {
+      cap: 75, applies: subscores.scopeClarity < 60,
+      code: "low_scope_clarity", dimension: "scopeClarity",
+      message: "Score capped at 75: low scope clarity — no constraints and no in-scope/out-of-scope markers, so a weak agent can wander.",
+    },
+    {
+      cap: 80, applies: subscores.concreteness === 0,
+      code: "low_concreteness", dimension: "concreteness",
+      message: "Score capped at 80: no concrete anchors — no file path, code reference, URL, or number to ground the work.",
+    },
   ];
 
   const triggered = rules.filter((r) => r.applies);
