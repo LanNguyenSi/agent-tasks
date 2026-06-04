@@ -330,6 +330,7 @@ function buildServer(token: string): McpServer {
         labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
         dependsOn: z.array(uuid()).max(50).optional(),
         debugFlavor: z.boolean().optional(),
+        templateData: z.record(z.string(), z.unknown()).optional(),
       },
     },
     async ({ projectId, ...body }) => {

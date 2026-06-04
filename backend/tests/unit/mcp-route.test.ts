@@ -319,6 +319,30 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     });
   });
 
+  it("tasks_create forwards templateData through to the backend body", async () => {
+    const projectId = "11111111-1111-1111-1111-111111111111";
+    await callTool("tasks_create", {
+      projectId,
+      title: "Specced task",
+      templateData: {
+        goal: "ship it",
+        acceptanceCriteria: "- tests green",
+        agentPrompt: "Step 1: ...",
+        prefers: { smallDiffs: true },
+      },
+    });
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].body).toEqual({
+      title: "Specced task",
+      templateData: {
+        goal: "ship it",
+        acceptanceCriteria: "- tests green",
+        agentPrompt: "Step 1: ...",
+        prefers: { smallDiffs: true },
+      },
+    });
+  });
+
   it("tasks_comment sends { content: ... } matching backend createCommentSchema", async () => {
     const taskId = "22222222-2222-2222-2222-222222222222";
     await callTool("tasks_comment", { taskId, content: "progress update" });

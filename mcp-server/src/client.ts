@@ -188,6 +188,7 @@ export class AgentTasksClient {
       labels?: string[];
       dependsOn?: string[];
       debugFlavor?: boolean;
+      templateData?: Record<string, unknown>;
     },
   ) {
     return this.request<unknown>(

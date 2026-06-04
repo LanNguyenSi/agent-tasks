@@ -174,7 +174,7 @@ model Project {
   description              String?
   githubRepo               String? // "owner/repo" if synced from GitHub
   githubSyncAt             DateTime?
-  taskTemplate             Json? // { fields: { goal: bool, acceptanceCriteria: bool, context: bool, constraints: bool } }
+  taskTemplate             Json? // { fields: { goal, acceptanceCriteria, context, constraints, scope, outOfScope, dependencies, risk, agentPrompt: bool }, presets: [...] }
   confidenceThreshold      Int             @default(60) // 0-100, minimum confidence score for agent claims
   requireDistinctReviewer  Boolean         @default(false) /// @deprecated use governanceMode. Kept readable through one release cycle for dashboards + external clients. Runtime still derives an answer when governanceMode is null. Remove once no client references it.
   soloMode                 Boolean         @default(false) /// @deprecated use governanceMode. See requireDistinctReviewer.
@@ -310,7 +310,7 @@ model Task {
   reviewClaimedAt        DateTime?
 
   // Template data (structured task info for agents)
-  templateData Json? // { goal?, acceptanceCriteria?, context?, constraints? }
+  templateData Json? // { goal?, acceptanceCriteria?, context?, constraints?, scope?, outOfScope?, dependencies?, risk?, agentPrompt?, prefers?, taskType? }
 
   // Free-form per-task metadata, populated by the server. Currently stores
   // `{ debugFlavor: boolean }` to flag tasks that should be approached

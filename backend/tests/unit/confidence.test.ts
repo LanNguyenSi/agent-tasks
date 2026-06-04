@@ -17,6 +17,8 @@ import {
   descriptionQuality,
   calculateConfidence,
   templateDataSchema,
+  taskTemplateSchema,
+  prefersSchema,
   type TaskQualitySubscores,
 } from "../../src/lib/confidence.js";
 
@@ -496,6 +498,81 @@ describe("templateDataSchema — taskType", () => {
   it("accepts payloads without taskType (BC)", () => {
     expect(templateDataSchema.safeParse({ goal: "g" }).success).toBe(true);
     expect(templateDataSchema.safeParse({}).success).toBe(true);
+  });
+});
+
+describe("templateData/taskTemplate — scorer-v2 fields (T2)", () => {
+  beforeEach(() => vi.spyOn(console, "info").mockImplementation(() => {}));
+  afterEach(() => vi.restoreAllMocks());
+
+  it("templateDataSchema accepts the new executability fields + prefers", () => {
+    const parsed = templateDataSchema.safeParse({
+      goal: "g",
+      acceptanceCriteria: "- a",
+      scope: "src/foo.ts",
+      outOfScope: "do not touch bar",
+      dependencies: "none",
+      risk: "low",
+      agentPrompt: "Step 1: ...",
+      prefers: { testBeforeImplementation: true, smallDiffs: true },
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.scope).toBe("src/foo.ts");
+      expect(parsed.data.agentPrompt).toBe("Step 1: ...");
+      expect(parsed.data.prefers?.testBeforeImplementation).toBe(true);
+    }
+  });
+
+  it("prefersSchema accepts all five booleans and an empty object", () => {
+    expect(prefersSchema.safeParse({
+      testBeforeImplementation: true,
+      verticalSlices: true,
+      smallDiffs: true,
+      explicitStopConditions: true,
+      noSpeculativeRefactoring: true,
+    }).success).toBe(true);
+    expect(prefersSchema.safeParse({}).success).toBe(true);
+  });
+
+  it("taskTemplateSchema.fields accepts the new booleans and defaults the rest to false", () => {
+    const parsed = taskTemplateSchema.safeParse({ fields: { acceptanceCriteria: true, scope: true, agentPrompt: true } });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.fields.scope).toBe(true);
+      expect(parsed.data.fields.agentPrompt).toBe(true);
+      expect(parsed.data.fields.outOfScope).toBe(false); // defaulted
+      expect(parsed.data.fields.dependencies).toBe(false);
+    }
+  });
+
+  it("backward-compat: old-shape templateData and empty payloads still parse", () => {
+    expect(templateDataSchema.safeParse({ goal: "g", acceptanceCriteria: "a", context: "c", constraints: "k" }).success).toBe(true);
+    expect(templateDataSchema.safeParse({}).success).toBe(true);
+  });
+
+  it("scoring-neutral: the new fields do not change score, findings, or subscores (T2 stores, does not weight)", () => {
+    const base = {
+      title: "Add request-id middleware",
+      description: "Add `requestId` in src/middleware/request-id.ts; verify via `curl` returns the header; expect 200",
+      templateFields: FULL_FIELDS,
+    } as const;
+    const without = calculateConfidence({ ...base, templateData: ALL_FILLED });
+    const withNew = calculateConfidence({
+      ...base,
+      templateData: {
+        ...ALL_FILLED,
+        scope: "src/middleware",
+        outOfScope: "no router change",
+        dependencies: "none",
+        risk: "low",
+        agentPrompt: "Step 1: add the middleware",
+        prefers: { smallDiffs: true },
+      },
+    });
+    expect(withNew.score).toBe(without.score);
+    expect(withNew.findings).toEqual(without.findings);
+    expect(withNew.subscores).toEqual(without.subscores);
   });
 });
 

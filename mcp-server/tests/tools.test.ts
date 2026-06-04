@@ -143,6 +143,33 @@ describe("buildTools", () => {
     });
   });
 
+  it("task_create forwards templateData to the backend create body", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
+    await tool("task_create").handler({
+      projectId: "22222222-2222-2222-2222-222222222222",
+      title: "Specced task",
+      templateData: {
+        goal: "ship it",
+        acceptanceCriteria: "- tests green",
+        agentPrompt: "Step 1: ...",
+        prefers: { smallDiffs: true },
+      },
+    } as never);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://example.test/api/projects/22222222-2222-2222-2222-222222222222/tasks",
+    );
+    expect(JSON.parse(init.body)).toEqual({
+      title: "Specced task",
+      templateData: {
+        goal: "ship it",
+        acceptanceCriteria: "- tests green",
+        agentPrompt: "Step 1: ...",
+        prefers: { smallDiffs: true },
+      },
+    });
+  });
+
   it("tasks_transition passes status and force fields", async () => {
     fetchMock.mockResolvedValue(ok({ task: { status: "done" } }));
     await tool("tasks_transition").handler({
