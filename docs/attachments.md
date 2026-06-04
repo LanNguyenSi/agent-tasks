@@ -119,7 +119,9 @@ Read an attachment as agent-consumable content rather than raw bytes: a UTF-8
 text excerpt for text files, or base64 for images. Agents need `tasks:read`.
 
 Query params: `includeBase64` (`true`/`1`/`yes`), `textByteLimit` (default
-200000, max 800000), `base64ByteLimit` (default 65536, max 512000).
+200000, max 800000), `base64ByteLimit` (default 65536, max 512000). Values
+above the max are rejected with `400 bad_request`. `base64ByteLimit` caps the
+returned base64 text length, not the raw file-byte size.
 
 Response: `200 { "attachment": { id, taskId, name, mimeType, sizeBytes, type }, "content": { ... } }`
 where `content` carries:

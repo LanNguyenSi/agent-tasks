@@ -91,7 +91,15 @@ import {
   ensureUploadDir,
   contentDisposition,
 } from "../services/attachment-files.js";
-import { readAttachmentContent, parseIncludeBase64Flag } from "../services/attachment-content.js";
+import {
+  readAttachmentContent,
+  parseIncludeBase64Flag,
+  parseReadByteLimit,
+  ATTACHMENT_READ_TEXT_DEFAULT,
+  ATTACHMENT_READ_TEXT_MAX,
+  ATTACHMENT_READ_BASE64_DEFAULT,
+  ATTACHMENT_READ_BASE64_MAX,
+} from "../services/attachment-content.js";
 
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -3626,12 +3634,32 @@ taskRouter.get("/tasks/:id/attachments/:attachmentId/content", async (c) => {
   });
   if (!attachment || attachment.taskId !== task.id) return notFound(c);
 
+  const textByteLimit = parseReadByteLimit(
+    c.req.query("textByteLimit"),
+    ATTACHMENT_READ_TEXT_DEFAULT,
+    ATTACHMENT_READ_TEXT_MAX,
+    "textByteLimit",
+  );
+  if (!textByteLimit.ok) {
+    return c.json({ error: "bad_request", message: textByteLimit.message }, 400);
+  }
+
+  const base64ByteLimit = parseReadByteLimit(
+    c.req.query("base64ByteLimit"),
+    ATTACHMENT_READ_BASE64_DEFAULT,
+    ATTACHMENT_READ_BASE64_MAX,
+    "base64ByteLimit",
+  );
+  if (!base64ByteLimit.ok) {
+    return c.json({ error: "bad_request", message: base64ByteLimit.message }, 400);
+  }
+
   // storedFilePath returns null for URL-pointer attachments (no bytes) and for
   // any path escaping UPLOAD_DIR; readAttachmentContent maps null to "missing".
   const content = await readAttachmentContent(storedFilePath(attachment.url), attachment.mimeType, {
     includeBase64: parseIncludeBase64Flag(c.req.query("includeBase64")),
-    textByteLimit: c.req.query("textByteLimit"),
-    base64ByteLimit: c.req.query("base64ByteLimit"),
+    textByteLimit: textByteLimit.value,
+    base64ByteLimit: base64ByteLimit.value,
   });
 
   return c.json({

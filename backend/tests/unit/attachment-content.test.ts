@@ -10,6 +10,7 @@ import path from "node:path";
 import {
   readAttachmentContent,
   parseIncludeBase64Flag,
+  parseReadByteLimit,
   ATTACHMENT_READ_BASE64_MAX,
 } from "../../src/services/attachment-content.js";
 
@@ -40,6 +41,33 @@ describe("parseIncludeBase64Flag", () => {
     expect(parseIncludeBase64Flag("false")).toBe(false);
     expect(parseIncludeBase64Flag(undefined)).toBe(false);
     expect(parseIncludeBase64Flag("0")).toBe(false);
+  });
+});
+
+describe("parseReadByteLimit", () => {
+  it("returns the fallback for an omitted value", () => {
+    expect(parseReadByteLimit(undefined, 10, 20, "limit")).toEqual({
+      ok: true,
+      value: 10,
+    });
+  });
+
+  it("accepts a positive integer within the max", () => {
+    expect(parseReadByteLimit("12", 10, 20, "limit")).toEqual({
+      ok: true,
+      value: 12,
+    });
+  });
+
+  it("rejects non-integer and over-max values", () => {
+    expect(parseReadByteLimit("abc", 10, 20, "limit")).toEqual({
+      ok: false,
+      message: "limit must be a positive integer no greater than 20",
+    });
+    expect(parseReadByteLimit("21", 10, 20, "limit")).toEqual({
+      ok: false,
+      message: "limit must be a positive integer no greater than 20",
+    });
   });
 });
 
@@ -108,10 +136,21 @@ describe("readAttachmentContent — image", () => {
     expect(r.base64Truncated).toBe(true);
   });
 
-  it("clamps an over-max base64 limit (still reads the 64-byte file)", async () => {
+  it("treats the base64 limit as a cap on returned base64 characters", async () => {
+    const base64Length = Buffer.alloc(64, 0).toString("base64").length;
     const r = await readAttachmentContent(files.png, "image/png", {
       includeBase64: true,
-      base64ByteLimit: ATTACHMENT_READ_BASE64_MAX + 1_000_000,
+      base64ByteLimit: base64Length - 1,
+    });
+    expect(r.base64Included).toBe(false);
+    expect(r.base64).toBeNull();
+    expect(r.base64Truncated).toBe(true);
+  });
+
+  it("still accepts a large but in-range base64 limit", async () => {
+    const r = await readAttachmentContent(files.png, "image/png", {
+      includeBase64: true,
+      base64ByteLimit: ATTACHMENT_READ_BASE64_MAX,
     });
     expect(r.base64Included).toBe(true);
   });

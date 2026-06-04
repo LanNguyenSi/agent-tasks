@@ -222,8 +222,6 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task IDs")
   .action(async (opts) => {
-    const config = loadConfig();
-
     if (!opts.project) {
       // Reject browse-only flags up front so they fail loudly instead of
       // silently being ignored; easier to diagnose than "I passed --status
@@ -241,6 +239,7 @@ tasks
         );
         process.exit(1);
       }
+      const config = loadConfig();
       const taskList = await api.getClaimableTasks(config);
       console.log(formatTasks(taskList, getMode(opts)));
       return;
@@ -298,6 +297,7 @@ tasks
     if (api.isUuid(opts.project)) {
       projectId = opts.project;
     } else {
+      const config = loadConfig();
       try {
         projectId = (await api.getProject(config, opts.project)).id;
       } catch (err) {
@@ -311,6 +311,7 @@ tasks
       }
     }
 
+    const config = loadConfig();
     const taskList = await api.listProjectTasks(config, projectId, {
       status: statuses,
       priority: priorities,

@@ -44,6 +44,30 @@ vi.mock("../../src/services/attachment-content.js", () => ({
     const r = String(v ?? "").trim().toLowerCase();
     return r === "1" || r === "true" || r === "yes";
   },
+  parseReadByteLimit: (value: unknown, fallback: number, max: number, fieldName: string) => {
+    if (value === undefined || value === null || String(value).trim() === "") {
+      return { ok: true, value: fallback } as const;
+    }
+    const raw = String(value).trim();
+    if (!/^\d+$/.test(raw)) {
+      return {
+        ok: false,
+        message: `${fieldName} must be a positive integer no greater than ${max}`,
+      } as const;
+    }
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > max) {
+      return {
+        ok: false,
+        message: `${fieldName} must be a positive integer no greater than ${max}`,
+      } as const;
+    }
+    return { ok: true, value: parsed } as const;
+  },
+  ATTACHMENT_READ_TEXT_DEFAULT: 200_000,
+  ATTACHMENT_READ_TEXT_MAX: 800_000,
+  ATTACHMENT_READ_BASE64_DEFAULT: 64 * 1024,
+  ATTACHMENT_READ_BASE64_MAX: 512_000,
 }));
 
 const accessMocks = vi.hoisted(() => ({
@@ -142,7 +166,9 @@ describe("GET /tasks/:id/attachments/:attId/content", () => {
     expect(typeof absPath).toBe("string");
     expect(absPath as string).toMatch(/abc\.md$/);
     expect(mime).toBe("text/markdown");
-    expect(opts).toMatchObject({ includeBase64: true, textByteLimit: "100" });
+    expect(opts.includeBase64).toBe(true);
+    expect(opts.textByteLimit).toBe(100);
+    expect(opts.base64ByteLimit).toBe(64 * 1024);
   });
 
   it("passes null to the reader for a URL-pointer attachment (no bytes)", async () => {
@@ -172,6 +198,30 @@ describe("GET /tasks/:id/attachments/:attId/content", () => {
     const res = await makeApp(weak).request("/tasks/task-1/attachments/a1/content");
     expect(res.status).toBe(403);
     expect(prismaMocks.attachmentFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid and over-max byte limits with 400", async () => {
+    prismaMocks.attachmentFindUnique.mockResolvedValue({
+      id: "a1",
+      taskId: "task-1",
+      name: "spec.md",
+      url: "/uploads/abc.md",
+      mimeType: "text/markdown",
+      sizeBytes: 20,
+      type: "DOCUMENT",
+    });
+
+    let res = await makeApp(AGENT).request(
+      "/tasks/task-1/attachments/a1/content?textByteLimit=nope",
+    );
+    expect(res.status).toBe(400);
+    expect(contentMock.readAttachmentContent).not.toHaveBeenCalled();
+
+    res = await makeApp(AGENT).request(
+      "/tasks/task-1/attachments/a1/content?base64ByteLimit=512001",
+    );
+    expect(res.status).toBe(400);
+    expect(contentMock.readAttachmentContent).not.toHaveBeenCalled();
   });
 
   it("returns 404 for a missing task", async () => {

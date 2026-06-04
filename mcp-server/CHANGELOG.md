@@ -2,6 +2,25 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## 0.8.0
+
+### Added
+
+- `task_attachment_list` and `task_attachment_get`, the first MCP verbs for
+  human-uploaded task attachments. Agents can now enumerate task attachments
+  and read one attachment as agent-consumable content: a UTF-8 text excerpt
+  for text files, or base64 for image files when `includeBase64` is set. The
+  new read surface mirrors the backend's attachment content endpoint and is
+  explicitly read-only: agents still cannot upload or delete attachments.
+
+### Fixed
+
+- `task_attachment_get`'s documented byte-limit contract now matches the wire:
+  `textByteLimit` / `base64ByteLimit` values above the allowed max are rejected
+  by the backend route instead of being silently clamped, and
+  `base64ByteLimit` is enforced against the returned base64 text length rather
+  than the raw file-byte size.
+
 ## 0.7.0
 
 ### Added

@@ -218,7 +218,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_attachment_get",
       description:
-        "Read one human-uploaded attachment's content: a UTF-8 text excerpt for text files (text/plain, markdown, csv), or base64 for images (jpeg/png/gif/webp) when `includeBase64` is set. Use this to consume an uploaded spec/document or a screenshot. `textByteLimit` (max 800000, default 200000) and `base64ByteLimit` (max 512000, default 65536) cap the returned slice; values above the max are rejected. The response carries `status` (ready/missing/unsupported/error), `truncated`, `bytesRead`, `fileSize`, and `base64Truncated` — when `base64Truncated` is true and `base64` is null, the image exceeded `base64ByteLimit`, so retry with a higher value. Requires the tasks:read scope for agent callers.",
+        "Read one human-uploaded attachment's content: a UTF-8 text excerpt for text files (text/plain, markdown, csv), or base64 for images (jpeg/png/gif/webp) when `includeBase64` is set. Use this to consume an uploaded spec/document or a screenshot. `textByteLimit` (max 800000, default 200000) and `base64ByteLimit` (max 512000, default 65536) cap the returned slice; values above the max are rejected. `base64ByteLimit` applies to the returned base64 text length, not the raw image-byte size. The response carries `status` (ready/missing/unsupported/error), `truncated`, `bytesRead`, `fileSize`, and `base64Truncated` — when `base64Truncated` is true and `base64` is null, the image exceeded `base64ByteLimit`, so retry with a higher value. Requires the tasks:read scope for agent callers.",
       inputShape: {
         taskId: uuid(),
         attachmentId: uuid(),

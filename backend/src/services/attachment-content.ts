@@ -22,7 +22,7 @@ export type AttachmentReadStatus = "ready" | "unsupported" | "missing" | "error"
 
 export interface ReadAttachmentOptions {
   includeBase64?: boolean;
-  /** Raw value (string from a query param or a number); clamped + parsed. */
+  /** Already-validated byte limits. Routes must reject invalid / over-max values. */
   textByteLimit?: unknown;
   base64ByteLimit?: unknown;
 }
@@ -50,6 +50,39 @@ function normalizeLimit(value: unknown, fallback: number, max: number): number {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(parsed, max);
+}
+
+export function parseReadByteLimit(
+  value: unknown,
+  fallback: number,
+  max: number,
+  fieldName: string,
+): { ok: true; value: number } | { ok: false; message: string } {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return { ok: true, value: fallback };
+  }
+
+  const raw = String(value).trim();
+  if (!/^\d+$/.test(raw)) {
+    return {
+      ok: false,
+      message: `${fieldName} must be a positive integer no greater than ${max}`,
+    };
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > max) {
+    return {
+      ok: false,
+      message: `${fieldName} must be a positive integer no greater than ${max}`,
+    };
+  }
+
+  return { ok: true, value: parsed };
+}
+
+function encodedBase64Length(rawBytes: number): number {
+  return 4 * Math.ceil(rawBytes / 3);
 }
 
 /** Coerce a query-string flag (`1`/`true`/`yes`) or boolean to a boolean. */
@@ -108,13 +141,14 @@ export async function readAttachmentContent(
     return emptyResult(mimeType, "unsupported", fileSize);
   }
 
-  // Optional base64 of the whole file, gated by the base64 cap. Available for
-  // both images (the primary use) and text (when a caller wants raw bytes).
+  // Optional base64 of the whole file, gated by the encoded base64 length cap.
+  // Available for both images (the primary use) and text (when a caller wants
+  // raw bytes).
   let base64: string | null = null;
   let base64Included = false;
   let base64Truncated = false;
   if (includeBase64) {
-    if (fileSize <= base64ByteLimit) {
+    if (encodedBase64Length(fileSize) <= base64ByteLimit) {
       try {
         base64 = (await readFile(absPath)).toString("base64");
         base64Included = true;

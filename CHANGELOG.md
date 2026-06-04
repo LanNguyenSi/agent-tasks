@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-06-04
+
+**Headline: task attachments land end to end. Humans can upload small image and text files directly onto a task, browse them in the task detail UI, and delete their own uploads; agents gain a read-only MCP/API surface to list and consume those attachments as text excerpts or base64 images. The release also folds in two hardening fixes discovered during the cut: the CLI test suite now builds before spawning `dist/index.js`, and `mcp-bridge` typecheck now builds `mcp-server` first in a fresh checkout.** Includes additive backend schema changes for task-attachment metadata.
+
+Operator note: no breaking changes. Per the convention since v0.9.0, workspace `package.json` versions are not bumped (frontend, backend, and CLI stay 0.3.0). This release DOES cut new npm package versions for the MCP surfaces: `@agent-tasks/mcp-server` 0.8.0 and `@agent-tasks/mcp-bridge` 0.7.0. The attachment metadata schema is additive (`mimeType`, `sizeBytes`, `type`, `createdByUser`, uploader audit events); existing tasks and URL-pointer attachments keep working.
+
+### Added
+
+- **Disk-backed task attachments for humans** (#308): tasks now accept uploaded image and text files, persist them on disk, and store metadata in the database. The backend adds multipart upload handling, MIME sniffing, a 5 MiB cap, auth-gated raw serving, delete cleanup, uploader attribution, audit events, and task/project cleanup of backing files.
+- **Task Attachments UI in the shared task detail** (#309): the board modal and `/tasks/[id]` page now render an Attachments section with drag-drop upload, client-side pre-checks, image thumbnails with lightbox preview, text-file rows with size and download links, and uploader/admin-safe delete confirmations.
+- **Read-only attachment content for agents** (#310): the API gains task attachment listing plus an agent-read content endpoint, and MCP gains `task_attachment_list` / `task_attachment_get` so pipeline stages can consume uploaded specs, screenshots, or notes.
+
+### Fixed
+
+- **Fresh-checkout release validation**: the CLI test script now builds before Vitest so spawn-based tests see `dist/index.js`, and `tasks list` no longer loads config before local browse-mode argument validation. `mcp-bridge` typecheck now builds `mcp-server` first so a clean checkout does not fail on missing local package artifacts.
+- **Attachment content limit contract**: `textByteLimit` / `base64ByteLimit` values above the documented max are now rejected instead of silently clamped, and `base64ByteLimit` is enforced against the returned base64 text length rather than the raw file-byte size.
+
+### Notes
+
+- New root release tag: `v0.22.0`.
+- New package tags: `mcp-server-v0.8.0`, `mcp-bridge-v0.7.0`.
+- Deployment still needs the attachment upload directory/volume in the runtime environment; the live rollout happens separately from this repo release.
+
 ## [0.21.0] - 2026-06-04
 
 **Headline: the modal and navigation UX pass. The shared Modal primitive gains an accessible X-close, a sticky header over a scrolling body, and thinner scrollbars; the task detail can be maximized from the board modal into a deep-linkable `/tasks/[id]` page; and the Agent Template Settings move out of a dashboard modal onto a dedicated `/projects/[id]/settings` page. Plus list-title clipping fixes and a server-side done-recency filter with pagination so older done tasks are reachable again.** No backend schema changes.
