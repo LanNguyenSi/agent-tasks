@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-06-04
+
+**Headline: a focused frontend usability release around task completion visibility and drill-down flow.** Done-task navigation is now consistent end-to-end (older completions stay reachable from home and the global tasks list pages against the backend instead of a capped local snapshot), the modal primitive is cleaner and more accessible, task details can be opened as a dedicated page from anywhere, and project-level Agent Template Settings now live on their own route instead of being squeezed into a dashboard modal. No backend schema changes.
+
+Operator note: no breaking changes. Per the convention since v0.9.0, workspace `package.json` versions are not bumped. This release rolls up the six merged PRs since `v0.20.0` (#301-#306), with one backend/API-facing change to task-list pagination semantics and the rest in frontend navigation and UI polish. The live deployment still updates separately from the tag-triggered GitHub release.
+
+### Added
+
+- **Standalone task detail route with deep-linkable maximize flow** (#305). Tasks now have a dedicated `/tasks/[id]` page that reuses the existing detail UI instead of duplicating it; the dashboard modal exposes a `Maximize ↗` action, and task list entries preserve a `returnTo` backlink so users can drill into a task and then land back in the filtered list or dashboard context they came from.
+- **Dedicated project settings page for Agent Template Settings** (#306). The full Agent Template Settings surface now lives at `/projects/[id]/settings`, including governance mode, webhook configuration, threshold and template controls, presets, and the existing save flow. The dashboard project settings affordance and the teams project menu both link there directly.
+
+### Changed
+
+- **Done-task discovery is now backend-backed and consistent across home and tasks** (#303). The team tasks endpoint now accepts server-side filtering/pagination inputs (`projectId`, `mine`, `q`, `sort`, `offset`, `updatedWithinDays`) and returns `pagination.totalMatching`, so the tasks page can page through the real filtered result set instead of a capped 1000-task snapshot. The done view keeps its 14-day "recent" window by default but exposes an explicit all-done mode, which also restores distinct "recent done" vs "older done" navigation from the home widget.
+- **The shared modal primitive got a small accessibility and ergonomics pass** (#304). The close control is now an icon button with a proper accessible name, the header stays fixed while content scrolls inside a dedicated body region, and shared scrollbar styling is slimmer and theme-aware across Chromium and Firefox.
+
+### Fixed
+
+- **Long task titles no longer overflow in list surfaces** (#301), matching the clamp behavior already expected elsewhere in the UI.
+- **The home Recently Done widget no longer shows duplicate "older/more" links** (#302); hidden recent items and older completions are merged into one clearer CTA instead of two links pointing to the same destination.
+
+### Notes
+
+- No database schema changes. No workspace package version bumps.
+- Release boundary: `v0.20.0..v0.21.0` = PRs `#301` through `#306`.
+
 ## [0.20.0] - 2026-06-03
 
 **Headline: the deferred long tail of the 2026-06-03 UI/UX audit, a frontend polish pass across every page (home, dashboard, task modal, tasks list, teams, settings, members/invite, and the auth/onboarding/landing funnel) with a set of new shared design-system primitives, accessibility wins throughout, plus the backend half of the ESLint setup wired into CI.** No backend schema changes.

@@ -26,7 +26,7 @@
     "start": "node dist/cli.js",
     "pretest": "npm run build",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "npm --prefix .. run build --workspace=@agent-tasks/mcp-server && tsc --noEmit"
   },
   "dependencies": {
     "@agent-tasks/mcp-server": "0.7.0"
