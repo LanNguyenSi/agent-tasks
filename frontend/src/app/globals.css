@@ -92,9 +92,17 @@ body {
 
 /* ── Scrollbar ────────────────────────────────────────────────── */
 
+/* Firefox: `scrollbar-*` are inherited, so setting them on the root
+   thins every scroll container in one declaration. Kept in sync with the
+   webkit thumb/track colours below. */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(93, 119, 163, 0.58) rgba(10, 14, 22, 0.7);
+}
+
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 *::-webkit-scrollbar-track {
@@ -104,7 +112,7 @@ body {
 *::-webkit-scrollbar-thumb {
   background: rgba(93, 119, 163, 0.58);
   border-radius: 999px;
-  border: 2px solid rgba(10, 14, 22, 0.7);
+  border: 1px solid rgba(10, 14, 22, 0.7);
 }
 
 *::-webkit-scrollbar-thumb:hover {
@@ -1040,6 +1048,18 @@ input[type="checkbox"] {
   animation: slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* The Modal primitive frames its content as a fixed header + scrolling
+   body + pinned footer. The card itself stops scrolling (padding moves
+   into the regions) so the scrollbar lives in the body only and never
+   reaches the top edge next to the header. ConfirmDialog keeps the bare
+   `.modal-card` above (flat + self-scrolling). */
+.modal-card--framed {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
 .confirm-modal-card {
   width: min(520px, 100%);
 }
@@ -1049,8 +1069,8 @@ input[type="checkbox"] {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  margin-bottom: var(--space-4);
-  padding-bottom: var(--space-4);
+  flex-shrink: 0;
+  padding: var(--space-6) var(--space-6) var(--space-4);
   border-bottom: 1px solid var(--border);
 }
 
@@ -1059,12 +1079,46 @@ input[type="checkbox"] {
   font-weight: 700;
 }
 
+/* Compact, square icon-button close control in the header. Mirrors the
+   hover treatment of .project-settings-icon / .project-card-menu-btn. */
+.modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--radius-base);
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.modal-close:hover {
+  color: var(--text);
+  background: var(--primary-muted);
+}
+
+.modal-body {
+  flex: 1 1 auto;
+  /* Required so the flex child can shrink below its content height and
+     actually scroll instead of pushing the card past its max-height. */
+  min-height: 0;
+  overflow: auto;
+  /* Reserve the scrollbar gutter so content doesn't shift horizontally
+     when a tall modal crosses the overflow threshold (e.g. "Show more").
+     Gracefully ignored by browsers that don't support it. */
+  scrollbar-gutter: stable;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+}
+
 .modal-actions {
   display: flex;
   gap: var(--space-2);
   justify-content: flex-end;
-  margin-top: var(--space-6);
-  padding-top: var(--space-4);
+  flex-shrink: 0;
+  padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--border);
 }
 
@@ -1304,8 +1358,23 @@ input[type="checkbox"] {
     grid-template-columns: 1fr;
   }
 
+  /* Flat cards (ConfirmDialog) tighten their own padding; framed cards
+     keep padding on the regions, re-asserted to 0 on the card so the
+     rule above doesn't reintroduce it. */
   .modal-card {
     padding: var(--space-4);
+  }
+  .modal-card--framed {
+    padding: 0;
+  }
+  .modal-header {
+    padding: var(--space-4) var(--space-4) var(--space-3);
+  }
+  .modal-body {
+    padding: var(--space-3) var(--space-4) var(--space-4);
+  }
+  .modal-actions {
+    padding: var(--space-3) var(--space-4);
   }
 }
 
@@ -1450,12 +1519,15 @@ html[data-theme="light"] ::selection {
   background: rgba(47, 111, 232, 0.22);
 }
 
+html[data-theme="light"] {
+  scrollbar-color: rgba(120, 134, 158, 0.55) rgba(214, 220, 231, 0.6);
+}
 html[data-theme="light"] *::-webkit-scrollbar-track {
   background: rgba(214, 220, 231, 0.6);
 }
 html[data-theme="light"] *::-webkit-scrollbar-thumb {
   background: rgba(120, 134, 158, 0.55);
-  border: 2px solid rgba(214, 220, 231, 0.6);
+  border: 1px solid rgba(214, 220, 231, 0.6);
 }
 html[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
   background: rgba(95, 110, 138, 0.7);

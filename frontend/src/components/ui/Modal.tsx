@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useId, useRef, type ReactNode } from "react";
-import { Button } from "./Button";
 
 interface ModalProps {
   open: boolean;
@@ -77,7 +76,10 @@ export default function Modal({
     <div className="modal-overlay" onClick={onClose}>
       <div
         ref={cardRef}
-        className="modal-card"
+        // `modal-card--framed` opts this card into the sticky-header /
+        // scrolling-body / pinned-footer layout. ConfirmDialog reuses the
+        // bare `.modal-card` (flat, self-padded) and intentionally omits it.
+        className="modal-card modal-card--framed"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -88,11 +90,28 @@ export default function Modal({
           <h3 className="modal-title" id={titleId}>
             {title}
           </h3>
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Close
-          </Button>
+          <button
+            type="button"
+            className="modal-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
         </div>
-        {children}
+        <div className="modal-body">{children}</div>
         {actions && <div className="modal-actions">{actions}</div>}
       </div>
     </div>
