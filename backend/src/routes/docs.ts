@@ -191,6 +191,12 @@ const openApiSpec = {
             description: "Template configuration with field toggles and reusable presets",
           },
           confidenceThreshold: { type: "integer", minimum: 0, maximum: 100, default: 60, description: "Minimum confidence score for agent claims" },
+          enforcementMode: {
+            type: "string",
+            enum: ["OFF", "WARN", "BLOCK"],
+            nullable: true,
+            description: "Confidence-gate enforcement (scorer-v2). OFF = advisory; WARN = compute + shadow-log but never block (the rollout default; null resolves to WARN); BLOCK = block claims below threshold OR on a violated keystone. Flipping to BLOCK requires acknowledgeShadowReport=true on the PATCH.",
+          },
           notificationWebhookUrl: {
             type: "string",
             format: "uri",

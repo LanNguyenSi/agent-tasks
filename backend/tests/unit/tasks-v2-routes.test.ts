@@ -2824,10 +2824,12 @@ const LOW_SCORE_TASK = {
   status: "open",
   // Empty description (cap 40) + no acceptance criteria / no verification signal
   // (the evals keystone) → score in the single digits, well below the threshold.
+  // enforcementMode BLOCK so the gate actually blocks (scorer-v2 T5: the default
+  // is WARN, which never blocks).
   title: "Fix thing",
   description: "",
   templateData: null,
-  project: { ...baseTask.project, confidenceThreshold: 60 },
+  project: { ...baseTask.project, confidenceThreshold: 60, enforcementMode: "BLOCK" },
 };
 
 // scorer-v2: a task that genuinely clears the threshold needs real
@@ -2844,7 +2846,52 @@ const PASSING_SCORE_TASK = {
     scope: "src/middleware/request-id.ts plus the app.ts wiring",
     agentPrompt: "1. Add the middleware. 2. Register it in app.ts. 3. Add a test.",
   },
-  project: { ...baseTask.project, confidenceThreshold: 50 },
+  project: { ...baseTask.project, confidenceThreshold: 50, enforcementMode: "BLOCK" },
+};
+
+// scorer-v2 T5: same thin task as LOW_SCORE_TASK but the project is in WARN
+// (compute + shadow-log, never block) and OFF (advisory, no audit).
+const WARN_MODE_TASK = {
+  ...LOW_SCORE_TASK,
+  project: { ...baseTask.project, confidenceThreshold: 60, enforcementMode: "WARN" },
+};
+const OFF_MODE_TASK = {
+  ...LOW_SCORE_TASK,
+  project: { ...baseTask.project, confidenceThreshold: 60, enforcementMode: "OFF" },
+};
+// Null enforcementMode must resolve to WARN (the rollout default → never blocks).
+const NULL_MODE_TASK = {
+  ...LOW_SCORE_TASK,
+  project: { ...baseTask.project, confidenceThreshold: 60, enforcementMode: null },
+};
+// scorer-v2 T5: the evals keystone is threshold-INDEPENDENT. A BLOCK project that
+// lowered its threshold to 0 still blocks a task with no acceptance criteria and
+// no verification path (richly specified otherwise, so score alone would pass).
+const KEYSTONE_THRESHOLD_ZERO_TASK = {
+  ...baseTask,
+  status: "open",
+  title: "Refactor signup validation",
+  description: "Refactor the signup handler in src/routes/auth.ts to extract body validation",
+  templateData: {
+    goal: "extract validation",
+    scope: "src/routes/auth.ts",
+    outOfScope: "session middleware",
+    dependencies: "none",
+    risk: "low",
+    agentPrompt: "1. extract the validator 2. call it",
+    // no acceptanceCriteria + no verification signal → keystone violated
+  },
+  project: { ...baseTask.project, confidenceThreshold: 0, enforcementMode: "BLOCK" },
+};
+// scorer-v2 T5: AC present (no keystone) but otherwise thin → score below the
+// threshold purely on field-count. Isolates threshold-blocking from the keystone.
+const THRESHOLD_ONLY_BLOCK_TASK = {
+  ...baseTask,
+  status: "open",
+  title: "Add a cache",
+  description: "Add an LRU cache in src/cache.ts",
+  templateData: { acceptanceCriteria: "- p99 latency < 50ms" },
+  project: { ...baseTask.project, confidenceThreshold: 60, enforcementMode: "BLOCK" },
 };
 
 describe("confidence gate: POST /tasks/:id/start", () => {
@@ -2883,6 +2930,142 @@ describe("confidence gate: POST /tasks/:id/start", () => {
         taskId: "task-1",
         projectId: "proj-1",
         payload: expect.objectContaining({ route: "start", actorType: "agent", threshold: 60 }),
+      }),
+    );
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  // ── scorer-v2 T5: enforcementMode ──────────────────────────────────────────
+
+  it("WARN mode: a would-block claim is ALLOWED (200) and emits a shadow audit, not a block", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(WARN_MODE_TASK);
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    // The claim actually completes (the gate allowed it through to the transition).
+    expect(prismaMocks.taskUpdate).toHaveBeenCalled();
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.claim_would_block_shadow",
+        taskId: "task-1",
+        projectId: "proj-1",
+        payload: expect.objectContaining({ route: "start", threshold: 60, keystoneBlocked: true }),
+      }),
+    );
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_blocked_low_readiness" }),
+    );
+  });
+
+  it("WARN mode: force=true with a short reason is NOT rejected (force is BLOCK-only)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(WARN_MODE_TASK);
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/start?force=true&forceReason=x", { method: "POST" });
+    expect(res.status).toBe(200); // not 400 — WARN never validates force
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_override_used" }),
+    );
+  });
+
+  it("BLOCK mode: a task below threshold WITHOUT a keystone violation blocks on threshold alone", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(THRESHOLD_ONLY_BLOCK_TASK);
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string; details: { score: number; threshold: number } };
+    expect(body.error).toBe("low_confidence");
+    expect(body.details.score).toBeLessThan(60);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.claim_blocked_low_readiness",
+        payload: expect.objectContaining({ keystoneBlocked: false }),
+      }),
+    );
+  });
+
+  it("grandfathering: a non-open (review) task in a BLOCK project is NOT confidence-gated on task_start", async () => {
+    // Thin task that WOULD block if gated, but it is past the claim edge.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      title: "Fix thing",
+      description: "",
+      templateData: null,
+      createdByAgentId: "agent-1",
+      claimedByAgentId: "agent-1",
+      project: { ...baseTask.project, confidenceThreshold: 60, enforcementMode: "BLOCK", requireDistinctReviewer: false, soloMode: true },
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskUpdate.mockResolvedValueOnce({ ...baseTask, status: "review", reviewClaimedByAgentId: "agent-1" });
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { kind: string };
+    expect(body.kind).toBe("review");
+    // The gate fires only on the open→in_progress edge — no block, no shadow audit.
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_blocked_low_readiness" }),
+    );
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_would_block_shadow" }),
+    );
+  });
+
+  it("null enforcementMode resolves to WARN (allowed + shadow audit, never blocked)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(NULL_MODE_TASK);
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_would_block_shadow" }),
+    );
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_blocked_low_readiness" }),
+    );
+  });
+
+  it("OFF mode: advisory — claim allowed (200) with no shadow and no block audit", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(OFF_MODE_TASK);
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_would_block_shadow" }),
+    );
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_blocked_low_readiness" }),
+    );
+  });
+
+  it("BLOCK mode: the evals keystone blocks even when the threshold is lowered to 0 (threshold-independent)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(KEYSTONE_THRESHOLD_ZERO_TASK);
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string; details: { score: number; threshold: number } };
+    expect(body.error).toBe("low_confidence");
+    expect(body.details.threshold).toBe(0);
+    expect(body.details.score).toBeGreaterThanOrEqual(0); // score alone would pass threshold 0
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.claim_blocked_low_readiness",
+        payload: expect.objectContaining({ keystoneBlocked: true }),
       }),
     );
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();

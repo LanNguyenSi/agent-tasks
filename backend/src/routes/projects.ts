@@ -23,6 +23,7 @@ import {
   deriveGovernanceModeFromFlags,
   legacyFlagsFromGovernanceMode,
 } from "../lib/governance-mode.js";
+import { resolveEnforcementMode, EnforcementMode } from "../lib/enforcement-mode.js";
 import { computeEffectiveGates } from "../services/gates/index.js";
 
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
@@ -45,6 +46,12 @@ const createProjectSchema = z.object({
 const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, slug: true }).extend({
   taskTemplate: taskTemplateSchema.nullable().optional(),
   confidenceThreshold: z.number().int().min(0).max(100).optional(),
+  // scorer-v2 (T5): per-project confidence-gate enforcement level.
+  enforcementMode: z.enum(["OFF", "WARN", "BLOCK"]).optional(),
+  // Required to flip a project TO `BLOCK` (the gate enforces it; this is not a
+  // stored column). Operationalizes "review the shadow report before blocking"
+  // — see docs/scorer-v2-enforcement.md.
+  acknowledgeShadowReport: z.boolean().optional(),
   governanceMode: z
     .enum(["REQUIRES_DISTINCT_REVIEWER", "AWAITS_CONFIRMATION", "AUTONOMOUS"])
     .optional(),
@@ -332,7 +339,24 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
   }
 
   const body = c.req.valid("json");
-  const { taskTemplate, notificationWebhookUrl, notificationWebhookSecret, ...rest } = body;
+
+  // scorer-v2 (T5): flipping a project TO `BLOCK` is gated on an explicit
+  // acknowledgement that its shadow report was reviewed. `acknowledgeShadowReport`
+  // is a request-only flag, never persisted. Idempotent re-sets of an
+  // already-BLOCK project don't require it.
+  if (body.enforcementMode === "BLOCK" && resolveEnforcementMode(project) !== EnforcementMode.BLOCK && body.acknowledgeShadowReport !== true) {
+    return c.json(
+      {
+        error: "shadow_report_unacknowledged",
+        message:
+          "Flipping enforcementMode to BLOCK requires acknowledgeShadowReport=true. Review the project's shadow report first (npm run shadow:report), then re-send with the acknowledgement. See docs/scorer-v2-enforcement.md.",
+      },
+      400,
+    );
+  }
+
+  // `acknowledgeShadowReport` is a control flag, not a column — keep it out of the write.
+  const { taskTemplate, notificationWebhookUrl, notificationWebhookSecret, acknowledgeShadowReport: _ack, ...rest } = body;
   const data: Prisma.ProjectUpdateInput = { ...rest };
   if (taskTemplate !== undefined) {
     data.taskTemplate = taskTemplate === null ? Prisma.JsonNull : taskTemplate;
@@ -391,6 +415,12 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
     governanceChange.confidenceThreshold = {
       from: project.confidenceThreshold,
       to: body.confidenceThreshold,
+    };
+  }
+  if (body.enforcementMode !== undefined && body.enforcementMode !== project.enforcementMode) {
+    governanceChange.enforcementMode = {
+      from: project.enforcementMode,
+      to: body.enforcementMode,
     };
   }
   if (body.soloMode !== undefined && body.soloMode !== project.soloMode) {
