@@ -1,3 +1,10 @@
+import type { TemplateData, TaskType } from "./confidence";
+
+// TemplateData is owned by ./confidence (the scorer is its primary consumer);
+// re-export it so existing `import { TemplateData } from "../lib/api"`
+// call-sites keep working without a duplicated definition.
+export type { TemplateData };
+
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -21,6 +28,13 @@ export interface TemplatePreset {
   acceptanceCriteria?: string;
   context?: string;
   constraints?: string;
+  // scorer-v2 executability fields (1:1 with the backend templatePresetSchema).
+  scope?: string;
+  outOfScope?: string;
+  dependencies?: string;
+  risk?: string;
+  agentPrompt?: string;
+  taskType?: TaskType;
 }
 
 export interface TaskTemplate {
@@ -29,6 +43,14 @@ export interface TaskTemplate {
     acceptanceCriteria: boolean;
     context: boolean;
     constraints: boolean;
+    // scorer-v2 executability fields. Optional: rows predating the schema
+    // widening (T2) have no value for these keys, so a project that never
+    // enabled them reads `undefined` (falsy → editor gated off).
+    scope?: boolean;
+    outOfScope?: boolean;
+    dependencies?: boolean;
+    risk?: boolean;
+    agentPrompt?: boolean;
   };
   presets?: TemplatePreset[];
 }
@@ -60,13 +82,6 @@ export interface Project {
    * Optional because some legacy API responses may omit it; treat
    * `undefined` as `"team"` for backward-compatibility. */
   accessSource?: "team" | "project";
-}
-
-export interface TemplateData {
-  goal?: string;
-  acceptanceCriteria?: string;
-  context?: string;
-  constraints?: string;
 }
 
 export interface Task {
