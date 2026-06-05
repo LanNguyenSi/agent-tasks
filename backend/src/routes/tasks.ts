@@ -3151,7 +3151,7 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     .map((t) => ({ to: t.to, label: t.label, requires: t.requires }));
 
   const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
-  const { score, missing, subscores, findings, inferredTaskType } = calculateConfidence({
+  const { score, missing, subscores, findings, inferredTaskType, blocking } = calculateConfidence({
     title: task.title,
     description: task.description,
     templateData: task.templateData as TemplateData | null,
@@ -3219,6 +3219,7 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
       score,
       missing,
       threshold: task.project.confidenceThreshold,
+      blocking,
       subscores,
       findings,
       inferredTaskType,
