@@ -31,13 +31,14 @@ vi.mock("../../src/lib/prisma.js", () => ({
 const teamAccessMocks = vi.hoisted(() => ({
   hasProjectAccess: vi.fn(),
   getProjectMembership: vi.fn(),
+  resolveTeamId: vi.fn(),
 }));
 
 vi.mock("../../src/services/team-access.js", () => ({
   isProjectAdmin: vi.fn().mockResolvedValue(true),
   hasProjectAccess: teamAccessMocks.hasProjectAccess,
   getProjectMembership: teamAccessMocks.getProjectMembership,
-  resolveTeamId: vi.fn(),
+  resolveTeamId: teamAccessMocks.resolveTeamId,
   resolveTeamIdErrorBody: vi.fn(),
 }));
 
@@ -100,6 +101,7 @@ beforeEach(() => {
     source: "team",
     role: "HUMAN_MEMBER",
   });
+  teamAccessMocks.resolveTeamId.mockResolvedValue({ ok: true, teamId: "team-1" });
 });
 
 describe("GET /api/projects/:id returns effectiveGates", () => {
@@ -142,6 +144,27 @@ describe("GET /api/projects/:id returns effectiveGates", () => {
     expect(body.effectiveGates[GateCode.PrRepoMatchesProject].active).toBe(
       true,
     );
+  });
+
+  it("attaches a taskCreation readiness block (template mode off by default)", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({ ...BASE_PROJECT });
+
+    const res = await makeApp(HUMAN_ACTOR).request(`/projects/${PROJECT_ID}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      taskCreation: {
+        enforcementMode: string;
+        confidenceThreshold: number;
+        templateModeEnabled: boolean;
+        requiredFields: string[];
+      };
+    };
+    expect(body.taskCreation).toEqual({
+      enforcementMode: "WARN",
+      confidenceThreshold: 60,
+      templateModeEnabled: false,
+      requiredFields: [],
+    });
   });
 });
 
@@ -189,6 +212,41 @@ describe("GET /api/projects/:id/effective-gates", () => {
     expect(distinct.name).toMatch(/review/i);
     expect(distinct.appliesTo).toContain("task_finish");
     expect(distinct.because).toMatch(/REQUIRES_DISTINCT_REVIEWER/);
+  });
+
+  it("returns the taskCreation block with required fields when template mode is on", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      teamId: "team-1",
+      githubRepo: "owner/repo",
+      governanceMode: GovernanceMode.AUTONOMOUS,
+      soloMode: false,
+      requireDistinctReviewer: false,
+      taskTemplate: {
+        fields: { goal: true, acceptanceCriteria: true, scope: false },
+      },
+      enforcementMode: "BLOCK",
+      confidenceThreshold: 70,
+    });
+
+    const res = await makeApp(HUMAN_ACTOR).request(
+      `/projects/${PROJECT_ID}/effective-gates`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      taskCreation: {
+        enforcementMode: string;
+        confidenceThreshold: number;
+        templateModeEnabled: boolean;
+        requiredFields: string[];
+      };
+    };
+    expect(body.taskCreation.enforcementMode).toBe("BLOCK");
+    expect(body.taskCreation.confidenceThreshold).toBe(70);
+    expect(body.taskCreation.templateModeEnabled).toBe(true);
+    expect([...body.taskCreation.requiredFields].sort()).toEqual([
+      "acceptanceCriteria",
+      "goal",
+    ]);
   });
 
   it("404s when the project is missing", async () => {
@@ -267,5 +325,38 @@ describe("GET /api/projects/:id/effective-gates", () => {
       `/projects/${PROJECT_ID}/effective-gates`,
     );
     expect(res.status).toBe(403);
+  });
+});
+
+describe("GET /api/projects/by-slug/:slug", () => {
+  it("returns project + effectiveGates + taskCreation (parity with id lookup)", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      ...BASE_PROJECT,
+      taskTemplate: { fields: { goal: true } },
+      enforcementMode: "BLOCK",
+      confidenceThreshold: 80,
+    });
+
+    const res = await makeApp(HUMAN_ACTOR).request(
+      `/projects/by-slug/test?teamId=team-1`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      project: { id: string };
+      effectiveGates: Record<string, { active: boolean }>;
+      taskCreation: {
+        enforcementMode: string;
+        confidenceThreshold: number;
+        templateModeEnabled: boolean;
+        requiredFields: string[];
+      };
+    };
+    expect(body.project.id).toBe(PROJECT_ID);
+    // Parity with GET /projects/:id — the gate map and readiness block are present.
+    expect(body.effectiveGates[GateCode.TaskStatusForMerge].active).toBe(true);
+    expect(body.taskCreation.enforcementMode).toBe("BLOCK");
+    expect(body.taskCreation.confidenceThreshold).toBe(80);
+    expect(body.taskCreation.templateModeEnabled).toBe(true);
+    expect(body.taskCreation.requiredFields).toEqual(["goal"]);
   });
 });

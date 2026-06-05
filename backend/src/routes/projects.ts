@@ -24,6 +24,7 @@ import {
   legacyFlagsFromGovernanceMode,
 } from "../lib/governance-mode.js";
 import { resolveEnforcementMode, EnforcementMode } from "../lib/enforcement-mode.js";
+import { describeTaskCreation } from "../lib/task-creation-readiness.js";
 import { computeEffectiveGates } from "../services/gates/index.js";
 
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
@@ -226,7 +227,13 @@ projectRouter.get("/projects/by-slug/:slug", async (c) => {
 
   if (!project) return notFound(c);
 
-  return c.json({ project: redactProject(project) });
+  // Mirror GET /projects/:id so the `projects_get` verb returns the same shape
+  // for slug lookups: the gate map plus the task-creation readiness block.
+  return c.json({
+    project: redactProject(project),
+    effectiveGates: computeEffectiveGates(project),
+    taskCreation: describeTaskCreation(project),
+  });
 });
 
 // ── Create project ────────────────────────────────────────────────────────────
@@ -289,6 +296,7 @@ projectRouter.get("/projects/:id", async (c) => {
   return c.json({
     project: redactProject({ ...project, accessSource: membership.source }),
     effectiveGates: computeEffectiveGates(project),
+    taskCreation: describeTaskCreation(project),
   });
 });
 
@@ -304,6 +312,11 @@ projectRouter.get("/projects/:id/effective-gates", async (c) => {
       governanceMode: true,
       soloMode: true,
       requireDistinctReviewer: true,
+      // Task-creation readiness — lets an agent learn, before composing a task,
+      // whether template mode is on and which structured fields are required.
+      taskTemplate: true,
+      enforcementMode: true,
+      confidenceThreshold: true,
     },
   });
 
@@ -313,7 +326,10 @@ projectRouter.get("/projects/:id/effective-gates", async (c) => {
     return forbidden(c, "Access denied");
   }
 
-  return c.json({ effectiveGates: computeEffectiveGates(project) });
+  return c.json({
+    effectiveGates: computeEffectiveGates(project),
+    taskCreation: describeTaskCreation(project),
+  });
 });
 
 // ── Update project ────────────────────────────────────────────────────────────

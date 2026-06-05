@@ -44,6 +44,8 @@ import {
 // emitted against terminal tasks by design and must still reach recipients.
 const STALE_WHEN_DONE: SignalType[] = ["review_needed", "task_available", "task_assigned"];
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
+import { resolveEnforcementMode } from "../lib/enforcement-mode.js";
+import { DEFAULT_CONFIDENCE_THRESHOLD } from "../lib/task-creation-readiness.js";
 import { evaluateConfidenceGate, deriveNextActions } from "../services/confidence-gate.js";
 import {
   DEFAULT_TRANSITIONS,
@@ -742,11 +744,13 @@ taskRouter.post(
     // task is already persisted above. If the project lookup throws, degrade to
     // defaults (threshold 60, no template; calculateConfidence is template-
     // independent) rather than 500 a successful creation.
-    let projectConf: { confidenceThreshold: number; taskTemplate: unknown } | null = null;
+    let projectConf:
+      | { confidenceThreshold: number; taskTemplate: unknown; enforcementMode: string | null }
+      | null = null;
     try {
       projectConf = await prisma.project.findUnique({
         where: { id: projectId },
-        select: { confidenceThreshold: true, taskTemplate: true },
+        select: { confidenceThreshold: true, taskTemplate: true, enforcementMode: true },
       });
     } catch {
       projectConf = null;
@@ -760,7 +764,11 @@ taskRouter.post(
     });
     const confidence = {
       score: conf.score,
-      threshold: projectConf?.confidenceThreshold ?? 60,
+      threshold: projectConf?.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
+      // The effective mode tells the caller whether a `blocking` score will
+      // actually be rejected at task_pickup/task_start (BLOCK) or is advisory
+      // (OFF/WARN). Create stays informational regardless.
+      enforcementMode: resolveEnforcementMode(projectConf ?? {}),
       blocking: conf.blocking,
       missing: conf.missing,
       findings: conf.findings,

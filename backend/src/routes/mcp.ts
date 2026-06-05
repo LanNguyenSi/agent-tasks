@@ -181,7 +181,7 @@ function buildServer(token: string): McpServer {
     "projects_get",
     {
       description:
-        "Fetch a single project by slug or id. Accepts either a UUID or a slug — the tool routes to the correct endpoint automatically. Returns the full project record plus `effectiveGates` — the set of gates that would fire on this project and under what conditions (use it to preempt 4xx responses instead of discovering preconditions by tripping them).",
+        "Fetch a single project by slug or id. Accepts either a UUID or a slug — the tool routes to the correct endpoint automatically. Returns the full project record plus `effectiveGates` — the set of gates that would fire on this project and under what conditions (use it to preempt 4xx responses instead of discovering preconditions by tripping them), and a `taskCreation` block describing task-template-mode requirements (enforcementMode, confidenceThreshold, templateModeEnabled, requiredFields[]).",
       inputSchema: { slugOrId: z.string().min(1) },
     },
     async ({ slugOrId }) => {
@@ -205,7 +205,7 @@ function buildServer(token: string): McpServer {
     "projects_get_effective_gates",
     {
       description:
-        "Return the gate map for a project — identical to the `effectiveGates` field on `projects_get`, but without the rest of the project payload. Keyed by `GateCode`; each entry carries `active`, `because`, `appliesTo`. Use this to answer 'will this verb be rejected?' before you call it.",
+        "Return the gate map for a project — identical to the `effectiveGates` field on `projects_get`, but without the rest of the project payload. Keyed by `GateCode`; each entry carries `active`, `because`, `appliesTo`. Use this to answer 'will this verb be rejected?' before you call it. The response also carries a `taskCreation` block ({ enforcementMode, confidenceThreshold, templateModeEnabled, requiredFields[] }): call it BEFORE task_create to learn whether task-template mode is on and which structured templateData fields this project requires.",
       inputSchema: { projectId: uuid() },
     },
     async ({ projectId }) => {
@@ -318,7 +318,7 @@ function buildServer(token: string): McpServer {
     "tasks_create",
     {
       description:
-        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — tasks_update does NOT accept it, and post-create dep changes go through the REST /tasks/:id/dependencies endpoints (currently human-only). Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. The response carries a non-blocking `confidence` object ({score, threshold, missing[], findings[], nextActions[]}) so you see what's missing immediately — a low score does NOT block creation; the hard gate is at task_pickup/task_start.",
+        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — tasks_update does NOT accept it, and post-create dep changes go through the REST /tasks/:id/dependencies endpoints (currently human-only). Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. The response carries a non-blocking `confidence` object ({score, threshold, enforcementMode, missing[], findings[], nextActions[]}) so you see what's missing immediately — a low score does NOT block creation; `enforcementMode` tells you whether the hard gate at task_pickup/task_start (BLOCK) will reject it or it is advisory (OFF/WARN). When a project uses task-template mode, call projects_get_effective_gates first and populate the templateData fields it lists under taskCreation.requiredFields.",
       inputSchema: {
         projectId: uuid(),
         title: z.string().min(1).max(255),
