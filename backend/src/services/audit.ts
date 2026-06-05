@@ -77,6 +77,11 @@ export type AuditAction =
   // Override-with-passing-score is NOT recorded (force is a no-op).
   | "task.claim_blocked_low_readiness"
   | "task.claim_override_used"
+  // scorer-v2 (T5): in WARN enforcement mode, a claim that WOULD have blocked
+  // (below threshold or a violated keystone) but was allowed through. The
+  // shadow signal that quantifies block blast radius before a project flips to
+  // BLOCK. Carries score/threshold/keystoneBlocked/caps in the payload.
+  | "task.claim_would_block_shadow"
   // Outbound Signal-webhook delivery. Fired by
   // services/notification-webhook.ts after every POST attempt the project's
   // `notificationWebhookUrl` produces. `delivered` records the final

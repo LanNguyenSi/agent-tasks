@@ -76,6 +76,7 @@ const baseProject = {
   githubSyncAt: null,
   taskTemplate: null,
   confidenceThreshold: 60,
+  enforcementMode: null,
   requireDistinctReviewer: false,
   soloMode: true,
   governanceMode: "AUTONOMOUS",
@@ -228,6 +229,92 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
 
     expect(res.status).toBe(400);
     expect(prismaMocks.projectUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("PATCH /projects/:id — enforcementMode (scorer-v2 T5)", () => {
+  it("accepts WARN/OFF and persists via prisma.update", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, enforcementMode: "OFF" });
+
+    const res = await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enforcementMode: "OFF" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
+      where: { id: "proj-1" },
+      data: expect.objectContaining({ enforcementMode: "OFF" }),
+    });
+  });
+
+  it("rejects a flip TO BLOCK without acknowledgeShadowReport (400, no DB write)", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject); // resolves to WARN
+
+    const res = await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enforcementMode: "BLOCK" }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("shadow_report_unacknowledged");
+    expect(body.message).toMatch(/shadow report/i);
+    expect(prismaMocks.projectUpdate).not.toHaveBeenCalled();
+  });
+
+  it("allows a flip TO BLOCK with acknowledgeShadowReport=true, and never persists the ack flag", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, enforcementMode: "BLOCK" });
+
+    const res = await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enforcementMode: "BLOCK", acknowledgeShadowReport: true }),
+    });
+
+    expect(res.status).toBe(200);
+    const call = prismaMocks.projectUpdate.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data.enforcementMode).toBe("BLOCK");
+    expect(call.data).not.toHaveProperty("acknowledgeShadowReport");
+  });
+
+  it("does NOT require the ack to re-set an already-BLOCK project (idempotent)", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({ ...baseProject, enforcementMode: "BLOCK" });
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, enforcementMode: "BLOCK" });
+
+    const res = await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enforcementMode: "BLOCK" }),
+    });
+
+    expect(res.status).toBe(200);
+  });
+
+  it("audits an enforcementMode change", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject); // null/WARN
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, enforcementMode: "OFF" });
+
+    await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enforcementMode: "OFF" }),
+    });
+
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "project.updated",
+        payload: {
+          changes: expect.objectContaining({
+            enforcementMode: { from: null, to: "OFF" },
+          }),
+        },
+      }),
+    );
   });
 });
 

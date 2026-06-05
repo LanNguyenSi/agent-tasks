@@ -176,6 +176,11 @@ model Project {
   githubSyncAt             DateTime?
   taskTemplate             Json? // { fields: { goal, acceptanceCriteria, context, constraints, scope, outOfScope, dependencies, risk, agentPrompt: bool }, presets: [...] }
   confidenceThreshold      Int             @default(60) // 0-100, minimum confidence score for agent claims
+  // scorer-v2 (T5): per-project confidence-gate enforcement. Nullable; null
+  // resolves to WARN via resolveEnforcementMode() so existing rows roll out in
+  // warn-mode without a backfill (mirrors governanceMode). New code reads via the
+  // resolver, never this column directly.
+  enforcementMode          EnforcementMode? // null => WARN (see lib/enforcement-mode.ts)
   requireDistinctReviewer  Boolean         @default(false) /// @deprecated use governanceMode. Kept readable through one release cycle for dashboards + external clients. Runtime still derives an answer when governanceMode is null. Remove once no client references it.
   soloMode                 Boolean         @default(false) /// @deprecated use governanceMode. See requireDistinctReviewer.
   governanceMode           GovernanceMode? // Null only for rows predating the migration; runtime derives from the legacy flags when null. New writes always set this; new code should read this.
@@ -427,6 +432,21 @@ enum GovernanceMode {
   AWAITS_CONFIRMATION
   // Single-actor project. No gates, no notifications. Replaces soloMode=true.
   AUTONOMOUS
+}
+
+// scorer-v2 (T5): per-project enforcement level for the confidence gate.
+enum EnforcementMode {
+  // Gate is advisory: the score is still computed and surfaced, but an agent is
+  // never blocked. Use to fully opt a project out.
+  OFF
+  // Compute + surface + shadow-log would-blocks, but never block. The safe
+  // rollout default — `null` resolves here, so existing projects start in WARN
+  // without a backfill. The shadow audit/report quantifies blast radius here.
+  WARN
+  // Block agent claims below the threshold AND on a violated keystone
+  // (ConfidenceResult.blocking) regardless of the threshold. Flip a project here
+  // only after reviewing its shadow report (see docs/scorer-v2-enforcement.md).
+  BLOCK
 }
 
 enum TaskPriority {
