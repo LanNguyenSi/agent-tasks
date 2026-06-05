@@ -81,6 +81,9 @@ export interface TaskDetailProps {
   templateFields: TemplateFields | null;
   confidenceThreshold: number;
   requireDistinctReviewer?: boolean;
+  /** Open directly in edit mode (e.g. from the create-confidence panel's
+   *  "Edit task"), so the user lands on the editors for the missing fields. */
+  initialEditing?: boolean;
   onUpdate: (task: Task) => void;
   onDelete: (taskId: string) => void;
   onClose: () => void;
@@ -106,6 +109,7 @@ export default function TaskDetail({
   onClose,
   onError,
   variant = "modal",
+  initialEditing = false,
 }: TaskDetailProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
@@ -159,15 +163,25 @@ export default function TaskDetail({
     setEditTaskType(task.templateData?.taskType ?? "");
   }, [task]);
 
-  // Reset modal state when switching to a different task (not on every poll refresh)
+  // Reset modal state when switching to a different task (not on every poll
+  // refresh). When opened via "Edit task" (initialEditing), start in edit mode
+  // with the editors seeded so the user lands on the missing fields. Deps stay
+  // [task.id] for poll-safety; initialEditing / initEditState are intentionally
+  // excluded so a poll refresh (same id, new object) does not re-trigger.
   useEffect(() => {
-    setIsEditing(false);
+    if (initialEditing) {
+      initEditState();
+      setIsEditing(true);
+    } else {
+      setIsEditing(false);
+    }
     setCommentText("");
     setDepPickerValue("");
     setShowDeleteTaskConfirm(false);
     setResultExpanded(false);
     setConfirmRemoveDepId(null);
     setConfirmDeleteCommentId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.id]);
 
   // Only show the result Show-more toggle when the collapsed box actually

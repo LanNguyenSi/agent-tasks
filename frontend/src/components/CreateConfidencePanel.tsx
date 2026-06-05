@@ -30,12 +30,13 @@ const MAX_NEXT_ACTIONS = 5;
 export default function CreateConfidencePanel({
   confidence,
   assignmentError,
-  onCreateAnother,
+  onEdit,
   onClose,
 }: {
   confidence: CreateConfidence;
   assignmentError?: string | null;
-  onCreateAnother: () => void;
+  /** Open the just-created task in the editor to act on the missing fields. */
+  onEdit: () => void;
   onClose: () => void;
 }) {
   const { score, threshold, blocking, missing, nextActions } = confidence;
@@ -95,8 +96,8 @@ export default function CreateConfidencePanel({
       )}
 
       <div style={{ display: "flex", gap: "0.5rem" }}>
-        <Button type="button" size="sm" onClick={onCreateAnother}>
-          Create another
+        <Button type="button" size="sm" onClick={onEdit}>
+          Edit task
         </Button>
         <Button type="button" size="sm" variant="secondary" onClick={onClose}>
           Close
