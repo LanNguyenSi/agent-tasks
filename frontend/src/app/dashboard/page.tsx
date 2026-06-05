@@ -15,10 +15,10 @@ import {
   type Team,
   type Project,
   type Task,
-  type TemplateData,
   type CreateConfidence,
 } from "../../lib/api";
-import { calculateConfidence, type TemplateFields } from "../../lib/confidence";
+import { calculateConfidence, TASK_TYPES, type TaskType, type TemplateFields } from "../../lib/confidence";
+import { buildSavedTemplateData } from "../../lib/templateData";
 import { PRIORITY_COLORS } from "../../lib/priorityColors";
 import { formatRelativeTime, formatAbsoluteDate } from "../../lib/time";
 import {
@@ -356,6 +356,12 @@ export default function DashboardPage() {
   const [newTaskAcceptanceCriteria, setNewTaskAcceptanceCriteria] = useState("");
   const [newTaskContext, setNewTaskContext] = useState("");
   const [newTaskConstraints, setNewTaskConstraints] = useState("");
+  const [newTaskScope, setNewTaskScope] = useState("");
+  const [newTaskOutOfScope, setNewTaskOutOfScope] = useState("");
+  const [newTaskDependencies, setNewTaskDependencies] = useState("");
+  const [newTaskRisk, setNewTaskRisk] = useState("");
+  const [newTaskAgentPrompt, setNewTaskAgentPrompt] = useState("");
+  const [newTaskTaskType, setNewTaskTaskType] = useState<TaskType | "">("");
   // The server's authoritative create-time confidence for the task just created.
   // When set, the modal shows the result panel instead of the form.
   const [createdConfidence, setCreatedConfidence] = useState<CreateConfidence | null>(null);
@@ -364,6 +370,25 @@ export default function DashboardPage() {
   const [createdAssignmentError, setCreatedAssignmentError] = useState<string | null>(null);
   // The id of the just-created task, so the panel's "Edit task" can open it.
   const [createdTaskId, setCreatedTaskId] = useState<string | null>(null);
+
+  // The templateData a create would persist, built from the create-form editors
+  // via the SAME helper the edit path uses (existing=null, since a create has no
+  // prior object). Single source for the create write and the live badge.
+  const newTaskTemplateData = useMemo(
+    () => buildSavedTemplateData(null, {
+      goal: newTaskGoal,
+      acceptanceCriteria: newTaskAcceptanceCriteria,
+      context: newTaskContext,
+      constraints: newTaskConstraints,
+      scope: newTaskScope,
+      outOfScope: newTaskOutOfScope,
+      dependencies: newTaskDependencies,
+      risk: newTaskRisk,
+      agentPrompt: newTaskAgentPrompt,
+      taskType: newTaskTaskType,
+    }),
+    [newTaskGoal, newTaskAcceptanceCriteria, newTaskContext, newTaskConstraints, newTaskScope, newTaskOutOfScope, newTaskDependencies, newTaskRisk, newTaskAgentPrompt, newTaskTaskType],
+  );
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
   const [doneVisibility, setDoneVisibility] = useState<DoneVisibility>(DEFAULT_DONE_VISIBILITY);
@@ -532,6 +557,12 @@ export default function DashboardPage() {
     setNewTaskAcceptanceCriteria("");
     setNewTaskContext("");
     setNewTaskConstraints("");
+    setNewTaskScope("");
+    setNewTaskOutOfScope("");
+    setNewTaskDependencies("");
+    setNewTaskRisk("");
+    setNewTaskAgentPrompt("");
+    setNewTaskTaskType("");
     setCreatedConfidence(null);
     setCreatedAssignmentError(null);
     setCreatedTaskId(null);
@@ -649,20 +680,13 @@ export default function DashboardPage() {
     setCreatingTask(true);
     setError(null);
     try {
-      const tplData: TemplateData = {};
-      if (newTaskGoal.trim()) tplData.goal = newTaskGoal.trim();
-      if (newTaskAcceptanceCriteria.trim()) tplData.acceptanceCriteria = newTaskAcceptanceCriteria.trim();
-      if (newTaskContext.trim()) tplData.context = newTaskContext.trim();
-      if (newTaskConstraints.trim()) tplData.constraints = newTaskConstraints.trim();
-      const hasTemplateData = Object.keys(tplData).length > 0;
-
       const { task: created, confidence } = await createTask(selectedProjectId, {
         title: newTaskTitle.trim(),
         description: newTaskDescription.trim() || undefined,
         status: newTaskStatus,
         priority: newTaskPriority,
         dueAt: toIsoDateOrNull(newTaskDueAt) ?? undefined,
-        ...(hasTemplateData ? { templateData: tplData } : {}),
+        ...(newTaskTemplateData ? { templateData: newTaskTemplateData } : {}),
       });
 
       let task = created;
@@ -961,6 +985,12 @@ export default function DashboardPage() {
                           if (preset.acceptanceCriteria !== undefined) setNewTaskAcceptanceCriteria(preset.acceptanceCriteria);
                           if (preset.context !== undefined) setNewTaskContext(preset.context);
                           if (preset.constraints !== undefined) setNewTaskConstraints(preset.constraints);
+                          if (preset.scope !== undefined) setNewTaskScope(preset.scope);
+                          if (preset.outOfScope !== undefined) setNewTaskOutOfScope(preset.outOfScope);
+                          if (preset.dependencies !== undefined) setNewTaskDependencies(preset.dependencies);
+                          if (preset.risk !== undefined) setNewTaskRisk(preset.risk);
+                          if (preset.agentPrompt !== undefined) setNewTaskAgentPrompt(preset.agentPrompt);
+                          if (preset.taskType !== undefined) setNewTaskTaskType(preset.taskType);
                         }}
                       >
                         {preset.name}
@@ -996,13 +1026,59 @@ export default function DashboardPage() {
                     </FormField>
                   </div>
                 )}
+                {templateFields.scope && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Scope">
+                      <textarea value={newTaskScope} onChange={(e) => setNewTaskScope(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="Files, modules, or surfaces this may touch" />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.outOfScope && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Out of Scope">
+                      <textarea value={newTaskOutOfScope} onChange={(e) => setNewTaskOutOfScope(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="What must NOT change" />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.dependencies && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Dependencies">
+                      <textarea value={newTaskDependencies} onChange={(e) => setNewTaskDependencies(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="Prerequisite work, or 'none'" />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.risk && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Risk">
+                      <textarea value={newTaskRisk} onChange={(e) => setNewTaskRisk(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="Risk / blast radius (low / medium / high, and why)" />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.agentPrompt && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Agent Prompt">
+                      <textarea value={newTaskAgentPrompt} onChange={(e) => setNewTaskAgentPrompt(e.target.value)} rows={4} style={{ width: "100%", resize: "vertical", fontFamily: "var(--font-mono, monospace)" }} placeholder="Step-by-step instructions a weak agent can execute verbatim" />
+                    </FormField>
+                  </div>
+                )}
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <FormField label="Task Type">
+                    <Select
+                      value={newTaskTaskType}
+                      onChange={(v) => setNewTaskTaskType(v as TaskType | "")}
+                      options={[{ value: "", label: "— none —" }, ...TASK_TYPES.map((t) => ({ value: t, label: t }))]}
+                      ariaLabel="Task type"
+                      style={{ width: "100%" }}
+                    />
+                  </FormField>
+                </div>
                 <div style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
                   Confidence:{" "}
                   <ConfidenceBadge
                     score={calculateConfidence({
                       title: newTaskTitle,
                       description: newTaskDescription || null,
-                      templateData: { goal: newTaskGoal || undefined, acceptanceCriteria: newTaskAcceptanceCriteria || undefined, context: newTaskContext || undefined, constraints: newTaskConstraints || undefined },
+                      templateData: newTaskTemplateData,
                       templateFields,
                     }).score}
                   />
