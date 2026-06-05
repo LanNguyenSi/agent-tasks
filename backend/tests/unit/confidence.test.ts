@@ -1,14 +1,17 @@
 /**
  * Unit tests for `backend/src/lib/confidence.ts`.
  *
- * Closes the zero-coverage gap flagged by ADR-0011 Milestone 1. Covers:
- *  - `descriptionQuality()` heuristic bins
- *  - `calculateConfidence()` headline score + missing[] under each
- *    templateFields combination
- *  - All six score caps from §"Important: Add Score Caps"
- *  - All seven subscores reach 0 / partial / 100 with a fixture
- *  - Findings emission: each cap and each rule miss yields the expected
- *    finding code with the expected severity
+ * scorer-v2 (T3) re-weights the additive score onto a FIXED, template-independent
+ * denominator (FIELD_WEIGHTS sum 100) and introduces the evals keystone. The
+ * tests cover:
+ *  - `descriptionQuality()` heuristic bins (unchanged)
+ *  - the fixed-denominator additive score (template-independence, probe flips)
+ *  - the evals keystone (blocking, sub-60 cap, threshold-independent emission)
+ *  - the agentPrompt keystone (warning-only, not blocking, not sub-60)
+ *  - the remaining structural + subscore caps
+ *  - all seven subscores reach 0 / partial / 100 with a fixture (unchanged)
+ *  - findings emission per missing field with the expected severity
+ *  - the T2 field schemas (unchanged) + the M2 taskType bridge
  *
  * Pure function under test, no Prisma or HTTP setup required.
  */
@@ -19,6 +22,8 @@ import {
   templateDataSchema,
   taskTemplateSchema,
   prefersSchema,
+  FIELD_WEIGHTS,
+  EVALS_KEYSTONE_CAP,
   type TaskQualitySubscores,
 } from "../../src/lib/confidence.js";
 
@@ -29,12 +34,39 @@ const FULL_FIELDS = {
   constraints: true,
 };
 
+// Legacy v1 fixture: goal / AC / context / constraints. Used by the unchanged
+// subscore + M2 tests (computeSubscores still reads these fields).
 const ALL_FILLED = {
   goal: "Add validation to user signup",
   acceptanceCriteria: "- Returns 400 on empty email\n- Returns 201 on valid",
   context: "Users currently hit a 500 when posting empty body",
   constraints: "No DB migration; keep existing schema",
 };
+
+// scorer-v2 fixture: all nine SCORED fields present (legacy context/constraints
+// kept to prove they no longer move the score).
+const ALL_V2 = {
+  goal: "Validate the signup request body",
+  acceptanceCriteria: "- Returns 400 on empty email\n- Returns 201 on a valid body",
+  scope: "src/routes/auth.ts signup handler only",
+  outOfScope: "do not touch the session middleware",
+  dependencies: "none",
+  risk: "low — single handler, no migration",
+  agentPrompt: "1. Add a zod body schema. 2. Return 400 on parse failure. 3. Add a unit test.",
+  context: "Posting an empty body 500s today",
+  constraints: "No DB migration",
+};
+
+// Concrete description with NO verification word (test/run/curl/check/verify/
+// green/CI), so fixtures control the verification signal purely via the
+// acceptanceCriteria field.
+const CONCRETE_DESC = "Add `validateSignup()` in src/routes/auth.ts:42 returning 400 on an empty body";
+
+// Concrete but no acceptance criteria and no verification signal → evals keystone.
+const NO_VERIF_DESC = "Refactor the signup handler in src/routes/auth.ts to extract body validation";
+
+// Concrete AND carries a prose verification signal (`curl`, "Verify"), still no AC.
+const VERIF_DESC = "Verify via `curl /api/signup` that src/routes/auth.ts returns 400 on an empty body";
 
 describe("descriptionQuality", () => {
   it("returns 0 for empty input", () => {
@@ -43,13 +75,11 @@ describe("descriptionQuality", () => {
   });
 
   it("rewards length up to ~300 chars then caps", () => {
-    // Holding density roughly constant by appending the same varied content.
     const sentence = "Validation endpoint POST signup email schema error 400 ";
     const short = descriptionQuality(sentence);
-    const long = descriptionQuality(sentence.repeat(6));   // ~300+ chars
-    const longer = descriptionQuality(sentence.repeat(60)); // way past cap
+    const long = descriptionQuality(sentence.repeat(6));
+    const longer = descriptionQuality(sentence.repeat(60));
     expect(long).toBeGreaterThan(short);
-    // Length component caps; doubling beyond ~300 chars must not blow past 1.0
     expect(longer).toBeLessThanOrEqual(1);
   });
 
@@ -79,61 +109,197 @@ describe("descriptionQuality", () => {
   });
 });
 
-describe("calculateConfidence — rule activation", () => {
-  it("counts only universally-required rules when no templateFields are set", () => {
+describe("calculateConfidence — fixed-denominator scoring (scorer-v2 T3)", () => {
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+  });
+  afterEach(() => infoSpy.mockRestore());
+
+  it("FIELD_WEIGHTS sum to exactly 100 (the fixed maxPossible)", () => {
+    const sum = Object.values(FIELD_WEIGHTS).reduce((a, b) => a + b, 0);
+    expect(sum).toBe(100);
+  });
+
+  it("a fully-specified task (all nine fields) scores near 100 with no caps", () => {
     const result = calculateConfidence({
-      title: "Do the thing",
-      description: "A short description that meets the 0.4 quality bar with `code` and src/file.ts anchor",
-      templateData: null,
+      title: "Validate signup body",
+      description: CONCRETE_DESC,
+      templateData: ALL_V2,
       templateFields: null,
     });
-    // title + description rules only (20 + 15 = 35 points)
-    expect(result.missing).toEqual([]);
-    expect(result.score).toBeGreaterThan(0);
+    expect(result.score).toBeGreaterThanOrEqual(90);
+    expect(result.blocking).toBe(false);
+    expect(infoSpy).not.toHaveBeenCalled();
   });
 
-  it("activates a rule only when its templateField flag is true", () => {
-    const result = calculateConfidence({
-      title: "Do the thing",
-      description: "A short description that meets the 0.4 quality bar with `code` and src/file.ts anchor",
-      templateData: { goal: "ok" },
-      templateFields: { goal: true, acceptanceCriteria: false, context: false, constraints: false },
-    });
-    expect(result.missing).not.toContain("acceptanceCriteria");
-    expect(result.missing).not.toContain("context");
+  it("score is template-INDEPENDENT: identical with null vs full templateFields", () => {
+    const base = { title: "Validate signup body", description: CONCRETE_DESC, templateData: ALL_V2 } as const;
+    const a = calculateConfidence({ ...base, templateFields: null });
+    const b = calculateConfidence({ ...base, templateFields: FULL_FIELDS });
+    expect(a.score).toBe(b.score);
   });
 
-  it("emits `missing` for inactive template fields that are present (skipped, not graded)", () => {
-    const result = calculateConfidence({
-      title: "Do the thing",
-      description: "A short description that meets the 0.4 quality bar with `code` and src/file.ts anchor",
-      templateData: { acceptanceCriteria: "- something" },
-      templateFields: { goal: false, acceptanceCriteria: false, context: false, constraints: false },
+  it("the executability fields move the score (no longer scoring-neutral as in T2)", () => {
+    const base = { title: "Add request-id middleware", description: CONCRETE_DESC, templateFields: null } as const;
+    const lean = calculateConfidence({ ...base, templateData: { goal: "g", acceptanceCriteria: "- has a header" } });
+    const rich = calculateConfidence({
+      ...base,
+      templateData: {
+        goal: "g",
+        acceptanceCriteria: "- has a header",
+        scope: "src/middleware",
+        outOfScope: "no router change",
+        dependencies: "none",
+        risk: "low",
+        agentPrompt: "1. add the middleware 2. wire it up",
+      },
     });
-    expect(result.missing).not.toContain("acceptanceCriteria");
-  });
-
-  it("marks every required field as missing when nothing is provided (empty title)", () => {
-    const result = calculateConfidence({
-      title: "",
-      description: "",
-      templateData: null,
-      templateFields: FULL_FIELDS,
-    });
-    expect(result.missing).toEqual(expect.arrayContaining([
-      "title",
-      "description",
-      "goal",
-      "acceptanceCriteria",
-      "context",
-      "constraints",
-    ]));
+    expect(rich.score).toBeGreaterThan(lean.score);
   });
 });
 
-describe("calculateConfidence — score caps (ADR-0011)", () => {
-  // The console.info log is fine but noisy. Re-spy per test so the
-  // afterEach restore doesn't leave subsequent tests with a detached spy.
+describe("calculateConfidence — probe regressions flip below 60 (scorer-v2 T3)", () => {
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+  });
+  afterEach(() => infoSpy.mockRestore());
+
+  it("full-template-no-AC falls below 60 (was 73)", () => {
+    const result = calculateConfidence({
+      title: "Refactor signup validation",
+      description: NO_VERIF_DESC,
+      // old "full template": goal + context + constraints, NO acceptance criteria,
+      // none of the new executability fields
+      templateData: { goal: "extract validation", context: "500 on empty body", constraints: "no migration" },
+      templateFields: FULL_FIELDS,
+    });
+    expect(result.score).toBeLessThan(60);
+    expect(result.blocking).toBe(true);
+  });
+
+  it("no-template-no-AC falls below 60 (was 74)", () => {
+    const result = calculateConfidence({
+      title: "Refactor signup validation",
+      description: NO_VERIF_DESC,
+      templateData: null,
+      templateFields: null,
+    });
+    expect(result.score).toBeLessThan(60);
+    expect(result.blocking).toBe(true);
+  });
+});
+
+describe("calculateConfidence — evals keystone (scorer-v2 T3)", () => {
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+  });
+  afterEach(() => infoSpy.mockRestore());
+
+  it("evals-absent emits a BLOCKING keystone finding and sets result.blocking", () => {
+    const result = calculateConfidence({
+      title: "ok",
+      description: NO_VERIF_DESC,
+      templateData: { goal: "g", scope: "s", outOfScope: "o", dependencies: "none", risk: "low", agentPrompt: "do it" },
+      templateFields: null,
+    });
+    const f = result.findings.find((x) => x.code === "missing_acceptance_criteria");
+    expect(f?.severity).toBe("blocking");
+    expect(f?.keystone).toBe(true);
+    expect(result.blocking).toBe(true);
+  });
+
+  it("keystone beats field-count: richly-specified-but-no-evals is capped at the keystone ceiling (<60)", () => {
+    // All eight non-evals fields present would otherwise reach the high-70s.
+    const result = calculateConfidence({
+      title: "Refactor signup validation",
+      description: NO_VERIF_DESC,
+      templateData: {
+        goal: "g",
+        scope: "src/routes/auth.ts",
+        outOfScope: "session middleware",
+        dependencies: "none",
+        risk: "low",
+        agentPrompt: "1. do x 2. do y",
+      },
+      templateFields: null,
+    });
+    expect(result.score).toBeLessThanOrEqual(EVALS_KEYSTONE_CAP);
+    expect(result.score).toBeLessThan(60);
+    expect(result.blocking).toBe(true);
+  });
+
+  it("is threshold-INDEPENDENT: calculateConfidence takes no threshold, so blocking + sub-60 hold regardless of project config", () => {
+    const result = calculateConfidence({
+      title: "ok",
+      description: NO_VERIF_DESC,
+      templateData: { goal: "g", scope: "s", outOfScope: "o", dependencies: "none", risk: "low", agentPrompt: "x" },
+      templateFields: null,
+    });
+    expect(result.blocking).toBe(true);
+    expect(result.score).toBeLessThan(60);
+  });
+
+  it("AC present → no keystone, not blocking", () => {
+    const result = calculateConfidence({
+      title: "ok",
+      description: NO_VERIF_DESC,
+      templateData: { goal: "g", acceptanceCriteria: "- returns 400 on empty body" },
+      templateFields: null,
+    });
+    expect(result.blocking).toBe(false);
+    expect(result.findings.find((x) => x.code === "missing_acceptance_criteria")).toBeUndefined();
+  });
+
+  it("prose verification signal → partial evals credit, WARNING (not keystone), not blocking", () => {
+    const withSignal = calculateConfidence({
+      title: "ok", description: VERIF_DESC, templateData: { goal: "g" }, templateFields: null,
+    });
+    const noSignal = calculateConfidence({
+      title: "ok", description: NO_VERIF_DESC, templateData: { goal: "g" }, templateFields: null,
+    });
+    expect(withSignal.blocking).toBe(false);
+    expect(noSignal.blocking).toBe(true);
+    // a prose verification path earns partial evals credit over silence
+    expect(withSignal.score).toBeGreaterThan(noSignal.score);
+    const f = withSignal.findings.find((x) => x.code === "missing_acceptance_criteria");
+    expect(f?.severity).toBe("warning");
+    expect(f?.keystone).toBeUndefined();
+  });
+});
+
+describe("calculateConfidence — agentPrompt keystone is WARNING-only (scorer-v2 T3)", () => {
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+  });
+  afterEach(() => infoSpy.mockRestore());
+
+  it("agentPrompt-absent: warning keystone finding, does NOT set blocking, does NOT cap below 60", () => {
+    const result = calculateConfidence({
+      title: "ok",
+      description: CONCRETE_DESC,
+      templateData: { ...ALL_V2, agentPrompt: "" }, // everything except agentPrompt
+      templateFields: null,
+    });
+    const f = result.findings.find((x) => x.code === "missing_agent_prompt");
+    expect(f?.severity).toBe("warning");
+    expect(f?.keystone).toBe(true);
+    expect(result.blocking).toBe(false);
+    expect(result.score).toBeGreaterThanOrEqual(60);
+  });
+
+  it("agentPrompt present → no missing_agent_prompt finding", () => {
+    const result = calculateConfidence({
+      title: "ok", description: CONCRETE_DESC, templateData: ALL_V2, templateFields: null,
+    });
+    expect(result.findings.find((x) => x.code === "missing_agent_prompt")).toBeUndefined();
+  });
+});
+
+describe("calculateConfidence — structural + subscore caps", () => {
   let infoSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
@@ -143,9 +309,9 @@ describe("calculateConfidence — score caps (ADR-0011)", () => {
   it("caps at 30 when title is empty", () => {
     const result = calculateConfidence({
       title: "",
-      description: "Decent description with `code` and a src/file.ts anchor that meets quality",
-      templateData: ALL_FILLED,
-      templateFields: FULL_FIELDS,
+      description: CONCRETE_DESC,
+      templateData: ALL_V2,
+      templateFields: null,
     });
     expect(result.score).toBeLessThanOrEqual(30);
     expect(result.findings.find((f) => f.code === "missing_title")).toBeDefined();
@@ -155,72 +321,19 @@ describe("calculateConfidence — score caps (ADR-0011)", () => {
     const result = calculateConfidence({
       title: "Some title",
       description: "",
-      templateData: ALL_FILLED,
-      templateFields: FULL_FIELDS,
+      templateData: ALL_V2,
+      templateFields: null,
     });
     expect(result.score).toBeLessThanOrEqual(40);
     expect(result.findings.find((f) => f.code === "missing_or_thin_description")).toBeDefined();
   });
 
-  it("caps at 70 when goal is missing (and goal is active)", () => {
-    const result = calculateConfidence({
-      title: "Some title",
-      description: "Decent description with `code` and a src/file.ts anchor that meets quality",
-      templateData: { ...ALL_FILLED, goal: "" },
-      templateFields: FULL_FIELDS,
-    });
-    expect(result.score).toBeLessThanOrEqual(70);
-    expect(result.findings.find((f) => f.code === "missing_goal")).toBeDefined();
-  });
-
-  it("caps at 80 when acceptanceCriteria is missing (and AC is active)", () => {
-    const result = calculateConfidence({
-      title: "Some title",
-      description: "Decent description with `code` and a src/file.ts anchor that meets quality",
-      templateData: { ...ALL_FILLED, acceptanceCriteria: "" },
-      templateFields: FULL_FIELDS,
-    });
-    expect(result.score).toBeLessThanOrEqual(80);
-    expect(result.findings.find((f) => f.code === "missing_acceptance_criteria")).toBeDefined();
-  });
-
-  it("caps at 85 when no verification path (no AC, no constraints, no signal regex)", () => {
-    const result = calculateConfidence({
-      title: "Some title",
-      // A scope marker ("only"/"keep") and a should-style verb hold scopeClarity
-      // and testability at 60 so the binding cap stays missing_verification (85),
-      // not the stricter subscore caps. "should" is a testability signal but NOT
-      // one of the missing_verification regex words (test/run/curl/check/verify/
-      // green/CI), so the 85 cap still fires.
-      description: "Decent description with `code` and a src/file.ts anchor; only the handler should change, keep the rest",
-      templateData: { goal: "ok", acceptanceCriteria: "", context: "ok", constraints: "" },
-      templateFields: { goal: true, acceptanceCriteria: false, context: true, constraints: false },
-    });
-    expect(result.score).toBeLessThanOrEqual(85);
-    // Pin 85 as the BINDING cap: the stricter subscore caps must not fire here.
-    expect(result.findings.find((f) => f.code === "low_testability")).toBeUndefined();
-    expect(result.findings.find((f) => f.code === "low_scope_clarity")).toBeUndefined();
-    const finding = result.findings.find((f) => f.code === "missing_verification");
-    expect(finding).toBeDefined();
-    expect(finding?.severity).toBe("warning");
-  });
-
-  it("does NOT cap at 85 when description contains a verification signal", () => {
-    const result = calculateConfidence({
-      title: "Some title",
-      description: "Decent description; verify with `curl /api/health` against ci/build/1234",
-      templateData: { goal: "ok", acceptanceCriteria: "", context: "ok", constraints: "" },
-      templateFields: { goal: true, acceptanceCriteria: false, context: true, constraints: false },
-    });
-    expect(result.findings.find((f) => f.code === "missing_verification")).toBeUndefined();
-  });
-
-  it("caps at 75 when ambiguity hits >= 3 and no concrete anchors", () => {
+  it("emits ambiguous_scope when >=3 vague terms and no concrete anchors (AC present, so keystone does not mask it)", () => {
     const result = calculateConfidence({
       title: "Some title",
       description: "We should fix this, improve that, and optimize the system somehow quickly",
-      templateData: ALL_FILLED,
-      templateFields: FULL_FIELDS,
+      templateData: { goal: "g", acceptanceCriteria: "- the build is green" },
+      templateFields: null,
     });
     expect(result.score).toBeLessThanOrEqual(75);
     const finding = result.findings.find((f) => f.code === "ambiguous_scope");
@@ -228,24 +341,52 @@ describe("calculateConfidence — score caps (ADR-0011)", () => {
     expect(finding?.severity).toBe("warning");
   });
 
-  it("strictest cap wins when multiple apply (no title + no AC → 30, not 80)", () => {
+  it("strictest cap wins (empty title beats the evals keystone → 30)", () => {
     const result = calculateConfidence({
       title: "",
-      description: "Decent description with `code` and a src/file.ts anchor that meets quality",
-      templateData: { ...ALL_FILLED, acceptanceCriteria: "" },
-      templateFields: FULL_FIELDS,
+      description: NO_VERIF_DESC, // no AC, no verification → keystone (55) also fires
+      templateData: null,
+      templateFields: null,
     });
     expect(result.score).toBeLessThanOrEqual(30);
     expect(result.findings.find((f) => f.code === "missing_title")).toBeDefined();
     expect(result.findings.find((f) => f.code === "missing_acceptance_criteria")).toBeDefined();
   });
 
+  it("emits low_testability / low_scope_clarity / low_concreteness findings when those subscores are low", () => {
+    const result = calculateConfidence({
+      title: "Rewrite onboarding copy",
+      description: "Rewrite the onboarding welcome text to be friendlier and shorter for brand new people",
+      templateData: { goal: "friendlier onboarding" },
+      templateFields: null,
+    });
+    expect(result.subscores.testability).toBe(0);
+    expect(result.subscores.scopeClarity).toBe(0);
+    expect(result.subscores.concreteness).toBe(0);
+    expect(result.findings.find((f) => f.code === "low_testability")).toBeDefined();
+    expect(result.findings.find((f) => f.code === "low_scope_clarity")).toBeDefined();
+    expect(result.findings.find((f) => f.code === "low_concreteness")).toBeDefined();
+  });
+
+  it("does NOT apply caps to a task strong on every dimension", () => {
+    const result = calculateConfidence({
+      title: "Add request-id middleware",
+      description: "Add `requestId` in src/middleware/request-id.ts; verify via `curl` that the response carries the header; expect 200",
+      templateData: ALL_V2,
+      templateFields: null,
+    });
+    for (const code of ["low_testability", "low_scope_clarity", "low_concreteness", "missing_acceptance_criteria"]) {
+      expect(result.findings.find((f) => f.code === code), `unexpected ${code}`).toBeUndefined();
+    }
+    expect(result.score).toBeGreaterThanOrEqual(90);
+  });
+
   it("logs one info-level line when a cap fires", () => {
     calculateConfidence({
       title: "",
-      description: "Decent description with `code` and a src/file.ts anchor that meets quality",
-      templateData: ALL_FILLED,
-      templateFields: FULL_FIELDS,
+      description: CONCRETE_DESC,
+      templateData: ALL_V2,
+      templateFields: null,
     });
     expect(infoSpy).toHaveBeenCalledTimes(1);
     expect(infoSpy.mock.calls[0]?.[0]).toContain("confidence.score_capped");
@@ -254,110 +395,15 @@ describe("calculateConfidence — score caps (ADR-0011)", () => {
   it("does NOT log when no cap fires", () => {
     calculateConfidence({
       title: "Add request-id middleware",
-      description: "Decent description with `code` and a src/file.ts anchor that meets quality",
-      templateData: ALL_FILLED,
-      templateFields: FULL_FIELDS,
+      description: CONCRETE_DESC,
+      templateData: ALL_V2,
+      templateFields: null,
     });
     expect(infoSpy).not.toHaveBeenCalled();
   });
 });
 
-describe("calculateConfidence — subscore-driven caps (scorer-v2 T1)", () => {
-  let infoSpy: ReturnType<typeof vi.spyOn>;
-  beforeEach(() => {
-    infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
-  });
-  afterEach(() => infoSpy.mockRestore());
-
-  it("caps at 70 (low_testability) when there is no AC and no test/verify language", () => {
-    const result = calculateConfidence({
-      title: "Add request-id middleware",
-      description: "Add `requestId` middleware in src/middleware/request-id.ts and wire it into app.ts",
-      // AC not graded as a rule here, but the testability subscore still reads it
-      templateData: { goal: "trace requests", context: "debugging is hard", constraints: "no new deps" },
-      templateFields: { goal: true, acceptanceCriteria: false, context: true, constraints: true },
-    });
-    expect(result.subscores.testability).toBe(0);
-    expect(result.score).toBeLessThanOrEqual(70);
-    const finding = result.findings.find((f) => f.code === "low_testability");
-    expect(finding).toBeDefined();
-    expect(finding?.severity).toBe("warning");
-    expect(finding?.dimension).toBe("testability");
-  });
-
-  it("caps at 75 (low_scope_clarity) when there are no constraints and no scope markers", () => {
-    const result = calculateConfidence({
-      title: "Add caching layer",
-      description: "Add an LRU cache in src/cache.ts for the slow lookups",
-      templateData: { goal: "speed up lookups", acceptanceCriteria: "- p99 latency < 50ms", context: "slow queries" },
-      templateFields: { goal: true, acceptanceCriteria: true, context: true, constraints: false },
-    });
-    expect(result.subscores.testability).toBe(100); // AC present → not a testability cap
-    expect(result.subscores.scopeClarity).toBe(0);
-    expect(result.score).toBeLessThanOrEqual(75);
-    expect(result.findings.find((f) => f.code === "low_scope_clarity")?.dimension).toBe("scopeClarity");
-  });
-
-  it("caps at 80 (low_concreteness) when the description has no concrete anchors", () => {
-    const result = calculateConfidence({
-      title: "Rewrite onboarding copy",
-      description: "Rewrite the onboarding welcome text to be friendlier and shorter for brand new people",
-      templateData: { goal: "friendlier onboarding", acceptanceCriteria: "- copy approved by design", context: "users confused", constraints: "do not change layout" },
-      templateFields: FULL_FIELDS,
-    });
-    expect(result.subscores.concreteness).toBe(0);
-    expect(result.score).toBeLessThanOrEqual(80);
-    expect(result.findings.find((f) => f.code === "low_concreteness")?.dimension).toBe("concreteness");
-  });
-
-  it("does NOT apply any subscore cap to a task strong on all three dimensions", () => {
-    const result = calculateConfidence({
-      title: "Add request-id middleware",
-      description: "Add `requestId` in src/middleware/request-id.ts; verify via `curl` that the response carries the header; expect 200",
-      templateData: ALL_FILLED,
-      templateFields: FULL_FIELDS,
-    });
-    for (const code of ["low_testability", "low_scope_clarity", "low_concreteness"]) {
-      expect(result.findings.find((f) => f.code === code), `unexpected ${code}`).toBeUndefined();
-    }
-    expect(result.score).toBeGreaterThan(80);
-  });
-
-  it("AC2: an otherwise-strong but unverifiable task scores measurably lower than the verifiable one", () => {
-    const common = {
-      title: "Add caching layer",
-      description: "Add an LRU cache in src/cache.ts for the slow lookups",
-      templateFields: { goal: true, acceptanceCriteria: false, context: true, constraints: true },
-    } as const;
-    const verifiable = calculateConfidence({
-      ...common,
-      templateData: { goal: "speed up lookups", acceptanceCriteria: "- p99 latency < 50ms", context: "slow queries", constraints: "no new deps" },
-    });
-    const unverifiable = calculateConfidence({
-      ...common,
-      templateData: { goal: "speed up lookups", acceptanceCriteria: "", context: "slow queries", constraints: "no new deps" },
-    });
-    expect(unverifiable.score).toBeLessThan(verifiable.score);
-    expect(unverifiable.score).toBeLessThanOrEqual(70);
-  });
-
-  it("AC3: subscore caps stay at/above the default threshold (60), so they do not newly block at the default", () => {
-    // A task missing only the verification path is capped by low_testability,
-    // but the cap ceiling (70) is above the default confidenceThreshold (60),
-    // so it still passes the default gate — the warn-mode property.
-    const result = calculateConfidence({
-      title: "Add request-id middleware",
-      description: "Add `requestId` middleware in src/middleware/request-id.ts and wire it into app.ts",
-      templateData: { goal: "trace requests", context: "debugging is hard", constraints: "no new deps" },
-      templateFields: { goal: true, acceptanceCriteria: false, context: true, constraints: true },
-    });
-    expect(result.findings.find((f) => f.code === "low_testability")).toBeDefined();
-    expect(result.score).toBeGreaterThanOrEqual(60);
-  });
-});
-
 describe("calculateConfidence — subscores", () => {
-  // Score caps still apply during these tests; silence the log.
   beforeEach(() => vi.spyOn(console, "info").mockImplementation(() => {}));
   afterEach(() => vi.restoreAllMocks());
 
@@ -413,7 +459,7 @@ describe("calculateConfidence — subscores", () => {
   it("contextQuality: 100 with context, partial with long description only, 0 otherwise", () => {
     expect(subs().contextQuality).toBe(100);
     const partial = subs({
-      description: "a ".repeat(200), // long, no context field
+      description: "a ".repeat(200),
       templateData: { ...ALL_FILLED, context: "" },
     }).contextQuality;
     expect(partial).toBeGreaterThan(0);
@@ -448,9 +494,9 @@ describe("calculateConfidence — inferredTaskType (M2 bridge)", () => {
   it("returns inferredTaskType when templateData.taskType is set", () => {
     const result = calculateConfidence({
       title: "Fix crash on signup",
-      description: "Decent description with `code` and src/file.ts anchor that meets quality",
-      templateData: { ...ALL_FILLED, taskType: "bugfix" },
-      templateFields: FULL_FIELDS,
+      description: CONCRETE_DESC,
+      templateData: { ...ALL_V2, taskType: "bugfix" },
+      templateFields: null,
     });
     expect(result.inferredTaskType).toBe("bugfix");
   });
@@ -458,9 +504,9 @@ describe("calculateConfidence — inferredTaskType (M2 bridge)", () => {
   it("returns undefined when templateData has no taskType", () => {
     const result = calculateConfidence({
       title: "Some task",
-      description: "Decent description with `code` and src/file.ts anchor that meets quality",
-      templateData: ALL_FILLED,
-      templateFields: FULL_FIELDS,
+      description: CONCRETE_DESC,
+      templateData: ALL_V2,
+      templateFields: null,
     });
     expect(result.inferredTaskType).toBeUndefined();
   });
@@ -468,15 +514,15 @@ describe("calculateConfidence — inferredTaskType (M2 bridge)", () => {
   it("does not affect score or findings (scoring-neutral bridge)", () => {
     const withType = calculateConfidence({
       title: "ok",
-      description: "ok ok ok",
-      templateData: { ...ALL_FILLED, taskType: "security" },
-      templateFields: FULL_FIELDS,
+      description: CONCRETE_DESC,
+      templateData: { ...ALL_V2, taskType: "security" },
+      templateFields: null,
     });
     const withoutType = calculateConfidence({
       title: "ok",
-      description: "ok ok ok",
-      templateData: ALL_FILLED,
-      templateFields: FULL_FIELDS,
+      description: CONCRETE_DESC,
+      templateData: ALL_V2,
+      templateFields: null,
     });
     expect(withType.score).toBe(withoutType.score);
     expect(withType.findings).toEqual(withoutType.findings);
@@ -541,7 +587,7 @@ describe("templateData/taskTemplate — scorer-v2 fields (T2)", () => {
     if (parsed.success) {
       expect(parsed.data.fields.scope).toBe(true);
       expect(parsed.data.fields.agentPrompt).toBe(true);
-      expect(parsed.data.fields.outOfScope).toBe(false); // defaulted
+      expect(parsed.data.fields.outOfScope).toBe(false);
       expect(parsed.data.fields.dependencies).toBe(false);
     }
   });
@@ -550,67 +596,51 @@ describe("templateData/taskTemplate — scorer-v2 fields (T2)", () => {
     expect(templateDataSchema.safeParse({ goal: "g", acceptanceCriteria: "a", context: "c", constraints: "k" }).success).toBe(true);
     expect(templateDataSchema.safeParse({}).success).toBe(true);
   });
-
-  it("scoring-neutral: the new fields do not change score, findings, or subscores (T2 stores, does not weight)", () => {
-    const base = {
-      title: "Add request-id middleware",
-      description: "Add `requestId` in src/middleware/request-id.ts; verify via `curl` returns the header; expect 200",
-      templateFields: FULL_FIELDS,
-    } as const;
-    const without = calculateConfidence({ ...base, templateData: ALL_FILLED });
-    const withNew = calculateConfidence({
-      ...base,
-      templateData: {
-        ...ALL_FILLED,
-        scope: "src/middleware",
-        outOfScope: "no router change",
-        dependencies: "none",
-        risk: "low",
-        agentPrompt: "Step 1: add the middleware",
-        prefers: { smallDiffs: true },
-      },
-    });
-    expect(withNew.score).toBe(without.score);
-    expect(withNew.findings).toEqual(without.findings);
-    expect(withNew.subscores).toEqual(without.subscores);
-  });
 });
 
 describe("calculateConfidence — findings", () => {
   beforeEach(() => vi.spyOn(console, "info").mockImplementation(() => {}));
   afterEach(() => vi.restoreAllMocks());
 
-  it("emits a blocking finding for each rule miss", () => {
+  it("emits a finding for every missing core field with the right severity", () => {
     const result = calculateConfidence({
       title: "",
       description: "",
       templateData: null,
-      templateFields: FULL_FIELDS,
+      templateFields: null,
     });
-    // The 6 rule-driven codes that map to MISS_FINDINGS. Cap-only codes
-    // (e.g. `missing_verification`) are appended as `warning` findings and
-    // are not part of this rule-driven set.
-    const RULE_DRIVEN_CODES = [
-      "missing_title",
-      "missing_or_thin_description",
-      "missing_goal",
-      "missing_acceptance_criteria",
-      "missing_context",
-      "missing_constraints",
-    ];
-    for (const code of RULE_DRIVEN_CODES) {
-      const finding = result.findings.find((f) => f.code === code);
-      expect(finding, `expected blocking finding ${code}`).toBeDefined();
-      expect(finding?.severity).toBe("blocking");
-    }
+    const bySeverity: Record<string, string> = {};
+    for (const f of result.findings) bySeverity[f.code] = f.severity;
+    expect(bySeverity["missing_title"]).toBe("blocking");
+    expect(bySeverity["missing_or_thin_description"]).toBe("blocking");
+    expect(bySeverity["missing_goal"]).toBe("warning");
+    expect(bySeverity["missing_acceptance_criteria"]).toBe("blocking"); // keystone (no AC, no verification)
+    expect(bySeverity["missing_scope"]).toBe("warning");
+    expect(bySeverity["missing_out_of_scope"]).toBe("info");
+    expect(bySeverity["missing_dependencies"]).toBe("info");
+    expect(bySeverity["missing_risk"]).toBe("info");
+    expect(bySeverity["missing_agent_prompt"]).toBe("warning");
+  });
+
+  it("dependencies = 'none' is a positive signal (not a miss)", () => {
+    const withNone = calculateConfidence({
+      title: "ok", description: CONCRETE_DESC, templateData: { ...ALL_V2, dependencies: "none" }, templateFields: null,
+    });
+    const withoutDeps = calculateConfidence({
+      title: "ok", description: CONCRETE_DESC, templateData: { ...ALL_V2, dependencies: "" }, templateFields: null,
+    });
+    expect(withNone.missing).not.toContain("dependencies");
+    expect(withNone.findings.find((f) => f.code === "missing_dependencies")).toBeUndefined();
+    expect(withoutDeps.missing).toContain("dependencies");
+    expect(withNone.score).toBeGreaterThan(withoutDeps.score);
   });
 
   it("emits a vague_language warning when ambiguity drops below threshold", () => {
     const result = calculateConfidence({
       title: "ok",
       description: "should fix improve optimize this somehow with src/file.ts anchor",
-      templateData: ALL_FILLED,
-      templateFields: FULL_FIELDS,
+      templateData: ALL_V2,
+      templateFields: null,
     });
     expect(result.findings.find((f) => f.code === "vague_language" && f.severity === "warning")).toBeDefined();
   });
@@ -619,8 +649,8 @@ describe("calculateConfidence — findings", () => {
     const result = calculateConfidence({
       title: "ok",
       description: "just plain words without anchors of any kind",
-      templateData: ALL_FILLED,
-      templateFields: FULL_FIELDS,
+      templateData: ALL_V2,
+      templateFields: null,
     });
     expect(result.findings.find((f) => f.code === "no_concrete_anchors" && f.severity === "warning")).toBeDefined();
   });
@@ -628,9 +658,9 @@ describe("calculateConfidence — findings", () => {
   it("enriches an existing blocking suggestion with the cap ceiling on code collision", () => {
     const result = calculateConfidence({
       title: "",
-      description: "Decent description with `code` and a src/file.ts anchor that meets quality",
-      templateData: ALL_FILLED,
-      templateFields: FULL_FIELDS,
+      description: CONCRETE_DESC,
+      templateData: ALL_V2,
+      templateFields: null,
     });
     const titleFinding = result.findings.find((f) => f.code === "missing_title");
     expect(titleFinding).toBeDefined();

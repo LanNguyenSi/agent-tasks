@@ -186,6 +186,13 @@ export interface QualityFinding {
   dimension: QualityDimension;
   message: string;
   suggestion?: string;
+  // scorer-v2 (T3): marks a threshold-INDEPENDENT keystone signal — a property
+  // a project must not be able to silently disable by lowering its threshold.
+  // The evals keystone ships as a `blocking` finding; the agentPrompt keystone
+  // ships as `warning` (until a programmatic producer populates agentPrompt).
+  // Gate enforcement that honours these regardless of the project threshold is
+  // wired in T5 (project enforcementMode) via `ConfidenceResult.blocking`.
+  keystone?: boolean;
 }
 
 export interface TaskQualitySubscores {
@@ -203,6 +210,14 @@ interface ConfidenceResult {
   missing: string[];
   subscores: TaskQualitySubscores;
   findings: QualityFinding[];
+  // scorer-v2 (T3): true when a hard, threshold-INDEPENDENT keystone is violated
+  // (today: evals absent — no acceptance criteria AND no verification signal in
+  // the description). The deterministic score is already capped below the default
+  // threshold in this case; this flag is the explicit signal T5's gate wiring
+  // consumes to block such a task even when a project lowers its threshold. The
+  // agentPrompt keystone is intentionally NOT reflected here (it ships as a
+  // warning until a programmatic producer exists).
+  blocking: boolean;
   // Bridge to Milestone 2. Echoed from `templateData.taskType` when the task
   // was created from a typed preset. Scoring is unchanged in this iteration;
   // future PRs use this to apply per-type required-signals and per-type
@@ -210,49 +225,44 @@ interface ConfidenceResult {
   inferredTaskType?: TaskType;
 }
 
-interface Rule {
-  field: string;
-  points: number;
-  templateField?: keyof TemplateFields;
-  check: (input: ConfidenceInput) => boolean;
-}
+// ── scorer-v2 (T3): fixed-denominator field weights ─────────────────────────
+// Every core field is ALWAYS scored, independent of the project's taskTemplate,
+// so the denominator is a fixed 100 — no template-gated dilution (the v1 bug
+// where dropping required fields shrank `maxPossible` and inflated the score).
+// evals + agentPrompt dominate because they are what a *weak* (no-reasoning)
+// agent needs most: a way to know the task is done, and a literal instruction
+// block to execute. `context`/`constraints` are intentionally NOT weighted here
+// — the executability rubric (scope / outOfScope / risk / dependencies) supersedes
+// them; they survive only as inputs to the descriptive subscores.
+//
+// These numbers are CALIBRATION TARGETS, not final. The T5 shadow report tunes
+// them against a real task corpus; keep them in this one constant so that tuning
+// is a single-line edit. Their sum is asserted to be exactly 100 by a unit test.
+export const FIELD_WEIGHTS = {
+  title: 8,
+  description: 7,
+  goal: 12,
+  evals: 22,        // acceptanceCriteria — "how do we know it's done"
+  agentPrompt: 18,  // literal instruction block for a weak agent
+  scope: 12,
+  outOfScope: 8,
+  dependencies: 7,
+  risk: 6,
+} as const;
 
-const RULES: Rule[] = [
-  {
-    field: "title",
-    points: 20,
-    check: (input) => input.title.trim().length > 0,
-  },
-  {
-    field: "description",
-    points: 15,
-    check: (input) => descriptionQuality(input.description ?? "") >= 0.4,
-  },
-  {
-    field: "goal",
-    points: 20,
-    templateField: "goal",
-    check: (input) => (input.templateData?.goal?.trim().length ?? 0) > 0,
-  },
-  {
-    field: "acceptanceCriteria",
-    points: 25,
-    templateField: "acceptanceCriteria",
-    check: (input) => (input.templateData?.acceptanceCriteria?.trim().length ?? 0) > 0,
-  },
-  {
-    field: "context",
-    points: 10,
-    templateField: "context",
-    check: (input) => (input.templateData?.context?.trim().length ?? 0) > 0,
-  },
-  {
-    field: "constraints",
-    points: 10,
-    templateField: "constraints",
-    check: (input) => (input.templateData?.constraints?.trim().length ?? 0) > 0,
-  },
-];
+// The evals keystone caps the score ABSOLUTELY below the default threshold (60)
+// whenever a task has no acceptance criteria AND no verification signal in its
+// description. This is what stops a richly-specified-but-unverifiable task from
+// passing on field-count alone (e.g. all eight non-evals fields filled would
+// otherwise reach 78). Threshold-INDEPENDENT gate enforcement (block even when a
+// project lowers its threshold) is wired in T5 via `ConfidenceResult.blocking`;
+// here the keystone manifests as this hard cap plus a `blocking` finding.
+export const EVALS_KEYSTONE_CAP = 55;
+
+/** Half-credit for a description that carries a prose verification path but no
+ *  structured acceptance criteria. Below the keystone bar (still no AC) but above
+ *  zero, so "verify via `curl ...`" is not scored identically to silence. */
+const EVALS_PARTIAL_POINTS = Math.round(FIELD_WEIGHTS.evals / 2);
 
 // Vague terms used by ambiguityRisk (overlay §"Ambiguity Risk").
 // Hits lower the subscore (start 100, -10 per hit, floor 0).
@@ -347,25 +357,68 @@ function computeSubscores(input: ConfidenceInput): TaskQualitySubscores {
   };
 }
 
-// Mapping from rule field misses to QualityFinding shape. Codes come from
-// overlay §"Example Finding Codes"; messages/suggestions are short and stable
-// so the 422-response task (180e5655) can surface them as-is.
-const MISS_FINDINGS: Record<string, { code: string; dimension: QualityDimension; message: string; suggestion: string }> = {
-  title:              { code: "missing_title",                dimension: "completeness",   message: "Title is empty.",                                  suggestion: "Add a short imperative title naming the change." },
-  description:        { code: "missing_or_thin_description",  dimension: "structure",      message: "Description is missing or below quality threshold.", suggestion: "Add a short Context and Goal section with concrete anchors." },
-  goal:               { code: "missing_goal",                 dimension: "completeness",   message: "Goal is missing.",                                  suggestion: "Add a one-line Goal stating the intended outcome." },
-  acceptanceCriteria: { code: "missing_acceptance_criteria",  dimension: "testability",    message: "Acceptance criteria are missing.",                  suggestion: "Add 2-5 bullets describing observable completion conditions." },
-  context:            { code: "missing_context",              dimension: "contextQuality", message: "Context is missing.",                               suggestion: "Add the user impact, related incident, or business reason." },
-  constraints:        { code: "missing_constraints",          dimension: "scopeClarity",   message: "Constraints / scope boundary are missing.",         suggestion: "Add 'in scope', 'out of scope', or 'do not change ...' lines." },
+// Mapping from a missing field to its QualityFinding shape. Stable codes/messages
+// so consumers (the 422 response, create-time surfacing, the UI) can render them
+// as-is. Severity reflects how load-bearing the field is for weak-agent
+// executability: `acceptanceCriteria` and `agentPrompt` are keystones (see
+// buildFindings for the keystone state machine); the executability boundaries
+// (scope/outOfScope/dependencies/risk) are advisory. `context`/`constraints` are
+// no longer scored (superseded by the executability fields) so they never appear
+// in `missing` and have no entry here.
+type MissFinding = {
+  code: string;
+  dimension: QualityDimension;
+  message: string;
+  suggestion: string;
+  severity: QualityFinding["severity"];
+  keystone?: boolean;
+};
+const MISS_FINDINGS: Record<string, MissFinding> = {
+  title:              { code: "missing_title",                dimension: "completeness",  severity: "blocking", message: "Title is empty.",                                  suggestion: "Add a short imperative title naming the change." },
+  description:        { code: "missing_or_thin_description",  dimension: "structure",     severity: "blocking", message: "Description is missing or below quality threshold.", suggestion: "Add a short Context and Goal section with concrete anchors." },
+  goal:               { code: "missing_goal",                 dimension: "completeness",  severity: "warning",  message: "Goal is missing.",                                 suggestion: "Add a one-line Goal stating the intended outcome." },
+  // acceptanceCriteria severity/keystone are decided in buildFindings from the
+  // evals keystone state; this entry holds the hard-keystone wording.
+  acceptanceCriteria: { code: "missing_acceptance_criteria",  dimension: "testability",   severity: "blocking", keystone: true, message: "No acceptance criteria and no verification path in the description.", suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals)." },
+  scope:              { code: "missing_scope",                dimension: "scopeClarity",  severity: "warning",  message: "Scope (what may change) is missing.",              suggestion: "List the files, modules, or surfaces the change may touch." },
+  outOfScope:         { code: "missing_out_of_scope",         dimension: "scopeClarity",  severity: "info",     message: "Out-of-scope boundary is missing.",                suggestion: "Name what must NOT change so a weak agent does not wander." },
+  dependencies:       { code: "missing_dependencies",         dimension: "completeness",  severity: "info",     message: "Dependencies are unstated.",                       suggestion: "State prerequisite work, or 'none' if there is no prerequisite." },
+  risk:               { code: "missing_risk",                 dimension: "ambiguityRisk", severity: "info",     message: "Risk / blast radius is unstated.",                 suggestion: "Note the risk level or blast radius (low / medium / high, and why)." },
+  agentPrompt:        { code: "missing_agent_prompt",         dimension: "completeness",  severity: "warning",  keystone: true, message: "No literal agent instruction block (agentPrompt).", suggestion: "Add a step-by-step instruction block a weak agent can execute verbatim." },
 };
 
-function buildFindings(missing: string[], subscores: TaskQualitySubscores, descPresent: boolean): QualityFinding[] {
+function buildFindings(
+  missing: string[],
+  subscores: TaskQualitySubscores,
+  descPresent: boolean,
+  evalsKeystoneViolated: boolean,
+): QualityFinding[] {
   const findings: QualityFinding[] = [];
   for (const field of missing) {
     const tpl = MISS_FINDINGS[field];
-    if (tpl) {
-      findings.push({ code: tpl.code, severity: "blocking", dimension: tpl.dimension, message: tpl.message, suggestion: tpl.suggestion });
+    if (!tpl) continue;
+    // The evals (acceptanceCriteria) keystone is hard-blocking ONLY when the
+    // task has no verification path at all. When the description carries a prose
+    // verification signal but no structured AC, downgrade to a non-keystone
+    // warning: the task is gradable, just not crisply.
+    if (field === "acceptanceCriteria" && !evalsKeystoneViolated) {
+      findings.push({
+        code: tpl.code,
+        severity: "warning",
+        dimension: tpl.dimension,
+        message: "No structured acceptance criteria; the description's verification signal is the only evals path.",
+        suggestion: tpl.suggestion,
+      });
+      continue;
     }
+    findings.push({
+      code: tpl.code,
+      severity: tpl.severity,
+      dimension: tpl.dimension,
+      message: tpl.message,
+      suggestion: tpl.suggestion,
+      ...(tpl.keystone ? { keystone: true } : {}),
+    });
   }
   // Subscore-driven warnings, only when the description exists (otherwise
   // missing_or_thin_description already covers it).
@@ -415,16 +468,18 @@ function applyScoreCaps(
 ): { cappedScore: number; capFindings: QualityFinding[] } {
   const desc = (input.description ?? "").trim();
   const td = input.templateData;
-  const tf = input.templateFields;
 
   const has = (v?: string | null) => (v?.trim().length ?? 0) > 0;
   const titlePresent = input.title.trim().length > 0;
   const descPresent = desc.length > 0;
-  const goalPresent = has(td?.goal);
   const acPresent = has(td?.acceptanceCriteria);
-  const consPresent = has(td?.constraints);
 
   const verificationSignal = acPresent || (descPresent && VERIFICATION_SIGNAL_PATTERN.test(desc));
+  // The hard evals keystone: no acceptance criteria AND no prose verification
+  // path. There is no way to know the task is done. Cap ABSOLUTE below the
+  // default threshold so even a task with every OTHER field filled cannot pass
+  // on field-count alone.
+  const evalsKeystoneViolated = !acPresent && !verificationSignal;
   const ambiguityHits = descPresent ? (desc.match(VAGUE_TERM_PATTERN) ?? []).length : 0;
   const hasConcrete = subscores.concreteness > 0;
 
@@ -439,20 +494,17 @@ function applyScoreCaps(
       code: "missing_or_thin_description", dimension: "structure",
       message: "Score capped at 40: description is empty.",
     },
+    // ── Evals keystone (scorer-v2, T3) ──────────────────────────────────────
+    // Replaces the v1 template-gated goal(70)/acceptanceCriteria(80) caps and the
+    // softer missing_verification(85) cap. This cap is template-INDEPENDENT and
+    // sits below the default threshold (60), so an evals-absent task blocks at the
+    // default. The blocking finding it merges into carries `keystone: true`
+    // (emitted by buildFindings); T5's gate wiring reads `ConfidenceResult.blocking`
+    // to enforce it even when a project lowers its threshold.
     {
-      cap: 70, applies: tf?.goal === true && !goalPresent,
-      code: "missing_goal", dimension: "completeness",
-      message: "Score capped at 70: goal is missing.",
-    },
-    {
-      cap: 80, applies: tf?.acceptanceCriteria === true && !acPresent,
+      cap: EVALS_KEYSTONE_CAP, applies: evalsKeystoneViolated,
       code: "missing_acceptance_criteria", dimension: "testability",
-      message: "Score capped at 80: acceptance criteria are missing.",
-    },
-    {
-      cap: 85, applies: !acPresent && !consPresent && !verificationSignal,
-      code: "missing_verification", dimension: "testability",
-      message: "Score capped at 85: no verification path (no acceptance criteria, no constraints, no test/run/curl/check/verify/CI signal in description).",
+      message: `Score capped at ${EVALS_KEYSTONE_CAP}: no acceptance criteria and no verification path (test/run/curl/check/verify/green/CI) in the description — there is no way to know the task is done.`,
     },
     {
       cap: 75, applies: ambiguityHits >= 3 && !hasConcrete,
@@ -504,33 +556,60 @@ function applyScoreCaps(
 }
 
 export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
-  const activeRules = RULES.filter((rule) => {
-    if (!rule.templateField) return true;
-    return input.templateFields?.[rule.templateField] === true;
-  });
+  const td = input.templateData;
+  const has = (v?: string | null) => (v?.trim().length ?? 0) > 0;
+  const desc = input.description ?? "";
+  const descTrim = desc.trim();
+  const descQuality = descriptionQuality(desc);
 
+  const titlePresent = input.title.trim().length > 0;
+  const goalPresent = has(td?.goal);
+  const acPresent = has(td?.acceptanceCriteria);
+  const scopePresent = has(td?.scope);
+  const outOfScopePresent = has(td?.outOfScope);
+  // `dependencies` is satisfied by any non-empty text, including the literal
+  // "none" — explicitly declaring no prerequisite is a positive signal, not a
+  // miss. (Satisfying it via the dependsOn[] graph edge is a follow-up; the
+  // scorer is a pure function and does not yet receive the edge set.)
+  const dependenciesPresent = has(td?.dependencies);
+  const riskPresent = has(td?.risk);
+  const agentPromptPresent = has(td?.agentPrompt);
+
+  const verificationSignal = descTrim.length > 0 && VERIFICATION_SIGNAL_PATTERN.test(descTrim);
+  const evalsKeystoneViolated = !acPresent && !verificationSignal;
+
+  // ── Fixed-denominator additive score ──────────────────────────────────────
+  // maxPossible is a constant 100 (FIELD_WEIGHTS sums to 100), so the score is
+  // template-INDEPENDENT — the v1 denominator dilution is gone.
+  const W = FIELD_WEIGHTS;
   let earned = 0;
-  let maxPossible = 0;
+  if (titlePresent) earned += W.title;
+  earned += Math.round(W.description * descQuality); // proportional, like v1
+  if (goalPresent) earned += W.goal;
+  if (acPresent) earned += W.evals;
+  else if (verificationSignal) earned += EVALS_PARTIAL_POINTS; // prose path, no AC
+  if (scopePresent) earned += W.scope;
+  if (outOfScopePresent) earned += W.outOfScope;
+  if (dependenciesPresent) earned += W.dependencies;
+  if (riskPresent) earned += W.risk;
+  if (agentPromptPresent) earned += W.agentPrompt;
+
+  const rawScore = Math.max(0, Math.min(100, earned));
+
+  // missing[]: every absent core field, in surfacing-priority order.
   const missing: string[] = [];
+  if (!titlePresent) missing.push("title");
+  if (descQuality < 0.4) missing.push("description");
+  if (!goalPresent) missing.push("goal");
+  if (!acPresent) missing.push("acceptanceCriteria");
+  if (!scopePresent) missing.push("scope");
+  if (!outOfScopePresent) missing.push("outOfScope");
+  if (!dependenciesPresent) missing.push("dependencies");
+  if (!riskPresent) missing.push("risk");
+  if (!agentPromptPresent) missing.push("agentPrompt");
 
-  for (const rule of activeRules) {
-    maxPossible += rule.points;
-    if (rule.field === "description") {
-      // Description earns proportional points based on quality
-      const quality = descriptionQuality(input.description ?? "");
-      const descPoints = Math.round(rule.points * quality);
-      earned += descPoints;
-      if (quality < 0.4) missing.push(rule.field);
-    } else if (rule.check(input)) {
-      earned += rule.points;
-    } else {
-      missing.push(rule.field);
-    }
-  }
-
-  const rawScore = maxPossible > 0 ? Math.round((earned / maxPossible) * 100) : 100;
   const subscores = computeSubscores(input);
-  const findings = buildFindings(missing, subscores, (input.description?.trim().length ?? 0) > 0);
+  const findings = buildFindings(missing, subscores, descTrim.length > 0, evalsKeystoneViolated);
 
   const { cappedScore, capFindings } = applyScoreCaps(rawScore, input, subscores);
 
@@ -562,11 +641,17 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
     );
   }
 
+  // Threshold-INDEPENDENT keystone signal for T5's gate wiring: true when a
+  // hard keystone is violated (today: the evals keystone). agentPrompt is a
+  // warning-severity keystone and deliberately does NOT set this flag.
+  const blocking = findings.some((f) => f.keystone === true && f.severity === "blocking");
+
   return {
     score: cappedScore,
     missing,
     subscores,
     findings,
+    blocking,
     inferredTaskType: input.templateData?.taskType,
   };
 }

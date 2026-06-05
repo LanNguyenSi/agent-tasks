@@ -110,18 +110,35 @@ const openApiSpec = {
       },
       Confidence: {
         type: "object",
-        description: "Deterministic confidence score based on task completeness. Score below threshold blocks agent claims.",
+        description: "Deterministic, template-independent confidence score (0-100, fixed denominator) measuring weak-agent executability. Score below threshold blocks agent claims. A violated keystone (see `blocking`) is a threshold-independent block.",
         properties: {
           score: { type: "integer", minimum: 0, maximum: 100, example: 75 },
           missing: {
             type: "array",
             items: { type: "string" },
-            example: ["constraints"],
-            description: "Template fields that are empty or missing",
+            example: ["scope", "agentPrompt"],
+            description: "Core fields that are empty or missing (title, description, goal, acceptanceCriteria, scope, outOfScope, dependencies, risk, agentPrompt)",
           },
           threshold: { type: "integer", minimum: 0, maximum: 100, example: 60, description: "Project-configured minimum score for agent claims" },
+          blocking: { type: "boolean", example: false, description: "True when a hard, threshold-INDEPENDENT keystone is violated (today: no acceptance criteria and no verification signal in the description). The score is already capped below the default threshold in this case." },
+          findings: {
+            type: "array",
+            description: "Per-dimension quality findings (info / warning / blocking). Keystone findings additionally carry `keystone: true`.",
+            items: {
+              type: "object",
+              properties: {
+                code: { type: "string", example: "missing_acceptance_criteria" },
+                severity: { type: "string", enum: ["info", "warning", "blocking"] },
+                dimension: { type: "string", example: "testability" },
+                message: { type: "string" },
+                suggestion: { type: "string" },
+                keystone: { type: "boolean" },
+              },
+              required: ["code", "severity", "dimension", "message"],
+            },
+          },
         },
-        required: ["score", "missing", "threshold"],
+        required: ["score", "missing", "threshold", "blocking"],
       },
       LowConfidenceError: {
         type: "object",

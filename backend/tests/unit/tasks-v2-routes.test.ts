@@ -2822,20 +2822,28 @@ describe("debug-flavor detection on pickup + start", () => {
 const LOW_SCORE_TASK = {
   ...baseTask,
   status: "open",
-  // Empty description triggers cap 40 + verification cap 85; score lands
-  // around 40, below the threshold below.
+  // Empty description (cap 40) + no acceptance criteria / no verification signal
+  // (the evals keystone) → score in the single digits, well below the threshold.
   title: "Fix thing",
   description: "",
   templateData: null,
   project: { ...baseTask.project, confidenceThreshold: 60 },
 };
 
+// scorer-v2: a task that genuinely clears the threshold needs real
+// executability fields (templateData), not just a title + description, because
+// the denominator is now a fixed 100.
 const PASSING_SCORE_TASK = {
   ...baseTask,
   status: "open",
   title: "Add request-id middleware",
   description: "Add the middleware in src/middleware/request-id.ts and verify with a curl test against /api/health",
-  templateData: null,
+  templateData: {
+    goal: "Attach a request id to every response for tracing",
+    acceptanceCriteria: "- Every response carries an x-request-id header\n- A unit test asserts the header",
+    scope: "src/middleware/request-id.ts plus the app.ts wiring",
+    agentPrompt: "1. Add the middleware. 2. Register it in app.ts. 3. Add a test.",
+  },
   project: { ...baseTask.project, confidenceThreshold: 50 },
 };
 

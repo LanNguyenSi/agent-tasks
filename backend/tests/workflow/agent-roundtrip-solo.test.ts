@@ -168,6 +168,10 @@ describe("workflow round-trip — soloMode path (task 47cc3e43)", () => {
       id: PROJECT_ID,
       soloMode: true,
       requireDistinctReviewer: false,
+      // This is a lifecycle + byte-budget round-trip, not a confidence-gate test
+      // (the gate has dedicated coverage). Disable the gate so the round-trip is
+      // not coupled to scorer calibration (scorer-v2 weights are tuned over time).
+      confidenceThreshold: 0,
     });
     currentTask = makeTask({ id: TASK_ID, projectId: PROJECT_ID }, project);
 
