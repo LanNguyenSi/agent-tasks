@@ -225,36 +225,44 @@ interface ConfidenceResult {
   inferredTaskType?: TaskType;
 }
 
-// ── scorer-v2 (T3): fixed-denominator field weights ─────────────────────────
+// ── scorer-v2: fixed-denominator field weights ──────────────────────────────
 // Every core field is ALWAYS scored, independent of the project's taskTemplate,
 // so the denominator is a fixed 100 — no template-gated dilution (the v1 bug
 // where dropping required fields shrank `maxPossible` and inflated the score).
-// evals + agentPrompt dominate because they are what a *weak* (no-reasoning)
-// agent needs most: a way to know the task is done, and a literal instruction
-// block to execute. `context`/`constraints` are intentionally NOT weighted here
-// — the executability rubric (scope / outOfScope / risk / dependencies) supersedes
-// them; they survive only as inputs to the descriptive subscores.
+// `context`/`constraints` are intentionally NOT weighted (the executability
+// rubric supersedes them; they survive only as inputs to the descriptive
+// subscores).
 //
-// These numbers are CALIBRATION TARGETS, not final. The T5 shadow report tunes
-// them against a real task corpus; keep them in this one constant so that tuning
-// is a single-line edit. Their sum is asserted to be exactly 100 by a unit test.
+// PROSE-FIRST calibration (2026-06-05, data-driven against the live 75-task
+// corpus). The original T3 weights made the STRUCTURED templateData fields
+// (evals/agentPrompt/scope/...) dominant — but real tasks are authored as rich
+// prose DESCRIPTIONS (corpus: 75/75 have a description, quality mean 0.91;
+// structured fields ~empty: goal 2/75, AC 2/75, agentPrompt 0/75), so those
+// weights blocked ~99%. The spec lives in the description, so `description`
+// dominates here; the structured fields are bonuses that lift a slicer-produced
+// task toward 100. Verifiability is still enforced — not by a weight but by the
+// evals KEYSTONE below (a task with no AC and no verification signal caps to 55
+// and blocks). Result on the corpus: ~69% pass, and every still-blocked task is
+// the keystone (non-verifiable). Re-tune in this one constant; the sum is
+// asserted to be exactly 100 by a unit test.
 export const FIELD_WEIGHTS = {
-  title: 8,
-  description: 7,
-  goal: 12,
-  evals: 22,        // acceptanceCriteria — "how do we know it's done"
-  agentPrompt: 18,  // literal instruction block for a weak agent
-  scope: 12,
-  outOfScope: 8,
-  dependencies: 7,
-  risk: 6,
+  title: 10,
+  description: 52,  // the spec lives in the prose description (dominant signal)
+  goal: 6,
+  evals: 16,        // acceptanceCriteria — structured "how do we know it's done"
+  agentPrompt: 3,   // bonus until a programmatic producer populates it
+  scope: 6,
+  outOfScope: 3,
+  dependencies: 2,
+  risk: 2,
 } as const;
 
 // The evals keystone caps the score ABSOLUTELY below the default threshold (60)
 // whenever a task has no acceptance criteria AND no verification signal in its
-// description. This is what stops a richly-specified-but-unverifiable task from
-// passing on field-count alone (e.g. all eight non-evals fields filled would
-// otherwise reach 78). Threshold-INDEPENDENT gate enforcement (block even when a
+// description. Under the prose-first weights this is load-bearing: a perfectly
+// written but unverifiable task reaches raw title(10)+description(52)=62, which
+// would otherwise pass — the cap pulls it to 55 so "no way to know it's done"
+// always blocks. Threshold-INDEPENDENT gate enforcement (block even when a
 // project lowers its threshold) is wired in T5 via `ConfidenceResult.blocking`;
 // here the keystone manifests as this hard cap plus a `blocking` finding.
 export const EVALS_KEYSTONE_CAP = 55;

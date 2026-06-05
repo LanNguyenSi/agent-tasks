@@ -230,7 +230,9 @@ describe("POST /projects/:projectId/tasks — confidence surfacing (scorer-v2 T4
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as CreateBody;
-    expect(body.confidence.score).toBeGreaterThanOrEqual(90);
+    // Comfortable pass under prose-first: a complete task with a concise (not
+    // rich) description clears the threshold well; a rich description pushes ~100.
+    expect(body.confidence.score).toBeGreaterThanOrEqual(70);
     expect(body.confidence.blocking).toBe(false);
     expect(body.confidence.missing).not.toContain("acceptanceCriteria");
   });
