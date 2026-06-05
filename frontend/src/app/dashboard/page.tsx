@@ -45,6 +45,7 @@ import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
 import { SkeletonList } from "../../components/ui/Skeleton";
 import TaskDetail from "../../components/TaskDetail";
+import TaskConfidenceSummary from "../../components/TaskConfidenceSummary";
 import ImportDialog from "../../components/ImportDialog";
 import Select from "@/components/ui/Select";
 
@@ -517,6 +518,29 @@ export default function DashboardPage() {
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
   const templateFields = selectedProject?.taskTemplate?.fields ?? null;
+  const createTaskConfidence = useMemo(
+    () =>
+      calculateConfidence({
+        title: newTaskTitle,
+        description: newTaskDescription || null,
+        templateData: {
+          goal: newTaskGoal || undefined,
+          acceptanceCriteria: newTaskAcceptanceCriteria || undefined,
+          context: newTaskContext || undefined,
+          constraints: newTaskConstraints || undefined,
+        },
+        templateFields,
+      }),
+    [
+      newTaskAcceptanceCriteria,
+      newTaskConstraints,
+      newTaskContext,
+      newTaskDescription,
+      newTaskGoal,
+      newTaskTitle,
+      templateFields,
+    ],
+  );
 
   useEffect(() => {
     void (async () => {
@@ -942,17 +966,12 @@ export default function DashboardPage() {
                     </FormField>
                   </div>
                 )}
-                <div style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
-                  Confidence:{" "}
-                  <ConfidenceBadge
-                    score={calculateConfidence({
-                      title: newTaskTitle,
-                      description: newTaskDescription || null,
-                      templateData: { goal: newTaskGoal || undefined, acceptanceCriteria: newTaskAcceptanceCriteria || undefined, context: newTaskContext || undefined, constraints: newTaskConstraints || undefined },
-                      templateFields,
-                    }).score}
-                  />
-                </div>
+                <TaskConfidenceSummary
+                  label="Create-time confidence"
+                  score={createTaskConfidence.score}
+                  missing={createTaskConfidence.missing}
+                  threshold={selectedProject?.confidenceThreshold ?? 60}
+                />
               </div>
             )}
           </div>
