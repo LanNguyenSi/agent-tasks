@@ -84,4 +84,33 @@ describe("buildSavedTemplateData — Save data-loss fix", () => {
     expect(saved?.goal).toBe("g");
     expect(saved?.prefers).toEqual({ smallDiffs: true });
   });
+
+  // The create path (dashboard create modal) feeds the same builder with
+  // existing=null, so create and edit write templateData identically.
+  it("builds the complete templateData from create-form edits (existing=null)", () => {
+    const saved = buildSavedTemplateData(null, {
+      goal: "Ship it",
+      acceptanceCriteria: "- works",
+      context: "ctx",
+      constraints: "no deps bumps",
+      scope: "src/foo.ts",
+      outOfScope: "the API",
+      dependencies: "none",
+      risk: "Low",
+      agentPrompt: "1. do x",
+      taskType: "feature",
+    });
+    expect(saved).toEqual({
+      goal: "Ship it",
+      acceptanceCriteria: "- works",
+      context: "ctx",
+      constraints: "no deps bumps",
+      scope: "src/foo.ts",
+      outOfScope: "the API",
+      dependencies: "none",
+      risk: "Low",
+      agentPrompt: "1. do x",
+      taskType: "feature",
+    });
+  });
 });
