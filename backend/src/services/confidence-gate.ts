@@ -3,6 +3,7 @@ import { calculateConfidence, type TemplateData, type TemplateFields, type Quali
 import { resolveEnforcementMode, EnforcementMode } from "../lib/enforcement-mode.js";
 import { lowConfidence } from "../middleware/error.js";
 import { logAuditEvent } from "./audit.js";
+import { SCOPES } from "./scopes.js";
 import type { Actor } from "../types/auth.js";
 
 const MIN_FORCE_REASON_LENGTH = 10;
@@ -43,9 +44,12 @@ type GateResult =
  * keystone by lowering its threshold.
  *
  * Force semantics (BLOCK mode only — force is moot when nothing blocks):
- *   - `?force=true` without `forceReason` → 400 bad_request
- *   - `?force=true` + reason on a would-block → success + `task.claim_override_used`
- *   - `?force=true` when nothing would block → success, no audit (no-op)
+ *   - `?force=true` WITHOUT the `confidence:override` scope → 403 forbidden. force
+ *     is a privileged operator override (scorer-v2 T6), not a self-service bypass.
+ *   - `?force=true` (with scope) without `forceReason` → 400 bad_request
+ *   - `?force=true` (with scope) + reason on a would-block → success +
+ *     `task.claim_override_used` (audit records the operator identity)
+ *   - `?force=true` (with scope) when nothing would block → success, no audit (no-op)
  *   - no force on a would-block → 422 + `task.claim_blocked_low_readiness`;
  *     response carries findings[] + nextActions[]
  *
@@ -106,6 +110,27 @@ export async function evaluateConfidenceGate(
   // BLOCK — force is meaningful only here (BLOCK is the only mode that blocks).
   const force = c.req.query("force") === "true";
   const forceReason = c.req.query("forceReason")?.trim() ?? "";
+
+  // scorer-v2 (T6): force is a privileged OPERATOR override, not a self-service
+  // agent bypass. Require the `confidence:override` scope, which an ordinary
+  // task-executing token does not carry — and cannot grant itself, since token
+  // creation is team-admin-only. Without this, the gated actor could wave itself
+  // through with any 10-char reason, making the gate advisory for the exact actor
+  // it targets. Checked before the reason-length validation: lacking the
+  // capability is more fundamental than a malformed reason.
+  if (force && !actor.scopes.includes(SCOPES.ConfidenceOverride)) {
+    return {
+      ok: false,
+      response: c.json(
+        {
+          error: "forbidden",
+          message: `force=true requires the '${SCOPES.ConfidenceOverride}' scope (an operator must mint a token with it). Improve the task to meet the confidence threshold, or have an operator claim it.`,
+        },
+        403,
+      ),
+    };
+  }
+
   if (force && forceReason.length < MIN_FORCE_REASON_LENGTH) {
     return {
       ok: false,
@@ -154,6 +179,9 @@ export async function evaluateConfidenceGate(
         forceReason,
         keystoneBlocked: confidence.blocking,
         missing: confidence.missing,
+        // Operator identity behind the override: the token (actorId) plus the
+        // user the token authenticates as. Lets an audit pin who waved it through.
+        operatorUserId: actor.userId,
         route,
         actorType: actor.type,
       },

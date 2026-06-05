@@ -898,7 +898,14 @@ const openApiSpec = {
             in: "query",
             required: false,
             schema: { type: "string", enum: ["true"] },
-            description: "Set to 'true' to bypass the confidence threshold check (for agents that can self-research missing context).",
+            description: "Set to 'true' to override the confidence gate (claim below threshold or past a keystone). Requires the operator-only 'confidence:override' scope plus a forceReason of at least 10 characters; without the scope the call returns 403. The override is audited with the operator identity.",
+          },
+          {
+            name: "forceReason",
+            in: "query",
+            required: false,
+            schema: { type: "string", minLength: 10 },
+            description: "Required when force=true: a >=10-char justification, recorded in the override audit event.",
           },
         ],
         responses: {

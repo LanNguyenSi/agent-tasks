@@ -133,6 +133,7 @@ const AGENT: Actor = {
   type: "agent",
   tokenId: "agent-1",
   teamId: "team-1",
+  userId: "user-1",
   scopes: [
     "tasks:read",
     "tasks:claim",
@@ -143,6 +144,10 @@ const AGENT: Actor = {
     // to verify scope rejection craft an explicit actor with the scope
     // omitted.
     "github:pr_merge",
+    // scorer-v2 T6: the operator-override scope, so the force/override gate
+    // tests below exercise the override path. A no-scope agent is crafted
+    // explicitly in the rejection test.
+    "confidence:override",
   ],
 };
 
@@ -3108,11 +3113,59 @@ describe("confidence gate: POST /tasks/:id/start", () => {
           route: "start",
           forceReason: "spike-investigation-on-flaky-CI",
           threshold: 60,
+          // scorer-v2 T6: the override audit pins the operator identity.
+          operatorUserId: "user-1",
         }),
       }),
     );
     expect(logAuditEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ action: "task.claim_blocked_low_readiness" }),
+    );
+  });
+
+  it("force=true from an agent WITHOUT confidence:override → 403 (scorer-v2 T6: not a self-service bypass)", async () => {
+    const NO_OVERRIDE_AGENT: Actor = {
+      type: "agent",
+      tokenId: "agent-no-override",
+      teamId: "team-1",
+      userId: "user-2",
+      scopes: ["tasks:read", "tasks:claim", "tasks:transition"], // no confidence:override
+    };
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(LOW_SCORE_TASK);
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp(NO_OVERRIDE_AGENT).request(
+      "/tasks/task-1/start?force=true&forceReason=trying-to-self-exempt",
+      { method: "POST" },
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("forbidden");
+    expect(body.message).toMatch(/confidence:override/);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_override_used" }),
+    );
+  });
+
+  it("humans are not gated: a low-score task in BLOCK mode is claimed with no block/override audit", async () => {
+    const HUMAN: Actor = { type: "human", userId: "u-human", teamId: "team-1", role: "ADMIN" };
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(LOW_SCORE_TASK); // BLOCK mode, score in single digits
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_blocked_low_readiness" }),
+    );
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_would_block_shadow" }),
+    );
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.claim_override_used" }),
     );
   });
 

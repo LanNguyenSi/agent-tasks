@@ -87,6 +87,19 @@ describe("POST /agent-tokens scope validation", () => {
     expect(res.status).toBe(201);
   });
 
+  it("accepts the `confidence:override` scope (scorer-v2 T6 operator override)", async () => {
+    const res = await makeApp().request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        teamId: "00000000-0000-0000-0000-000000000001",
+        name: "operator",
+        scopes: ["confidence:override"],
+      }),
+    });
+    expect(res.status).toBe(201);
+  });
+
   it("GET /scopes returns the canonical list with labels", async () => {
     const res = await makeApp().request("/scopes");
     expect(res.status).toBe(200);
