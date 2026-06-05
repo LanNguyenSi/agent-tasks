@@ -34,6 +34,13 @@ export const ALL_SCOPES = [
   // check. Kept in this enum so (a) token-creation validates it as a real
   // scope and (b) the settings UI surfaces it alongside the others.
   "sso:admin",
+  // Confidence-gate override (scorer-v2 T6). Required to use `?force=true` to
+  // claim a task below the project's confidence threshold (or violating a
+  // keystone). Withheld from ordinary task-executing tokens so the gated actor
+  // cannot wave itself through; an operator (team admin) mints a token with this
+  // scope to grant a deliberate, audited override. Enforced in
+  // `services/confidence-gate.ts`.
+  "confidence:override",
 ] as const;
 
 export type Scope = (typeof ALL_SCOPES)[number];
@@ -56,6 +63,7 @@ export const SCOPE_LABELS: Record<Scope, string> = {
   "github:pr_create": "Open pull requests on behalf of a team member (server-side)",
   "github:pr_merge": "Merge pull requests on behalf of a team member (server-side)",
   "sso:admin": "Manage SSO connection (team-scoped, sensitive)",
+  "confidence:override": "Override the confidence gate (force-claim a low-readiness task) — operator only",
 };
 
 export const SCOPES = {
@@ -70,4 +78,5 @@ export const SCOPES = {
   GithubPrCreate: "github:pr_create",
   GithubPrMerge: "github:pr_merge",
   SsoAdmin: "sso:admin",
+  ConfidenceOverride: "confidence:override",
 } as const satisfies Record<string, Scope>;

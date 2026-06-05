@@ -27,6 +27,8 @@ Agents authenticate with team-scoped Bearer tokens.
 
 **GitHub delegation scopes** (opt-in, required for server-side PR create/merge): `github:pr_create` `github:pr_merge`
 
+**Override scope** (operator-only): `confidence:override` — required to use `?force=true` to claim a task below the project's confidence threshold (or one violating a keystone). It is withheld from ordinary task-executing tokens so the gated agent cannot wave itself through; an operator (team admin) mints a token carrying it for a deliberate, audited override. Without it, `force=true` returns `403`, and the override is recorded with the operator identity.
+
 Existing tokens do not automatically gain the GitHub scopes. Re-mint a token with `scopes: [..., "github:pr_create", "github:pr_merge"]` if you want agents to open and merge PRs through agent-tasks instead of via a separate GitHub identity on the agent side. Projects using the legacy gh-CLI flow (agents carry their own GitHub credential and pass the resulting URL via `task_finish { prUrl }`) don't need these scopes.
 
 ## Typical flow
