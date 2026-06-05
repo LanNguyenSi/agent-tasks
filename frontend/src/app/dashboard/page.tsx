@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -362,6 +362,8 @@ export default function DashboardPage() {
   // A self-assignment failure for the just-created task, shown inside the result
   // panel (the task itself was created; only the claim failed).
   const [createdAssignmentError, setCreatedAssignmentError] = useState<string | null>(null);
+  // The id of the just-created task, so the panel's "Edit task" can open it.
+  const [createdTaskId, setCreatedTaskId] = useState<string | null>(null);
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
   const [doneVisibility, setDoneVisibility] = useState<DoneVisibility>(DEFAULT_DONE_VISIBILITY);
@@ -406,6 +408,16 @@ export default function DashboardPage() {
 
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [activeTaskDetail, setActiveTaskDetail] = useState<Task | null>(null);
+  // When true, the next opened task detail starts in edit mode (set only by the
+  // create-confidence panel's "Edit task"; reset on every other open + on close).
+  const [editActiveOnOpen, setEditActiveOnOpen] = useState(false);
+
+  // Open a task's detail. `edit` is opt-in (panel "Edit task"); all normal opens
+  // pass it false so a board/list click never inherits a stale edit-mode flag.
+  const selectTask = useCallback((id: string | null, edit = false) => {
+    setEditActiveOnOpen(edit);
+    setActiveTaskId(id);
+  }, []);
 
   // Fetch full task detail (with comments/attachments) when a task is selected
   useEffect(() => {
@@ -522,6 +534,7 @@ export default function DashboardPage() {
     setNewTaskConstraints("");
     setCreatedConfidence(null);
     setCreatedAssignmentError(null);
+    setCreatedTaskId(null);
   }
 
   function closeNewTaskModal() {
@@ -671,6 +684,7 @@ export default function DashboardPage() {
       // close-on-success behaviour if an older backend omits confidence; there
       // the assignment error has no panel to live in, so surface it on the page.
       if (confidence) {
+        setCreatedTaskId(task.id);
         setCreatedAssignmentError(assignmentError);
         setCreatedConfidence(confidence);
       } else {
@@ -887,7 +901,11 @@ export default function DashboardPage() {
           <CreateConfidencePanel
             confidence={createdConfidence}
             assignmentError={createdAssignmentError}
-            onCreateAnother={resetNewTaskFields}
+            onEdit={() => {
+              const id = createdTaskId;
+              closeNewTaskModal();
+              if (id) selectTask(id, true);
+            }}
             onClose={closeNewTaskModal}
           />
         ) : (
@@ -1115,7 +1133,7 @@ export default function DashboardPage() {
               </p>
             </div>
             {viewMode === "board" ? (
-              <BoardColumns tasks={filteredTasks} activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} templateFields={templateFields} />
+              <BoardColumns tasks={filteredTasks} activeTaskId={activeTaskId} onSelectTask={selectTask} templateFields={templateFields} />
             ) : (
               <div className="task-list-shell">
                 <div className="task-list-head">
@@ -1150,7 +1168,7 @@ export default function DashboardPage() {
                       key={task.id}
                       type="button"
                       className="task-list-row"
-                      onClick={() => setActiveTaskId(task.id)}
+                      onClick={() => selectTask(task.id)}
                       style={{
                         width: "100%",
                         textAlign: "left",
@@ -1211,7 +1229,8 @@ export default function DashboardPage() {
           requireDistinctReviewer={selectedProject?.requireDistinctReviewer ?? false}
           onUpdate={handleTaskUpdate}
           onDelete={handleTaskDelete}
-          onClose={() => setActiveTaskId(null)}
+          onClose={() => selectTask(null)}
+          initialEditing={editActiveOnOpen}
           onError={(msg) => setError(msg)}
         />
       )}
