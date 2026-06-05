@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-06-05
+
+**Headline: the scorer-v2 frontend surface. The dashboard now mirrors the backend prose-first confidence scorer (the live badges match what the agent-claim gate computes), surfaces the create-time confidence verdict after a task is created (the score versus the project threshold, the missing fields, and the top next steps, with an Edit-task shortcut straight into the editor), and lets a human author all the scorer-v2 executability fields (scope, out-of-scope, dependencies, risk, agentPrompt, taskType) in both the create and edit forms. The Save data-loss that wiped producer-set templateData on a human edit is fixed.** No backend schema changes; the backend scorer-v2 and the create-time confidence response shipped in v0.22.x.
+
+Operator note: no breaking changes. Per the convention since v0.9.0, workspace `package.json` versions are not bumped (frontend and backend stay 0.3.0; `@agent-tasks/mcp-server` 0.8.0 and `@agent-tasks/mcp-bridge` 0.7.0 are unchanged). One visible behaviour change: the confidence badge numbers move from the old client-side v1 scorer to the prose-first values, which is intended, they now match the gate. The frontend was deployed and the UI flows (create badges, the create-time confidence panel, the Edit-task shortcut, the new create-form editors) were operator-verified; the create-time confidence response was verified live via the create path.
+
+### Added
+
+- **Create-time confidence on the task-create modal** (#320): after a successful create, the New Task modal shows the backend's authoritative scorer-v2 verdict (the score versus the project threshold, the missing fields, and the top next steps) instead of just closing. `createTask` now returns `{ task, confidence }`; the panel renders the server value, not a recomputed client one. A self-assignment failure is shown in the panel rather than hidden behind the modal overlay, and the panel takes focus and announces its verdict for keyboard and screen-reader users.
+- **Edit-task shortcut from the confidence panel** (#321): the post-create panel's primary action opens the just-created task directly in the editor in edit mode, so the missing fields the panel listed are ready to fill. Normal task opens stay in view mode.
+- **Author the executability fields at creation time** (#322): the create modal gains gated editors for scope, out-of-scope, dependencies, risk, and agentPrompt, plus a Task Type select, mirroring the task editor. Preset chips now copy these fields too. The create and edit forms write templateData through one shared helper.
+
+### Fixed
+
+- **Save no longer wipes producer-set templateData** (#319): editing a task in the UI rebuilt templateData from only the four rendered editors, so a human Save erased fields a producer had set over MCP (scope, out-of-scope, dependencies, risk, agentPrompt, prefers, taskType). Save now reconstructs the complete object from the stored data plus the editors (a non-empty value sets a key, an empty one clears it), keeping the backend full-replace contract intact.
+
+### Changed
+
+- **Frontend confidence scorer synced to the backend** (#319): the dashboard's client-side scorer that drives the board badge, the create-form live badge, and the task-detail badge was the drifted v1 model; it is now a faithful mirror of the prose-first scorer-v2 (fixed-denominator weights, the evals keystone cap, subscores, and score caps), with its computed outputs (score, blocking, missing, subscores, findings) asserted against backend ground truth in the test suite. The badges now match what the agent-claim gate computes. The new templateData executability fields and taskType are surfaced in the frontend types and the task editor, and the duplicated TemplateData type now has a single owner.
+
 ## [0.22.0] - 2026-06-04
 
 **Headline: task file attachments. Humans can upload image and text files to a task (drag-drop or file picker), view image thumbnails with a lightbox and download text files, and delete their own; the bytes live on a disk volume and the database holds metadata only. Agents can read attachments (text excerpt or base64) so a pipeline stage can consume an uploaded spec, document, or screenshot.** Additive schema, applied by the existing `prisma db push` migrate step.
