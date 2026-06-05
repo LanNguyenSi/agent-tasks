@@ -121,6 +121,11 @@ const openApiSpec = {
           },
           threshold: { type: "integer", minimum: 0, maximum: 100, example: 60, description: "Project-configured minimum score for agent claims" },
           blocking: { type: "boolean", example: false, description: "True when a hard, threshold-INDEPENDENT keystone is violated (today: no acceptance criteria and no verification signal in the description). The score is already capped below the default threshold in this case." },
+          nextActions: {
+            type: "array",
+            items: { type: "string" },
+            description: "Prioritised, deduplicated suggestions (blocking first) for raising the score. Present on the create response and the low-confidence 422; omitted from the read-only task view.",
+          },
           findings: {
             type: "array",
             description: "Per-dimension quality findings (info / warning / blocking). Keystone findings additionally carry `keystone: true`.",
@@ -637,13 +642,16 @@ const openApiSpec = {
         },
         responses: {
           "201": {
-            description: "Task created",
+            description: "Task created. The non-blocking `confidence` object surfaces the score and what's missing at create time; a low score does NOT block creation (the hard gate is at task_pickup/task_start).",
             content: {
               "application/json": {
                 schema: {
                   type: "object",
-                  properties: { task: { $ref: "#/components/schemas/Task" } },
-                  required: ["task"],
+                  properties: {
+                    task: { $ref: "#/components/schemas/Task" },
+                    confidence: { $ref: "#/components/schemas/Confidence" },
+                  },
+                  required: ["task", "confidence"],
                 },
               },
             },

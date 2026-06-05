@@ -22,6 +22,9 @@ const prismaMocks = vi.hoisted(() => ({
   taskCreate: vi.fn(),
   taskFindMany: vi.fn(),
   taskFindUnique: vi.fn(),
+  // scorer-v2 T4: the create handler reads the project's confidenceThreshold +
+  // taskTemplate to attach a create-time confidence object to the response.
+  projectFindUnique: vi.fn().mockResolvedValue({ confidenceThreshold: 60, taskTemplate: null }),
   agentTokenFindUnique: vi.fn().mockResolvedValue({ name: "Agent" }),
   userFindUnique: vi.fn().mockResolvedValue({ name: "Human" }),
 }));
@@ -35,6 +38,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
       findFirst: vi.fn(),
       update: vi.fn(),
     },
+    project: { findUnique: prismaMocks.projectFindUnique },
     signal: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     workflow: { findFirst: vi.fn() },
     agentToken: { findUnique: prismaMocks.agentTokenFindUnique },
@@ -175,6 +179,71 @@ describe("POST /projects/:projectId/tasks — debugFlavor", () => {
     expect(createArg.data.metadata).toEqual({ debugFlavor: true });
     expect(createArg.data.labels).toEqual(["feature"]);
     expect(createArg.data.templateData).toEqual({ goal: "Ship the panel" });
+  });
+});
+
+describe("POST /projects/:projectId/tasks — confidence surfacing (scorer-v2 T4)", () => {
+  type CreateBody = {
+    task: { id: string };
+    confidence: {
+      score: number;
+      threshold: number;
+      blocking: boolean;
+      missing: string[];
+      findings: Array<{ code: string; severity: string }>;
+      nextActions: string[];
+    };
+  };
+
+  it("a thin task still creates (201, non-blocking) but the response carries confidence with findings", async () => {
+    const res = await postCreate({ title: "Fix the thing" }); // no description, no AC
+    expect(res.status).toBe(201); // create is never blocked by a low score
+    const body = (await res.json()) as CreateBody;
+    expect(body.confidence).toBeDefined();
+    expect(body.confidence.threshold).toBe(60);
+    expect(body.confidence.score).toBeLessThan(60);
+    expect(body.confidence.blocking).toBe(true); // no AC, no verification signal → evals keystone
+    expect(body.confidence.missing).toContain("acceptanceCriteria");
+    expect(body.confidence.findings.length).toBeGreaterThan(0);
+    expect(body.confidence.nextActions.length).toBeGreaterThan(0);
+    // The suggestions actually address the gaps (not just a non-empty array):
+    // the missing-AC keystone suggestion is surfaced.
+    expect(body.confidence.nextActions.join(" ")).toMatch(/completion conditions|acceptance criteria/i);
+  });
+
+  it("a fully-specified task scores high with no keystone block and no missing AC", async () => {
+    const res = await postCreate({
+      title: "Add request-id middleware",
+      description: "Add `requestId` in src/middleware/request-id.ts; verify via `curl`; expect 200",
+      templateData: {
+        goal: "trace requests",
+        acceptanceCriteria: "- every response carries x-request-id\n- a test asserts it",
+        scope: "src/middleware/request-id.ts",
+        outOfScope: "no router change",
+        dependencies: "none",
+        risk: "low",
+        agentPrompt: "1. add the middleware 2. wire it 3. test",
+        // constraints lifts the scopeClarity subscore (a T1 cap reads it) so the
+        // fully-specified task is not capped by low_scope_clarity.
+        constraints: "no new dependencies",
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as CreateBody;
+    expect(body.confidence.score).toBeGreaterThanOrEqual(90);
+    expect(body.confidence.blocking).toBe(false);
+    expect(body.confidence.missing).not.toContain("acceptanceCriteria");
+  });
+
+  it("degrades gracefully: a failing project lookup still returns 201 with best-effort confidence", async () => {
+    // The task is already persisted; the confidence add-on must never 500 a
+    // successful create. A thrown project query degrades to defaults.
+    prismaMocks.projectFindUnique.mockRejectedValueOnce(new Error("db unavailable"));
+    const res = await postCreate({ title: "Add a settings panel" });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as CreateBody;
+    expect(body.confidence).toBeDefined();
+    expect(body.confidence.threshold).toBe(60); // default fallback when the lookup fails
   });
 });
 

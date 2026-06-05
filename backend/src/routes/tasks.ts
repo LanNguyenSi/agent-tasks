@@ -44,7 +44,7 @@ import {
 // emitted against terminal tasks by design and must still reach recipients.
 const STALE_WHEN_DONE: SignalType[] = ["review_needed", "task_available", "task_assigned"];
 import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
-import { evaluateConfidenceGate } from "../services/confidence-gate.js";
+import { evaluateConfidenceGate, deriveNextActions } from "../services/confidence-gate.js";
 import {
   DEFAULT_TRANSITIONS,
   findDefaultTransition,
@@ -730,7 +730,44 @@ taskRouter.post(
       void emitTaskAvailableSignal(task.id, projectId, actor.type, actorName);
     }
 
-    return c.json({ task }, 201);
+    // Create-time confidence surfacing (scorer-v2 T4). INFORMATIONAL only — a low
+    // score never blocks creation; the hard block stays at task_pickup/task_start.
+    // Reuses the same calculateConfidence + deriveNextActions the pickup gate uses
+    // (one source), so what's-missing is consistent everywhere. UI rendering of
+    // these findings is a follow-up (task 1a925647): the dashboard create form
+    // still drives a stale client-side scorer, so consuming the server findings
+    // there is tied to syncing the frontend scorer (91e0df67).
+    //
+    // Confidence is best-effort and must NEVER be the reason a create fails — the
+    // task is already persisted above. If the project lookup throws, degrade to
+    // defaults (threshold 60, no template; calculateConfidence is template-
+    // independent) rather than 500 a successful creation.
+    let projectConf: { confidenceThreshold: number; taskTemplate: unknown } | null = null;
+    try {
+      projectConf = await prisma.project.findUnique({
+        where: { id: projectId },
+        select: { confidenceThreshold: true, taskTemplate: true },
+      });
+    } catch {
+      projectConf = null;
+    }
+    const tpl = projectConf?.taskTemplate as { fields?: TemplateFields } | null;
+    const conf = calculateConfidence({
+      title: task.title,
+      description: task.description,
+      templateData: task.templateData as TemplateData | null,
+      templateFields: tpl?.fields ?? null,
+    });
+    const confidence = {
+      score: conf.score,
+      threshold: projectConf?.confidenceThreshold ?? 60,
+      blocking: conf.blocking,
+      missing: conf.missing,
+      findings: conf.findings,
+      nextActions: deriveNextActions(conf.findings),
+    };
+
+    return c.json({ task, confidence }, 201);
   },
 );
 

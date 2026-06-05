@@ -50,6 +50,9 @@ const prismaMocks = vi.hoisted(() => ({
   signalUpdate: vi.fn(),
   signalUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
   workflowFindFirst: vi.fn().mockResolvedValue(null),
+  // scorer-v2 T4: the create handler reads the project for the create-time
+  // confidence object on the response.
+  projectFindUnique: vi.fn().mockResolvedValue({ confidenceThreshold: 0, taskTemplate: null }),
   agentTokenFindUnique: vi.fn().mockResolvedValue({ id: "agent-author", name: "Author" }),
   userFindUnique: vi.fn().mockResolvedValue(null),
 }));
@@ -63,6 +66,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
       findMany: prismaMocks.taskFindMany,
       update: prismaMocks.taskUpdate,
     },
+    project: { findUnique: prismaMocks.projectFindUnique },
     signal: {
       findFirst: prismaMocks.signalFindFirst,
       update: prismaMocks.signalUpdate,
