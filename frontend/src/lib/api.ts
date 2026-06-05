@@ -1,4 +1,4 @@
-import type { TemplateData, TaskType } from "./confidence";
+import type { TemplateData, TaskType, QualityFinding } from "./confidence";
 
 // TemplateData is owned by ./confidence (the scorer is its primary consumer);
 // re-export it so existing `import { TemplateData } from "../lib/api"`
@@ -545,6 +545,22 @@ export async function getTask(taskId: string): Promise<Task> {
   return data.task;
 }
 
+/**
+ * The authoritative create-time confidence the backend returns alongside a
+ * newly-created task (POST /api/projects/:id/tasks responds `{ task, confidence }`).
+ * It is the deterministic scorer-v2 output plus the project threshold and the
+ * derived nextActions; the create form renders this rather than recomputing
+ * client-side. `confidence` is optional only as a guard against an older backend.
+ */
+export interface CreateConfidence {
+  score: number;
+  threshold: number;
+  blocking: boolean;
+  missing: string[];
+  findings: QualityFinding[];
+  nextActions: string[];
+}
+
 export async function createTask(
   projectId: string,
   body: {
@@ -555,12 +571,11 @@ export async function createTask(
     dueAt?: string;
     templateData?: TemplateData;
   },
-): Promise<Task> {
-  const data = await request<{ task: Task }>(`/api/projects/${projectId}/tasks`, {
+): Promise<{ task: Task; confidence?: CreateConfidence }> {
+  return request<{ task: Task; confidence?: CreateConfidence }>(`/api/projects/${projectId}/tasks`, {
     method: "POST",
     body: JSON.stringify(body),
   });
-  return data.task;
 }
 
 export async function updateTask(

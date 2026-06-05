@@ -16,6 +16,7 @@ import {
   type Project,
   type Task,
   type TemplateData,
+  type CreateConfidence,
 } from "../../lib/api";
 import { calculateConfidence, type TemplateFields } from "../../lib/confidence";
 import { PRIORITY_COLORS } from "../../lib/priorityColors";
@@ -35,6 +36,7 @@ import {
 } from "../../lib/dashboardPrefs";
 import AppHeader from "../../components/AppHeader";
 import ConfidenceBadge from "../../components/ConfidenceBadge";
+import CreateConfidencePanel from "../../components/CreateConfidencePanel";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
@@ -354,6 +356,12 @@ export default function DashboardPage() {
   const [newTaskAcceptanceCriteria, setNewTaskAcceptanceCriteria] = useState("");
   const [newTaskContext, setNewTaskContext] = useState("");
   const [newTaskConstraints, setNewTaskConstraints] = useState("");
+  // The server's authoritative create-time confidence for the task just created.
+  // When set, the modal shows the result panel instead of the form.
+  const [createdConfidence, setCreatedConfidence] = useState<CreateConfidence | null>(null);
+  // A self-assignment failure for the just-created task, shown inside the result
+  // panel (the task itself was created; only the claim failed).
+  const [createdAssignmentError, setCreatedAssignmentError] = useState<string | null>(null);
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
   const [doneVisibility, setDoneVisibility] = useState<DoneVisibility>(DEFAULT_DONE_VISIBILITY);
@@ -501,8 +509,7 @@ export default function DashboardPage() {
     return listSortedTasks.slice(start, start + LIST_PAGE_SIZE);
   }, [currentListPage, listSortedTasks]);
 
-  function closeNewTaskModal() {
-    setShowNewTask(false);
+  function resetNewTaskFields() {
     setNewTaskTitle("");
     setNewTaskDescription("");
     setNewTaskStatus("open");
@@ -513,6 +520,13 @@ export default function DashboardPage() {
     setNewTaskAcceptanceCriteria("");
     setNewTaskContext("");
     setNewTaskConstraints("");
+    setCreatedConfidence(null);
+    setCreatedAssignmentError(null);
+  }
+
+  function closeNewTaskModal() {
+    setShowNewTask(false);
+    resetNewTaskFields();
   }
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
@@ -629,7 +643,7 @@ export default function DashboardPage() {
       if (newTaskConstraints.trim()) tplData.constraints = newTaskConstraints.trim();
       const hasTemplateData = Object.keys(tplData).length > 0;
 
-      let task = await createTask(selectedProjectId, {
+      const { task: created, confidence } = await createTask(selectedProjectId, {
         title: newTaskTitle.trim(),
         description: newTaskDescription.trim() || undefined,
         status: newTaskStatus,
@@ -638,17 +652,31 @@ export default function DashboardPage() {
         ...(hasTemplateData ? { templateData: tplData } : {}),
       });
 
+      let task = created;
+      let assignmentError: string | null = null;
       if (newTaskAssignee === "me") {
         try {
           task = await claimTask(task.id);
         } catch (claimError) {
-          setError(`Task created, but assignment failed: ${(claimError as Error).message}`);
+          assignmentError = `Self-assignment failed: ${(claimError as Error).message}`;
         }
       }
 
       setTasks((prev) => [task, ...prev]);
       setActiveTaskId(null);
-      closeNewTaskModal();
+      // Surface the backend's authoritative create-time confidence in the modal.
+      // A self-assignment failure is shown INSIDE the result panel alongside the
+      // confidence (the task was created; only the claim failed) rather than as a
+      // page-level banner the modal overlay would hide. Fall back to the old
+      // close-on-success behaviour if an older backend omits confidence; there
+      // the assignment error has no panel to live in, so surface it on the page.
+      if (confidence) {
+        setCreatedAssignmentError(assignmentError);
+        setCreatedConfidence(confidence);
+      } else {
+        if (assignmentError) setError(assignmentError);
+        closeNewTaskModal();
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -854,7 +882,15 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <Modal open={showNewTask} onClose={closeNewTaskModal} title="New Task">
+      <Modal open={showNewTask} onClose={closeNewTaskModal} title={createdConfidence ? "Task created" : "New Task"}>
+        {createdConfidence ? (
+          <CreateConfidencePanel
+            confidence={createdConfidence}
+            assignmentError={createdAssignmentError}
+            onCreateAnother={resetNewTaskFields}
+            onClose={closeNewTaskModal}
+          />
+        ) : (
         <form onSubmit={(e) => void handleCreateTask(e)}>
           <div style={{ marginBottom: "0.75rem" }}>
             <div style={{ marginBottom: "0.5rem" }}>
@@ -961,6 +997,7 @@ export default function DashboardPage() {
             {creatingTask ? "Creating…" : "Create task"}
           </Button>
         </form>
+        )}
       </Modal>
 
       <Card padding="sm" style={{ marginBottom: "0.9rem" }}>
