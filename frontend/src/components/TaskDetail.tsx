@@ -19,9 +19,9 @@ import {
   type User,
   type Task,
   type Comment,
-  type TemplateData,
 } from "../lib/api";
-import { calculateConfidence } from "../lib/confidence";
+import { calculateConfidence, TASK_TYPES, type TaskType, type TemplateFields } from "../lib/confidence";
+import { buildSavedTemplateData } from "../lib/templateData";
 import { formatRelativeTime, formatAbsoluteDate, formatDueDate } from "../lib/time";
 import ConfidenceBadge from "./ConfidenceBadge";
 import TaskArtifactsSection from "./TaskArtifactsSection";
@@ -78,7 +78,7 @@ export interface TaskDetailProps {
   task: Task;
   tasks: Task[];
   user: User | null;
-  templateFields: { goal?: boolean; acceptanceCriteria?: boolean; context?: boolean; constraints?: boolean } | null;
+  templateFields: TemplateFields | null;
   confidenceThreshold: number;
   requireDistinctReviewer?: boolean;
   onUpdate: (task: Task) => void;
@@ -134,6 +134,12 @@ export default function TaskDetail({
   const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState("");
   const [editContext, setEditContext] = useState("");
   const [editConstraints, setEditConstraints] = useState("");
+  const [editScope, setEditScope] = useState("");
+  const [editOutOfScope, setEditOutOfScope] = useState("");
+  const [editDependencies, setEditDependencies] = useState("");
+  const [editRisk, setEditRisk] = useState("");
+  const [editAgentPrompt, setEditAgentPrompt] = useState("");
+  const [editTaskType, setEditTaskType] = useState<TaskType | "">("");
 
   const initEditState = useCallback(() => {
     setEditTitle(task.title);
@@ -145,6 +151,12 @@ export default function TaskDetail({
     setEditAcceptanceCriteria(task.templateData?.acceptanceCriteria ?? "");
     setEditContext(task.templateData?.context ?? "");
     setEditConstraints(task.templateData?.constraints ?? "");
+    setEditScope(task.templateData?.scope ?? "");
+    setEditOutOfScope(task.templateData?.outOfScope ?? "");
+    setEditDependencies(task.templateData?.dependencies ?? "");
+    setEditRisk(task.templateData?.risk ?? "");
+    setEditAgentPrompt(task.templateData?.agentPrompt ?? "");
+    setEditTaskType(task.templateData?.taskType ?? "");
   }, [task]);
 
   // Reset modal state when switching to a different task (not on every poll refresh)
@@ -236,9 +248,35 @@ export default function TaskDetail({
       editGoal !== (task.templateData?.goal ?? "") ||
       editAcceptanceCriteria !== (task.templateData?.acceptanceCriteria ?? "") ||
       editContext !== (task.templateData?.context ?? "") ||
-      editConstraints !== (task.templateData?.constraints ?? "")
+      editConstraints !== (task.templateData?.constraints ?? "") ||
+      editScope !== (task.templateData?.scope ?? "") ||
+      editOutOfScope !== (task.templateData?.outOfScope ?? "") ||
+      editDependencies !== (task.templateData?.dependencies ?? "") ||
+      editRisk !== (task.templateData?.risk ?? "") ||
+      editAgentPrompt !== (task.templateData?.agentPrompt ?? "") ||
+      editTaskType !== (task.templateData?.taskType ?? "")
     );
-  }, [isEditing, editTitle, editDescription, editPriority, editStatus, editDueAt, editGoal, editAcceptanceCriteria, editContext, editConstraints, task]);
+  }, [isEditing, editTitle, editDescription, editPriority, editStatus, editDueAt, editGoal, editAcceptanceCriteria, editContext, editConstraints, editScope, editOutOfScope, editDependencies, editRisk, editAgentPrompt, editTaskType, task]);
+
+  // The complete templateData a Save would persist: seed from the stored object
+  // (carrying `prefers` and any producer-set field without an editor), then
+  // apply the editors. Single source of truth for both the Save write and the
+  // live confidence preview, so the badge reflects exactly what gets stored.
+  const editedTemplateData = useMemo(
+    () => buildSavedTemplateData(task.templateData, {
+      goal: editGoal,
+      acceptanceCriteria: editAcceptanceCriteria,
+      context: editContext,
+      constraints: editConstraints,
+      scope: editScope,
+      outOfScope: editOutOfScope,
+      dependencies: editDependencies,
+      risk: editRisk,
+      agentPrompt: editAgentPrompt,
+      taskType: editTaskType,
+    }),
+    [task.templateData, editGoal, editAcceptanceCriteria, editContext, editConstraints, editScope, editOutOfScope, editDependencies, editRisk, editAgentPrompt, editTaskType],
+  );
 
   const startEditing = useCallback(() => {
     initEditState();
@@ -304,19 +342,13 @@ export default function TaskDetail({
   async function handleSaveTask() {
     setSavingTask(true);
     try {
-      const editTplData: TemplateData = {};
-      if (editGoal.trim()) editTplData.goal = editGoal.trim();
-      if (editAcceptanceCriteria.trim()) editTplData.acceptanceCriteria = editAcceptanceCriteria.trim();
-      if (editContext.trim()) editTplData.context = editContext.trim();
-      if (editConstraints.trim()) editTplData.constraints = editConstraints.trim();
-
       const updated = await updateTask(task.id, {
         title: editTitle.trim(),
         description: editDescription.trim() || null,
         priority: editPriority,
         status: editStatus,
         dueAt: toIsoDateOrNull(editDueAt),
-        templateData: Object.keys(editTplData).length > 0 ? editTplData : null,
+        templateData: editedTemplateData,
       });
       onUpdate(updated);
       setIsEditing(false);
@@ -640,9 +672,7 @@ export default function TaskDetail({
               const conf = calculateConfidence({
                 title: isEditing ? editTitle : task.title,
                 description: isEditing ? (editDescription || null) : (task.description ?? null),
-                templateData: isEditing
-                  ? { goal: editGoal || undefined, acceptanceCriteria: editAcceptanceCriteria || undefined, context: editContext || undefined, constraints: editConstraints || undefined }
-                  : task.templateData,
+                templateData: isEditing ? editedTemplateData : task.templateData,
                 templateFields,
               });
               return (
@@ -693,6 +723,52 @@ export default function TaskDetail({
                     </FormField>
                   </div>
                 )}
+                {templateFields.scope && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Scope">
+                      <textarea value={editScope} onChange={(e) => setEditScope(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.outOfScope && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Out of Scope">
+                      <textarea value={editOutOfScope} onChange={(e) => setEditOutOfScope(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.dependencies && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Dependencies">
+                      <textarea value={editDependencies} onChange={(e) => setEditDependencies(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.risk && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Risk">
+                      <textarea value={editRisk} onChange={(e) => setEditRisk(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
+                    </FormField>
+                  </div>
+                )}
+                {templateFields.agentPrompt && (
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <FormField label="Agent Prompt">
+                      <textarea value={editAgentPrompt} onChange={(e) => setEditAgentPrompt(e.target.value)} rows={4} style={{ width: "100%", resize: "vertical", fontFamily: "var(--font-mono, monospace)" }} />
+                    </FormField>
+                  </div>
+                )}
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <FormField label="Task Type">
+                    <Select
+                      value={editTaskType}
+                      onChange={(v) => setEditTaskType(v as TaskType | "")}
+                      options={[{ value: "", label: "— none —" }, ...TASK_TYPES.map((t) => ({ value: t, label: t }))]}
+                      ariaLabel="Task type"
+                      style={{ width: "100%" }}
+                    />
+                  </FormField>
+                </div>
               </>
             ) : (
               <div style={{ display: "grid", gap: "0.5rem" }}>
@@ -718,6 +794,42 @@ export default function TaskDetail({
                   <div>
                     <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Constraints</span>
                     <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.constraints}</ReactMarkdown></div>
+                  </div>
+                )}
+                {templateFields.scope && task.templateData?.scope && (
+                  <div>
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Scope</span>
+                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.scope}</ReactMarkdown></div>
+                  </div>
+                )}
+                {templateFields.outOfScope && task.templateData?.outOfScope && (
+                  <div>
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Out of Scope</span>
+                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.outOfScope}</ReactMarkdown></div>
+                  </div>
+                )}
+                {templateFields.dependencies && task.templateData?.dependencies && (
+                  <div>
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Dependencies</span>
+                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.dependencies}</ReactMarkdown></div>
+                  </div>
+                )}
+                {templateFields.risk && task.templateData?.risk && (
+                  <div>
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Risk</span>
+                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.risk}</ReactMarkdown></div>
+                  </div>
+                )}
+                {templateFields.agentPrompt && task.templateData?.agentPrompt && (
+                  <div>
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Agent Prompt</span>
+                    <pre style={{ marginTop: "0.15rem", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-mono, monospace)", fontSize: "var(--text-xs)", background: "var(--surface-secondary)", padding: "0.5rem", borderRadius: "var(--radius-sm)" }}>{task.templateData.agentPrompt}</pre>
+                  </div>
+                )}
+                {task.templateData?.taskType && (
+                  <div>
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Task Type</span>
+                    <div style={{ marginTop: "0.15rem", fontSize: "var(--text-sm)" }}>{task.templateData.taskType}</div>
                   </div>
                 )}
               </div>

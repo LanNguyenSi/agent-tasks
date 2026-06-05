@@ -17,7 +17,7 @@ import {
   type Task,
   type TemplateData,
 } from "../../lib/api";
-import { calculateConfidence } from "../../lib/confidence";
+import { calculateConfidence, type TemplateFields } from "../../lib/confidence";
 import { PRIORITY_COLORS } from "../../lib/priorityColors";
 import { formatRelativeTime, formatAbsoluteDate } from "../../lib/time";
 import {
@@ -175,7 +175,7 @@ const TaskCard = memo(function TaskCard({
   task: Task;
   active: boolean;
   onSelect: (taskId: string) => void;
-  templateFields?: { goal?: boolean; acceptanceCriteria?: boolean; context?: boolean; constraints?: boolean } | null;
+  templateFields?: TemplateFields | null;
 }) {
   return (
     <button
@@ -274,7 +274,7 @@ function BoardColumns({
   tasks: Task[];
   activeTaskId: string | null;
   onSelectTask: (taskId: string) => void;
-  templateFields?: { goal?: boolean; acceptanceCriteria?: boolean; context?: boolean; constraints?: boolean } | null;
+  templateFields?: TemplateFields | null;
 }) {
   // The done column accumulates without bound on an active project; cap
   // it at DONE_BOARD_VISIBLE_LIMIT cards with an expander so it stops
