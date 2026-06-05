@@ -229,25 +229,30 @@ interface ConfidenceResult {
 // Every core field is ALWAYS scored, independent of the project's taskTemplate,
 // so the denominator is a fixed 100 — no template-gated dilution (the v1 bug
 // where dropping required fields shrank `maxPossible` and inflated the score).
-// evals + agentPrompt dominate because they are what a *weak* (no-reasoning)
-// agent needs most: a way to know the task is done, and a literal instruction
-// block to execute. `context`/`constraints` are intentionally NOT weighted here
-// — the executability rubric (scope / outOfScope / risk / dependencies) supersedes
-// them; they survive only as inputs to the descriptive subscores.
+//
+// Calibration target (real-corpus, prose-first): the description must be the
+// dominant signal. Rich prose tasks are common in the existing corpus; they
+// should not lose to thin titles plus fully-populated sidecars. Evals remains a
+// strong field because it defines "how do we know it's done", but the additive
+// layer now assumes that the main execution context lives in description prose,
+// with sidecars refining it rather than replacing it. `context`/`constraints`
+// are intentionally NOT weighted here — the executability rubric (scope /
+// outOfScope / risk / dependencies) supersedes them; they survive only as
+// inputs to the descriptive subscores.
 //
 // These numbers are CALIBRATION TARGETS, not final. The T5 shadow report tunes
 // them against a real task corpus; keep them in this one constant so that tuning
 // is a single-line edit. Their sum is asserted to be exactly 100 by a unit test.
 export const FIELD_WEIGHTS = {
-  title: 8,
-  description: 7,
-  goal: 12,
-  evals: 22,        // acceptanceCriteria — "how do we know it's done"
-  agentPrompt: 18,  // literal instruction block for a weak agent
-  scope: 12,
-  outOfScope: 8,
-  dependencies: 7,
-  risk: 6,
+  title: 5,
+  description: 45,
+  goal: 8,
+  evals: 15,        // acceptanceCriteria — "how do we know it's done"
+  agentPrompt: 7,   // literal instruction block for a weak agent
+  scope: 6,
+  outOfScope: 4,
+  dependencies: 5,
+  risk: 5,
 } as const;
 
 // The evals keystone caps the score ABSOLUTELY below the default threshold (60)

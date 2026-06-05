@@ -68,6 +68,61 @@ const NO_VERIF_DESC = "Refactor the signup handler in src/routes/auth.ts to extr
 // Concrete AND carries a prose verification signal (`curl`, "Verify"), still no AC.
 const VERIF_DESC = "Verify via `curl /api/signup` that src/routes/auth.ts returns 400 on an empty body";
 
+// Corpus-style probes for prose-first calibration (Milestone 5). These model
+// the real inversion we want to avoid:
+// - rich execution prose with only a light sidecar should be claimable
+// - terse prose plus heavily-populated sidecars should not dominate it
+const PROSE_FIRST_TASK = {
+  title: "Stabilize signup validation",
+  description: [
+    "Goal: stop the empty-body 500 in signup.",
+    "Scope: only src/routes/auth.ts and its request parser.",
+    "Out of scope: session middleware and database schema.",
+    "Dependencies: none.",
+    "Risk: low because this is one handler.",
+    "Verify via `curl /api/signup` that empty body returns 400 and valid body returns 201.",
+    "Implementation hint: extract validateSignupBody() and keep the response contract unchanged.",
+  ].join("\n"),
+  templateData: { goal: "Stop the empty-body 500" },
+  templateFields: null,
+} as const;
+
+const SIDECARS_FIRST_TASK = {
+  title: "Stabilize signup validation",
+  description: "Refactor signup validation",
+  templateData: {
+    goal: "Stop the empty-body 500",
+    acceptanceCriteria: "- 400 on empty body\n- 201 on valid body",
+    scope: "src/routes/auth.ts",
+    outOfScope: "session middleware",
+    dependencies: "none",
+    risk: "low",
+    agentPrompt: "1. Extract validateSignupBody. 2. Keep response contract. 3. Add a unit test.",
+  },
+  templateFields: null,
+} as const;
+
+const MIXED_TASK = {
+  title: "Stabilize signup validation",
+  description: "Verify via `curl /api/signup` that src/routes/auth.ts returns 400 on empty body and 201 on valid body.",
+  templateData: {
+    goal: "Stop the empty-body 500",
+    scope: "src/routes/auth.ts",
+    risk: "low",
+  },
+  templateFields: null,
+} as const;
+
+const RICH_CORPUS_DESC = [
+  "Goal: stop the empty-body 500 in signup.",
+  "Scope: only src/routes/auth.ts and its request parser.",
+  "Out of scope: session middleware and database schema.",
+  "Dependencies: none.",
+  "Risk: low because this is one handler.",
+  "Verify via `curl /api/signup` that empty body returns 400 and valid body returns 201.",
+  "Implementation hint: extract validateSignupBody() and keep the response contract unchanged.",
+].join("\n");
+
 describe("descriptionQuality", () => {
   it("returns 0 for empty input", () => {
     expect(descriptionQuality("")).toBe(0);
@@ -124,7 +179,7 @@ describe("calculateConfidence — fixed-denominator scoring (scorer-v2 T3)", () 
   it("a fully-specified task (all nine fields) scores near 100 with no caps", () => {
     const result = calculateConfidence({
       title: "Validate signup body",
-      description: CONCRETE_DESC,
+      description: RICH_CORPUS_DESC,
       templateData: ALL_V2,
       templateFields: null,
     });
@@ -156,6 +211,22 @@ describe("calculateConfidence — fixed-denominator scoring (scorer-v2 T3)", () 
       },
     });
     expect(rich.score).toBeGreaterThan(lean.score);
+  });
+
+  it("corpus-style calibration is prose-first: rich prose clears the default threshold", () => {
+    const result = calculateConfidence(PROSE_FIRST_TASK);
+    expect(result.score).toBeGreaterThanOrEqual(60);
+    expect(result.blocking).toBe(false);
+  });
+
+  it("corpus-style calibration does not let sidecars swamp rich prose", () => {
+    const prose = calculateConfidence(PROSE_FIRST_TASK);
+    const sidecars = calculateConfidence(SIDECARS_FIRST_TASK);
+    const mixed = calculateConfidence(MIXED_TASK);
+
+    expect(prose.score).toBeGreaterThan(mixed.score);
+    expect(sidecars.score - prose.score).toBeLessThanOrEqual(10);
+    expect(sidecars.score).toBeLessThan(75);
   });
 });
 
@@ -371,7 +442,7 @@ describe("calculateConfidence — structural + subscore caps", () => {
   it("does NOT apply caps to a task strong on every dimension", () => {
     const result = calculateConfidence({
       title: "Add request-id middleware",
-      description: "Add `requestId` in src/middleware/request-id.ts; verify via `curl` that the response carries the header; expect 200",
+      description: RICH_CORPUS_DESC,
       templateData: ALL_V2,
       templateFields: null,
     });
