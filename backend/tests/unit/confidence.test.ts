@@ -68,6 +68,16 @@ const NO_VERIF_DESC = "Refactor the signup handler in src/routes/auth.ts to extr
 // Concrete AND carries a prose verification signal (`curl`, "Verify"), still no AC.
 const VERIF_DESC = "Verify via `curl /api/signup` that src/routes/auth.ts returns 400 on an empty body";
 
+// High-quality, structured description (multi-line, bullets, anchors, a verify
+// signal). Under the prose-first weights `description` is dominant, so a
+// genuinely complete task needs a rich description like this to score near 100.
+const RICH_DESC = [
+  "Add a `requestId` middleware in src/middleware/request-id.ts that attaches a UUID to every response.",
+  "- Wire it into app.ts before the router so all routes inherit it.",
+  "- Verify with `curl -i /api/health` that the response carries an x-request-id header; expect 200.",
+  "See the tracing notes at https://example.com/rfc/1234 for the header format.",
+].join("\n");
+
 describe("descriptionQuality", () => {
   it("returns 0 for empty input", () => {
     expect(descriptionQuality("")).toBe(0);
@@ -121,16 +131,43 @@ describe("calculateConfidence — fixed-denominator scoring (scorer-v2 T3)", () 
     expect(sum).toBe(100);
   });
 
-  it("a fully-specified task (all nine fields) scores near 100 with no caps", () => {
+  it("a fully-specified task (rich description + all nine fields) scores near 100 with no caps", () => {
     const result = calculateConfidence({
       title: "Validate signup body",
-      description: CONCRETE_DESC,
+      description: RICH_DESC,
       templateData: ALL_V2,
       templateFields: null,
     });
     expect(result.score).toBeGreaterThanOrEqual(90);
     expect(result.blocking).toBe(false);
     expect(infoSpy).not.toHaveBeenCalled();
+  });
+
+  it("prose-first: a well-described + verifiable task passes (>=60) with NO structured templateData", () => {
+    const result = calculateConfidence({
+      title: "Add request-id middleware",
+      description: RICH_DESC, // rich + a `curl`/verify signal, but no templateData
+      templateData: null,
+      templateFields: null,
+    });
+    expect(result.blocking).toBe(false); // verification signal → no evals keystone
+    expect(result.score).toBeGreaterThanOrEqual(60);
+  });
+
+  it("prose-first: a well-described but NON-verifiable task still blocks (evals keystone caps it)", () => {
+    const result = calculateConfidence({
+      title: "Replace the config loader",
+      description: [
+        "Replace the legacy config loader in src/config/loader.ts with a typed schema.",
+        "- Move the defaults into src/config/defaults.ts.",
+        "- Read the 12 documented keys from process.env via a zod object.",
+        "- Keep the public getConfig() signature unchanged for the 40 call sites.",
+      ].join("\n"), // high quality, NO verification word
+      templateData: null,
+      templateFields: null,
+    });
+    expect(result.blocking).toBe(true);
+    expect(result.score).toBeLessThan(60);
   });
 
   it("score is template-INDEPENDENT: identical with null vs full templateFields", () => {
@@ -371,7 +408,7 @@ describe("calculateConfidence — structural + subscore caps", () => {
   it("does NOT apply caps to a task strong on every dimension", () => {
     const result = calculateConfidence({
       title: "Add request-id middleware",
-      description: "Add `requestId` in src/middleware/request-id.ts; verify via `curl` that the response carries the header; expect 200",
+      description: RICH_DESC,
       templateData: ALL_V2,
       templateFields: null,
     });
