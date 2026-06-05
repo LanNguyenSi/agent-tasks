@@ -188,6 +188,7 @@ describe("POST /projects/:projectId/tasks — confidence surfacing (scorer-v2 T4
     confidence: {
       score: number;
       threshold: number;
+      enforcementMode: string;
       blocking: boolean;
       missing: string[];
       findings: Array<{ code: string; severity: string }>;
@@ -203,6 +204,9 @@ describe("POST /projects/:projectId/tasks — confidence surfacing (scorer-v2 T4
     expect(body.confidence.threshold).toBe(60);
     expect(body.confidence.score).toBeLessThan(60);
     expect(body.confidence.blocking).toBe(true); // no AC, no verification signal → evals keystone
+    // enforcementMode tells the caller whether `blocking` actually rejects at
+    // pickup/start; the mock project has no column set, so it resolves to WARN.
+    expect(body.confidence.enforcementMode).toBe("WARN");
     expect(body.confidence.missing).toContain("acceptanceCriteria");
     expect(body.confidence.findings.length).toBeGreaterThan(0);
     expect(body.confidence.nextActions.length).toBeGreaterThan(0);

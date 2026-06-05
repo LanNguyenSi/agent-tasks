@@ -104,7 +104,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_create",
       description:
-        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. The response carries a non-blocking `confidence` object ({score, threshold, missing[], findings[], nextActions[]}) so you see what's missing immediately — a low score does NOT block creation; the hard gate is at task_pickup/task_start.",
+        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. The response carries a non-blocking `confidence` object ({score, threshold, enforcementMode, missing[], findings[], nextActions[]}) so you see what's missing immediately — a low score does NOT block creation; `enforcementMode` tells you whether the hard gate at task_pickup/task_start (BLOCK) will reject it or it is advisory (OFF/WARN). When a project uses task-template mode, call projects_get_effective_gates first and populate the templateData fields it lists under taskCreation.requiredFields.",
       inputShape: {
         projectId: uuid(),
         title: z.string().min(1).max(255),
@@ -273,14 +273,14 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       name: "projects_get",
       description:
         DEPRECATED +
-        "Fetch a single project by slug or id. Project browsing is not an agent concern under v2. The non-deprecated use is the `effectiveGates` field in the response — call `projects_get_effective_gates` for a leaner payload.",
+        "Fetch a single project by slug or id. Project browsing is not an agent concern under v2. The non-deprecated use is the `effectiveGates` and `taskCreation` fields in the response — call `projects_get_effective_gates` for a leaner payload that carries both.",
       inputShape: { slugOrId: z.string().min(1) },
       handler: async ({ slugOrId }) => wrap(() => client.getProject(slugOrId)),
     }),
     def({
       name: "projects_get_effective_gates",
       description:
-        "Return the gate map for a project. Each entry is keyed by `GateCode` (e.g. `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) and carries `active` (whether this gate would evaluate on this project), `because` (why — e.g. governance mode, project binding), and `appliesTo` (the verb names the gate can reject). Use it to answer 'will this verb be blocked?' BEFORE making the call, instead of discovering preconditions by tripping a 4xx.",
+        "Return the gate map for a project. Each entry is keyed by `GateCode` (e.g. `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) and carries `active` (whether this gate would evaluate on this project), `because` (why — e.g. governance mode, project binding), and `appliesTo` (the verb names the gate can reject). Use it to answer 'will this verb be blocked?' BEFORE making the call, instead of discovering preconditions by tripping a 4xx. The response also carries a `taskCreation` block ({ enforcementMode, confidenceThreshold, templateModeEnabled, requiredFields[] }): call it BEFORE task_create to learn whether task-template mode is on and which structured templateData fields this project requires.",
       inputShape: { projectId: uuid() },
       handler: async ({ projectId }) =>
         wrap(() => client.getProjectEffectiveGates(projectId)),
