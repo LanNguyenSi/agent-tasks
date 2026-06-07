@@ -53,6 +53,12 @@ services:
       SESSION_SECRET: ${SESSION_SECRET}
       FRONTEND_URL: https://agent-tasks.opentriologue.ai
       CORS_ORIGINS: https://agent-tasks.opentriologue.ai
+      # Number of trusted reverse-proxy hops in front of the backend. Prod runs
+      # behind exactly one Traefik hop, so the rate limiter must read the real
+      # client IP from the rightmost X-Forwarded-For entry. Without this it
+      # falls back to Traefik's container socket address and buckets every
+      # client together, turning the per-client auth limits into global caps.
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       # Optional: gates the identity-broker register endpoint. Empty by
       # default (back-compat accept-any); set in prod .env to restrict.
