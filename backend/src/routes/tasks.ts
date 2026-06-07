@@ -1559,8 +1559,13 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     }
 
     const flavor = await deriveDebugFlavor(task, getGroundingClient());
-    const updated = await prisma.task.update({
-      where: { id: task.id },
+    // Atomic compare-and-swap: only claim if the row is still unclaimed. The
+    // `task.claimedBy*` null-check above is a fast path, but two actors can
+    // both pass it before either writes (TOCTOU). Guarding on
+    // `claimedBy* IS NULL` makes exactly one writer win; the loser sees
+    // count===0 and gets a 409.
+    const claimResult = await prisma.task.updateMany({
+      where: { id: task.id, claimedByUserId: null, claimedByAgentId: null },
       data: {
         claimedByUserId: actor.type === "human" ? actor.userId : null,
         claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
@@ -1571,8 +1576,17 @@ taskRouter.post("/tasks/:id/start", async (c) => {
           ? { metadata: flavor.mergedMetadata as Prisma.InputJsonValue }
           : {}),
       },
+    });
+    if (claimResult.count === 0) {
+      return conflict(c, "Task is already claimed");
+    }
+
+    // updateMany cannot use `include`, so re-fetch the freshly claimed row.
+    const updated = await prisma.task.findUnique({
+      where: { id: task.id },
       include: taskInclude,
     });
+    if (!updated) return notFound(c);
 
     void logAuditEvent({
       action: "task.claimed",
@@ -4215,16 +4229,30 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     return _exhaustive;
   }
 
-  const updated = await prisma.task.update({
-    where: { id: task.id },
+  // Atomic compare-and-swap: only write the claim if the row is still
+  // unclaimed. The earlier `task.claimedBy*` null-check above is a fast
+  // path, but two actors can both pass it before either writes (TOCTOU).
+  // Guarding the write on `claimedBy* IS NULL` makes exactly one writer win;
+  // the loser sees count===0 and gets a 409.
+  const claimResult = await prisma.task.updateMany({
+    where: { id: task.id, claimedByUserId: null, claimedByAgentId: null },
     data: {
       claimedByUserId: actor.type === "human" ? actor.userId : null,
       claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
       claimedAt: new Date(),
       status: startTarget,
     },
+  });
+  if (claimResult.count === 0) {
+    return conflict(c, "Task is already claimed");
+  }
+
+  // updateMany cannot use `include`, so re-fetch the freshly claimed row.
+  const updated = await prisma.task.findUnique({
+    where: { id: task.id },
     include: taskInclude,
   });
+  if (!updated) return notFound(c);
 
   void logAuditEvent({
     action: "task.claimed",
