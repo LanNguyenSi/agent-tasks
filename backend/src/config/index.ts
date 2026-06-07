@@ -27,6 +27,15 @@ const configSchema = z.object({
   // (back-compat). Stop-gap until agent-tasks' existing multi-team model
   // is hardened for cross-user isolation of new OAuth arrivals.
   ALLOWED_GITHUB_LOGINS: z.string().default(""),
+  // Number of trusted reverse-proxy hops in front of the backend (e.g. 1
+  // for a single Traefik instance). X-Forwarded-For is appended-to by each
+  // proxy, so all but the rightmost `hops` entries are client-controlled
+  // and must not be trusted. Rate limiting reads the client IP from that
+  // offset; when 0 (default) it ignores X-Forwarded-For entirely and uses
+  // the raw socket peer address, which a client cannot spoof. Set this to
+  // 1 in production behind Traefik so per-client limits key on the real
+  // client IP instead of the proxy's address.
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
 });
 
 function loadConfig() {

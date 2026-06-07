@@ -22,6 +22,7 @@ const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
   taskFindMany: vi.fn(),
   taskUpdate: vi.fn(),
+  taskUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
   signalFindFirst: vi.fn(),
   signalUpdate: vi.fn(),
   signalUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -37,6 +38,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
       findUnique: prismaMocks.taskFindUnique,
       findMany: prismaMocks.taskFindMany,
       update: prismaMocks.taskUpdate,
+      updateMany: prismaMocks.taskUpdateMany,
     },
     signal: {
       findFirst: prismaMocks.signalFindFirst,
@@ -216,6 +218,20 @@ beforeEach(() => {
     ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
       Promise.resolve({ ...baseTask, id: where.id, ...data }),
   );
+  // Atomic claim CAS (TOCTOU fix) used by the open-branch of /start and by
+  // /claim. Default to "won the race"; the lost-race tests override with
+  // mockResolvedValueOnce({ count: 0 }).
+  prismaMocks.taskUpdateMany.mockResolvedValue({ count: 1 });
+  // Those two routes re-fetch the row with a second findUnique after the CAS.
+  // Tests queue the INITIAL fetch via mockResolvedValueOnce; this persistent
+  // default serves the re-fetch (the only second findUnique any route in this
+  // suite makes — every other route fetches once).
+  prismaMocks.taskFindUnique.mockResolvedValue({
+    ...baseTask,
+    status: "in_progress",
+    claimedByAgentId: "agent-1",
+    claimedByUserId: null,
+  });
   // Reset the grounding client mock to the failure-soft default. Every
   // test that wants the Phase 2 happy path overrides this explicitly.
   groundingClientMock.start.mockReset();
@@ -316,7 +332,15 @@ describe("POST /tasks/pickup", () => {
 
 describe("POST /tasks/:id/start", () => {
   it("open task: claims, transitions to in_progress, returns expectedFinishState", async () => {
-    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "open" });
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce({ ...baseTask, status: "open" }) // initial fetch
+      // Re-fetch after the atomic CAS claim returns the claimed row.
+      .mockResolvedValueOnce({
+        ...baseTask,
+        status: "in_progress",
+        claimedByAgentId: "agent-1",
+        claimedByUserId: null,
+      });
     prismaMocks.taskFindFirst.mockResolvedValueOnce(null); // hard-limit ok
     prismaMocks.taskFindMany.mockResolvedValueOnce([]); // no blockers
     prismaMocks.workflowFindFirst.mockResolvedValueOnce(null); // falls back to built-in default
@@ -329,12 +353,35 @@ describe("POST /tasks/:id/start", () => {
     expect(body.task.status).toBe("in_progress");
     expect(body.task.claimedByAgentId).toBe("agent-1");
 
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
-    expect(updateCall.data).toMatchObject({
+    // Claim is an atomic compare-and-swap guarded on the row still being
+    // unclaimed (TOCTOU fix), not an unconditional update.
+    const claimCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    expect(claimCall.where).toMatchObject({
+      id: "task-1",
+      claimedByUserId: null,
+      claimedByAgentId: null,
+    });
+    expect(claimCall.data).toMatchObject({
       status: "in_progress",
       claimedByAgentId: "agent-1",
       claimedByUserId: null,
     });
+  });
+
+  it("open task: loses the claim CAS race → 409 (TOCTOU regression)", async () => {
+    // Another actor claimed between our null-check and the write: the
+    // compare-and-swap matches zero rows, so this caller must get a 409
+    // rather than silently double-claiming.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "open" });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null); // hard-limit ok
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]); // no blockers
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("conflict");
   });
 
   it("rejects when the agent already holds an active claim on a different task", async () => {
@@ -502,7 +549,7 @@ describe("POST /tasks/:id/start — gate enforcement (parity with task_finish)",
 
     const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("in_progress");
   });
 
@@ -523,7 +570,7 @@ describe("POST /tasks/:id/start — gate enforcement (parity with task_finish)",
 
     const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("in_progress");
   });
 });
@@ -567,7 +614,7 @@ describe("POST /tasks/:id/start — optional branchName arg", () => {
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("in_progress");
     expect(updateCall.data.branchName).toBe("feat/single-call");
   });
@@ -590,7 +637,7 @@ describe("POST /tasks/:id/start — optional branchName arg", () => {
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("in_progress");
     // The persisted branchName must not move; we never overwrite a pre-existing value.
     expect(updateCall.data.branchName).toBeUndefined();
@@ -628,7 +675,7 @@ describe("POST /tasks/:id/start — optional branchName arg", () => {
 
     const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("in_progress");
     expect(updateCall.data.branchName).toBeUndefined();
   });
@@ -685,7 +732,7 @@ describe("POST /tasks/:id/start — optional branchName arg", () => {
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.branchName).toBeUndefined();
   });
 
@@ -787,34 +834,76 @@ describe("POST /tasks/:id/claim — gate enforcement (REST parity with MCP task_
   });
 
   it("accepts claim when the custom workflow's gate passes", async () => {
-    prismaMocks.taskFindUnique.mockResolvedValueOnce({
-      ...baseTask,
-      status: "open",
-      branchName: "feat/pre-set",
-      workflowId: "wf-1",
-      workflow: {
-        definition: {
-          initialState: "open",
-          states: [
-            { name: "open", terminal: false },
-            { name: "in_progress", terminal: false },
-          ],
-          transitions: [
-            { from: "open", to: "in_progress", requires: ["branchPresent"] },
-          ],
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce({
+        ...baseTask,
+        status: "open",
+        branchName: "feat/pre-set",
+        workflowId: "wf-1",
+        workflow: {
+          definition: {
+            initialState: "open",
+            states: [
+              { name: "open", terminal: false },
+              { name: "in_progress", terminal: false },
+            ],
+            transitions: [
+              { from: "open", to: "in_progress", requires: ["branchPresent"] },
+            ],
+          },
         },
-      },
-    });
+      })
+      // Re-fetch after the atomic CAS claim.
+      .mockResolvedValueOnce({
+        ...baseTask,
+        status: "in_progress",
+        branchName: "feat/pre-set",
+        claimedByAgentId: "agent-1",
+        claimedByUserId: null,
+      });
     prismaMocks.taskFindMany.mockResolvedValueOnce([]);
 
     const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
-    expect(updateCall.data.status).toBe("in_progress");
-    expect(updateCall.data.claimedByAgentId).toBe("agent-1");
+    // Atomic compare-and-swap guarded on the row still being unclaimed.
+    const claimCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    expect(claimCall.where).toMatchObject({
+      id: "task-1",
+      claimedByUserId: null,
+      claimedByAgentId: null,
+    });
+    expect(claimCall.data.status).toBe("in_progress");
+    expect(claimCall.data.claimedByAgentId).toBe("agent-1");
   });
 
   it("default workflow: claim on a branchless open task passes (gate relaxed on this edge)", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce({
+        ...baseTask,
+        status: "open",
+        branchName: null,
+        workflowId: null,
+        workflow: null,
+      })
+      .mockResolvedValueOnce({
+        ...baseTask,
+        status: "in_progress",
+        branchName: null,
+        claimedByAgentId: "agent-1",
+        claimedByUserId: null,
+      });
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBe(200);
+    const claimCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    expect(claimCall.data.status).toBe("in_progress");
+  });
+
+  it("loses the claim CAS race → 409 (TOCTOU regression)", async () => {
+    // The unclaimed where-guard matches zero rows because another actor
+    // claimed first; the caller must get a 409, never a double-claim.
     prismaMocks.taskFindUnique.mockResolvedValueOnce({
       ...baseTask,
       status: "open",
@@ -824,11 +913,12 @@ describe("POST /tasks/:id/claim — gate enforcement (REST parity with MCP task_
     });
     prismaMocks.taskFindMany.mockResolvedValueOnce([]);
     prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 0 });
 
     const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
-    expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
-    expect(updateCall.data.status).toBe("in_progress");
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("conflict");
   });
 
   it("already-claimed task returns 409 before the gate evaluates (existing behaviour)", async () => {
@@ -2615,9 +2705,9 @@ describe("debug-flavor detection on pickup + start", () => {
     expect(body.kind).toBe("work");
     expect(body.groundingHint?.debugFlavor).toBe(true);
 
-    // Claim + metadata are folded into a single update so task_start stays
+    // Claim + metadata are folded into a single CAS write so task_start stays
     // one DB write on the open->in_progress transition.
-    const updateCalls = prismaMocks.taskUpdate.mock.calls.map(
+    const updateCalls = prismaMocks.taskUpdateMany.mock.calls.map(
       (c) => (c[0] as { data: Record<string, unknown> }).data,
     );
     expect(updateCalls).toHaveLength(1);
@@ -2951,7 +3041,7 @@ describe("confidence gate: POST /tasks/:id/start", () => {
     const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
     expect(res.status).toBe(200);
     // The claim actually completes (the gate allowed it through to the transition).
-    expect(prismaMocks.taskUpdate).toHaveBeenCalled();
+    expect(prismaMocks.taskUpdateMany).toHaveBeenCalled();
     expect(logAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "task.claim_would_block_shadow",
@@ -3231,7 +3321,10 @@ describe("confidence gate: POST /tasks/:id/claim", () => {
   });
 
   it("force=true + forceReason on low-score → 200 and emits override audit (route=claim)", async () => {
-    prismaMocks.taskFindUnique.mockResolvedValueOnce(LOW_SCORE_TASK);
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(LOW_SCORE_TASK)
+      // Re-fetch after the atomic CAS claim.
+      .mockResolvedValueOnce({ ...LOW_SCORE_TASK, status: "in_progress", claimedByAgentId: "agent-1" });
     prismaMocks.taskFindMany.mockResolvedValueOnce([]);
     prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
 
@@ -3249,7 +3342,10 @@ describe("confidence gate: POST /tasks/:id/claim", () => {
   });
 
   it("force=true + forceReason on passing-score → 200 but NO override audit", async () => {
-    prismaMocks.taskFindUnique.mockResolvedValueOnce(PASSING_SCORE_TASK);
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(PASSING_SCORE_TASK)
+      // Re-fetch after the atomic CAS claim.
+      .mockResolvedValueOnce({ ...PASSING_SCORE_TASK, status: "in_progress", claimedByAgentId: "agent-1" });
     prismaMocks.taskFindMany.mockResolvedValueOnce([]);
     prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
 

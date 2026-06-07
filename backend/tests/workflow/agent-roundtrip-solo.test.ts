@@ -46,6 +46,7 @@ const prismaMocks = vi.hoisted(() => ({
   taskFindFirst: vi.fn(),
   taskFindMany: vi.fn(),
   taskUpdate: vi.fn(),
+  taskUpdateMany: vi.fn(),
   signalFindFirst: vi.fn(),
   signalUpdate: vi.fn(),
   signalUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -65,6 +66,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
       findFirst: prismaMocks.taskFindFirst,
       findMany: prismaMocks.taskFindMany,
       update: prismaMocks.taskUpdate,
+      updateMany: prismaMocks.taskUpdateMany,
     },
     project: { findUnique: prismaMocks.projectFindUnique },
     signal: {
@@ -192,6 +194,27 @@ describe("workflow round-trip — soloMode path (task 47cc3e43)", () => {
         if (where.id !== currentTask.id) return Promise.reject(new Error("task not found"));
         currentTask = { ...currentTask, ...data, updatedAt: new Date() };
         return Promise.resolve(currentTask);
+      },
+    );
+    // CAS shim for the atomic claim (TOCTOU fix): only mutate when the row
+    // still matches the unclaimed where-guard, mirroring Prisma updateMany.
+    prismaMocks.taskUpdateMany.mockImplementation(
+      ({
+        where,
+        data,
+      }: {
+        where: { id: string; claimedByAgentId?: null; claimedByUserId?: null };
+        data: Partial<TaskRow>;
+      }) => {
+        if (where.id !== currentTask.id) return Promise.resolve({ count: 0 });
+        if (
+          where.claimedByAgentId === null &&
+          (currentTask.claimedByAgentId !== null || currentTask.claimedByUserId !== null)
+        ) {
+          return Promise.resolve({ count: 0 });
+        }
+        currentTask = { ...currentTask, ...data, updatedAt: new Date() };
+        return Promise.resolve({ count: 1 });
       },
     );
     prismaMocks.taskFindMany.mockResolvedValue([]);
