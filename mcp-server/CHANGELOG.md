@@ -2,6 +2,14 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## 0.9.0
+
+### Added
+
+- **scorer-v2 executability fields on `task_create`** (#313): `scope`, `outOfScope`, `dependencies`, `risk`, `agentPrompt`, and `prefers` are now accepted in the structured `templateData` the confidence scorer reads.
+- **Create-time confidence on the `task_create` response** (#317): the verb surfaces the scorer-v2 confidence verdict (score versus the project threshold, missing fields, next steps) so an agent sees immediately whether a created task clears the gate.
+- **Task-template requirements exposed at discovery time** (#324): the project discovery surface (`projects_get_effective_gates` and the project read) now reports the `taskCreation` block (`enforcementMode`, `confidenceThreshold`, `templateModeEnabled`, `requiredFields[]`), so an agent can learn a project's required fields before composing a task.
+
 ## 0.8.0
 
 ### Added

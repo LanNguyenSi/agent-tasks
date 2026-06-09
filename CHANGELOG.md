@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-06-09
+
+**Headline: agents can discover a project's task-template requirements before composing a task.** The project discovery surface now reports whether task-template mode is on, the required fields, the enforcement mode, and the confidence threshold, so an agent can compose a task that will clear the create-time confidence gate on the first try. Plus the 2026-05-30 audit fixes. No schema changes; deployed from `master`, so this tag is deploy provenance.
+
+### Added
+
+- **`taskCreation` discovery block on the project surface** (PR #324). `GET /projects/:id`, `GET /projects/:id/effective-gates`, and the by-slug lookup now return a read-only `taskCreation` block (`enforcementMode`, `confidenceThreshold`, `templateModeEnabled`, `requiredFields[]`). Previously `projects_get_effective_gates` returned only the merge/review gate map, so an agent could not learn a project's task-template requirements before composing via `task_create`.
+
+### Security
+
+- **MEDIUM: auth rate limiting no longer trusts the client-controlled `X-Forwarded-For`** (PR #326, finding #21). The key IP is derived from the socket peer via `getConnInfo`, or from the right of `X-Forwarded-For` when the new `TRUSTED_PROXY_HOPS` config is set, closing the spoofable-XFF bypass.
+- **MEDIUM: claim and start writes are now atomic compare-and-swap** (PR #326, finding #22). `POST /tasks/:id/claim` and the open-branch of `POST /tasks/:id/start` use a guarded `updateMany`, closing a claim race.
+- **hono bumped to `^4.12.21`** (4 MEDIUM CVEs: CVE-2026-47673 / 47674 / 47675 / 47676, PR #325).
+
 ## [0.23.0] - 2026-06-05
 
 **Headline: the scorer-v2 frontend surface. The dashboard now mirrors the backend prose-first confidence scorer (the live badges match what the agent-claim gate computes), surfaces the create-time confidence verdict after a task is created (the score versus the project threshold, the missing fields, and the top next steps, with an Edit-task shortcut straight into the editor), and lets a human author all the scorer-v2 executability fields (scope, out-of-scope, dependencies, risk, agentPrompt, taskType) in both the create and edit forms. The Save data-loss that wiped producer-set templateData on a human edit is fixed.** No backend schema changes; the backend scorer-v2 and the create-time confidence response shipped in v0.22.x.
