@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { prisma } from "../lib/prisma.js";
-import { hasProjectAccess, isProjectAdmin } from "../services/team-access.js";
+import { hasProjectAccess, isProjectAdmin, requireProjectWrite } from "../services/team-access.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import { ConflictError } from "../lib/errors.js";
@@ -480,8 +480,8 @@ workflowRouter.post(
       return forbidden(c, "Agents cannot create workflows");
     }
 
-    if (!(await hasProjectAccess(actor, projectId))) {
-      return forbidden(c, "Access denied to this project");
+    if (!(await requireProjectWrite(actor, projectId))) {
+      return forbidden(c, "Write access required");
     }
 
     const body = c.req.valid("json");

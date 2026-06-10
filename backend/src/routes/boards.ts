@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { prisma } from "../lib/prisma.js";
-import { hasProjectAccess } from "../services/team-access.js";
+import { hasProjectAccess, requireProjectWrite } from "../services/team-access.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 
@@ -58,8 +58,8 @@ boardRouter.post(
       return forbidden(c, "Agents cannot create boards");
     }
 
-    if (!(await hasProjectAccess(actor, projectId))) {
-      return forbidden(c, "Access denied");
+    if (!(await requireProjectWrite(actor, projectId))) {
+      return forbidden(c, "Write access required");
     }
 
     const body = c.req.valid("json");
@@ -124,8 +124,8 @@ boardRouter.put(
     const board = await prisma.board.findUnique({ where: { id: c.req.param("id") } });
     if (!board) return notFound(c);
 
-    if (!(await hasProjectAccess(actor, board.projectId))) {
-      return forbidden(c, "Access denied");
+    if (!(await requireProjectWrite(actor, board.projectId))) {
+      return forbidden(c, "Write access required");
     }
 
     const body = c.req.valid("json");
