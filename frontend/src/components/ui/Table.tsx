@@ -51,6 +51,16 @@ interface TableProps<T extends object> {
   loading?: boolean;
   emptyLabel?: string;
   className?: string;
+  /**
+   * Optional HTML `id` to set on each `<tr>`. Useful for anchor-based
+   * scrollIntoView (e.g. workflow transition highlight).
+   */
+  rowId?: (row: T) => string;
+  /**
+   * Optional extra CSS class(es) to add to each row's `<tr>`. Useful for
+   * temporary highlight effects driven by parent state.
+   */
+  rowClassName?: (row: T) => string | undefined;
   // ── Controlled sort ────────────────────────────────────────────
   // Provide all three together to bypass internal sort state entirely.
   /** Controlled sort column key. Pass null/undefined for "no sort". */
@@ -74,6 +84,8 @@ export function Table<T extends object>({
   loading = false,
   emptyLabel = "No items found.",
   className,
+  rowId,
+  rowClassName,
   sortKey: sortKeyProp,
   sortDirection: sortDirectionProp,
   onSortChange,
@@ -192,10 +204,12 @@ export function Table<T extends object>({
               // onRowClick takes priority; rowHref is suppressed when both are set.
               const href = !onRowClick ? rowHref?.(row) : undefined;
               const hasClick = onRowClick !== undefined || href !== undefined;
+              const extraClass = rowClassName?.(row);
               return (
                 <tr
                   key={rowKey(row)}
-                  className={["table-tr", hasClick ? "table-tr--link" : ""].filter(Boolean).join(" ")}
+                  id={rowId?.(row)}
+                  className={["table-tr", hasClick ? "table-tr--link" : "", extraClass].filter(Boolean).join(" ")}
                   onClick={
                     onRowClick
                       ? () => onRowClick(row)
