@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -17,20 +17,15 @@ import {
   type Task,
   type CreateConfidence,
 } from "../../lib/api";
-import { calculateConfidence, TASK_TYPES, type TaskType, type TemplateFields } from "../../lib/confidence";
+import { calculateConfidence, TASK_TYPES, type TaskType } from "../../lib/confidence";
 import { buildSavedTemplateData } from "../../lib/templateData";
-import { PRIORITY_COLORS } from "../../lib/priorityColors";
-import { formatRelativeTime, formatAbsoluteDate } from "../../lib/time";
 import {
-  DONE_BOARD_VISIBLE_LIMIT,
   DEFAULT_DONE_VISIBILITY,
   isDoneTaskHidden,
   readStoredDoneVisibility,
   storeDoneVisibility,
   readStoredViewMode,
   storeViewMode,
-  readStoredSort,
-  storeSort,
   type DoneVisibility,
   type DashboardViewMode,
 } from "../../lib/dashboardPrefs";
@@ -38,89 +33,38 @@ import ConfidenceBadge from "../../components/ConfidenceBadge";
 import CreateConfidencePanel from "../../components/CreateConfidencePanel";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
-import Card from "../../components/ui/Card";
-import DropdownMenu from "../../components/ui/DropdownMenu";
 import EmptyState from "../../components/ui/EmptyState";
 import FormField from "../../components/ui/FormField";
+import { Icon } from "../../components/ui/Icon";
+import { KeyHint } from "../../components/ui/KeyHint";
 import Modal from "../../components/ui/Modal";
-import Pagination from "../../components/ui/Pagination";
+import { PageHeader } from "../../components/ui/PageHeader";
 import { SkeletonList } from "../../components/ui/Skeleton";
+import { StatusChip } from "../../components/ui/StatusChip";
+import { Tabs } from "../../components/ui/Tabs";
+import { useToast } from "../../components/ui/Toast";
 import TaskDetail from "../../components/TaskDetail";
 import ImportDialog from "../../components/ImportDialog";
 import Select from "@/components/ui/Select";
+import DropdownMenu from "../../components/ui/DropdownMenu";
+import ProjectPicker from "../../components/dashboard/ProjectPicker";
+import FilterToolbar from "../../components/dashboard/FilterToolbar";
+import BoardView from "../../components/dashboard/BoardView";
+import TaskListView from "../../components/dashboard/TaskListView";
+
+// ── Types ────────────────────────────────────────────────────────
 
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
-
 type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-type SortColumn = "title" | "status" | "assignee" | "due" | "updated" | "priority";
-type SortDirection = "asc" | "desc";
-interface SortState { column: SortColumn; direction: SortDirection; }
-
-const STATUS_LABELS: Record<Status, string> = {
-  open: "Open",
-  in_progress: "In Progress",
-  review: "In Review",
-  done: "Done",
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  open: "var(--muted)",
-  in_progress: "var(--primary)",
-  review: "var(--warning)",
-  done: "var(--success)",
-};
-
-const PRIORITY_RANK: Record<Priority, number> = {
-  CRITICAL: 0,
-  HIGH: 1,
-  MEDIUM: 2,
-  LOW: 3,
-};
-const STATUS_RANK: Record<string, number> = {
-  open: 0,
-  in_progress: 1,
-  review: 2,
-  done: 3,
-};
-
-const NATURAL_SORT_DIR: Record<SortColumn, SortDirection> = {
-  title: "asc",
-  status: "asc",
-  assignee: "asc",
-  due: "asc",
-  updated: "desc",
-  priority: "desc",
-};
 
 const LIST_PAGE_SIZE = 12;
+
+// ── Helpers ──────────────────────────────────────────────────────
 
 function isOverdue(task: Task): boolean {
   if (!task.dueAt || task.status === "done") return false;
   return new Date(task.dueAt).getTime() < Date.now();
-}
-
-function sortTasksForBoardColumn(tasks: Task[]): Task[] {
-  return [...tasks].sort((a, b) => {
-    const overdueDiff = Number(isOverdue(b)) - Number(isOverdue(a));
-    if (overdueDiff !== 0) return overdueDiff;
-
-    const priorityDiff = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
-    if (priorityDiff !== 0) return priorityDiff;
-
-    if (a.dueAt || b.dueAt) {
-      const aDue = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
-      const bDue = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
-      if (aDue !== bDue) return aDue - bDue;
-    }
-
-    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-  });
-}
-
-function toDateInputValue(value: string | null): string {
-  if (!value) return "";
-  return value.slice(0, 10);
 }
 
 function toIsoDateOrNull(value: string): string | null {
@@ -161,175 +105,12 @@ function storeProjectId(teamId: string, projectId: string): void {
   }
 }
 
-function getAssigneeName(task: Task): string {
-  if (task.claimedByUser) return task.claimedByUser.name ?? task.claimedByUser.login;
-  if (task.claimedByAgent) return `Agent ${task.claimedByAgent.name}`;
-  return "Unassigned";
-}
-
-const TaskCard = memo(function TaskCard({
-  task,
-  active,
-  onSelect,
-  templateFields,
-}: {
-  task: Task;
-  active: boolean;
-  onSelect: (taskId: string) => void;
-  templateFields?: TemplateFields | null;
-}) {
-  return (
-    <button
-      className={`task-card${active ? " task-card--active" : ""}`}
-      type="button"
-      onClick={() => onSelect(task.id)}
-      style={{
-        width: "100%",
-        textAlign: "left",
-        borderRadius: "10px",
-        padding: "0.6rem 0.7rem",
-        marginBottom: "0.4rem",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.25rem", minWidth: 0 }}>
-        <p className="text-break-anywhere" style={{ fontWeight: 600, fontSize: "var(--text-base)", lineHeight: 1.35, color: "var(--text)", display: "flex", alignItems: "center", gap: "0.4rem", minWidth: 0 }}>
-          <span
-            role="img"
-            aria-label={`Status: ${STATUS_LABELS[task.status as Status] ?? task.status}`}
-            title={STATUS_LABELS[task.status as Status] ?? task.status}
-            style={{ width: "7px", height: "7px", borderRadius: "50%", background: STATUS_COLORS[task.status] ?? "var(--muted)", flexShrink: 0 }}
-          />
-          {task.title}
-        </p>
-        <span
-          style={{
-            width: "9px",
-            height: "9px",
-            borderRadius: "50%",
-            background: PRIORITY_COLORS[task.priority],
-            flexShrink: 0,
-            marginTop: "4px",
-          }}
-          title={task.priority}
-        />
-      </div>
-      {task.description && (
-        <p
-          className="text-break-anywhere"
-          style={{
-            color: "var(--muted)",
-            fontSize: "var(--text-xs)",
-            lineHeight: 1.35,
-            marginBottom: "0.35rem",
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-          }}
-        >
-          {task.description}
-        </p>
-      )}
-      {(task.externalRef || (task.labels && task.labels.length > 0)) && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem", marginBottom: "0.35rem", minWidth: 0 }}>
-          {task.externalRef && (
-            <span className="text-break-anywhere" title={task.externalRef} style={{ fontSize: "var(--text-xs)", color: "var(--primary)", background: "var(--primary-muted)", borderRadius: "4px", padding: "0.1rem 0.35rem", fontWeight: 600, fontFamily: "monospace", maxWidth: "100%" }}>
-              {task.externalRef}
-            </span>
-          )}
-          {task.labels?.map((label) => (
-            <span key={label} className="text-break-anywhere" title={label} style={{ fontSize: "var(--text-xs)", color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 15%, transparent)", borderRadius: "4px", padding: "0.1rem 0.35rem", maxWidth: "100%" }}>
-              {label}
-            </span>
-          ))}
-        </div>
-      )}
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", alignItems: "flex-end" }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
-          <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>{task.priority}</span>
-          <ConfidenceBadge score={calculateConfidence({ title: task.title, description: task.description, templateData: task.templateData, templateFields }).score} />
-          {isOverdue(task) && (
-            <span className="status-chip" style={{ color: "var(--danger)", borderColor: "color-mix(in srgb, var(--danger) 55%, var(--border) 45%)" }}>
-              Overdue
-            </span>
-          )}
-        </div>
-        <div style={{ textAlign: "right", fontSize: "var(--text-xs)", color: "var(--muted)" }}>
-          <div>{getAssigneeName(task)}</div>
-          <div>{task.dueAt ? `Due ${toDateInputValue(task.dueAt)}` : "No due date"}</div>
-          <div title={formatAbsoluteDate(task.updatedAt)}>{formatRelativeTime(task.updatedAt)}</div>
-        </div>
-      </div>
-    </button>
-  );
-});
-
-function BoardColumns({
-  tasks,
-  activeTaskId,
-  onSelectTask,
-  templateFields,
-}: {
-  tasks: Task[];
-  activeTaskId: string | null;
-  onSelectTask: (taskId: string) => void;
-  templateFields?: TemplateFields | null;
-}) {
-  // The done column accumulates without bound on an active project; cap
-  // it at DONE_BOARD_VISIBLE_LIMIT cards with an expander so it stops
-  // dominating the board. Other columns are never capped.
-  const [showAllDone, setShowAllDone] = useState(false);
-  return (
-    <div className="board-columns" style={{ alignItems: "start" }}>
-      {STATUSES.map((status) => {
-        const columnTasks = sortTasksForBoardColumn(tasks.filter((task) => task.status === status));
-        const capped = status === "done" && !showAllDone && columnTasks.length > DONE_BOARD_VISIBLE_LIMIT;
-        const visibleTasks = capped ? columnTasks.slice(0, DONE_BOARD_VISIBLE_LIMIT) : columnTasks;
-        const overflowCount = columnTasks.length - visibleTasks.length;
-        return (
-          <section key={status}>
-            <div style={{ position: "sticky", top: 0, zIndex: 2, background: "var(--bg)", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", paddingBottom: "0.35rem", borderBottom: "1px solid var(--border)" }}>
-              <h3 style={{ fontSize: "var(--text-xs)", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--muted)" }}>
-                {STATUS_LABELS[status]}
-              </h3>
-              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", background: "var(--primary-muted)", borderRadius: "999px", padding: "0.1rem 0.45rem", fontWeight: 600 }}>{columnTasks.length}</span>
-            </div>
-            {columnTasks.length === 0 ? (
-              <div style={{ border: "1px dashed var(--border)", borderRadius: "10px", padding: "1rem", color: "var(--muted)", textAlign: "center", fontSize: "var(--text-xs)" }}>
-                No tasks
-              </div>
-            ) : (
-              <>
-                {visibleTasks.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    active={task.id === activeTaskId}
-                    onSelect={onSelectTask}
-                    templateFields={templateFields}
-                  />
-                ))}
-                {status === "done" && columnTasks.length > DONE_BOARD_VISIBLE_LIMIT && (
-                  <button
-                    type="button"
-                    className="filter-chip"
-                    style={{ width: "100%", marginTop: "0.2rem" }}
-                    onClick={() => setShowAllDone((value) => !value)}
-                  >
-                    {showAllDone ? "Show less" : `… ${overflowCount} more`}
-                  </button>
-                )}
-              </>
-            )}
-          </section>
-        );
-      })}
-    </div>
-  );
-}
+// ── Dashboard page ───────────────────────────────────────────────
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { toast } = useToast();
+
   const [user, setUser] = useState<User | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -337,12 +118,16 @@ export default function DashboardPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [tasks, setTasks] = useState<Task[]>([]);
 
+  // Separate boot error (prevents board mount) from action error (toast only).
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [bootError, setBootError] = useState<string | null>(null);
 
   const [showNewTask, setShowNewTask] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+
+  // NewTaskModal fields
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
   const [newTaskStatus, setNewTaskStatus] = useState<Status>("open");
@@ -359,89 +144,92 @@ export default function DashboardPage() {
   const [newTaskRisk, setNewTaskRisk] = useState("");
   const [newTaskAgentPrompt, setNewTaskAgentPrompt] = useState("");
   const [newTaskTaskType, setNewTaskTaskType] = useState<TaskType | "">("");
-  // The server's authoritative create-time confidence for the task just created.
-  // When set, the modal shows the result panel instead of the form.
   const [createdConfidence, setCreatedConfidence] = useState<CreateConfidence | null>(null);
-  // A self-assignment failure for the just-created task, shown inside the result
-  // panel (the task itself was created; only the claim failed).
   const [createdAssignmentError, setCreatedAssignmentError] = useState<string | null>(null);
-  // The id of the just-created task, so the panel's "Edit task" can open it.
   const [createdTaskId, setCreatedTaskId] = useState<string | null>(null);
 
-  // The templateData a create would persist, built from the create-form editors
-  // via the SAME helper the edit path uses (existing=null, since a create has no
-  // prior object). Single source for the create write and the live badge.
   const newTaskTemplateData = useMemo(
-    () => buildSavedTemplateData(null, {
-      goal: newTaskGoal,
-      acceptanceCriteria: newTaskAcceptanceCriteria,
-      context: newTaskContext,
-      constraints: newTaskConstraints,
-      scope: newTaskScope,
-      outOfScope: newTaskOutOfScope,
-      dependencies: newTaskDependencies,
-      risk: newTaskRisk,
-      agentPrompt: newTaskAgentPrompt,
-      taskType: newTaskTaskType,
-    }),
-    [newTaskGoal, newTaskAcceptanceCriteria, newTaskContext, newTaskConstraints, newTaskScope, newTaskOutOfScope, newTaskDependencies, newTaskRisk, newTaskAgentPrompt, newTaskTaskType],
+    () =>
+      buildSavedTemplateData(null, {
+        goal: newTaskGoal,
+        acceptanceCriteria: newTaskAcceptanceCriteria,
+        context: newTaskContext,
+        constraints: newTaskConstraints,
+        scope: newTaskScope,
+        outOfScope: newTaskOutOfScope,
+        dependencies: newTaskDependencies,
+        risk: newTaskRisk,
+        agentPrompt: newTaskAgentPrompt,
+        taskType: newTaskTaskType,
+      }),
+    [
+      newTaskGoal,
+      newTaskAcceptanceCriteria,
+      newTaskContext,
+      newTaskConstraints,
+      newTaskScope,
+      newTaskOutOfScope,
+      newTaskDependencies,
+      newTaskRisk,
+      newTaskAgentPrompt,
+      newTaskTaskType,
+    ],
   );
+
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
   const [doneVisibility, setDoneVisibility] = useState<DoneVisibility>(DEFAULT_DONE_VISIBILITY);
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [viewMode, setViewMode] = useState<DashboardViewMode>("board");
-  const [sortState, setSortState] = useState<SortState>({ column: "updated", direction: "desc" });
   const [listPage, setListPage] = useState(1);
-  // View preferences (done visibility, view mode, sort) persist in
-  // localStorage. They load AFTER mount via the effect below to avoid an
-  // SSR/hydration mismatch; `prefsLoaded` then gates the persist effects
-  // so they don't clobber the stored values with the initial defaults.
   const [prefsLoaded, setPrefsLoaded] = useState(false);
-  const projectTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  // Overflow menu (settings / members / workflow links)
+  const overflowTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+
+  // Search input ref for "/" shortcut focus
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
   const selectedTeam = useMemo(
-    () => teams.find((team) => team.id === selectedTeamId) ?? null,
+    () => teams.find((t) => t.id === selectedTeamId) ?? null,
     [teams, selectedTeamId],
   );
 
-  // Restore persisted view preferences once, after mount.
+  const selectedProject = useMemo(
+    () => projects.find((p) => p.id === selectedProjectId) ?? null,
+    [projects, selectedProjectId],
+  );
+
+  const templateFields = selectedProject?.taskTemplate?.fields ?? null;
+
+  // ── Restore persisted view preferences once after mount ──────
+
   useEffect(() => {
     setDoneVisibility(readStoredDoneVisibility());
     setViewMode(readStoredViewMode());
-    const storedSort = readStoredSort(Object.keys(NATURAL_SORT_DIR));
-    if (storedSort) {
-      setSortState({ column: storedSort.column as SortColumn, direction: storedSort.direction });
-    }
     setPrefsLoaded(true);
   }, []);
 
-  // Persist each preference on change (guarded so the initial defaults
-  // don't overwrite what was just restored above).
   useEffect(() => {
     if (prefsLoaded) storeDoneVisibility(doneVisibility);
   }, [doneVisibility, prefsLoaded]);
+
   useEffect(() => {
     if (prefsLoaded) storeViewMode(viewMode);
   }, [viewMode, prefsLoaded]);
-  useEffect(() => {
-    if (prefsLoaded) storeSort({ column: sortState.column, direction: sortState.direction });
-  }, [sortState, prefsLoaded]);
+
+  // ── Task detail ──────────────────────────────────────────────
 
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [activeTaskDetail, setActiveTaskDetail] = useState<Task | null>(null);
-  // When true, the next opened task detail starts in edit mode (set only by the
-  // create-confidence panel's "Edit task"; reset on every other open + on close).
   const [editActiveOnOpen, setEditActiveOnOpen] = useState(false);
 
-  // Open a task's detail. `edit` is opt-in (panel "Edit task"); all normal opens
-  // pass it false so a board/list click never inherits a stale edit-mode flag.
   const selectTask = useCallback((id: string | null, edit = false) => {
     setEditActiveOnOpen(edit);
     setActiveTaskId(id);
   }, []);
 
-  // Fetch full task detail (with comments/attachments) when a task is selected
   useEffect(() => {
     if (!activeTaskId) {
       setActiveTaskDetail(null);
@@ -451,14 +239,16 @@ export default function DashboardPage() {
     void getTask(activeTaskId).then((task) => {
       if (!cancelled) setActiveTaskDetail(task);
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [activeTaskId]);
 
-  const activeTask = activeTaskDetail;
+  // ── Filtered task lists ──────────────────────────────────────
+
   const filteredTasks = useMemo(() => {
     const normalizedQuery = taskQuery.trim().toLowerCase();
     const now = Date.now();
-
     return tasks.filter((task) => {
       if (task.status === "done" && isDoneTaskHidden(doneVisibility, task.updatedAt, now)) return false;
       if (taskScope === "mine" && task.claimedByUserId !== user?.id) return false;
@@ -466,17 +256,17 @@ export default function DashboardPage() {
       if (taskScope === "overdue" && !isOverdue(task)) return false;
       if (labelFilter && !(task.labels ?? []).includes(labelFilter)) return false;
       if (!normalizedQuery) return true;
-      return `${task.title} ${task.description ?? ""} ${task.externalRef ?? ""} ${(task.labels ?? []).join(" ")}`.toLowerCase().includes(normalizedQuery);
+      return `${task.title} ${task.description ?? ""} ${task.externalRef ?? ""} ${(task.labels ?? []).join(" ")}`
+        .toLowerCase()
+        .includes(normalizedQuery);
     });
   }, [tasks, taskQuery, taskScope, doneVisibility, labelFilter, user?.id]);
 
-  // Count of done tasks the current visibility hides — surfaced as a
-  // one-click reveal so nothing feels silently dropped.
   const hiddenDoneCount = useMemo(() => {
     if (doneVisibility === "all") return 0;
     const now = Date.now();
     return tasks.filter(
-      (task) => task.status === "done" && isDoneTaskHidden(doneVisibility, task.updatedAt, now),
+      (t) => t.status === "done" && isDoneTaskHidden(doneVisibility, t.updatedAt, now),
     ).length;
   }, [tasks, doneVisibility]);
 
@@ -488,60 +278,135 @@ export default function DashboardPage() {
     return [...set].sort();
   }, [tasks]);
 
-  const statusSummary = useMemo(() => {
-    return STATUSES.reduce<Record<Status, number>>((acc, status) => {
-      acc[status] = filteredTasks.filter((task) => task.status === status).length;
-      return acc;
-    }, { open: 0, in_progress: 0, review: 0, done: 0 });
-  }, [filteredTasks]);
-  const hasActiveFilters = taskQuery.trim().length > 0 || taskScope !== "all" || doneVisibility !== DEFAULT_DONE_VISIBILITY || labelFilter !== null;
+  const hasActiveFilters =
+    taskQuery.trim().length > 0 ||
+    taskScope !== "all" ||
+    doneVisibility !== DEFAULT_DONE_VISIBILITY ||
+    labelFilter !== null;
 
-  function toggleSort(column: SortColumn) {
-    setSortState((prev) => {
-      if (prev.column === column) {
-        return { column, direction: prev.direction === "asc" ? "desc" : "asc" };
+  // Reset list page when filters or view mode change
+  useEffect(() => {
+    setListPage(1);
+  }, [selectedProjectId, taskQuery, taskScope, doneVisibility, viewMode]);
+
+  // ── Bootstrap ────────────────────────────────────────────────
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [me, userTeams] = await Promise.all([getCurrentUser(), getTeams()]);
+        if (!me) {
+          router.replace("/auth");
+          return;
+        }
+        setUser(me);
+        setTeams(userTeams);
+
+        if (userTeams.length === 0) {
+          router.replace("/onboarding");
+          return;
+        }
+
+        const params = new URLSearchParams(window.location.search);
+        const requestedTeamId = params.get("teamId");
+        const requestedProjectId = params.get("projectId");
+        const requestedTaskId = params.get("taskId");
+
+        const resolvedTeam = userTeams.find((t) => t.id === requestedTeamId) ?? userTeams[0]!;
+        setSelectedTeamId(resolvedTeam.id);
+
+        const teamProjects = await getProjects(resolvedTeam.id);
+        setProjects(teamProjects);
+
+        if (teamProjects.length === 0) {
+          setSelectedProjectId("");
+          setTasks([]);
+          updateUrl(resolvedTeam.id);
+          setLoading(false);
+          return;
+        }
+
+        const storedProjectId = readStoredProjectId(resolvedTeam.id);
+        const preferredProjectId = requestedProjectId ?? storedProjectId;
+        const resolvedProject =
+          teamProjects.find((p) => p.id === preferredProjectId) ?? teamProjects[0]!;
+        setSelectedProjectId(resolvedProject.id);
+        storeProjectId(resolvedTeam.id, resolvedProject.id);
+
+        const projectTasks = await getTasks(resolvedProject.id);
+        setTasks(projectTasks);
+        setActiveTaskId(
+          requestedTaskId && projectTasks.some((t) => t.id === requestedTaskId)
+            ? requestedTaskId
+            : null,
+        );
+        updateUrl(resolvedTeam.id, resolvedProject.id);
+      } catch (err) {
+        setBootError((err as Error).message);
+      } finally {
+        setLoading(false);
       }
-      return { column, direction: NATURAL_SORT_DIR[column] };
-    });
+    })();
+  }, [router]);
+
+  // Poll for task updates every 15 seconds
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    const interval = setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const freshTasks = await getTasks(selectedProjectId);
+        setTasks(freshTasks);
+      } catch {
+        // Silent — avoid error banner for background polls
+      }
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, [selectedProjectId]);
+
+  // ── Keyboard shortcuts ───────────────────────────────────────
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName;
+      const isTyping = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+
+      if (!isTyping && e.key === "/" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      if (!isTyping && (e.key === "c" || e.key === "C") && !e.metaKey && !e.ctrlKey) {
+        if (selectedProjectId && !showNewTask) {
+          setBootError(null);
+          setShowNewTask(true);
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [selectedProjectId, showNewTask]);
+
+  // ── Project change ───────────────────────────────────────────
+
+  async function handleProjectChange(projectId: string) {
+    if (!selectedTeamId) return;
+    setSelectedProjectId(projectId);
+    setBootError(null);
+    setLoading(true);
+    try {
+      const projectTasks = await getTasks(projectId);
+      setTasks(projectTasks);
+      setActiveTaskId(null);
+      storeProjectId(selectedTeamId, projectId);
+      updateUrl(selectedTeamId, projectId);
+    } catch (err) {
+      setBootError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  const listSortedTasks = useMemo(() => {
-    const dir = sortState.direction === "asc" ? 1 : -1;
-    return [...filteredTasks].sort((a, b) => {
-      let cmp = 0;
-      switch (sortState.column) {
-        case "title":
-          cmp = a.title.localeCompare(b.title);
-          break;
-        case "status":
-          cmp = (STATUS_RANK[a.status] ?? 0) - (STATUS_RANK[b.status] ?? 0);
-          break;
-        case "assignee":
-          cmp = getAssigneeName(a).localeCompare(getAssigneeName(b));
-          break;
-        case "due": {
-          const aDue = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
-          const bDue = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
-          cmp = aDue - bDue;
-          break;
-        }
-        case "updated":
-          cmp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
-          break;
-        case "priority":
-          cmp = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
-          break;
-      }
-      return cmp * dir;
-    });
-  }, [filteredTasks, sortState]);
-
-  const listTotalPages = Math.max(1, Math.ceil(listSortedTasks.length / LIST_PAGE_SIZE));
-  const currentListPage = Math.min(listPage, listTotalPages);
-  const listPageTasks = useMemo(() => {
-    const start = (currentListPage - 1) * LIST_PAGE_SIZE;
-    return listSortedTasks.slice(start, start + LIST_PAGE_SIZE);
-  }, [currentListPage, listSortedTasks]);
+  // ── Create task ──────────────────────────────────────────────
 
   function resetNewTaskFields() {
     setNewTaskTitle("");
@@ -570,112 +435,10 @@ export default function DashboardPage() {
     resetNewTaskFields();
   }
 
-  const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
-  const templateFields = selectedProject?.taskTemplate?.fields ?? null;
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const [me, userTeams] = await Promise.all([getCurrentUser(), getTeams()]);
-        if (!me) {
-          router.replace("/auth");
-          return;
-        }
-        setUser(me);
-
-        setTeams(userTeams);
-        if (userTeams.length === 0) {
-          router.replace("/onboarding");
-          return;
-        }
-
-        const params = new URLSearchParams(window.location.search);
-        const requestedTeamId = params.get("teamId");
-        const requestedProjectId = params.get("projectId");
-        const requestedTaskId = params.get("taskId");
-
-        const resolvedTeam =
-          userTeams.find((team) => team.id === requestedTeamId) ?? userTeams[0]!;
-        setSelectedTeamId(resolvedTeam.id);
-
-        const teamProjects = await getProjects(resolvedTeam.id);
-        setProjects(teamProjects);
-
-        if (teamProjects.length === 0) {
-          setSelectedProjectId("");
-          setTasks([]);
-          updateUrl(resolvedTeam.id);
-          setLoading(false);
-          return;
-        }
-
-        const storedProjectId = readStoredProjectId(resolvedTeam.id);
-        const preferredProjectId = requestedProjectId ?? storedProjectId;
-        const resolvedProject =
-          teamProjects.find((project) => project.id === preferredProjectId) ?? teamProjects[0]!;
-        setSelectedProjectId(resolvedProject.id);
-        storeProjectId(resolvedTeam.id, resolvedProject.id);
-
-        const projectTasks = await getTasks(resolvedProject.id);
-        setTasks(projectTasks);
-        setActiveTaskId(
-          requestedTaskId && projectTasks.some((t) => t.id === requestedTaskId)
-            ? requestedTaskId
-            : null,
-        );
-
-        updateUrl(resolvedTeam.id, resolvedProject.id);
-      } catch (err) {
-        setError((err as Error).message);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [router]);
-
-  // Poll for task updates every 15 seconds
-  useEffect(() => {
-    if (!selectedProjectId) return;
-    const interval = setInterval(async () => {
-      if (document.hidden) return;
-      try {
-        const freshTasks = await getTasks(selectedProjectId);
-        setTasks(freshTasks);
-      } catch {
-        // silent – avoid error banner for background polls
-      }
-    }, 15_000);
-    return () => clearInterval(interval);
-  }, [selectedProjectId]);
-
-  useEffect(() => {
-    setListPage(1);
-  }, [selectedProjectId, taskQuery, taskScope, doneVisibility, sortState, viewMode]);
-
-  async function handleProjectChange(projectId: string) {
-    if (!selectedTeamId) return;
-    setSelectedProjectId(projectId);
-    setError(null);
-    setLoading(true);
-    try {
-      const projectTasks = await getTasks(projectId);
-      setTasks(projectTasks);
-      setActiveTaskId(null);
-      storeProjectId(selectedTeamId, projectId);
-      updateUrl(selectedTeamId, projectId);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function handleCreateTask(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedProjectId || !newTaskTitle.trim()) return;
-
     setCreatingTask(true);
-    setError(null);
     try {
       const { task: created, confidence } = await createTask(selectedProjectId, {
         title: newTaskTitle.trim(),
@@ -698,219 +461,305 @@ export default function DashboardPage() {
 
       setTasks((prev) => [task, ...prev]);
       setActiveTaskId(null);
-      // Surface the backend's authoritative create-time confidence in the modal.
-      // A self-assignment failure is shown INSIDE the result panel alongside the
-      // confidence (the task was created; only the claim failed) rather than as a
-      // page-level banner the modal overlay would hide. Fall back to the old
-      // close-on-success behaviour if an older backend omits confidence; there
-      // the assignment error has no panel to live in, so surface it on the page.
+
       if (confidence) {
         setCreatedTaskId(task.id);
         setCreatedAssignmentError(assignmentError);
         setCreatedConfidence(confidence);
       } else {
-        if (assignmentError) setError(assignmentError);
+        if (assignmentError) toast(assignmentError, "error");
         closeNewTaskModal();
       }
     } catch (err) {
-      setError((err as Error).message);
+      toast((err as Error).message, "error");
     } finally {
       setCreatingTask(false);
     }
   }
 
   function handleTaskUpdate(updated: Task) {
-    setTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
+    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
     setActiveTaskDetail(updated);
   }
 
   function handleTaskDelete(taskId: string) {
-    setTasks((prev) => prev.filter((task) => task.id !== taskId));
+    setTasks((prev) => prev.filter((t) => t.id !== taskId));
     setActiveTaskId(null);
   }
 
-  return (
-    <main className="page-shell">
-      {selectedProject?.accessSource === "project" && (
-        <div style={{ marginBottom: "var(--space-3)" }}>
-          <AlertBanner tone="info">
-            This project is shared with you. You access it through a per-project
-            invite, not via the team. PR operations on the linked GitHub
-            repository require your own collaborator-level access on the repo.
-          </AlertBanner>
-        </div>
-      )}
+  function clearFilters() {
+    setTaskQuery("");
+    setTaskScope("all");
+    setDoneVisibility(DEFAULT_DONE_VISIBILITY);
+    setLabelFilter(null);
+  }
 
-      <section
-        className="dashboard-select-grid"
-        style={{
-          gap: "0.6rem",
-          marginBottom: "1rem",
-          alignItems: "end",
-        }}
+  // ── Render ───────────────────────────────────────────────────
+
+  // Project-access info banner (shared-via-invite)
+  const accessBanner = selectedProject?.accessSource === "project" && (
+    <div className="db-access-banner">
+      <AlertBanner tone="info">
+        This project is shared with you via a per-project invite. PR operations
+        on the linked GitHub repository require your own collaborator-level access.
+      </AlertBanner>
+    </div>
+  );
+
+  // Toolbar: project picker + summary + search + filter + view toggle + new task
+  const toolbar = (
+    <PageHeader
+      breadcrumb={
+        <>
+          <span>{selectedTeam?.name ?? "Pandora Lab"}</span>
+          <span>/</span>
+        </>
+      }
+      title={
+        <ProjectPicker
+          projects={projects}
+          selectedProjectId={selectedProjectId}
+          onSelect={(id) => void handleProjectChange(id)}
+          loading={loading}
+        />
+      }
+      summary={
+        selectedProjectId && !loading ? (
+          <span className="num">{filteredTasks.length} tasks</span>
+        ) : undefined
+      }
+    >
+      {/* Search with "/" shortcut */}
+      <div className="db-search">
+        <Icon name="search" size={14} />
+        <input
+          ref={searchInputRef}
+          type="search"
+          className="db-search-input"
+          aria-label="Search tasks"
+          value={taskQuery}
+          onChange={(e) => setTaskQuery(e.target.value)}
+          placeholder="Search tasks…"
+        />
+        <KeyHint>/</KeyHint>
+      </div>
+
+      {/* Filter toggle */}
+      <button
+        type="button"
+        className={`btn--box btn--sm ${showFilters || hasActiveFilters ? "btn-primary" : "btn-ghost"}`}
+        onClick={() => setShowFilters((v) => !v)}
       >
-        <div className="project-select-wrap">
-          <FormField label="Project">
-            <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-            <button
-              ref={projectTriggerRef}
-              type="button"
-              disabled={loading || !selectedTeamId || projects.length === 0}
-              onClick={() => setProjectMenuOpen((value) => !value)}
-              style={{
-                width: "100%",
-                background: "var(--surface)",
-                color: "var(--text)",
-                border: "1px solid var(--border)",
-                borderRadius: "8px",
-                padding: "0.5rem 0.75rem",
-                textAlign: "left",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: "0.5rem",
-                opacity: loading || !selectedTeamId || projects.length === 0 ? 0.7 : 1,
-              }}
-              aria-haspopup="menu"
-              aria-expanded={projectMenuOpen}
-            >
-              <span
-                style={{
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-2)",
-                }}
-              >
-                {selectedProject?.accessSource === "project" && (
-                  <ShareIcon title="Shared with you" />
-                )}
-                {selectedProject?.name ?? "Select a project"}
-              </span>
-              <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{projectMenuOpen ? "▲" : "▼"}</span>
-            </button>
-            {selectedProjectId && (
-              <>
-              <Link
-                href={`/projects/workflow?projectId=${selectedProjectId}`}
-                className="project-settings-icon"
-                aria-label="Workflow settings"
-                title="Workflow & gates"
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="8" cy="8" r="2.5" />
-                  <path d="M6.83 2.17a.5.5 0 0 1 .49-.4h1.36a.5.5 0 0 1 .49.4l.2 1.1a4.5 4.5 0 0 1 1.09.63l1.05-.35a.5.5 0 0 1 .58.2l.68 1.18a.5.5 0 0 1-.1.6l-.84.75a4.5 4.5 0 0 1 0 1.26l.84.75a.5.5 0 0 1 .1.6l-.68 1.18a.5.5 0 0 1-.58.2l-1.05-.35a4.5 4.5 0 0 1-1.09.63l-.2 1.1a.5.5 0 0 1-.49.4H7.32a.5.5 0 0 1-.49-.4l-.2-1.1a4.5 4.5 0 0 1-1.09-.63l-1.05.35a.5.5 0 0 1-.58-.2l-.68-1.18a.5.5 0 0 1 .1-.6l.84-.75a4.5 4.5 0 0 1 0-1.26l-.84-.75a.5.5 0 0 1-.1-.6l.68-1.18a.5.5 0 0 1 .58-.2l1.05.35a4.5 4.5 0 0 1 1.09-.63l.2-1.1z" />
-                </svg>
-              </Link>
-              <Link
-                href={`/projects/${selectedProjectId}/members`}
-                className="project-settings-icon"
-                aria-label="Project members"
-                title="Project members & invites"
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="6" cy="6" r="2.5" />
-                  <path d="M2 13a4 4 0 0 1 8 0" />
-                  <circle cx="11.5" cy="5" r="1.8" />
-                  <path d="M9.5 12.5a3 3 0 0 1 5 0" />
-                </svg>
-              </Link>
-              <Link
-                href={`/projects/${selectedProjectId}/settings`}
-                className="project-settings-icon"
-                aria-label="Template settings"
-                title="Agent template & confidence settings"
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="2" y="2" width="12" height="12" rx="2" />
-                  <path d="M5 6h6M5 8h4M5 10h5" />
-                </svg>
-              </Link>
-              </>
-            )}
-            </div>
-          </FormField>
+        <Icon name="filter" size={14} />
+        Filter
+        {hasActiveFilters && !showFilters && <span className="db-filter-dot" />}
+      </button>
+
+      {/* Board / List view toggle */}
+      <Tabs
+        value={viewMode}
+        onChange={(v) => setViewMode(v as DashboardViewMode)}
+        tabs={[
+          { value: "board", label: "Board", icon: <Icon name="board" size={14} /> },
+          { value: "list", label: "List", icon: <Icon name="list" size={14} /> },
+        ]}
+        label="View"
+      />
+
+      {/* Import (ghost) */}
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setShowImport(true)}
+        disabled={!selectedProjectId}
+      >
+        Import
+      </Button>
+
+      {/* New task with "C" key hint */}
+      <Button
+        size="sm"
+        onClick={() => {
+          setBootError(null);
+          setShowNewTask(true);
+        }}
+        disabled={!selectedProjectId}
+        keyHint="C"
+      >
+        <Icon name="plus" size={13} />
+        New task
+      </Button>
+
+      {/* Overflow menu: workflow / members / settings */}
+      {selectedProjectId && (
+        <>
+          <button
+            ref={overflowTriggerRef}
+            type="button"
+            className="db-overflow-btn"
+            aria-label="Project settings"
+            aria-haspopup="menu"
+            aria-expanded={overflowOpen}
+            onClick={() => setOverflowOpen((v) => !v)}
+          >
+            <Icon name="dots" size={14} />
+          </button>
           <DropdownMenu
-            anchorRef={projectTriggerRef}
-            open={projectMenuOpen}
-            onClose={() => setProjectMenuOpen(false)}
-            align="start"
-            minWidth={220}
-            className="project-picker-menu"
+            anchorRef={overflowTriggerRef}
+            open={overflowOpen}
+            onClose={() => setOverflowOpen(false)}
+            align="end"
+            minWidth={180}
           >
-            <div role="menu" className="menu-scroll" style={{ maxHeight: "300px" }}>
-              {projects.map((project) => {
-                const active = project.id === selectedProjectId;
-                return (
-                  <button
-                    key={project.id}
-                    type="button"
-                    role="menuitem"
-                    className={`menu-option ${active ? "menu-option-active" : ""}`}
-                    onClick={() => {
-                      setProjectMenuOpen(false);
-                      if (project.id !== selectedProjectId) {
-                        void handleProjectChange(project.id);
-                      }
-                    }}
-                    title={project.accessSource === "project" ? `${project.name} (shared)` : project.name}
-                    style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}
-                  >
-                    {project.accessSource === "project" && <ShareIcon title="Shared" />}
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {project.name}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+            <Link
+              href={`/projects/workflow?projectId=${selectedProjectId}`}
+              className="app-dropdown-item"
+              onClick={() => setOverflowOpen(false)}
+            >
+              Workflow &amp; gates
+            </Link>
+            <Link
+              href={`/projects/${selectedProjectId}/members`}
+              className="app-dropdown-item"
+              onClick={() => setOverflowOpen(false)}
+            >
+              Members
+            </Link>
+            <Link
+              href={`/projects/${selectedProjectId}/settings`}
+              className="app-dropdown-item"
+              onClick={() => setOverflowOpen(false)}
+            >
+              Settings
+            </Link>
           </DropdownMenu>
-        </div>
+        </>
+      )}
+    </PageHeader>
+  );
 
-        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end", gap: "0.5rem", flexWrap: "wrap" }}>
-          <div>
-            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.25rem" }}>View</p>
-            <div className="view-toggle" aria-label="Task view mode">
-              <button
-                type="button"
-                className={viewMode === "board" ? "view-toggle-active" : ""}
-                aria-pressed={viewMode === "board"}
-                onClick={() => setViewMode("board")}
-              >
-                Board view
-              </button>
-              <button
-                type="button"
-                className={viewMode === "list" ? "view-toggle-active" : ""}
-                aria-pressed={viewMode === "list"}
-                onClick={() => setViewMode("list")}
-              >
-                List view
-              </button>
-            </div>
-          </div>
-          <Button
-            variant="ghost"
-            onClick={() => setShowImport(true)}
-            disabled={!selectedProjectId}
-          >
-            Import
-          </Button>
-          <Button
-            onClick={() => {
-              setError(null);
-              setShowNewTask(true);
-            }}
-            disabled={!selectedProjectId}
-          >
-            + New Task
-          </Button>
-        </div>
-      </section>
+  // Filter bar (shown when showFilters is true)
+  const filterBar = showFilters && (
+    <FilterToolbar
+      taskScope={taskScope}
+      onScopeChange={setTaskScope}
+      doneVisibility={doneVisibility}
+      onDoneVisibilityChange={setDoneVisibility}
+      labels={allLabels}
+      labelFilter={labelFilter}
+      onLabelFilterChange={setLabelFilter}
+      hiddenDoneCount={hiddenDoneCount}
+      hasActiveFilters={hasActiveFilters}
+      onClearFilters={clearFilters}
+    />
+  );
 
-      <Modal open={showNewTask} onClose={closeNewTaskModal} title={createdConfidence ? "Task created" : "New Task"}>
+  // Main content area
+  let content: React.ReactNode;
+  if (loading) {
+    content = (
+      <div className="db-state-wrap">
+        <SkeletonList rows={5} rowHeight="4.5rem" label="Loading tasks" />
+      </div>
+    );
+  } else if (bootError) {
+    content = (
+      <div className="db-state-wrap">
+        <AlertBanner tone="danger" title="Could not load tasks">
+          {bootError}
+        </AlertBanner>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="db-retry-btn"
+          onClick={() => window.location.reload()}
+        >
+          Retry
+        </Button>
+      </div>
+    );
+  } else if (!selectedTeamId) {
+    content = (
+      <div className="db-state-wrap">
+        <EmptyState
+          icon="box"
+          title="No team selected"
+          description="Join or create a team to get started."
+          action={
+            <Button href="/teams" size="sm">
+              Go to Teams
+            </Button>
+          }
+        />
+      </div>
+    );
+  } else if (!selectedProjectId) {
+    content = (
+      <div className="db-state-wrap">
+        <EmptyState
+          icon="box"
+          title="This team has no projects yet."
+          description="Create a project to start tracking tasks."
+          action={
+            <Button href={`/teams?teamId=${selectedTeamId}`} size="sm">
+              Create project
+            </Button>
+          }
+        />
+      </div>
+    );
+  } else if (viewMode === "board") {
+    content = (
+      <>
+        {/* Status summary only in list view per spec; board columns are self-documenting */}
+        <BoardView
+          tasks={filteredTasks}
+          activeTaskId={activeTaskId}
+          onSelectTask={selectTask}
+          onAddTask={() => {
+            setBootError(null);
+            setShowNewTask(true);
+          }}
+        />
+      </>
+    );
+  } else {
+    // List view: status summary bar + table
+    content = (
+      <>
+        <div className="db-status-summary">
+          {STATUSES.map((s) => (
+            <StatusChip key={s} status={s.replace(/_/g, "-")} />
+          ))}
+          <span className="db-filter-label">
+            {filteredTasks.length} / {tasks.length} tasks shown
+          </span>
+        </div>
+        <TaskListView
+          tasks={filteredTasks}
+          onSelectTask={selectTask}
+          page={listPage}
+          pageSize={LIST_PAGE_SIZE}
+          onPageChange={setListPage}
+        />
+      </>
+    );
+  }
+
+  return (
+    <div className="db-shell">
+      {toolbar}
+      {filterBar}
+      {accessBanner}
+
+      {content}
+
+      {/* NewTaskModal (inline per D1 scope; extracted in D2) */}
+      <Modal
+        open={showNewTask}
+        onClose={closeNewTaskModal}
+        title={createdConfidence ? "Task created" : "New Task"}
+      >
         {createdConfidence ? (
           <CreateConfidencePanel
             confidence={createdConfidence}
@@ -923,371 +772,218 @@ export default function DashboardPage() {
             onClose={closeNewTaskModal}
           />
         ) : (
-        <form onSubmit={(e) => void handleCreateTask(e)}>
-          <div style={{ marginBottom: "0.75rem" }}>
-            <div style={{ marginBottom: "0.5rem" }}>
-              <FormField label="Title">
-                <input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} required style={{ width: "100%" }} />
-              </FormField>
-            </div>
-
-            <div style={{ marginBottom: "0.5rem" }}>
-              <FormField label="Description">
-                <textarea value={newTaskDescription} onChange={(e) => setNewTaskDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
-              </FormField>
-            </div>
-
-            <div className="new-task-grid" style={{ gap: "0.5rem" }}>
-              <FormField label="Status">
-                <Select value={newTaskStatus} onChange={(v) => setNewTaskStatus(v as Status)} options={STATUSES.map((status) => ({ value: status, label: STATUS_LABELS[status] }))} style={{ width: "100%" }} />
-              </FormField>
-              <FormField label="Priority">
-                <Select value={newTaskPriority} onChange={(v) => setNewTaskPriority(v as Priority)} options={[{value:"LOW",label:"LOW"},{value:"MEDIUM",label:"MEDIUM"},{value:"HIGH",label:"HIGH"},{value:"CRITICAL",label:"CRITICAL"}]} style={{ width: "100%" }} />
-              </FormField>
-              <FormField label="Due Date">
-                <input type="date" value={newTaskDueAt} onChange={(e) => setNewTaskDueAt(e.target.value)} style={{ width: "100%" }} />
-              </FormField>
-            </div>
-            <div style={{ marginTop: "0.5rem" }}>
-              <FormField label="Assignee">
-                <Select
-                  value={newTaskAssignee}
-                  onChange={(v) => setNewTaskAssignee(v as "unassigned" | "me")}
-                  options={[{value:"unassigned",label:"Unassigned"},{value:"me",label:"Assign to me"}]}
-                  style={{ width: "100%" }}
-                />
-              </FormField>
-            </div>
-
-            {templateFields && (
-              <div style={{ marginTop: "0.75rem", borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
-                <p style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: "0.5rem", color: "var(--text)" }}>Agent Template</p>
-                {(selectedProject?.taskTemplate?.presets?.length ?? 0) > 0 && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginBottom: "0.5rem" }}>
-                    {selectedProject!.taskTemplate!.presets!.map((preset) => (
-                      <button
-                        key={preset.name}
-                        type="button"
-                        className="filter-chip"
-                        onClick={() => {
-                          if (preset.description !== undefined) setNewTaskDescription(preset.description);
-                          if (preset.goal !== undefined) setNewTaskGoal(preset.goal);
-                          if (preset.acceptanceCriteria !== undefined) setNewTaskAcceptanceCriteria(preset.acceptanceCriteria);
-                          if (preset.context !== undefined) setNewTaskContext(preset.context);
-                          if (preset.constraints !== undefined) setNewTaskConstraints(preset.constraints);
-                          if (preset.scope !== undefined) setNewTaskScope(preset.scope);
-                          if (preset.outOfScope !== undefined) setNewTaskOutOfScope(preset.outOfScope);
-                          if (preset.dependencies !== undefined) setNewTaskDependencies(preset.dependencies);
-                          if (preset.risk !== undefined) setNewTaskRisk(preset.risk);
-                          if (preset.agentPrompt !== undefined) setNewTaskAgentPrompt(preset.agentPrompt);
-                          if (preset.taskType !== undefined) setNewTaskTaskType(preset.taskType);
-                        }}
-                      >
-                        {preset.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {templateFields.goal && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Goal">
-                      <textarea value={newTaskGoal} onChange={(e) => setNewTaskGoal(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="What should be achieved?" />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.acceptanceCriteria && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Acceptance Criteria">
-                      <textarea value={newTaskAcceptanceCriteria} onChange={(e) => setNewTaskAcceptanceCriteria(e.target.value)} rows={3} style={{ width: "100%", resize: "vertical" }} placeholder="When is this task done?" />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.context && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Context">
-                      <textarea value={newTaskContext} onChange={(e) => setNewTaskContext(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="Relevant files, links, dependencies…" />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.constraints && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Constraints">
-                      <textarea value={newTaskConstraints} onChange={(e) => setNewTaskConstraints(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="What must not happen?" />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.scope && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Scope">
-                      <textarea value={newTaskScope} onChange={(e) => setNewTaskScope(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="Files, modules, or surfaces this may touch" />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.outOfScope && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Out of Scope">
-                      <textarea value={newTaskOutOfScope} onChange={(e) => setNewTaskOutOfScope(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="What must NOT change" />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.dependencies && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Dependencies">
-                      <textarea value={newTaskDependencies} onChange={(e) => setNewTaskDependencies(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="Prerequisite work, or 'none'" />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.risk && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Risk">
-                      <textarea value={newTaskRisk} onChange={(e) => setNewTaskRisk(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} placeholder="Risk / blast radius (low / medium / high, and why)" />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.agentPrompt && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Agent Prompt">
-                      <textarea value={newTaskAgentPrompt} onChange={(e) => setNewTaskAgentPrompt(e.target.value)} rows={4} style={{ width: "100%", resize: "vertical", fontFamily: "var(--font-mono, monospace)" }} placeholder="Step-by-step instructions a weak agent can execute verbatim" />
-                    </FormField>
-                  </div>
-                )}
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <FormField label="Task Type">
-                    <Select
-                      value={newTaskTaskType}
-                      onChange={(v) => setNewTaskTaskType(v as TaskType | "")}
-                      options={[{ value: "", label: "— none —" }, ...TASK_TYPES.map((t) => ({ value: t, label: t }))]}
-                      ariaLabel="Task type"
-                      style={{ width: "100%" }}
-                    />
-                  </FormField>
-                </div>
-                <div style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
-                  Confidence:{" "}
-                  <ConfidenceBadge
-                    score={calculateConfidence({
-                      title: newTaskTitle,
-                      description: newTaskDescription || null,
-                      templateData: newTaskTemplateData,
-                      templateFields,
-                    }).score}
+          <form onSubmit={(e) => void handleCreateTask(e)}>
+            <div className="ntm-form-body">
+              <div className="ntm-field-wrap">
+                <FormField label="Title">
+                  <input
+                    className="ntm-w-full"
+                    value={newTaskTitle}
+                    onChange={(e) => setNewTaskTitle(e.target.value)}
+                    required
                   />
-                </div>
+                </FormField>
               </div>
-            )}
-          </div>
 
-          <Button type="submit" disabled={creatingTask} loading={creatingTask} size="sm">
-            {creatingTask ? "Creating…" : "Create task"}
-          </Button>
-        </form>
+              <div className="ntm-field-wrap">
+                <FormField label="Description">
+                  <textarea
+                    className="ntm-w-full ntm-resizable"
+                    value={newTaskDescription}
+                    onChange={(e) => setNewTaskDescription(e.target.value)}
+                    rows={5}
+                  />
+                </FormField>
+              </div>
+
+              <div className="new-task-grid new-task-grid--gapped">
+                <FormField label="Status">
+                  <Select
+                    className="ntm-w-full"
+                    value={newTaskStatus}
+                    onChange={(v) => setNewTaskStatus(v as Status)}
+                    options={[
+                      { value: "open", label: "Open" },
+                      { value: "in_progress", label: "In Progress" },
+                      { value: "review", label: "In Review" },
+                      { value: "done", label: "Done" },
+                    ]}
+                  />
+                </FormField>
+                <FormField label="Priority">
+                  <Select
+                    className="ntm-w-full"
+                    value={newTaskPriority}
+                    onChange={(v) => setNewTaskPriority(v as Priority)}
+                    options={[
+                      { value: "LOW", label: "LOW" },
+                      { value: "MEDIUM", label: "MEDIUM" },
+                      { value: "HIGH", label: "HIGH" },
+                      { value: "CRITICAL", label: "CRITICAL" },
+                    ]}
+                  />
+                </FormField>
+                <FormField label="Due Date">
+                  <input
+                    className="ntm-w-full"
+                    type="date"
+                    value={newTaskDueAt}
+                    onChange={(e) => setNewTaskDueAt(e.target.value)}
+                  />
+                </FormField>
+              </div>
+
+              <div className="ntm-assignee-wrap">
+                <FormField label="Assignee">
+                  <Select
+                    className="ntm-w-full"
+                    value={newTaskAssignee}
+                    onChange={(v) => setNewTaskAssignee(v as "unassigned" | "me")}
+                    options={[
+                      { value: "unassigned", label: "Unassigned" },
+                      { value: "me", label: "Assign to me" },
+                    ]}
+                  />
+                </FormField>
+              </div>
+
+              {templateFields && (
+                <div className="ntm-template-section">
+                  <p className="ntm-template-heading">Agent Template</p>
+                  {(selectedProject?.taskTemplate?.presets?.length ?? 0) > 0 && (
+                    <div className="ntm-preset-row">
+                      {selectedProject!.taskTemplate!.presets!.map((preset) => (
+                        <button
+                          key={preset.name}
+                          type="button"
+                          className="filter-chip"
+                          onClick={() => {
+                            if (preset.description !== undefined) setNewTaskDescription(preset.description);
+                            if (preset.goal !== undefined) setNewTaskGoal(preset.goal);
+                            if (preset.acceptanceCriteria !== undefined) setNewTaskAcceptanceCriteria(preset.acceptanceCriteria);
+                            if (preset.context !== undefined) setNewTaskContext(preset.context);
+                            if (preset.constraints !== undefined) setNewTaskConstraints(preset.constraints);
+                            if (preset.scope !== undefined) setNewTaskScope(preset.scope);
+                            if (preset.outOfScope !== undefined) setNewTaskOutOfScope(preset.outOfScope);
+                            if (preset.dependencies !== undefined) setNewTaskDependencies(preset.dependencies);
+                            if (preset.risk !== undefined) setNewTaskRisk(preset.risk);
+                            if (preset.agentPrompt !== undefined) setNewTaskAgentPrompt(preset.agentPrompt);
+                            if (preset.taskType !== undefined) setNewTaskTaskType(preset.taskType);
+                          }}
+                        >
+                          {preset.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {templateFields.goal && (
+                    <div className="ntm-field-wrap">
+                      <FormField label="Goal">
+                        <textarea className="ntm-w-full ntm-resizable" value={newTaskGoal} onChange={(e) => setNewTaskGoal(e.target.value)} rows={2} placeholder="What should be achieved?" />
+                      </FormField>
+                    </div>
+                  )}
+                  {templateFields.acceptanceCriteria && (
+                    <div className="ntm-field-wrap">
+                      <FormField label="Acceptance Criteria">
+                        <textarea className="ntm-w-full ntm-resizable" value={newTaskAcceptanceCriteria} onChange={(e) => setNewTaskAcceptanceCriteria(e.target.value)} rows={3} placeholder="When is this task done?" />
+                      </FormField>
+                    </div>
+                  )}
+                  {templateFields.context && (
+                    <div className="ntm-field-wrap">
+                      <FormField label="Context">
+                        <textarea className="ntm-w-full ntm-resizable" value={newTaskContext} onChange={(e) => setNewTaskContext(e.target.value)} rows={2} placeholder="Relevant files, links, dependencies…" />
+                      </FormField>
+                    </div>
+                  )}
+                  {templateFields.constraints && (
+                    <div className="ntm-field-wrap">
+                      <FormField label="Constraints">
+                        <textarea className="ntm-w-full ntm-resizable" value={newTaskConstraints} onChange={(e) => setNewTaskConstraints(e.target.value)} rows={2} placeholder="What must not happen?" />
+                      </FormField>
+                    </div>
+                  )}
+                  {templateFields.scope && (
+                    <div className="ntm-field-wrap">
+                      <FormField label="Scope">
+                        <textarea className="ntm-w-full ntm-resizable" value={newTaskScope} onChange={(e) => setNewTaskScope(e.target.value)} rows={2} placeholder="Files, modules, or surfaces this may touch" />
+                      </FormField>
+                    </div>
+                  )}
+                  {templateFields.outOfScope && (
+                    <div className="ntm-field-wrap">
+                      <FormField label="Out of Scope">
+                        <textarea className="ntm-w-full ntm-resizable" value={newTaskOutOfScope} onChange={(e) => setNewTaskOutOfScope(e.target.value)} rows={2} placeholder="What must NOT change" />
+                      </FormField>
+                    </div>
+                  )}
+                  {templateFields.dependencies && (
+                    <div className="ntm-field-wrap">
+                      <FormField label="Dependencies">
+                        <textarea className="ntm-w-full ntm-resizable" value={newTaskDependencies} onChange={(e) => setNewTaskDependencies(e.target.value)} rows={2} placeholder="Prerequisite work, or 'none'" />
+                      </FormField>
+                    </div>
+                  )}
+                  {templateFields.risk && (
+                    <div className="ntm-field-wrap">
+                      <FormField label="Risk">
+                        <textarea className="ntm-w-full ntm-resizable" value={newTaskRisk} onChange={(e) => setNewTaskRisk(e.target.value)} rows={2} placeholder="Risk / blast radius (low / medium / high, and why)" />
+                      </FormField>
+                    </div>
+                  )}
+                  {templateFields.agentPrompt && (
+                    <div className="ntm-field-wrap">
+                      <FormField label="Agent Prompt">
+                        <textarea
+                          className="ntm-w-full ntm-resizable ntm-mono-area"
+                          value={newTaskAgentPrompt}
+                          onChange={(e) => setNewTaskAgentPrompt(e.target.value)}
+                          rows={4}
+                          placeholder="Step-by-step instructions a weak agent can execute verbatim"
+                        />
+                      </FormField>
+                    </div>
+                  )}
+                  <div className="ntm-field-wrap">
+                    <FormField label="Task Type">
+                      <Select
+                        className="ntm-w-full"
+                        value={newTaskTaskType}
+                        onChange={(v) => setNewTaskTaskType(v as TaskType | "")}
+                        options={[{ value: "", label: "— none —" }, ...TASK_TYPES.map((t) => ({ value: t, label: t }))]}
+                        ariaLabel="Task type"
+                      />
+                    </FormField>
+                  </div>
+                  <div className="ntm-confidence">
+                    Confidence:{" "}
+                    <ConfidenceBadge
+                      score={
+                        calculateConfidence({
+                          title: newTaskTitle,
+                          description: newTaskDescription || null,
+                          templateData: newTaskTemplateData,
+                          templateFields,
+                        }).score
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <Button type="submit" disabled={creatingTask} loading={creatingTask} size="sm">
+              {creatingTask ? "Creating…" : "Create task"}
+            </Button>
+          </form>
         )}
       </Modal>
 
-      <Card padding="sm" style={{ marginBottom: "0.9rem" }}>
-        <div className="board-toolbar">
-          <input
-            type="search"
-            aria-label="Search tasks"
-            value={taskQuery}
-            onChange={(e) => setTaskQuery(e.target.value)}
-            placeholder="Search tasks..."
-            style={{ width: "100%" }}
-          />
-        </div>
-        <div className="scope-chip-row" style={{ alignItems: "center" }}>
-          <div className="board-scope-inline">
-            <span>Scope</span>
-            <Select
-              ariaLabel="Scope"
-              value={taskScope}
-              onChange={(v) => setTaskScope(v as "all" | "mine" | "overdue" | "unassigned")}
-              options={[
-                { value: "all", label: "All tasks" },
-                { value: "mine", label: "Assigned to me" },
-                { value: "overdue", label: "Overdue" },
-                { value: "unassigned", label: "Unassigned" },
-              ]}
-              style={{ minWidth: 150 }}
-            />
-          </div>
-          <div className="board-scope-inline">
-            <span>Done</span>
-            <Select
-              ariaLabel="Done"
-              value={doneVisibility}
-              onChange={(v) => setDoneVisibility(v as DoneVisibility)}
-              options={[
-                { value: "recent", label: "Recent" },
-                { value: "all", label: "All" },
-                { value: "none", label: "None" },
-              ]}
-              style={{ minWidth: 110 }}
-            />
-            {hiddenDoneCount > 0 && doneVisibility !== "all" && (
-              <button
-                type="button"
-                title="Show all done tasks"
-                onClick={() => setDoneVisibility("all")}
-                style={{ background: "none", border: "none", padding: 0, color: "var(--primary)", cursor: "pointer", fontSize: "var(--text-xs)", fontWeight: 600 }}
-              >
-                Show {hiddenDoneCount} hidden
-              </button>
-            )}
-          </div>
-          {allLabels.length > 0 && (
-            <div className="board-scope-inline">
-              <span>Labels</span>
-              <Select
-                ariaLabel="Labels"
-                value={labelFilter ?? ""}
-                onChange={(v) => setLabelFilter(v || null)}
-                options={[{ value: "", label: "All labels" }, ...allLabels.map((label) => ({ value: label, label }))]}
-                style={{ minWidth: 130 }}
-              />
-            </div>
-          )}
-          {hasActiveFilters && (
-            <button
-              type="button"
-              className="filter-chip filter-chip-clear"
-              style={{ marginLeft: "auto" }}
-              onClick={() => {
-                setTaskQuery("");
-                setTaskScope("all");
-                setDoneVisibility(DEFAULT_DONE_VISIBILITY);
-                setLabelFilter(null);
-              }}
-            >
-              Clear filters
-            </button>
-          )}
-        </div>
-        {/* Rendered in both list and board views so the toolbar height
-            stays stable across the view toggle (no reflow). In board view
-            it duplicates the per-column counts, an accepted trade-off. */}
-        <div className="status-summary">
-          {STATUSES.map((status) => (
-            <span key={status} className="status-chip">
-              {STATUS_LABELS[status]}: {statusSummary[status]}
-            </span>
-          ))}
-        </div>
-      </Card>
-
-      {loading ? (
-        <div style={{ padding: "0.5rem 0" }}>
-          <SkeletonList rows={5} rowHeight="4.5rem" label="Loading tasks" />
-        </div>
-      ) : error ? (
-        <AlertBanner tone="danger" title="Error">
-          {error}
-        </AlertBanner>
-      ) : !selectedTeamId ? (
-        <EmptyState message="Select a team to continue." />
-      ) : !selectedProjectId ? (
-        <EmptyState message={`Select a project to view tasks for ${selectedTeam?.name ?? "this team"}.`} />
-      ) : (
-        <div className="dashboard-grid">
-          <section style={{ minWidth: 0 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem", gap: "0.5rem", flexWrap: "wrap" }}>
-              <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-                {filteredTasks.length} / {tasks.length} tasks
-              </p>
-              <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-                {projects.find((project) => project.id === selectedProjectId)?.name}
-              </p>
-            </div>
-            {viewMode === "board" ? (
-              <BoardColumns tasks={filteredTasks} activeTaskId={activeTaskId} onSelectTask={selectTask} templateFields={templateFields} />
-            ) : (
-              <div className="task-list-shell">
-                <div className="task-list-head">
-                  {([
-                    ["title", "Task"],
-                    ["status", "Status"],
-                    ["assignee", "Assignee"],
-                    ["due", "Due"],
-                    ["updated", "Updated"],
-                    ["priority", "Priority"],
-                  ] as [SortColumn, string][]).map(([col, label]) => (
-                    <button
-                      key={col}
-                      type="button"
-                      className={sortState.column === col ? "sort-active" : ""}
-                      onClick={() => toggleSort(col)}
-                    >
-                      {label}
-                      {sortState.column === col && (
-                        <span style={{ color: "var(--primary)", marginLeft: "0.25rem" }}>
-                          {sortState.direction === "asc" ? "▲" : "▼"}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-                {listPageTasks.length === 0 ? (
-                  <div style={{ padding: "1rem", color: "var(--muted)", textAlign: "center" }}>No tasks in this list view.</div>
-                ) : (
-                  listPageTasks.map((task, index) => (
-                    <button
-                      key={task.id}
-                      type="button"
-                      className="task-list-row"
-                      onClick={() => selectTask(task.id)}
-                      style={{
-                        width: "100%",
-                        textAlign: "left",
-                        border: "none",
-                        background: "transparent",
-                        color: "var(--text)",
-                        padding: "0.72rem 0.78rem",
-                        borderBottom: index < listPageTasks.length - 1 ? "1px solid var(--border)" : "none",
-                      }}
-                    >
-                      <span className="task-list-cell-main">
-                        <span style={{ fontSize: "var(--text-sm)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
-                          {task.title}
-                        </span>
-                      </span>
-                      <span className="task-list-cell-status" data-label="Status">
-                        <span className="status-chip" style={{ color: STATUS_COLORS[task.status] }}>
-                          {STATUS_LABELS[task.status as Status]}
-                        </span>
-                      </span>
-                      <span className="task-list-cell-muted" data-label="Assignee" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {getAssigneeName(task)}
-                      </span>
-                      <span className="task-list-cell-muted" data-label="Due" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {task.dueAt ? toDateInputValue(task.dueAt) : "No due date"}
-                      </span>
-                      <span className="task-list-cell-updated" title={formatAbsoluteDate(task.updatedAt)}>
-                        {formatRelativeTime(task.updatedAt)}
-                      </span>
-                      <span className="task-list-cell-priority" data-label="Priority">
-                        <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>
-                          {task.priority}
-                        </span>
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-            {viewMode === "list" && (
-              <Pagination
-                page={currentListPage}
-                totalPages={listTotalPages}
-                onPageChange={setListPage}
-              />
-            )}
-          </section>
-        </div>
-      )}
-
-      {activeTask && (
+      {/* TaskDetail modal */}
+      {activeTaskDetail && (
         <TaskDetail
-          task={activeTask}
+          task={activeTaskDetail}
           tasks={tasks}
           user={user}
           templateFields={templateFields}
@@ -1297,54 +993,22 @@ export default function DashboardPage() {
           onDelete={handleTaskDelete}
           onClose={() => selectTask(null)}
           initialEditing={editActiveOnOpen}
-          onError={(msg) => setError(msg)}
+          onError={(msg) => toast(msg, "error")}
         />
       )}
 
+      {/* Import dialog */}
       {selectedProjectId && (
         <ImportDialog
           open={showImport}
           onClose={() => setShowImport(false)}
           projectId={selectedProjectId}
           apiBase=""
-          onImported={() => { getTasks(selectedProjectId).then(setTasks).catch(() => {}); }}
+          onImported={() => {
+            getTasks(selectedProjectId).then(setTasks).catch(() => {});
+          }}
         />
       )}
-
-    </main>
-  );
-}
-
-/**
- * Inline share marker rendered next to a project's name when the user
- * accesses the project via a per-project invite (`accessSource: "project"`)
- * rather than full team membership. Sized to align with adjacent text in
- * the project picker; tone follows the `--primary` token used elsewhere
- * for "info" affordances.
- */
-function ShareIcon({ title }: { title: string }) {
-  return (
-    <span
-      title={title}
-      aria-label={title}
-      role="img"
-      style={{ color: "var(--primary)", display: "inline-flex" }}
-    >
-      <svg
-        width="12"
-        height="12"
-        viewBox="0 0 16 16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <circle cx="3.5" cy="8" r="2" />
-        <circle cx="12" cy="3.5" r="2" />
-        <circle cx="12" cy="12.5" r="2" />
-        <path d="M5.2 7.1l5.2-2.5M5.2 8.9l5.2 2.5" />
-      </svg>
-    </span>
+    </div>
   );
 }
