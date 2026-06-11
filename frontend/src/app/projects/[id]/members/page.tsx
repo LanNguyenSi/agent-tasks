@@ -128,27 +128,13 @@ export default function ProjectMembersPage() {
       <div role="status" aria-busy="true">
         <span className="sr-only">Loading members and invites</span>
         {/* Members skeleton */}
-        <Card
-          surface="raised"
-          // eslint-disable-next-line no-restricted-syntax
-          style={{ marginBottom: "var(--space-4)" }} /* dynamic: spacing */
-        >
-          <Skeleton
-            width={120}
-            height="1rem"
-            // eslint-disable-next-line no-restricted-syntax
-            style={{ marginBottom: "var(--space-3)" }} /* dynamic: spacing */
-          />
+        <Card surface="raised" className="mem-card">
+          <Skeleton width={120} height="1rem" className="mem-skeleton-head" />
           <SkeletonList rows={3} rowHeight="3rem" label="Loading members" />
         </Card>
         {/* Invites skeleton */}
         <Card surface="raised">
-          <Skeleton
-            width={100}
-            height="1rem"
-            // eslint-disable-next-line no-restricted-syntax
-            style={{ marginBottom: "var(--space-3)" }} /* dynamic: spacing */
-          />
+          <Skeleton width={100} height="1rem" className="mem-skeleton-head" />
           <SkeletonList rows={2} rowHeight="3rem" label="Loading invites" />
         </Card>
       </div>
@@ -158,40 +144,22 @@ export default function ProjectMembersPage() {
   return (
     <>
       {error && (
-        <div
-          // eslint-disable-next-line no-restricted-syntax
-          style={{ marginBottom: "var(--space-4)" }} /* dynamic: spacing */
-        >
+        <div className="mem-error">
           <AlertBanner tone="danger">{error}</AlertBanner>
         </div>
       )}
 
       {freshInvite && (
-        <Card
-          surface="raised"
-          // eslint-disable-next-line no-restricted-syntax
-          style={{ marginBottom: "var(--space-4)" }} /* dynamic: spacing */
-        >
-          <h2
-            // eslint-disable-next-line no-restricted-syntax
-            style={{ marginTop: 0, fontSize: "var(--text-md)", fontWeight: 600 }} /* dynamic: heading size */
-          >
+        <Card surface="raised" className="mem-card">
+          <h2 className="mem-section-heading mem-section-heading--no-mb">
             Invite link generated
           </h2>
           <AlertBanner tone="warning">
             This link is shown only once. Copy it now; the token cannot be
             retrieved later.
           </AlertBanner>
-          <pre
-            // eslint-disable-next-line no-restricted-syntax
-            style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", padding: "var(--space-3)", borderRadius: "var(--radius-sm)", wordBreak: "break-all", whiteSpace: "pre-wrap", fontSize: "var(--text-sm)", marginTop: "var(--space-3)" }} /* dynamic: code block */
-          >
-            {freshInvite.shareUrl}
-          </pre>
-          <div
-            // eslint-disable-next-line no-restricted-syntax
-            style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-2)" }} /* dynamic: button row */
-          >
+          <pre className="mem-invite-pre">{freshInvite.shareUrl}</pre>
+          <div className="mem-invite-actions">
             <Button onClick={() => void copyShareUrl()}>
               Copy share link
             </Button>
@@ -206,18 +174,12 @@ export default function ProjectMembersPage() {
             </Button>
           </div>
           {copyState === "copied" && (
-            <p
-              // eslint-disable-next-line no-restricted-syntax
-              style={{ marginTop: "var(--space-2)", color: "var(--success)", fontSize: "var(--text-sm)" }} /* dynamic: status color */
-            >
+            <p className="mem-copy-status mem-copy-status--success">
               Copied to clipboard.
             </p>
           )}
           {copyState === "failed" && (
-            <p
-              // eslint-disable-next-line no-restricted-syntax
-              style={{ marginTop: "var(--space-2)", color: "var(--danger)", fontSize: "var(--text-sm)" }} /* dynamic: status color */
-            >
+            <p className="mem-copy-status mem-copy-status--danger">
               Copy failed. Select the link above manually (Ctrl+A, Ctrl+C).
             </p>
           )}
@@ -225,17 +187,8 @@ export default function ProjectMembersPage() {
       )}
 
       {/* ── Members ──────────────────────────────────────────────── */}
-      <Card
-        surface="raised"
-        // eslint-disable-next-line no-restricted-syntax
-        style={{ marginBottom: "var(--space-4)" }} /* dynamic: spacing */
-      >
-        <h2
-          // eslint-disable-next-line no-restricted-syntax
-          style={{ marginTop: 0, fontSize: "var(--text-md)", fontWeight: 600, marginBottom: "var(--space-3)" }} /* dynamic: heading */
-        >
-          Members
-        </h2>
+      <Card surface="raised" className="mem-card">
+        <h2 className="mem-section-heading">Members</h2>
         {!members || members.length === 0 ? (
           <EmptyState
             icon="box"
@@ -253,31 +206,18 @@ export default function ProjectMembersPage() {
       </Card>
 
       {/* ── Create invite ─────────────────────────────────────────── */}
-      <Card
-        surface="raised"
-        // eslint-disable-next-line no-restricted-syntax
-        style={{ marginBottom: "var(--space-4)" }} /* dynamic: spacing */
-      >
-        <h2
-          // eslint-disable-next-line no-restricted-syntax
-          style={{ marginTop: 0, fontSize: "var(--text-md)", fontWeight: 600 }} /* dynamic: heading */
-        >
+      <Card surface="raised" className="mem-card">
+        <h2 className="mem-section-heading mem-section-heading--no-mb">
           Create invite
         </h2>
-        <p
-          // eslint-disable-next-line no-restricted-syntax
-          style={{ fontSize: "var(--text-sm)", color: "var(--muted)", marginBottom: "var(--space-3)" }} /* dynamic: muted text */
-        >
+        <p className="mem-desc">
           Generates a one-time link. The recipient signs in and accepts to gain
           per-project access.
         </p>
         {(project?.governanceMode === "AUTONOMOUS" ||
           (project?.governanceMode == null &&
             project?.soloMode === true)) && (
-          <div
-            // eslint-disable-next-line no-restricted-syntax
-            style={{ marginBottom: "var(--space-3)" }} /* dynamic: spacing */
-          >
+          <div className="mem-warning-wrap">
             <AlertBanner tone="warning">
               This project is currently autonomous (no distinct-reviewer gate).
               Accepting the first invite switches the project to dual-control
@@ -286,11 +226,7 @@ export default function ProjectMembersPage() {
             </AlertBanner>
           </div>
         )}
-        <div
-          className="collapsing-grid"
-          // eslint-disable-next-line no-restricted-syntax
-          style={{ gap: "var(--space-3)", maxWidth: "480px" }} /* dynamic: max-width */
-        >
+        <div className="mem-create-form-grid">
           <FormField label="Role">
             <Select
               value={role}
@@ -314,10 +250,7 @@ export default function ProjectMembersPage() {
             />
           </FormField>
         </div>
-        <div
-          // eslint-disable-next-line no-restricted-syntax
-          style={{ marginTop: "var(--space-3)" }} /* dynamic: spacing */
-        >
+        <div className="mem-create-btn-row">
           <Button onClick={() => void handleCreate()} loading={creating}>
             Generate invite
           </Button>
@@ -326,12 +259,7 @@ export default function ProjectMembersPage() {
 
       {/* ── Invites list ──────────────────────────────────────────── */}
       <Card surface="raised">
-        <h2
-          // eslint-disable-next-line no-restricted-syntax
-          style={{ marginTop: 0, fontSize: "var(--text-md)", fontWeight: 600, marginBottom: "var(--space-3)" }} /* dynamic: heading */
-        >
-          Invites
-        </h2>
+        <h2 className="mem-section-heading">Invites</h2>
         {!invites || invites.length === 0 ? (
           <EmptyState
             icon="plus"
@@ -340,30 +268,12 @@ export default function ProjectMembersPage() {
             dashed
           />
         ) : (
-          <div
-            // eslint-disable-next-line no-restricted-syntax
-            style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }} /* dynamic: list container */
-          >
-            {invites.map((inv, i) => (
-              <div
-                key={inv.id}
-                // eslint-disable-next-line no-restricted-syntax
-                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--space-3)", padding: "var(--space-3) var(--space-4)", borderBottom: i < invites.length - 1 ? "1px solid var(--border)" : "none" }} /* dynamic: row with conditional border */
-              >
-                <div
-                  // eslint-disable-next-line no-restricted-syntax
-                  style={{ minWidth: 0 }} /* dynamic: text truncation container */
-                >
-                  <p
-                    // eslint-disable-next-line no-restricted-syntax
-                    style={{ fontWeight: 600, fontSize: "var(--text-sm)", marginBottom: "var(--space-1)" }} /* dynamic: label weight */
-                  >
-                    {roleLabel(inv.role)}
-                  </p>
-                  <p
-                    // eslint-disable-next-line no-restricted-syntax
-                    style={{ color: "var(--muted)", fontSize: "var(--text-xs)", margin: 0 }} /* dynamic: muted text */
-                  >
+          <div className="mem-invite-list">
+            {invites.map((inv) => (
+              <div key={inv.id} className="mem-invite-row">
+                <div className="mem-invite-row-text">
+                  <p className="mem-invite-role">{roleLabel(inv.role)}</p>
+                  <p className="mem-invite-meta">
                     <InviteStatusBadge status={inv.status} /> Expires{" "}
                     {new Date(inv.expiresAt).toLocaleString()}
                   </p>
@@ -442,21 +352,8 @@ function MemberRow({ member }: { member: ProjectMember }) {
 }
 
 function InviteStatusBadge({ status }: { status: ProjectInvite["status"] }) {
-  const tone = (() => {
-    switch (status) {
-      case "pending":
-        return "var(--primary)";
-      case "expired":
-        return "var(--danger)";
-      case "consumed":
-        return "var(--muted)";
-    }
-  })();
   return (
-    <span
-      // eslint-disable-next-line no-restricted-syntax
-      style={{ display: "inline-block", padding: "0 var(--space-2)", marginRight: "var(--space-2)", borderRadius: "4px", background: "color-mix(in srgb, " + tone + " 15%, transparent)", color: tone, fontSize: "var(--text-xs)", fontWeight: 600, textTransform: "uppercase" }} /* dynamic: computed tint from status token */
-    >
+    <span className="mem-invite-badge" data-status={status}>
       {status}
     </span>
   );

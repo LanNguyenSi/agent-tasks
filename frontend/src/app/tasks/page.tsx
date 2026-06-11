@@ -745,6 +745,24 @@ function TasksPageInner() {
                 sortDirection={sort.direction === "asc" ? "ascending" : "descending"}
                 onSortChange={handleSortChange}
                 emptyLabel="No tasks match the current filters."
+                compactSort={
+                  <select
+                    className="table-sort-native"
+                    aria-label="Sort by"
+                    value={`${sort.column}:${sort.direction}`}
+                    onChange={(e) => {
+                      const [col, dir] = e.target.value.split(":");
+                      updateParams({ sort: `${col}:${dir}` }, false);
+                    }}
+                  >
+                    {TASK_PAGE_COLUMNS.filter((c) => c.sortable).map((col) => (
+                      <optgroup key={col.key} label={col.header}>
+                        <option value={`${col.key}:asc`}>{col.header}: A to Z</option>
+                        <option value={`${col.key}:desc`}>{col.header}: Z to A</option>
+                      </optgroup>
+                    ))}
+                  </select>
+                }
               />
 
               {totalPages > 1 && (

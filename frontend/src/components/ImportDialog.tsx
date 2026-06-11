@@ -75,7 +75,7 @@ export default function ImportDialog({ open, onClose, projectId, apiBase, onImpo
         try {
           // Strip a leading UTF-8 BOM — Excel writes one on CSV exports
           // and the old SheetJS path handled this transparently. Without
-          // this, the first header cell would be prefixed with \uFEFF
+          // this, the first header cell would be prefixed with
           // and fail auto-detection.
           const raw = (e.target?.result as string) ?? "";
           const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
@@ -200,9 +200,7 @@ export default function ImportDialog({ open, onClose, projectId, apiBase, onImpo
   return (
     <Modal open={open} title="Import Tasks" onClose={handleClose}>
       {error && (
-        <div style={{ background: "color-mix(in srgb, var(--danger) 15%, transparent)", border: "1px solid var(--danger)", borderRadius: "var(--radius-base)", padding: "0.5rem 0.75rem", marginBottom: "0.75rem", color: "var(--danger)", fontSize: "var(--text-sm)" }}>
-          {error}
-        </div>
+        <div className="idlg-error">{error}</div>
       )}
 
       {/* Step 1: Upload */}
@@ -211,27 +209,16 @@ export default function ImportDialog({ open, onClose, projectId, apiBase, onImpo
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={handleDrop}
-          style={{
-            border: `2px dashed ${dragOver ? "var(--primary)" : "var(--border)"}`,
-            borderRadius: "var(--radius-base)",
-            padding: "2rem",
-            textAlign: "center",
-            cursor: "pointer",
-            transition: "border-color 0.15s",
-          }}
+          className={`idlg-drop-zone${dragOver ? " idlg-drop-zone--active" : ""}`}
           onClick={() => document.getElementById("import-file-input")?.click()}
         >
-          <p style={{ fontSize: "var(--text-md)", fontWeight: 600, marginBottom: "0.5rem" }}>
-            Drop .xlsx or .csv file here
-          </p>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-            or click to browse
-          </p>
+          <p className="idlg-drop-label">Drop .xlsx or .csv file here</p>
+          <p className="idlg-drop-hint">or click to browse</p>
           <input
             id="import-file-input"
             type="file"
             accept=".xlsx,.xls,.csv"
-            style={{ display: "none" }}
+            className="idlg-file-input"
             onChange={handleFileSelect}
           />
         </div>
@@ -240,26 +227,19 @@ export default function ImportDialog({ open, onClose, projectId, apiBase, onImpo
       {/* Step 2: Column Mapping */}
       {step === "mapping" && mapping && (
         <div>
-          <p style={{ marginBottom: "0.75rem", color: "var(--muted)", fontSize: "var(--text-sm)" }}>
+          <p className="idlg-desc">
             Found {rows.length} rows and {headers.length} columns. Verify the column mapping:
           </p>
-          <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "0.4rem", marginBottom: "1rem" }}>
+          <div className="idlg-mapping-grid">
             {(Object.keys(mapping) as (keyof ColumnMapping)[]).map((field) => (
-              <label key={field} style={{ display: "contents" }}>
-                <span style={{ fontSize: "var(--text-sm)", fontWeight: 500, padding: "0.3rem 0", color: field === "title" ? "var(--text)" : "var(--muted)" }}>
+              <label key={field} className="idlg-mapping-label">
+                <span className={`idlg-mapping-field-name${field === "title" ? " idlg-mapping-field-name--required" : ""}`}>
                   {field}{field === "title" ? " *" : ""}
                 </span>
                 <select
+                  className="idlg-mapping-select"
                   value={mapping[field] ?? ""}
                   onChange={(e) => updateMapping(field, e.target.value === "" ? null : Number(e.target.value))}
-                  style={{
-                    background: "var(--surface)",
-                    border: "1px solid var(--border)",
-                    borderRadius: "var(--radius-base)",
-                    padding: "0.3rem 0.5rem",
-                    color: "var(--text)",
-                    fontSize: "var(--text-sm)",
-                  }}
                 >
                   <option value="">-- not mapped --</option>
                   {headers.map((h, i) => (
@@ -270,12 +250,12 @@ export default function ImportDialog({ open, onClose, projectId, apiBase, onImpo
             ))}
           </div>
           {completeness && (
-            <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginBottom: "0.75rem" }}>
+            <p className="idlg-completeness">
               {completeness.mapped.length} fields mapped
               {completeness.unmapped.length > 0 && ` (unmapped: ${completeness.unmapped.join(", ")})`}
             </p>
           )}
-          <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+          <div className="idlg-actions">
             <Button variant="ghost" onClick={reset}>Back</Button>
             <Button onClick={handlePreview} disabled={mapping.title === null}>
               Preview
@@ -287,39 +267,35 @@ export default function ImportDialog({ open, onClose, projectId, apiBase, onImpo
       {/* Step 3: Preview */}
       {step === "preview" && (
         <div>
-          <p style={{ marginBottom: "0.75rem", fontSize: "var(--text-sm)", color: "var(--muted)" }}>
-            {tasks.length} tasks ready to import:
-          </p>
-          <div style={{ maxHeight: "300px", overflow: "auto", marginBottom: "1rem", border: "1px solid var(--border)", borderRadius: "var(--radius-base)" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-xs)" }}>
+          <p className="idlg-desc">{tasks.length} tasks ready to import:</p>
+          <div className="idlg-preview-table-wrap">
+            <table className="idlg-preview-table">
               <thead>
-                <tr style={{ borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--surface)" }}>
-                  <th style={{ textAlign: "left", padding: "0.4rem 0.5rem" }}>Ref</th>
-                  <th style={{ textAlign: "left", padding: "0.4rem 0.5rem" }}>Title</th>
-                  <th style={{ textAlign: "left", padding: "0.4rem 0.5rem" }}>Priority</th>
-                  <th style={{ textAlign: "left", padding: "0.4rem 0.5rem" }}>Status</th>
-                  <th style={{ textAlign: "left", padding: "0.4rem 0.5rem" }}>Labels</th>
+                <tr className="idlg-preview-thead-tr">
+                  <th className="idlg-preview-th">Ref</th>
+                  <th className="idlg-preview-th">Title</th>
+                  <th className="idlg-preview-th">Priority</th>
+                  <th className="idlg-preview-th">Status</th>
+                  <th className="idlg-preview-th">Labels</th>
                 </tr>
               </thead>
               <tbody>
                 {tasks.slice(0, 50).map((t, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
-                    <td style={{ padding: "0.3rem 0.5rem", fontFamily: "monospace", color: "var(--primary)" }}>{t.externalRef || "-"}</td>
-                    <td style={{ padding: "0.3rem 0.5rem", maxWidth: "250px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</td>
-                    <td style={{ padding: "0.3rem 0.5rem" }}>{t.priority}</td>
-                    <td style={{ padding: "0.3rem 0.5rem" }}>{t.status}</td>
-                    <td style={{ padding: "0.3rem 0.5rem" }}>{t.labels.join(", ")}</td>
+                  <tr key={i} className="idlg-preview-row">
+                    <td className="idlg-preview-td idlg-preview-td--ref">{t.externalRef || "-"}</td>
+                    <td className="idlg-preview-td idlg-preview-td--title">{t.title}</td>
+                    <td className="idlg-preview-td">{t.priority}</td>
+                    <td className="idlg-preview-td">{t.status}</td>
+                    <td className="idlg-preview-td">{t.labels.join(", ")}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {tasks.length > 50 && (
-              <p style={{ padding: "0.4rem 0.5rem", color: "var(--muted)", fontSize: "var(--text-xs)" }}>
-                ... and {tasks.length - 50} more
-              </p>
+              <p className="idlg-preview-more">... and {tasks.length - 50} more</p>
             )}
           </div>
-          <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+          <div className="idlg-actions">
             <Button variant="ghost" onClick={() => setStep("mapping")}>Back</Button>
             <Button onClick={handleImport}>
               Import {tasks.length} tasks
@@ -330,28 +306,26 @@ export default function ImportDialog({ open, onClose, projectId, apiBase, onImpo
 
       {/* Step 4: Importing */}
       {step === "importing" && (
-        <div style={{ textAlign: "center", padding: "2rem" }}>
-          <p style={{ fontSize: "var(--text-md)" }}>Importing {tasks.length} tasks...</p>
-        </div>
+        <p className="idlg-importing">Importing {tasks.length} tasks...</p>
       )}
 
       {/* Step 5: Done */}
       {step === "done" && result && (
-        <div style={{ textAlign: "center", padding: "1.5rem" }}>
-          <p style={{ fontSize: "var(--text-md)", fontWeight: 600, marginBottom: "0.75rem" }}>Import Complete</p>
-          <div style={{ display: "flex", justifyContent: "center", gap: "2rem", marginBottom: "1rem" }}>
+        <div className="idlg-done">
+          <p className="idlg-done-title">Import Complete</p>
+          <div className="idlg-done-stats">
             <div>
-              <p style={{ fontSize: "var(--text-lg)", fontWeight: 700, color: "var(--primary)" }}>{result.created}</p>
-              <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Created</p>
+              <p className="idlg-done-stat-num idlg-done-stat-num--primary">{result.created}</p>
+              <p className="idlg-done-stat-label">Created</p>
             </div>
             <div>
-              <p style={{ fontSize: "var(--text-lg)", fontWeight: 700, color: "var(--muted)" }}>{result.skipped}</p>
-              <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Skipped</p>
+              <p className="idlg-done-stat-num idlg-done-stat-num--muted">{result.skipped}</p>
+              <p className="idlg-done-stat-label">Skipped</p>
             </div>
             {result.failed > 0 && (
               <div>
-                <p style={{ fontSize: "var(--text-lg)", fontWeight: 700, color: "var(--danger)" }}>{result.failed}</p>
-                <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Failed</p>
+                <p className="idlg-done-stat-num idlg-done-stat-num--danger">{result.failed}</p>
+                <p className="idlg-done-stat-label">Failed</p>
               </div>
             )}
           </div>

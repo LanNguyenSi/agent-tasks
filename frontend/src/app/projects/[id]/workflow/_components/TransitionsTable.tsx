@@ -274,6 +274,7 @@ export function TransitionsTable({
             row._index === highlightedIndex ? "wf-row-highlight" : undefined
           }
           emptyLabel="No transitions defined. Tasks will not be able to change status."
+          className="table-wrapper--late-stack"
         />
       )}
     </Card>

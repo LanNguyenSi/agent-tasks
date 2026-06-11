@@ -1,6 +1,12 @@
 // Component library v2 gallery: B1 + B2 primitives in every state.
 // No auth dependency. Theme toggle persists to localStorage.
 // Route: /dev/ui
+//
+// Inline styles below are INTENTIONAL and EXEMPT from the no-restricted-syntax
+// rule: this is a developer-only demo gallery where each variant block shows
+// the exact CSS values in use. Extracting them to shared classes would make
+// the gallery harder to read as a reference and provide no a11y or UX benefit.
+/* eslint-disable no-restricted-syntax */
 
 "use client";
 

@@ -50,24 +50,16 @@ export default function CreateConfidencePanel({
   }, []);
 
   return (
-    <div ref={containerRef} tabIndex={-1} style={{ outline: "none" }}>
-      <p style={{ fontSize: "var(--text-sm)", color: "var(--text)", marginBottom: "0.6rem" }}>
-        Task created.
-      </p>
+    <div ref={containerRef} tabIndex={-1} className="ccp-root">
+      <p className="ccp-created">Task created.</p>
 
       {assignmentError && (
-        <p role="alert" style={{ fontSize: "var(--text-xs)", color: "var(--danger)", marginBottom: "0.6rem" }}>
-          {assignmentError}
-        </p>
+        <p role="alert" className="ccp-error">{assignmentError}</p>
       )}
 
-      <div
-        role="status"
-        aria-live="polite"
-        style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.6rem" }}
-      >
+      <div role="status" aria-live="polite" className="ccp-verdict-row">
         <ConfidenceBadge score={score} size="md" />
-        <span style={{ fontSize: "var(--text-sm)", color: passes ? "var(--success)" : "var(--danger)" }}>
+        <span className={`ccp-verdict-text ${passes ? "ccp-verdict-text--pass" : "ccp-verdict-text--fail"}`}>
           {passes
             ? `At or above the ${threshold} threshold`
             : `Below the ${threshold} threshold: agents cannot claim this task`}
@@ -75,27 +67,23 @@ export default function CreateConfidencePanel({
       </div>
 
       {missing.length > 0 && (
-        <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginBottom: "0.6rem" }}>
+        <p className="ccp-missing">
           Missing: {missing.map(humanizeField).join(", ")}
         </p>
       )}
 
       {nextActions.length > 0 && (
-        <div style={{ marginBottom: "0.8rem" }}>
-          <p style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--text)", marginBottom: "0.3rem" }}>
-            Next steps to raise confidence
-          </p>
-          <ul style={{ margin: 0, paddingLeft: "1.1rem", display: "grid", gap: "0.25rem" }}>
+        <div className="ccp-next-steps">
+          <p className="ccp-next-steps-heading">Next steps to raise confidence</p>
+          <ul className="ccp-next-steps-list">
             {nextActions.slice(0, MAX_NEXT_ACTIONS).map((action) => (
-              <li key={action} style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
-                {action}
-              </li>
+              <li key={action} className="ccp-next-steps-item">{action}</li>
             ))}
           </ul>
         </div>
       )}
 
-      <div style={{ display: "flex", gap: "0.5rem" }}>
+      <div className="ccp-actions">
         <Button type="button" size="sm" onClick={onEdit}>
           Edit task
         </Button>

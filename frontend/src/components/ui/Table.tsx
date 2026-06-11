@@ -61,6 +61,13 @@ interface TableProps<T extends object> {
    * temporary highlight effects driven by parent state.
    */
   rowClassName?: (row: T) => string | undefined;
+  /**
+   * Optional compact sort control rendered above the stacked list on
+   * mobile viewports (<900px). The element is wrapped in a
+   * `.table-compact-sort` div which the CSS hides at desktop widths.
+   * Pass a `<select>` or a custom control that calls `onSortChange`.
+   */
+  compactSort?: ReactNode;
   // ── Controlled sort ────────────────────────────────────────────
   // Provide all three together to bypass internal sort state entirely.
   /** Controlled sort column key. Pass null/undefined for "no sort". */
@@ -86,6 +93,7 @@ export function Table<T extends object>({
   className,
   rowId,
   rowClassName,
+  compactSort,
   sortKey: sortKeyProp,
   sortDirection: sortDirectionProp,
   onSortChange,
@@ -139,6 +147,9 @@ export function Table<T extends object>({
 
   return (
     <div className={["table-wrapper", className].filter(Boolean).join(" ")}>
+      {compactSort && (
+        <div className="table-compact-sort">{compactSort}</div>
+      )}
       <table className="table">
         <thead>
           <tr className="table-head-row">

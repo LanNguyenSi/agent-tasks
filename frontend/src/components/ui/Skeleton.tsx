@@ -15,6 +15,8 @@ interface SkeletonProps {
   /** CSS border-radius (default the small token). */
   radius?: string | number;
   style?: CSSProperties;
+  /** Additional class names (e.g. for margin spacing in context). */
+  className?: string;
 }
 
 /**
@@ -27,10 +29,11 @@ export function Skeleton({
   height = "1rem",
   radius = "var(--radius-sm)",
   style,
+  className,
 }: SkeletonProps) {
   return (
     <div
-      className="skeleton"
+      className={className ? `skeleton ${className}` : "skeleton"}
       aria-hidden="true"
       // eslint-disable-next-line no-restricted-syntax
       style={{
