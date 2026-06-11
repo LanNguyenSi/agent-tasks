@@ -8,7 +8,10 @@ import {
   type TaskAttachment,
   type User,
 } from "../lib/api";
+import { Button } from "./ui/Button";
 import CollapsibleSection from "./ui/CollapsibleSection";
+import { Icon } from "./ui/Icon";
+import InlineConfirmDelete from "./ui/InlineConfirmDelete";
 
 // Mirrors the backend cap and allowlist. The client check is a friendly
 // pre-flight only; the backend re-validates by magic-byte sniff.
@@ -74,7 +77,6 @@ export default function TaskAttachmentsSection({
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [preview, setPreview] = useState<TaskAttachment | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const lastTaskId = useRef(taskId);
@@ -92,9 +94,7 @@ export default function TaskAttachmentsSection({
   }, [taskId, initial]);
 
   // Lightbox: close on Escape, move focus into the dialog on open, and restore
-  // focus to the previously focused element (the thumbnail) on close. The
-  // dialog has no focusable children, so a full Tab trap is unnecessary; add
-  // one here if an interactive control is ever placed inside the lightbox.
+  // focus to the previously focused element (the thumbnail) on close.
   useEffect(() => {
     if (!preview) return;
     lastFocusRef.current = document.activeElement as HTMLElement | null;
@@ -139,7 +139,7 @@ export default function TaskAttachmentsSection({
     (e: React.DragEvent) => {
       e.preventDefault();
       setDragOver(false);
-      if (uploading) return; // mirror the disabled click/input path
+      if (uploading) return;
       if (e.dataTransfer.files.length > 0) void handleFiles(e.dataTransfer.files);
     },
     [handleFiles, uploading],
@@ -164,7 +164,6 @@ export default function TaskAttachmentsSection({
         onError((err as Error).message);
       } finally {
         setDeletingId(null);
-        setConfirmDeleteId(null);
       }
     },
     [taskId, onError],
@@ -176,234 +175,172 @@ export default function TaskAttachmentsSection({
   const canDelete = (a: TaskAttachment): boolean =>
     canManageAll || (!!a.createdByUserId && a.createdByUserId === user?.id);
 
-  // Two-step delete: first click arms the row, then Confirm runs it (matches the
-  // delete-comment / remove-dependency idiom elsewhere in the task detail).
-  const deleteControl = (a: TaskAttachment) => {
-    if (!canDelete(a)) return null;
-    const danger = {
-      background: "none",
-      border: "none",
-      color: "var(--danger)",
-      cursor: "pointer",
-      fontSize: "var(--text-xs)",
-      padding: "0 0.25rem",
-    } as const;
-    if (confirmDeleteId === a.id) {
-      return (
-        <span style={{ display: "inline-flex", gap: "0.3rem", alignItems: "center" }}>
-          <button
-            type="button"
-            onClick={() => void remove(a)}
-            disabled={deletingId === a.id}
-            aria-label={`Confirm delete ${a.name}`}
-            style={{ ...danger, fontWeight: 600 }}
-          >
-            {deletingId === a.id ? "…" : "Confirm?"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfirmDeleteId(null)}
-            disabled={deletingId === a.id}
-            aria-label={`Cancel delete ${a.name}`}
-            style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: "var(--text-xs)", padding: 0 }}
-          >
-            Cancel
-          </button>
-        </span>
-      );
-    }
-    return (
-      <button type="button" onClick={() => setConfirmDeleteId(a.id)} aria-label={`Delete ${a.name}`} style={danger}>
-        Delete
-      </button>
-    );
-  };
+  const hiddenInput = (
+    <input
+      ref={inputRef}
+      type="file"
+      accept="image/jpeg,image/png,image/gif,image/webp,text/plain,text/markdown,text/csv,.md,.markdown,.csv,.txt"
+      multiple
+      disabled={uploading}
+      className="sr-only"
+      onChange={onInputChange}
+    />
+  );
 
   return (
     <CollapsibleSection key={taskId} title="Attachments" count={items.length}>
-      <div style={{ display: "grid", gap: "0.75rem" }}>
-        {/* Upload zone */}
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={onDrop}
-          onClick={() => inputRef.current?.click()}
-          role="button"
-          tabIndex={0}
-          aria-label="Upload an attachment"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              inputRef.current?.click();
-            }
-          }}
-          style={{
-            border: `2px dashed ${dragOver ? "var(--primary)" : "var(--border)"}`,
-            borderRadius: "var(--radius-base)",
-            padding: "1rem",
-            textAlign: "center",
-            cursor: uploading ? "default" : "pointer",
-            transition: "border-color 0.15s",
-            opacity: uploading ? 0.7 : 1,
-          }}
-        >
-          <p style={{ fontSize: "var(--text-sm)", fontWeight: 600, margin: 0 }}>
-            {uploading ? "Uploading…" : "Drop an image or text file here"}
-          </p>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", margin: "0.2rem 0 0" }}>
-            or click to browse · images (jpeg, png, gif, webp) and text (plain, markdown, csv), up to 5 MiB
-          </p>
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/gif,image/webp,text/plain,text/markdown,text/csv,.md,.markdown,.csv,.txt"
-            multiple
-            disabled={uploading}
-            style={{ display: "none" }}
-            onChange={onInputChange}
-          />
-        </div>
-
+      <div className="tas-root">
         {items.length === 0 ? (
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>No attachments yet.</p>
-        ) : null}
-
-        {/* Image thumbnails */}
-        {images.length > 0 ? (
+          /* Designed empty state — the entire box is also the drop zone */
           <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))",
-              gap: "0.5rem",
+            className={["tas-empty", dragOver ? "tas-empty--drag-over" : ""].filter(Boolean).join(" ")}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            onClick={() => inputRef.current?.click()}
+            role="button"
+            tabIndex={0}
+            aria-label="Upload an attachment"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                inputRef.current?.click();
+              }
             }}
           >
-            {images.map((a) => (
-              <div key={a.id} style={{ position: "relative" }}>
-                <button
-                  type="button"
-                  onClick={() => setPreview(a)}
-                  aria-label={`Preview ${a.name}`}
-                  style={{
-                    padding: 0,
-                    border: "1px solid var(--border)",
-                    borderRadius: "8px",
-                    overflow: "hidden",
-                    background: "var(--surface)",
-                    cursor: "pointer",
-                    width: "100%",
-                    aspectRatio: "1 / 1",
-                    display: "block",
-                  }}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element -- auth-gated raw endpoint, not a static asset for next/image */}
-                  <img
-                    src={rawAttachmentUrl(taskId, a.id)}
-                    alt={a.name}
-                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                  />
-                </button>
-                <div
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    color: "var(--muted)",
-                    marginTop: "0.2rem",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                  title={a.name}
-                >
-                  {a.name}
-                </div>
-                {deleteControl(a)}
-              </div>
-            ))}
+            <Icon name="clip" size={15} />
+            <span className="tas-empty-text">
+              {uploading
+                ? "Uploading…"
+                : "No attachments yet. Drag a file here, or paste an image into a comment."}
+            </span>
+            {!uploading && (
+              <Button size="sm" variant="ghost" onClick={(e: React.MouseEvent) => { e.stopPropagation(); inputRef.current?.click(); }}>
+                <Icon name="clip" size={13} />
+                Attach file
+              </Button>
+            )}
+            {hiddenInput}
           </div>
-        ) : null}
+        ) : (
+          <>
+            {/* Compact upload zone when items already exist */}
+            <div
+              className={["tas-upload-zone", dragOver ? "tas-upload-zone--drag-over" : ""].filter(Boolean).join(" ")}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+              onClick={() => inputRef.current?.click()}
+              role="button"
+              tabIndex={0}
+              aria-label="Upload an attachment"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  inputRef.current?.click();
+                }
+              }}
+            >
+              <p className="tas-upload-title">
+                {uploading ? "Uploading…" : "Drop an image or text file here"}
+              </p>
+              <p className="tas-upload-hint">
+                or click to browse · images (jpeg, png, gif, webp) and text (plain, markdown, csv), up to 5 MiB
+              </p>
+              {hiddenInput}
+            </div>
 
-        {/* Text / document rows */}
-        {docs.length > 0 ? (
-          <div style={{ display: "grid", gap: "0.4rem" }}>
-            {docs.map((a) => (
-              <div
-                key={a.id}
-                style={{
-                  border: "1px solid var(--border)",
-                  borderRadius: "8px",
-                  padding: "0.5rem",
-                  fontSize: "var(--text-sm)",
-                  background: "var(--surface)",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: "0.5rem",
-                }}
-              >
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div
-                    style={{
-                      fontWeight: 600,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {a.name}
+            {/* Image thumbnails */}
+            {images.length > 0 && (
+              <div className="tas-image-grid">
+                {images.map((a) => (
+                  <div key={a.id} className="tas-thumb-cell">
+                    <button
+                      type="button"
+                      onClick={() => setPreview(a)}
+                      aria-label={`Preview ${a.name}`}
+                      className="tas-thumb-btn"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element -- auth-gated raw endpoint, not a static asset for next/image */}
+                      <img
+                        src={rawAttachmentUrl(taskId, a.id)}
+                        alt={a.name}
+                        className="tas-thumb-img"
+                      />
+                    </button>
+                    <div className="tas-thumb-name" title={a.name}>{a.name}</div>
+                    {canDelete(a) && (
+                      <InlineConfirmDelete
+                        onConfirm={() => void remove(a)}
+                        busy={deletingId === a.id}
+                        ariaLabel={`Delete ${a.name}`}
+                        confirmAriaLabel={`Confirm delete ${a.name}`}
+                        cancelAriaLabel={`Cancel delete ${a.name}`}
+                      />
+                    )}
                   </div>
-                  <div style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginTop: "0.1rem" }}>
-                    {creatorLabel(a)} · {new Date(a.createdAt).toLocaleString()}
-                    {a.sizeBytes > 0 ? ` · ${formatBytes(a.sizeBytes)}` : ""}
-                    {a.mimeType ? ` · ${a.mimeType}` : ""}
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0, alignItems: "center" }}>
-                  <a
-                    href={rawAttachmentUrl(taskId, a.id)}
-                    download={a.name}
-                    style={{ fontSize: "var(--text-xs)" }}
-                  >
-                    Download
-                  </a>
-                  {deleteControl(a)}
-                </div>
+                ))}
               </div>
-            ))}
+            )}
+
+            {/* Text / document rows */}
+            {docs.length > 0 && (
+              <div className="tas-doc-list">
+                {docs.map((a) => (
+                  <div key={a.id} className="tas-doc-row">
+                    <div className="tas-doc-info">
+                      <div className="tas-doc-name">{a.name}</div>
+                      <div className="tas-doc-meta">
+                        {creatorLabel(a)} · {new Date(a.createdAt).toLocaleString()}
+                        {a.sizeBytes > 0 ? ` · ${formatBytes(a.sizeBytes)}` : ""}
+                        {a.mimeType ? ` · ${a.mimeType}` : ""}
+                      </div>
+                    </div>
+                    <div className="tas-doc-actions">
+                      <a
+                        href={rawAttachmentUrl(taskId, a.id)}
+                        download={a.name}
+                        className="tas-doc-download"
+                      >
+                        Download
+                      </a>
+                      {canDelete(a) && (
+                        <InlineConfirmDelete
+                          onConfirm={() => void remove(a)}
+                          busy={deletingId === a.id}
+                          ariaLabel={`Delete ${a.name}`}
+                          confirmAriaLabel={`Confirm delete ${a.name}`}
+                          cancelAriaLabel={`Cancel delete ${a.name}`}
+                        />
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Lightbox */}
+        {preview && (
+          <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Preview of ${preview.name}`}
+            tabIndex={-1}
+            onClick={() => setPreview(null)}
+            className="tas-lightbox"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element -- auth-gated raw endpoint */}
+            <img
+              src={rawAttachmentUrl(taskId, preview.id)}
+              alt={preview.name}
+              className="tas-lightbox-img"
+            />
           </div>
-        ) : null}
+        )}
       </div>
-
-      {/* Lightbox */}
-      {preview ? (
-        <div
-          ref={dialogRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Preview of ${preview.name}`}
-          tabIndex={-1}
-          onClick={() => setPreview(null)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0, 0, 0, 0.75)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-            padding: "2rem",
-            outline: "none",
-          }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element -- auth-gated raw endpoint */}
-          <img
-            src={rawAttachmentUrl(taskId, preview.id)}
-            alt={preview.name}
-            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: "8px" }}
-          />
-        </div>
-      ) : null}
     </CollapsibleSection>
   );
 }

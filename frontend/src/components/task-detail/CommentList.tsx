@@ -1,28 +1,22 @@
 // Renders the list of user comments on a task.
-// The composer (textarea + Send button) stays in TaskDetail for now (E3).
+// The composer (textarea + Send button) stays in TaskDetail.
 // Webhook activity comments are filtered out upstream before passing here.
 
 import type { Comment, User } from "@/lib/api";
-import { Button } from "@/components/ui/Button";
+import InlineConfirmDelete from "@/components/ui/InlineConfirmDelete";
 import { formatAbsoluteDate, formatRelativeTime } from "@/lib/time";
 
 interface CommentListProps {
   comments: Comment[];
   user: User | null;
-  /** Id of the comment currently pending delete confirmation, or null. */
-  confirmDeleteCommentId: string | null;
-  onDeleteRequest: (commentId: string) => void;
+  /** Called when the user confirms a delete for the given comment. */
   onConfirmDelete: (commentId: string) => void;
-  onCancelDelete: () => void;
 }
 
 export default function CommentList({
   comments,
   user,
-  confirmDeleteCommentId,
-  onDeleteRequest,
   onConfirmDelete,
-  onCancelDelete,
 }: CommentListProps) {
   if (comments.length === 0) return null;
 
@@ -70,32 +64,9 @@ export default function CommentList({
               </span>
               {isOwn && (
                 <span className="td-comment-actions">
-                  {confirmDeleteCommentId === comment.id ? (
-                    <>
-                      <Button
-                        variant="link-danger"
-                        size="sm"
-                        onClick={() => onConfirmDelete(comment.id)}
-                      >
-                        Confirm?
-                      </Button>
-                      <Button
-                        variant="link"
-                        size="sm"
-                        onClick={onCancelDelete}
-                      >
-                        Cancel
-                      </Button>
-                    </>
-                  ) : (
-                    <Button
-                      variant="link-danger"
-                      size="sm"
-                      onClick={() => onDeleteRequest(comment.id)}
-                    >
-                      Delete
-                    </Button>
-                  )}
+                  <InlineConfirmDelete
+                    onConfirm={() => onConfirmDelete(comment.id)}
+                  />
                 </span>
               )}
             </div>

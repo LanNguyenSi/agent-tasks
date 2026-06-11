@@ -15,6 +15,7 @@ import {
 } from "../../../lib/api";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import TaskDetail from "../../../components/TaskDetail";
+import TaskDetailSkeleton from "../../../components/task-detail/TaskDetailSkeleton";
 
 /**
  * Full-page ("maximized") task detail at /tasks/[id].
@@ -103,7 +104,9 @@ export default function TaskDetailPage() {
       )}
 
       {loading && (
-        <p style={{ padding: "var(--space-5)", color: "var(--muted)" }}>Loading…</p>
+        <div style={{ padding: "var(--space-5)" }}>
+          <TaskDetailSkeleton />
+        </div>
       )}
 
       {!loading && task && project && (

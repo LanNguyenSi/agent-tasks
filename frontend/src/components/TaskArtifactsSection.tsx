@@ -12,6 +12,9 @@ import {
 } from "../lib/api";
 import { Button } from "./ui/Button";
 import CollapsibleSection from "./ui/CollapsibleSection";
+import { Icon } from "./ui/Icon";
+import InlineConfirmDelete from "./ui/InlineConfirmDelete";
+import { SkeletonList } from "./ui/Skeleton";
 
 const TYPE_LABELS: Record<TaskArtifactType, string> = {
   build_log: "Build logs",
@@ -148,28 +151,23 @@ export default function TaskArtifactsSection({
   return (
     <CollapsibleSection key={taskId} title="Artifacts" count={artifacts.length}>
       {loading && artifacts.length === 0 ? (
-        <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>Loading…</p>
+        <SkeletonList rows={2} rowHeight="3.5rem" label="Loading artifacts" />
       ) : artifacts.length === 0 ? (
-        <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>
-          No artifacts yet. Agents can attach build logs, test reports, and other typed outputs via the API.
-        </p>
+        <div className="ta-empty">
+          <Icon name="box" size={15} />
+          <span>
+            No artifacts yet. Agents publish build logs and reports here via{" "}
+            <code className="ta-empty-code">task_artifact_create</code>.
+          </span>
+        </div>
       ) : (
-        <div style={{ display: "grid", gap: "0.75rem" }}>
+        <div className="ta-artifact-list">
           {grouped.map(([type, items]) => (
             <div key={type}>
-              <p
-                style={{
-                  fontSize: "var(--text-xs)",
-                  fontWeight: 600,
-                  color: "var(--muted)",
-                  marginBottom: "0.3rem",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.03em",
-                }}
-              >
+              <p className="ta-type-label">
                 {TYPE_LABELS[type]} ({items.length})
               </p>
-              <div style={{ display: "grid", gap: "0.4rem" }}>
+              <div className="ta-artifact-rows">
                 {items.map((a) => {
                   const state = expanded[a.id];
                   // Backend is the source of truth on delete authorization; this
@@ -177,58 +175,26 @@ export default function TaskArtifactsSection({
                   // the viewer is the human creator or when they can manage all
                   // artifacts in the project (admin). Agent-created artifacts
                   // are never deletable from the web UI — agents use the API.
-                  const isHumanCreator =
-                    !!a.createdByUserId && a.createdByUserId === user?.id;
+                  const isHumanCreator = !!a.createdByUserId && a.createdByUserId === user?.id;
                   const canDelete = isHumanCreator || canManageAll;
                   return (
-                    <div
-                      key={a.id}
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: "8px",
-                        padding: "0.5rem",
-                        fontSize: "var(--text-sm)",
-                        background: "var(--surface)",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          gap: "0.5rem",
-                        }}
-                      >
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div
-                            style={{
-                              fontWeight: 600,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {a.name}
-                          </div>
-                          <div
-                            style={{
-                              fontSize: "var(--text-xs)",
-                              color: "var(--muted)",
-                              marginTop: "0.1rem",
-                            }}
-                          >
+                    <div key={a.id} className="ta-artifact-row">
+                      <div className="ta-artifact-row-inner">
+                        <div className="ta-artifact-info">
+                          <div className="ta-artifact-name">{a.name}</div>
+                          <div className="ta-artifact-meta">
                             {creatorLabel(a)} · {new Date(a.createdAt).toLocaleString()}
                             {a.sizeBytes > 0 ? ` · ${formatBytes(a.sizeBytes)}` : ""}
                             {a.mimeType ? ` · ${a.mimeType}` : ""}
                           </div>
                         </div>
-                        <div style={{ display: "flex", gap: "0.3rem", flexShrink: 0 }}>
+                        <div className="ta-artifact-actions">
                           {a.url ? (
                             <a
                               href={a.url}
                               target="_blank"
                               rel="noreferrer"
-                              style={{ fontSize: "var(--text-xs)", alignSelf: "center" }}
+                              className="ta-artifact-link"
                             >
                               Open
                             </a>
@@ -239,56 +205,23 @@ export default function TaskArtifactsSection({
                             </Button>
                           ) : null}
                           {canDelete ? (
-                            <button
-                              type="button"
-                              onClick={() => void remove(a)}
-                              disabled={deletingId === a.id}
-                              style={{
-                                background: "none",
-                                border: "none",
-                                color: "var(--danger)",
-                                cursor: "pointer",
-                                fontSize: "var(--text-xs)",
-                                padding: "0 0.25rem",
-                              }}
-                            >
-                              {deletingId === a.id ? "…" : "Delete"}
-                            </button>
+                            <InlineConfirmDelete
+                              onConfirm={() => void remove(a)}
+                              busy={deletingId === a.id}
+                            />
                           ) : null}
                         </div>
                       </div>
                       {a.description ? (
-                        <p
-                          style={{
-                            marginTop: "0.3rem",
-                            fontSize: "var(--text-xs)",
-                            color: "var(--muted)",
-                            whiteSpace: "pre-wrap",
-                          }}
-                        >
-                          {a.description}
-                        </p>
+                        <p className="ta-artifact-description">{a.description}</p>
                       ) : null}
                       {state && state !== "loading" ? (
-                        <div style={{ marginTop: "0.4rem" }}>
-                          <pre
-                            className="text-break-anywhere"
-                            style={{
-                              margin: 0,
-                              padding: "0.5rem",
-                              background: "var(--bg)",
-                              border: "1px solid var(--border)",
-                              borderRadius: "6px",
-                              fontSize: "var(--text-xs)",
-                              maxHeight: "20rem",
-                              overflow: "auto",
-                              whiteSpace: "pre-wrap",
-                            }}
-                          >
+                        <div className="ta-artifact-preview">
+                          <pre className="ta-artifact-pre text-break-anywhere">
                             {state.content ?? "(no inline content)"}
                           </pre>
                           {state.content ? (
-                            <div style={{ marginTop: "0.3rem", textAlign: "right" }}>
+                            <div className="ta-artifact-preview-foot">
                               <Button size="sm" onClick={() => download(state)}>
                                 Download
                               </Button>

@@ -40,14 +40,17 @@ import {
   type TemplateFields,
 } from "../lib/confidence";
 import { buildSavedTemplateData } from "../lib/templateData";
+import type { TemplateDataEdits } from "../lib/templateData";
 import { formatRelativeTime, formatAbsoluteDate } from "../lib/time";
 import ConfidenceBadge from "./ConfidenceBadge";
+import Markdown from "./Markdown";
 import TaskArtifactsSection from "./TaskArtifactsSection";
 import TaskAttachmentsSection from "./TaskAttachmentsSection";
 import { Button } from "./ui/Button";
 import CollapsibleSection from "./ui/CollapsibleSection";
 import ConfirmDialog from "./ui/ConfirmDialog";
 import FormField from "./ui/FormField";
+import InlineConfirmDelete from "./ui/InlineConfirmDelete";
 import Modal from "./ui/Modal";
 import Select from "@/components/ui/Select";
 import { KeyHint } from "./ui/KeyHint";
@@ -58,8 +61,35 @@ import CommentList from "./task-detail/CommentList";
 
 type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
-// Agent results can run to thousands of characters; the collapsed box is
-// clamped via .td-result--clamped CSS class (max-height: 16rem).
+// ── Template field config ──────────────────────────────────────────────────
+// One entry per editable templateData key. Drives BOTH view and edit rendering,
+// replacing the 9 copy-pasted blocks that existed before.
+// agentPrompt uses kind:'text' → rendered as <pre> in view, mono textarea in edit.
+// All other markdown fields use kind:'markdown' → rendered with <Markdown>.
+
+type FieldKind = "text" | "markdown";
+
+interface TemplateFieldDef {
+  key: string;
+  label: string;
+  kind: FieldKind;
+  rows?: number;
+  mono?: boolean;
+}
+
+const TEMPLATE_FIELD_DEFS: TemplateFieldDef[] = [
+  { key: "goal",               label: "Goal",                kind: "markdown", rows: 2 },
+  { key: "acceptanceCriteria", label: "Acceptance Criteria", kind: "markdown", rows: 3 },
+  { key: "context",            label: "Context",             kind: "markdown", rows: 2 },
+  { key: "constraints",        label: "Constraints",         kind: "markdown", rows: 2 },
+  { key: "scope",              label: "Scope",               kind: "markdown", rows: 2 },
+  { key: "outOfScope",         label: "Out of Scope",        kind: "markdown", rows: 2 },
+  { key: "dependencies",       label: "Dependencies",        kind: "markdown", rows: 2 },
+  { key: "risk",               label: "Risk",                kind: "markdown", rows: 2 },
+  { key: "agentPrompt",        label: "Agent Prompt",        kind: "text",     rows: 4, mono: true },
+];
+
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function toDateInputValue(value: string | null): string {
   if (!value) return "";
@@ -70,6 +100,34 @@ function toIsoDateOrNull(value: string): string | null {
   if (!value) return null;
   return new Date(`${value}T00:00:00`).toISOString();
 }
+
+/** Parse GFM task-list items in a markdown string. Returns null when none found. */
+function parseChecklistProgress(text: string): { checked: number; total: number } | null {
+  const matches = text.match(/^- \[[ xX]\]/gm);
+  if (!matches || matches.length === 0) return null;
+  const checked = matches.filter((m) => m !== "- [ ]").length;
+  return { checked, total: matches.length };
+}
+
+function buildEdits(
+  td: Record<string, string>,
+  taskType: TaskType | "",
+): TemplateDataEdits {
+  return {
+    goal:               td.goal               ?? "",
+    acceptanceCriteria: td.acceptanceCriteria  ?? "",
+    context:            td.context             ?? "",
+    constraints:        td.constraints         ?? "",
+    scope:              td.scope               ?? "",
+    outOfScope:         td.outOfScope          ?? "",
+    dependencies:       td.dependencies        ?? "",
+    risk:               td.risk                ?? "",
+    agentPrompt:        td.agentPrompt         ?? "",
+    taskType,
+  };
+}
+
+// ── Component ──────────────────────────────────────────────────────────────
 
 export interface TaskDetailProps {
   task: Task;
@@ -127,8 +185,6 @@ export default function TaskDetail({
   const [depPickerValue, setDepPickerValue] = useState("");
   const [commentText, setCommentText] = useState("");
   const [submittingComment, setSubmittingComment] = useState(false);
-  const [confirmRemoveDepId, setConfirmRemoveDepId] = useState<string | null>(null);
-  const [confirmDeleteCommentId, setConfirmDeleteCommentId] = useState<string | null>(null);
   const [resultOverflows, setResultOverflows] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
   const reviewSectionRef = useRef<HTMLElement>(null);
@@ -139,33 +195,32 @@ export default function TaskDetail({
   const [editDescription, setEditDescription] = useState("");
   const [editPriority, setEditPriority] = useState<Priority>("MEDIUM");
   const [editDueAt, setEditDueAt] = useState("");
-  const [editGoal, setEditGoal] = useState("");
-  const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState("");
-  const [editContext, setEditContext] = useState("");
-  const [editConstraints, setEditConstraints] = useState("");
-  const [editScope, setEditScope] = useState("");
-  const [editOutOfScope, setEditOutOfScope] = useState("");
-  const [editDependencies, setEditDependencies] = useState("");
-  const [editRisk, setEditRisk] = useState("");
-  const [editAgentPrompt, setEditAgentPrompt] = useState("");
   const [editTaskType, setEditTaskType] = useState<TaskType | "">("");
+  // All 9 string templateData fields consolidated into one record.
+  const [editTemplateData, setEditTemplateData] = useState<Record<string, string>>({});
+
+  const getField = (key: string): string => editTemplateData[key] ?? "";
+  const setField = (key: string, value: string): void =>
+    setEditTemplateData((prev) => ({ ...prev, [key]: value }));
 
   const initEditState = useCallback(() => {
     setEditTitle(task.title);
     setEditDescription(task.description ?? "");
     setEditPriority(task.priority);
-    // status is intentionally not seeded — no status field in edit mode
     setEditDueAt(toDateInputValue(task.dueAt));
-    setEditGoal(task.templateData?.goal ?? "");
-    setEditAcceptanceCriteria(task.templateData?.acceptanceCriteria ?? "");
-    setEditContext(task.templateData?.context ?? "");
-    setEditConstraints(task.templateData?.constraints ?? "");
-    setEditScope(task.templateData?.scope ?? "");
-    setEditOutOfScope(task.templateData?.outOfScope ?? "");
-    setEditDependencies(task.templateData?.dependencies ?? "");
-    setEditRisk(task.templateData?.risk ?? "");
-    setEditAgentPrompt(task.templateData?.agentPrompt ?? "");
     setEditTaskType(task.templateData?.taskType ?? "");
+    const td = task.templateData as Record<string, string | undefined> | null;
+    setEditTemplateData({
+      goal:               td?.goal               ?? "",
+      acceptanceCriteria: td?.acceptanceCriteria  ?? "",
+      context:            td?.context             ?? "",
+      constraints:        td?.constraints         ?? "",
+      scope:              td?.scope               ?? "",
+      outOfScope:         td?.outOfScope          ?? "",
+      dependencies:       td?.dependencies        ?? "",
+      risk:               td?.risk                ?? "",
+      agentPrompt:        td?.agentPrompt         ?? "",
+    });
   }, [task]);
 
   // Reset state when switching to a different task (not on every poll refresh).
@@ -180,8 +235,6 @@ export default function TaskDetail({
     setDepPickerValue("");
     setShowDeleteTaskConfirm(false);
     setResultExpanded(false);
-    setConfirmRemoveDepId(null);
-    setConfirmDeleteCommentId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.id]);
 
@@ -211,8 +264,6 @@ export default function TaskDetail({
   const handleMarkDone = useCallback(async () => {
     setReviewBusy(true);
     try {
-      // Route through /transition so the backend enforces workflow rules,
-      // precondition gates, and the optional distinct-reviewer gate.
       const updated = await transitionTask(task.id, "done");
       onUpdate(updated);
     } catch (err) {
@@ -241,7 +292,6 @@ export default function TaskDetail({
       try {
         await deleteComment(task.id, commentId);
         onUpdate({ ...task, comments: task.comments?.filter((co) => co.id !== commentId) });
-        setConfirmDeleteCommentId(null);
       } catch (err) {
         onError((err as Error).message);
       }
@@ -254,7 +304,6 @@ export default function TaskDetail({
       try {
         await removeDependency(task.id, depId);
         onUpdate({ ...task, blockedBy: task.blockedBy?.filter((d) => d.id !== depId) });
-        setConfirmRemoveDepId(null);
       } catch (err) {
         onError((err as Error).message);
       }
@@ -266,51 +315,23 @@ export default function TaskDetail({
 
   const isDirty = useMemo(() => {
     if (!isEditing) return false;
+    const td = task.templateData as Record<string, string | undefined> | null;
+    const templateDataDirty = TEMPLATE_FIELD_DEFS.some(
+      ({ key }) => (editTemplateData[key] ?? "") !== (td?.[key] ?? ""),
+    );
     return (
       editTitle !== task.title ||
       editDescription !== (task.description ?? "") ||
       editPriority !== task.priority ||
-      // status is no longer tracked in edit mode
       editDueAt !== toDateInputValue(task.dueAt) ||
-      editGoal !== (task.templateData?.goal ?? "") ||
-      editAcceptanceCriteria !== (task.templateData?.acceptanceCriteria ?? "") ||
-      editContext !== (task.templateData?.context ?? "") ||
-      editConstraints !== (task.templateData?.constraints ?? "") ||
-      editScope !== (task.templateData?.scope ?? "") ||
-      editOutOfScope !== (task.templateData?.outOfScope ?? "") ||
-      editDependencies !== (task.templateData?.dependencies ?? "") ||
-      editRisk !== (task.templateData?.risk ?? "") ||
-      editAgentPrompt !== (task.templateData?.agentPrompt ?? "") ||
-      editTaskType !== (task.templateData?.taskType ?? "")
+      editTaskType !== (task.templateData?.taskType ?? "") ||
+      templateDataDirty
     );
-  }, [
-    isEditing,
-    editTitle, editDescription, editPriority, editDueAt,
-    editGoal, editAcceptanceCriteria, editContext, editConstraints,
-    editScope, editOutOfScope, editDependencies, editRisk,
-    editAgentPrompt, editTaskType, task,
-  ]);
+  }, [isEditing, editTitle, editDescription, editPriority, editDueAt, editTaskType, editTemplateData, task]);
 
   const editedTemplateData = useMemo(
-    () =>
-      buildSavedTemplateData(task.templateData, {
-        goal: editGoal,
-        acceptanceCriteria: editAcceptanceCriteria,
-        context: editContext,
-        constraints: editConstraints,
-        scope: editScope,
-        outOfScope: editOutOfScope,
-        dependencies: editDependencies,
-        risk: editRisk,
-        agentPrompt: editAgentPrompt,
-        taskType: editTaskType,
-      }),
-    [
-      task.templateData,
-      editGoal, editAcceptanceCriteria, editContext, editConstraints,
-      editScope, editOutOfScope, editDependencies, editRisk,
-      editAgentPrompt, editTaskType,
-    ],
+    () => buildSavedTemplateData(task.templateData, buildEdits(editTemplateData, editTaskType)),
+    [task.templateData, editTemplateData, editTaskType],
   );
 
   // Live confidence score (reflects edit state in edit mode).
@@ -323,10 +344,7 @@ export default function TaskDetail({
       templateFields,
     });
     return conf.score;
-  }, [
-    templateFields, isEditing, editTitle, editDescription,
-    editedTemplateData, task,
-  ]);
+  }, [templateFields, isEditing, editTitle, editDescription, editedTemplateData, task]);
 
   const startEditing = useCallback(() => {
     initEditState();
@@ -376,10 +394,7 @@ export default function TaskDetail({
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [
-    isEditing, startEditing, cancelEditing, handleClose,
-    showDiscardPrompt, showDeleteTaskConfirm, variant,
-  ]);
+  }, [isEditing, startEditing, cancelEditing, handleClose, showDiscardPrompt, showDeleteTaskConfirm, variant]);
 
   async function handleSaveTask() {
     setSavingTask(true);
@@ -388,7 +403,6 @@ export default function TaskDetail({
         title: editTitle.trim(),
         description: editDescription.trim() || null,
         priority: editPriority,
-        // status is intentionally omitted — changes only via gated transitions
         dueAt: toIsoDateOrNull(editDueAt),
         templateData: editedTemplateData,
       });
@@ -439,8 +453,7 @@ export default function TaskDetail({
     }
   }
 
-  // Gate-respecting workflow advance. `start` claims + moves open → in_progress;
-  // `submit_review` moves in_progress → review.
+  // Gate-respecting workflow advance.
   async function handleAdvance(action: "start" | "submit_review") {
     setAdvanceBusy(true);
     try {
@@ -466,24 +479,19 @@ export default function TaskDetail({
   const resultClamped = !resultExpanded;
   const showResultToggle = resultOverflows || resultExpanded;
 
-  // ── Edit mode footer (Save / Cancel) ──────────────────────────
+  // ── Edit mode footer ───────────────────────────────────────────────────────
   const editFooter = isEditing ? (
     <div className="td-edit-footer">
       <Button variant="ghost" size="sm" onClick={cancelEditing} disabled={savingTask}>
         Cancel
       </Button>
-      <Button
-        onClick={() => void handleSaveTask()}
-        disabled={savingTask}
-        loading={savingTask}
-        size="sm"
-      >
+      <Button onClick={() => void handleSaveTask()} disabled={savingTask} loading={savingTask} size="sm">
         {savingTask ? "Saving…" : "Save"}
       </Button>
     </div>
   ) : null;
 
-  // ── Header component (shared between modal + page contexts) ────
+  // ── Header component ───────────────────────────────────────────────────────
   const header = (
     <TaskHeader
       task={task}
@@ -504,7 +512,7 @@ export default function TaskDetail({
     />
   );
 
-  // ── Main column ────────────────────────────────────────────────
+  // ── Main column ────────────────────────────────────────────────────────────
   const mainColumn = (
     <div className="td-main">
 
@@ -514,7 +522,6 @@ export default function TaskDetail({
           <>
             <p className="section-kicker">Overview</p>
             <div className="td-field-row">
-              {/* dynamic: title label stays outside FormField to avoid nesting */}
               <FormField label="Title">
                 <input
                   value={editTitle}
@@ -535,22 +542,37 @@ export default function TaskDetail({
         ) : (
           <>
             <div className="td-section-head">
-              <h2 className="td-section-title">Description</h2>
+              <h2 className="td-section-title">
+                Description
+                {task.description && (() => {
+                  const p = parseChecklistProgress(task.description);
+                  if (!p) return null;
+                  return (
+                    <span className="td-checklist-progress num">
+                      <span className="td-checklist-bar">
+                        {/* dynamic: progress bar width = percentage */}
+                        <span
+                          className="td-checklist-bar-fill"
+                          // eslint-disable-next-line no-restricted-syntax
+                          style={{ width: `${Math.round((p.checked / p.total) * 100)}%` }}
+                        />
+                      </span>
+                      {p.checked} of {p.total}
+                    </span>
+                  );
+                })()}
+              </h2>
             </div>
             {task.description ? (
-              <div className="prose-markdown">
-                <ReactMarkdown>{task.description}</ReactMarkdown>
-              </div>
+              <Markdown>{task.description}</Markdown>
             ) : (
-              <p className="td-empty-desc">
-                No description
-              </p>
+              <p className="td-empty-desc">No description</p>
             )}
           </>
         )}
       </section>
 
-      {/* ── Workflow (edit mode: priority + due date; status removed) ─ */}
+      {/* ── Workflow (edit mode: priority + due date) ─── */}
       {isEditing && (
         <section className="td-section">
           <p className="section-kicker">Workflow</p>
@@ -560,9 +582,9 @@ export default function TaskDetail({
                 value={editPriority}
                 onChange={(v) => setEditPriority(v as Priority)}
                 options={[
-                  { value: "LOW", label: "LOW" },
-                  { value: "MEDIUM", label: "MEDIUM" },
-                  { value: "HIGH", label: "HIGH" },
+                  { value: "LOW",      label: "LOW" },
+                  { value: "MEDIUM",   label: "MEDIUM" },
+                  { value: "HIGH",     label: "HIGH" },
                   { value: "CRITICAL", label: "CRITICAL" },
                 ]}
                 className="td-form-input"
@@ -580,7 +602,7 @@ export default function TaskDetail({
         </section>
       )}
 
-      {/* ── Agent Template ───────────────────────────────────── */}
+      {/* ── Agent Template ───────────────────────────────── */}
       {templateFields && (
         <section className="td-section">
           <div className="td-section-head">
@@ -589,9 +611,7 @@ export default function TaskDetail({
           {(() => {
             const conf = calculateConfidence({
               title: isEditing ? editTitle : task.title,
-              description: isEditing
-                ? editDescription || null
-                : task.description ?? null,
+              description: isEditing ? editDescription || null : task.description ?? null,
               templateData: isEditing ? editedTemplateData : task.templateData,
               templateFields,
             });
@@ -613,116 +633,24 @@ export default function TaskDetail({
               </div>
             );
           })()}
+
           {isEditing ? (
             <>
-              {templateFields.goal && (
-                <div className="td-field-row">
-                  <FormField label="Goal">
-                    <textarea
-                      value={editGoal}
-                      onChange={(e) => setEditGoal(e.target.value)}
-                      rows={2}
-                      className="td-form-textarea"
-                    />
-                  </FormField>
-                </div>
-              )}
-              {templateFields.acceptanceCriteria && (
-                <div className="td-field-row">
-                  <FormField label="Acceptance Criteria">
-                    <textarea
-                      value={editAcceptanceCriteria}
-                      onChange={(e) => setEditAcceptanceCriteria(e.target.value)}
-                      rows={3}
-                      className="td-form-textarea"
-                    />
-                  </FormField>
-                </div>
-              )}
-              {templateFields.context && (
-                <div className="td-field-row">
-                  <FormField label="Context">
-                    <textarea
-                      value={editContext}
-                      onChange={(e) => setEditContext(e.target.value)}
-                      rows={2}
-                      className="td-form-textarea"
-                    />
-                  </FormField>
-                </div>
-              )}
-              {templateFields.constraints && (
-                <div className="td-field-row">
-                  <FormField label="Constraints">
-                    <textarea
-                      value={editConstraints}
-                      onChange={(e) => setEditConstraints(e.target.value)}
-                      rows={2}
-                      className="td-form-textarea"
-                    />
-                  </FormField>
-                </div>
-              )}
-              {templateFields.scope && (
-                <div className="td-field-row">
-                  <FormField label="Scope">
-                    <textarea
-                      value={editScope}
-                      onChange={(e) => setEditScope(e.target.value)}
-                      rows={2}
-                      className="td-form-textarea"
-                    />
-                  </FormField>
-                </div>
-              )}
-              {templateFields.outOfScope && (
-                <div className="td-field-row">
-                  <FormField label="Out of Scope">
-                    <textarea
-                      value={editOutOfScope}
-                      onChange={(e) => setEditOutOfScope(e.target.value)}
-                      rows={2}
-                      className="td-form-textarea"
-                    />
-                  </FormField>
-                </div>
-              )}
-              {templateFields.dependencies && (
-                <div className="td-field-row">
-                  <FormField label="Dependencies">
-                    <textarea
-                      value={editDependencies}
-                      onChange={(e) => setEditDependencies(e.target.value)}
-                      rows={2}
-                      className="td-form-textarea"
-                    />
-                  </FormField>
-                </div>
-              )}
-              {templateFields.risk && (
-                <div className="td-field-row">
-                  <FormField label="Risk">
-                    <textarea
-                      value={editRisk}
-                      onChange={(e) => setEditRisk(e.target.value)}
-                      rows={2}
-                      className="td-form-textarea"
-                    />
-                  </FormField>
-                </div>
-              )}
-              {templateFields.agentPrompt && (
-                <div className="td-field-row">
-                  <FormField label="Agent Prompt">
-                    <textarea
-                      value={editAgentPrompt}
-                      onChange={(e) => setEditAgentPrompt(e.target.value)}
-                      rows={4}
-                      className="td-form-textarea td-form-textarea--mono"
-                    />
-                  </FormField>
-                </div>
-              )}
+              {TEMPLATE_FIELD_DEFS.map(({ key, label, rows, mono }) => {
+                if (!templateFields[key as keyof TemplateFields]) return null;
+                return (
+                  <div key={key} className="td-field-row">
+                    <FormField label={label}>
+                      <textarea
+                        value={getField(key)}
+                        onChange={(e) => setField(key, e.target.value)}
+                        rows={rows ?? 2}
+                        className={["td-form-textarea", mono ? "td-form-textarea--mono" : ""].filter(Boolean).join(" ")}
+                      />
+                    </FormField>
+                  </div>
+                );
+              })}
               <div className="td-field-row">
                 <FormField label="Task Type">
                   <Select
@@ -740,84 +668,25 @@ export default function TaskDetail({
             </>
           ) : (
             <div className="td-template-fields-view">
-              {templateFields.goal && task.templateData?.goal && (
-                <div>
-                  <span className="td-template-field-kicker">Goal</span>
-                  <div className="prose-markdown td-template-field-prose">
-                    <ReactMarkdown>{task.templateData.goal}</ReactMarkdown>
+              {TEMPLATE_FIELD_DEFS.map(({ key, label, kind }) => {
+                if (!templateFields[key as keyof TemplateFields]) return null;
+                const value = (task.templateData as Record<string, string | undefined> | null)?.[key];
+                if (!value) return null;
+                return (
+                  <div key={key}>
+                    <span className="td-template-field-kicker">{label}</span>
+                    {kind === "text" ? (
+                      <pre className="td-template-field-pre">{value}</pre>
+                    ) : (
+                      <Markdown className="td-template-field-prose">{value}</Markdown>
+                    )}
                   </div>
-                </div>
-              )}
-              {templateFields.acceptanceCriteria && task.templateData?.acceptanceCriteria && (
-                <div>
-                  <span className="td-template-field-kicker">Acceptance Criteria</span>
-                  <div className="prose-markdown td-template-field-prose">
-                    <ReactMarkdown>{task.templateData.acceptanceCriteria}</ReactMarkdown>
-                  </div>
-                </div>
-              )}
-              {templateFields.context && task.templateData?.context && (
-                <div>
-                  <span className="td-template-field-kicker">Context</span>
-                  <div className="prose-markdown td-template-field-prose">
-                    <ReactMarkdown>{task.templateData.context}</ReactMarkdown>
-                  </div>
-                </div>
-              )}
-              {templateFields.constraints && task.templateData?.constraints && (
-                <div>
-                  <span className="td-template-field-kicker">Constraints</span>
-                  <div className="prose-markdown td-template-field-prose">
-                    <ReactMarkdown>{task.templateData.constraints}</ReactMarkdown>
-                  </div>
-                </div>
-              )}
-              {templateFields.scope && task.templateData?.scope && (
-                <div>
-                  <span className="td-template-field-kicker">Scope</span>
-                  <div className="prose-markdown td-template-field-prose">
-                    <ReactMarkdown>{task.templateData.scope}</ReactMarkdown>
-                  </div>
-                </div>
-              )}
-              {templateFields.outOfScope && task.templateData?.outOfScope && (
-                <div>
-                  <span className="td-template-field-kicker">Out of Scope</span>
-                  <div className="prose-markdown td-template-field-prose">
-                    <ReactMarkdown>{task.templateData.outOfScope}</ReactMarkdown>
-                  </div>
-                </div>
-              )}
-              {templateFields.dependencies && task.templateData?.dependencies && (
-                <div>
-                  <span className="td-template-field-kicker">Dependencies</span>
-                  <div className="prose-markdown td-template-field-prose">
-                    <ReactMarkdown>{task.templateData.dependencies}</ReactMarkdown>
-                  </div>
-                </div>
-              )}
-              {templateFields.risk && task.templateData?.risk && (
-                <div>
-                  <span className="td-template-field-kicker">Risk</span>
-                  <div className="prose-markdown td-template-field-prose">
-                    <ReactMarkdown>{task.templateData.risk}</ReactMarkdown>
-                  </div>
-                </div>
-              )}
-              {templateFields.agentPrompt && task.templateData?.agentPrompt && (
-                <div>
-                  <span className="td-template-field-kicker">Agent Prompt</span>
-                  <pre className="td-template-field-pre">
-                    {task.templateData.agentPrompt}
-                  </pre>
-                </div>
-              )}
+                );
+              })}
               {task.templateData?.taskType && (
                 <div>
                   <span className="td-template-field-kicker">Task Type</span>
-                  <div className="td-template-field-text">
-                    {task.templateData.taskType}
-                  </div>
+                  <div className="td-template-field-text">{task.templateData.taskType}</div>
                 </div>
               )}
             </div>
@@ -825,40 +694,25 @@ export default function TaskDetail({
         </section>
       )}
 
-      {/* ── Dependencies (edit mode: full editor; view: collapsible) ── */}
+      {/* ── Dependencies ──────────────────────────────────── */}
       {isEditing ? (
         <section className="td-section">
           <p className="section-kicker">Dependencies</p>
           {(task.blockedBy?.length ?? 0) === 0 && (task.blocks?.length ?? 0) === 0 ? (
-            <p className="td-dep-empty">
-              No dependencies.
-            </p>
+            <p className="td-dep-empty">No dependencies.</p>
           ) : (
             <div className="td-dep-edit-list">
               {task.blockedBy?.map((dep) => (
-                <div
-                  key={dep.id}
-                  className="td-dep-edit-row"
-                >
+                <div key={dep.id} className="td-dep-edit-row">
                   <span className="td-dep-edit-row-left">
                     <span className={["td-dep-status-dot", dep.status === "done" ? "td-dep-status-dot--done" : "td-dep-status-dot--blocked"].join(" ")} />
                     <span>{dep.title}</span>
                     <span className="td-dep-status">({dep.status})</span>
                   </span>
-                  {confirmRemoveDepId === dep.id ? (
-                    <span className="td-dep-edit-row-actions">
-                      <Button variant="link-danger" size="sm" onClick={() => void removeDependencyConfirmed(dep.id)}>
-                        Confirm?
-                      </Button>
-                      <Button variant="link" size="sm" onClick={() => setConfirmRemoveDepId(null)}>
-                        Cancel
-                      </Button>
-                    </span>
-                  ) : (
-                    <Button variant="link" size="sm" onClick={() => setConfirmRemoveDepId(dep.id)}>
-                      Remove
-                    </Button>
-                  )}
+                  <InlineConfirmDelete
+                    label="Remove"
+                    onConfirm={() => void removeDependencyConfirmed(dep.id)}
+                  />
                 </div>
               ))}
               {task.blocks?.map((dep) => (
@@ -921,20 +775,14 @@ export default function TaskDetail({
         >
           <div className="td-dep-view-list">
             {task.blockedBy?.map((dep) => (
-              <div
-                key={dep.id}
-                className="td-dep-view-row"
-              >
+              <div key={dep.id} className="td-dep-view-row">
                 <span className={["td-dep-status-dot", dep.status === "done" ? "td-dep-status-dot--done" : "td-dep-status-dot--blocked"].join(" ")} />
                 <span>{dep.title}</span>
                 <span className="td-dep-status">({dep.status})</span>
               </div>
             ))}
             {task.blocks?.map((dep) => (
-              <div
-                key={dep.id}
-                className="td-dep-view-blocks"
-              >
+              <div key={dep.id} className="td-dep-view-blocks">
                 blocks: {dep.title} ({dep.status})
               </div>
             ))}
@@ -942,7 +790,7 @@ export default function TaskDetail({
         </CollapsibleSection>
       ) : null}
 
-      {/* ── Agent Output (branch / PR / result) ─────────────────── */}
+      {/* ── Agent Output (branch / PR / result) ─────────────── */}
       {(task.branchName || task.prUrl || task.result) && (
         <section className="td-section">
           <div className="td-section-head">
@@ -952,9 +800,7 @@ export default function TaskDetail({
             {task.branchName && (
               <div className="td-output-row">
                 <span className="td-output-label">Branch</span>
-                <code className="td-output-code">
-                  {task.branchName}
-                </code>
+                <code className="td-output-code">{task.branchName}</code>
               </div>
             )}
             {task.prUrl && (
@@ -972,9 +818,7 @@ export default function TaskDetail({
             )}
             {task.result && (
               <div>
-                <span className="td-output-label td-output-label-block">
-                  Result
-                </span>
+                <span className="td-output-label td-output-label-block">Result</span>
                 <div
                   ref={resultRef}
                   className={[
@@ -1002,7 +846,7 @@ export default function TaskDetail({
         </section>
       )}
 
-      {/* ── Review panel ─────────────────────────────────────────── */}
+      {/* ── Review panel ─────────────────────────────────────── */}
       {task.status === "review" && (
         <section className="td-section">
           <ReviewPanel
@@ -1019,7 +863,7 @@ export default function TaskDetail({
         </section>
       )}
 
-      {/* ── Attachments ──────────────────────────────────────────── */}
+      {/* ── Attachments ──────────────────────────────────────── */}
       <section className="td-section">
         <TaskAttachmentsSection
           taskId={task.id}
@@ -1029,7 +873,7 @@ export default function TaskDetail({
         />
       </section>
 
-      {/* ── Artifacts ────────────────────────────────────────────── */}
+      {/* ── Artifacts ────────────────────────────────────────── */}
       <section className="td-section">
         <TaskArtifactsSection
           taskId={task.id}
@@ -1039,7 +883,7 @@ export default function TaskDetail({
         />
       </section>
 
-      {/* ── Activity (webhook events) ─────────────────────────────── */}
+      {/* ── Activity (webhook events) ─────────────────────────── */}
       {webhookEvents.length > 0 && (
         <section className="td-section">
           <CollapsibleSection key={task.id} title="Activity" count={webhookEvents.length}>
@@ -1081,7 +925,7 @@ export default function TaskDetail({
         </section>
       )}
 
-      {/* ── Comments ─────────────────────────────────────────────── */}
+      {/* ── Comments ─────────────────────────────────────────── */}
       <section className="td-section">
         <div className="td-section-head">
           <h2 className="td-section-title">Comments</h2>
@@ -1092,10 +936,7 @@ export default function TaskDetail({
         <CommentList
           comments={userComments}
           user={user}
-          confirmDeleteCommentId={confirmDeleteCommentId}
-          onDeleteRequest={(id) => setConfirmDeleteCommentId(id)}
           onConfirmDelete={(id) => void deleteCommentConfirmed(id)}
-          onCancelDelete={() => setConfirmDeleteCommentId(null)}
         />
         {/* Composer */}
         <div className="td-composer">
@@ -1132,7 +973,7 @@ export default function TaskDetail({
     </div>
   );
 
-  // ── Sidebar ────────────────────────────────────────────────────
+  // ── Sidebar ────────────────────────────────────────────────────────────────
   const sidebar = (
     <aside className="td-sidebar" aria-label="Task properties">
       <TaskMetaSidebar
@@ -1146,7 +987,7 @@ export default function TaskDetail({
     </aside>
   );
 
-  // ── Layout ────────────────────────────────────────────────────
+  // ── Layout ────────────────────────────────────────────────────────────────
   const layout = (
     <div className="td-layout">
       {mainColumn}
@@ -1172,9 +1013,6 @@ export default function TaskDetail({
           title={task.title}
           actions={editFooter}
           headerActions={
-            // Hidden while editing: navigating to /tasks/[id] opens in view
-            // mode, silently dropping unsaved changes. The discard guard on
-            // X / backdrop / Escape is bypassed if the link is reachable.
             !isEditing ? (
               <Link
                 href={`/tasks/${task.id}`}
