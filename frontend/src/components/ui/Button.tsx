@@ -1,15 +1,49 @@
-import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
+// Button primitive — all geometry in CSS classes (globals.css .btn--*).
+// Supports: primary / secondary / danger / outline-danger / ghost / link / link-danger variants,
+// sm/md/lg sizes, loading spinner (label kept visible), optional KeyHint chip,
+// and href prop (renders <a> with the same classes for link affordances).
+//
+// Call sites that pass style={{}} for layout override still work — those are
+// caller-owned dynamic values, not component geometry.
 
-type Variant = "primary" | "secondary" | "danger" | "outline-danger" | "ghost" | "link" | "link-danger";
+import type {
+  AnchorHTMLAttributes,
+  ButtonHTMLAttributes,
+  CSSProperties,
+  ReactNode,
+} from "react";
+import { KeyHint } from "./KeyHint";
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+type Variant =
+  | "primary"
+  | "secondary"
+  | "danger"
+  | "outline-danger"
+  | "ghost"
+  | "link"
+  | "link-danger";
+
+interface ButtonBaseProps {
   variant?: Variant;
   size?: "sm" | "md" | "lg";
   loading?: boolean;
   children: ReactNode;
+  /** Renders a KeyHint chip after the label (inside the button). */
+  keyHint?: string;
+  /** When set, renders an <a> element instead of <button>. */
+  href?: string;
+  disabled?: boolean;
+  className?: string;
+  style?: CSSProperties;
 }
 
-const variantClass: Record<Variant, string> = {
+type ButtonProps = ButtonBaseProps &
+  (
+    | Omit<ButtonHTMLAttributes<HTMLButtonElement>, keyof ButtonBaseProps>
+    | Omit<AnchorHTMLAttributes<HTMLAnchorElement>, keyof ButtonBaseProps>
+  );
+
+const VARIANT_CLASS: Record<Variant, string> = {
   primary: "btn-primary",
   secondary: "btn-secondary",
   danger: "btn-danger",
@@ -19,10 +53,10 @@ const variantClass: Record<Variant, string> = {
   "link-danger": "btn-link btn-link-danger",
 };
 
-const sizeStyles: Record<string, CSSProperties> = {
-  sm: { padding: "0.35rem 0.75rem", fontSize: "var(--text-sm, 0.8125rem)" },
-  md: { padding: "0.5rem 1.25rem", fontSize: "var(--text-base, 0.875rem)" },
-  lg: { padding: "0.75rem 1.75rem", fontSize: "var(--text-md, 1rem)" },
+const SIZE_CLASS: Record<string, string> = {
+  sm: "btn--sm",
+  md: "btn--md",
+  lg: "btn--lg",
 };
 
 export function Button({
@@ -31,33 +65,53 @@ export function Button({
   loading = false,
   children,
   disabled,
-  style,
   className,
-  ...props
+  keyHint,
+  href,
+  style,
+  ...rest
 }: ButtonProps) {
-  // The link / link-danger variants render as unboxed inline text (no
-  // padding, background, or radius) so they sit inside chips and metadata
-  // rows without looking like a button. Colour + underline come from the
-  // .btn-link CSS class.
   const isLink = variant === "link" || variant === "link-danger";
+
+  const classes = [
+    VARIANT_CLASS[variant],
+    !isLink ? `btn--box ${SIZE_CLASS[size]}` : "",
+    className,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const content = (
+    <>
+      {loading && <span className="btn-spinner" aria-hidden="true" />}
+      {children}
+      {keyHint && <KeyHint>{keyHint}</KeyHint>}
+      {loading && <span className="sr-only">Loading</span>}
+    </>
+  );
+
+  if (href) {
+    return (
+      <a
+        href={href}
+        className={classes}
+        style={style}
+        {...(rest as AnchorHTMLAttributes<HTMLAnchorElement>)}
+      >
+        {content}
+      </a>
+    );
+  }
+
   return (
     <button
       disabled={disabled || loading}
-      className={[variantClass[variant], className].filter(Boolean).join(" ")}
-      style={{
-        cursor: disabled || loading ? "not-allowed" : "pointer",
-        opacity: disabled || loading ? 0.4 : 1,
-        fontFamily: "inherit",
-        ...(isLink
-          ? { background: "none", border: "none", padding: 0, fontWeight: 600 }
-          : { borderRadius: "var(--radius-base, 6px)", fontWeight: 600, ...sizeStyles[size] }),
-        ...style,
-      }}
-      {...props}
+      className={classes}
+      style={style}
       aria-busy={loading || undefined}
+      {...(rest as ButtonHTMLAttributes<HTMLButtonElement>)}
     >
-      {children}
-      {loading && <span className="sr-only">Loading</span>}
+      {content}
     </button>
   );
 }

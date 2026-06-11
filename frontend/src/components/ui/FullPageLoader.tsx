@@ -1,5 +1,8 @@
 "use client";
 
+// Full-page loading state. All geometry in .full-page-loader-* classes in globals.css.
+// Replaces the assorted bare "Loading…" paragraphs that diverged per page.
+
 import { SkeletonList } from "./Skeleton";
 
 interface FullPageLoaderProps {
@@ -22,7 +25,11 @@ interface FullPageLoaderProps {
  * "Loading…" paragraphs that diverged per page. Both variants expose a
  * `role="status"` region so screen readers announce loading once.
  */
-export function FullPageLoader({ label = "Loading…", variant = "centered", rows = 5 }: FullPageLoaderProps) {
+export function FullPageLoader({
+  label = "Loading…",
+  variant = "centered",
+  rows = 5,
+}: FullPageLoaderProps) {
   if (variant === "shell") {
     return (
       <main className="page-shell">
@@ -35,17 +42,10 @@ export function FullPageLoader({ label = "Loading…", variant = "centered", row
     <main
       role="status"
       aria-busy="true"
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "var(--space-3)",
-      }}
+      className="full-page-loader"
     >
       <span className="spinner" aria-hidden="true" />
-      <span style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>{label}</span>
+      <span className="full-page-loader-label">{label}</span>
     </main>
   );
 }

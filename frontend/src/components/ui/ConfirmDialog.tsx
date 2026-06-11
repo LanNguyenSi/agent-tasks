@@ -1,5 +1,8 @@
 "use client";
 
+// Compact confirmation dialog. All geometry in CSS:
+// .confirm-dialog-* for the inner content, .confirm-modal-card for the card.
+
 import { useEffect, useId, useRef } from "react";
 import { Button } from "./Button";
 
@@ -83,11 +86,13 @@ export default function ConfirmDialog({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
       >
-        <h3 id={titleId} style={{ fontSize: "var(--text-md, 1rem)", fontWeight: 700, marginBottom: "var(--space-2, 0.5rem)" }}>{title}</h3>
-        <p style={{ color: "var(--text-secondary, #b0bac7)", fontSize: "var(--text-sm, 0.8125rem)", marginBottom: "var(--space-4, 1rem)" }}>{message}</p>
-        <div style={{ display: "flex", gap: "var(--space-2, 0.5rem)", justifyContent: "flex-end", flexWrap: "wrap" }}>
+        <h3 id={titleId} className="confirm-dialog-title">
+          {title}
+        </h3>
+        <p className="confirm-dialog-message">{message}</p>
+        <div className="confirm-dialog-actions">
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
             {cancelLabel}
           </Button>

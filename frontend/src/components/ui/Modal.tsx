@@ -1,12 +1,21 @@
 "use client";
 
+// Modal dialog with fixed header, scrolling body, and pinned footer.
+// Header/body/footer slots exposed via props; existing children-only call
+// sites are unaffected (children renders in the body, actions in the footer).
+//
+// footer prop is an alias for actions. body prop is an alias for children.
+// Both the old and new names work at any call site.
+
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
 interface ModalProps {
   open: boolean;
   onClose: () => void;
   title: string;
-  children: ReactNode;
+  /** Body content. Alias: body prop. */
+  children?: ReactNode;
+  /** Footer actions row. Alias: footer prop. */
   actions?: ReactNode;
   /**
    * Optional controls rendered in the header to the left of the close
@@ -20,6 +29,10 @@ interface ModalProps {
    * edit before closing) so the two handlers do not double-fire.
    */
   closeOnEscape?: boolean;
+  /** Slot alias for children. When both are set, footer wins. */
+  body?: ReactNode;
+  /** Slot alias for actions. When both are set, footer wins. */
+  footer?: ReactNode;
 }
 
 export default function Modal({
@@ -30,10 +43,16 @@ export default function Modal({
   actions,
   headerActions,
   closeOnEscape = true,
+  body,
+  footer,
 }: ModalProps) {
   const titleId = useId();
   const cardRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+
+  // Slot resolution: explicit slot props win over the legacy props.
+  const bodyContent = body ?? children;
+  const footerContent = footer ?? actions;
 
   // Focus management: move focus into the dialog on open, restore it to
   // the previously-focused element (the trigger) on close/unmount.
@@ -121,8 +140,8 @@ export default function Modal({
             </button>
           </div>
         </div>
-        <div className="modal-body">{children}</div>
-        {actions && <div className="modal-actions">{actions}</div>}
+        <div className="modal-body">{bodyContent}</div>
+        {footerContent && <div className="modal-actions">{footerContent}</div>}
       </div>
     </div>
   );
