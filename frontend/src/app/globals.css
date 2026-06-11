@@ -5723,7 +5723,7 @@ a.proj-chip:hover {
   gap: var(--space-5);
 }
 
-/* Sticky side nav — hidden under 1000px via the responsive block below. */
+/* Sticky side nav: hidden under 1000px via the responsive block below. */
 .settings-side-nav {
   position: sticky;
   top: calc(48px + var(--space-4));
