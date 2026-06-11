@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1440">
+<title>scorer: fixed maxPossible=100 + keystone caps · agent-tasks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* surfaces: 3 elevation steps + page */
+  --bg-0: #08090c;
+  --bg-1: #0e1014;
+  --bg-2: #14171c;
+  --bg-3: #191d24;
+  /* hairlines */
+  --border: #ffffff0f;
+  --border-strong: #ffffff1a;
+  /* text */
+  --text-1: #e8eaee;
+  --text-2: #a6acb8;
+  --text-3: #6d7480;
+  /* one restrained accent */
+  --accent: #5e6ad2;
+  --accent-hover: #6974dc;
+  --accent-text: #9aa3ec;
+  --accent-soft: rgba(94, 106, 210, 0.14);
+  --accent-border: rgba(94, 106, 210, 0.38);
+  /* status */
+  --st-open: #8a8f98;        --st-open-text: #a8aeb8;
+  --st-progress: #5e6ad2;    --st-progress-text: #99a2ee;
+  --st-review: #c08b3a;      --st-review-text: #d9aa5e;
+  --st-done: #4c9a68;        --st-done-text: #74bd8f;
+  /* priority */
+  --pr-critical: #e07a76;
+  --pr-high: #d99657;
+  --pr-medium: #c2ab60;
+  --pr-low: #8a8f98;
+  /* shape + rhythm */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 32px;
+  /* type */
+  --fs-h1: 20px;
+  --fs-section: 14px;
+  --fs-body: 13px;
+  --fs-meta: 12px;
+  --fs-micro: 11px;
+  --font-ui: "Inter", -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { background: var(--bg-0); }
+body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  color: var(--text-1);
+  -webkit-font-smoothing: antialiased;
+  min-width: 1280px;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+button, a { transition: background-color .12s ease, border-color .12s ease, color .12s ease; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+.num { font-variant-numeric: tabular-nums; }
+svg { display: block; flex: none; }
+
+/* ---------- app nav (shared shell) ---------- */
+.nav {
+  position: sticky; top: 0; z-index: 30;
+  height: 48px;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--border);
+}
+.nav-inner {
+  height: 100%; padding: 0 var(--s-5);
+  display: flex; align-items: center; gap: var(--s-5);
+}
+.brand {
+  display: flex; align-items: center; gap: var(--s-2);
+  font-size: var(--fs-body); font-weight: 600; letter-spacing: -0.01em;
+}
+.brand svg { color: var(--accent); }
+.nav-links { display: flex; align-items: center; gap: var(--s-1); }
+.nav-link {
+  display: inline-flex; align-items: center; height: 26px; padding: 0 10px;
+  border-radius: var(--r-md);
+  font-size: 12.5px; font-weight: 500; color: var(--text-3);
+}
+.nav-link:hover { color: var(--text-1); background: #ffffff08; }
+.nav-link[aria-current="page"] { color: var(--text-1); background: #ffffff0d; }
+.nav-spacer { flex: 1; }
+.user-menu {
+  display: flex; align-items: center; gap: var(--s-2);
+  height: 30px; padding: 0 var(--s-2); border-radius: var(--r-md);
+  font-size: var(--fs-meta); color: var(--text-2);
+}
+.user-menu:hover { background: #ffffff08; color: var(--text-1); }
+.user-menu svg { color: var(--text-3); }
+.avatar {
+  width: 18px; height: 18px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: #2b3052; color: #b3baf2;
+  font-size: 8px; font-weight: 600; letter-spacing: 0.03em;
+  flex: none;
+}
+.avatar-lg { width: 24px; height: 24px; font-size: 10px; }
+
+/* ---------- page frame ---------- */
+.page { max-width: 1168px; margin: 0 auto; padding: var(--s-5) var(--s-5) 0; }
+
+.breadcrumb {
+  display: flex; align-items: center; gap: var(--s-2);
+  font-size: var(--fs-meta); color: var(--text-3);
+}
+.breadcrumb a:hover { color: var(--text-1); }
+.breadcrumb .sep { opacity: 0.55; }
+
+/* task title IS the page title */
+.task-h1 {
+  margin-top: var(--s-3);
+  font-size: var(--fs-h1); font-weight: 600; letter-spacing: -0.012em; line-height: 1.35;
+  max-width: 820px;
+}
+
+.head-row {
+  margin-top: var(--s-4);
+  display: flex; align-items: center; gap: var(--s-2);
+}
+.chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 22px; padding: 0 9px; border-radius: var(--r-md);
+  font-size: var(--fs-micro); font-weight: 500;
+}
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+.chip-progress {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  color: var(--st-progress-text);
+}
+.chip-progress .dot { background: var(--st-progress); }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px; border-radius: var(--r-md);
+  font-size: 12.5px; font-weight: 500;
+}
+.btn-transition {
+  background: transparent; border: 1px solid var(--border-strong); color: var(--text-2);
+}
+.btn-transition:hover { border-color: var(--accent-border); color: var(--accent-text); background: var(--accent-soft); }
+.btn-transition svg { color: var(--text-3); }
+.btn-transition:hover svg { color: var(--accent-text); }
+.btn-ghost { color: var(--text-2); border: 1px solid transparent; }
+.btn-ghost:hover { color: var(--text-1); background: #ffffff08; }
+.btn-icon { width: 28px; padding: 0; justify-content: center; }
+.head-right { margin-left: auto; display: flex; align-items: center; gap: var(--s-1); }
+.transition-hint { font-size: var(--fs-micro); color: var(--text-3); margin-left: 2px; }
+
+/* ---------- two-column layout ---------- */
+.layout {
+  margin-top: var(--s-5);
+  display: grid; grid-template-columns: minmax(0, 1fr) 300px;
+}
+.main { padding: 0 var(--s-6) 64px 0; }
+.aside {
+  border-left: 1px solid var(--border);
+  padding: 0 0 64px var(--s-5);
+}
+
+/* ---------- main column sections ---------- */
+.section { margin-top: var(--s-6); padding-top: var(--s-5); border-top: 1px solid var(--border); }
+.section:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.section-head {
+  display: flex; align-items: center; gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+.section-title { font-size: var(--fs-section); font-weight: 600; letter-spacing: -0.006em; }
+.section-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 16px; padding: 0 5px; border-radius: 999px;
+  background: #ffffff0a; color: var(--text-3);
+  font-size: var(--fs-micro); font-weight: 500; font-variant-numeric: tabular-nums;
+}
+.section-action { margin-left: auto; }
+
+/* markdown prose */
+.prose { max-width: 720px; }
+.prose h2 {
+  font-size: var(--fs-section); font-weight: 600; letter-spacing: -0.006em;
+  margin: var(--s-5) 0 var(--s-2);
+  display: flex; align-items: center; gap: var(--s-2);
+}
+.prose h2:first-child { margin-top: 0; }
+.prose p { font-size: var(--fs-body); line-height: 1.65; color: var(--text-2); }
+.prose code, .inline-code {
+  font-family: var(--font-mono); font-size: 11.5px; color: #c6cbd6;
+  background: #ffffff0a; border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 1px 5px;
+  white-space: nowrap;
+}
+.ac-progress {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  font-size: var(--fs-meta); font-weight: 400; color: var(--text-3);
+}
+.ac-bar { width: 56px; height: 4px; border-radius: 999px; background: #ffffff12; overflow: hidden; }
+.ac-bar i { display: block; height: 100%; width: 50%; border-radius: 999px; background: var(--accent); }
+.checklist { list-style: none; margin-top: var(--s-2); }
+.checklist li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 0; font-size: var(--fs-body); color: var(--text-2);
+}
+.cb {
+  width: 16px; height: 16px; border-radius: var(--r-sm); flex: none;
+  border: 1px solid #ffffff2e;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.cb-on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.checklist li.done-item { color: var(--text-3); }
+
+/* designed empty states */
+.empty {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: var(--s-4) var(--s-4);
+  background: var(--bg-1); border: 1px dashed var(--border-strong); border-radius: var(--r-lg);
+  font-size: 12.5px; color: var(--text-3);
+}
+.empty.solid { border-style: solid; }
+.empty svg { color: var(--text-3); }
+.empty .inline-code { white-space: nowrap; }
+
+/* comments */
+.thread { display: flex; flex-direction: column; gap: var(--s-3); max-width: 720px; }
+.comment {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: var(--s-3) var(--s-4);
+}
+.comment-head { display: flex; align-items: center; gap: var(--s-2); margin-bottom: var(--s-2); }
+.comment-author { font-size: var(--fs-body); font-weight: 600; }
+.comment-time { font-size: var(--fs-meta); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.comment-body { font-size: var(--fs-body); line-height: 1.6; color: var(--text-2); }
+
+.composer {
+  margin-top: var(--s-3); max-width: 720px;
+  background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+}
+.composer:hover { border-color: #ffffff26; }
+.composer-input {
+  padding: var(--s-3) var(--s-4); min-height: 56px;
+  font-size: var(--fs-body); color: var(--text-3);
+}
+.composer-foot {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
+  border-top: 1px solid var(--border);
+}
+.composer-hint { font-size: var(--fs-micro); color: var(--text-3); display: inline-flex; align-items: center; gap: 5px; }
+.key {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  background: #ffffff08; border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  font-size: 10px; font-weight: 500; color: var(--text-3);
+}
+.composer-foot .spacer { flex: 1; }
+.btn-primary { background: var(--accent); color: #fff; height: 26px; }
+.btn-primary:hover { background: var(--accent-hover); }
+
+/* ---------- metadata sidebar ---------- */
+.props-kicker {
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--text-3); margin-bottom: var(--s-4);
+}
+.props { display: grid; grid-template-columns: 96px 1fr; row-gap: var(--s-4); align-items: center; }
+.prop-label { font-size: var(--fs-meta); color: var(--text-3); }
+.prop-value { font-size: var(--fs-meta); color: var(--text-1); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.prio {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase;
+}
+.prio-high { color: var(--pr-high); }
+.label {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 7px;
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  font-size: var(--fs-micro); color: var(--text-2);
+}
+.branch-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 20px; padding: 0 7px;
+  background: #ffffff08; border: 1px solid var(--border); border-radius: var(--r-sm);
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--text-2);
+}
+.branch-chip svg { color: var(--text-3); }
+.due-val { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.due-val svg { color: var(--text-3); }
+.conf { display: inline-flex; align-items: center; gap: var(--s-2); }
+.conf-bar { width: 56px; height: 4px; border-radius: 999px; background: #ffffff12; overflow: hidden; }
+.conf-bar i { display: block; height: 100%; width: 82%; border-radius: 999px; background: var(--st-done); }
+.conf-num { font-size: var(--fs-meta); font-weight: 500; color: var(--st-done-text); font-variant-numeric: tabular-nums; }
+.aside-divider { height: 1px; background: var(--border); margin: var(--s-5) 0; }
+.next-transition { font-size: var(--fs-meta); color: var(--text-3); line-height: 1.6; }
+.next-transition .to { color: var(--st-review-text); font-weight: 500; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-mark" viewBox="0 0 16 16">
+      <rect x="1.5" y="2" width="3.4" height="12" rx="1.2" fill="currentColor"/>
+      <rect x="6.3" y="2" width="3.4" height="8" rx="1.2" fill="currentColor" opacity=".7"/>
+      <rect x="11.1" y="2" width="3.4" height="10" rx="1.2" fill="currentColor" opacity=".45"/>
+    </symbol>
+    <symbol id="i-chev-d" viewBox="0 0 16 16">
+      <path d="M4.5 6.25 8 9.75l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-arrow-r" viewBox="0 0 16 16">
+      <path d="M3 8h9.5M9 4.5 12.5 8 9 11.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-edit" viewBox="0 0 16 16">
+      <path d="M11.2 2.8a1.55 1.55 0 0 1 2.2 2.2L5.2 13.2 2.5 13.9l.7-2.7 8-8.4Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-dots" viewBox="0 0 16 16">
+      <circle cx="3.5" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="12.5" cy="8" r="1.2" fill="currentColor"/>
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 16 16">
+      <path d="m3.5 8.5 3 3 6-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-cal" viewBox="0 0 16 16">
+      <rect x="2.5" y="3.5" width="11" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <path d="M2.5 6.75h11M5.5 1.75v3M10.5 1.75v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-branch" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <circle cx="4" cy="3.5" r="1.6"/><circle cx="4" cy="12.5" r="1.6"/><circle cx="12" cy="3.5" r="1.6"/>
+        <path d="M4 5.5v5M12 5.5c0 3.5-8 2-8 5.5"/>
+      </g>
+    </symbol>
+    <symbol id="i-clip" viewBox="0 0 16 16">
+      <path d="m12.6 7.2-4.7 4.7a2.6 2.6 0 0 1-3.7-3.7l4.9-4.9a1.75 1.75 0 0 1 2.5 2.5L6.9 10.5a.9.9 0 0 1-1.3-1.3l4.2-4.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-box" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+        <path d="M8 1.8 13.5 4.7v6.6L8 14.2l-5.5-2.9V4.7L8 1.8Z"/>
+        <path d="M2.5 4.7 8 7.7l5.5-3M8 7.7v6.5"/>
+      </g>
+    </symbol>
+    <symbol id="i-attach-plus" viewBox="0 0 16 16">
+      <path d="M8 3.25v9.5M3.25 8h9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </symbol>
+  </defs>
+</svg>
+
+<!-- app shell -->
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#"><svg width="15" height="15"><use href="#i-mark"/></svg>agent-tasks</a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-link" href="#">Home</a>
+      <a class="nav-link" href="dashboard.html" aria-current="page">Dashboard</a>
+      <a class="nav-link" href="#">Tasks</a>
+      <a class="nav-link" href="#">Teams</a>
+      <a class="nav-link" href="#">Settings</a>
+    </nav>
+    <div class="nav-spacer"></div>
+    <button class="user-menu" aria-label="Account menu for Lan Nguyen Si">
+      <span class="avatar">LN</span>
+      Lan Nguyen Si
+      <svg width="12" height="12"><use href="#i-chev-d"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="page">
+
+  <!-- breadcrumb context -->
+  <nav class="breadcrumb" aria-label="Breadcrumb">
+    <a href="#">Pandora Lab</a>
+    <span class="sep">/</span>
+    <a href="dashboard.html">agent-tasks</a>
+    <span class="sep">/</span>
+    <span>Task</span>
+  </nav>
+
+  <!-- the task title IS the page title -->
+  <h1 class="task-h1">scorer: fixed maxPossible=100 + keystone caps, template-independent scoring</h1>
+
+  <div class="head-row">
+    <span class="chip chip-progress"><span class="dot" aria-hidden="true"></span>In Progress</span>
+    <button class="btn btn-transition">
+      <svg width="13" height="13"><use href="#i-arrow-r"/></svg>
+      Move to Review
+    </button>
+    <span class="transition-hint">only allowed transition</span>
+    <div class="head-right">
+      <button class="btn btn-ghost"><svg width="13" height="13"><use href="#i-edit"/></svg>Edit</button>
+      <button class="btn btn-ghost btn-icon" aria-label="More actions"><svg width="14" height="14"><use href="#i-dots"/></svg></button>
+    </div>
+  </div>
+
+  <div class="layout">
+
+    <!-- main column -->
+    <main class="main">
+
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">Description</h2>
+        </div>
+        <div class="prose">
+          <h2>Context</h2>
+          <p>The scorer pipeline derives <code>maxPossible</code> from the active template, so confidence scores are not comparable across projects: the same quality of spec lands at a different score depending on which template fields a project enables.</p>
+          <h2>Goal</h2>
+          <p>Fix <code>maxPossible = 100</code> and introduce keystone caps for <code>evals</code> and <code>agentPrompt</code>, making scoring template-independent.</p>
+          <h2>Acceptance criteria
+            <span class="ac-progress num"><span class="ac-bar"><i></i></span>2 of 4</span>
+          </h2>
+          <ul class="checklist">
+            <li class="done-item"><span class="cb cb-on"><svg width="10" height="10"><use href="#i-check"/></svg></span>maxPossible constant</li>
+            <li class="done-item"><span class="cb cb-on"><svg width="10" height="10"><use href="#i-check"/></svg></span>keystone caps apply</li>
+            <li><span class="cb"></span>scorer tests updated</li>
+            <li><span class="cb"></span>CHANGELOG entry</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">Attachments</h2>
+          <span class="section-count num">0</span>
+          <span class="section-action">
+            <button class="btn btn-ghost"><svg width="13" height="13"><use href="#i-attach-plus"/></svg>Attach file</button>
+          </span>
+        </div>
+        <div class="empty">
+          <svg width="15" height="15"><use href="#i-clip"/></svg>
+          No attachments yet. Drag a file here, or paste an image into a comment.
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">Artifacts</h2>
+          <span class="section-count num">0</span>
+        </div>
+        <div class="empty solid">
+          <svg width="15" height="15"><use href="#i-box"/></svg>
+          <span>No artifacts yet. Agents publish build logs and reports here via <span class="inline-code">task_artifact_create</span>.</span>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">Comments</h2>
+          <span class="section-count num">2</span>
+        </div>
+        <div class="thread">
+          <article class="comment">
+            <div class="comment-head">
+              <span class="avatar avatar-lg">LN</span>
+              <span class="comment-author">Lan Nguyen Si</span>
+              <span class="comment-time">Jun 10, 2026 · 14:32</span>
+            </div>
+            <p class="comment-body">Started on branch <span class="inline-code">feat/scorer-fixed-max</span>. The template-derived path turns out to also feed the create-confidence panel, so the frontend contract needs a version bump.</p>
+          </article>
+          <article class="comment">
+            <div class="comment-head">
+              <span class="avatar avatar-lg">LN</span>
+              <span class="comment-author">Lan Nguyen Si</span>
+              <span class="comment-time">Jun 11, 2026 · 09:05</span>
+            </div>
+            <p class="comment-body">Heads-up: keystone caps interact with the per-taskType relaxation from the deferred LLM-judge task. Keeping them orthogonal for now.</p>
+          </article>
+        </div>
+        <div class="composer">
+          <div class="composer-input">Leave a comment… markdown is supported</div>
+          <div class="composer-foot">
+            <span class="composer-hint"><span class="key">⌘</span><span class="key">↵</span> to post</span>
+            <span class="spacer"></span>
+            <button class="btn btn-primary">Comment</button>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- metadata sidebar -->
+    <aside class="aside" aria-label="Task properties">
+      <p class="props-kicker">Properties</p>
+      <div class="props">
+        <span class="prop-label">Status</span>
+        <span class="prop-value"><span class="chip chip-progress"><span class="dot" aria-hidden="true"></span>In Progress</span></span>
+
+        <span class="prop-label">Priority</span>
+        <span class="prop-value"><span class="prio prio-high">High</span></span>
+
+        <span class="prop-label">Assignee</span>
+        <span class="prop-value"><span class="avatar">LN</span>Lan Nguyen Si</span>
+
+        <span class="prop-label">Labels</span>
+        <span class="prop-value"><span class="label">scorer</span><span class="label">backend</span></span>
+
+        <span class="prop-label">Branch</span>
+        <span class="prop-value">
+          <span class="branch-chip"><svg width="11" height="11"><use href="#i-branch"/></svg>feat/scorer-fixed-max</span>
+        </span>
+
+        <span class="prop-label">Due date</span>
+        <span class="prop-value"><span class="due-val"><svg width="12" height="12"><use href="#i-cal"/></svg>Jun 14, 2026</span></span>
+
+        <span class="prop-label">Created</span>
+        <span class="prop-value num" style="color: var(--text-2)">Jun 10, 2026</span>
+
+        <span class="prop-label">Confidence</span>
+        <span class="prop-value"><span class="conf"><span class="conf-bar"><i></i></span><span class="conf-num">82/100</span></span></span>
+      </div>
+
+      <div class="aside-divider"></div>
+      <p class="next-transition">Workflow: In Progress can move to <span class="to">Review</span>. Other transitions are gated.</p>
+    </aside>
+
+  </div>
+</div>
+
+</body>
+</html>

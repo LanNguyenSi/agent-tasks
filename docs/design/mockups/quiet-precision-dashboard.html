@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1440">
+<title>agent-tasks · Board · Pandora Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* surfaces: 3 elevation steps + page */
+  --bg-0: #08090c;
+  --bg-1: #0e1014;
+  --bg-2: #14171c;
+  --bg-3: #191d24;
+  /* hairlines */
+  --border: #ffffff0f;
+  --border-strong: #ffffff1a;
+  /* text */
+  --text-1: #e8eaee;
+  --text-2: #a6acb8;
+  --text-3: #6d7480;
+  /* one restrained accent */
+  --accent: #5e6ad2;
+  --accent-hover: #6974dc;
+  --accent-text: #9aa3ec;
+  --accent-soft: rgba(94, 106, 210, 0.14);
+  --accent-border: rgba(94, 106, 210, 0.38);
+  /* status */
+  --st-open: #8a8f98;        --st-open-text: #a8aeb8;
+  --st-progress: #5e6ad2;    --st-progress-text: #99a2ee;
+  --st-review: #c08b3a;      --st-review-text: #d9aa5e;
+  --st-done: #4c9a68;        --st-done-text: #74bd8f;
+  /* priority */
+  --pr-critical: #e07a76;
+  --pr-high: #d99657;
+  --pr-medium: #c2ab60;
+  --pr-low: #8a8f98;
+  /* shape + rhythm */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 32px;
+  /* type */
+  --fs-h1: 20px;
+  --fs-section: 14px;
+  --fs-body: 13px;
+  --fs-meta: 12px;
+  --fs-micro: 11px;
+  --font-ui: "Inter", -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { background: var(--bg-0); }
+body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  color: var(--text-1);
+  -webkit-font-smoothing: antialiased;
+  min-width: 1280px;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+button, a, .card { transition: background-color .12s ease, border-color .12s ease, color .12s ease; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+.num { font-variant-numeric: tabular-nums; }
+svg { display: block; flex: none; }
+
+/* ---------- app nav ---------- */
+.nav {
+  position: sticky; top: 0; z-index: 30;
+  height: 48px;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--border);
+}
+.nav-inner {
+  height: 100%; padding: 0 var(--s-5);
+  display: flex; align-items: center; gap: var(--s-5);
+}
+.brand {
+  display: flex; align-items: center; gap: var(--s-2);
+  font-size: var(--fs-body); font-weight: 600; letter-spacing: -0.01em;
+}
+.brand svg { color: var(--accent); }
+.nav-links { display: flex; align-items: center; gap: var(--s-1); }
+.nav-link {
+  display: inline-flex; align-items: center; height: 26px; padding: 0 10px;
+  border-radius: var(--r-md);
+  font-size: 12.5px; font-weight: 500; color: var(--text-3);
+}
+.nav-link:hover { color: var(--text-1); background: #ffffff08; }
+.nav-link[aria-current="page"] { color: var(--text-1); background: #ffffff0d; }
+.nav-spacer { flex: 1; }
+.user-menu {
+  display: flex; align-items: center; gap: var(--s-2);
+  height: 30px; padding: 0 var(--s-2); border-radius: var(--r-md);
+  font-size: var(--fs-meta); color: var(--text-2);
+}
+.user-menu:hover { background: #ffffff08; color: var(--text-1); }
+.user-menu svg { color: var(--text-3); }
+.avatar {
+  width: 18px; height: 18px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: #2b3052; color: #b3baf2;
+  font-size: 8px; font-weight: 600; letter-spacing: 0.03em;
+}
+
+/* ---------- toolbar: ONE compact control band ---------- */
+.toolbar {
+  position: sticky; top: 48px; z-index: 20;
+  height: 52px; padding: 0 var(--s-5);
+  display: flex; align-items: center; gap: var(--s-3);
+  background: rgba(8, 9, 12, 0.88);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.tb-left { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
+.crumb { font-size: var(--fs-meta); color: var(--text-3); }
+.crumb-sep { font-size: var(--fs-meta); color: var(--text-3); opacity: 0.55; }
+.page-title { font-size: var(--fs-h1); font-weight: 600; letter-spacing: -0.012em; }
+.proj-switch {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 6px; margin-left: -6px; border-radius: var(--r-md);
+  font-size: var(--fs-h1); font-weight: 600; letter-spacing: -0.012em; color: var(--text-1);
+}
+.proj-switch:hover { background: #ffffff0a; }
+.proj-switch svg { color: var(--text-3); margin-top: 2px; }
+.tb-divider { width: 1px; height: 16px; background: var(--border-strong); margin: 0 var(--s-1); }
+.summary { font-size: var(--fs-meta); color: var(--text-3); white-space: nowrap; }
+.tb-right { margin-left: auto; display: flex; align-items: center; gap: var(--s-2); }
+
+.search {
+  display: flex; align-items: center; gap: var(--s-2);
+  width: 224px; height: 28px; padding: 0 6px 0 var(--s-2);
+  background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  color: var(--text-3); font-size: 12.5px;
+}
+.search:hover { border-color: #ffffff26; }
+.search .ph { flex: 1; }
+.key {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  background: #ffffff08; border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  font-size: 10px; font-weight: 500; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px; border-radius: var(--r-md);
+  font-size: 12.5px; font-weight: 500;
+}
+.btn-ghost { color: var(--text-2); border: 1px solid var(--border-strong); background: transparent; }
+.btn-ghost:hover { color: var(--text-1); background: #ffffff08; border-color: #ffffff26; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary .key { background: #ffffff1f; border-color: #ffffff2e; color: #fff; }
+
+.view-toggle {
+  display: flex; align-items: center; gap: 2px;
+  height: 28px; padding: 2px;
+  background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--r-md);
+}
+.view-toggle button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 22px; border-radius: var(--r-sm); color: var(--text-3);
+}
+.view-toggle button:hover { color: var(--text-2); }
+.view-toggle button[aria-pressed="true"] { background: #232831; color: var(--text-1); }
+
+/* ---------- board ---------- */
+.board {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--s-3);
+  padding: var(--s-4) var(--s-5) var(--s-6);
+  align-items: start;
+}
+.col { background: var(--bg-1); border-radius: 10px; padding: var(--s-2); }
+.col-head {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-1) var(--s-2) 10px;
+}
+.col-title { font-size: var(--fs-body); font-weight: 600; letter-spacing: -0.005em; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 16px; padding: 0 5px; border-radius: 999px;
+  font-size: var(--fs-micro); font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.col-add {
+  margin-left: auto; width: 22px; height: 22px; border-radius: var(--r-sm);
+  display: inline-flex; align-items: center; justify-content: center; color: var(--text-3);
+}
+.col-add:hover { background: #ffffff0a; color: var(--text-1); }
+
+.col-open    .dot { background: var(--st-open); }
+.col-open    .count { background: rgba(138,143,152,.13); color: var(--st-open-text); }
+.col-prog    .dot { background: var(--st-progress); }
+.col-prog    .count { background: var(--accent-soft); color: var(--st-progress-text); }
+.col-review  .dot { background: var(--st-review); }
+.col-review  .count { background: rgba(192,139,58,.13); color: var(--st-review-text); }
+.col-done    .dot { background: var(--st-done); }
+.col-done    .count { background: rgba(76,154,104,.13); color: var(--st-done-text); }
+
+.cards { display: flex; flex-direction: column; gap: var(--s-2); }
+.card {
+  display: block; background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: var(--s-3);
+}
+.card:hover { background: var(--bg-3); border-color: #ffffff1f; }
+.card-top { display: flex; align-items: center; gap: var(--s-2); margin-bottom: 6px; }
+.prio {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase;
+}
+.prio-critical { color: var(--pr-critical); }
+.prio-high     { color: var(--pr-high); }
+.prio-medium   { color: var(--pr-medium); }
+.prio-low      { color: var(--pr-low); }
+.pr-chip {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 18px; padding: 0 6px;
+  background: #ffffff08; border: 1px solid var(--border); border-radius: var(--r-sm);
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.pr-chip svg { color: var(--text-3); }
+.card-title { font-size: var(--fs-body); font-weight: 500; line-height: 1.45; letter-spacing: -0.003em; }
+.card.is-done .card-title { color: var(--text-2); }
+.card-foot { display: flex; align-items: center; gap: var(--s-1); margin-top: 10px; }
+.label {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 7px;
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  font-size: var(--fs-micro); color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.meta-right { margin-left: auto; display: flex; align-items: center; gap: var(--s-2); }
+.due {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+.due svg { color: var(--text-3); }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-mark" viewBox="0 0 16 16">
+      <rect x="1.5" y="2" width="3.4" height="12" rx="1.2" fill="currentColor"/>
+      <rect x="6.3" y="2" width="3.4" height="8" rx="1.2" fill="currentColor" opacity=".7"/>
+      <rect x="11.1" y="2" width="3.4" height="10" rx="1.2" fill="currentColor" opacity=".45"/>
+    </symbol>
+    <symbol id="i-chev-d" viewBox="0 0 16 16">
+      <path d="M4.5 6.25 8 9.75l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 16 16">
+      <circle cx="7" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <path d="m10.2 10.2 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-filter" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <path d="M2.5 4.5h11M4.5 8h7M6.5 11.5h3"/>
+      </g>
+    </symbol>
+    <symbol id="i-board" viewBox="0 0 16 16">
+      <rect x="2" y="2.5" width="3.3" height="11" rx="1" fill="currentColor"/>
+      <rect x="6.35" y="2.5" width="3.3" height="7.5" rx="1" fill="currentColor"/>
+      <rect x="10.7" y="2.5" width="3.3" height="9.5" rx="1" fill="currentColor"/>
+    </symbol>
+    <symbol id="i-list" viewBox="0 0 16 16">
+      <g stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <path d="M5.5 4h8M5.5 8h8M5.5 12h8"/>
+        <path d="M2.5 4h.01M2.5 8h.01M2.5 12h.01" stroke-width="2"/>
+      </g>
+    </symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16">
+      <path d="M8 3.25v9.5M3.25 8h9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-cal" viewBox="0 0 16 16">
+      <rect x="2.5" y="3.5" width="11" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <path d="M2.5 6.75h11M5.5 1.75v3M10.5 1.75v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-pr" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <circle cx="4" cy="3.5" r="1.6"/><circle cx="4" cy="12.5" r="1.6"/><circle cx="12" cy="12.5" r="1.6"/>
+        <path d="M4 5.5v5M8.5 3.5H10A2 2 0 0 1 12 5.5v5"/>
+      </g>
+    </symbol>
+  </defs>
+</svg>
+
+<!-- app shell -->
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#"><svg width="15" height="15"><use href="#i-mark"/></svg>agent-tasks</a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-link" href="#">Home</a>
+      <a class="nav-link" href="#" aria-current="page">Dashboard</a>
+      <a class="nav-link" href="#">Tasks</a>
+      <a class="nav-link" href="#">Teams</a>
+      <a class="nav-link" href="#">Settings</a>
+    </nav>
+    <div class="nav-spacer"></div>
+    <button class="user-menu" aria-label="Account menu for Lan Nguyen Si">
+      <span class="avatar">LN</span>
+      Lan Nguyen Si
+      <svg width="12" height="12"><use href="#i-chev-d"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- single compact control band -->
+<div class="toolbar">
+  <div class="tb-left">
+    <span class="crumb">Pandora Lab</span>
+    <span class="crumb-sep">/</span>
+    <h1 class="page-title">
+      <button class="proj-switch" aria-label="Switch project, current: agent-tasks">
+        agent-tasks
+        <svg width="13" height="13"><use href="#i-chev-d"/></svg>
+      </button>
+    </h1>
+    <span class="tb-divider"></span>
+    <span class="summary num">9 tasks</span>
+  </div>
+  <div class="tb-right">
+    <button class="search" aria-label="Search tasks">
+      <svg width="14" height="14"><use href="#i-search"/></svg>
+      <span class="ph">Search tasks…</span>
+      <span class="key">/</span>
+    </button>
+    <button class="btn btn-ghost">
+      <svg width="14" height="14"><use href="#i-filter"/></svg>
+      Filter
+    </button>
+    <div class="view-toggle" role="group" aria-label="View">
+      <button aria-pressed="true" aria-label="Board view"><svg width="14" height="14"><use href="#i-board"/></svg></button>
+      <button aria-pressed="false" aria-label="List view"><svg width="14" height="14"><use href="#i-list"/></svg></button>
+    </div>
+    <button class="btn btn-primary">
+      <svg width="13" height="13"><use href="#i-plus"/></svg>
+      New task
+      <span class="key">C</span>
+    </button>
+  </div>
+</div>
+
+<!-- board -->
+<main class="board" aria-label="Board: agent-tasks">
+
+  <section class="col col-open" aria-label="Open, 5 tasks">
+    <header class="col-head">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="col-title">Open</span>
+      <span class="count num">5</span>
+      <button class="col-add" aria-label="Add task to Open"><svg width="13" height="13"><use href="#i-plus"/></svg></button>
+    </header>
+    <div class="cards">
+      <a class="card" href="#">
+        <div class="card-top"><span class="prio prio-medium">Medium</span></div>
+        <h3 class="card-title">Validate preflight before task_finish (gate on ready:true)</h3>
+        <div class="card-foot">
+          <span class="label">mcp</span><span class="label">+1</span>
+        </div>
+      </a>
+      <a class="card" href="#">
+        <div class="card-top"><span class="prio prio-medium">Medium</span></div>
+        <h3 class="card-title">M4: Improvement panel UI (findings + nextActions on task page)</h3>
+        <div class="card-foot">
+          <span class="label">frontend</span><span class="label">+1</span>
+        </div>
+      </a>
+      <a class="card" href="#">
+        <div class="card-top"><span class="prio prio-low">Low</span></div>
+        <h3 class="card-title">Task attachments: per-task aggregate count/size cap</h3>
+        <div class="card-foot">
+          <span class="label">backend</span>
+        </div>
+      </a>
+      <a class="card" href="#">
+        <div class="card-top"><span class="prio prio-high">High</span></div>
+        <h3 class="card-title">Outbound notification webhook on Signal create (push-delivery v1)</h3>
+        <div class="card-foot">
+          <span class="label">backend</span><span class="label">+1</span>
+        </div>
+      </a>
+      <a class="card" href="#">
+        <div class="card-top"><span class="prio prio-high">High</span></div>
+        <h3 class="card-title">v2 single-claim model blocks parallel PR work in the same session</h3>
+        <div class="card-foot">
+          <span class="label">design</span><span class="label">+1</span>
+        </div>
+      </a>
+    </div>
+  </section>
+
+  <section class="col col-prog" aria-label="In Progress, 1 task">
+    <header class="col-head">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="col-title">In Progress</span>
+      <span class="count num">1</span>
+      <button class="col-add" aria-label="Add task to In Progress"><svg width="13" height="13"><use href="#i-plus"/></svg></button>
+    </header>
+    <div class="cards">
+      <a class="card" href="task-detail.html">
+        <div class="card-top"><span class="prio prio-high">High</span></div>
+        <h3 class="card-title">scorer: fixed maxPossible=100 + keystone caps, template-independent scoring</h3>
+        <div class="card-foot">
+          <span class="label">scorer</span><span class="label">+1</span>
+          <span class="meta-right">
+            <span class="due"><svg width="12" height="12"><use href="#i-cal"/></svg>Jun 14</span>
+            <span class="avatar" title="Lan Nguyen Si">LN</span>
+          </span>
+        </div>
+      </a>
+    </div>
+  </section>
+
+  <section class="col col-review" aria-label="Review, 1 task">
+    <header class="col-head">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="col-title">Review</span>
+      <span class="count num">1</span>
+      <button class="col-add" aria-label="Add task to Review"><svg width="13" height="13"><use href="#i-plus"/></svg></button>
+    </header>
+    <div class="cards">
+      <a class="card" href="#">
+        <div class="card-top">
+          <span class="prio prio-critical">Critical</span>
+          <span class="pr-chip"><svg width="11" height="11"><use href="#i-pr"/></svg>#331</span>
+        </div>
+        <h3 class="card-title">authz: enforce write-tier on boards + workflows routers (PROJECT_VIEWER escalation)</h3>
+        <div class="card-foot">
+          <span class="label">security</span><span class="label">+1</span>
+        </div>
+      </a>
+    </div>
+  </section>
+
+  <section class="col col-done" aria-label="Done, 2 tasks">
+    <header class="col-head">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="col-title">Done</span>
+      <span class="count num">2</span>
+      <button class="col-add" aria-label="Add task to Done"><svg width="13" height="13"><use href="#i-plus"/></svg></button>
+    </header>
+    <div class="cards">
+      <a class="card is-done" href="#">
+        <div class="card-top"><span class="prio prio-medium">Medium</span></div>
+        <h3 class="card-title">Templates: optional taskType on presets as bridge to task-type-aware scoring</h3>
+      </a>
+      <a class="card is-done" href="#">
+        <div class="card-top"><span class="prio prio-low">Low</span></div>
+        <h3 class="card-title">Test fixture: two distinct agent tokens for claim-race integration tests</h3>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+</body>
+</html>
