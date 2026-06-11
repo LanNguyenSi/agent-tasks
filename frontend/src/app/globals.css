@@ -1530,6 +1530,385 @@ input[type="checkbox"] {
 .prose-markdown strong { color: var(--text); }
 .prose-markdown em { color: var(--text-secondary); }
 
+/* ── Component library v2 ─────────────────────────────────────── */
+/*
+ * Geometry for B1 primitives: Icon, KeyHint, Badge, StatusChip,
+ * PriorityLabel, Tabs, Tooltip.
+ * Rules: only token vars (no raw hex), no !important, component-scoped
+ * class prefixes (icon-, key-hint-, badge-, status-chip-, priority-label-,
+ * tabs-, tooltip-).
+ */
+
+/* ── Icon ─────────────────────────────────────────────────────── */
+
+.icon {
+  display: inline-block;
+  flex: none;
+  line-height: 0;
+  color: currentColor;
+}
+
+/* ── KeyHint ──────────────────────────────────────────────────── */
+
+.key-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--space-4);
+  height: var(--space-4);
+  padding: 0 var(--space-1);
+  background: color-mix(in srgb, var(--surface-raised) 60%, transparent);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  color: var(--muted);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+/* Key hints inside primary buttons lighten to match the button text. */
+.btn-primary .key-hint {
+  background: color-mix(in srgb, #fff 12%, transparent);
+  border-color: color-mix(in srgb, #fff 18%, transparent);
+  color: color-mix(in srgb, #fff 85%, transparent);
+}
+
+/* ── Badge ────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: var(--space-4);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.badge--neutral {
+  background: color-mix(in srgb, var(--border-strong) 80%, transparent);
+  color: var(--text-secondary);
+}
+
+.badge--primary {
+  background: var(--primary-muted);
+  border: 1px solid var(--primary-border);
+  color: var(--primary-text);
+}
+
+.badge--status-open {
+  background: color-mix(in srgb, var(--status-open) 13%, transparent);
+  color: var(--status-open-text);
+}
+
+.badge--status-in-progress {
+  background: var(--primary-muted);
+  color: var(--status-in-progress-text);
+}
+
+.badge--status-review {
+  background: color-mix(in srgb, var(--status-review) 13%, transparent);
+  color: var(--status-review-text);
+}
+
+.badge--status-done {
+  background: color-mix(in srgb, var(--status-done) 13%, transparent);
+  color: var(--status-done-text);
+}
+
+/* ── StatusChip ───────────────────────────────────────────────── */
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 22px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-base);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  border: 1px solid transparent;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.status-chip-dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  flex: none;
+}
+
+.status-chip--open {
+  background: color-mix(in srgb, var(--status-open) 13%, transparent);
+  border-color: color-mix(in srgb, var(--status-open) 38%, transparent);
+  color: var(--status-open-text);
+}
+.status-chip--open .status-chip-dot {
+  background: var(--status-open);
+}
+
+.status-chip--in-progress {
+  background: var(--primary-muted);
+  border-color: var(--primary-border);
+  color: var(--status-in-progress-text);
+}
+.status-chip--in-progress .status-chip-dot {
+  background: var(--status-in-progress);
+}
+
+.status-chip--review {
+  background: color-mix(in srgb, var(--status-review) 13%, transparent);
+  border-color: color-mix(in srgb, var(--status-review) 38%, transparent);
+  color: var(--status-review-text);
+}
+.status-chip--review .status-chip-dot {
+  background: var(--status-review);
+}
+
+.status-chip--done {
+  background: color-mix(in srgb, var(--status-done) 13%, transparent);
+  border-color: color-mix(in srgb, var(--status-done) 38%, transparent);
+  color: var(--status-done-text);
+}
+.status-chip--done .status-chip-dot {
+  background: var(--status-done);
+}
+
+/* Fallback for unknown/custom statuses: grey open treatment */
+.status-chip--unknown {
+  background: color-mix(in srgb, var(--status-open) 13%, transparent);
+  border-color: color-mix(in srgb, var(--status-open) 38%, transparent);
+  color: var(--status-open-text);
+}
+.status-chip--unknown .status-chip-dot {
+  background: var(--status-open);
+}
+
+/* ── PriorityLabel ────────────────────────────────────────────── */
+
+.priority-label {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.priority-label--critical {
+  color: var(--priority-critical);
+}
+.priority-label--high {
+  color: var(--priority-high);
+}
+.priority-label--medium {
+  color: var(--priority-medium);
+}
+.priority-label--low {
+  color: var(--priority-low);
+}
+
+/* ── Tabs (segmented control) ─────────────────────────────────── */
+
+.tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: var(--space-1);
+  background: color-mix(in srgb, var(--surface) 74%, var(--bg) 26%);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-base);
+}
+
+.tabs-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: 24px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.tabs-tab:hover {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+
+.tabs-tab[aria-selected="true"] {
+  background: color-mix(in srgb, var(--primary) 24%, var(--bg) 76%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 50%, transparent);
+  color: var(--text);
+}
+
+.tabs-tab:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabs-tab { transition: none; }
+}
+
+/* ── Tooltip ──────────────────────────────────────────────────── */
+
+.tooltip-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.tooltip-content {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-base);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--transition-fast), visibility 0ms linear var(--transition-fast);
+}
+
+/* Show on hover with 200ms delay */
+.tooltip-wrapper:hover .tooltip-content {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--transition-fast) 200ms, visibility 0ms linear 200ms;
+}
+
+/* Show on focus-within immediately (no delay) */
+.tooltip-wrapper:focus-within .tooltip-content {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--transition-fast) 0ms, visibility 0ms linear 0ms;
+}
+
+/* Viewport-edge flip: data-side="bottom" positions below the trigger */
+.tooltip-content[data-side="bottom"] {
+  bottom: auto;
+  top: calc(100% + var(--space-2));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tooltip-content { transition: none; }
+  .tooltip-wrapper:hover .tooltip-content { transition: none; }
+  .tooltip-wrapper:focus-within .tooltip-content { transition: none; }
+}
+
+/* ── /dev/ui gallery page ─────────────────────────────────────── */
+
+.dev-gallery {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-5);
+}
+
+.dev-gallery-title {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  margin-bottom: var(--space-1);
+}
+
+.dev-gallery-subtitle {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  margin-bottom: var(--space-6);
+}
+
+.dev-section {
+  margin-bottom: var(--space-6);
+}
+
+.dev-section-heading {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.dev-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.dev-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: var(--space-3);
+}
+
+.dev-icon-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.dev-icon-cell-label {
+  font-size: var(--text-2xs);
+  color: var(--muted);
+  text-align: center;
+  font-family: var(--font-mono);
+}
+
+.dev-theme-toggle {
+  position: fixed;
+  top: var(--space-4);
+  right: var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-base);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  z-index: 100;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.dev-theme-toggle:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-hover);
+}
+
 /* ── Light theme ──────────────────────────────────────────────── */
 /*
  * Activated by `data-theme="light"` on <html>. Token-only re-declaration:
