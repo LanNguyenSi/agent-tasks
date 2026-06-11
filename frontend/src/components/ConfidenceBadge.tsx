@@ -1,32 +1,48 @@
 "use client";
 
+// Confidence score badge. Keyboard-reachable (tabIndex=0) with visible
+// qualifier text ("ready" / "fair" / "low") so the encoding is not
+// color-only. De-inlined: colors live in .confidence-badge--* CSS classes.
+//
+// When rendered inside a <button> or other interactive element, pass
+// tabIndex={-1} to avoid a nested-interactive violation.
+
 interface ConfidenceBadgeProps {
   score: number;
   size?: "sm" | "md";
+  /** Override the tab index. Default is 0 (keyboard-reachable). */
+  tabIndex?: number;
 }
 
-function getColor(score: number): string {
-  if (score < 40) return "var(--danger)";
-  if (score <= 70) return "var(--warning, #e5a00d)";
-  return "var(--success, #22c55e)";
+type Tier = "ready" | "fair" | "low";
+
+function getTier(score: number): Tier {
+  if (score > 70) return "ready";
+  if (score >= 40) return "fair";
+  return "low";
 }
 
-export default function ConfidenceBadge({ score, size = "sm" }: ConfidenceBadgeProps) {
-  const color = getColor(score);
-  const fontSize = size === "sm" ? "var(--text-xs)" : "var(--text-sm)";
+const TIER_LABEL: Record<Tier, string> = {
+  ready: "ready",
+  fair: "fair",
+  low: "low",
+};
+
+export default function ConfidenceBadge({ score, size = "sm", tabIndex = 0 }: ConfidenceBadgeProps) {
+  const tier = getTier(score);
 
   return (
     <span
-      title={`Confidence: ${score}/100`}
-      className="status-chip"
-      style={{
-        color,
-        borderColor: `color-mix(in srgb, ${color} 55%, var(--border) 45%)`,
-        fontSize,
-        fontVariantNumeric: "tabular-nums",
-      }}
+      tabIndex={tabIndex}
+      aria-label={`Confidence: ${score}/100, ${TIER_LABEL[tier]}`}
+      className={[
+        "status-chip",
+        "confidence-badge",
+        `confidence-badge--${tier}`,
+        `confidence-badge--${size}`,
+      ].join(" ")}
     >
-      {score}%
+      {score}/100, {TIER_LABEL[tier]}
     </span>
   );
 }

@@ -28,13 +28,13 @@ export default function HomePage() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+    <div className="landing-page-root">
       <header className="landing-header">
         <span className="landing-logo">agent-tasks</span>
         <Link href="/auth" className="landing-header-link">Sign in</Link>
       </header>
 
-      <main className="landing-shell" style={{ flex: 1 }}>
+      <main className="landing-shell landing-main">
         <section className="landing-card">
           <p className="landing-eyebrow">agent-tasks</p>
           <h1 className="landing-title">Plan and ship work without workflow chaos.</h1>
@@ -49,9 +49,9 @@ export default function HomePage() {
             </Link>
             <a
               href="/api/auth/github"
-              className="landing-cta-secondary"
+              className={`landing-cta-secondary${redirectingToGithub ? " landing-cta--redirecting" : ""}`}
               onClick={() => setRedirectingToGithub(true)}
-              style={redirectingToGithub ? { pointerEvents: "none", opacity: 0.7 } : undefined}
+              aria-disabled={redirectingToGithub}
             >
               {redirectingToGithub ? "Redirecting to GitHub…" : "Continue with GitHub"}
             </a>
@@ -93,7 +93,7 @@ export default function HomePage() {
         <span className="landing-footer-sep">/</span>
         <a href="/docs" className="landing-footer-link">API Docs</a>
         <span className="landing-footer-sep">/</span>
-        <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>MIT License</span>
+        <span className="landing-license">MIT License</span>
       </footer>
     </div>
   );

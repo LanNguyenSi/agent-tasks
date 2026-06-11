@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   applyResolvedTheme,
   isThemePreference,
@@ -27,7 +27,7 @@ function readStoredPreference(): ThemePreference {
     const raw = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (isThemePreference(raw)) return raw;
   } catch {
-    // localStorage can throw in private mode — fall back to system.
+    // localStorage can throw in private mode -- fall back to system.
   }
   return "system";
 }
@@ -36,6 +36,7 @@ export default function ThemePreferenceField() {
   const [preference, setPreference] = useState<ThemePreference>("system");
   const [resolved, setResolved] = useState<ResolvedTheme>("dark");
   const [mounted, setMounted] = useState(false);
+  const groupRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const pref = readStoredPreference();
@@ -67,7 +68,27 @@ export default function ThemePreferenceField() {
     try {
       window.localStorage.setItem(THEME_STORAGE_KEY, next);
     } catch {
-      // Ignore storage failures — theme still applies for this session.
+      // Ignore storage failures -- theme still applies for this session.
+    }
+  }
+
+  // Arrow key navigation within the radiogroup (ArrowLeft/Right cycle).
+  function handleGroupKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const currentIdx = OPTIONS.findIndex((o) => o.value === preference);
+    const nextIdx =
+      e.key === "ArrowRight"
+        ? (currentIdx + 1) % OPTIONS.length
+        : (currentIdx - 1 + OPTIONS.length) % OPTIONS.length;
+    const nextOpt = OPTIONS[nextIdx];
+    if (nextOpt) {
+      pick(nextOpt.value);
+      // Move DOM focus to the newly activated radio.
+      const btn = groupRef.current?.querySelector<HTMLElement>(
+        `[data-theme-pref="${nextOpt.value}"]`,
+      );
+      btn?.focus();
     }
   }
 
@@ -75,7 +96,11 @@ export default function ThemePreferenceField() {
 
   return (
     <div role="radiogroup" aria-label="Theme preference" data-testid="theme-preference">
-      <div className="view-toggle" style={{ display: "inline-flex" }}>
+      <div
+        ref={groupRef}
+        className="view-toggle theme-toggle"
+        onKeyDown={handleGroupKeyDown}
+      >
         {OPTIONS.map((opt) => {
           const active = opt.value === activePref;
           return (
@@ -94,7 +119,7 @@ export default function ThemePreferenceField() {
           );
         })}
       </div>
-      <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "var(--space-2)" }}>
+      <p className="theme-hint">
         {activePref === "system"
           ? `Following your operating system (currently ${resolved}).`
           : `Using ${activePref} theme.`}

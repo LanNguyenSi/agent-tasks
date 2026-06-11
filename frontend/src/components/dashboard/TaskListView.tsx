@@ -155,6 +155,11 @@ export default function TaskListView({
   const safePage = Math.min(page, totalPages);
   const paged = sorted.slice((safePage - 1) * pageSize, safePage * pageSize);
 
+  const sortOptions = TASK_LIST_COLS.filter((c) => c.sortable).map((c) => ({
+    value: c.key,
+    label: c.header,
+  }));
+
   return (
     <div className="db-list-wrap">
       <Table
@@ -166,6 +171,30 @@ export default function TaskListView({
         sortDirection={sortDir === "asc" ? "ascending" : "descending"}
         onSortChange={handleSortChange}
         emptyLabel="No tasks match the current filters."
+        compactSort={
+          <select
+            className="table-sort-native"
+            aria-label="Sort by"
+            value={`${sortKey}:${sortDir}`}
+            onChange={(e) => {
+              const [col, dir] = e.target.value.split(":");
+              if (col !== sortKey) {
+                setSortKey(col as SortKey);
+                setSortDir((dir as SortDir) ?? NATURAL_DIR[col as SortKey]);
+              } else {
+                setSortDir(dir as SortDir);
+              }
+              onPageChange(1);
+            }}
+          >
+            {sortOptions.map((opt) => (
+              <optgroup key={opt.value} label={opt.label}>
+                <option value={`${opt.value}:asc`}>{opt.label}: A to Z</option>
+                <option value={`${opt.value}:desc`}>{opt.label}: Z to A</option>
+              </optgroup>
+            ))}
+          </select>
+        }
       />
 
       {totalPages > 1 && (

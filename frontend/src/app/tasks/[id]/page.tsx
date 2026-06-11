@@ -98,13 +98,13 @@ export default function TaskDetailPage() {
       {loading && <h1 className="sr-only">Task Details</h1>}
 
       {error && (
-        <div style={{ padding: "var(--space-5)", maxWidth: "1168px", margin: "0 auto" }}>
+        <div className="td-error-wrap">
           <AlertBanner tone="danger">{error}</AlertBanner>
         </div>
       )}
 
       {loading && (
-        <div style={{ padding: "var(--space-5)" }}>
+        <div className="td-loading-wrap">
           <TaskDetailSkeleton />
         </div>
       )}

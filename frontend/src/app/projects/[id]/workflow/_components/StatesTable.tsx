@@ -235,6 +235,7 @@ export function StatesTable({
           rows={rows}
           rowKey={(row) => `state-${row._index}`}
           emptyLabel="No states defined."
+          className="table-wrapper--late-stack"
         />
       )}
     </Card>

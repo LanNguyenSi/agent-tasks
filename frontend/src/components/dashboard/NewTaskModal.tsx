@@ -206,7 +206,7 @@ export default function NewTaskModal({
 
   // ── Confidence badge shown in the collapsible header ──────────
   const templateHeaderBadge = templateFields ? (
-    <ConfidenceBadge score={confidenceScore} size="sm" />
+    <ConfidenceBadge score={confidenceScore} size="sm" tabIndex={-1} />
   ) : null;
 
   // ── Modal body: confidence panel or form ──────────────────────

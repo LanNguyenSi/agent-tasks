@@ -57,6 +57,11 @@ export default function CommentList({
               >
                 {authorName}
               </span>
+              {isAgent && (
+                <span className="td-agent-tag" aria-label="Agent author">
+                  Agent
+                </span>
+              )}
               <span
                 className="td-comment-time"
                 title={formatAbsoluteDate(comment.createdAt)}

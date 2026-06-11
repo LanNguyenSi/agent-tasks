@@ -30,7 +30,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       data-theme="dark"
-      style={{ colorScheme: "dark" }}
+      // eslint-disable-next-line no-restricted-syntax
+      style={{ colorScheme: "dark" /* dynamic: SSR initial; theme.ts updates at runtime */ }}
       suppressHydrationWarning
       className={`${inter.variable} ${jetbrainsMono.variable}`}
     >
