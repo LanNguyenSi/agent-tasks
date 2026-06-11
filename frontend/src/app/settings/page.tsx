@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
@@ -20,10 +19,14 @@ import {
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
+import CollapsibleSection from "../../components/ui/CollapsibleSection";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
+import { CopyableCode } from "../../components/ui/CopyableCode";
+import EmptyState from "../../components/ui/EmptyState";
 import FormField from "../../components/ui/FormField";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import Modal from "../../components/ui/Modal";
+import { PageHeader } from "../../components/ui/PageHeader";
 import Select from "@/components/ui/Select";
 import ConnectAgentModal from "../../components/ConnectAgentModal";
 import ThemePreferenceField from "../../components/ThemePreferenceField";
@@ -39,11 +42,8 @@ function formatRelativeTime(iso: string): string {
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 }
-// Fallback used only if the backend scope endpoint fails to load. The
-// canonical list now lives in `backend/src/services/scopes.ts` and is
-// fetched via `GET /api/agent-tokens/scopes` — this hard-coded copy used
-// to drift (it missed `github:pr_create` / `github:pr_merge` after those
-// scopes landed). Kept in sync as a safety net only.
+
+// Fallback used only if the backend scope endpoint fails to load.
 const FALLBACK_SCOPES = [
   { id: "tasks:read", label: "Read tasks" },
   { id: "tasks:create", label: "Create tasks" },
@@ -58,13 +58,24 @@ const FALLBACK_SCOPES = [
   { id: "sso:admin", label: "Manage SSO connection (team-scoped, sensitive)" },
 ];
 
+// Sensitive scopes receive a tinted background to make their severity visible.
+const SENSITIVE_SCOPES = new Set(["sso:admin", "github:pr_merge"]);
+
 type TokenRecord = AgentToken;
 
-// One-time token reveal: mirror ConnectAgentModal by replacing the secret
-// with a placeholder after a delay so an abandoned tab does not leave it on
-// screen. Revealing again is a deliberate click.
+// One-time token reveal: mask after a delay so an abandoned tab does not
+// leave the secret on screen indefinitely.
 const REVEAL_MASK_DELAY_MS = 30_000;
-const MASK_PLACEHOLDER = "••••••••";
+
+// Section ids for the sticky side-nav anchors.
+const SECTIONS = [
+  { id: "account", label: "Account" },
+  { id: "appearance", label: "Appearance" },
+  { id: "github", label: "GitHub" },
+  { id: "sso", label: "Enterprise SSO" },
+  { id: "delegation", label: "Agent Permissions" },
+  { id: "api-tokens", label: "API Tokens" },
+];
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -76,13 +87,18 @@ export default function SettingsPage() {
   const [newToken, setNewToken] = useState<string | null>(null);
   const [tokenMasked, setTokenMasked] = useState(false);
   const maskTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<string>("account");
 
   const [showConnect, setShowConnect] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [tokenName, setTokenName] = useState("");
-  const [selectedScopes, setSelectedScopes] = useState<string[]>(["tasks:read", "tasks:create", "tasks:claim"]);
-  const [availableScopes, setAvailableScopes] = useState<{ id: string; label: string }[]>(FALLBACK_SCOPES);
+  const [selectedScopes, setSelectedScopes] = useState<string[]>([
+    "tasks:read",
+    "tasks:create",
+    "tasks:claim",
+  ]);
+  const [availableScopes, setAvailableScopes] =
+    useState<{ id: string; label: string }[]>(FALLBACK_SCOPES);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
@@ -102,16 +118,11 @@ export default function SettingsPage() {
     if (typeof window === "undefined") return false;
     return new URLSearchParams(window.location.search).get("github_connected") === "1";
   }, []);
+
   const docsUrl = `${API_BASE}/docs`;
   const openApiUrl = `${API_BASE}/api/openapi.json`;
   const mcpPackage = "@agent-tasks/mcp-server";
   const mcpCommand = `npx ${mcpPackage} --token <TOKEN>`;
-  const setupSnippet = [
-    "Agent Setup (MCP-first)",
-    `MCP server: ${mcpPackage}`,
-    `Quick start: ${mcpCommand}`,
-    "REST fallback header: Authorization: Bearer <TOKEN>",
-  ].join("\n");
 
   useEffect(() => {
     void (async () => {
@@ -130,10 +141,6 @@ export default function SettingsPage() {
       const t = await getTeams();
       setTeams(t);
 
-      // Pull the canonical scope list from the backend so the UI never
-      // drifts. Falls back to the hard-coded list if the endpoint
-      // misbehaves — the settings page stays usable even when a single
-      // scope row is out of date.
       void getAvailableScopes()
         .then((scopes) => {
           if (scopes.length > 0) setAvailableScopes(scopes);
@@ -149,18 +156,38 @@ export default function SettingsPage() {
         setTokens(tok);
       }
 
-      // Probe GitHub token health in the background — don't block the
-      // page on a GitHub round-trip. The endpoint is cheap on a cache
-      // hit; on a miss it's a single API call that takes <500ms.
       if (me.githubConnected) {
         void getGithubTokenHealth()
           .then(setTokenHealth)
-          .catch(() => setTokenHealth({ state: "unknown", lastCheckedAt: null }));
+          .catch(() =>
+            setTokenHealth({ state: "unknown", lastCheckedAt: null }),
+          );
       }
 
       setLoading(false);
     })();
   }, [router]);
+
+  // Scroll spy: update active section based on the section currently in view.
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setActiveSection(entry.target.id);
+          }
+        }
+      },
+      { rootMargin: "-40% 0px -55% 0px", threshold: 0 },
+    );
+
+    const ids = SECTIONS.map((s) => s.id);
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, [loading]);
 
   async function loadTokens(teamId: string) {
     setError(null);
@@ -174,7 +201,11 @@ export default function SettingsPage() {
     setCreating(true);
     setError(null);
     try {
-      const result = await createAgentToken({ teamId: selectedTeamId, name: tokenName.trim(), scopes: selectedScopes });
+      const result = await createAgentToken({
+        teamId: selectedTeamId,
+        name: tokenName.trim(),
+        scopes: selectedScopes,
+      });
       setNewToken(result.rawToken);
       setTokens((prev) => [...prev, result.token]);
       setShowCreate(false);
@@ -217,12 +248,6 @@ export default function SettingsPage() {
     }
   }
 
-  async function copyToClipboard(value: string, message: string) {
-    await navigator.clipboard.writeText(value);
-    setCopyMessage(message);
-    setTimeout(() => setCopyMessage(null), 2400);
-  }
-
   function revealNewToken() {
     if (maskTimerRef.current) {
       clearTimeout(maskTimerRef.current);
@@ -231,8 +256,14 @@ export default function SettingsPage() {
     setTokenMasked(false);
   }
 
-  // When a one-time token is shown, start the mask-after-delay timer; the
-  // success banner's role=status announces it. Clear everything on dismiss.
+  function startNewTokenMask() {
+    if (maskTimerRef.current) clearTimeout(maskTimerRef.current);
+    maskTimerRef.current = setTimeout(() => {
+      setTokenMasked(true);
+      maskTimerRef.current = null;
+    }, REVEAL_MASK_DELAY_MS);
+  }
+
   useEffect(() => {
     if (!newToken) {
       setTokenMasked(false);
@@ -268,397 +299,524 @@ export default function SettingsPage() {
 
   return (
     <main className="page-shell">
-      <nav aria-label="Settings sections" style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", fontSize: "var(--text-sm)", flexWrap: "wrap" }}>
-        <a href="#account" className="settings-nav-link">Account</a>
-        <a href="#appearance" className="settings-nav-link">Appearance</a>
-        <a href="#github" className="settings-nav-link">GitHub</a>
-        <a href="#sso" className="settings-nav-link">Enterprise SSO</a>
-        <a href="#delegation" className="settings-nav-link">Agent Permissions</a>
-        <a href="#api-tokens" className="settings-nav-link">API Tokens</a>
-      </nav>
+      <PageHeader title="Settings" />
 
-      <Card style={{ marginBottom: "var(--space-4)" }}>
-        <section id="account">
-          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "0.5rem" }}>Account</h2>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.25rem" }}>Login: {user?.login}</p>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.25rem" }}>Name: {user?.name ?? "Not set"}</p>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>Email: {user?.email ?? "Not set"}</p>
-        </section>
-      </Card>
+      <div className="settings-layout">
+        {/* Sticky side-nav: hidden under 1000px via CSS */}
+        <aside className="settings-side-nav" aria-label="Settings sections">
+          <nav>
+            <p className="settings-side-nav-group-label">Account &amp; Appearance</p>
+            <a
+              href="#account"
+              className={`settings-side-nav-link${activeSection === "account" ? " settings-side-nav-link--active" : ""}`}
+            >
+              Account
+            </a>
+            <a
+              href="#appearance"
+              className={`settings-side-nav-link${activeSection === "appearance" ? " settings-side-nav-link--active" : ""}`}
+            >
+              Appearance
+            </a>
+            <p className="settings-side-nav-group-label">Integrations</p>
+            <a
+              href="#github"
+              className={`settings-side-nav-link${activeSection === "github" ? " settings-side-nav-link--active" : ""}`}
+            >
+              GitHub
+            </a>
+            <a
+              href="#sso"
+              className={`settings-side-nav-link${activeSection === "sso" ? " settings-side-nav-link--active" : ""}`}
+            >
+              Enterprise SSO
+            </a>
+            <a
+              href="#delegation"
+              className={`settings-side-nav-link${activeSection === "delegation" ? " settings-side-nav-link--active" : ""}`}
+            >
+              Agent Permissions
+            </a>
+            <p className="settings-side-nav-group-label">Developer</p>
+            <a
+              href="#api-tokens"
+              className={`settings-side-nav-link${activeSection === "api-tokens" ? " settings-side-nav-link--active" : ""}`}
+            >
+              API Tokens
+            </a>
+          </nav>
+        </aside>
 
-      <Card style={{ marginBottom: "var(--space-4)" }}>
-        <section id="appearance">
-          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "0.5rem" }}>Appearance</h2>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "var(--space-3)" }}>
-            Choose how agent-tasks looks on this device. The preference is stored locally in your browser.
-          </p>
-          <ThemePreferenceField />
-        </section>
-      </Card>
+        <div className="settings-content">
+          {/* Group 1: Account & Appearance */}
+          <div className="settings-section-group">
+            <p className="settings-group-eyebrow">Account &amp; Appearance</p>
 
-      <Card style={{ marginBottom: "var(--space-4)" }}>
-        <section id="github">
-          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "0.5rem" }}>GitHub Integration</h2>
-          {githubConnectedNow && (
-            <AlertBanner tone="success" title="Connection updated">
-              GitHub connected successfully.
-            </AlertBanner>
-          )}
-          {user?.githubConnected ? (
-            tokenHealth?.state === "invalid" ? (
-              <div>
-                <AlertBanner tone="danger" title="GitHub token invalid">
-                  Your GitHub token has been revoked or expired. Repo sync, PR
-                  create/merge/comment, and the <code>ciGreen</code> transition
-                  gate are currently failing for your account. Reconnect to
-                  restore them.
-                </AlertBanner>
-                <Link
-                  href="/api/auth/github/connect"
-                  className="btn-primary"
+            <Card>
+              <section id="account">
+                <h2 className="settings-section-heading">Account</h2>
+                <dl className="settings-account-list">
+                  <dt>Login</dt>
+                  <dd>{user?.login}</dd>
+                  <dt>Name</dt>
+                  <dd>{user?.name ?? "Not set"}</dd>
+                  <dt>Email</dt>
+                  <dd>{user?.email ?? "Not set"}</dd>
+                </dl>
+              </section>
+            </Card>
+
+            <Card>
+              <section id="appearance">
+                <h2 className="settings-section-heading">Appearance</h2>
+                <p className="settings-section-desc">
+                  Choose how agent-tasks looks on this device. The preference is stored
+                  locally in your browser.
+                </p>
+                <ThemePreferenceField />
+              </section>
+            </Card>
+          </div>
+
+          {/* Group 2: Integrations */}
+          <div className="settings-section-group">
+            <p className="settings-group-eyebrow">Integrations</p>
+
+            <Card>
+              <section id="github">
+                <h2 className="settings-section-heading">GitHub Integration</h2>
+                {githubConnectedNow && (
+                  <AlertBanner tone="success" title="Connection updated">
+                    GitHub connected successfully.
+                  </AlertBanner>
+                )}
+                {user?.githubConnected ? (
+                  tokenHealth?.state === "invalid" ? (
+                    <div>
+                      <AlertBanner tone="danger" title="GitHub token invalid">
+                        Your GitHub token has been revoked or expired. Repo sync, PR
+                        create/merge/comment, and the <code>ciGreen</code> transition
+                        gate are currently failing for your account. Reconnect to
+                        restore them.
+                      </AlertBanner>
+                      <Button href="/api/auth/github/connect" variant="secondary">
+                        Reconnect GitHub
+                      </Button>
+                    </div>
+                  ) : tokenHealth?.state === "unknown" ? (
+                    <div>
+                      <AlertBanner tone="info">
+                        GitHub is connected. Could not verify token health just now.
+                        {tokenHealth.lastCheckedAt && (
+                          <span className="settings-github-check-time">
+                            Last checked {formatRelativeTime(tokenHealth.lastCheckedAt)}.
+                          </span>
+                        )}
+                      </AlertBanner>
+                    </div>
+                  ) : (
+                    <AlertBanner tone="success">
+                      GitHub is connected. Sync is available.
+                      {tokenHealth?.state === "healthy" && tokenHealth.lastCheckedAt && (
+                        <span className="settings-github-check-time">
+                          Token verified {formatRelativeTime(tokenHealth.lastCheckedAt)}.
+                        </span>
+                      )}
+                    </AlertBanner>
+                  )
+                ) : (
+                  <div>
+                    <AlertBanner tone="warning" title="GitHub not connected">
+                      No GitHub connection yet. Repository sync is disabled until you
+                      connect GitHub.
+                    </AlertBanner>
+                    <Button href="/api/auth/github/connect" variant="secondary">
+                      Connect GitHub
+                    </Button>
+                  </div>
+                )}
+              </section>
+            </Card>
+
+            <Card>
+              <section id="sso">
+                <h2 className="settings-section-heading">Enterprise SSO</h2>
+                <p className="settings-section-desc">
+                  Configure OpenID Connect so members of your team can sign in with their
+                  company identity provider (Okta, Azure AD, Google Workspace, Auth0,
+                  Keycloak, and others). Gated by an AgentToken with the{" "}
+                  <code>sso:admin</code> scope -- not by your normal session -- so stolen
+                  browser sessions cannot touch SSO config. Generate a token under{" "}
+                  <a href="#api-tokens" className="settings-inline-link">
+                    API Tokens
+                  </a>{" "}
+                  and hand it out-of-band to whoever owns IdP setup.
+                </p>
+                <Button href="/settings/sso" variant="secondary">
+                  Manage SSO connection
+                </Button>
+              </section>
+            </Card>
+
+            <Card>
+              <section id="delegation">
+                <h2 className="settings-section-heading">Agent Permissions</h2>
+                <p className="settings-section-desc">
+                  Allow agents to perform GitHub actions on your behalf. Without explicit
+                  consent, agent requests are rejected.
+                </p>
+                {!user?.githubConnected && (
+                  <AlertBanner tone="warning">
+                    Connect GitHub first to enable agent permissions.
+                  </AlertBanner>
+                )}
+                <div
+                  className="settings-delegation-grid"
+                  /* dynamic: opacity/pointerEvents depend on runtime githubConnected state */
+                  /* eslint-disable-next-line no-restricted-syntax */
                   style={{
-                    display: "inline-block",
-                    padding: "0.5rem 0.875rem",
-                    textDecoration: "none",
+                    opacity: user?.githubConnected ? 1 : 0.5, /* dynamic: auth state */
+                    pointerEvents: user?.githubConnected ? "auto" : "none", /* dynamic: auth state */
                   }}
                 >
-                  Reconnect GitHub
-                </Link>
-              </div>
-            ) : (
-              <AlertBanner tone="success">
-                GitHub is connected. Sync is available.
-                {tokenHealth?.state === "healthy" && tokenHealth.lastCheckedAt && (
-                  <span style={{ display: "block", color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.25rem" }}>
-                    Token verified {formatRelativeTime(tokenHealth.lastCheckedAt)}.
-                  </span>
-                )}
-              </AlertBanner>
-            )
-          ) : (
-            <div>
-              <AlertBanner tone="warning" title="GitHub not connected">
-                No GitHub connection yet. Repository sync is disabled until you connect GitHub.
-              </AlertBanner>
-              <Link
-                href="/api/auth/github/connect"
-                className="btn-secondary"
-                style={{
-                  display: "inline-block",
-                  padding: "0.5rem 0.875rem",
-                  textDecoration: "none",
-                }}
-              >
-                Connect GitHub
-              </Link>
-            </div>
-          )}
-        </section>
-      </Card>
-
-      <Card style={{ marginBottom: "var(--space-4)" }}>
-        <section id="sso">
-          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "0.5rem" }}>
-            Enterprise SSO
-          </h2>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.75rem" }}>
-            Configure OpenID Connect so members of your team can sign in with their company
-            identity provider (Okta, Azure AD, Google Workspace, Auth0, Keycloak, and others).
-            Gated by an AgentToken with the <code>sso:admin</code> scope — not by your normal
-            session — so stolen browser sessions cannot touch SSO config. Generate a token
-            under <a href="#api-tokens" style={{ color: "var(--link)" }}>API Tokens</a> and
-            hand it out-of-band to whoever owns IdP setup.
-          </p>
-          <Link
-            href="/settings/sso"
-            className="btn-secondary"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              padding: "0.5rem 1rem",
-              borderRadius: "var(--radius-lg)",
-              textDecoration: "none",
-              fontWeight: 600,
-            }}
-          >
-            Manage SSO connection
-          </Link>
-        </section>
-      </Card>
-
-      <Card style={{ marginBottom: "var(--space-4)" }}>
-        <section id="delegation">
-          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700, marginBottom: "0.5rem" }}>Agent Permissions</h2>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.75rem" }}>
-            Allow agents to perform GitHub actions on your behalf. Without explicit consent, agent requests are rejected.
-          </p>
-          {!user?.githubConnected && (
-            <div style={{ marginBottom: "0.75rem" }}>
-              <AlertBanner tone="warning">
-                Connect GitHub first to enable agent permissions.
-              </AlertBanner>
-            </div>
-          )}
-          <div style={{ display: "grid", gap: "0.5rem", marginBottom: "1rem", opacity: user?.githubConnected ? 1 : 0.5, pointerEvents: user?.githubConnected ? "auto" : "none" }}>
-            {([
-              { key: "allowAgentPrCreate" as const, label: "Allow agents to create PRs on my behalf" },
-              { key: "allowAgentPrMerge" as const, label: "Allow agents to merge PRs on my behalf" },
-              { key: "allowAgentPrComment" as const, label: "Allow agents to comment on PRs on my behalf" },
-            ]).map(({ key, label }) => (
-              <label key={key} style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "var(--text-sm)" }}>
-                <input
-                  type="checkbox"
-                  checked={delegation[key]}
-                  disabled={!user?.githubConnected}
-                  onChange={(e) => setDelegation((prev) => ({ ...prev, [key]: e.target.checked }))}
-                />
-                {label}
-              </label>
-            ))}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <Button
-              size="sm"
-              disabled={!user?.githubConnected || delegationSaving || !isDelegationDirty}
-              loading={delegationSaving}
-              onClick={() => void handleDelegationSave()}
-            >
-              Save
-            </Button>
-            {delegationSuccess ? (
-              <span style={{ color: "var(--success)", fontSize: "var(--text-sm)" }}>Saved</span>
-            ) : isDelegationDirty ? (
-              <span style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>Unsaved changes</span>
-            ) : null}
-          </div>
-        </section>
-      </Card>
-
-      <Card>
-        <section id="api-tokens">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-          <div>
-            <h2 style={{ fontSize: "var(--text-base)", fontWeight: 700 }}>API Tokens</h2>
-            <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-              Tokens are team-scoped. Create and manage them here in user settings.
-            </p>
-          </div>
-          {teams.length > 0 && (() => {
-            // Admin-only: backend `canManageTeamTokens` rejects non-admins
-            // on `POST /api/agent-tokens`. Disable the buttons in the UI
-            // rather than letting users click a primary CTA that 403s,
-            // mirroring the gating the dashboard Connect button had before
-            // the flow moved here.
-            const canManage = selectedTeam?.role === "ADMIN";
-            const adminTitle = canManage
-              ? undefined
-              : "Only team admins can generate agent tokens";
-            return (
-              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                <Button
-                  onClick={() => setShowConnect(true)}
-                  size="sm"
-                  disabled={!canManage}
-                  title={adminTitle}
-                >
-                  Connect an agent
-                </Button>
-                <Button
-                  onClick={() => setShowCreate(true)}
-                  size="sm"
-                  variant="ghost"
-                  disabled={!canManage}
-                  title={adminTitle}
-                >
-                  Create custom token
-                </Button>
-              </div>
-            );
-          })()}
-        </div>
-
-        {teams.length === 0 ? (
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-            No team found yet. Create a team first to generate API tokens.
-          </p>
-        ) : (
-          <div style={{ marginBottom: "1rem" }}>
-            <FormField label="Team">
-              <Select
-                value={selectedTeamId}
-                onChange={(v) => {
-                  setSelectedTeamId(v);
-                  void loadTokens(v);
-                }}
-                options={teams.map((team) => ({ value: team.id, label: team.name }))}
-                style={{ width: "100%", maxWidth: "320px" }}
-              />
-            </FormField>
-          </div>
-        )}
-
-        <AlertBanner tone="info" title="Agent setup (2 steps)">
-          <ol style={{ margin: "0 0 0.625rem 1.1rem", padding: 0 }}>
-            <li>Create a token and pass it to the agent.</li>
-            <li>
-              Connect the agent to the MCP server — this is the supported
-              agent interface. The REST API stays available as a fallback.
-            </li>
-          </ol>
-          <div style={{ display: "grid", gap: "0.5rem", marginBottom: "0.4rem" }}>
-            <label style={{ display: "grid", gap: "0.25rem" }}>
-              <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>MCP server package</span>
-              <span style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "var(--text-xs)", wordBreak: "break-all", flex: "1 1 380px" }}>
-                  {mcpPackage}
-                </code>
-                <Button variant="ghost" size="sm" onClick={() => void copyToClipboard(mcpPackage, "Package name copied.")}>Copy</Button>
-              </span>
-            </label>
-            <label style={{ display: "grid", gap: "0.25rem" }}>
-              <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Quick start command</span>
-              <span style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "var(--text-xs)", wordBreak: "break-all", flex: "1 1 380px" }}>
-                  {mcpCommand}
-                </code>
-                <Button variant="ghost" size="sm" onClick={() => void copyToClipboard(mcpCommand, "Command copied.")}>Copy</Button>
-              </span>
-            </label>
-          </div>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", margin: 0 }}>
-            Or add the server to your MCP client config (Claude Code, Cursor, …).
-            REST fallback header: <code>Authorization: Bearer &lt;TOKEN&gt;</code>
-          </p>
-          <Button variant="ghost" size="sm" style={{ marginTop: "0.55rem" }} onClick={() => void copyToClipboard(setupSnippet, "Setup info copied.")}>Copy all setup info</Button>
-          {copyMessage && (
-            <p style={{ color: "var(--text)", fontSize: "var(--text-xs)", marginTop: "0.4rem" }}>
-              {copyMessage}
-            </p>
-          )}
-        </AlertBanner>
-
-        <AlertBanner tone="info" title="Developer docs (REST API)">
-          <p style={{ margin: "0 0 0.5rem 0", color: "var(--muted)", fontSize: "var(--text-xs)" }}>
-            For frontend, CLI, or integrations that talk to the REST API
-            directly. Agents should use the MCP server above.
-          </p>
-          <div style={{ display: "grid", gap: "0.5rem" }}>
-            <label style={{ display: "grid", gap: "0.25rem" }}>
-              <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Swagger docs</span>
-              <span style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "var(--text-xs)", wordBreak: "break-all", flex: "1 1 380px" }}>
-                  {docsUrl}
-                </code>
-                <Button variant="ghost" size="sm" onClick={() => void copyToClipboard(docsUrl, "Swagger link copied.")}>Copy</Button>
-              </span>
-            </label>
-            <label style={{ display: "grid", gap: "0.25rem" }}>
-              <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>OpenAPI JSON</span>
-              <span style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                <code style={{ display: "block", background: "var(--surface)", padding: "0.5rem 0.625rem", borderRadius: "6px", border: "1px solid var(--border)", color: "var(--text)", fontSize: "var(--text-xs)", wordBreak: "break-all", flex: "1 1 380px" }}>
-                  {openApiUrl}
-                </code>
-                <Button variant="ghost" size="sm" onClick={() => void copyToClipboard(openApiUrl, "OpenAPI link copied.")}>Copy</Button>
-              </span>
-            </label>
-          </div>
-        </AlertBanner>
-
-        {error && !showCreate && (
-          <AlertBanner tone="danger" title="Action failed">
-            {error}
-          </AlertBanner>
-        )}
-
-        {newToken && (
-          <AlertBanner tone="success" title="Token created (shown once)">
-            <code style={{ display: "block", background: "var(--surface)", padding: "0.625rem 0.75rem", borderRadius: "6px", fontFamily: "monospace", fontSize: "var(--text-sm)", wordBreak: "break-all", color: "var(--text)" }}>
-              {tokenMasked ? MASK_PLACEHOLDER : newToken}
-            </code>
-            <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.625rem", flexWrap: "wrap" }}>
-              <Button variant="secondary" size="sm" onClick={() => void copyToClipboard(newToken, "Token copied.")}>Copy</Button>
-              {tokenMasked && (
-                <Button variant="ghost" size="sm" onClick={revealNewToken}>Reveal</Button>
-              )}
-              <Button variant="ghost" size="sm" onClick={() => setNewToken(null)}>Dismiss</Button>
-            </div>
-          </AlertBanner>
-        )}
-
-        <Modal open={showCreate && teams.length > 0} onClose={() => setShowCreate(false)} title="Create Agent Token">
-          <form onSubmit={(e) => void handleCreate(e)}>
-            <div style={{ marginBottom: "0.875rem" }}>
-              <FormField label="Token name">
-                <input value={tokenName} onChange={(e) => setTokenName(e.target.value)} placeholder="e.g. ci-bot" required style={{ width: "100%", display: "block" }} />
-              </FormField>
-            </div>
-            <div style={{ marginBottom: "1rem" }}>
-              <FormField label="Scopes">
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-                  {availableScopes.map((scope) => (
-                    <label key={scope.id} style={{ display: "flex", alignItems: "center", gap: "0.375rem", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+                  {(
+                    [
+                      {
+                        key: "allowAgentPrCreate" as const,
+                        label: "Allow agents to create PRs on my behalf",
+                      },
+                      {
+                        key: "allowAgentPrMerge" as const,
+                        label: "Allow agents to merge PRs on my behalf",
+                      },
+                      {
+                        key: "allowAgentPrComment" as const,
+                        label: "Allow agents to comment on PRs on my behalf",
+                      },
+                    ] as const
+                  ).map(({ key, label }) => (
+                    <label key={key} className="settings-delegation-row">
                       <input
                         type="checkbox"
-                        checked={selectedScopes.includes(scope.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) setSelectedScopes((s) => [...s, scope.id]);
-                          else setSelectedScopes((s) => s.filter((x) => x !== scope.id));
-                        }}
+                        checked={delegation[key]}
+                        disabled={!user?.githubConnected}
+                        onChange={(e) =>
+                          setDelegation((prev) => ({
+                            ...prev,
+                            [key]: e.target.checked,
+                          }))
+                        }
                       />
-                      <span style={{ background: "var(--border)", padding: "0.125rem 0.5rem", borderRadius: "4px", fontFamily: "monospace", fontSize: "var(--text-xs)" }}>{scope.id}</span>
+                      <span>{label}</span>
                     </label>
                   ))}
                 </div>
-              </FormField>
-              {selectedScopes.length === 0 && (
-                <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.4rem" }}>Select at least one scope.</p>
-              )}
-            </div>
-            {error && (
-              <AlertBanner tone="danger" title="Failed to create token">
-                {error}
-              </AlertBanner>
-            )}
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              <Button type="submit" disabled={creating || selectedScopes.length === 0} loading={creating} size="sm">Create</Button>
-              <Button variant="ghost" size="sm" type="button" onClick={() => setShowCreate(false)}>Cancel</Button>
-            </div>
-          </form>
-        </Modal>
-
-        {teams.length > 0 && (tokens.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "2rem", border: "1px dashed var(--border)", borderRadius: "10px", color: "var(--muted)" }}>
-            No tokens yet.
+                <div className="settings-delegation-footer">
+                  <Button
+                    size="sm"
+                    disabled={!user?.githubConnected || delegationSaving || !isDelegationDirty}
+                    loading={delegationSaving}
+                    onClick={() => void handleDelegationSave()}
+                  >
+                    Save
+                  </Button>
+                  {delegationSuccess ? (
+                    <span className="settings-delegation-status settings-delegation-status--saved">
+                      Saved
+                    </span>
+                  ) : isDelegationDirty ? (
+                    <span className="settings-delegation-status">Unsaved changes</span>
+                  ) : null}
+                </div>
+              </section>
+            </Card>
           </div>
-        ) : (
-          <div style={{ border: "1px solid var(--border)", borderRadius: "10px", overflow: "hidden" }}>
-            {tokens.map((token, i) => (
-              <div key={token.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.875rem 1rem", borderBottom: i < tokens.length - 1 ? "1px solid var(--border)" : "none" }}>
-                <div>
-                  <p style={{ fontWeight: 600, fontSize: "var(--text-sm)", marginBottom: "0.25rem" }}>{token.name}</p>
-                  <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap" }}>
-                    {token.scopes.map((s) => (
-                      <span key={s} style={{ background: "var(--border)", padding: "0 0.375rem", borderRadius: "4px", fontFamily: "monospace", fontSize: "var(--text-xs)", color: "var(--muted)" }}>{s}</span>
+
+          {/* Group 3: API Tokens */}
+          <div className="settings-section-group">
+            <p className="settings-group-eyebrow">Developer</p>
+
+            <Card>
+              <section id="api-tokens">
+                <div className="settings-tokens-header">
+                  <div>
+                    <h2 className="settings-section-heading">API Tokens</h2>
+                    <p className="settings-section-desc">
+                      Tokens are team-scoped. Create and manage them here in user settings.
+                    </p>
+                  </div>
+                  {teams.length > 0 &&
+                    (() => {
+                      const canManage = selectedTeam?.role === "ADMIN";
+                      const adminTitle = canManage
+                        ? undefined
+                        : "Only team admins can generate agent tokens";
+                      return (
+                        <div className="settings-tokens-actions">
+                          <Button
+                            onClick={() => setShowConnect(true)}
+                            size="sm"
+                            disabled={!canManage}
+                            title={adminTitle}
+                          >
+                            Connect an agent
+                          </Button>
+                          <Button
+                            onClick={() => setShowCreate(true)}
+                            size="sm"
+                            variant="ghost"
+                            disabled={!canManage}
+                            title={adminTitle}
+                          >
+                            Create custom token
+                          </Button>
+                        </div>
+                      );
+                    })()}
+                </div>
+
+                {teams.length > 0 && (
+                  <div className="settings-team-select">
+                    <FormField label="Team">
+                      <Select
+                        value={selectedTeamId}
+                        onChange={(v) => {
+                          setSelectedTeamId(v);
+                          void loadTokens(v);
+                        }}
+                        options={teams.map((team) => ({
+                          value: team.id,
+                          label: team.name,
+                        }))}
+                      />
+                    </FormField>
+                  </div>
+                )}
+
+                {/* Documentation banners collapsed by default so the token list
+                    is visible above the fold on a standard 1440x900 viewport. */}
+                <CollapsibleSection title="Agent setup (2 steps)">
+                  <div className="settings-docs-block">
+                    <ol className="settings-docs-steps">
+                      <li>Create a token and pass it to the agent.</li>
+                      <li>
+                        Connect the agent to the MCP server -- this is the supported
+                        agent interface. The REST API stays available as a fallback.
+                      </li>
+                    </ol>
+                    <CopyableCode
+                      value={mcpPackage}
+                      label="MCP server package"
+                    />
+                    <CopyableCode
+                      value={mcpCommand}
+                      label="Quick start command"
+                    />
+                    <p className="settings-docs-hint">
+                      Or add the server to your MCP client config (Claude Code, Cursor, …).
+                      REST fallback header: <code>Authorization: Bearer &lt;TOKEN&gt;</code>
+                    </p>
+                  </div>
+                </CollapsibleSection>
+
+                <CollapsibleSection title="Developer docs (REST API)">
+                  <div className="settings-docs-block">
+                    <p className="settings-docs-hint">
+                      For frontend, CLI, or integrations that talk to the REST API
+                      directly. Agents should use the MCP server above.
+                    </p>
+                    <CopyableCode value={docsUrl} label="Swagger docs" />
+                    <CopyableCode value={openApiUrl} label="OpenAPI JSON" />
+                  </div>
+                </CollapsibleSection>
+
+                {error && !showCreate && (
+                  <AlertBanner tone="danger" title="Action failed">
+                    {error}
+                  </AlertBanner>
+                )}
+
+                {newToken && (
+                  <AlertBanner tone="success" title="Token created (shown once)">
+                    <CopyableCode
+                      value={newToken}
+                      masked={tokenMasked}
+                      onCopy={startNewTokenMask}
+                    />
+                    {tokenMasked && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={revealNewToken}
+                        className="settings-token-reveal"
+                      >
+                        Reveal
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setNewToken(null)}
+                      className="settings-token-reveal"
+                    >
+                      Dismiss
+                    </Button>
+                  </AlertBanner>
+                )}
+
+                {teams.length === 0 ? (
+                  <EmptyState
+                    icon="box"
+                    title="No team found yet"
+                    description="Create a team first to generate API tokens."
+                    dashed
+                  />
+                ) : tokens.length === 0 ? (
+                  <EmptyState
+                    icon="box"
+                    title="No tokens yet"
+                    description="Generate a token to connect an agent or integration."
+                    dashed
+                    action={
+                      selectedTeam?.role === "ADMIN" ? (
+                        <Button
+                          size="sm"
+                          onClick={() => setShowConnect(true)}
+                        >
+                          Connect an agent
+                        </Button>
+                      ) : undefined
+                    }
+                  />
+                ) : (
+                  <div className="settings-token-list">
+                    {tokens.map((token, i) => (
+                      <div
+                        key={token.id}
+                        className={`settings-token-row${i < tokens.length - 1 ? " settings-token-row--bordered" : ""}`}
+                      >
+                        <div>
+                          <p className="settings-token-name">{token.name}</p>
+                          <div className="settings-token-scopes">
+                            {token.scopes.map((s) => (
+                              <code key={s} className="settings-token-scope">
+                                {s}
+                              </code>
+                            ))}
+                          </div>
+                          <p className="settings-token-meta">
+                            Created {formatRelativeTime(token.createdAt)}
+                            {token.lastUsedAt
+                              ? ` · last used ${formatRelativeTime(token.lastUsedAt)}`
+                              : " · never used"}
+                            {token.expiresAt
+                              ? ` · expires ${new Date(token.expiresAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}`
+                              : ""}
+                          </p>
+                        </div>
+                        <Button
+                          variant="outline-danger"
+                          size="sm"
+                          onClick={() =>
+                            setRevokeTarget({ id: token.id, name: token.name })
+                          }
+                        >
+                          Revoke
+                        </Button>
+                      </div>
                     ))}
                   </div>
-                  <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "0.35rem" }}>
-                    Created {formatRelativeTime(token.createdAt)}
-                    {token.lastUsedAt ? ` · last used ${formatRelativeTime(token.lastUsedAt)}` : " · never used"}
-                    {token.expiresAt ? ` · expires ${new Date(token.expiresAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}` : ""}
-                  </p>
-                </div>
-                <Button variant="outline-danger" size="sm" onClick={() => setRevokeTarget({ id: token.id, name: token.name })}>Revoke</Button>
-              </div>
-            ))}
+                )}
+              </section>
+            </Card>
           </div>
-        ))}
-        </section>
-      </Card>
+        </div>
+      </div>
+
+      {/* Create token modal */}
+      <Modal
+        open={showCreate && teams.length > 0}
+        onClose={() => setShowCreate(false)}
+        title="Create Agent Token"
+      >
+        <form onSubmit={(e) => void handleCreate(e)}>
+          <div className="settings-create-token-form">
+            <FormField label="Token name">
+              <input
+                value={tokenName}
+                onChange={(e) => setTokenName(e.target.value)}
+                placeholder="e.g. ci-bot"
+                required
+                className="settings-input"
+              />
+            </FormField>
+          </div>
+          <div className="settings-scope-grid">
+            <FormField label="Scopes">
+              {availableScopes.map((scope) => {
+                const isSensitive = SENSITIVE_SCOPES.has(scope.id);
+                return (
+                  <label
+                    key={scope.id}
+                    className={`settings-scope-row${isSensitive ? " settings-scope-row--sensitive" : ""}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedScopes.includes(scope.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedScopes((s) => [...s, scope.id]);
+                        } else {
+                          setSelectedScopes((s) => s.filter((x) => x !== scope.id));
+                        }
+                      }}
+                    />
+                    <div className="settings-scope-info">
+                      <code className="settings-scope-id">{scope.id}</code>
+                      <span className="settings-scope-label">{scope.label}</span>
+                    </div>
+                  </label>
+                );
+              })}
+            </FormField>
+            {selectedScopes.length === 0 && (
+              <p className="settings-scope-hint">Select at least one scope.</p>
+            )}
+          </div>
+          {error && (
+            <AlertBanner tone="danger" title="Failed to create token">
+              {error}
+            </AlertBanner>
+          )}
+          <div className="settings-modal-actions">
+            <Button
+              type="submit"
+              disabled={creating || selectedScopes.length === 0}
+              loading={creating}
+              size="sm"
+            >
+              Create
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              onClick={() => setShowCreate(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       <ConfirmDialog
         open={Boolean(revokeTarget)}
         title="Revoke API token?"
-        message={revokeTarget ? `The token "${revokeTarget.name}" will stop working immediately.` : ""}
+        message={
+          revokeTarget
+            ? `The token "${revokeTarget.name}" will stop working immediately.`
+            : ""
+        }
         confirmLabel="Revoke token"
         cancelLabel="Keep token"
         tone="danger"
@@ -677,10 +835,6 @@ export default function SettingsPage() {
           teamId={selectedTeamId}
           scopeLabel={selectedTeam.name}
           onTokenCreated={(token) => {
-            // Optimistic insert into the visible token list so the user
-            // sees the new row immediately without a page reload. The
-            // server-side create is done by the modal; this just mirrors
-            // it in the table below.
             setTokens((prev) => [...prev, token]);
           }}
         />

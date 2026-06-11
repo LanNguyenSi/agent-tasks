@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
-import FormField from "../../../components/ui/FormField";
 import ConfirmDialog from "../../../components/ui/ConfirmDialog";
+import FormField from "../../../components/ui/FormField";
+import { PageHeader } from "../../../components/ui/PageHeader";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -14,10 +14,10 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
  * SSO config is token-gated: an AgentToken with the `sso:admin` scope is
  * required, not a normal session. This page NEVER relies on session cookies;
  * the token lives only in React state for the current tab. It is not stored
- * in localStorage — close the tab and you have to paste it again.
+ * in localStorage -- close the tab and you have to paste it again.
  *
  * Flow:
- *   1. User pastes the token → we call /api/sso/whoami to resolve team + existing config
+ *   1. User pastes the token -- we call /api/sso/whoami to resolve team + existing config
  *   2. We render the edit form pre-filled (secret is never returned)
  *   3. PUT/DELETE go through the same token
  */
@@ -53,7 +53,7 @@ async function ssoFetch<T>(
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { message?: string };
-    throw new Error(body.message || `Request failed (${res.status})`);
+    throw new Error(body.message ?? `Request failed (${res.status})`);
   }
   return res.json() as Promise<T>;
 }
@@ -113,7 +113,7 @@ export default function SsoSettingsPage() {
     try {
       if (!clientSecret && authorized.connection) {
         throw new Error(
-          "Client secret is required. Paste it again — for security it is never returned after saving.",
+          "Client secret is required. Paste it again -- for security it is never returned after saving.",
         );
       }
       const domains = emailDomains
@@ -151,7 +151,9 @@ export default function SsoSettingsPage() {
     setError(null);
     setDeleting(true);
     try {
-      await ssoFetch(`/api/teams/${authorized.team.id}/sso`, token, { method: "DELETE" });
+      await ssoFetch(`/api/teams/${authorized.team.id}/sso`, token, {
+        method: "DELETE",
+      });
       setAuthorized({ ...authorized, connection: null });
       setDisplayName("");
       setIssuer("");
@@ -179,20 +181,23 @@ export default function SsoSettingsPage() {
   }
 
   return (
-    <main style={{ maxWidth: "720px", margin: "0 auto", padding: "var(--space-6) var(--space-4)" }}>
-      <div style={{ marginBottom: "var(--space-4)" }}>
-        <Link href="/settings" style={{ color: "var(--muted)", fontSize: "var(--text-sm)", textDecoration: "none" }}>
-          ← Settings
-        </Link>
-        <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginTop: "var(--space-2)" }}>Enterprise SSO (OIDC)</h1>
-        <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-          Configure your team&apos;s identity provider. This page is gated by a dedicated
-          AgentToken with the <code>sso:admin</code> scope — not by your normal session —
-          so that accidental or stolen browser sessions cannot touch SSO configuration.
-          Generate a token under Settings → API Tokens, hand it out-of-band to whoever
-          owns your IdP setup, and revoke it when done.
-        </p>
-      </div>
+    <main className="page-shell page-shell--narrow">
+      <PageHeader
+        breadcrumb={
+          <a href="/settings" className="settings-breadcrumb">
+            Settings
+          </a>
+        }
+        title="Enterprise SSO (OIDC)"
+      />
+
+      <p className="settings-section-desc">
+        Configure your team&apos;s identity provider. This page is gated by a dedicated
+        AgentToken with the <code>sso:admin</code> scope -- not by your normal session --
+        so that accidental or stolen browser sessions cannot touch SSO configuration.
+        Generate a token under Settings &rarr; API Tokens, hand it out-of-band to whoever
+        owns your IdP setup, and revoke it when done.
+      </p>
 
       {!authorized && (
         <Card>
@@ -204,7 +209,7 @@ export default function SsoSettingsPage() {
                 onChange={(event) => setToken(event.target.value)}
                 placeholder="agt_..."
                 required
-                style={{ width: "100%", display: "block" }}
+                className="settings-input"
               />
             </FormField>
             {error && (
@@ -222,9 +227,9 @@ export default function SsoSettingsPage() {
       {authorized && (
         <>
           <AlertBanner tone="info" title={`Unlocked for team: ${authorized.team.name}`}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--space-2)" }}>
+            <div className="settings-sso-lock-row">
               <span>
-                Token is held in memory only — close the tab or click &quot;Lock&quot; to
+                Token is held in memory only -- close the tab or click &quot;Lock&quot; to
                 clear it.
               </span>
               <Button type="button" variant="secondary" onClick={handleLock}>
@@ -241,7 +246,7 @@ export default function SsoSettingsPage() {
                   onChange={(event) => setDisplayName(event.target.value)}
                   placeholder="Acme Okta"
                   required
-                  style={{ width: "100%", display: "block" }}
+                  className="settings-input"
                 />
               </FormField>
 
@@ -252,7 +257,7 @@ export default function SsoSettingsPage() {
                   onChange={(event) => setIssuer(event.target.value)}
                   placeholder="https://acme.okta.com"
                   required
-                  style={{ width: "100%", display: "block" }}
+                  className="settings-input"
                 />
               </FormField>
 
@@ -261,18 +266,24 @@ export default function SsoSettingsPage() {
                   value={clientId}
                   onChange={(event) => setClientId(event.target.value)}
                   required
-                  style={{ width: "100%", display: "block" }}
+                  className="settings-input"
                 />
               </FormField>
 
-              <FormField label={authorized.connection ? "Client secret (re-enter to update)" : "Client secret"}>
+              <FormField
+                label={
+                  authorized.connection
+                    ? "Client secret (re-enter to update)"
+                    : "Client secret"
+                }
+              >
                 <input
                   type="password"
                   value={clientSecret}
                   onChange={(event) => setClientSecret(event.target.value)}
                   required={!authorized.connection}
                   placeholder={authorized.connection ? "••••••••" : ""}
-                  style={{ width: "100%", display: "block" }}
+                  className="settings-input"
                 />
               </FormField>
 
@@ -281,30 +292,30 @@ export default function SsoSettingsPage() {
                   value={emailDomains}
                   onChange={(event) => setEmailDomains(event.target.value)}
                   placeholder="acme.com, acme.co.uk"
-                  style={{ width: "100%", display: "block" }}
+                  className="settings-input"
                 />
               </FormField>
 
               <FormField label="Redirect URI (configure in your IdP)">
-                <input value={callbackUrl} readOnly style={{ width: "100%", display: "block" }} />
+                <input value={callbackUrl} readOnly className="settings-input" />
               </FormField>
 
-              <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-2)" }}>
+              <label className="settings-delegation-row">
                 <input
                   type="checkbox"
                   checked={autoProvision}
                   onChange={(event) => setAutoProvision(event.target.checked)}
                 />
-                Auto-provision new users on first login
+                <span>Auto-provision new users on first login</span>
               </label>
 
-              <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
+              <label className="settings-delegation-row">
                 <input
                   type="checkbox"
                   checked={enabled}
                   onChange={(event) => setEnabled(event.target.checked)}
                 />
-                Enabled
+                <span>Enabled</span>
               </label>
 
               {error && (
@@ -319,12 +330,16 @@ export default function SsoSettingsPage() {
                 </AlertBanner>
               )}
 
-              <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+              <div className="settings-modal-actions">
                 <Button type="submit" disabled={saving} loading={saving}>
                   {authorized.connection ? "Update connection" : "Create connection"}
                 </Button>
                 {authorized.connection && (
-                  <Button type="button" variant="secondary" onClick={() => setDeleteConfirmOpen(true)}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setDeleteConfirmOpen(true)}
+                  >
                     Remove
                   </Button>
                 )}
