@@ -6368,3 +6368,223 @@ a.proj-chip:hover {
   }
 }
 
+/* ── Auth v2 ────────────────────────────────────────────────────── */
+/* Single-width centered shell used by /auth, /onboarding, /invite, /auth/error. */
+/* Width is fixed at 440px via the .auth-shell-inner max-width below.            */
+
+.auth-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+.auth-shell-inner {
+  width: 100%;
+  max-width: 440px;
+}
+
+.auth-shell-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+  text-align: center;
+}
+
+.auth-shell-home-link {
+  display: block;
+  line-height: 0;
+  text-decoration: none;
+  border-radius: var(--radius-base);
+}
+
+.auth-shell-home-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+.auth-shell-logo {
+  width: 40px;
+  height: 40px;
+}
+
+.auth-shell-heading {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin: 0;
+}
+
+.auth-shell-subtitle {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+/* Card frame derived from .landing-card: gradient-wash + accent border. */
+.auth-shell-card {
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--primary-border) 40%);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(360px 200px at -5% -20%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 60%),
+    radial-gradient(260px 160px at 108% -8%, color-mix(in srgb, var(--success) 7%, transparent), transparent 55%),
+    var(--surface);
+  padding: var(--space-5);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+}
+
+/* Grid for spacing between form fields and major card sections. */
+.auth-form-grid {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/* Inputs inside an auth grid fill their cell. */
+.auth-form-grid input {
+  display: block;
+  width: 100%;
+}
+
+/* "or continue with email" hairline divider. */
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* GitHub primary button: full-width, flex row, icon + label. */
+.auth-github-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  text-decoration: none;
+}
+
+.auth-github-btn[aria-disabled="true"] {
+  opacity: 0.65;
+  pointer-events: none;
+  cursor: default;
+}
+
+/* Full-width submit button. */
+.auth-btn-full {
+  width: 100%;
+}
+
+/* Slug / mono input (onboarding team slug). */
+.auth-slug-input {
+  font-family: var(--font-mono);
+}
+
+/* User avatar on onboarding card. */
+.auth-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-full);
+  display: block;
+  margin: 0 auto var(--space-3);
+}
+
+/* Muted helper text rendered below a form control (via FormField hint prop). */
+.form-field-hint {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin: var(--space-1) 0 0 0;
+}
+
+/* Muted text lines inside auth cards (invite, onboarding notes). */
+.auth-muted-line {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+/* Mode-toggle text link at the bottom of the auth card. */
+.auth-mode-toggle {
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.auth-mode-toggle-btn {
+  background: none;
+  border: none;
+  color: var(--primary-text);
+  font-size: inherit;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+  text-underline-offset: 2px;
+}
+
+.auth-mode-toggle-btn:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+/* "Forgot password" hint in login mode. */
+.auth-forgot-hint {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin: 0;
+}
+
+/* Sign-out link row in onboarding (Button variant="ghost" renders inline). */
+.auth-signout-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-4);
+}
+
+/* Welcome header inside the onboarding card (avatar + name). */
+.auth-welcome-header {
+  text-align: center;
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.auth-welcome-name {
+  font-size: var(--text-md);
+  font-weight: 600;
+  margin: 0 0 var(--space-1) 0;
+  color: var(--text);
+}
+
+.auth-welcome-sub {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+/* Error heading in /auth/error card (danger-colored). */
+.auth-error-heading {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--danger);
+  margin: 0 0 var(--space-3) 0;
+}
+
+.auth-error-copy {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-5) 0;
+}
+
