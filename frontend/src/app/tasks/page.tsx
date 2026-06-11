@@ -1,7 +1,6 @@
 "use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getCurrentUser,
@@ -26,6 +25,7 @@ import EmptyState from "../../components/ui/EmptyState";
 import { Skeleton, SkeletonList } from "../../components/ui/Skeleton";
 import Pagination from "../../components/ui/Pagination";
 import Select from "../../components/ui/Select";
+import { Table, type ColumnDef } from "../../components/ui/Table";
 import { normalizeStatus, toDateLabel } from "../../lib/taskDisplay";
 import { STATUS_MUTED_IN_LIST } from "../../lib/status";
 
@@ -36,6 +36,68 @@ type SortDirection = "asc" | "desc";
 type Scope = "all" | "open" | "mine" | "priority" | "review" | "done";
 
 type EnrichedTask = Task & { projectName: string };
+
+// Column definitions for the task list table.
+// Sort keys match the server-side SortColumn parameter names.
+// Render functions close over module-level imports only (no component state).
+const TASK_PAGE_COLUMNS: ColumnDef<EnrichedTask>[] = [
+  {
+    key: "title",
+    header: "Task",
+    sortable: true,
+    width: "34%",
+    render: (t) => <span className="tasks-row-title">{t.title}</span>,
+  },
+  {
+    key: "status",
+    header: "Status",
+    sortable: true,
+    width: "12%",
+    render: (t) => {
+      const nStatus = normalizeStatus(t.status);
+      const isMuted = STATUS_MUTED_IN_LIST.has(nStatus);
+      return <StatusChip status={nStatus} className={isMuted ? "status-chip--muted" : undefined} />;
+    },
+  },
+  {
+    key: "project",
+    header: "Project",
+    sortable: true,
+    width: "15.5%",
+    render: (t) => (
+      <span className="table-cell-secondary" title={t.projectName}>
+        {t.projectName}
+      </span>
+    ),
+  },
+  {
+    key: "due",
+    header: "Due",
+    sortable: true,
+    width: "13%",
+    render: (t) => (
+      <span className="table-cell-secondary num">{t.dueAt ? toDateLabel(t.dueAt) : "—"}</span>
+    ),
+  },
+  {
+    key: "updated",
+    header: "Updated",
+    sortable: true,
+    width: "13%",
+    render: (t) => (
+      <span className="table-cell-secondary num" title={formatAbsoluteDate(t.updatedAt)}>
+        {formatRelativeTime(t.updatedAt)}
+      </span>
+    ),
+  },
+  {
+    key: "priority",
+    header: "Priority",
+    sortable: true,
+    width: "12%",
+    render: (t) => <PriorityLabel priority={t.priority} />,
+  },
+];
 
 const STATUSES: Status[] = ["open", "in_progress", "review", "done"];
 const PRIORITIES: Priority[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
@@ -144,8 +206,6 @@ function TasksPageSkeleton() {
       </div>
       <div className="tasks-skeleton-tabs">
         {[80, 60, 80, 70, 80, 110].map((w, i) => (
-          /* dynamic: width varies per simulated tab */
-          // eslint-disable-next-line no-restricted-syntax
           <Skeleton key={i} width={`${w}px`} height="28px" radius="var(--radius-base)" />
         ))}
       </div>
@@ -369,12 +429,15 @@ function TasksPageInner() {
     updateParams({ [param]: matchesPreset ? null : next.join(",") });
   }
 
-  function toggleSort(column: SortColumn): void {
-    const next: SortDirection =
-      sort.column === column
+  // Controlled sort callback for the Table primitive.
+  // Ignores the proposed direction from Table; applies natural direction for new columns.
+  function handleSortChange(key: string): void {
+    const col = key as SortColumn;
+    const nextDir: SortDirection =
+      sort.column === col
         ? sort.direction === "asc" ? "desc" : "asc"
-        : column === "title" || column === "project" ? "asc" : "desc";
-    updateParams({ sort: `${column}:${next}` }, false);
+        : col === "title" || col === "project" ? "asc" : "desc";
+    updateParams({ sort: `${col}:${nextDir}` }, false);
   }
 
   function clearFilters(): void {
@@ -667,104 +730,17 @@ function TasksPageInner() {
             />
           ) : (
             <>
-              {/* Task table: uses shared .task-list-* CSS matching the dashboard list view */}
-              <div className="task-list-shell">
-                <div className="task-list-head">
-                  {(
-                    [
-                      ["title", "Task"],
-                      ["status", "Status"],
-                      ["project", "Project"],
-                      ["due", "Due"],
-                      ["updated", "Updated"],
-                      ["priority", "Priority"],
-                    ] as [SortColumn, string][]
-                  ).map(([col, label]) => (
-                    <button
-                      key={col}
-                      type="button"
-                      aria-sort={
-                        sort.column === col
-                          ? sort.direction === "asc"
-                            ? "ascending"
-                            : "descending"
-                          : "none"
-                      }
-                      data-col={col}
-                      className={sort.column === col ? "sort-active" : ""}
-                      onClick={() => toggleSort(col)}
-                      aria-label={
-                        sort.column === col
-                          ? `Sort by ${label}, currently ${sort.direction === "asc" ? "ascending" : "descending"}`
-                          : `Sort by ${label}`
-                      }
-                    >
-                      {label}
-                      {sort.column === col && (
-                        <span
-                          className={[
-                            "table-sort-icon",
-                            sort.direction === "asc" ? "table-sort-icon--up" : "",
-                          ]
-                            .filter(Boolean)
-                            .join(" ")}
-                          aria-hidden="true"
-                        >
-                          <Icon
-                            name={sort.direction === "desc" ? "chevron-down" : "chevron-right"}
-                            size={12}
-                          />
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-
-                {pagedTasks.map((task) => {
-                  const nStatus = normalizeStatus(task.status);
-                  const isMuted = STATUS_MUTED_IN_LIST.has(nStatus);
-                  // Row navigates to /tasks/[id] preserving the current query string
-                  // so the detail page can offer a back link with the right filters.
-                  const rowHref = `/tasks/${task.id}?${searchParams.toString()}`;
-                  return (
-                    <Link
-                      key={task.id}
-                      href={rowHref}
-                      className="task-list-row"
-                    >
-                      <span className="task-list-cell-main">
-                        <span className="tasks-row-title">{task.title}</span>
-                      </span>
-                      <span className="task-list-cell-status" data-label="Status">
-                        <StatusChip
-                          status={nStatus}
-                          className={isMuted ? "status-chip--muted" : undefined}
-                        />
-                      </span>
-                      <span
-                        className="task-list-cell-muted"
-                        data-label="Project"
-                        title={task.projectName}
-                      >
-                        {task.projectName}
-                      </span>
-                      <span className="task-list-cell-muted num" data-label="Due">
-                        {task.dueAt ? toDateLabel(task.dueAt) : "—"}
-                      </span>
-                      <span
-                        className="task-list-cell-updated num"
-                        data-label="Updated"
-                        title={formatAbsoluteDate(task.updatedAt)}
-                      >
-                        {formatRelativeTime(task.updatedAt)}
-                      </span>
-                      <span className="task-list-cell-priority" data-label="Priority">
-                        <PriorityLabel priority={task.priority} />
-                      </span>
-                    </Link>
-                  );
-                })}
-              </div>
+              {/* Task table: shared ui/Table primitive with server-side controlled sort. */}
+              <Table
+                columns={TASK_PAGE_COLUMNS}
+                rows={pagedTasks}
+                rowKey={(t) => t.id}
+                rowHref={(t) => `/tasks/${t.id}?${searchParams.toString()}`}
+                sortKey={sort.column}
+                sortDirection={sort.direction === "asc" ? "ascending" : "descending"}
+                onSortChange={handleSortChange}
+                emptyLabel="No tasks match the current filters."
+              />
 
               {totalPages > 1 && (
                 <div className="tasks-pagination">

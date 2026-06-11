@@ -1043,95 +1043,6 @@ input[type="checkbox"] {
   color: var(--text);
 }
 
-/* ── Task list ────────────────────────────────────────────────── */
-
-.task-list-shell {
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  background: color-mix(in srgb, var(--surface) 90%, var(--bg) 10%);
-}
-
-.task-list-head {
-  display: grid;
-  grid-template-columns: minmax(0, 2.2fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 0.85fr) minmax(0, 0.85fr) minmax(0, 0.75fr);
-  gap: var(--space-2);
-  padding: 0.58rem var(--space-3);
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface) 74%, var(--bg) 26%);
-}
-
-.task-list-head button {
-  background: none;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: var(--text-xs);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  text-align: left;
-  padding: 0;
-  font-family: inherit;
-}
-.task-list-head button:hover {
-  color: var(--text-secondary);
-}
-.task-list-head button.sort-active {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.task-list-row {
-  display: grid;
-  grid-template-columns: minmax(0, 2.2fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 0.85fr) minmax(0, 0.85fr) minmax(0, 0.75fr);
-  gap: var(--space-2);
-  align-items: center;
-  padding: var(--space-3);
-  text-decoration: none;
-  color: var(--text);
-  transition: background var(--transition-fast);
-}
-
-.task-list-row:not(:last-child) {
-  border-bottom: 1px solid var(--border);
-}
-
-.task-list-row:hover {
-  transform: none;
-  background: var(--primary-muted);
-}
-
-/* Every cell is a grid item; grid items default to min-width: auto
-   (= min-content), so an unbreakable long string (e.g. a long project
-   name) refuses to shrink and forces its track wider than its fr share.
-   That overflows the row and shoves the flexible title track, making the
-   title overlap its neighbours. min-width: 0 on all cells lets every
-   track shrink to its fr share so the title clips inside its own cell. */
-.task-list-cell-main,
-.task-list-cell-status,
-.task-list-cell-muted,
-.task-list-cell-updated,
-.task-list-cell-priority {
-  min-width: 0;
-}
-
-.task-list-cell-muted,
-.task-list-cell-updated {
-  font-size: var(--text-xs);
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task-list-cell-status {
-  font-size: var(--text-xs);
-}
-
-.task-list-cell-priority {
-  font-size: var(--text-xs);
-}
-
 /* ── Filter chips ─────────────────────────────────────────────── */
 
 .scope-chip-row {
@@ -1463,14 +1374,11 @@ input[type="checkbox"] {
   }
 }
 
+/* Hide the Updated column in the tasks-table-region at medium widths. */
 @media (max-width: 1200px) {
-  .task-list-cell-updated,
-  .task-list-head button:nth-child(5) {
+  .tasks-table-region .table-th[data-col="updated"],
+  .tasks-table-region .table-td[data-col="updated"] {
     display: none;
-  }
-  .task-list-head,
-  .task-list-row {
-    grid-template-columns: minmax(0, 2.2fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 0.85fr) minmax(0, 0.75fr);
   }
 }
 
@@ -1529,27 +1437,6 @@ input[type="checkbox"] {
 
   .board-toolbar {
     grid-template-columns: 1fr;
-  }
-
-  .task-list-row {
-    grid-template-columns: 1fr;
-    gap: var(--space-1);
-  }
-
-  /* Stacked cells get an inline field label so each value is identifiable
-     once the column header row is hidden. The title (main) cell and the
-     already-hidden updated cell are intentionally not labelled. */
-  .task-list-row [data-label]::before {
-    content: attr(data-label) ": ";
-    color: var(--muted);
-    font-size: var(--text-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-right: 0.4rem;
-  }
-
-  .task-list-head {
-    display: none;
   }
 
   .project-select-wrap {
@@ -2144,7 +2031,18 @@ input[type="checkbox"] {
 .table-td--right { text-align: right; }
 .table-td--center { text-align: center; }
 
+/* Secondary/muted text inside a table cell: smaller, muted, single-line truncated. */
+.table-cell-secondary {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .table-row-link {
+  display: block; /* fills the cell so block children (e.g. truncated spans) size correctly */
   color: inherit;
   text-decoration: none;
 }
