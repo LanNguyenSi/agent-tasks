@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -14,67 +14,47 @@ import {
 } from "../../lib/api";
 import { formatRelativeTime } from "../../lib/time";
 import { isDoneTaskHidden } from "../../lib/dashboardPrefs";
-import { PRIORITY_COLORS } from "../../lib/priorityColors";
+import { normalizeStatus } from "../../lib/taskDisplay";
 import Card from "../../components/ui/Card";
 import { SkeletonList } from "../../components/ui/Skeleton";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
-
-const STATUS_COLORS: Record<string, string> = {
-  open: "var(--muted)",
-  in_progress: "var(--primary)",
-  review: "var(--warning)",
-  done: "var(--success)",
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  open: "Open",
-  in_progress: "In Progress",
-  review: "In Review",
-  done: "Done",
-};
+import EmptyState from "../../components/ui/EmptyState";
+import { StatusChip } from "../../components/ui/StatusChip";
+import { PriorityLabel } from "../../components/ui/PriorityLabel";
 
 type EnrichedTask = Task & { projectName: string };
+
+// ── TaskRow ───────────────────────────────────────────────────────
 
 function TaskRow({ task, teamId }: { task: EnrichedTask; teamId: string }) {
   return (
     <Link
       href={`/dashboard?teamId=${teamId}&projectId=${task.projectId}&taskId=${task.id}`}
-      aria-label={`${task.title}, ${task.projectName}, ${STATUS_LABELS[task.status] ?? task.status}, ${task.priority} priority`}
-      style={{ textDecoration: "none", color: "inherit" }}
+      aria-label={`${task.title}, ${task.projectName}, ${task.status.replace(/_/g, " ")}, ${task.priority} priority`}
+      className="home-task-row"
     >
-      <div className="open-task-row" style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.5rem", borderRadius: "var(--radius-base)", transition: "background 0.12s ease" }}>
-        <span
-          aria-hidden="true"
-          title={STATUS_LABELS[task.status] ?? task.status}
-          style={{ width: "7px", height: "7px", borderRadius: "50%", background: STATUS_COLORS[task.status] ?? "var(--muted)", flexShrink: 0 }}
-        />
-        {/* `open-task-row-title` keeps the hook that the <480px
-           viewport rule in globals.css uses to promote the title
-           to its own full-width line. Don't rename without updating
-           the CSS. */}
-        <span className="open-task-row-title" style={{ flex: 1, fontSize: "var(--text-sm)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-          {task.title}
+      <StatusChip status={normalizeStatus(task.status)} />
+      {/* `home-task-row-title` is referenced in the <480px responsive rule
+         in globals.css to promote the title to its own full-width line.
+         Do not rename without updating the CSS. */}
+      <span className="home-task-row-title">{task.title}</span>
+      <span className="home-task-row-project" title={task.projectName}>
+        {task.projectName}
+      </span>
+      {task.externalRef && (
+        <span className="home-task-row-ref" title={task.externalRef}>
+          {task.externalRef}
         </span>
-        <span title={task.projectName} style={{ color: "var(--muted)", fontSize: "var(--text-xs)", maxWidth: "8rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-          {task.projectName}
-        </span>
-        {task.externalRef && (
-          <span title={task.externalRef} style={{ fontSize: "var(--text-xs)", color: "var(--primary)", background: "var(--primary-muted)", borderRadius: "4px", padding: "0.05rem 0.3rem", fontWeight: 600, fontFamily: "monospace", maxWidth: "6rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-            {task.externalRef}
-          </span>
-        )}
-        <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] ?? "var(--muted)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
-          {task.priority}
-        </span>
-        <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
-          {formatRelativeTime(task.updatedAt)}
-        </span>
-      </div>
+      )}
+      <PriorityLabel priority={task.priority} />
+      <span className="home-task-row-time">{formatRelativeTime(task.updatedAt)}</span>
     </Link>
   );
 }
+
+// ── TaskWidget ────────────────────────────────────────────────────
 
 const WIDGET_LIMIT = 10;
 
@@ -83,71 +63,69 @@ interface WidgetProps {
   tasks: EnrichedTask[];
   teamId: string;
   scope: string;
-  emptyText: string;
-  // Team-wide total for this scope, sourced from the server-side counts
-  // block. Falls back to the loaded slice length when the backend hasn't
-  // been redeployed yet (forward-compat). Use this for badges and "+N
-  // more" so the numbers don't drift once the team's task count exceeds
-  // the row-fetch page size.
+  /** EmptyState content shown when displayTotal === 0 and data is loaded. */
+  emptyState: ReactNode;
+  /**
+   * Team-wide total for this scope, sourced from the server-side counts block.
+   * Falls back to loaded-slice length when the backend hasn't been redeployed
+   * yet (forward-compat). Drives badges and "+N more" so the numbers don't
+   * drift when the team's task count exceeds the row-fetch page size.
+   */
   total?: number;
-  // "Recently Done" only: count of done tasks beyond the 14-day window. When
-  // set, the widget offers a link to reveal them via the full done list,
-  // since the recent-capped list/count would otherwise hide them.
+  /**
+   * "Recently Done" only: count of done tasks beyond the 14-day window. When
+   * set, the widget offers a link to reveal them via the full done list.
+   */
   olderCount?: number;
 }
 
-function TaskWidget({ title, tasks, teamId, scope, emptyText, total, olderCount = 0 }: WidgetProps) {
+function TaskWidget({ title, tasks, teamId, scope, emptyState, total, olderCount = 0 }: WidgetProps) {
   const listHref = `/tasks?teamId=${teamId}&scope=${scope}`;
-  // The Recently Done widget previews recent (≤14d) completions: its title /
-  // total / "more" links stay inside the recent window, while "older done"
-  // deep-links to the >14d slice. The /tasks done view now filters by recency,
-  // so the two links land on genuinely different, pre-filtered lists. Non-done
-  // widgets have olderCount=0 and use the plain scope href.
   const moreHref = scope === "done" ? `${listHref}&recency=recent` : listHref;
   const olderHref = `/tasks?teamId=${teamId}&scope=done&recency=older`;
   const displayTotal = total ?? tasks.length;
   const moreCount = Math.max(0, displayTotal - WIDGET_LIMIT);
+
   return (
-    <Card style={{ marginBottom: "0.75rem" }} padding="sm">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", gap: "0.5rem" }}>
-        <Link href={moreHref} style={{ textDecoration: "none", color: "inherit", flex: 1, minWidth: 0 }}>
-          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {title}
-          </h2>
+    <Card className="home-widget-card" padding="sm">
+      <div className="home-widget-header">
+        <Link href={moreHref} className="home-widget-title-link">
+          <h2 className="home-widget-title">{title}</h2>
         </Link>
-        <Link href={moreHref} className="widget-link" style={{ fontSize: "var(--text-xs)", flexShrink: 0 }}>
-          {displayTotal} total →
+        <Link href={moreHref} className="widget-link home-widget-more">
+          <span className="num">{displayTotal}</span> total &rarr;
         </Link>
       </div>
+
       {displayTotal === 0 ? (
         <>
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", padding: "0.25rem 0" }}>{emptyText}</p>
+          {emptyState}
           {olderCount > 0 && (
-            <p style={{ textAlign: "right", marginTop: "0.2rem", fontSize: "var(--text-xs)" }}>
+            <p className="home-widget-footer">
               <Link href={olderHref} className="widget-link">
-                Show {olderCount} older done →
+                Show {olderCount} older done &rarr;
               </Link>
             </p>
           )}
         </>
       ) : (
         <>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+          <div className="home-widget-tasks">
             {tasks.slice(0, WIDGET_LIMIT).map((task) => (
               <TaskRow key={task.id} task={task} teamId={teamId} />
             ))}
           </div>
           {moreCount > 0 && (
-            <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
+            <p className="home-widget-footer">
               <Link href={moreHref} className="widget-link">
-                +{moreCount} more →
+                +{moreCount} more &rarr;
               </Link>
             </p>
           )}
           {olderCount > 0 && (
-            <p style={{ textAlign: "right", marginTop: "0.4rem", fontSize: "var(--text-xs)" }}>
+            <p className="home-widget-footer">
               <Link href={olderHref} className="widget-link">
-                +{olderCount} older done →
+                +{olderCount} older done &rarr;
               </Link>
             </p>
           )}
@@ -156,6 +134,27 @@ function TaskWidget({ title, tasks, teamId, scope, emptyText, total, olderCount 
     </Card>
   );
 }
+
+// ── StatTile ──────────────────────────────────────────────────────
+
+function StatTile({
+  count,
+  label,
+  href,
+}: {
+  count: number;
+  label: string;
+  href: string;
+}) {
+  return (
+    <Link href={href} className="home-stat-tile">
+      <span className="home-stat-tile-number num">{count}</span>
+      <span className="home-stat-tile-label">{label}</span>
+    </Link>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────
 
 export default function HomeDashboardPage() {
   const router = useRouter();
@@ -166,12 +165,12 @@ export default function HomeDashboardPage() {
   const [counts, setCounts] = useState<TeamTasksCounts | null>(null);
   const [loading, setLoading] = useState(true);
   // Distinct from `loading` (auth/team bootstrap): the task aggregation is a
-  // second roundtrip, so without this the widgets would briefly render their
-  // empty states before the first fetch resolves.
+  // second roundtrip, so without this the widgets briefly render their empty
+  // states before the first fetch resolves.
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // A background-poll failure while data is already on screen should keep the
-  // stale data and flag a soft hint, not wipe back to empty widgets.
+  // A background-poll failure while data is already on screen keeps the stale
+  // data and flags a soft hint, not wiping back to empty widgets.
   const [staleWarning, setStaleWarning] = useState(false);
   const [refetchKey, setRefetchKey] = useState(0);
   const hasDataRef = useRef(false);
@@ -191,12 +190,6 @@ export default function HomeDashboardPage() {
     })();
   }, [router]);
 
-  // Single aggregation roundtrip per refresh: server returns the union of
-  // tasks across every team-accessible project (team-owned + per-project
-  // shares) plus a projects map for the project-name decoration. Replaces
-  // the previous fan-out that issued one HTTP request per project (with
-  // 40 projects this was ~40 parallel requests, each carrying its own
-  // 3-query ACL — see the perf regression ticket for details).
   useEffect(() => {
     if (!selectedTeam) return;
     let cancelled = false;
@@ -210,11 +203,7 @@ export default function HomeDashboardPage() {
           ...t,
           projectName: projectName.get(t.projectId) ?? "(unknown)",
         }));
-        // Server orders by updatedAt desc; preserve that here.
         setAllTasks(enriched);
-        // counts is optional during the rollout window; null means
-        // TaskWidget will fall back to `tasks.length` (the legacy
-        // off-by-page-size behavior).
         setCounts(r.counts ?? null);
         if (r.projects.length > 0) {
           setFirstProjectId((prev) => prev ?? r.projects[0]!.id);
@@ -224,18 +213,12 @@ export default function HomeDashboardPage() {
         setStaleWarning(false);
       } catch (err) {
         if (cancelled) return;
-        // First load with nothing on screen yet: surface a real error so the
-        // empty widgets don't read as "you have 0 tasks". A background-poll
-        // failure after data is shown keeps the stale data and only flags a
-        // soft hint (matches the dashboard's silent-poll behavior).
         if (hasDataRef.current) {
           setStaleWarning(true);
         } else {
           setError((err as Error).message);
         }
       } finally {
-        // Flip the gate even if the fetch rejects, so a failed first request
-        // falls back to the error branch instead of hanging on the skeleton.
         if (!cancelled) setTasksLoaded(true);
       }
     }
@@ -244,6 +227,8 @@ export default function HomeDashboardPage() {
     const interval = setInterval(() => void fetchTeamTasks(selectedTeam.id), 15_000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [selectedTeam, refetchKey]);
+
+  // ── Filtered task sets ────────────────────────────────────────
 
   const openTasks = useMemo(
     () => allTasks.filter((t) => t.status === "open" || t.status === "in_progress"),
@@ -260,20 +245,12 @@ export default function HomeDashboardPage() {
     [allTasks],
   );
 
-  // Only the genuinely recent completions, matching the dashboard's default
-  // done window (reusing the same predicate). Keeps the widget from claiming
-  // a huge "N total" when the team has accumulated months of done tasks.
   const recentlyDone = useMemo(() => {
     const now = Date.now();
     return allTasks.filter((t) => t.status === "done" && !isDoneTaskHidden("recent", t.updatedAt, now));
   }, [allTasks]);
 
-  // Done tasks beyond the 14-day window, so the Recently Done widget can offer
-  // a link to reveal them (its list only shows the recent ones).
   const olderDoneCount = useMemo(() => {
-    // Prefer the server's authoritative >14d done count; fall back to deriving
-    // it from the team-wide done total minus the recent slice for a backend
-    // predating the doneOlder count.
     if (typeof counts?.doneOlder === "number") return counts.doneOlder;
     const doneTotal = counts?.done ?? allTasks.filter((t) => t.status === "done").length;
     return Math.max(0, doneTotal - recentlyDone.length);
@@ -288,20 +265,60 @@ export default function HomeDashboardPage() {
     return <FullPageLoader variant="shell" label="Loading your tasks" />;
   }
 
+  const teamId = selectedTeam?.id ?? "";
+
+  // ── Stat strip ────────────────────────────────────────────────
+
+  const statStrip = (
+    <div className="home-stat-strip">
+      <StatTile
+        count={counts?.open ?? openTasks.length}
+        label="Open"
+        href={`/tasks?teamId=${teamId}&scope=open`}
+      />
+      <StatTile
+        count={counts?.mine ?? myTasks.length}
+        label="Mine"
+        href={`/tasks?teamId=${teamId}&scope=mine`}
+      />
+      <StatTile
+        count={counts?.priority ?? priorityTasks.length}
+        label="Priority"
+        href={`/tasks?teamId=${teamId}&scope=priority`}
+      />
+      <StatTile
+        count={counts?.review ?? inReviewTasks.length}
+        label="In Review"
+        href={`/tasks?teamId=${teamId}&scope=review`}
+      />
+      <StatTile
+        count={counts?.doneRecent ?? recentlyDone.length}
+        label="Recently Done"
+        href={`/tasks?teamId=${teamId}&scope=done`}
+      />
+    </div>
+  );
+
   return (
     <main className="page-shell">
-      <Card padding="sm" style={{ marginBottom: "var(--space-4)" }}>
-        <h1 style={{ fontSize: "var(--text-lg)", fontWeight: 700, color: "var(--text)" }}>Your task overview</h1>
-        <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginTop: "var(--space-1)" }}>Across all your projects.</p>
-      </Card>
+      {/* PageHeader-style heading */}
+      <div className="home-header">
+        <h1 className="home-header-title">
+          {selectedTeam?.name ?? "Home"}
+        </h1>
+        <p className="home-header-sub">Task overview across all your projects.</p>
+      </div>
 
       {selectedTeam && (
         !tasksLoaded ? (
-          <SkeletonList rows={5} rowHeight="4rem" label="Loading your tasks" />
+          <>
+            {statStrip}
+            <SkeletonList rows={5} rowHeight="4rem" label="Loading your tasks" />
+          </>
         ) : error ? (
           <AlertBanner tone="danger" title="Couldn't load your tasks">
             {error}
-            <div style={{ marginTop: "var(--space-3)" }}>
+            <div className="home-error-retry">
               <Button
                 variant="secondary"
                 size="sm"
@@ -317,21 +334,86 @@ export default function HomeDashboardPage() {
           </AlertBanner>
         ) : (
           <>
-            {staleWarning && (
-              <p style={{ color: "var(--warning)", fontSize: "var(--text-xs)", marginBottom: "var(--space-2)" }}>
+            {statStrip}
+
+            {/* Stale-warning slot: always present (reserves space, prevents layout jump).
+                Visibility controlled by staleWarning state. */}
+            <div
+              className={["home-stale-slot", staleWarning ? "" : "home-stale-slot--hidden"].filter(Boolean).join(" ")}
+              aria-live="polite"
+            >
+              <AlertBanner
+                tone="warning"
+                onDismiss={staleWarning ? () => setStaleWarning(false) : undefined}
+              >
                 Last update failed; showing the most recent data.
-              </p>
-            )}
+              </AlertBanner>
+            </div>
+
+            {/* Widgets: My Tasks, Open Tasks, Priority, In Review, Recently Done */}
             <div className="home-widgets-grid">
-              <TaskWidget title="Open Tasks" tasks={openTasks} teamId={selectedTeam.id} scope="open" emptyText="No open tasks." total={counts?.open} />
-              <TaskWidget title="My Tasks" tasks={myTasks} teamId={selectedTeam.id} scope="mine" emptyText="No tasks assigned to you." total={counts?.mine} />
-              <TaskWidget title="Priority (High / Critical)" tasks={priorityTasks} teamId={selectedTeam.id} scope="priority" emptyText="No high-priority tasks." total={counts?.priority} />
-              <TaskWidget title="In Review" tasks={inReviewTasks} teamId={selectedTeam.id} scope="review" emptyText="Nothing in review." total={counts?.review} />
-              {/* total = the server's recent (≤14d) done count; olderCount =
-                  the >14d count. The widget's "more" link stays in the recent
-                  window and "older done" deep-links to the >14d slice, both now
-                  pre-filtered by the /tasks done recency view. */}
-              <TaskWidget title="Recently Done" tasks={recentlyDone} teamId={selectedTeam.id} scope="done" emptyText="No tasks completed in the last 14 days." total={counts?.doneRecent ?? recentlyDone.length} olderCount={olderDoneCount} />
+              <TaskWidget
+                title="My Tasks"
+                tasks={myTasks}
+                teamId={teamId}
+                scope="mine"
+                total={counts?.mine}
+                emptyState={
+                  <EmptyState
+                    title="Nothing assigned to you."
+                    action={
+                      <Button href={`/tasks?teamId=${teamId}&scope=open`} variant="ghost" size="sm">
+                        Browse open tasks
+                      </Button>
+                    }
+                  />
+                }
+              />
+              <TaskWidget
+                title="Open Tasks"
+                tasks={openTasks}
+                teamId={teamId}
+                scope="open"
+                total={counts?.open}
+                emptyState={
+                  <EmptyState
+                    title="No open tasks."
+                    action={
+                      <Button href={`/tasks?teamId=${teamId}&scope=all`} variant="ghost" size="sm">
+                        View all tasks
+                      </Button>
+                    }
+                  />
+                }
+              />
+              <TaskWidget
+                title="Priority (High / Critical)"
+                tasks={priorityTasks}
+                teamId={teamId}
+                scope="priority"
+                total={counts?.priority}
+                emptyState={<EmptyState title="No high-priority tasks." />}
+              />
+              <TaskWidget
+                title="In Review"
+                tasks={inReviewTasks}
+                teamId={teamId}
+                scope="review"
+                total={counts?.review}
+                emptyState={<EmptyState title="Nothing in review." />}
+              />
+              {/* total = the server's recent (<=14d) done count; olderCount = the >14d count.
+                  The widget's "more" link stays in the recent window; "older done" deep-links
+                  to the >14d slice. */}
+              <TaskWidget
+                title="Recently Done"
+                tasks={recentlyDone}
+                teamId={teamId}
+                scope="done"
+                total={counts?.doneRecent ?? recentlyDone.length}
+                olderCount={olderDoneCount}
+                emptyState={<EmptyState title="No tasks completed in the last 14 days." />}
+              />
             </div>
           </>
         )

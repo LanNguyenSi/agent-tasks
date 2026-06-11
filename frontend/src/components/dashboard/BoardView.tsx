@@ -10,14 +10,16 @@ import { Badge, type BadgeTone } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
 import { PriorityLabel } from "../ui/PriorityLabel";
 import { STATUS_LABELS } from "../../lib/status";
+import {
+  normalizeStatus,
+  isOverdue,
+  toDateLabel,
+  getAssigneeName,
+  PRIORITY_RANK,
+} from "../../lib/taskDisplay";
 import { DONE_BOARD_VISIBLE_LIMIT } from "../../lib/dashboardPrefs";
 import type { Task } from "../../lib/api";
 import { formatAbsoluteDate } from "../../lib/time";
-
-// Normalize API underscore status to hyphenated CSS/lib key.
-function normalizeStatus(s: string): string {
-  return s.replace(/_/g, "-");
-}
 
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
@@ -30,34 +32,11 @@ const COLUMN_BADGE_TONE: Record<string, BadgeTone> = {
   done: "status-done",
 };
 
-const PRIORITY_RANK: Record<string, number> = {
-  CRITICAL: 0,
-  HIGH: 1,
-  MEDIUM: 2,
-  LOW: 3,
-};
-
-function isOverdue(task: Task): boolean {
-  if (!task.dueAt || task.status === "done") return false;
-  return new Date(task.dueAt).getTime() < Date.now();
-}
-
-function toDateLabel(value: string | null): string {
-  if (!value) return "";
-  return value.slice(0, 10);
-}
-
 function getInitials(task: Task): string {
   const name = task.claimedByUser?.name ?? task.claimedByUser?.login ?? task.claimedByAgent?.name ?? "";
   const words = name.trim().split(/\s+/);
   if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
   return name.slice(0, 2).toUpperCase();
-}
-
-function getAssigneeName(task: Task): string {
-  if (task.claimedByUser) return task.claimedByUser.name ?? task.claimedByUser.login;
-  if (task.claimedByAgent) return `Agent ${task.claimedByAgent.name}`;
-  return "Unassigned";
 }
 
 function sortColumnTasks(tasks: Task[]): Task[] {

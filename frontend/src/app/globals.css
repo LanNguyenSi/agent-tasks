@@ -3289,3 +3289,236 @@ html[data-theme="light"] {
   min-height: 100vh;
 }
 
+/* ── Home v2 ─────────────────────────────────────────────────── */
+/*
+ * Component-scoped classes for the home surface (Stage D2).
+ * Prefix: home- (header, stat strip, task row, widget internals).
+ * All geometry lives here; no inline style blocks in home/page.tsx.
+ */
+
+/* Page-level heading (H1 + sub-line) above the stat strip */
+.home-header {
+  margin-bottom: var(--space-4);
+}
+
+.home-header-title {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.home-header-sub {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin-top: var(--space-1);
+}
+
+/* Stat strip: 5-column row of large-number tiles */
+.home-stat-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+@media (max-width: 900px) {
+  .home-stat-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .home-stat-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Clickable stat tile linking to the corresponding /tasks scope */
+.home-stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  text-decoration: none;
+  color: inherit;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.home-stat-tile:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+/* Large numeric count inside the tile */
+.home-stat-tile-number {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1;
+}
+
+/* Tile label below the number */
+.home-stat-tile-label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* Stale-warning slot: always rendered to avoid layout jump on appearance.
+   When the banner is absent the slot collapses to 0 height via clip.
+   When the banner appears it grows to its natural height. The AlertBanner
+   itself keeps its full geometry so the transition is smooth; only the
+   container is clipped. */
+.home-stale-slot {
+  margin-bottom: var(--space-2);
+}
+
+.home-stale-slot--hidden {
+  height: 0;
+  overflow: hidden;
+  margin-bottom: 0;
+}
+
+/* Retry button spacing in home error state */
+.home-error-retry {
+  margin-top: var(--space-3);
+}
+
+/* Widget card spacing */
+.home-widget-card {
+  margin-bottom: 0;
+}
+
+/* Widget header: title link + "N total" on the right */
+.home-widget-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-2);
+  gap: var(--space-2);
+}
+
+/* Title link takes remaining width, single line with ellipsis */
+.home-widget-title-link {
+  flex: 1;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.home-widget-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "N total →" count link pinned right */
+.home-widget-more {
+  font-size: var(--text-xs);
+  flex-shrink: 0;
+}
+
+/* Column of task rows inside a widget */
+.home-widget-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* "+N more →" / "older done →" footer link */
+.home-widget-footer {
+  text-align: right;
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+/* Task row: flex strip inside a widget (replaces open-task-row) */
+.home-task-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-base);
+  text-decoration: none;
+  color: inherit;
+  transition: background var(--transition-fast);
+}
+
+.home-task-row:hover {
+  background: var(--primary-muted);
+}
+
+/* Task title: fills remaining width, single-line ellipsis */
+.home-task-row-title {
+  flex: 1;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* Project name in muted color, capped width */
+.home-task-row-project {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+/* External-ref / PR chip (mono, accent tint) */
+.home-task-row-ref {
+  font-size: var(--text-xs);
+  color: var(--primary);
+  background: var(--primary-muted);
+  border-radius: var(--radius-sm);
+  padding: 0.05rem 0.3rem;
+  font-weight: 600;
+  font-family: var(--font-mono, monospace);
+  max-width: 6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+/* Relative updated-at timestamp */
+.home-task-row-time {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  flex-shrink: 0;
+}
+
+/* Narrow viewports: wrap row so the title gets a full line */
+@media (max-width: 480px) {
+  .home-task-row {
+    flex-wrap: wrap;
+  }
+
+  .home-task-row-title {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+}
+
+/* CollapsibleSection headerExtra: the inline badge in the header toggle button */
+.collapsible-section-header-extra {
+  margin-left: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  pointer-events: none; /* badge is decorative inside the button */
+}
+

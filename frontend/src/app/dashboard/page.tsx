@@ -9,16 +9,11 @@ import {
   getProjects,
   getTasks,
   getTask,
-  createTask,
-  claimTask,
   type User,
   type Team,
   type Project,
   type Task,
-  type CreateConfidence,
 } from "../../lib/api";
-import { calculateConfidence, TASK_TYPES, type TaskType } from "../../lib/confidence";
-import { buildSavedTemplateData } from "../../lib/templateData";
 import {
   DEFAULT_DONE_VISIBILITY,
   isDoneTaskHidden,
@@ -29,15 +24,11 @@ import {
   type DoneVisibility,
   type DashboardViewMode,
 } from "../../lib/dashboardPrefs";
-import ConfidenceBadge from "../../components/ConfidenceBadge";
-import CreateConfidencePanel from "../../components/CreateConfidencePanel";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import EmptyState from "../../components/ui/EmptyState";
-import FormField from "../../components/ui/FormField";
 import { Icon } from "../../components/ui/Icon";
 import { KeyHint } from "../../components/ui/KeyHint";
-import Modal from "../../components/ui/Modal";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { SkeletonList } from "../../components/ui/Skeleton";
 import { StatusChip } from "../../components/ui/StatusChip";
@@ -45,18 +36,17 @@ import { Tabs } from "../../components/ui/Tabs";
 import { useToast } from "../../components/ui/Toast";
 import TaskDetail from "../../components/TaskDetail";
 import ImportDialog from "../../components/ImportDialog";
-import Select from "../../components/ui/Select";
 import DropdownMenu from "../../components/ui/DropdownMenu";
 import ProjectPicker from "../../components/dashboard/ProjectPicker";
 import FilterToolbar from "../../components/dashboard/FilterToolbar";
 import BoardView from "../../components/dashboard/BoardView";
 import TaskListView from "../../components/dashboard/TaskListView";
+import NewTaskModal from "../../components/dashboard/NewTaskModal";
 
 // ── Types ────────────────────────────────────────────────────────
 
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
-type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
 const LIST_PAGE_SIZE = 12;
 
@@ -65,11 +55,6 @@ const LIST_PAGE_SIZE = 12;
 function isOverdue(task: Task): boolean {
   if (!task.dueAt || task.status === "done") return false;
   return new Date(task.dueAt).getTime() < Date.now();
-}
-
-function toIsoDateOrNull(value: string): string | null {
-  if (!value) return null;
-  return new Date(`${value}T00:00:00`).toISOString();
 }
 
 function updateUrl(teamId: string, projectId?: string): void {
@@ -124,57 +109,9 @@ export default function DashboardPage() {
 
   const [showNewTask, setShowNewTask] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  const [creatingTask, setCreatingTask] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-
-  // NewTaskModal fields
-  const [newTaskTitle, setNewTaskTitle] = useState("");
-  const [newTaskDescription, setNewTaskDescription] = useState("");
-  const [newTaskStatus, setNewTaskStatus] = useState<Status>("open");
-  const [newTaskPriority, setNewTaskPriority] = useState<Priority>("MEDIUM");
-  const [newTaskDueAt, setNewTaskDueAt] = useState("");
-  const [newTaskAssignee, setNewTaskAssignee] = useState<"unassigned" | "me">("unassigned");
-  const [newTaskGoal, setNewTaskGoal] = useState("");
-  const [newTaskAcceptanceCriteria, setNewTaskAcceptanceCriteria] = useState("");
-  const [newTaskContext, setNewTaskContext] = useState("");
-  const [newTaskConstraints, setNewTaskConstraints] = useState("");
-  const [newTaskScope, setNewTaskScope] = useState("");
-  const [newTaskOutOfScope, setNewTaskOutOfScope] = useState("");
-  const [newTaskDependencies, setNewTaskDependencies] = useState("");
-  const [newTaskRisk, setNewTaskRisk] = useState("");
-  const [newTaskAgentPrompt, setNewTaskAgentPrompt] = useState("");
-  const [newTaskTaskType, setNewTaskTaskType] = useState<TaskType | "">("");
-  const [createdConfidence, setCreatedConfidence] = useState<CreateConfidence | null>(null);
-  const [createdAssignmentError, setCreatedAssignmentError] = useState<string | null>(null);
-  const [createdTaskId, setCreatedTaskId] = useState<string | null>(null);
-
-  const newTaskTemplateData = useMemo(
-    () =>
-      buildSavedTemplateData(null, {
-        goal: newTaskGoal,
-        acceptanceCriteria: newTaskAcceptanceCriteria,
-        context: newTaskContext,
-        constraints: newTaskConstraints,
-        scope: newTaskScope,
-        outOfScope: newTaskOutOfScope,
-        dependencies: newTaskDependencies,
-        risk: newTaskRisk,
-        agentPrompt: newTaskAgentPrompt,
-        taskType: newTaskTaskType,
-      }),
-    [
-      newTaskGoal,
-      newTaskAcceptanceCriteria,
-      newTaskContext,
-      newTaskConstraints,
-      newTaskScope,
-      newTaskOutOfScope,
-      newTaskDependencies,
-      newTaskRisk,
-      newTaskAgentPrompt,
-      newTaskTaskType,
-    ],
-  );
+  // Status preset when opening NewTaskModal from a board column's + button.
+  const [newTaskInitialStatus, setNewTaskInitialStatus] = useState<Status>("open");
 
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
@@ -377,6 +314,7 @@ export default function DashboardPage() {
       }
       if (!isTyping && (e.key === "c" || e.key === "C") && !e.metaKey && !e.ctrlKey) {
         if (selectedProjectId && !showNewTask) {
+          setNewTaskInitialStatus("open");
           setBootError(null);
           setShowNewTask(true);
         }
@@ -403,77 +341,6 @@ export default function DashboardPage() {
       setBootError((err as Error).message);
     } finally {
       setLoading(false);
-    }
-  }
-
-  // ── Create task ──────────────────────────────────────────────
-
-  function resetNewTaskFields() {
-    setNewTaskTitle("");
-    setNewTaskDescription("");
-    setNewTaskStatus("open");
-    setNewTaskPriority("MEDIUM");
-    setNewTaskDueAt("");
-    setNewTaskAssignee("unassigned");
-    setNewTaskGoal("");
-    setNewTaskAcceptanceCriteria("");
-    setNewTaskContext("");
-    setNewTaskConstraints("");
-    setNewTaskScope("");
-    setNewTaskOutOfScope("");
-    setNewTaskDependencies("");
-    setNewTaskRisk("");
-    setNewTaskAgentPrompt("");
-    setNewTaskTaskType("");
-    setCreatedConfidence(null);
-    setCreatedAssignmentError(null);
-    setCreatedTaskId(null);
-  }
-
-  function closeNewTaskModal() {
-    setShowNewTask(false);
-    resetNewTaskFields();
-  }
-
-  async function handleCreateTask(e: React.FormEvent) {
-    e.preventDefault();
-    if (!selectedProjectId || !newTaskTitle.trim()) return;
-    setCreatingTask(true);
-    try {
-      const { task: created, confidence } = await createTask(selectedProjectId, {
-        title: newTaskTitle.trim(),
-        description: newTaskDescription.trim() || undefined,
-        status: newTaskStatus,
-        priority: newTaskPriority,
-        dueAt: toIsoDateOrNull(newTaskDueAt) ?? undefined,
-        ...(newTaskTemplateData ? { templateData: newTaskTemplateData } : {}),
-      });
-
-      let task = created;
-      let assignmentError: string | null = null;
-      if (newTaskAssignee === "me") {
-        try {
-          task = await claimTask(task.id);
-        } catch (claimError) {
-          assignmentError = `Self-assignment failed: ${(claimError as Error).message}`;
-        }
-      }
-
-      setTasks((prev) => [task, ...prev]);
-      setActiveTaskId(null);
-
-      if (confidence) {
-        setCreatedTaskId(task.id);
-        setCreatedAssignmentError(assignmentError);
-        setCreatedConfidence(confidence);
-      } else {
-        if (assignmentError) toast(assignmentError, "error");
-        closeNewTaskModal();
-      }
-    } catch (err) {
-      toast((err as Error).message, "error");
-    } finally {
-      setCreatingTask(false);
     }
   }
 
@@ -584,6 +451,7 @@ export default function DashboardPage() {
       <Button
         size="sm"
         onClick={() => {
+          setNewTaskInitialStatus("open");
           setBootError(null);
           setShowNewTask(true);
         }}
@@ -721,7 +589,7 @@ export default function DashboardPage() {
           activeTaskId={activeTaskId}
           onSelectTask={selectTask}
           onAddTask={(status) => {
-            setNewTaskStatus(status);
+            setNewTaskInitialStatus(status as Status);
             setBootError(null);
             setShowNewTask(true);
           }}
@@ -759,231 +627,20 @@ export default function DashboardPage() {
 
       {content}
 
-      {/* NewTaskModal (inline per D1 scope; extracted in D2) */}
-      <Modal
+      {/* NewTaskModal — extracted to components/dashboard/NewTaskModal.tsx in D2 */}
+      <NewTaskModal
         open={showNewTask}
-        onClose={closeNewTaskModal}
-        title={createdConfidence ? "Task created" : "New Task"}
-      >
-        {createdConfidence ? (
-          <CreateConfidencePanel
-            confidence={createdConfidence}
-            assignmentError={createdAssignmentError}
-            onEdit={() => {
-              const id = createdTaskId;
-              closeNewTaskModal();
-              if (id) selectTask(id, true);
-            }}
-            onClose={closeNewTaskModal}
-          />
-        ) : (
-          <form onSubmit={(e) => void handleCreateTask(e)}>
-            <div className="ntm-form-body">
-              <div className="ntm-field-wrap">
-                <FormField label="Title">
-                  <input
-                    className="ntm-w-full"
-                    value={newTaskTitle}
-                    onChange={(e) => setNewTaskTitle(e.target.value)}
-                    required
-                  />
-                </FormField>
-              </div>
-
-              <div className="ntm-field-wrap">
-                <FormField label="Description">
-                  <textarea
-                    className="ntm-w-full ntm-resizable"
-                    value={newTaskDescription}
-                    onChange={(e) => setNewTaskDescription(e.target.value)}
-                    rows={5}
-                  />
-                </FormField>
-              </div>
-
-              <div className="new-task-grid new-task-grid--gapped">
-                <FormField label="Status">
-                  <Select
-                    className="ntm-w-full"
-                    value={newTaskStatus}
-                    onChange={(v) => setNewTaskStatus(v as Status)}
-                    options={[
-                      { value: "open", label: "Open" },
-                      { value: "in_progress", label: "In Progress" },
-                      { value: "review", label: "In Review" },
-                      { value: "done", label: "Done" },
-                    ]}
-                  />
-                </FormField>
-                <FormField label="Priority">
-                  <Select
-                    className="ntm-w-full"
-                    value={newTaskPriority}
-                    onChange={(v) => setNewTaskPriority(v as Priority)}
-                    options={[
-                      { value: "LOW", label: "LOW" },
-                      { value: "MEDIUM", label: "MEDIUM" },
-                      { value: "HIGH", label: "HIGH" },
-                      { value: "CRITICAL", label: "CRITICAL" },
-                    ]}
-                  />
-                </FormField>
-                <FormField label="Due Date">
-                  <input
-                    className="ntm-w-full"
-                    type="date"
-                    value={newTaskDueAt}
-                    onChange={(e) => setNewTaskDueAt(e.target.value)}
-                  />
-                </FormField>
-              </div>
-
-              <div className="ntm-assignee-wrap">
-                <FormField label="Assignee">
-                  <Select
-                    className="ntm-w-full"
-                    value={newTaskAssignee}
-                    onChange={(v) => setNewTaskAssignee(v as "unassigned" | "me")}
-                    options={[
-                      { value: "unassigned", label: "Unassigned" },
-                      { value: "me", label: "Assign to me" },
-                    ]}
-                  />
-                </FormField>
-              </div>
-
-              {templateFields && (
-                <div className="ntm-template-section">
-                  <p className="ntm-template-heading">Agent Template</p>
-                  {(selectedProject?.taskTemplate?.presets?.length ?? 0) > 0 && (
-                    <div className="ntm-preset-row">
-                      {selectedProject!.taskTemplate!.presets!.map((preset) => (
-                        <button
-                          key={preset.name}
-                          type="button"
-                          className="filter-chip"
-                          onClick={() => {
-                            if (preset.description !== undefined) setNewTaskDescription(preset.description);
-                            if (preset.goal !== undefined) setNewTaskGoal(preset.goal);
-                            if (preset.acceptanceCriteria !== undefined) setNewTaskAcceptanceCriteria(preset.acceptanceCriteria);
-                            if (preset.context !== undefined) setNewTaskContext(preset.context);
-                            if (preset.constraints !== undefined) setNewTaskConstraints(preset.constraints);
-                            if (preset.scope !== undefined) setNewTaskScope(preset.scope);
-                            if (preset.outOfScope !== undefined) setNewTaskOutOfScope(preset.outOfScope);
-                            if (preset.dependencies !== undefined) setNewTaskDependencies(preset.dependencies);
-                            if (preset.risk !== undefined) setNewTaskRisk(preset.risk);
-                            if (preset.agentPrompt !== undefined) setNewTaskAgentPrompt(preset.agentPrompt);
-                            if (preset.taskType !== undefined) setNewTaskTaskType(preset.taskType);
-                          }}
-                        >
-                          {preset.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {templateFields.goal && (
-                    <div className="ntm-field-wrap">
-                      <FormField label="Goal">
-                        <textarea className="ntm-w-full ntm-resizable" value={newTaskGoal} onChange={(e) => setNewTaskGoal(e.target.value)} rows={2} placeholder="What should be achieved?" />
-                      </FormField>
-                    </div>
-                  )}
-                  {templateFields.acceptanceCriteria && (
-                    <div className="ntm-field-wrap">
-                      <FormField label="Acceptance Criteria">
-                        <textarea className="ntm-w-full ntm-resizable" value={newTaskAcceptanceCriteria} onChange={(e) => setNewTaskAcceptanceCriteria(e.target.value)} rows={3} placeholder="When is this task done?" />
-                      </FormField>
-                    </div>
-                  )}
-                  {templateFields.context && (
-                    <div className="ntm-field-wrap">
-                      <FormField label="Context">
-                        <textarea className="ntm-w-full ntm-resizable" value={newTaskContext} onChange={(e) => setNewTaskContext(e.target.value)} rows={2} placeholder="Relevant files, links, dependencies…" />
-                      </FormField>
-                    </div>
-                  )}
-                  {templateFields.constraints && (
-                    <div className="ntm-field-wrap">
-                      <FormField label="Constraints">
-                        <textarea className="ntm-w-full ntm-resizable" value={newTaskConstraints} onChange={(e) => setNewTaskConstraints(e.target.value)} rows={2} placeholder="What must not happen?" />
-                      </FormField>
-                    </div>
-                  )}
-                  {templateFields.scope && (
-                    <div className="ntm-field-wrap">
-                      <FormField label="Scope">
-                        <textarea className="ntm-w-full ntm-resizable" value={newTaskScope} onChange={(e) => setNewTaskScope(e.target.value)} rows={2} placeholder="Files, modules, or surfaces this may touch" />
-                      </FormField>
-                    </div>
-                  )}
-                  {templateFields.outOfScope && (
-                    <div className="ntm-field-wrap">
-                      <FormField label="Out of Scope">
-                        <textarea className="ntm-w-full ntm-resizable" value={newTaskOutOfScope} onChange={(e) => setNewTaskOutOfScope(e.target.value)} rows={2} placeholder="What must NOT change" />
-                      </FormField>
-                    </div>
-                  )}
-                  {templateFields.dependencies && (
-                    <div className="ntm-field-wrap">
-                      <FormField label="Dependencies">
-                        <textarea className="ntm-w-full ntm-resizable" value={newTaskDependencies} onChange={(e) => setNewTaskDependencies(e.target.value)} rows={2} placeholder="Prerequisite work, or 'none'" />
-                      </FormField>
-                    </div>
-                  )}
-                  {templateFields.risk && (
-                    <div className="ntm-field-wrap">
-                      <FormField label="Risk">
-                        <textarea className="ntm-w-full ntm-resizable" value={newTaskRisk} onChange={(e) => setNewTaskRisk(e.target.value)} rows={2} placeholder="Risk / blast radius (low / medium / high, and why)" />
-                      </FormField>
-                    </div>
-                  )}
-                  {templateFields.agentPrompt && (
-                    <div className="ntm-field-wrap">
-                      <FormField label="Agent Prompt">
-                        <textarea
-                          className="ntm-w-full ntm-resizable ntm-mono-area"
-                          value={newTaskAgentPrompt}
-                          onChange={(e) => setNewTaskAgentPrompt(e.target.value)}
-                          rows={4}
-                          placeholder="Step-by-step instructions a weak agent can execute verbatim"
-                        />
-                      </FormField>
-                    </div>
-                  )}
-                  <div className="ntm-field-wrap">
-                    <FormField label="Task Type">
-                      <Select
-                        className="ntm-w-full"
-                        value={newTaskTaskType}
-                        onChange={(v) => setNewTaskTaskType(v as TaskType | "")}
-                        options={[{ value: "", label: "— none —" }, ...TASK_TYPES.map((t) => ({ value: t, label: t }))]}
-                        ariaLabel="Task type"
-                      />
-                    </FormField>
-                  </div>
-                  <div className="ntm-confidence">
-                    Confidence:{" "}
-                    <ConfidenceBadge
-                      score={
-                        calculateConfidence({
-                          title: newTaskTitle,
-                          description: newTaskDescription || null,
-                          templateData: newTaskTemplateData,
-                          templateFields,
-                        }).score
-                      }
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <Button type="submit" disabled={creatingTask} loading={creatingTask} size="sm">
-              {creatingTask ? "Creating…" : "Create task"}
-            </Button>
-          </form>
-        )}
-      </Modal>
+        onClose={() => setShowNewTask(false)}
+        projectId={selectedProjectId}
+        templateFields={templateFields}
+        templatePresets={selectedProject?.taskTemplate?.presets ?? []}
+        initialStatus={newTaskInitialStatus}
+        onTaskCreated={(task) => {
+          setTasks((prev) => [task, ...prev]);
+          setActiveTaskId(null);
+        }}
+        onEditTask={(id) => selectTask(id, true)}
+      />
 
       {/* TaskDetail modal */}
       {activeTaskDetail && (

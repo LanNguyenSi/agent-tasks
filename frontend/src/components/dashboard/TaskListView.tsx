@@ -17,27 +17,17 @@ import { Icon } from "../ui/Icon";
 import type { Task } from "../../lib/api";
 import { formatRelativeTime, formatAbsoluteDate } from "../../lib/time";
 import { readStoredSort, storeSort } from "../../lib/dashboardPrefs";
+import {
+  normalizeStatus,
+  getAssigneeName,
+  toDateLabel,
+  PRIORITY_RANK,
+} from "../../lib/taskDisplay";
 
 type SortKey = "title" | "status" | "priority" | "assignee" | "dueAt" | "updatedAt";
 type SortDir = "asc" | "desc";
 
-const PRIORITY_RANK: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
 const STATUS_RANK: Record<string, number> = { open: 0, in_progress: 1, review: 2, done: 3 };
-
-function normalizeStatus(s: string): string {
-  return s.replace(/_/g, "-");
-}
-
-function getAssigneeName(task: Task): string {
-  if (task.claimedByUser) return task.claimedByUser.name ?? task.claimedByUser.login;
-  if (task.claimedByAgent) return `Agent ${task.claimedByAgent.name}`;
-  return "Unassigned";
-}
-
-function toDateLabel(value: string | null): string {
-  if (!value) return "";
-  return value.slice(0, 10);
-}
 
 interface ColDef {
   key: SortKey;
