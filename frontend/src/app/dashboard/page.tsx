@@ -34,7 +34,6 @@ import {
   type DoneVisibility,
   type DashboardViewMode,
 } from "../../lib/dashboardPrefs";
-import AppHeader from "../../components/AppHeader";
 import ConfidenceBadge from "../../components/ConfidenceBadge";
 import CreateConfidencePanel from "../../components/CreateConfidencePanel";
 import AlertBanner from "../../components/ui/AlertBanner";
@@ -181,14 +180,12 @@ const TaskCard = memo(function TaskCard({
 }) {
   return (
     <button
-      className="task-card"
+      className={`task-card${active ? " task-card--active" : ""}`}
       type="button"
       onClick={() => onSelect(task.id)}
       style={{
         width: "100%",
         textAlign: "left",
-        background: active ? "var(--primary-muted)" : "var(--surface)",
-        border: `1px solid ${active ? "var(--primary)" : "var(--border)"}`,
         borderRadius: "10px",
         padding: "0.6rem 0.7rem",
         marginBottom: "0.4rem",
@@ -734,11 +731,6 @@ export default function DashboardPage() {
 
   return (
     <main className="page-shell">
-      <AppHeader
-        user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null}
-        boardHref={selectedTeamId && selectedProjectId ? `/dashboard?teamId=${selectedTeamId}&projectId=${selectedProjectId}` : "/dashboard"}
-      />
-
       {selectedProject?.accessSource === "project" && (
         <div style={{ marginBottom: "var(--space-3)" }}>
           <AlertBanner tone="info">
@@ -752,8 +744,6 @@ export default function DashboardPage() {
       <section
         className="dashboard-select-grid"
         style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(220px, 360px) auto",
           gap: "0.6rem",
           marginBottom: "1rem",
           alignItems: "end",
@@ -947,7 +937,7 @@ export default function DashboardPage() {
               </FormField>
             </div>
 
-            <div className="new-task-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "0.5rem" }}>
+            <div className="new-task-grid" style={{ gap: "0.5rem" }}>
               <FormField label="Status">
                 <Select value={newTaskStatus} onChange={(v) => setNewTaskStatus(v as Status)} options={STATUSES.map((status) => ({ value: status, label: STATUS_LABELS[status] }))} style={{ width: "100%" }} />
               </FormField>

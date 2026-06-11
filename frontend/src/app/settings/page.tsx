@@ -17,7 +17,6 @@ import {
   type AgentToken,
   type GithubTokenHealth,
 } from "../../lib/api";
-import AppHeader from "../../components/AppHeader";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
@@ -269,8 +268,6 @@ export default function SettingsPage() {
 
   return (
     <main className="page-shell">
-      <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
-
       <nav aria-label="Settings sections" style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", fontSize: "var(--text-sm)", flexWrap: "wrap" }}>
         <a href="#account" className="settings-nav-link">Account</a>
         <a href="#appearance" className="settings-nav-link">Appearance</a>

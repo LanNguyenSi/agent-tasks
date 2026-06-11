@@ -1,3 +1,7 @@
+// Pagination: Previous / Next navigation for multi-page lists.
+// The page-count display uses .teams-pagination from globals.css (layout class
+// shared with the teams page). The buttons row uses .pagination-buttons.
+
 import { Button } from "./Button";
 
 interface PaginationProps {
@@ -11,8 +15,10 @@ export default function Pagination({ page, totalPages, onPageChange }: Paginatio
 
   return (
     <div className="teams-pagination">
-      <span>Page {page} of {totalPages}</span>
-      <div style={{ display: "flex", gap: "var(--space-2, 0.5rem)" }}>
+      <span>
+        Page {page} of {totalPages}
+      </span>
+      <div className="pagination-buttons">
         <Button
           variant="ghost"
           size="sm"

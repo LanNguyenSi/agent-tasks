@@ -14,7 +14,6 @@ import {
   type ProjectMemberRole,
   type User,
 } from "../../../../lib/api";
-import AppHeader from "../../../../components/AppHeader";
 import AlertBanner from "../../../../components/ui/AlertBanner";
 import { Button } from "../../../../components/ui/Button";
 import Card from "../../../../components/ui/Card";
@@ -43,7 +42,7 @@ export default function ProjectMembersPage() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
 
-  const [user, setUser] = useState<User | null>(null);
+  const [, setUser] = useState<User | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [invites, setInvites] = useState<ProjectInvite[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -133,8 +132,6 @@ export default function ProjectMembersPage() {
 
   return (
     <main className="page-shell">
-      <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
-
       <nav aria-label="Breadcrumb" style={{ fontSize: "var(--text-sm)", marginBottom: "var(--space-3)", display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
         <Link href="/dashboard" style={{ color: "var(--muted)" }}>
           ← Back to dashboard
@@ -167,7 +164,7 @@ export default function ProjectMembersPage() {
           </AlertBanner>
           <pre
             style={{
-              background: "var(--surface-secondary)",
+              background: "var(--surface-raised)",
               border: "1px solid var(--border)",
               padding: "var(--space-3)",
               borderRadius: "var(--radius-sm, 6px)",

@@ -1,5 +1,9 @@
 "use client";
 
+// Collapsible section with animated chevron. All geometry in .collapsible-*
+// classes in globals.css; no inline styles except the chevron rotation which
+// is handled via a CSS modifier class.
+
 import { useState, type ReactNode } from "react";
 
 interface CollapsibleSectionProps {
@@ -17,25 +21,21 @@ interface CollapsibleSectionProps {
  * stretching the modal by default. Reset across tasks is done by the caller
  * keying the element (`key={task.id}`), so this stays state-only.
  */
-export default function CollapsibleSection({ title, count, defaultOpen = false, children }: CollapsibleSectionProps) {
+export default function CollapsibleSection({
+  title,
+  count,
+  defaultOpen = false,
+  children,
+}: CollapsibleSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
+
   return (
-    <section style={{ marginBottom: "0.8rem" }}>
+    <section className="collapsible-section">
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.4rem",
-          background: "none",
-          border: "none",
-          padding: 0,
-          cursor: "pointer",
-          width: "100%",
-          textAlign: "left",
-        }}
+        className="collapsible-section-toggle"
       >
         <svg
           width="10"
@@ -45,16 +45,16 @@ export default function CollapsibleSection({ title, count, defaultOpen = false, 
           stroke="currentColor"
           strokeWidth="3"
           aria-hidden="true"
-          style={{ color: "var(--muted)", flexShrink: 0, transition: "transform 0.15s", transform: open ? "rotate(90deg)" : "none" }}
+          className={["collapsible-chevron", open ? "collapsible-chevron--open" : ""].filter(Boolean).join(" ")}
         >
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
         </svg>
-        <span className="section-kicker" style={{ marginBottom: 0 }}>
+        <span className="section-kicker">
           {title}
           {count !== undefined && count > 0 ? ` (${count})` : ""}
         </span>
       </button>
-      {open && <div style={{ marginTop: "0.4rem" }}>{children}</div>}
+      {open && <div className="collapsible-section-body">{children}</div>}
     </section>
   );
 }

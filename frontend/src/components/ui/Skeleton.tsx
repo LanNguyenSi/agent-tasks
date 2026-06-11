@@ -1,5 +1,10 @@
 "use client";
 
+// Shimmer placeholder blocks.
+// The .skeleton class carries the animation; .skeleton-list carries the flex
+// column layout. Width, height, and border-radius are kept as inline styles
+// because they are dynamic prop values (not static geometry).
+
 import type { CSSProperties } from "react";
 
 interface SkeletonProps {
@@ -13,7 +18,7 @@ interface SkeletonProps {
 }
 
 /**
- * A single shimmering placeholder block. Decorative — marked
+ * A single shimmering placeholder block. Decorative, marked
  * `aria-hidden` so screen readers announce the surrounding
  * `aria-busy` container's loading state instead of empty boxes.
  */
@@ -27,7 +32,14 @@ export function Skeleton({
     <div
       className="skeleton"
       aria-hidden="true"
-      style={{ width, height, borderRadius: radius, ...style }}
+      // eslint-disable-next-line no-restricted-syntax
+      style={{
+        /* dynamic: width/height/radius are component props */
+        width,
+        height,
+        borderRadius: radius,
+        ...style,
+      }}
     />
   );
 }
@@ -39,6 +51,7 @@ interface SkeletonListProps {
   rowHeight?: string | number;
   /** Accessible label announced to screen readers while loading. */
   label?: string;
+  /** Gap between rows. Dynamic prop, kept as inline style. */
   gap?: string | number;
 }
 
@@ -53,7 +66,16 @@ export function SkeletonList({
   gap = "var(--space-2)",
 }: SkeletonListProps) {
   return (
-    <div role="status" aria-busy="true" style={{ display: "flex", flexDirection: "column", gap }}>
+    <div
+      role="status"
+      aria-busy="true"
+      className="skeleton-list"
+      // eslint-disable-next-line no-restricted-syntax
+      style={{
+        /* dynamic: gap prop */
+        gap,
+      }}
+    >
       <span className="sr-only">{label}</span>
       {Array.from({ length: rows }, (_, i) => (
         <Skeleton key={i} height={rowHeight} />

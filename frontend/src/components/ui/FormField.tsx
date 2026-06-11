@@ -1,3 +1,6 @@
+// FormField: associates a label with its control.
+// All geometry in .form-field-label class in globals.css.
+
 import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from "react";
 import Select from "./Select";
 
@@ -35,17 +38,8 @@ export default function FormField({ label, children }: FormFieldProps) {
   }
 
   return (
-    <div>
-      <label
-        htmlFor={htmlFor}
-        style={{
-          display: "block",
-          color: "var(--text-secondary, #b0bac7)",
-          fontSize: "var(--text-xs, 0.75rem)",
-          fontWeight: 500,
-          marginBottom: "var(--space-1, 0.25rem)",
-        }}
-      >
+    <div className="form-field">
+      <label htmlFor={htmlFor} className="form-field-label">
         {label}
       </label>
       {control}

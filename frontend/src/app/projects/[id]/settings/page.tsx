@@ -12,7 +12,6 @@ import {
   type TaskTemplate,
   type TemplatePreset,
 } from "../../../../lib/api";
-import AppHeader from "../../../../components/AppHeader";
 import AlertBanner from "../../../../components/ui/AlertBanner";
 import { Button } from "../../../../components/ui/Button";
 import Card from "../../../../components/ui/Card";
@@ -68,7 +67,7 @@ export default function ProjectSettingsPage() {
   const projectId = params.id;
   const router = useRouter();
 
-  const [user, setUser] = useState<User | null>(null);
+  const [, setUser] = useState<User | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -190,11 +189,6 @@ export default function ProjectSettingsPage() {
 
   return (
     <main className="page-shell">
-      <AppHeader
-        user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null}
-        boardHref={boardHref}
-      />
-
       <p style={{ fontSize: "var(--text-sm)", marginBottom: "var(--space-3)" }}>
         <Link href={boardHref} style={{ color: "var(--muted)" }}>
           ← Back to board

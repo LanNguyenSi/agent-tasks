@@ -837,7 +837,7 @@ export default function TaskDetail({
                 {templateFields.agentPrompt && task.templateData?.agentPrompt && (
                   <div>
                     <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Agent Prompt</span>
-                    <pre style={{ marginTop: "0.15rem", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-mono, monospace)", fontSize: "var(--text-xs)", background: "var(--surface-secondary)", padding: "0.5rem", borderRadius: "var(--radius-sm)" }}>{task.templateData.agentPrompt}</pre>
+                    <pre style={{ marginTop: "0.15rem", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-mono, monospace)", fontSize: "var(--text-xs)", background: "var(--surface-raised)", padding: "0.5rem", borderRadius: "var(--radius-sm)" }}>{task.templateData.agentPrompt}</pre>
                   </div>
                 )}
                 {task.templateData?.taskType && (
@@ -859,7 +859,7 @@ export default function TaskDetail({
               {task.branchName && (
                 <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-sm)" }}>
                   <span style={{ color: "var(--muted)", minWidth: "4rem" }}>Branch</span>
-                  <code style={{ background: "var(--surface-secondary)", padding: "0.2rem 0.5rem", borderRadius: "var(--radius-sm)", fontSize: "var(--text-xs)", wordBreak: "break-all" }}>
+                  <code style={{ background: "var(--surface-raised)", padding: "0.2rem 0.5rem", borderRadius: "var(--radius-sm)", fontSize: "var(--text-xs)", wordBreak: "break-all" }}>
                     {task.branchName}
                   </code>
                 </div>
