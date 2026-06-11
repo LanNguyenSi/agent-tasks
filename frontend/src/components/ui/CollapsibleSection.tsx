@@ -13,6 +13,11 @@ interface CollapsibleSectionProps {
   /** Whether the section starts expanded. Defaults to collapsed. */
   defaultOpen?: boolean;
   children: ReactNode;
+  /**
+   * Optional content rendered to the right of the section kicker inside the
+   * toggle button (e.g. a live ConfidenceBadge in the NewTaskModal template header).
+   */
+  headerExtra?: ReactNode;
 }
 
 /**
@@ -26,6 +31,7 @@ export default function CollapsibleSection({
   count,
   defaultOpen = false,
   children,
+  headerExtra,
 }: CollapsibleSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -53,6 +59,9 @@ export default function CollapsibleSection({
           {title}
           {count !== undefined && count > 0 ? ` (${count})` : ""}
         </span>
+        {headerExtra && (
+          <span className="collapsible-section-header-extra">{headerExtra}</span>
+        )}
       </button>
       {open && <div className="collapsible-section-body">{children}</div>}
     </section>
