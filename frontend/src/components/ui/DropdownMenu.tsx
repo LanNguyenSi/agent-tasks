@@ -56,6 +56,7 @@ export default function DropdownMenu({
     <div
       ref={panelRef}
       className={["app-dropdown-menu", className].filter(Boolean).join(" ")}
+      // eslint-disable-next-line no-restricted-syntax
       style={dynamicStyle}
     >
       {children}

@@ -40,7 +40,6 @@ import {
   type WorkflowTemplateSummary,
   type WorkflowTransition,
 } from "../../../lib/api";
-import AppHeader from "../../../components/AppHeader";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
@@ -438,7 +437,6 @@ export default function WorkflowEditorPage() {
   if (loading) {
     return (
       <main className="page-shell">
-        <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
         <p style={{ color: "var(--muted)" }}>Loading workflow…</p>
       </main>
     );
@@ -447,7 +445,6 @@ export default function WorkflowEditorPage() {
   if (error && !workflow) {
     return (
       <main className="page-shell">
-        <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
         <AlertBanner tone="danger" title="Could not load workflow">
           {error}
         </AlertBanner>
@@ -462,8 +459,6 @@ export default function WorkflowEditorPage() {
 
   return (
     <main className="page-shell">
-      <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
-
       <p style={{ fontSize: "var(--text-sm)", marginBottom: "var(--space-3)" }}>
         <Link
           // Back to the project board (i.e. /dashboard with both

@@ -105,7 +105,8 @@ export default function Select({
   return (
     <div
       className={["select-wrapper", className].filter(Boolean).join(" ")}
-      style={style}
+      // eslint-disable-next-line no-restricted-syntax
+      style={style} /* dynamic: caller-owned layout override */
     >
       <button
         ref={triggerRef}
@@ -154,6 +155,7 @@ export default function Select({
             role="listbox"
             id={`${id}-list`}
             className="select-list"
+            // eslint-disable-next-line no-restricted-syntax
             style={{
               /* dynamic: computed position from usePopover */
               ...positionStyle,

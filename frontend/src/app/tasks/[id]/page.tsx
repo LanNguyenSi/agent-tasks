@@ -12,7 +12,6 @@ import {
   type Task,
   type Project,
 } from "../../../lib/api";
-import AppHeader from "../../../components/AppHeader";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import TaskDetail from "../../../components/TaskDetail";
 
@@ -88,11 +87,6 @@ export default function TaskDetailPage() {
 
   return (
     <main className="page-shell">
-      <AppHeader
-        user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null}
-        boardHref={boardHref}
-      />
-
       {/* Page-level heading for the document outline. Visually hidden
           because the task title already shows as the first visible heading
           in the detail body; this keeps the outline rooted at an h1 without

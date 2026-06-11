@@ -95,7 +95,8 @@ export function Button({
       <a
         href={href}
         className={classes}
-        style={style}
+        // eslint-disable-next-line no-restricted-syntax
+        style={style} /* dynamic: caller-owned layout override */
         {...(rest as AnchorHTMLAttributes<HTMLAnchorElement>)}
       >
         {content}
@@ -107,7 +108,8 @@ export function Button({
     <button
       disabled={disabled || loading}
       className={classes}
-      style={style}
+      // eslint-disable-next-line no-restricted-syntax
+      style={style} /* dynamic: caller-owned layout override */
       aria-busy={loading || undefined}
       {...(rest as ButtonHTMLAttributes<HTMLButtonElement>)}
     >

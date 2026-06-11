@@ -543,11 +543,19 @@ input[type="checkbox"] {
 /* ── Task card ────────────────────────────────────────────────── */
 
 .task-card {
+  border: 1px solid var(--border);
+  background: var(--surface);
   transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
 
+/* Active state (selected task) expressed via class modifier, not inline style. */
+.task-card--active {
+  border-color: var(--primary);
+  background: var(--primary-muted);
+}
+
 .task-card:hover {
-  border-color: color-mix(in srgb, var(--primary) 40%, var(--border-strong) 60%) !important;
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border-strong) 60%);
   box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 10%, transparent);
   transform: translateY(-2px);
 }
@@ -674,8 +682,111 @@ input[type="checkbox"] {
 
 /* ── App header ───────────────────────────────────────────────── */
 
-.app-header-nav {
-  min-width: 0;
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  height: 48px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header-inner {
+  height: 100%;
+  padding: 0 var(--space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.app-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.app-brand .icon {
+  color: var(--primary);
+}
+
+.app-nav-links {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.app-nav-link {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--radius-base);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.app-nav-link:hover {
+  color: var(--text);
+  background: color-mix(in srgb, white 3%, transparent);
+}
+
+.app-nav-link[aria-current="page"] {
+  color: var(--text);
+  background: color-mix(in srgb, white 5%, transparent);
+}
+
+.app-nav-spacer {
+  flex: 1;
+}
+
+.app-user-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-base);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.app-user-trigger:hover {
+  background: color-mix(in srgb, white 3%, transparent);
+  color: var(--text);
+}
+
+.app-user-trigger .icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.app-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--primary) 30%, var(--surface));
+  color: var(--primary-text);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+  object-fit: cover;
 }
 
 .app-user-name {
@@ -829,6 +940,34 @@ input[type="checkbox"] {
   margin-bottom: 0.65rem;
 }
 
+.teams-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.teams-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.project-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
 .team-option-meta {
   display: inline-flex;
   align-items: center;
@@ -839,6 +978,18 @@ input[type="checkbox"] {
   color: var(--muted);
   font-size: 0.68rem;
   font-weight: 500;
+}
+
+/* ── Dashboard select grid + new-task grid ────────────────────── */
+
+.dashboard-select-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 360px) auto;
+}
+
+.new-task-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 /* ── Board toolbar ────────────────────────────────────────────── */
@@ -1290,7 +1441,7 @@ input[type="checkbox"] {
 
 @media (max-width: 1100px) {
   .dashboard-select-grid {
-    grid-template-columns: 1fr !important;
+    grid-template-columns: 1fr;
   }
 
   .board-columns {
@@ -1322,15 +1473,8 @@ input[type="checkbox"] {
     grid-template-columns: 1fr;
   }
 
-  .app-header {
-    align-items: flex-start !important;
-    gap: var(--space-3) !important;
-  }
-
-  .app-header-nav {
-    row-gap: 0.35rem;
-  }
-
+  /* App header collapses username at narrow widths. Flex geometry is
+     on .app-header-inner (base class) so no override is needed here. */
   .app-user-name {
     display: none;
   }
@@ -1342,12 +1486,12 @@ input[type="checkbox"] {
 
   .teams-header-row {
     flex-direction: column;
-    align-items: flex-start !important;
+    align-items: flex-start;
   }
 
   .teams-actions {
     width: 100%;
-    justify-content: flex-start !important;
+    justify-content: flex-start;
   }
 
   .teams-actions > a,
@@ -1357,7 +1501,7 @@ input[type="checkbox"] {
   }
 
   .project-form-grid {
-    grid-template-columns: 1fr !important;
+    grid-template-columns: 1fr;
   }
 
   .teams-filter-bar {
@@ -1365,7 +1509,7 @@ input[type="checkbox"] {
   }
 
   .projects-grid {
-    grid-template-columns: 1fr !important;
+    grid-template-columns: 1fr;
   }
 
   .teams-pagination {
@@ -1378,7 +1522,7 @@ input[type="checkbox"] {
   }
 
   .task-list-row {
-    grid-template-columns: 1fr !important;
+    grid-template-columns: 1fr;
     gap: var(--space-1);
   }
 
@@ -1403,7 +1547,7 @@ input[type="checkbox"] {
   }
 
   .new-task-grid {
-    grid-template-columns: 1fr !important;
+    grid-template-columns: 1fr;
   }
 
   .task-detail-actions > button {

@@ -15,7 +15,6 @@ import {
   type Team,
   type Project,
 } from "../../lib/api";
-import AppHeader from "../../components/AppHeader";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
@@ -299,14 +298,9 @@ export default function TeamsPage() {
 
   return (
     <main className="page-shell">
-      <AppHeader
-        user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null}
-        boardHref={selectedTeam && projects[0] ? `/dashboard?teamId=${selectedTeam.id}&projectId=${projects[0].id}` : "/dashboard"}
-      />
-
       {selectedTeam && (
         <>
-          <div className="teams-header-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", gap: "0.75rem", flexWrap: "wrap" }}>
+          <div className="teams-header-row">
             <div>
               {teams.length > 1 && (
                 <div style={{ maxWidth: "240px", marginBottom: "0.5rem" }}>
@@ -321,7 +315,7 @@ export default function TeamsPage() {
               <h1 style={{ fontSize: "var(--text-xl)", fontWeight: 700 }}>{selectedTeam.name}</h1>
               <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>{selectedTeam.projectCount ?? projects.length} projects</p>
             </div>
-            <div className="teams-actions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            <div className="teams-actions">
               {!user?.githubConnected ? (
                 <Link
                   href="/api/auth/github/connect"
@@ -400,7 +394,7 @@ export default function TeamsPage() {
 
           <Modal open={showNewProject} onClose={closeNewProjectModal} title="New Project">
             <form onSubmit={(e) => void handleCreateProject(e)}>
-              <div className="project-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "0.75rem" }}>
+              <div className="project-form-grid">
                 <FormField label="Name">
                   <input value={projectName} onChange={(e) => handleProjectNameChange(e.target.value)} placeholder="My Project" required style={{ width: "100%", display: "block" }} />
                 </FormField>
@@ -488,7 +482,7 @@ export default function TeamsPage() {
             />
           ) : (
             <>
-              <div className="projects-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
+              <div className="projects-grid">
                 {pagedProjects.map((project) => (
                   <ProjectCard
                     key={project.id}

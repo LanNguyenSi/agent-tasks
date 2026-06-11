@@ -14,7 +14,6 @@ import {
   type ProjectMemberRole,
   type User,
 } from "../../../../lib/api";
-import AppHeader from "../../../../components/AppHeader";
 import AlertBanner from "../../../../components/ui/AlertBanner";
 import { Button } from "../../../../components/ui/Button";
 import Card from "../../../../components/ui/Card";
@@ -133,8 +132,6 @@ export default function ProjectMembersPage() {
 
   return (
     <main className="page-shell">
-      <AppHeader user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null} />
-
       <nav aria-label="Breadcrumb" style={{ fontSize: "var(--text-sm)", marginBottom: "var(--space-3)", display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
         <Link href="/dashboard" style={{ color: "var(--muted)" }}>
           ← Back to dashboard

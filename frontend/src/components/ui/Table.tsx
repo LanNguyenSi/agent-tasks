@@ -94,6 +94,7 @@ export function Table<T extends Record<string, unknown>>({
                   .join(" ")}
                 aria-sort={col.sortable && sortKey === col.key ? sortDir : col.sortable ? "none" : undefined}
                 data-col={col.key}
+                // eslint-disable-next-line no-restricted-syntax
                 style={col.width ? { width: col.width } : undefined /* dynamic: column width prop */}
               >
                 {col.sortable ? (

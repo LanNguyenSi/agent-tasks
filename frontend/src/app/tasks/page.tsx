@@ -15,7 +15,6 @@ import {
 } from "../../lib/api";
 import { formatAbsoluteDate, formatRelativeTime, formatDueDate } from "../../lib/time";
 import { PRIORITY_COLORS } from "../../lib/priorityColors";
-import AppHeader from "../../components/AppHeader";
 import Card from "../../components/ui/Card";
 import EmptyState from "../../components/ui/EmptyState";
 import { SkeletonList } from "../../components/ui/Skeleton";
@@ -331,17 +330,9 @@ function TasksPageInner() {
     );
   }
 
-  const boardHref = selectedTeam && projects[0]
-    ? `/dashboard?teamId=${selectedTeam.id}&projectId=${projects[0].id}`
-    : "/dashboard";
 
   return (
     <main className="page-shell">
-      <AppHeader
-        user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null}
-        boardHref={boardHref}
-      />
-
       <Card padding="sm" style={{ marginBottom: "var(--space-4)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
           <div>

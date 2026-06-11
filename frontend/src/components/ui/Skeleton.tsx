@@ -32,6 +32,7 @@ export function Skeleton({
     <div
       className="skeleton"
       aria-hidden="true"
+      // eslint-disable-next-line no-restricted-syntax
       style={{
         /* dynamic: width/height/radius are component props */
         width,
@@ -69,6 +70,7 @@ export function SkeletonList({
       role="status"
       aria-busy="true"
       className="skeleton-list"
+      // eslint-disable-next-line no-restricted-syntax
       style={{
         /* dynamic: gap prop */
         gap,

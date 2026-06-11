@@ -40,7 +40,8 @@ export default function Card({
       ]
         .filter(Boolean)
         .join(" ")}
-      style={style}
+      // eslint-disable-next-line no-restricted-syntax
+      style={style} /* dynamic: caller-owned layout override */
     >
       {children}
     </div>

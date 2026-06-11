@@ -15,7 +15,6 @@ import {
 import { formatRelativeTime } from "../../lib/time";
 import { isDoneTaskHidden } from "../../lib/dashboardPrefs";
 import { PRIORITY_COLORS } from "../../lib/priorityColors";
-import AppHeader from "../../components/AppHeader";
 import Card from "../../components/ui/Card";
 import { SkeletonList } from "../../components/ui/Skeleton";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
@@ -289,17 +288,8 @@ export default function HomeDashboardPage() {
     return <FullPageLoader variant="shell" label="Loading your tasks" />;
   }
 
-  const boardHref = selectedTeam && firstProjectId
-    ? `/dashboard?teamId=${selectedTeam.id}&projectId=${firstProjectId}`
-    : "/dashboard";
-
   return (
     <main className="page-shell">
-      <AppHeader
-        user={user ? { login: user.login, avatarUrl: user.avatarUrl } : null}
-        boardHref={boardHref}
-      />
-
       <Card padding="sm" style={{ marginBottom: "var(--space-4)" }}>
         <h1 style={{ fontSize: "var(--text-lg)", fontWeight: 700, color: "var(--text)" }}>Your task overview</h1>
         <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginTop: "var(--space-1)" }}>Across all your projects.</p>

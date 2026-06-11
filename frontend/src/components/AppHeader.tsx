@@ -5,130 +5,135 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { logout } from "../lib/api";
 import DropdownMenu from "./ui/DropdownMenu";
+import { Icon } from "./ui/Icon";
 
 interface AppHeaderProps {
   user?: {
     login: string;
     avatarUrl?: string | null;
   } | null;
-  boardHref?: string;
 }
 
-export default function AppHeader({ user, boardHref = "/dashboard" }: AppHeaderProps) {
+export default function AppHeader({ user }: AppHeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
   const isHome = pathname.startsWith("/home");
-  const isTeams = pathname.startsWith("/teams");
   const isDashboard = pathname.startsWith("/dashboard");
+  const isTasks = pathname.startsWith("/tasks");
+  const isTeams = pathname.startsWith("/teams");
+  const isSettings = pathname.startsWith("/settings");
 
   return (
-    <header
-      className="app-header"
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: "1rem",
-        marginBottom: "1rem",
-        borderBottom: "1px solid var(--border)",
-        paddingBottom: "0.9rem",
-      }}
-    >
-      <div className="app-header-nav" style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
-        <Link href="/home" style={{ fontWeight: 700, color: "var(--primary)", textDecoration: "none" }}>
+    <header className="app-header">
+      <div className="app-header-inner">
+        <Link href="/home" className="app-brand">
+          <Icon name="board" size={15} />
           agent-tasks
         </Link>
-        <Link href="/home" aria-current={isHome ? "page" : undefined} style={{ color: isHome ? "var(--text)" : "var(--muted)", fontWeight: isHome ? 600 : 400, fontSize: "var(--text-sm)", textDecoration: "none" }}>
-          Home
-        </Link>
-        <Link href="/teams" aria-current={isTeams ? "page" : undefined} style={{ color: isTeams ? "var(--text)" : "var(--muted)", fontWeight: isTeams ? 600 : 400, fontSize: "var(--text-sm)", textDecoration: "none" }}>
-          Teams
-        </Link>
-        <Link href={boardHref} aria-current={isDashboard ? "page" : undefined} style={{ color: isDashboard ? "var(--text)" : "var(--muted)", fontWeight: isDashboard ? 600 : 400, fontSize: "var(--text-sm)", textDecoration: "none" }}>
-          Board
-        </Link>
+
+        <nav className="app-nav-links" aria-label="Main">
+          <Link
+            href="/home"
+            className="app-nav-link"
+            aria-current={isHome ? "page" : undefined}
+          >
+            Home
+          </Link>
+          <Link
+            href="/dashboard"
+            className="app-nav-link"
+            aria-current={isDashboard ? "page" : undefined}
+          >
+            Dashboard
+          </Link>
+          <Link
+            href="/tasks"
+            className="app-nav-link"
+            aria-current={isTasks ? "page" : undefined}
+          >
+            Tasks
+          </Link>
+          <Link
+            href="/teams"
+            className="app-nav-link"
+            aria-current={isTeams ? "page" : undefined}
+          >
+            Teams
+          </Link>
+          <Link
+            href="/settings"
+            className="app-nav-link"
+            aria-current={isSettings ? "page" : undefined}
+          >
+            Settings
+          </Link>
+        </nav>
+
+        <div className="app-nav-spacer" />
+
+        {user && (
+          <>
+            <button
+              ref={triggerRef}
+              type="button"
+              className="app-user-trigger"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label={`Account menu for ${user.login}`}
+            >
+              {user.avatarUrl ? (
+                <img
+                  src={user.avatarUrl}
+                  alt={user.login}
+                  className="app-avatar"
+                />
+              ) : (
+                <span className="app-avatar">
+                  {user.login.slice(0, 2).toUpperCase()}
+                </span>
+              )}
+              <span className="app-user-name">{user.login}</span>
+              <Icon name="chevron-down" size={12} />
+            </button>
+
+            <DropdownMenu
+              anchorRef={triggerRef}
+              open={menuOpen}
+              onClose={() => setMenuOpen(false)}
+              align="end"
+              minWidth={190}
+            >
+              <div role="menu">
+                <Link
+                  href="/settings"
+                  role="menuitem"
+                  onClick={() => setMenuOpen(false)}
+                  className="app-dropdown-item"
+                >
+                  Settings
+                </Link>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void logout().then(() => {
+                      router.replace("/");
+                    });
+                  }}
+                  className="app-dropdown-item app-dropdown-item-danger"
+                >
+                  Logout
+                </button>
+              </div>
+            </DropdownMenu>
+          </>
+        )}
       </div>
-
-      {user && (
-        <div>
-          <button
-            ref={triggerRef}
-            type="button"
-            className="app-user-trigger"
-            onClick={() => setMenuOpen((value) => !value)}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              border: "1px solid var(--border)",
-              background: "transparent",
-              color: "var(--muted)",
-              borderRadius: "8px",
-              padding: "0.3rem 0.55rem",
-            }}
-          >
-            {user.avatarUrl ? (
-              <img src={user.avatarUrl} alt={user.login} style={{ width: "24px", height: "24px", borderRadius: "50%" }} />
-            ) : (
-              <span
-                style={{
-                  width: "24px",
-                  height: "24px",
-                  borderRadius: "999px",
-                  background: "var(--border)",
-                  color: "var(--text)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "var(--text-xs)",
-                  fontWeight: 700,
-                }}
-              >
-                {user.login.charAt(0).toUpperCase()}
-              </span>
-            )}
-            <span className="app-user-name" style={{ color: "var(--text)", fontSize: "var(--text-sm)" }}>{user.login}</span>
-            <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>{menuOpen ? "▲" : "▼"}</span>
-          </button>
-
-          <DropdownMenu
-            anchorRef={triggerRef}
-            open={menuOpen}
-            onClose={() => setMenuOpen(false)}
-            align="end"
-            minWidth={190}
-          >
-            <div role="menu">
-              <Link
-                href="/settings"
-                role="menuitem"
-                onClick={() => setMenuOpen(false)}
-                className="app-dropdown-item"
-              >
-                Settings
-              </Link>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setMenuOpen(false);
-                  void logout().then(() => {
-                    router.replace("/");
-                  });
-                }}
-                className="app-dropdown-item app-dropdown-item-danger"
-              >
-                Logout
-              </button>
-            </div>
-          </DropdownMenu>
-        </div>
-      )}
     </header>
   );
 }
