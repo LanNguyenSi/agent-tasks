@@ -43,3 +43,10 @@ export const KNOWN_STATUSES = Object.keys(STATUS_LABELS);
 // tasks draw the eye. Only list surfaces (tasks page) apply this treatment —
 // the dashboard board/list keep the standard green --status-done styling.
 export const STATUS_MUTED_IN_LIST: ReadonlySet<string> = new Set(["done"]);
+
+// The API returns `in_progress` (underscore); StatusChip CSS classes use
+// `in-progress` (hyphen). Normalize at call sites that bridge the API value
+// to a chip/class key.
+export function normalizeStatus(status: string): string {
+  return status === "in_progress" ? "in-progress" : status;
+}
