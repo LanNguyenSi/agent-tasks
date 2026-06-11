@@ -45,7 +45,7 @@ import { Tabs } from "../../components/ui/Tabs";
 import { useToast } from "../../components/ui/Toast";
 import TaskDetail from "../../components/TaskDetail";
 import ImportDialog from "../../components/ImportDialog";
-import Select from "@/components/ui/Select";
+import Select from "../../components/ui/Select";
 import DropdownMenu from "../../components/ui/DropdownMenu";
 import ProjectPicker from "../../components/dashboard/ProjectPicker";
 import FilterToolbar from "../../components/dashboard/FilterToolbar";
@@ -525,7 +525,11 @@ export default function DashboardPage() {
       }
       summary={
         selectedProjectId && !loading ? (
-          <span className="num">{filteredTasks.length} tasks</span>
+          <span className="num">
+            {hasActiveFilters
+              ? `${filteredTasks.length} / ${tasks.length} tasks`
+              : `${filteredTasks.length} tasks`}
+          </span>
         ) : undefined
       }
     >
@@ -716,7 +720,8 @@ export default function DashboardPage() {
           tasks={filteredTasks}
           activeTaskId={activeTaskId}
           onSelectTask={selectTask}
-          onAddTask={() => {
+          onAddTask={(status) => {
+            setNewTaskStatus(status);
             setBootError(null);
             setShowNewTask(true);
           }}

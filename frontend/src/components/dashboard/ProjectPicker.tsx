@@ -24,9 +24,14 @@ interface ProjectPickerProps {
   loading?: boolean;
 }
 
-function ShareIcon() {
+function ShareIcon({ label }: { label?: string }) {
   return (
-    <span className="db-share-icon" aria-hidden="true">
+    <span
+      className="db-share-icon"
+      role="img"
+      aria-label={label ?? "Shared via project invite"}
+      title={label ?? "Shared via project invite"}
+    >
       <svg
         width="12"
         height="12"
@@ -36,6 +41,7 @@ function ShareIcon() {
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
+        aria-hidden="true"
       >
         <circle cx="3.5" cy="8" r="2" />
         <circle cx="12" cy="3.5" r="2" />
@@ -69,7 +75,9 @@ export default function ProjectPicker({
         aria-expanded={open}
         aria-label={`Switch project, current: ${selectedProject?.name ?? "none"}`}
       >
-        {selectedProject?.accessSource === "project" && <ShareIcon />}
+        {selectedProject?.accessSource === "project" && (
+          <ShareIcon label={`${selectedProject.name} (shared via project invite)`} />
+        )}
         <span className="db-proj-switch-name">
           {selectedProject?.name ?? (loading ? "Loading…" : "Select project")}
         </span>
@@ -105,7 +113,9 @@ export default function ProjectPicker({
                     : project.name
                 }
               >
-                {project.accessSource === "project" && <ShareIcon />}
+                {project.accessSource === "project" && (
+                  <ShareIcon label={`${project.name} (shared via project invite)`} />
+                )}
                 {project.name}
               </button>
             );

@@ -10,12 +10,13 @@
 // due, updated. All columns are sortable; sort state is owned here so it
 // doesn't conflict with external pagination.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StatusChip } from "../ui/StatusChip";
 import { PriorityLabel } from "../ui/PriorityLabel";
 import { Icon } from "../ui/Icon";
 import type { Task } from "../../lib/api";
 import { formatRelativeTime, formatAbsoluteDate } from "../../lib/time";
+import { readStoredSort, storeSort } from "../../lib/dashboardPrefs";
 
 type SortKey = "title" | "status" | "priority" | "assignee" | "dueAt" | "updatedAt";
 type SortDir = "asc" | "desc";
@@ -102,6 +103,8 @@ interface TaskListViewProps {
   onPageChange: (page: number) => void;
 }
 
+const SORT_KEYS: readonly SortKey[] = ["title", "status", "priority", "assignee", "dueAt", "updatedAt"];
+
 export default function TaskListView({
   tasks,
   onSelectTask,
@@ -109,12 +112,20 @@ export default function TaskListView({
   pageSize,
   onPageChange,
 }: TaskListViewProps) {
-  const [sortKey, setSortKey] = useState<SortKey>("updatedAt");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // Restore persisted sort on mount; fall back to updatedAt desc.
+  const stored = readStoredSort(SORT_KEYS);
+  const [sortKey, setSortKey] = useState<SortKey>((stored?.column as SortKey | undefined) ?? "updatedAt");
+  const [sortDir, setSortDir] = useState<SortDir>(stored?.direction ?? "desc");
+
+  // Persist sort whenever it changes.
+  useEffect(() => {
+    storeSort({ column: sortKey, direction: sortDir });
+  }, [sortKey, sortDir]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      onPageChange(1); // L1 fix: reset page when reversing direction
     } else {
       setSortKey(key);
       setSortDir(NATURAL_DIR[key]);
@@ -202,10 +213,11 @@ export default function TaskListView({
                     }
                   }}
                   tabIndex={0}
+                  role="button"
                   aria-label={`Open task: ${task.title}`}
                 >
                   <td className="table-td" data-col="title" data-label="Task">
-                    <span className="table-cell-text">{task.title}</span>
+                    <span className="db-list-cell-title">{task.title}</span>
                   </td>
                   <td className="table-td" data-col="status" data-label="Status">
                     <StatusChip status={normalizeStatus(task.status)} />
