@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Workflow & Gates — v2 editor under the /projects/[id] hub layout.
+ * Workflow & Gates: v2 editor under the /projects/[id] hub layout.
  *
  * Single-draft architecture: any edit (gate toggle, state or transition
  * add/edit/rename/remove, initialState change) goes into `draft`, a
@@ -13,7 +13,7 @@
  *
  * Validation runs client-side (structural errors + reachability
  * warnings) and is mirrored by the backend's `workflowDefinitionSchema`
- * — the frontend is UX, the backend is the source of truth.
+ * The frontend is UX; the backend is the source of truth.
  *
  * Stage F2 changes vs. the original /projects/workflow page:
  *  - Route: lives at /projects/[id]/workflow (hub layout, useParams).
@@ -86,7 +86,7 @@ export default function WorkflowEditorPage() {
   const [savedBanner, setSavedBanner] = useState(false);
   const [resetting, setResetting] = useState(false);
 
-  // ConfirmDialog states — each dialog independent.
+  // ConfirmDialog states, each dialog independent.
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmSaveWarnings, setConfirmSaveWarnings] = useState(false);
   const [confirmTemplateApply, setConfirmTemplateApply] = useState<string | null>(null);
@@ -465,7 +465,7 @@ export default function WorkflowEditorPage() {
           isDefault
             ? "Using system default"
             : isDirty
-              ? "Custom workflow — unsaved changes"
+              ? "Custom workflow: unsaved changes"
               : "Custom workflow"
         }
       >

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * TransitionsTable v2 — uses the ui/Table primitive.
+ * TransitionsTable v2: uses the ui/Table primitive.
  *
  * Gates render as toggle chips (active = tinted) with the rule's
  * description in a Tooltip, replacing the old checkbox + code rows.
@@ -33,7 +33,7 @@ export interface TransitionsTableProps {
   saving: boolean;
   loading?: boolean;
   /** Index of the transition to scroll into view and highlight. */
-  highlightedIndex: number | null;
+  highlightedIndex?: number | null;
   onAddTransition: () => void;
   onRemoveTransition: (index: number) => void;
   onUpdateTransitionField: <K extends keyof WorkflowTransition>(
@@ -51,7 +51,7 @@ export function TransitionsTable({
   canEdit,
   saving,
   loading,
-  highlightedIndex,
+  highlightedIndex = null,
   onAddTransition,
   onRemoveTransition,
   onUpdateTransitionField,

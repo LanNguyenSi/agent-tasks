@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * WorkflowDiagram — read-only horizontal state-diagram strip.
+ * WorkflowDiagram: read-only horizontal state-diagram strip.
  *
  * Shows workflow states as colored chips connected by arrow buttons.
  * Each arrow button represents a transition; arrows with gates carry a
@@ -13,7 +13,7 @@
  * appear as inline arrows between the state chips. All other transitions
  * (backward, skip, self-loops) are shown in a compact secondary row below.
  *
- * Pure CSS/flexbox — no canvas or SVG library.
+ * Pure CSS/flexbox, no canvas or SVG library.
  */
 
 import { Fragment } from "react";
@@ -40,7 +40,7 @@ export interface WorkflowDiagramProps {
   def: WorkflowDefinition;
   /** Called when the user clicks a transition arrow; index is into def.transitions. */
   onArrowClick: (transitionIndex: number) => void;
-  /** Loading state — renders a skeleton strip instead of the real diagram. */
+  /** Loading state: renders a skeleton strip instead of the real diagram. */
   loading?: boolean;
 }
 

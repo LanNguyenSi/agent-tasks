@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 import {
   TransitionsTable,
   type TransitionsTableProps,
-} from "../../src/app/projects/workflow/_components/TransitionsTable";
+} from "../../src/app/projects/[id]/workflow/_components/TransitionsTable";
 import type {
   WorkflowDefinition,
   WorkflowRule,
@@ -121,9 +121,12 @@ describe("TransitionsTable — read-only", () => {
     renderTable({ canEdit: false });
     // branchPresent → "Branch present", prMerged → "PR merged",
     // legacyRule → "legacyRule" (fallback).
+    // The catalog labels appear only once (chip text); the raw id for
+    // legacyRule appears twice because the Tooltip content also echoes the
+    // id (no description to show). Use getAllByText and assert at least one.
     expect(screen.getByText("Branch present")).toBeInTheDocument();
     expect(screen.getByText("PR merged")).toBeInTheDocument();
-    expect(screen.getByText("legacyRule")).toBeInTheDocument();
+    expect(screen.getAllByText("legacyRule").length).toBeGreaterThan(0);
   });
 });
 
@@ -166,7 +169,8 @@ describe("TransitionsTable — edit mode", () => {
 
   it("✕ on a row calls onRemoveTransition with the row index", async () => {
     renderTable({ canEdit: true, handlers });
-    const removeButtons = screen.getAllByTitle("Remove transition");
+    // Buttons use title="Remove transition <from> → <to>"; match by prefix regex.
+    const removeButtons = screen.getAllByTitle(/^Remove transition/);
     expect(removeButtons).toHaveLength(2);
     await userEvent.click(removeButtons[1]);
     expect(handlers.onRemoveTransition).toHaveBeenCalledTimes(1);
@@ -229,15 +233,18 @@ describe("TransitionsTable — edit mode", () => {
     );
   });
 
-  it("toggling a rule checkbox calls onToggleRule(i, ruleId, nextState)", async () => {
+  it("toggling a rule chip calls onToggleRule(i, ruleId, nextState)", async () => {
     renderTable({ canEdit: true, handlers });
-    // Row 0 has branchPresent checked, prMerged unchecked, ciGreen unchecked.
-    const checkboxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
-    // First three checkboxes correspond to row 0's three rules in catalog order.
-    const row0BranchPresent = checkboxes[0];
-    const row0PrMerged = checkboxes[1];
-    expect(row0BranchPresent).toBeChecked();
-    expect(row0PrMerged).not.toBeChecked();
+    // Gate chips are now toggle <button> elements with aria-pressed.
+    // Row 0 has branchPresent active (pressed=true), prMerged inactive (pressed=false).
+    // Each rule label appears once per row; row 0 buttons come first in DOM order.
+    const branchPresentButtons = screen.getAllByRole("button", { name: "Branch present" });
+    const prMergedButtons = screen.getAllByRole("button", { name: "PR merged" });
+    const row0BranchPresent = branchPresentButtons[0];
+    const row0PrMerged = prMergedButtons[0];
+
+    expect(row0BranchPresent).toHaveAttribute("aria-pressed", "true");
+    expect(row0PrMerged).toHaveAttribute("aria-pressed", "false");
 
     await userEvent.click(row0PrMerged);
     expect(handlers.onToggleRule).toHaveBeenCalledWith(0, "prMerged", true);
@@ -321,7 +328,12 @@ describe("TransitionsTable — edit mode", () => {
     renderTable({ canEdit: true, saving: true, handlers });
     for (const el of screen.getAllByRole("textbox")) expect(el).toBeDisabled();
     for (const el of screen.getAllByRole("combobox")) expect(el).toBeDisabled();
-    for (const el of screen.getAllByRole("checkbox")) expect(el).toBeDisabled();
+    // Gate chips are now toggle buttons with aria-pressed; they must be disabled while saving.
+    const gateChips = screen
+      .getAllByRole("button")
+      .filter((el) => el.hasAttribute("aria-pressed"));
+    expect(gateChips.length).toBeGreaterThan(0);
+    for (const el of gateChips) expect(el).toBeDisabled();
     expect(screen.getByRole("button", { name: /add transition/i })).toBeDisabled();
   });
 });

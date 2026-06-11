@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * StatesTable v2 — uses the ui/Table primitive.
+ * StatesTable v2: uses the ui/Table primitive.
  *
  * Dumb component: the parent owns the draft, the validation, and the
  * mutation handlers. This component only renders and forwards user
