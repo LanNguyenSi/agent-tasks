@@ -167,7 +167,7 @@ export default function ProjectMembersPage() {
           </AlertBanner>
           <pre
             style={{
-              background: "var(--surface-secondary)",
+              background: "var(--surface-raised)",
               border: "1px solid var(--border)",
               padding: "var(--space-3)",
               borderRadius: "var(--radius-sm, 6px)",

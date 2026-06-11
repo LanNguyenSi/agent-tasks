@@ -123,7 +123,7 @@ export default function Select({ options, value, onChange, placeholder = "Select
             background: "var(--surface)",
             border: "1px solid var(--border-hover)",
             borderRadius: "var(--radius-lg)",
-            boxShadow: "var(--shadow-lg)",
+            boxShadow: "var(--shadow-overlay)",
             padding: "4px",
             maxHeight: "200px",
             overflowY: "auto",
