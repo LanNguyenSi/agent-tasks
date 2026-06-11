@@ -42,6 +42,7 @@ import FilterToolbar from "../../components/dashboard/FilterToolbar";
 import BoardView from "../../components/dashboard/BoardView";
 import TaskListView from "../../components/dashboard/TaskListView";
 import NewTaskModal from "../../components/dashboard/NewTaskModal";
+import { isOverdue } from "../../lib/taskDisplay";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -51,11 +52,6 @@ type Status = (typeof STATUSES)[number];
 const LIST_PAGE_SIZE = 12;
 
 // ── Helpers ──────────────────────────────────────────────────────
-
-function isOverdue(task: Task): boolean {
-  if (!task.dueAt || task.status === "done") return false;
-  return new Date(task.dueAt).getTime() < Date.now();
-}
 
 function updateUrl(teamId: string, projectId?: string): void {
   const url = new URL(window.location.href);
