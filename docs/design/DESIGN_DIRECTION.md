@@ -85,7 +85,8 @@ Chip recipe: fill `color-mix(in srgb, var(--status-X) 13%, transparent)`, dot in
 |---|---|---|
 | `--font` | Inter (via next/font) + system fallbacks | All UI text |
 | `--font-mono` | JetBrains Mono (via next/font), ui-monospace fallback | Branches, PR refs, scopes, code, token values |
-| `--text-xs` | 11px (0.6875rem) | Micro: label pills, priority text base, key chips |
+| `--text-2xs` | 10px (0.625rem) | Priority text, keyboard-hint chips, uppercase micro labels (tracking 0.06em) |
+| `--text-xs` | 11px (0.6875rem) | Micro: label pills, counts in chips |
 | `--text-sm` | 12px (0.75rem) | Meta: timestamps, prop labels, breadcrumbs |
 | `--text-base` | 13px (0.8125rem) | Body, card titles, nav |
 | `--text-md` | 14px (0.875rem) | Section headings, weight 600 |
@@ -107,7 +108,7 @@ All counts and numerals in lists render with `font-variant-numeric: tabular-nums
 | `--space-6` | 32px |
 | `--space-8` | 48px (rare, page-level gaps) |
 
-Note: `--space-5`/`--space-6` change value (20/24px to 24/32px). Every surface PR re-snaps the spacing of the files it touches, so the shift lands surface by surface, never as a silent global jump.
+Note: `--space-5`/`--space-6`/`--space-8` change value (20/24/32px to 24/32/48px). Every surface PR re-snaps the spacing of the files it touches, so the shift lands surface by surface, never as a silent global jump.
 
 ### Radii
 
@@ -234,6 +235,22 @@ Shared non-primitive extractions consumed across the surface PRs: `lib/status.ts
 - Branded first impression consistent with the landing card: brand mark, `--text-2xl` heading, gradient-washed frame (audit HIGH: most generic screens at the moment of first impression).
 - autocomplete attributes and a visible password-length hint (audit MEDIUM a11y); the GitHub redirect state revives on back-navigation via `pageshow` (audit MEDIUM: permanently bricked link).
 - Invite accept keeps the preview mounted with a loading Button; dead-invite errors route to /home with an actionable line (audit MEDIUM flow).
+
+## Mockup-to-token mapping
+
+The mockup `:root` blocks use shorthand names; the doc names above are canonical. Mapping:
+
+| Mockup | Canonical |
+|---|---|
+| `--bg-0` / `--bg-1` / `--bg-2` / `--bg-3` | `--bg` / `--surface` / `--surface-raised` / `--surface-hover` |
+| `--accent`, `--accent-soft`, `--accent-text` | `--primary`, `--primary-muted`, `--primary-text` |
+| `--st-open`, `--st-progress`, `--st-review`, `--st-done` | `--status-open`, `--status-in-progress`, `--status-review`, `--status-done` |
+| `--pri-*` | `--priority-*` |
+| `--r-1` / `--r-2` / `--r-3` | `--radius-sm` / `--radius-base` / `--radius-lg` |
+| `--s-1` .. `--s-6` | `--space-1` .. `--space-8` (mockup scale is positional) |
+| `--fs-*` | `--text-*` (10px sizes map to `--text-2xs`, off-scale 12.5/11.5/10.5px snap to the canonical scale) |
+
+Raw hex values in the mockups that have no token (white-alpha overlays like `#ffffff12`, avatar tints, view-toggle active fill, prose code text) are NOT canon: the foundation PR replaces them with tokens or `color-mix()` recipes derived from the tokens above. Where mockup pixels and this document disagree, this document wins (the known cases: board column radius 10px snaps to `--radius-lg` 8px, off-scale font sizes snap to the type scale).
 
 ## Mockup references
 
