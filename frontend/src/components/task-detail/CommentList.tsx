@@ -3,6 +3,7 @@
 // Webhook activity comments are filtered out upstream before passing here.
 
 import type { Comment, User } from "@/lib/api";
+import Markdown from "@/components/Markdown";
 import InlineConfirmDelete from "@/components/ui/InlineConfirmDelete";
 import { formatAbsoluteDate, formatRelativeTime } from "@/lib/time";
 
@@ -70,7 +71,9 @@ export default function CommentList({
                 </span>
               )}
             </div>
-            <p className="td-comment-body">{comment.content}</p>
+            <div className="td-comment-body prose-markdown">
+              <Markdown>{comment.content}</Markdown>
+            </div>
           </article>
         );
       })}
