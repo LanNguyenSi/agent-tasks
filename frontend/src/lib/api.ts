@@ -912,6 +912,19 @@ export async function getGitHubDelegationLogs(projectId: string, opts?: { action
 
 export type ProjectMemberRole = "PROJECT_VIEWER" | "PROJECT_CONTRIBUTOR" | "PROJECT_ADMIN";
 
+export interface ProjectMember {
+  id: string;
+  userId: string;
+  role: ProjectMemberRole;
+  joinedAt: string;
+  user: {
+    id: string;
+    login: string;
+    name: string | null;
+    avatarUrl: string | null;
+  };
+}
+
 export interface ProjectInvite {
   id: string;
   projectId: string;
@@ -988,6 +1001,13 @@ export async function acceptInvite(token: string): Promise<{
     role: data.role,
     soloModeChanged: data.soloModeChanged,
   };
+}
+
+export async function listProjectMembers(projectId: string): Promise<ProjectMember[]> {
+  const data = await request<{ members: ProjectMember[] }>(
+    `/api/projects/${projectId}/members`,
+  );
+  return data.members;
 }
 
 export async function removeProjectMember(projectId: string, userId: string): Promise<{

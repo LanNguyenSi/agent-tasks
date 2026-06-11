@@ -3,13 +3,14 @@
 // Compact confirmation dialog. All geometry in CSS:
 // .confirm-dialog-* for the inner content, .confirm-modal-card for the card.
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { Button } from "./Button";
 
 interface ConfirmDialogProps {
   open: boolean;
   title: string;
-  message: string;
+  /** Message body. Accepts a React node so callers can include lists/markup. */
+  message: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   busy?: boolean;
@@ -91,7 +92,7 @@ export default function ConfirmDialog({
         <h3 id={titleId} className="confirm-dialog-title">
           {title}
         </h3>
-        <p className="confirm-dialog-message">{message}</p>
+        <div className="confirm-dialog-message">{message}</div>
         <div className="confirm-dialog-actions">
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
             {cancelLabel}

@@ -271,6 +271,45 @@ projectInviteAdminRouter.delete("/projects/:id/members/:userId", async (c) => {
   return c.json({ success: true, claimsReleased: releasedClaims.count });
 });
 
+// GET /projects/:id/members: read-only list of accepted project members.
+// Gated on hasProjectAccess so any member (including shared-link members) can
+// see who else has access. Intentionally lighter than the DELETE above: no
+// admin guard, read-only data, no audit event needed.
+projectInviteAdminRouter.get("/projects/:id/members", async (c) => {
+  const actor = c.get("actor") as Actor;
+  const projectId = c.req.param("id");
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { id: true },
+  });
+  if (!project) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, projectId))) {
+    return forbidden(c, "Access denied");
+  }
+
+  const members = await prisma.projectMember.findMany({
+    where: { projectId },
+    orderBy: { createdAt: "asc" },
+    include: {
+      user: {
+        select: { id: true, login: true, name: true, avatarUrl: true },
+      },
+    },
+  });
+
+  return c.json({
+    members: members.map((m) => ({
+      id: m.id,
+      userId: m.userId,
+      role: m.role,
+      joinedAt: m.createdAt,
+      user: m.user,
+    })),
+  });
+});
+
 // ── Token-scoped accept routes ───────────────────────────────────────────────
 
 inviteAcceptRouter.post(

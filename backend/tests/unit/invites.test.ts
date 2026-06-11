@@ -22,6 +22,7 @@ const prismaMocks = vi.hoisted(() => ({
   projectInviteFindMany: vi.fn(),
   projectInviteUpdate: vi.fn(),
   projectMemberFindUnique: vi.fn(),
+  projectMemberFindMany: vi.fn(),
   projectMemberCreate: vi.fn(),
   projectMemberDelete: vi.fn(),
   teamMemberFindMany: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     },
     projectMember: {
       findUnique: prismaMocks.projectMemberFindUnique,
+      findMany: prismaMocks.projectMemberFindMany,
       create: prismaMocks.projectMemberCreate,
       delete: prismaMocks.projectMemberDelete,
     },
@@ -621,5 +623,64 @@ describe("GET /admin/project-shares", () => {
     ) as { projectInvites: { some: { consumedAt: null; expiresAt: { gt: Date } } } };
     expect(inviteArm.projectInvites.some.consumedAt).toBeNull();
     expect(inviteArm.projectInvites.some.expiresAt.gt).toBeInstanceOf(Date);
+  });
+});
+
+describe("GET /projects/:id/members", () => {
+  it("returns members with user info for a project member", async () => {
+    teamAccessMocks.hasProjectAccess.mockResolvedValue(true);
+    prismaMocks.projectMemberFindMany.mockResolvedValue([
+      {
+        id: "pm-1",
+        projectId: PROJECT_ID,
+        userId: "user-1",
+        role: "PROJECT_CONTRIBUTOR",
+        invitedById: "admin-1",
+        createdAt: new Date("2026-01-01T00:00:00Z"),
+        user: { id: "user-1", login: "alice", name: "Alice", avatarUrl: null },
+      },
+      {
+        id: "pm-2",
+        projectId: PROJECT_ID,
+        userId: "user-2",
+        role: "PROJECT_ADMIN",
+        invitedById: "admin-1",
+        createdAt: new Date("2026-01-02T00:00:00Z"),
+        user: { id: "user-2", login: "bob", name: null, avatarUrl: "https://example.com/bob.jpg" },
+      },
+    ]);
+
+    const res = await makeAdminApp(ADMIN).request(`/projects/${PROJECT_ID}/members`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      members: Array<{ id: string; userId: string; role: string; joinedAt: string; user: { login: string } }>;
+    };
+    expect(body.members).toHaveLength(2);
+    expect(body.members[0]?.userId).toBe("user-1");
+    expect(body.members[0]?.role).toBe("PROJECT_CONTRIBUTOR");
+    expect(body.members[0]?.user?.login).toBe("alice");
+    expect(body.members[1]?.user?.login).toBe("bob");
+  });
+
+  it("returns an empty list when no members exist", async () => {
+    teamAccessMocks.hasProjectAccess.mockResolvedValue(true);
+    prismaMocks.projectMemberFindMany.mockResolvedValue([]);
+
+    const res = await makeAdminApp(ADMIN).request(`/projects/${PROJECT_ID}/members`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { members: unknown[] };
+    expect(body.members).toEqual([]);
+  });
+
+  it("403s when the caller has no project access", async () => {
+    teamAccessMocks.hasProjectAccess.mockResolvedValue(false);
+    const res = await makeAdminApp(OTHER_USER).request(`/projects/${PROJECT_ID}/members`);
+    expect(res.status).toBe(403);
+  });
+
+  it("404s when the project does not exist", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(null);
+    const res = await makeAdminApp(ADMIN).request(`/projects/${PROJECT_ID}/members`);
+    expect(res.status).toBe(404);
   });
 });

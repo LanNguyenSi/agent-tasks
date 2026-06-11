@@ -11,7 +11,7 @@ import userEvent from "@testing-library/user-event";
 import {
   StatesTable,
   type StatesTableProps,
-} from "../../src/app/projects/workflow/_components/StatesTable";
+} from "../../src/app/projects/[id]/workflow/_components/StatesTable";
 import type { WorkflowDefinition } from "../../src/lib/api";
 
 function makeDef(): WorkflowDefinition {
@@ -129,7 +129,8 @@ describe("StatesTable — edit mode", () => {
 
   it("clicking the ✕ remove button calls onRemoveState with the row index", async () => {
     renderTable({ canEdit: true, handlers });
-    const removeButtons = screen.getAllByTitle("Remove state");
+    // Buttons use title="Remove state <name>"; match by prefix regex.
+    const removeButtons = screen.getAllByTitle(/^Remove state/);
     expect(removeButtons).toHaveLength(3);
     await userEvent.click(removeButtons[1]);
     expect(handlers.onRemoveState).toHaveBeenCalledTimes(1);
