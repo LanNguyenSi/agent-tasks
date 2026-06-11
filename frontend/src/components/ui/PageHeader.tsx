@@ -1,5 +1,5 @@
 // 52px sticky toolbar: breadcrumb, H1 title, summary, and right-aligned actions.
-// One per page — no page adopts it yet; shown in /dev/ui only for now.
+// One per page : no page adopts it yet; shown in /dev/ui only for now.
 // Geometry in .page-header-* classes in globals.css.
 //
 // Usage:

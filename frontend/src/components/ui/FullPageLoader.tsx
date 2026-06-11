@@ -9,9 +9,9 @@ interface FullPageLoaderProps {
   /** Announced to assistive tech and shown beneath the centered spinner. */
   label?: string;
   /**
-   * "centered" — a spinner vertically centered in the viewport, for whole-page
+   * "centered", a spinner vertically centered in the viewport, for whole-page
    * bootstraps that have no content shell yet (settings, teams, auth gate).
-   * "shell" — skeleton rows inside the standard `.page-shell` width, so the
+   * "shell", skeleton rows inside the standard `.page-shell` width, so the
    * placeholder occupies the same column the loaded content will and the
    * layout does not jump on first paint.
    */

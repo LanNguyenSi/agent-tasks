@@ -1,9 +1,9 @@
-// Button primitive — all geometry in CSS classes (globals.css .btn--*).
+// Button primitive : all geometry in CSS classes (globals.css .btn--*).
 // Supports: primary / secondary / danger / outline-danger / ghost / link / link-danger variants,
 // sm/md/lg sizes, loading spinner (label kept visible), optional KeyHint chip,
 // and href prop (renders <a> with the same classes for link affordances).
 //
-// Call sites that pass style={{}} for layout override still work — those are
+// Call sites that pass style={{}} for layout override still work; those are
 // caller-owned dynamic values, not component geometry.
 
 import type {

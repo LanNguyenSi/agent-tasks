@@ -18,7 +18,7 @@ interface SkeletonProps {
 }
 
 /**
- * A single shimmering placeholder block. Decorative — marked
+ * A single shimmering placeholder block. Decorative, marked
  * `aria-hidden` so screen readers announce the surrounding
  * `aria-busy` container's loading state instead of empty boxes.
  */
@@ -51,7 +51,7 @@ interface SkeletonListProps {
   rowHeight?: string | number;
   /** Accessible label announced to screen readers while loading. */
   label?: string;
-  /** Gap between rows. Dynamic prop — kept as inline style. */
+  /** Gap between rows. Dynamic prop, kept as inline style. */
   gap?: string | number;
 }
 

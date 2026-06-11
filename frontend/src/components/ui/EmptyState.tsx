@@ -1,4 +1,4 @@
-// Empty-state component — centered stack with optional icon, title, description,
+// Empty-state component, centered stack with optional icon, title, description,
 // and action slot. All geometry in .empty-state-* classes in globals.css.
 //
 // Backward compat: existing call sites that pass message= still work (title
@@ -46,7 +46,7 @@ export default function EmptyState({
   dashed = false,
   className,
 }: EmptyStateProps) {
-  // message is the legacy prop — fall back to it when title is not provided.
+  // message is the legacy prop, fall back to it when title is not provided.
   const displayTitle = title ?? message;
 
   return (

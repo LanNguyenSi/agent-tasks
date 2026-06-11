@@ -42,7 +42,7 @@ export default function ProjectMembersPage() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
 
-  const [user, setUser] = useState<User | null>(null);
+  const [, setUser] = useState<User | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [invites, setInvites] = useState<ProjectInvite[] | null>(null);
   const [loading, setLoading] = useState(true);

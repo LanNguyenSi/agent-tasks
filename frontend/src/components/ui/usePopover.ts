@@ -5,7 +5,7 @@
 // scroll/resize repositioning, outside-click, and Escape-to-close.
 //
 // Only the two computed coordinates (top, left) and optional width are
-// returned as positionStyle — all other panel geometry lives in CSS classes.
+// returned as positionStyle; all other panel geometry lives in CSS classes.
 //
 // Usage:
 //   const { panelRef, positionStyle, positionReady, mounted } = usePopover({

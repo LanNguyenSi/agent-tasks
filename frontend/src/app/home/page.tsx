@@ -161,7 +161,7 @@ export default function HomeDashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
-  const [firstProjectId, setFirstProjectId] = useState<string | null>(null);
+  const [, setFirstProjectId] = useState<string | null>(null);
   const [allTasks, setAllTasks] = useState<EnrichedTask[]>([]);
   const [counts, setCounts] = useState<TeamTasksCounts | null>(null);
   const [loading, setLoading] = useState(true);

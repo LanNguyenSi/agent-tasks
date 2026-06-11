@@ -1,4 +1,4 @@
-// Card primitive — all geometry in CSS classes (globals.css .card--*).
+// Card primitive : all geometry in CSS classes (globals.css .card--*).
 // surface prop: "surface" (default, --surface bg) | "raised" (--surface-raised bg).
 // dashed and interactive modifier props are additive.
 //

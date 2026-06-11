@@ -1,4 +1,4 @@
-// Component library v2 gallery — B1 + B2 primitives in every state.
+// Component library v2 gallery: B1 + B2 primitives in every state.
 // No auth dependency. Theme toggle persists to localStorage.
 // Route: /dev/ui
 
@@ -131,7 +131,7 @@ export default function UIGalleryPage() {
 
       {/* ── B2: PageHeader ────────────────────────────────────── */}
       <section className="dev-section">
-        <h2 className="dev-section-heading">PageHeader (inline demo — sticky in real pages)</h2>
+        <h2 className="dev-section-heading">PageHeader (inline demo, sticky in real pages)</h2>
         <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
           <PageHeader
             breadcrumb={<><a href="#">Home</a> / Projects / agent-tasks</>}
@@ -295,7 +295,7 @@ export default function UIGalleryPage() {
         <Modal
           open={modalOpen}
           onClose={() => setModalOpen(false)}
-          title="Scroll test — pinned footer"
+          title="Scroll test: pinned footer"
           footer={
             <>
               <Button variant="ghost" size="sm" onClick={() => setModalOpen(false)}>Cancel</Button>
@@ -485,7 +485,7 @@ export default function UIGalleryPage() {
             <KeyHint>/</KeyHint>
           </div>
 
-          {/* Primary button with key hint — uses the Button component */}
+          {/* Primary button with key hint, uses the Button component */}
           <Button variant="primary" size="sm" keyHint="C">
             <Icon name="plus" size={13} />
             New task

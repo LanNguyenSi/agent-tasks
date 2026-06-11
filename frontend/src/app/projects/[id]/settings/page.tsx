@@ -67,7 +67,7 @@ export default function ProjectSettingsPage() {
   const projectId = params.id;
   const router = useRouter();
 
-  const [user, setUser] = useState<User | null>(null);
+  const [, setUser] = useState<User | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

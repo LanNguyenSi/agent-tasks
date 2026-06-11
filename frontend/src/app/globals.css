@@ -1723,7 +1723,7 @@ input[type="checkbox"] {
   opacity: 0.4;
 }
 
-/* Loading spinner inside a button — 12×12px, inherits stroke from button color */
+/* Loading spinner inside a button: 12x12px, inherits stroke from button color */
 .btn-spinner {
   width: 12px;
   height: 12px;

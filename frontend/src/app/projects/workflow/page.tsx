@@ -65,7 +65,7 @@ export default function WorkflowEditorPage() {
     setProjectId(params.get("projectId") ?? "");
   }, []);
 
-  const [user, setUser] = useState<User | null>(null);
+  const [, setUser] = useState<User | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [team, setTeam] = useState<Team | null>(null);
   const [workflow, setWorkflow] = useState<EffectiveWorkflow | null>(null);
