@@ -4,13 +4,21 @@
 // and stacked two-line card mode under 900px.
 // Geometry lives in .table-* classes in globals.css.
 //
-// Usage:
-//   const cols: ColumnDef<Task>[] = [
+// Uncontrolled (internal sort, row links):
+//   const cols: ColumnDef<Row>[] = [
 //     { key: "title", header: "Title", sortable: true },
 //     { key: "status", header: "Status", render: (r) => <StatusChip status={r.status} /> },
 //   ];
-//   <Table columns={cols} rows={tasks} rowKey={(r) => r.id} rowHref={(r) => `/tasks/${r.id}`} />
+//   <Table columns={cols} rows={rows} rowKey={(r) => r.id} rowHref={(r) => `/items/${r.id}`} />
+//
+// Controlled (server-side sort, modal-open rows):
+//   <Table
+//     columns={cols} rows={rows} rowKey={(r) => r.id}
+//     sortKey={sort.col} sortDirection={sort.dir} onSortChange={handleSortChange}
+//     onRowClick={(r) => openModal(r.id)}
+//   />
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { Icon } from "./Icon";
 
@@ -24,57 +32,96 @@ export interface ColumnDef<T = Record<string, unknown>> {
   render?: (row: T) => ReactNode;
 }
 
-interface TableProps<T extends Record<string, unknown>> {
+type SortDir = "ascending" | "descending" | "none";
+
+interface TableProps<T extends object> {
   columns: ColumnDef<T>[];
   rows: T[];
   rowKey: (row: T) => string;
   /**
-   * When set, the title cell (first column) contains a real `<a>` link and
-   * clicking the row delegates to it for full keyboard/pointer accessibility.
+   * When set, the title cell (first column) contains a real Next.js `<Link>`
+   * and clicking the row delegates to it for full keyboard/pointer accessibility.
    */
   rowHref?: (row: T) => string;
+  /**
+   * When set, clicking the row calls this callback (e.g. to open a detail modal).
+   * Takes priority over rowHref when both are provided.
+   */
+  onRowClick?: (row: T) => void;
   loading?: boolean;
   emptyLabel?: string;
   className?: string;
+  // ── Controlled sort ────────────────────────────────────────────
+  // Provide all three together to bypass internal sort state entirely.
+  /** Controlled sort column key. Pass null/undefined for "no sort". */
+  sortKey?: string | null;
+  /** Controlled sort direction. */
+  sortDirection?: SortDir;
+  /**
+   * Called when a sortable header is clicked in controlled mode.
+   * direction is the proposed next value (ascending when switching to a new
+   * column; flipped when clicking the active column). The parent may override.
+   */
+  onSortChange?: (key: string, direction: "ascending" | "descending") => void;
 }
 
-type SortDir = "ascending" | "descending" | "none";
-
-export function Table<T extends Record<string, unknown>>({
+export function Table<T extends object>({
   columns,
   rows,
   rowKey,
   rowHref,
+  onRowClick,
   loading = false,
   emptyLabel = "No items found.",
   className,
+  sortKey: sortKeyProp,
+  sortDirection: sortDirectionProp,
+  onSortChange,
 }: TableProps<T>) {
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<SortDir>("none");
+  const isControlled = onSortChange !== undefined;
+
+  // Uncontrolled sort state (ignored when isControlled).
+  const [internalSortKey, setInternalSortKey] = useState<string | null>(null);
+  const [internalSortDir, setInternalSortDir] = useState<SortDir>("none");
+
+  const effectiveSortKey = isControlled ? (sortKeyProp ?? null) : internalSortKey;
+  const effectiveSortDir = isControlled ? (sortDirectionProp ?? "none") : internalSortDir;
 
   function handleSort(key: string) {
-    if (sortKey === key) {
-      if (sortDir === "ascending") {
-        setSortDir("descending");
-      } else if (sortDir === "descending") {
-        setSortDir("none");
-        setSortKey(null);
+    if (isControlled) {
+      let nextDir: "ascending" | "descending";
+      if (effectiveSortKey === key) {
+        nextDir = effectiveSortDir === "ascending" ? "descending" : "ascending";
       } else {
-        setSortDir("ascending");
+        nextDir = "ascending";
       }
+      onSortChange!(key, nextDir);
     } else {
-      setSortKey(key);
-      setSortDir("ascending");
+      if (internalSortKey === key) {
+        if (internalSortDir === "ascending") {
+          setInternalSortDir("descending");
+        } else if (internalSortDir === "descending") {
+          setInternalSortDir("none");
+          setInternalSortKey(null);
+        } else {
+          setInternalSortDir("ascending");
+        }
+      } else {
+        setInternalSortKey(key);
+        setInternalSortDir("ascending");
+      }
     }
   }
 
   const sortedRows =
-    sortKey && sortDir !== "none"
+    !isControlled && internalSortKey && internalSortDir !== "none"
       ? [...rows].sort((a, b) => {
-          const aVal = String(a[sortKey] ?? "");
-          const bVal = String(b[sortKey] ?? "");
+          const rec = a as Record<string, unknown>;
+          const rec2 = b as Record<string, unknown>;
+          const aVal = String(rec[internalSortKey] ?? "");
+          const bVal = String(rec2[internalSortKey] ?? "");
           const cmp = aVal.localeCompare(bVal, undefined, { numeric: true });
-          return sortDir === "ascending" ? cmp : -cmp;
+          return internalSortDir === "ascending" ? cmp : -cmp;
         })
       : rows;
 
@@ -92,7 +139,7 @@ export function Table<T extends Record<string, unknown>>({
                 ]
                   .filter(Boolean)
                   .join(" ")}
-                aria-sort={col.sortable && sortKey === col.key ? sortDir : col.sortable ? "none" : undefined}
+                aria-sort={col.sortable && effectiveSortKey === col.key ? effectiveSortDir : col.sortable ? "none" : undefined}
                 data-col={col.key}
                 // eslint-disable-next-line no-restricted-syntax
                 style={col.width ? { width: col.width } : undefined /* dynamic: column width prop */}
@@ -100,21 +147,21 @@ export function Table<T extends Record<string, unknown>>({
                 {col.sortable ? (
                   <button
                     type="button"
-                    className={["table-sort-btn", sortKey === col.key ? "table-sort-btn--active" : ""].filter(Boolean).join(" ")}
+                    className={["table-sort-btn", effectiveSortKey === col.key ? "table-sort-btn--active" : ""].filter(Boolean).join(" ")}
                     onClick={() => handleSort(col.key)}
                   >
                     {col.header}
                     <span
                       className={[
                         "table-sort-icon",
-                        sortKey === col.key && sortDir === "ascending" ? "table-sort-icon--up" : "",
+                        effectiveSortKey === col.key && effectiveSortDir === "ascending" ? "table-sort-icon--up" : "",
                       ]
                         .filter(Boolean)
                         .join(" ")}
                       aria-hidden="true"
                     >
                       <Icon
-                        name={sortKey === col.key && sortDir === "descending" ? "chevron-down" : "chevron-right"}
+                        name={effectiveSortKey === col.key && effectiveSortDir === "descending" ? "chevron-down" : "chevron-right"}
                         size={12}
                       />
                     </span>
@@ -142,27 +189,35 @@ export function Table<T extends Record<string, unknown>>({
             </tr>
           ) : (
             sortedRows.map((row) => {
-              const href = rowHref?.(row);
+              // onRowClick takes priority; rowHref is suppressed when both are set.
+              const href = !onRowClick ? rowHref?.(row) : undefined;
+              const hasClick = onRowClick !== undefined || href !== undefined;
               return (
                 <tr
                   key={rowKey(row)}
-                  className={["table-tr", href ? "table-tr--link" : ""].filter(Boolean).join(" ")}
+                  className={["table-tr", hasClick ? "table-tr--link" : ""].filter(Boolean).join(" ")}
                   onClick={
-                    href
+                    onRowClick
+                      ? () => onRowClick(row)
+                      : href
                       ? (e) => {
-                          // Delegate to the real anchor if click is not on it
                           if ((e.target as HTMLElement).closest("a")) return;
                           const anchor = e.currentTarget.querySelector<HTMLAnchorElement>("a.table-row-link");
                           anchor?.click();
                         }
                       : undefined
                   }
-                  tabIndex={href ? 0 : undefined}
+                  tabIndex={hasClick ? 0 : undefined}
                   onKeyDown={
-                    href
+                    hasClick
                       ? (e) => {
-                          if (e.key === "Enter") {
-                            e.currentTarget.querySelector<HTMLAnchorElement>("a.table-row-link")?.click();
+                          if (e.key === "Enter" || (onRowClick && e.key === " ")) {
+                            e.preventDefault();
+                            if (onRowClick) {
+                              onRowClick(row);
+                            } else {
+                              e.currentTarget.querySelector<HTMLAnchorElement>("a.table-row-link")?.click();
+                            }
                           }
                         }
                       : undefined
@@ -170,7 +225,9 @@ export function Table<T extends Record<string, unknown>>({
                 >
                   {columns.map((col, colIndex) => {
                     const isTitle = colIndex === 0;
-                    const cell = col.render ? col.render(row) : (row[col.key] as ReactNode);
+                    const cell = col.render
+                      ? col.render(row)
+                      : ((row as unknown as Record<string, unknown>)[col.key] as ReactNode);
                     return (
                       <td
                         key={col.key}
@@ -184,11 +241,11 @@ export function Table<T extends Record<string, unknown>>({
                         data-label={col.header}
                       >
                         {isTitle && href ? (
-                          // Real <a> lives in title cell for full keyboard accessibility.
+                          // Real <Link> lives in the title cell for full keyboard/SPA routing.
                           // tabIndex={-1} so tab order goes through the row, not twice.
-                          <a href={href} className="table-row-link" tabIndex={-1}>
+                          <Link href={href} className="table-row-link" tabIndex={-1}>
                             {cell}
-                          </a>
+                          </Link>
                         ) : (
                           cell
                         )}

@@ -99,6 +99,8 @@ export default function UIGalleryPage() {
   const [activeTab, setActiveTab] = useState("board");
   const [selectVal, setSelectVal] = useState("all");
   const [modalOpen, setModalOpen] = useState(false);
+  const [ctrlSortKey, setCtrlSortKey] = useState<string>("title");
+  const [ctrlSortDir, setCtrlSortDir] = useState<"ascending" | "descending">("ascending");
   const { toast } = useToast();
 
   useEffect(() => {
@@ -152,7 +154,7 @@ export default function UIGalleryPage() {
 
       {/* ── B2: Table ─────────────────────────────────────────── */}
       <section className="dev-section">
-        <h2 className="dev-section-heading">Table (sortable, row links, stacked under 900px)</h2>
+        <h2 className="dev-section-heading">Table — uncontrolled sort, row links (stacked under 900px)</h2>
         <Table
           columns={TABLE_COLS}
           rows={TABLE_ROWS}
@@ -172,6 +174,23 @@ export default function UIGalleryPage() {
             <Table columns={TABLE_COLS} rows={[]} rowKey={(r) => r.id} loading />
           </div>
         </div>
+
+        {/* Controlled-sort mode: parent owns sort state, row click opens alert. */}
+        <h3 style={{ marginTop: "var(--space-6)", marginBottom: "var(--space-2)", fontSize: "var(--text-sm)", fontWeight: 600, color: "var(--text-secondary)" }}>
+          Controlled sort + onRowClick (sort: {ctrlSortKey} {ctrlSortDir})
+        </h3>
+        <Table
+          columns={TABLE_COLS}
+          rows={TABLE_ROWS}
+          rowKey={(r) => r.id}
+          sortKey={ctrlSortKey}
+          sortDirection={ctrlSortDir}
+          onSortChange={(key, dir) => { setCtrlSortKey(key); setCtrlSortDir(dir); }}
+          onRowClick={(r) => toast(`Clicked: ${r.title}`, "info")}
+        />
+        <p style={{ marginTop: "var(--space-2)", fontSize: "var(--text-xs)", color: "var(--muted)" }}>
+          Sort state is owned by the parent; row click triggers a toast instead of navigating.
+        </p>
       </section>
 
       {/* ── B2: Toast ─────────────────────────────────────────── */}

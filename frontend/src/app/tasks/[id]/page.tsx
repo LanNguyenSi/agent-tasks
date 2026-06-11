@@ -2,18 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   getCurrentUser,
   getTask,
   getProject,
   getTasks,
+  getTeams,
   type User,
   type Task,
   type Project,
+  type Team,
 } from "../../../lib/api";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import TaskDetail from "../../../components/TaskDetail";
+import TaskDetailSkeleton from "../../../components/task-detail/TaskDetailSkeleton";
 
 /**
  * Full-page ("maximized") task detail at /tasks/[id].
@@ -24,8 +26,8 @@ import TaskDetail from "../../../components/TaskDetail";
  * exact component the modal wraps — so the two surfaces never drift.
  *
  * Deep-linkable: the task id is enough to fetch the task, its project (for
- * template fields / confidence threshold / reviewer policy), and the
- * project's tasks (for the dependency picker).
+ * template fields / confidence threshold / reviewer policy), the project's
+ * tasks (for the dependency picker), and the team name for the breadcrumb.
  */
 export default function TaskDetailPage() {
   const params = useParams<{ id: string }>();
@@ -35,6 +37,7 @@ export default function TaskDetailPage() {
   const [user, setUser] = useState<User | null>(null);
   const [task, setTask] = useState<Task | null>(null);
   const [project, setProject] = useState<Project | null>(null);
+  const [team, setTeam] = useState<Team | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,14 +52,17 @@ export default function TaskDetailPage() {
           return;
         }
         const fetchedTask = await getTask(taskId);
-        const [fetchedProject, projectTasks] = await Promise.all([
+        const [fetchedProject, projectTasks, allTeams] = await Promise.all([
           getProject(fetchedTask.projectId),
           getTasks(fetchedTask.projectId),
+          getTeams(),
         ]);
         if (cancelled) return;
+        const matchedTeam = allTeams.find((t) => t.id === fetchedProject.teamId) ?? null;
         setUser(me);
         setTask(fetchedTask);
         setProject(fetchedProject);
+        setTeam(matchedTeam);
         setTasks(projectTasks);
         setError(null);
       } catch (err) {
@@ -71,15 +77,15 @@ export default function TaskDetailPage() {
     };
   }, [taskId, router]);
 
-  const boardHref =
-    project && task
-      ? `/dashboard?teamId=${project.teamId}&projectId=${task.projectId}`
-      : "/dashboard";
-
   function handleUpdate(updated: Task) {
     setTask(updated);
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
   }
+
+  const boardHref =
+    project && task
+      ? `/dashboard?teamId=${project.teamId}&projectId=${task.projectId}`
+      : "/dashboard";
 
   function goToBoard() {
     router.push(boardHref);
@@ -87,26 +93,21 @@ export default function TaskDetailPage() {
 
   return (
     <main className="page-shell">
-      {/* Page-level heading for the document outline. Visually hidden
-          because the task title already shows as the first visible heading
-          in the detail body; this keeps the outline rooted at an h1 without
-          duplicating the title on screen (mirrors the modal's "Task
-          Details" title). */}
-      <h1 className="sr-only">Task Details</h1>
-
-      <p style={{ fontSize: "var(--text-sm)", marginBottom: "var(--space-3)" }}>
-        <Link href={boardHref} style={{ color: "var(--muted)" }}>
-          ← Back to board
-        </Link>
-      </p>
+      {/* Visually hidden H1 for the document outline when the task hasn't
+          loaded yet; once loaded, TaskDetail renders the real task-title H1. */}
+      {loading && <h1 className="sr-only">Task Details</h1>}
 
       {error && (
-        <div style={{ marginBottom: "var(--space-4)" }}>
+        <div style={{ padding: "var(--space-5)", maxWidth: "1168px", margin: "0 auto" }}>
           <AlertBanner tone="danger">{error}</AlertBanner>
         </div>
       )}
 
-      {loading && <p style={{ color: "var(--muted)" }}>Loading…</p>}
+      {loading && (
+        <div style={{ padding: "var(--space-5)" }}>
+          <TaskDetailSkeleton />
+        </div>
+      )}
 
       {!loading && task && project && (
         <TaskDetail
@@ -121,6 +122,10 @@ export default function TaskDetailPage() {
           onDelete={goToBoard}
           onClose={goToBoard}
           onError={(msg) => setError(msg)}
+          teamName={team?.name}
+          teamId={project.teamId}
+          projectName={project.name}
+          projectId={project.id}
         />
       )}
     </main>

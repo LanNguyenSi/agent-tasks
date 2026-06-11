@@ -1,19 +1,14 @@
 "use client";
 
-// List view for the dashboard: semantic <table> using the shared .table-*
-// CSS classes from globals.css (same classes the Table primitive uses).
-// Row clicks open the TaskDetail modal via onSelectTask — not navigation,
-// so we build the rows ourselves rather than relying on Table's rowHref
-// mechanism (which wraps the title cell in an <a>).
-//
-// Columns: title, status (StatusChip), priority (PriorityLabel), assignee,
-// due, updated. All columns are sortable; sort state is owned here so it
-// doesn't conflict with external pagination.
+// Dashboard list view: renders via the shared ui/Table primitive.
+// Sort state is owned here (client-side sort over the full task set) and
+// persisted to localStorage. Controlled-sort props bridge Table's header
+// clicks back to this component's state.
 
 import { useEffect, useState } from "react";
 import { StatusChip } from "../ui/StatusChip";
 import { PriorityLabel } from "../ui/PriorityLabel";
-import { Icon } from "../ui/Icon";
+import { Table, type ColumnDef } from "../ui/Table";
 import type { Task } from "../../lib/api";
 import { formatRelativeTime, formatAbsoluteDate } from "../../lib/time";
 import { readStoredSort, storeSort } from "../../lib/dashboardPrefs";
@@ -29,20 +24,6 @@ type SortDir = "asc" | "desc";
 
 const STATUS_RANK: Record<string, number> = { open: 0, in_progress: 1, review: 2, done: 3 };
 
-interface ColDef {
-  key: SortKey;
-  label: string;
-}
-
-const COLUMNS: ColDef[] = [
-  { key: "title", label: "Task" },
-  { key: "status", label: "Status" },
-  { key: "priority", label: "Priority" },
-  { key: "assignee", label: "Assignee" },
-  { key: "dueAt", label: "Due" },
-  { key: "updatedAt", label: "Updated" },
-];
-
 const NATURAL_DIR: Record<SortKey, SortDir> = {
   title: "asc",
   status: "asc",
@@ -51,6 +32,8 @@ const NATURAL_DIR: Record<SortKey, SortDir> = {
   dueAt: "asc",
   updatedAt: "desc",
 };
+
+const SORT_KEYS: readonly SortKey[] = ["title", "status", "priority", "assignee", "dueAt", "updatedAt"];
 
 function sortTasks(tasks: Task[], key: SortKey, dir: SortDir): Task[] {
   const d = dir === "asc" ? 1 : -1;
@@ -83,6 +66,52 @@ function sortTasks(tasks: Task[], key: SortKey, dir: SortDir): Task[] {
   });
 }
 
+// Column definitions are static; render functions close over only imports.
+const TASK_LIST_COLS: ColumnDef<Task>[] = [
+  {
+    key: "title",
+    header: "Task",
+    sortable: true,
+    render: (t) => <span className="db-list-cell-title">{t.title}</span>,
+  },
+  {
+    key: "status",
+    header: "Status",
+    sortable: true,
+    render: (t) => <StatusChip status={normalizeStatus(t.status)} />,
+  },
+  {
+    key: "priority",
+    header: "Priority",
+    sortable: true,
+    render: (t) => <PriorityLabel priority={t.priority} />,
+  },
+  {
+    key: "assignee",
+    header: "Assignee",
+    sortable: true,
+    render: (t) => <span className="table-cell-secondary">{getAssigneeName(t)}</span>,
+  },
+  {
+    key: "dueAt",
+    header: "Due",
+    sortable: true,
+    render: (t) => (
+      <span className="table-cell-secondary num">{t.dueAt ? toDateLabel(t.dueAt) : "—"}</span>
+    ),
+  },
+  {
+    key: "updatedAt",
+    header: "Updated",
+    sortable: true,
+    render: (t) => (
+      <span className="table-cell-secondary num" title={formatAbsoluteDate(t.updatedAt)}>
+        {formatRelativeTime(t.updatedAt)}
+      </span>
+    ),
+  },
+];
+
 interface TaskListViewProps {
   tasks: Task[];
   onSelectTask: (taskId: string) => void;
@@ -92,8 +121,6 @@ interface TaskListViewProps {
   /** Called when page changes (parent drives pagination). */
   onPageChange: (page: number) => void;
 }
-
-const SORT_KEYS: readonly SortKey[] = ["title", "status", "priority", "assignee", "dueAt", "updatedAt"];
 
 export default function TaskListView({
   tasks,
@@ -112,15 +139,15 @@ export default function TaskListView({
     storeSort({ column: sortKey, direction: sortDir });
   }, [sortKey, sortDir]);
 
-  function toggleSort(key: SortKey) {
-    if (sortKey === key) {
+  function handleSortChange(key: string) {
+    const newKey = key as SortKey;
+    if (sortKey === newKey) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-      onPageChange(1); // L1 fix: reset page when reversing direction
     } else {
-      setSortKey(key);
-      setSortDir(NATURAL_DIR[key]);
-      onPageChange(1);
+      setSortKey(newKey);
+      setSortDir(NATURAL_DIR[newKey]);
     }
+    onPageChange(1);
   }
 
   const sorted = sortTasks(tasks, sortKey, sortDir);
@@ -130,111 +157,16 @@ export default function TaskListView({
 
   return (
     <div className="db-list-wrap">
-      <div className="table-wrapper">
-        <table className="table" aria-label="Task list">
-          <thead>
-            <tr className="table-head-row">
-              {COLUMNS.map((col) => {
-                const isActive = sortKey === col.key;
-                const ariaSort = isActive
-                  ? sortDir === "asc"
-                    ? ("ascending" as const)
-                    : ("descending" as const)
-                  : ("none" as const);
-                return (
-                  <th
-                    key={col.key}
-                    className="table-th"
-                    aria-sort={ariaSort}
-                    data-col={col.key}
-                  >
-                    <button
-                      type="button"
-                      className={[
-                        "table-sort-btn",
-                        isActive ? "table-sort-btn--active" : "",
-                      ]
-                        .filter(Boolean)
-                        .join(" ")}
-                      onClick={() => toggleSort(col.key)}
-                    >
-                      {col.label}
-                      <span
-                        className={[
-                          "table-sort-icon",
-                          isActive && sortDir === "asc" ? "table-sort-icon--up" : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                        aria-hidden="true"
-                      >
-                        <Icon
-                          name={
-                            isActive && sortDir === "desc"
-                              ? "chevron-down"
-                              : "chevron-right"
-                          }
-                          size={12}
-                        />
-                      </span>
-                    </button>
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {paged.length === 0 ? (
-              <tr className="table-tr table-tr--state">
-                <td colSpan={COLUMNS.length} className="table-td table-td--state">
-                  No tasks match the current filters.
-                </td>
-              </tr>
-            ) : (
-              paged.map((task) => (
-                <tr
-                  key={task.id}
-                  className="table-tr table-tr--link"
-                  onClick={() => onSelectTask(task.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onSelectTask(task.id);
-                    }
-                  }}
-                  tabIndex={0}
-                  role="button"
-                  aria-label={`Open task: ${task.title}`}
-                >
-                  <td className="table-td" data-col="title" data-label="Task">
-                    <span className="db-list-cell-title">{task.title}</span>
-                  </td>
-                  <td className="table-td" data-col="status" data-label="Status">
-                    <StatusChip status={normalizeStatus(task.status)} />
-                  </td>
-                  <td className="table-td" data-col="priority" data-label="Priority">
-                    <PriorityLabel priority={task.priority} />
-                  </td>
-                  <td className="table-td task-list-cell-muted" data-col="assignee" data-label="Assignee">
-                    {getAssigneeName(task)}
-                  </td>
-                  <td className="table-td task-list-cell-muted num" data-col="dueAt" data-label="Due">
-                    {task.dueAt ? toDateLabel(task.dueAt) : "—"}
-                  </td>
-                  <td
-                    className="table-td task-list-cell-updated"
-                    data-col="updatedAt"
-                    data-label="Updated"
-                    title={formatAbsoluteDate(task.updatedAt)}
-                  >
-                    {formatRelativeTime(task.updatedAt)}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <Table
+        columns={TASK_LIST_COLS}
+        rows={paged}
+        rowKey={(t) => t.id}
+        onRowClick={(t) => onSelectTask(t.id)}
+        sortKey={sortKey}
+        sortDirection={sortDir === "asc" ? "ascending" : "descending"}
+        onSortChange={handleSortChange}
+        emptyLabel="No tasks match the current filters."
+      />
 
       {totalPages > 1 && (
         <div className="db-list-pagination">

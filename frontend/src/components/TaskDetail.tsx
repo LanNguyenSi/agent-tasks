@@ -1,9 +1,22 @@
 "use client";
 
+// TaskDetail: orchestration layer for the task detail surface.
+//
+// Renders in two contexts:
+//   variant="modal" (default) — inside a Modal overlay, title carried by
+//     the Modal's own <h3>; the TaskHeader component renders only the
+//     action row.
+//   variant="page" — on /tasks/[id]; TaskHeader renders breadcrumb + H1 +
+//     action row; no Modal wrapper.
+//
+// WORKFLOW GATE: status changes only happen through the gated transition
+// buttons (handleAdvance). The status Select has been intentionally removed
+// from edit mode to prevent bypassing workflow gate policies via raw PATCH.
+// This closes the gate bypass documented in the UI overhaul audit (HIGH).
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
-import { PRIORITY_COLORS } from "../lib/priorityColors";
 import {
   updateTask,
   deleteTask,
@@ -20,42 +33,63 @@ import {
   type Task,
   type Comment,
 } from "../lib/api";
-import { calculateConfidence, TASK_TYPES, type TaskType, type TemplateFields } from "../lib/confidence";
+import {
+  calculateConfidence,
+  TASK_TYPES,
+  type TaskType,
+  type TemplateFields,
+} from "../lib/confidence";
 import { buildSavedTemplateData } from "../lib/templateData";
-import { formatRelativeTime, formatAbsoluteDate, formatDueDate } from "../lib/time";
+import type { TemplateDataEdits } from "../lib/templateData";
+import { formatRelativeTime, formatAbsoluteDate } from "../lib/time";
 import ConfidenceBadge from "./ConfidenceBadge";
+import Markdown from "./Markdown";
 import TaskArtifactsSection from "./TaskArtifactsSection";
 import TaskAttachmentsSection from "./TaskAttachmentsSection";
 import { Button } from "./ui/Button";
 import CollapsibleSection from "./ui/CollapsibleSection";
 import ConfirmDialog from "./ui/ConfirmDialog";
 import FormField from "./ui/FormField";
+import InlineConfirmDelete from "./ui/InlineConfirmDelete";
 import Modal from "./ui/Modal";
 import Select from "@/components/ui/Select";
+import { KeyHint } from "./ui/KeyHint";
+import TaskHeader from "./task-detail/TaskHeader";
+import TaskMetaSidebar from "./task-detail/TaskMetaSidebar";
+import ReviewPanel from "./task-detail/ReviewPanel";
+import CommentList from "./task-detail/CommentList";
 
-type Status = "open" | "in_progress" | "review" | "done";
 type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
-const STATUSES: readonly Status[] = ["open", "in_progress", "review", "done"];
-const STATUS_LABELS: Record<Status, string> = {
-  open: "Open",
-  in_progress: "In Progress",
-  review: "In Review",
-  done: "Done",
-};
+// ── Template field config ──────────────────────────────────────────────────
+// One entry per editable templateData key. Drives BOTH view and edit rendering,
+// replacing the 9 copy-pasted blocks that existed before.
+// agentPrompt uses kind:'text' → rendered as <pre> in view, mono textarea in edit.
+// All other markdown fields use kind:'markdown' → rendered with <Markdown>.
 
-// Agent results can run to thousands of characters; clamp the collapsed box
-// to this height and measure whether the content actually overflows so the
-// Show more/less toggle only appears when it does something.
-const RESULT_CLAMP_HEIGHT = "16rem";
-// Fades the clamped content to transparent regardless of the modal's
-// background colour (no overlay element needed).
-const RESULT_FADE_MASK = "linear-gradient(to bottom, #000 70%, transparent)";
+type FieldKind = "text" | "markdown";
 
-function isOverdue(task: Task): boolean {
-  if (!task.dueAt || task.status === "done") return false;
-  return new Date(task.dueAt).getTime() < Date.now();
+interface TemplateFieldDef {
+  key: string;
+  label: string;
+  kind: FieldKind;
+  rows?: number;
+  mono?: boolean;
 }
+
+const TEMPLATE_FIELD_DEFS: TemplateFieldDef[] = [
+  { key: "goal",               label: "Goal",                kind: "markdown", rows: 2 },
+  { key: "acceptanceCriteria", label: "Acceptance Criteria", kind: "markdown", rows: 3 },
+  { key: "context",            label: "Context",             kind: "markdown", rows: 2 },
+  { key: "constraints",        label: "Constraints",         kind: "markdown", rows: 2 },
+  { key: "scope",              label: "Scope",               kind: "markdown", rows: 2 },
+  { key: "outOfScope",         label: "Out of Scope",        kind: "markdown", rows: 2 },
+  { key: "dependencies",       label: "Dependencies",        kind: "markdown", rows: 2 },
+  { key: "risk",               label: "Risk",                kind: "markdown", rows: 2 },
+  { key: "agentPrompt",        label: "Agent Prompt",        kind: "text",     rows: 4, mono: true },
+];
+
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function toDateInputValue(value: string | null): string {
   if (!value) return "";
@@ -67,12 +101,33 @@ function toIsoDateOrNull(value: string): string | null {
   return new Date(`${value}T00:00:00`).toISOString();
 }
 
-function getClaimLabel(task: Task): string {
-  if (!task.claimedByUserId && !task.claimedByAgentId) return "Unassigned";
-  if (task.claimedByUser) return task.claimedByUser.name ?? task.claimedByUser.login;
-  if (task.claimedByAgent) return `Agent ${task.claimedByAgent.name}`;
-  return "Assigned";
+/** Parse GFM task-list items in a markdown string. Returns null when none found. */
+function parseChecklistProgress(text: string): { checked: number; total: number } | null {
+  const matches = text.match(/^- \[[ xX]\]/gm);
+  if (!matches || matches.length === 0) return null;
+  const checked = matches.filter((m) => m !== "- [ ]").length;
+  return { checked, total: matches.length };
 }
+
+function buildEdits(
+  td: Record<string, string>,
+  taskType: TaskType | "",
+): TemplateDataEdits {
+  return {
+    goal:               td.goal               ?? "",
+    acceptanceCriteria: td.acceptanceCriteria  ?? "",
+    context:            td.context             ?? "",
+    constraints:        td.constraints         ?? "",
+    scope:              td.scope               ?? "",
+    outOfScope:         td.outOfScope          ?? "",
+    dependencies:       td.dependencies        ?? "",
+    risk:               td.risk                ?? "",
+    agentPrompt:        td.agentPrompt         ?? "",
+    taskType,
+  };
+}
+
+// ── Component ──────────────────────────────────────────────────────────────
 
 export interface TaskDetailProps {
   task: Task;
@@ -89,12 +144,15 @@ export interface TaskDetailProps {
   onClose: () => void;
   onError: (message: string) => void;
   /**
-   * "modal" (default) renders inside the Modal primitive with a maximize
-   * affordance and a pinned footer. "page" renders the bare detail for the
-   * full-page /tasks/[id] route (the page owns its own chrome); Escape no
-   * longer closes, and Save/Cancel sticks to the bottom of the page.
+   * "modal" (default) renders inside the Modal primitive.
+   * "page" renders the bare detail for the full-page /tasks/[id] route.
    */
   variant?: "modal" | "page";
+  // Breadcrumb data — supplied by the page context only
+  teamName?: string;
+  teamId?: string;
+  projectName?: string;
+  projectId?: string;
 }
 
 export default function TaskDetail({
@@ -110,6 +168,10 @@ export default function TaskDetail({
   onError,
   variant = "modal",
   initialEditing = false,
+  teamName,
+  teamId,
+  projectName,
+  projectId,
 }: TaskDetailProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
@@ -123,51 +185,45 @@ export default function TaskDetail({
   const [depPickerValue, setDepPickerValue] = useState("");
   const [commentText, setCommentText] = useState("");
   const [submittingComment, setSubmittingComment] = useState(false);
-  const [confirmRemoveDepId, setConfirmRemoveDepId] = useState<string | null>(null);
-  const [confirmDeleteCommentId, setConfirmDeleteCommentId] = useState<string | null>(null);
   const [resultOverflows, setResultOverflows] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
   const reviewSectionRef = useRef<HTMLElement>(null);
 
+  // Edit-mode field state (status intentionally excluded — transitions only
+  // happen through the gated advance buttons, never via direct status PATCH).
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editPriority, setEditPriority] = useState<Priority>("MEDIUM");
-  const [editStatus, setEditStatus] = useState<Status>("open");
   const [editDueAt, setEditDueAt] = useState("");
-  const [editGoal, setEditGoal] = useState("");
-  const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState("");
-  const [editContext, setEditContext] = useState("");
-  const [editConstraints, setEditConstraints] = useState("");
-  const [editScope, setEditScope] = useState("");
-  const [editOutOfScope, setEditOutOfScope] = useState("");
-  const [editDependencies, setEditDependencies] = useState("");
-  const [editRisk, setEditRisk] = useState("");
-  const [editAgentPrompt, setEditAgentPrompt] = useState("");
   const [editTaskType, setEditTaskType] = useState<TaskType | "">("");
+  // All 9 string templateData fields consolidated into one record.
+  const [editTemplateData, setEditTemplateData] = useState<Record<string, string>>({});
+
+  const getField = (key: string): string => editTemplateData[key] ?? "";
+  const setField = (key: string, value: string): void =>
+    setEditTemplateData((prev) => ({ ...prev, [key]: value }));
 
   const initEditState = useCallback(() => {
     setEditTitle(task.title);
     setEditDescription(task.description ?? "");
     setEditPriority(task.priority);
-    setEditStatus(task.status as Status);
     setEditDueAt(toDateInputValue(task.dueAt));
-    setEditGoal(task.templateData?.goal ?? "");
-    setEditAcceptanceCriteria(task.templateData?.acceptanceCriteria ?? "");
-    setEditContext(task.templateData?.context ?? "");
-    setEditConstraints(task.templateData?.constraints ?? "");
-    setEditScope(task.templateData?.scope ?? "");
-    setEditOutOfScope(task.templateData?.outOfScope ?? "");
-    setEditDependencies(task.templateData?.dependencies ?? "");
-    setEditRisk(task.templateData?.risk ?? "");
-    setEditAgentPrompt(task.templateData?.agentPrompt ?? "");
     setEditTaskType(task.templateData?.taskType ?? "");
+    const td = task.templateData as Record<string, string | undefined> | null;
+    setEditTemplateData({
+      goal:               td?.goal               ?? "",
+      acceptanceCriteria: td?.acceptanceCriteria  ?? "",
+      context:            td?.context             ?? "",
+      constraints:        td?.constraints         ?? "",
+      scope:              td?.scope               ?? "",
+      outOfScope:         td?.outOfScope          ?? "",
+      dependencies:       td?.dependencies        ?? "",
+      risk:               td?.risk                ?? "",
+      agentPrompt:        td?.agentPrompt         ?? "",
+    });
   }, [task]);
 
-  // Reset modal state when switching to a different task (not on every poll
-  // refresh). When opened via "Edit task" (initialEditing), start in edit mode
-  // with the editors seeded so the user lands on the missing fields. Deps stay
-  // [task.id] for poll-safety; initialEditing / initEditState are intentionally
-  // excluded so a poll refresh (same id, new object) does not re-trigger.
+  // Reset state when switching to a different task (not on every poll refresh).
   useEffect(() => {
     if (initialEditing) {
       initEditState();
@@ -179,14 +235,10 @@ export default function TaskDetail({
     setDepPickerValue("");
     setShowDeleteTaskConfirm(false);
     setResultExpanded(false);
-    setConfirmRemoveDepId(null);
-    setConfirmDeleteCommentId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.id]);
 
-  // Only show the result Show-more toggle when the collapsed box actually
-  // overflows, instead of guessing from a character count that doesn't track
-  // rendered height.
+  // Only show the result Show-more toggle when the collapsed box actually overflows.
   useEffect(() => {
     const el = resultRef.current;
     if (!el || resultExpanded) return;
@@ -209,6 +261,18 @@ export default function TaskDetail({
     [task.id, reviewComment, onUpdate, onError],
   );
 
+  const handleMarkDone = useCallback(async () => {
+    setReviewBusy(true);
+    try {
+      const updated = await transitionTask(task.id, "done");
+      onUpdate(updated);
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setReviewBusy(false);
+    }
+  }, [task.id, onUpdate, onError]);
+
   const submitComment = useCallback(async () => {
     if (!commentText.trim() || submittingComment) return;
     setSubmittingComment(true);
@@ -228,7 +292,6 @@ export default function TaskDetail({
       try {
         await deleteComment(task.id, commentId);
         onUpdate({ ...task, comments: task.comments?.filter((co) => co.id !== commentId) });
-        setConfirmDeleteCommentId(null);
       } catch (err) {
         onError((err as Error).message);
       }
@@ -241,7 +304,6 @@ export default function TaskDetail({
       try {
         await removeDependency(task.id, depId);
         onUpdate({ ...task, blockedBy: task.blockedBy?.filter((d) => d.id !== depId) });
-        setConfirmRemoveDepId(null);
       } catch (err) {
         onError((err as Error).message);
       }
@@ -253,44 +315,36 @@ export default function TaskDetail({
 
   const isDirty = useMemo(() => {
     if (!isEditing) return false;
+    const td = task.templateData as Record<string, string | undefined> | null;
+    const templateDataDirty = TEMPLATE_FIELD_DEFS.some(
+      ({ key }) => (editTemplateData[key] ?? "") !== (td?.[key] ?? ""),
+    );
     return (
       editTitle !== task.title ||
       editDescription !== (task.description ?? "") ||
       editPriority !== task.priority ||
-      editStatus !== (task.status as Status) ||
       editDueAt !== toDateInputValue(task.dueAt) ||
-      editGoal !== (task.templateData?.goal ?? "") ||
-      editAcceptanceCriteria !== (task.templateData?.acceptanceCriteria ?? "") ||
-      editContext !== (task.templateData?.context ?? "") ||
-      editConstraints !== (task.templateData?.constraints ?? "") ||
-      editScope !== (task.templateData?.scope ?? "") ||
-      editOutOfScope !== (task.templateData?.outOfScope ?? "") ||
-      editDependencies !== (task.templateData?.dependencies ?? "") ||
-      editRisk !== (task.templateData?.risk ?? "") ||
-      editAgentPrompt !== (task.templateData?.agentPrompt ?? "") ||
-      editTaskType !== (task.templateData?.taskType ?? "")
+      editTaskType !== (task.templateData?.taskType ?? "") ||
+      templateDataDirty
     );
-  }, [isEditing, editTitle, editDescription, editPriority, editStatus, editDueAt, editGoal, editAcceptanceCriteria, editContext, editConstraints, editScope, editOutOfScope, editDependencies, editRisk, editAgentPrompt, editTaskType, task]);
+  }, [isEditing, editTitle, editDescription, editPriority, editDueAt, editTaskType, editTemplateData, task]);
 
-  // The complete templateData a Save would persist: seed from the stored object
-  // (carrying `prefers` and any producer-set field without an editor), then
-  // apply the editors. Single source of truth for both the Save write and the
-  // live confidence preview, so the badge reflects exactly what gets stored.
   const editedTemplateData = useMemo(
-    () => buildSavedTemplateData(task.templateData, {
-      goal: editGoal,
-      acceptanceCriteria: editAcceptanceCriteria,
-      context: editContext,
-      constraints: editConstraints,
-      scope: editScope,
-      outOfScope: editOutOfScope,
-      dependencies: editDependencies,
-      risk: editRisk,
-      agentPrompt: editAgentPrompt,
-      taskType: editTaskType,
-    }),
-    [task.templateData, editGoal, editAcceptanceCriteria, editContext, editConstraints, editScope, editOutOfScope, editDependencies, editRisk, editAgentPrompt, editTaskType],
+    () => buildSavedTemplateData(task.templateData, buildEdits(editTemplateData, editTaskType)),
+    [task.templateData, editTemplateData, editTaskType],
   );
+
+  // Live confidence score (reflects edit state in edit mode).
+  const confidenceScore = useMemo(() => {
+    if (!templateFields) return null;
+    const conf = calculateConfidence({
+      title: isEditing ? editTitle : task.title,
+      description: isEditing ? (editDescription || null) : (task.description ?? null),
+      templateData: isEditing ? editedTemplateData : task.templateData,
+      templateFields,
+    });
+    return conf.score;
+  }, [templateFields, isEditing, editTitle, editDescription, editedTemplateData, task]);
 
   const startEditing = useCallback(() => {
     initEditState();
@@ -321,25 +375,14 @@ export default function TaskDetail({
   // Keyboard shortcuts
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // When a ConfirmDialog is open it owns Escape (it calls onCancel on
-      // its own document listener), so defer: a single Escape must not fire
-      // both handlers and race (this modal's handler would reopen the
-      // discard prompt the dialog just closed).
       if (showDiscardPrompt || showDeleteTaskConfirm) return;
-      // 'e' to enter edit mode (only when no input/textarea focused)
       if (e.key === "e" && !isEditing) {
         const tag = (e.target as HTMLElement).tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
         e.preventDefault();
         startEditing();
       }
-      // Escape cancels an in-progress edit, otherwise closes the modal
-      // (which itself guards against discarding unsaved changes). This
-      // modal owns its own Escape handling, so it opts the Modal
-      // primitive out via closeOnEscape={false} to avoid double-firing.
       if (e.key === "Escape") {
-        // On the full page there is nothing to close, so Escape only
-        // cancels an in-progress edit; the modal additionally closes.
         if (isEditing) {
           e.preventDefault();
           cancelEditing();
@@ -360,7 +403,6 @@ export default function TaskDetail({
         title: editTitle.trim(),
         description: editDescription.trim() || null,
         priority: editPriority,
-        status: editStatus,
         dueAt: toIsoDateOrNull(editDueAt),
         templateData: editedTemplateData,
       });
@@ -411,16 +453,14 @@ export default function TaskDetail({
     }
   }
 
-  // Contextual one-click workflow advance (gate-respecting, unlike the
-  // edit-mode status PATCH). `start` claims + moves open → in_progress;
-  // `transition` moves in_progress → review. Both surface gate/precondition
-  // failures via onError rather than swallowing them.
+  // Gate-respecting workflow advance.
   async function handleAdvance(action: "start" | "submit_review") {
     setAdvanceBusy(true);
     try {
-      const updated = action === "start"
-        ? await startTask(task.id)
-        : await transitionTask(task.id, "review");
+      const updated =
+        action === "start"
+          ? await startTask(task.id)
+          : await transitionTask(task.id, "review");
       onUpdate(updated);
     } catch (err) {
       onError((err as Error).message);
@@ -429,573 +469,452 @@ export default function TaskDetail({
     }
   }
 
-  const webhookEvents = (task.comments ?? []).filter((c: Comment) => c.content.startsWith("[webhook]"));
-  const userComments = (task.comments ?? []).filter((c: Comment) => !c.content.startsWith("[webhook]"));
+  const webhookEvents = (task.comments ?? []).filter((c: Comment) =>
+    c.content.startsWith("[webhook]"),
+  );
+  const userComments = (task.comments ?? []).filter(
+    (c: Comment) => !c.content.startsWith("[webhook]"),
+  );
 
-  // The result box is clamped whenever it isn't expanded; the fade mask and
-  // the Show more/less toggle only appear when the measured content overflows.
   const resultClamped = !resultExpanded;
   const showResultToggle = resultOverflows || resultExpanded;
-  const canSubmitReview = Boolean(task.branchName && task.prUrl);
 
+  // ── Edit mode footer ───────────────────────────────────────────────────────
   const editFooter = isEditing ? (
-    <div style={{ display: "flex", gap: "0.45rem" }}>
-      <Button variant="ghost" size="sm" onClick={cancelEditing} disabled={savingTask}>Cancel</Button>
+    <div className="td-edit-footer">
+      <Button variant="ghost" size="sm" onClick={cancelEditing} disabled={savingTask}>
+        Cancel
+      </Button>
       <Button onClick={() => void handleSaveTask()} disabled={savingTask} loading={savingTask} size="sm">
         {savingTask ? "Saving…" : "Save"}
       </Button>
     </div>
   ) : null;
 
-  const content = (
-    <>
-        {/* Header actions */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.45rem", marginBottom: "var(--space-3)" }}>
-          <div style={{ display: "flex", gap: "0.45rem" }}>
-            {!isEditing && task.status === "open" && !task.claimedByUserId && !task.claimedByAgentId && (
-              <Button size="sm" onClick={() => void handleAdvance("start")} disabled={advanceBusy} loading={advanceBusy}>
-                Start
-              </Button>
-            )}
-            {!isEditing && task.status === "in_progress" && task.claimedByUserId === user?.id && (
-              <>
-                <Button
-                  size="sm"
-                  onClick={() => void handleAdvance("submit_review")}
-                  disabled={advanceBusy || !canSubmitReview}
-                  loading={advanceBusy}
-                  title={!canSubmitReview ? "Record a branch and PR before submitting for review" : undefined}
-                >
-                  Submit for review
-                </Button>
-                {!canSubmitReview && (
-                  <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)", alignSelf: "center" }}>
-                    Add a branch and PR first
-                  </span>
-                )}
-              </>
-            )}
-            {!isEditing && task.status === "review" && (
-              <button
-                type="button"
-                onClick={() => reviewSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
-                style={{ background: "var(--warning-muted)", border: "1px solid color-mix(in srgb, var(--warning) 40%, var(--border) 60%)", borderRadius: "var(--radius-base)", color: "var(--warning)", cursor: "pointer", fontSize: "var(--text-xs)", fontWeight: 600, padding: "0.35rem 0.6rem" }}
-              >
-                Jump to review ↓
-              </button>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: "0.45rem" }}>
-            {!isEditing && (
-              <Button variant="secondary" size="sm" onClick={startEditing}>Edit</Button>
-            )}
-            {/* Delete is intentionally only reachable from edit mode, so the
-                view header can't trigger a destructive action by accident. */}
-            {isEditing && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowDeleteTaskConfirm(true)}
-                disabled={savingTask || deletingTask}
-                style={{ color: "var(--danger)" }}
-              >
-                {deletingTask ? "Deleting…" : "Delete"}
-              </Button>
-            )}
-          </div>
-        </div>
+  // ── Header component ───────────────────────────────────────────────────────
+  const header = (
+    <TaskHeader
+      task={task}
+      user={user}
+      variant={variant}
+      teamName={teamName}
+      teamId={teamId}
+      projectName={projectName}
+      projectId={projectId}
+      isEditing={isEditing}
+      advanceBusy={advanceBusy}
+      onStartEditing={startEditing}
+      onAdvance={(action) => void handleAdvance(action)}
+      onDeleteRequest={() => setShowDeleteTaskConfirm(true)}
+      onScrollToReview={() =>
+        reviewSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
+      }
+    />
+  );
 
-        {/* ── Overview ──────────────────────────────────────────────── */}
-        <section style={{ marginBottom: "0.8rem" }}>
+  // ── Main column ────────────────────────────────────────────────────────────
+  const mainColumn = (
+    <div className="td-main">
+
+      {/* ── Description ─────────────────────────────────────── */}
+      <section className="td-section">
+        {isEditing ? (
+          <>
+            <p className="section-kicker">Overview</p>
+            <div className="td-field-row">
+              <FormField label="Title">
+                <input
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="td-form-input"
+                />
+              </FormField>
+            </div>
+            <FormField label="Description">
+              <textarea
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                rows={5}
+                className="td-form-textarea"
+              />
+            </FormField>
+          </>
+        ) : (
+          <>
+            <div className="td-section-head">
+              <h2 className="td-section-title">
+                Description
+                {task.description && (() => {
+                  const p = parseChecklistProgress(task.description);
+                  if (!p) return null;
+                  return (
+                    <span className="td-checklist-progress num">
+                      <span className="td-checklist-bar">
+                        {/* dynamic: progress bar width = percentage */}
+                        <span
+                          className="td-checklist-bar-fill"
+                          // eslint-disable-next-line no-restricted-syntax
+                          style={{ width: `${Math.round((p.checked / p.total) * 100)}%` }}
+                        />
+                      </span>
+                      {p.checked} of {p.total}
+                    </span>
+                  );
+                })()}
+              </h2>
+            </div>
+            {task.description ? (
+              <Markdown>{task.description}</Markdown>
+            ) : (
+              <p className="td-empty-desc">No description</p>
+            )}
+          </>
+        )}
+      </section>
+
+      {/* ── Workflow (edit mode: priority + due date) ─── */}
+      {isEditing && (
+        <section className="td-section">
+          <p className="section-kicker">Workflow</p>
+          <div className="td-field-row">
+            <FormField label="Priority">
+              <Select
+                value={editPriority}
+                onChange={(v) => setEditPriority(v as Priority)}
+                options={[
+                  { value: "LOW",      label: "LOW" },
+                  { value: "MEDIUM",   label: "MEDIUM" },
+                  { value: "HIGH",     label: "HIGH" },
+                  { value: "CRITICAL", label: "CRITICAL" },
+                ]}
+                className="td-form-input"
+              />
+            </FormField>
+          </div>
+          <FormField label="Due Date">
+            <input
+              type="date"
+              value={editDueAt}
+              onChange={(e) => setEditDueAt(e.target.value)}
+              className="td-form-input"
+            />
+          </FormField>
+        </section>
+      )}
+
+      {/* ── Agent Template ───────────────────────────────── */}
+      {templateFields && (
+        <section className="td-section">
+          <div className="td-section-head">
+            <h2 className="td-section-title">Agent Template</h2>
+          </div>
+          {(() => {
+            const conf = calculateConfidence({
+              title: isEditing ? editTitle : task.title,
+              description: isEditing ? editDescription || null : task.description ?? null,
+              templateData: isEditing ? editedTemplateData : task.templateData,
+              templateFields,
+            });
+            return (
+              <div className="td-conf-section">
+                <div className="td-conf-badge-row">
+                  <ConfidenceBadge score={conf.score} size="md" />
+                  {conf.score < confidenceThreshold && (
+                    <span className="td-conf-threshold-warn">
+                      Below threshold ({confidenceThreshold}) — agents cannot claim this task
+                    </span>
+                  )}
+                </div>
+                {conf.missing.length > 0 && (
+                  <p className="td-conf-missing">
+                    Missing: {conf.missing.join(", ")}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+
           {isEditing ? (
             <>
-              <p className="section-kicker">Overview</p>
-              <div style={{ marginBottom: "0.5rem" }}>
-                <FormField label="Title">
-                  <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ width: "100%" }} />
+              {TEMPLATE_FIELD_DEFS.map(({ key, label, rows, mono }) => {
+                if (!templateFields[key as keyof TemplateFields]) return null;
+                return (
+                  <div key={key} className="td-field-row">
+                    <FormField label={label}>
+                      <textarea
+                        value={getField(key)}
+                        onChange={(e) => setField(key, e.target.value)}
+                        rows={rows ?? 2}
+                        className={["td-form-textarea", mono ? "td-form-textarea--mono" : ""].filter(Boolean).join(" ")}
+                      />
+                    </FormField>
+                  </div>
+                );
+              })}
+              <div className="td-field-row">
+                <FormField label="Task Type">
+                  <Select
+                    value={editTaskType}
+                    onChange={(v) => setEditTaskType(v as TaskType | "")}
+                    options={[
+                      { value: "", label: "— none —" },
+                      ...TASK_TYPES.map((t) => ({ value: t, label: t })),
+                    ]}
+                    ariaLabel="Task type"
+                    className="td-form-input"
+                  />
                 </FormField>
               </div>
-              <FormField label="Description">
-                <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={5} style={{ width: "100%", resize: "vertical" }} />
-              </FormField>
             </>
           ) : (
-            <>
-              <h2 className="text-break-anywhere" style={{ fontSize: "var(--text-md)", fontWeight: 700, color: "var(--text)", marginBottom: "0.5rem", lineHeight: 1.3 }}>
-                {task.title}
-              </h2>
-              {/* Metadata chip row */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.65rem" }}>
-                <span className="status-chip">{STATUS_LABELS[task.status as Status]}</span>
-                <span className="status-chip" style={{ color: PRIORITY_COLORS[task.priority] }}>{task.priority}</span>
-                <span className="status-chip">{task.dueAt ? `Due ${formatDueDate(task.dueAt)}` : "No due date"}</span>
-                {isOverdue(task) && (
-                  <span className="status-chip" style={{ color: "var(--danger)", borderColor: "color-mix(in srgb, var(--danger) 55%, var(--border) 45%)" }}>Overdue</span>
-                )}
-                <span className="status-chip" style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
-                  {getClaimLabel(task)}
-                  {!task.claimedByUserId && !task.claimedByAgentId && task.status !== "open" && (
-                    <Button variant="link" size="sm" onClick={() => void handleClaim()} disabled={claimBusy} loading={claimBusy} style={{ fontSize: "var(--text-xs)" }}>
-                      Claim
-                    </Button>
-                  )}
-                  {task.claimedByUserId === user?.id && (
-                    <Button variant="link-danger" size="sm" onClick={() => void handleRelease()} disabled={claimBusy} loading={claimBusy} style={{ fontSize: "var(--text-xs)" }}>
-                      Release
-                    </Button>
-                  )}
-                </span>
-              </div>
-              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.65rem" }}>
-                <span title={formatAbsoluteDate(task.createdAt)}>Created {formatRelativeTime(task.createdAt)}</span>
-                {" · "}
-                <span title={formatAbsoluteDate(task.updatedAt)}>updated {formatRelativeTime(task.updatedAt)}</span>
-              </p>
-              {/* External Ref + Labels */}
-              {(task.externalRef || (task.labels && task.labels.length > 0)) && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginBottom: "0.65rem" }}>
-                  {task.externalRef && (
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--primary)", background: "var(--primary-muted)", borderRadius: "4px", padding: "0.15rem 0.4rem", fontWeight: 600, fontFamily: "monospace" }}>
-                      {task.externalRef}
-                    </span>
-                  )}
-                  {task.labels?.map((label) => (
-                    <span key={label} style={{ fontSize: "var(--text-xs)", color: "var(--text)", background: "color-mix(in srgb, var(--muted) 20%, transparent)", borderRadius: "4px", padding: "0.15rem 0.4rem" }}>
-                      {label}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {/* Description */}
-              {task.description ? (
-                <div className="prose-markdown">
-                  <ReactMarkdown>{task.description}</ReactMarkdown>
-                </div>
-              ) : (
-                <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", fontStyle: "italic" }}>No description</p>
-              )}
-            </>
-          )}
-        </section>
-
-        {/* ── Workflow (edit mode only) ──────────────────────────────── */}
-        {isEditing && (
-          <section style={{ marginBottom: "0.8rem" }}>
-            <p className="section-kicker">Workflow</p>
-            <div className="collapsing-grid" style={{ gap: "0.4rem", marginBottom: "0.5rem" }}>
-              <FormField label="Status">
-                <Select value={editStatus} onChange={(v) => setEditStatus(v as Status)} options={STATUSES.map((status) => ({ value: status, label: STATUS_LABELS[status] }))} style={{ width: "100%" }} />
-              </FormField>
-              <FormField label="Priority">
-                <Select value={editPriority} onChange={(v) => setEditPriority(v as Priority)} options={[{value:"LOW",label:"LOW"},{value:"MEDIUM",label:"MEDIUM"},{value:"HIGH",label:"HIGH"},{value:"CRITICAL",label:"CRITICAL"}]} style={{ width: "100%" }} />
-              </FormField>
-            </div>
-            <FormField label="Due Date">
-              <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)} style={{ width: "100%" }} />
-            </FormField>
-          </section>
-        )}
-
-        {/* ── Dependencies ──────────────────────────────────────────── */}
-        {isEditing ? (
-          <section style={{ marginBottom: "0.8rem" }}>
-            <p className="section-kicker">Dependencies</p>
-            {(task.blockedBy?.length ?? 0) === 0 && (task.blocks?.length ?? 0) === 0 ? (
-              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>No dependencies.</p>
-            ) : (
-              <div style={{ display: "grid", gap: "0.3rem", marginBottom: "0.4rem" }}>
-                {task.blockedBy?.map((dep) => (
-                  <div key={dep.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "var(--text-sm)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
-                      <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: dep.status === "done" ? "var(--success, #22c55e)" : "var(--danger)", flexShrink: 0 }} />
-                      <span style={{ color: "var(--text)" }}>{dep.title}</span>
-                      <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>({dep.status})</span>
-                    </span>
-                    {confirmRemoveDepId === dep.id ? (
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
-                        <Button variant="link-danger" size="sm" onClick={() => void removeDependencyConfirmed(dep.id)} style={{ fontSize: "var(--text-xs)" }}>Confirm?</Button>
-                        <Button variant="link" size="sm" onClick={() => setConfirmRemoveDepId(null)} style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Cancel</Button>
-                      </span>
+            <div className="td-template-fields-view">
+              {TEMPLATE_FIELD_DEFS.map(({ key, label, kind }) => {
+                if (!templateFields[key as keyof TemplateFields]) return null;
+                const value = (task.templateData as Record<string, string | undefined> | null)?.[key];
+                if (!value) return null;
+                return (
+                  <div key={key}>
+                    <span className="td-template-field-kicker">{label}</span>
+                    {kind === "text" ? (
+                      <pre className="td-template-field-pre">{value}</pre>
                     ) : (
-                      <Button variant="link" size="sm" onClick={() => setConfirmRemoveDepId(dep.id)} style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Remove</Button>
+                      <Markdown className="td-template-field-prose">{value}</Markdown>
                     )}
                   </div>
-                ))}
-                {task.blocks?.map((dep) => (
-                  <div key={dep.id} style={{ fontSize: "var(--text-xs)", color: "var(--muted)", padding: "0.2rem 0.5rem" }}>
-                    blocks: {dep.title} ({dep.status})
-                  </div>
-                ))}
-              </div>
-            )}
-            <div style={{ display: "flex", gap: "0.3rem" }}>
-              <Select
-                value={depPickerValue}
-                onChange={(v) => setDepPickerValue(v)}
-                options={[{value:"",label:"Add blocker..."},...tasks
-                  .filter((t) => t.id !== task.id && t.projectId === task.projectId && !task.blockedBy?.some((d) => d.id === t.id))
-                  .map((t) => ({value: t.id, label: t.title}))]}
-                style={{ flex: 1, fontSize: "var(--text-sm)" }}
-              />
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={!depPickerValue}
-                onClick={async () => {
-                  if (!depPickerValue) return;
-                  try {
-                    await addDependency(task.id, depPickerValue);
-                    const blockerTask = tasks.find((t) => t.id === depPickerValue);
-                    if (blockerTask) {
-                      onUpdate({ ...task, blockedBy: [...(task.blockedBy ?? []), { id: blockerTask.id, title: blockerTask.title, status: blockerTask.status }] });
-                    }
-                    setDepPickerValue("");
-                  } catch (err) {
-                    onError((err as Error).message);
-                  }
-                }}
-              >
-                Add
-              </Button>
+                );
+              })}
+              {task.templateData?.taskType && (
+                <div>
+                  <span className="td-template-field-kicker">Task Type</span>
+                  <div className="td-template-field-text">{task.templateData.taskType}</div>
+                </div>
+              )}
             </div>
-          </section>
-        ) : ((task.blockedBy?.length ?? 0) > 0 || (task.blocks?.length ?? 0) > 0) ? (
-          <CollapsibleSection key={task.id} title="Dependencies" count={(task.blockedBy?.length ?? 0) + (task.blocks?.length ?? 0)}>
-            <div style={{ display: "grid", gap: "0.3rem" }}>
+          )}
+        </section>
+      )}
+
+      {/* ── Dependencies ──────────────────────────────────── */}
+      {isEditing ? (
+        <section className="td-section">
+          <p className="section-kicker">Dependencies</p>
+          {(task.blockedBy?.length ?? 0) === 0 && (task.blocks?.length ?? 0) === 0 ? (
+            <p className="td-dep-empty">No dependencies.</p>
+          ) : (
+            <div className="td-dep-edit-list">
               {task.blockedBy?.map((dep) => (
-                <div key={dep.id} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "var(--text-sm)", padding: "0.25rem 0" }}>
-                  <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: dep.status === "done" ? "var(--success, #22c55e)" : "var(--danger)", flexShrink: 0 }} />
-                  <span style={{ color: "var(--text)" }}>{dep.title}</span>
-                  <span style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>({dep.status})</span>
+                <div key={dep.id} className="td-dep-edit-row">
+                  <span className="td-dep-edit-row-left">
+                    <span className={["td-dep-status-dot", dep.status === "done" ? "td-dep-status-dot--done" : "td-dep-status-dot--blocked"].join(" ")} />
+                    <span>{dep.title}</span>
+                    <span className="td-dep-status">({dep.status})</span>
+                  </span>
+                  <InlineConfirmDelete
+                    label="Remove"
+                    onConfirm={() => void removeDependencyConfirmed(dep.id)}
+                  />
                 </div>
               ))}
               {task.blocks?.map((dep) => (
-                <div key={dep.id} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "var(--text-xs)", color: "var(--muted)", padding: "0.2rem 0" }}>
-                  <span>blocks: {dep.title} ({dep.status})</span>
+                <div key={dep.id} className="td-dep-blocks-line">
+                  blocks: {dep.title} ({dep.status})
                 </div>
               ))}
             </div>
-          </CollapsibleSection>
-        ) : null}
+          )}
+          <div className="td-dep-picker-row">
+            <Select
+              value={depPickerValue}
+              onChange={(v) => setDepPickerValue(v)}
+              options={[
+                { value: "", label: "Add blocker..." },
+                ...tasks
+                  .filter(
+                    (t) =>
+                      t.id !== task.id &&
+                      t.projectId === task.projectId &&
+                      !task.blockedBy?.some((d) => d.id === t.id),
+                  )
+                  .map((t) => ({ value: t.id, label: t.title })),
+              ]}
+              className="td-dep-picker-select"
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!depPickerValue}
+              onClick={async () => {
+                if (!depPickerValue) return;
+                try {
+                  await addDependency(task.id, depPickerValue);
+                  const blockerTask = tasks.find((t) => t.id === depPickerValue);
+                  if (blockerTask) {
+                    onUpdate({
+                      ...task,
+                      blockedBy: [
+                        ...(task.blockedBy ?? []),
+                        { id: blockerTask.id, title: blockerTask.title, status: blockerTask.status },
+                      ],
+                    });
+                  }
+                  setDepPickerValue("");
+                } catch (err) {
+                  onError((err as Error).message);
+                }
+              }}
+            >
+              Add
+            </Button>
+          </div>
+        </section>
+      ) : (task.blockedBy?.length ?? 0) > 0 || (task.blocks?.length ?? 0) > 0 ? (
+        <CollapsibleSection
+          key={task.id}
+          title="Dependencies"
+          count={(task.blockedBy?.length ?? 0) + (task.blocks?.length ?? 0)}
+        >
+          <div className="td-dep-view-list">
+            {task.blockedBy?.map((dep) => (
+              <div key={dep.id} className="td-dep-view-row">
+                <span className={["td-dep-status-dot", dep.status === "done" ? "td-dep-status-dot--done" : "td-dep-status-dot--blocked"].join(" ")} />
+                <span>{dep.title}</span>
+                <span className="td-dep-status">({dep.status})</span>
+              </div>
+            ))}
+            {task.blocks?.map((dep) => (
+              <div key={dep.id} className="td-dep-view-blocks">
+                blocks: {dep.title} ({dep.status})
+              </div>
+            ))}
+          </div>
+        </CollapsibleSection>
+      ) : null}
 
-        {/* ── Agent Template ──────────────────────────────────────────── */}
-        {templateFields && (
-          <section style={{ marginBottom: "0.8rem" }}>
-            <p className="section-kicker">Agent Template</p>
-            {(() => {
-              const conf = calculateConfidence({
-                title: isEditing ? editTitle : task.title,
-                description: isEditing ? (editDescription || null) : (task.description ?? null),
-                templateData: isEditing ? editedTemplateData : task.templateData,
-                templateFields,
-              });
-              return (
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem" }}>
-                    <ConfidenceBadge score={conf.score} size="md" />
-                    {conf.score < confidenceThreshold && (
-                      <span style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}>
-                        Below threshold ({confidenceThreshold}) — agents cannot claim this task
-                      </span>
-                    )}
-                  </div>
-                  {conf.missing.length > 0 && (
-                    <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginBottom: "0.5rem" }}>
-                      Missing: {conf.missing.join(", ")}
-                    </p>
-                  )}
+      {/* ── Agent Output (branch / PR / result) ─────────────── */}
+      {(task.branchName || task.prUrl || task.result) && (
+        <section className="td-section">
+          <div className="td-section-head">
+            <h2 className="td-section-title">Agent Output</h2>
+          </div>
+          <div className="td-output-list">
+            {task.branchName && (
+              <div className="td-output-row">
+                <span className="td-output-label">Branch</span>
+                <code className="td-output-code">{task.branchName}</code>
+              </div>
+            )}
+            {task.prUrl && (
+              <div className="td-output-row">
+                <span className="td-output-label">PR</span>
+                <a
+                  href={task.prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {task.prNumber ? `#${task.prNumber}` : "Open PR"}
+                </a>
+              </div>
+            )}
+            {task.result && (
+              <div>
+                <span className="td-output-label td-output-label-block">Result</span>
+                <div
+                  ref={resultRef}
+                  className={[
+                    "prose-markdown td-result-section",
+                    resultClamped ? "td-result--clamped" : "",
+                    resultClamped && resultOverflows ? "td-result--masked" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                >
+                  <ReactMarkdown>{task.result}</ReactMarkdown>
                 </div>
-              );
-            })()}
-            {isEditing ? (
-              <>
-                {templateFields.goal && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Goal">
-                      <textarea value={editGoal} onChange={(e) => setEditGoal(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.acceptanceCriteria && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Acceptance Criteria">
-                      <textarea value={editAcceptanceCriteria} onChange={(e) => setEditAcceptanceCriteria(e.target.value)} rows={3} style={{ width: "100%", resize: "vertical" }} />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.context && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Context">
-                      <textarea value={editContext} onChange={(e) => setEditContext(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.constraints && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Constraints">
-                      <textarea value={editConstraints} onChange={(e) => setEditConstraints(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.scope && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Scope">
-                      <textarea value={editScope} onChange={(e) => setEditScope(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.outOfScope && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Out of Scope">
-                      <textarea value={editOutOfScope} onChange={(e) => setEditOutOfScope(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.dependencies && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Dependencies">
-                      <textarea value={editDependencies} onChange={(e) => setEditDependencies(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.risk && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Risk">
-                      <textarea value={editRisk} onChange={(e) => setEditRisk(e.target.value)} rows={2} style={{ width: "100%", resize: "vertical" }} />
-                    </FormField>
-                  </div>
-                )}
-                {templateFields.agentPrompt && (
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <FormField label="Agent Prompt">
-                      <textarea value={editAgentPrompt} onChange={(e) => setEditAgentPrompt(e.target.value)} rows={4} style={{ width: "100%", resize: "vertical", fontFamily: "var(--font-mono, monospace)" }} />
-                    </FormField>
-                  </div>
-                )}
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <FormField label="Task Type">
-                    <Select
-                      value={editTaskType}
-                      onChange={(v) => setEditTaskType(v as TaskType | "")}
-                      options={[{ value: "", label: "— none —" }, ...TASK_TYPES.map((t) => ({ value: t, label: t }))]}
-                      ariaLabel="Task type"
-                      style={{ width: "100%" }}
-                    />
-                  </FormField>
-                </div>
-              </>
-            ) : (
-              <div style={{ display: "grid", gap: "0.5rem" }}>
-                {templateFields.goal && task.templateData?.goal && (
-                  <div>
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Goal</span>
-                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.goal}</ReactMarkdown></div>
-                  </div>
-                )}
-                {templateFields.acceptanceCriteria && task.templateData?.acceptanceCriteria && (
-                  <div>
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Acceptance Criteria</span>
-                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.acceptanceCriteria}</ReactMarkdown></div>
-                  </div>
-                )}
-                {templateFields.context && task.templateData?.context && (
-                  <div>
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Context</span>
-                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.context}</ReactMarkdown></div>
-                  </div>
-                )}
-                {templateFields.constraints && task.templateData?.constraints && (
-                  <div>
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Constraints</span>
-                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.constraints}</ReactMarkdown></div>
-                  </div>
-                )}
-                {templateFields.scope && task.templateData?.scope && (
-                  <div>
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Scope</span>
-                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.scope}</ReactMarkdown></div>
-                  </div>
-                )}
-                {templateFields.outOfScope && task.templateData?.outOfScope && (
-                  <div>
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Out of Scope</span>
-                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.outOfScope}</ReactMarkdown></div>
-                  </div>
-                )}
-                {templateFields.dependencies && task.templateData?.dependencies && (
-                  <div>
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Dependencies</span>
-                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.dependencies}</ReactMarkdown></div>
-                  </div>
-                )}
-                {templateFields.risk && task.templateData?.risk && (
-                  <div>
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Risk</span>
-                    <div className="prose-markdown" style={{ marginTop: "0.15rem" }}><ReactMarkdown>{task.templateData.risk}</ReactMarkdown></div>
-                  </div>
-                )}
-                {templateFields.agentPrompt && task.templateData?.agentPrompt && (
-                  <div>
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Agent Prompt</span>
-                    <pre style={{ marginTop: "0.15rem", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-mono, monospace)", fontSize: "var(--text-xs)", background: "var(--surface-raised)", padding: "0.5rem", borderRadius: "var(--radius-sm)" }}>{task.templateData.agentPrompt}</pre>
-                  </div>
-                )}
-                {task.templateData?.taskType && (
-                  <div>
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Task Type</span>
-                    <div style={{ marginTop: "0.15rem", fontSize: "var(--text-sm)" }}>{task.templateData.taskType}</div>
-                  </div>
+                {showResultToggle && (
+                  <button
+                    type="button"
+                    className="td-result-toggle"
+                    onClick={() => setResultExpanded((v) => !v)}
+                  >
+                    {resultExpanded ? "Show less" : "Show more"}
+                  </button>
                 )}
               </div>
             )}
-          </section>
-        )}
+          </div>
+        </section>
+      )}
 
-        {/* ── Agent Output ──────────────────────────────────────────── */}
-        {(task.branchName || task.prUrl || task.result) && (
-          <section style={{ marginBottom: "0.8rem" }}>
-            <p className="section-kicker">Agent Output</p>
-            <div style={{ display: "grid", gap: "var(--space-2)" }}>
-              {task.branchName && (
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-sm)" }}>
-                  <span style={{ color: "var(--muted)", minWidth: "4rem" }}>Branch</span>
-                  <code style={{ background: "var(--surface-raised)", padding: "0.2rem 0.5rem", borderRadius: "var(--radius-sm)", fontSize: "var(--text-xs)", wordBreak: "break-all" }}>
-                    {task.branchName}
-                  </code>
-                </div>
-              )}
-              {task.prUrl && (
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-sm)" }}>
-                  <span style={{ color: "var(--muted)", minWidth: "4rem" }}>PR</span>
-                  <a
-                    href={task.prUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ fontSize: "var(--text-sm)", wordBreak: "break-all" }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {task.prNumber ? `#${task.prNumber}` : "Open PR"}
-                  </a>
-                </div>
-              )}
-              {task.result && (
-                <div style={{ fontSize: "var(--text-sm)" }}>
-                  <span style={{ color: "var(--muted)", display: "block", marginBottom: "var(--space-1)" }}>Result</span>
-                  <div
-                    ref={resultRef}
-                    className="prose-markdown"
-                    style={{
-                      fontSize: "var(--text-sm)",
-                      maxHeight: resultClamped ? RESULT_CLAMP_HEIGHT : undefined,
-                      overflow: resultClamped ? "hidden" : undefined,
-                      maskImage: resultClamped && resultOverflows ? RESULT_FADE_MASK : undefined,
-                      WebkitMaskImage: resultClamped && resultOverflows ? RESULT_FADE_MASK : undefined,
-                    }}
-                  >
-                    <ReactMarkdown>{task.result}</ReactMarkdown>
-                  </div>
-                  {showResultToggle && (
-                    <button
-                      type="button"
-                      onClick={() => setResultExpanded((v) => !v)}
-                      style={{ background: "none", border: "none", padding: "0.25rem 0", color: "var(--primary)", cursor: "pointer", fontSize: "var(--text-xs)", fontWeight: 600 }}
-                    >
-                      {resultExpanded ? "Show less" : "Show more"}
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </section>
-        )}
+      {/* ── Review panel ─────────────────────────────────────── */}
+      {task.status === "review" && (
+        <section className="td-section">
+          <ReviewPanel
+            task={task}
+            user={user}
+            requireDistinctReviewer={requireDistinctReviewer}
+            reviewComment={reviewComment}
+            onReviewCommentChange={setReviewComment}
+            reviewBusy={reviewBusy}
+            onSubmitReview={(outcome) => void submitReview(outcome)}
+            onMarkDone={() => void handleMarkDone()}
+            reviewSectionRef={reviewSectionRef}
+          />
+        </section>
+      )}
 
-        {/* ── Divider ──────────────────────────────────────────────── */}
-        <div style={{ borderTop: "1px solid var(--border)", margin: "0.6rem 0" }} />
+      {/* ── Attachments ──────────────────────────────────────── */}
+      <section className="td-section">
+        <TaskAttachmentsSection
+          taskId={task.id}
+          initial={task.attachments}
+          user={user}
+          onError={onError}
+        />
+      </section>
 
-        {/* ── Review ──────────────────────────────────────────────── */}
-        {task.status === "review" && task.claimedByUserId === user?.id && (
-          <section ref={reviewSectionRef} style={{ marginBottom: "0.8rem" }}>
-            <p className="section-kicker">Review</p>
-            {requireDistinctReviewer ? (
-              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>
-                This project requires a <strong>distinct reviewer</strong>. You claimed this task, so you cannot approve it yourself — a different user or agent must take the review lock and approve. Once approved, the task moves to done automatically.
-              </p>
-            ) : (
-              <>
-                <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.4rem" }}>This is your task. Once review is complete, mark it done.</p>
-                <Button
-                  size="sm"
-                  disabled={reviewBusy}
-                  loading={reviewBusy}
-                  onClick={async () => {
-                    setReviewBusy(true);
-                    try {
-                      // Route through /transition so the backend can enforce
-                      // workflow rules, precondition gates, and (when the
-                      // project has it on) the distinct-reviewer gate. The
-                      // old code called PATCH directly, which bypassed all
-                      // three.
-                      const updated = await transitionTask(task.id, "done");
-                      onUpdate(updated);
-                    } catch (err) {
-                      onError((err as Error).message);
-                    } finally {
-                      setReviewBusy(false);
-                    }
-                  }}
-                >
-                  Mark Done
-                </Button>
-              </>
-            )}
-          </section>
-        )}
+      {/* ── Artifacts ────────────────────────────────────────── */}
+      <section className="td-section">
+        <TaskArtifactsSection
+          taskId={task.id}
+          initial={task.artifacts}
+          user={user}
+          onError={onError}
+        />
+      </section>
 
-        {task.status === "review" && task.claimedByUserId !== user?.id && (
-          <section ref={reviewSectionRef} style={{ marginBottom: "0.8rem" }}>
-            <p className="section-kicker">Review</p>
-            <div style={{ marginBottom: "0.4rem" }}>
-              <textarea
-                value={reviewComment}
-                onChange={(e) => setReviewComment(e.target.value)}
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !reviewBusy) {
-                    e.preventDefault();
-                    void submitReview("approve");
-                  }
-                }}
-                aria-label="Review feedback"
-                placeholder="Review feedback (optional)"
-                rows={2}
-                style={{ width: "100%", resize: "vertical", fontSize: "var(--text-sm)" }}
-              />
-            </div>
-            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", margin: "0 0 0.4rem" }}>⌘/Ctrl+Enter to approve</p>
-            <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-              <Button size="sm" disabled={reviewBusy} loading={reviewBusy} onClick={() => void submitReview("approve")}>
-                Approve
-              </Button>
-              <Button variant="outline-danger" size="sm" disabled={reviewBusy} loading={reviewBusy} onClick={() => void submitReview("request_changes")}>
-                Request Changes
-              </Button>
-            </div>
-          </section>
-        )}
-
-        {/* ── Activity ──────────────────────────────────────────── */}
-        {webhookEvents.length > 0 && (
+      {/* ── Activity (webhook events) ─────────────────────────── */}
+      {webhookEvents.length > 0 && (
+        <section className="td-section">
           <CollapsibleSection key={task.id} title="Activity" count={webhookEvents.length}>
-            <div style={{ display: "grid", gap: "0.25rem", marginBottom: "0.5rem" }}>
+            <div className="td-activity-list">
               {webhookEvents.map((event: Comment) => {
                 const message = event.content.replace(/^\[webhook]\s*/, "");
-                const isTransition = message.includes("merged") || message.includes("in_progress") || message.includes("→");
-                const isReview = message.includes("approved") || message.includes("Changes requested") || message.includes("dismissed");
-                const dotColor = isTransition ? "var(--success, #22c55e)" : isReview ? "var(--warning, #eab308)" : "var(--muted)";
+                const isTransition =
+                  message.includes("merged") ||
+                  message.includes("in_progress") ||
+                  message.includes("→");
+                const isReview =
+                  message.includes("approved") ||
+                  message.includes("Changes requested") ||
+                  message.includes("dismissed");
+                const dotColor = isTransition
+                  ? "var(--status-done)"
+                  : isReview
+                    ? "var(--status-review)"
+                    : "var(--muted)";
                 return (
-                  <div key={event.id} style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", padding: "0.35rem 0.5rem", fontSize: "var(--text-xs)", color: "var(--text-secondary)", background: "var(--surface)", borderRadius: "6px" }}>
-                    <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: dotColor, flexShrink: 0, marginTop: "5px" }} />
-                    <span style={{ flex: 1, lineHeight: 1.4 }}>{message}</span>
-                    <span title={formatAbsoluteDate(event.createdAt)} style={{ color: "var(--muted)", whiteSpace: "nowrap", flexShrink: 0 }}>
+                  <div key={event.id} className="td-activity-item">
+                    <span
+                      className="td-activity-dot"
+                      // eslint-disable-next-line no-restricted-syntax
+                      style={{ background: dotColor }} /* dynamic: event type color */
+                    />
+                    <span className="td-activity-message">{message}</span>
+                    <span
+                      title={formatAbsoluteDate(event.createdAt)}
+                      className="td-activity-time"
+                    >
                       {formatRelativeTime(event.createdAt)}
                     </span>
                   </div>
@@ -1003,112 +922,97 @@ export default function TaskDetail({
               })}
             </div>
           </CollapsibleSection>
-        )}
-
-        {/* ── Artifacts ─────────────────────────────────────────── */}
-        <TaskArtifactsSection
-          taskId={task.id}
-          initial={task.artifacts}
-          user={user}
-          onError={onError}
-        />
-
-        {/* ── Attachments ───────────────────────────────────────── */}
-        <TaskAttachmentsSection
-          taskId={task.id}
-          initial={task.attachments}
-          user={user}
-          onError={onError}
-        />
-
-        {/* ── Comments ──────────────────────────────────────────── */}
-        <section>
-          <p className="section-kicker">Comments</p>
-          {userComments.length === 0 ? (
-            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>No comments yet.</p>
-          ) : (
-            <div style={{ display: "grid", gap: "0.4rem", marginBottom: "0.5rem" }}>
-              {userComments.map((comment: Comment) => {
-                const authorName = comment.authorUser?.name ?? comment.authorUser?.login ?? (comment.authorAgent ? `Agent ${comment.authorAgent.name}` : "Unknown");
-                const isOwn = comment.authorUser?.id === user?.id;
-                return (
-                  <div key={comment.id} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem", fontSize: "var(--text-sm)", background: "var(--surface)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
-                      <span style={{ fontWeight: 600, fontSize: "var(--text-xs)", color: comment.authorAgent ? "var(--primary, #3b82f6)" : "var(--text)" }}>
-                        {authorName}
-                      </span>
-                      <span style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                        <span title={formatAbsoluteDate(comment.createdAt)} style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>
-                          {formatRelativeTime(comment.createdAt)}
-                        </span>
-                        {isOwn && (
-                          confirmDeleteCommentId === comment.id ? (
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
-                              <Button variant="link-danger" size="sm" onClick={() => void deleteCommentConfirmed(comment.id)} style={{ fontSize: "var(--text-xs)" }}>Confirm?</Button>
-                              <Button variant="link" size="sm" onClick={() => setConfirmDeleteCommentId(null)} style={{ fontSize: "var(--text-xs)", color: "var(--muted)" }}>Cancel</Button>
-                            </span>
-                          ) : (
-                            <Button variant="link-danger" size="sm" onClick={() => setConfirmDeleteCommentId(comment.id)} style={{ fontSize: "var(--text-xs)" }}>Delete</Button>
-                          )
-                        )}
-                      </span>
-                    </div>
-                    <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.4, color: "var(--text)" }}>{comment.content}</p>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <div>
-            <div style={{ display: "flex", gap: "0.4rem" }}>
-              <textarea
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                    e.preventDefault();
-                    void submitComment();
-                  }
-                }}
-                aria-label="Write a comment"
-                placeholder="Write a comment..."
-                rows={2}
-                style={{ flex: 1, resize: "vertical", fontSize: "var(--text-sm)" }}
-              />
-              <Button
-                size="sm"
-                disabled={!commentText.trim() || submittingComment}
-                loading={submittingComment}
-                onClick={() => void submitComment()}
-              >
-                Send
-              </Button>
-            </div>
-            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", margin: "0.25rem 0 0" }}>⌘/Ctrl+Enter to send</p>
-          </div>
         </section>
-    </>
+      )}
+
+      {/* ── Comments ─────────────────────────────────────────── */}
+      <section className="td-section">
+        <div className="td-section-head">
+          <h2 className="td-section-title">Comments</h2>
+          {userComments.length > 0 && (
+            <span className="td-section-count num">{userComments.length}</span>
+          )}
+        </div>
+        <CommentList
+          comments={userComments}
+          user={user}
+          onConfirmDelete={(id) => void deleteCommentConfirmed(id)}
+        />
+        {/* Composer */}
+        <div className="td-composer">
+          <textarea
+            className="td-composer-input"
+            value={commentText}
+            onChange={(e) => setCommentText(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                e.preventDefault();
+                void submitComment();
+              }
+            }}
+            aria-label="Write a comment"
+            placeholder="Leave a comment… markdown supported"
+          />
+          <div className="td-composer-foot">
+            <span className="td-composer-hint">
+              <KeyHint>⌘</KeyHint> <KeyHint>↵</KeyHint> to post
+            </span>
+            <span className="td-composer-spacer" />
+            <Button
+              size="sm"
+              disabled={!commentText.trim() || submittingComment}
+              loading={submittingComment}
+              onClick={() => void submitComment()}
+            >
+              Comment
+            </Button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  );
+
+  // ── Sidebar ────────────────────────────────────────────────────────────────
+  const sidebar = (
+    <aside className="td-sidebar" aria-label="Task properties">
+      <TaskMetaSidebar
+        task={task}
+        user={user}
+        confidenceScore={confidenceScore}
+        onClaim={() => void handleClaim()}
+        onRelease={() => void handleRelease()}
+        claimBusy={claimBusy}
+      />
+    </aside>
+  );
+
+  // ── Layout ────────────────────────────────────────────────────────────────
+  const layout = (
+    <div className="td-layout">
+      {mainColumn}
+      {sidebar}
+    </div>
   );
 
   return (
     <>
       {variant === "page" ? (
-        <>
-          {content}
-          {editFooter && <div className="task-detail-page-actions">{editFooter}</div>}
-        </>
+        <div className="td-page">
+          {header}
+          {layout}
+          {editFooter && (
+            <div className="task-detail-page-actions">{editFooter}</div>
+          )}
+        </div>
       ) : (
         <Modal
           open
           onClose={handleClose}
           closeOnEscape={false}
-          title="Task Details"
+          title={task.title}
           actions={editFooter}
           headerActions={
-            // Hidden while editing: the maximize Link navigates immediately,
-            // and the /tasks/[id] page opens in view mode, so showing it
-            // mid-edit would silently drop unsaved changes — bypassing the
-            // discard guard that the X / backdrop / Escape paths honour.
             !isEditing ? (
               <Link
                 href={`/tasks/${task.id}`}
@@ -1133,7 +1037,8 @@ export default function TaskDetail({
             ) : undefined
           }
         >
-          {content}
+          {header}
+          {layout}
         </Modal>
       )}
 
