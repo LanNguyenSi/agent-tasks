@@ -5700,3 +5700,891 @@ a.proj-chip:hover {
   margin: 0 auto;
 }
 
+/* ── Settings v2 ──────────────────────────────────────────────────────────── */
+
+/* Narrow page shell variant (SSO settings page). */
+.page-shell--narrow {
+  max-width: 760px;
+}
+
+/* Two-column layout: 240px sticky side nav + content. */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: var(--space-6);
+  align-items: start;
+  margin-top: var(--space-4);
+}
+
+.settings-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* Sticky side nav: hidden under 1000px via the responsive block below. */
+.settings-side-nav {
+  position: sticky;
+  top: calc(48px + var(--space-4));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.settings-side-nav nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.settings-side-nav-group-label {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin: var(--space-3) 0 var(--space-1) 0;
+  padding: 0 var(--space-2);
+}
+
+.settings-side-nav-group-label:first-child {
+  margin-top: 0;
+}
+
+.settings-side-nav-link {
+  display: block;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-radius: var(--radius-base);
+  border-left: 2px solid transparent;
+  transition: color var(--transition-fast), background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.settings-side-nav-link:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+
+.settings-side-nav-link--active {
+  color: var(--primary-text);
+  border-left-color: var(--primary);
+  background: var(--primary-muted);
+}
+
+/* Section groups with uppercase eyebrow labels. */
+.settings-section-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.settings-group-eyebrow {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* Section heading inside a card: one step above body text. */
+.settings-section-heading {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.settings-section-desc {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  margin: 0 0 var(--space-3) 0;
+}
+
+/* Account dl: two-column key/value grid. */
+.settings-account-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.settings-account-list dt {
+  color: var(--muted);
+}
+
+.settings-account-list dd {
+  color: var(--text);
+  margin: 0;
+}
+
+/* GitHub health timestamp line. */
+.settings-github-check-time {
+  display: block;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin-top: var(--space-1);
+}
+
+/* Inline link within prose (SSO description, etc.). */
+.settings-inline-link {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.settings-inline-link:hover {
+  text-decoration: underline;
+}
+
+/* Delegation section */
+.settings-delegation-grid {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.settings-delegation-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+
+.settings-delegation-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.settings-delegation-status {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.settings-delegation-status--saved {
+  color: var(--success);
+}
+
+/* API Tokens section header row: wraps at narrow widths. */
+.settings-tokens-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.settings-tokens-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Team select row in tokens section. */
+.settings-team-select {
+  margin-bottom: var(--space-3);
+  max-width: 320px;
+}
+
+/* Documentation blocks inside CollapsibleSection. */
+.settings-docs-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+}
+
+.settings-docs-steps {
+  margin: 0 0 var(--space-1) var(--space-4);
+  padding: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.settings-docs-hint {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin: 0;
+}
+
+/* Token list */
+.settings-token-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.settings-token-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  gap: var(--space-3);
+}
+
+.settings-token-row--bordered {
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-token-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--text);
+  margin: 0 0 var(--space-1) 0;
+}
+
+.settings-token-scopes {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-1);
+}
+
+.settings-token-scope {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.settings-token-meta {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin: 0;
+}
+
+.settings-token-reveal {
+  margin-right: var(--space-1);
+}
+
+/* Token create modal inputs */
+.settings-input {
+  width: 100%;
+  display: block;
+}
+
+.settings-input--mono {
+  font-family: var(--font-mono);
+}
+
+.settings-create-token-form {
+  margin-bottom: var(--space-3);
+}
+
+/* Scope picker in create-token modal: single-column with two-line rows. */
+.settings-scope-grid {
+  margin-bottom: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings-scope-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-base);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background var(--transition-fast);
+}
+
+.settings-scope-row:hover {
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+
+/* Warning tint for sensitive scopes (sso:admin, github:pr_merge). */
+.settings-scope-row--sensitive {
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  border-color: color-mix(in srgb, var(--warning) 25%, var(--border) 75%);
+}
+
+.settings-scope-row--sensitive:hover {
+  background: color-mix(in srgb, var(--warning) 13%, transparent);
+}
+
+.settings-scope-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-scope-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text);
+  background: none;
+}
+
+.settings-scope-label {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.settings-scope-hint {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin: 0;
+}
+
+.settings-modal-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* SSO page */
+.settings-breadcrumb {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+
+.settings-breadcrumb:hover {
+  color: var(--text);
+}
+
+.settings-sso-lock-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── CopyableCode ──────────────────────────────────────────────── */
+
+.copyable-code {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.copyable-code-label {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.copyable-code-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.copyable-code-value {
+  flex: 1 1 280px;
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-base);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.copyable-code-btn {
+  flex-shrink: 0;
+}
+
+/* ── ConnectAgentModal v2 ──────────────────────────────────────── */
+
+.connect-agent-intro {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.connect-agent-summary {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin: 0 0 var(--space-3) 0;
+}
+
+.connect-agent-tabs {
+  margin-bottom: var(--space-3);
+}
+
+.connect-agent-generate {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
+}
+
+.connect-agent-generating-hint {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.connect-agent-snippet {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.connect-agent-snippet--sm {
+  margin: 0 0 var(--space-2) 0;
+  border-radius: var(--radius-base);
+  padding: var(--space-2) var(--space-3);
+}
+
+.connect-agent-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.connect-agent-verify {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin: 0 0 var(--space-3) 0;
+}
+
+.connect-agent-http-alt {
+  margin-bottom: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.connect-agent-http-alt-summary {
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: var(--space-2);
+}
+
+.connect-agent-http-alt-desc {
+  margin: 0 0 var(--space-2) 0;
+}
+
+.connect-agent-link {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.connect-agent-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Teams page v2 ─────────────────────────────────────────────── */
+
+.teams-team-switcher {
+  max-width: 240px;
+  margin-bottom: var(--space-2);
+}
+
+.teams-page-title {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  margin: 0 0 var(--space-1) 0;
+}
+
+.teams-project-count {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.teams-filter-card {
+  margin-bottom: var(--space-3);
+}
+
+.teams-search-input {
+  width: 100%;
+}
+
+.teams-github-only-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  padding-left: var(--space-1);
+}
+
+.teams-count-hint {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin: 0;
+}
+
+.teams-slug-hint {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin: calc(-1 * var(--space-1)) 0 var(--space-3) 0;
+}
+
+.teams-github-repo-field {
+  margin-bottom: var(--space-3);
+}
+
+.project-card {
+  position: relative;
+  height: 100%;
+}
+
+.project-card-link {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+
+.project-card-title-row {
+  margin-bottom: var(--space-1);
+  padding-right: var(--space-5);
+}
+
+.project-card-title {
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+  font-size: var(--text-base);
+}
+
+.project-card-repo {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.project-card-desc {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.project-card-chip-placeholder {
+  min-height: 1.6rem;
+}
+
+.project-card-chip {
+  color: var(--primary-text);
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border) 45%);
+  font-size: var(--text-xs);
+}
+
+.project-card--skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+
+/* Disabled dropdown item (non-interactive muted text). */
+.app-dropdown-item-disabled {
+  color: var(--muted);
+  cursor: default;
+  margin: 0;
+}
+
+/* ── NotificationWebhookSection v2 ─────────────────────────────── */
+
+.notification-webhook-section {
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.notification-webhook-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin: 0 0 var(--space-1) 0;
+  color: var(--text);
+}
+
+.notification-webhook-desc {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.notification-webhook-field-label {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.notification-webhook-input {
+  width: 100%;
+  font-size: var(--text-sm);
+}
+
+.notification-webhook-input--flex {
+  flex: 1;
+  width: auto;
+}
+
+.notification-webhook-hint {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin: 2px 0 var(--space-2) 0;
+}
+
+.notification-webhook-secret-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.notification-webhook-redacted {
+  flex: 1;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+/* ── Settings v2 responsive ────────────────────────────────────── */
+
+@media (max-width: 1000px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-side-nav {
+    display: none;
+  }
+}
+
+/* ── Auth v2 ────────────────────────────────────────────────────── */
+/* Single-width centered shell used by /auth, /onboarding, /invite, /auth/error. */
+/* Width is fixed at 440px via the .auth-shell-inner max-width below.            */
+
+.auth-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+.auth-shell-inner {
+  width: 100%;
+  max-width: 440px;
+}
+
+.auth-shell-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+  text-align: center;
+}
+
+.auth-shell-home-link {
+  display: block;
+  line-height: 0;
+  text-decoration: none;
+  border-radius: var(--radius-base);
+}
+
+.auth-shell-home-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+.auth-shell-logo {
+  width: 40px;
+  height: 40px;
+}
+
+.auth-shell-heading {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin: 0;
+}
+
+.auth-shell-subtitle {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+/* Card frame derived from .landing-card: gradient-wash + accent border. */
+.auth-shell-card {
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--primary-border) 40%);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(360px 200px at -5% -20%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 60%),
+    radial-gradient(260px 160px at 108% -8%, color-mix(in srgb, var(--success) 7%, transparent), transparent 55%),
+    var(--surface);
+  padding: var(--space-5);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+}
+
+/* Grid for spacing between form fields and major card sections. */
+.auth-form-grid {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/* Inputs inside an auth grid fill their cell. */
+.auth-form-grid input {
+  display: block;
+  width: 100%;
+}
+
+/* "or continue with email" hairline divider. */
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* GitHub primary button: full-width, flex row, icon + label. */
+.auth-github-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  text-decoration: none;
+}
+
+.auth-github-btn[aria-disabled="true"] {
+  opacity: 0.65;
+  pointer-events: none;
+  cursor: default;
+}
+
+/* Full-width submit button. */
+.auth-btn-full {
+  width: 100%;
+}
+
+/* Slug / mono input (onboarding team slug). */
+.auth-slug-input {
+  font-family: var(--font-mono);
+}
+
+/* User avatar on onboarding card. */
+.auth-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-full);
+  display: block;
+  margin: 0 auto var(--space-3);
+}
+
+/* Muted helper text rendered below a form control (via FormField hint prop). */
+.form-field-hint {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin: var(--space-1) 0 0 0;
+}
+
+/* Muted text lines inside auth cards (invite, onboarding notes). */
+.auth-muted-line {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+/* Mode-toggle text link at the bottom of the auth card. */
+.auth-mode-toggle {
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.auth-mode-toggle-btn {
+  background: none;
+  border: none;
+  color: var(--primary-text);
+  font-size: inherit;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+  text-underline-offset: 2px;
+}
+
+.auth-mode-toggle-btn:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+/* "Forgot password" hint in login mode. */
+.auth-forgot-hint {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin: 0;
+}
+
+/* Sign-out link row in onboarding (Button variant="ghost" renders inline). */
+.auth-signout-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-4);
+}
+
+/* Welcome header inside the onboarding card (avatar + name). */
+.auth-welcome-header {
+  text-align: center;
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.auth-welcome-name {
+  font-size: var(--text-md);
+  font-weight: 600;
+  margin: 0 0 var(--space-1) 0;
+  color: var(--text);
+}
+
+.auth-welcome-sub {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+/* Error heading in /auth/error card (danger-colored). */
+.auth-error-heading {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--danger);
+  margin: 0 0 var(--space-3) 0;
+}
+
+.auth-error-copy {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-5) 0;
+}
+

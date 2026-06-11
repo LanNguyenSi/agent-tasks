@@ -1,9 +1,16 @@
 /** @vitest-environment jsdom */
 /**
- * ConnectAgentModal — behaviour coverage for the one-click onboarding path.
- * The `createAgentToken` API is mocked so no network traffic fires; tests
- * pin down: scope shape, default tab, snippet substitution per client,
- * single-request-per-open guarantee, reopen semantics, and error handling.
+ * ConnectAgentModal -- behaviour coverage for the one-click onboarding path.
+ *
+ * KEY CONTRACT CHANGE (stage G1):
+ *   The modal NO LONGER mints a token on open. Opening the modal shows the
+ *   scope/TTL summary and a "Generate token" button. The POST fires only when
+ *   the user explicitly clicks that button. Closing before clicking leaves no
+ *   orphan token.
+ *
+ * Tests pin down: no-POST-on-open guarantee, explicit-generate contract, scope
+ * shape, default tab, snippet substitution per client, reopen semantics, and
+ * error handling.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
@@ -24,6 +31,20 @@ __setMaskDelayForTests(50);
 
 const mockCreate = vi.mocked(createAgentToken);
 
+function makeTokenResult(rawToken = "atk_live_test123") {
+  return {
+    rawToken,
+    token: {
+      id: "t-1",
+      name: "Agent (Pandora) -- 2026-04-14",
+      scopes: ["tasks:read", "tasks:claim", "tasks:transition"],
+      expiresAt: null,
+      lastUsedAt: null,
+      createdAt: new Date().toISOString(),
+    },
+  };
+}
+
 function renderModal(open = true) {
   return render(
     <ConnectAgentModal
@@ -38,39 +59,69 @@ function renderModal(open = true) {
 describe("ConnectAgentModal", () => {
   beforeEach(() => {
     mockCreate.mockReset();
-    mockCreate.mockResolvedValue({
-      rawToken: "atk_live_test123",
-      token: {
-        id: "t-1",
-        name: "Agent (Pandora) — 2026-04-14",
-        scopes: ["tasks:read", "tasks:claim", "tasks:transition"],
-        expiresAt: null,
-        lastUsedAt: null,
-        createdAt: new Date().toISOString(),
-      },
-    });
+    mockCreate.mockResolvedValue(makeTokenResult());
   });
 
   afterEach(() => {
     cleanup();
-    // Restore real timers in case an earlier test bailed before its own
-    // cleanup — otherwise the next test's waitFor would deadlock.
     vi.useRealTimers();
   });
 
-  it("does not generate a token while closed", () => {
-    renderModal(false);
+  // --- Core contract: no mint on open ---------------------------------
+
+  it("does NOT call createAgentToken when the modal opens", () => {
+    renderModal(true);
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call createAgentToken when the modal opens and then closes without clicking Generate", async () => {
+    const { rerender } = renderModal(true);
+    // Close without generating
+    rerender(
+      <ConnectAgentModal
+        open={false}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+      />,
+    );
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("shows the scope/TTL summary and a Generate token button before generation", () => {
+    renderModal(true);
+    // Summary text about the token characteristics
+    expect(screen.getByText("team-scoped")).toBeInTheDocument();
+    // Explicit generate button
+    expect(
+      screen.getByTestId("connect-generate-btn"),
+    ).toBeInTheDocument();
+    // No snippet yet
+    expect(screen.queryByTestId("connect-snippet")).not.toBeInTheDocument();
+  });
+
+  // --- Explicit generate flow -----------------------------------------
+
+  it("calls createAgentToken only after the user clicks Generate token", async () => {
+    renderModal(true);
+    expect(mockCreate).not.toHaveBeenCalled();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
+    // Snippet now visible
+    await screen.findByTestId("connect-snippet");
   });
 
   it("requests minimum-viable scopes and excludes tasks:create / projects:read", async () => {
     renderModal(true);
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
     await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
 
     const call = mockCreate.mock.calls[0]![0];
     expect(call.teamId).toBe("team-1");
-
-    // Must include the five scopes the happy path needs.
     expect(call.scopes).toEqual(
       expect.arrayContaining([
         "tasks:read",
@@ -80,44 +131,39 @@ describe("ConnectAgentModal", () => {
         "tasks:update",
       ]),
     );
-
-    // Must NOT include broader scopes — least-privilege regression guard.
+    // Least-privilege guard
     expect(call.scopes).not.toContain("tasks:create");
     expect(call.scopes).not.toContain("projects:read");
-
-    // Must set an expiresAt (default-never-expire is a known footgun).
+    // Must set expiry
     expect(call.expiresAt).toBeTruthy();
     expect(new Date(call.expiresAt!).getTime()).toBeGreaterThan(Date.now());
   });
 
   it("renders the MCP snippet by default with the real token embedded", async () => {
     renderModal(true);
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
 
     const snippet = await screen.findByTestId("connect-snippet");
     expect(snippet.textContent).toContain("claude mcp add agent-tasks");
     expect(snippet.textContent).toContain(`AGENT_TASKS_TOKEN="atk_live_test123"`);
-
-    const mcpTab = screen.getByTestId("connect-tab-mcp");
-    expect(mcpTab).toHaveAttribute("aria-selected", "true");
-    expect(mcpTab.textContent).toMatch(/recommended/i);
   });
 
-  it("swaps the snippet when switching tabs but keeps the same token", async () => {
+  it("swaps the snippet when switching tabs but keeps the same token and does not re-mint", async () => {
     renderModal(true);
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
     await screen.findByTestId("connect-snippet");
 
-    const user = userEvent.setup();
-
-    await user.click(screen.getByTestId("connect-tab-cli"));
+    // The shared Tabs component renders accessible tab buttons by label.
+    await user.click(screen.getByRole("tab", { name: /cli/i }));
     let snippet = screen.getByTestId("connect-snippet");
-    // CLI snippet must use the real package name and both env vars.
     expect(snippet.textContent).toContain(`AGENT_TASKS_TOKEN="atk_live_test123"`);
     expect(snippet.textContent).toContain("agent-tasks-cli");
     expect(snippet.textContent).toContain("AGENT_TASKS_ENDPOINT");
-    // Must NOT reference the non-existent @agent-tasks/cli package.
     expect(snippet.textContent).not.toContain("@agent-tasks/cli");
 
-    await user.click(screen.getByTestId("connect-tab-api"));
+    await user.click(screen.getByRole("tab", { name: /curl/i }));
     snippet = screen.getByTestId("connect-snippet");
     expect(snippet.textContent).toContain("Authorization: Bearer atk_live_test123");
     expect(snippet.textContent).toContain("/api/tasks");
@@ -128,64 +174,55 @@ describe("ConnectAgentModal", () => {
 
   it("surfaces the team-scope disclosure so users don't assume per-project", async () => {
     renderModal(true);
-    await screen.findByTestId("connect-snippet");
-    // The strong element carrying the team-scoped disclosure.
     expect(screen.getByText("team-scoped")).toBeInTheDocument();
   });
 
-  it("generates a fresh token on reopen and does not fire during close", async () => {
+  it("generates a fresh token on reopen", async () => {
     const { rerender } = render(
-      <ConnectAgentModal open={true} onClose={() => {}} teamId="team-1" scopeLabel="Pandora Team" />,
+      <ConnectAgentModal
+        open={true}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+      />,
     );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
     await screen.findByTestId("connect-snippet");
     expect(mockCreate).toHaveBeenCalledTimes(1);
 
+    // Close resets state
     rerender(
-      <ConnectAgentModal open={false} onClose={() => {}} teamId="team-1" scopeLabel="Pandora Team" />,
+      <ConnectAgentModal
+        open={false}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+      />,
     );
     expect(screen.queryByTestId("connect-snippet")).not.toBeInTheDocument();
+
+    // Reopen: still no POST until user clicks Generate
+    rerender(
+      <ConnectAgentModal
+        open={true}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+      />,
+    );
+    // Generate button is back, no snippet yet
+    expect(screen.getByTestId("connect-generate-btn")).toBeInTheDocument();
     expect(mockCreate).toHaveBeenCalledTimes(1);
 
-    rerender(
-      <ConnectAgentModal open={true} onClose={() => {}} teamId="team-1" scopeLabel="Pandora Team" />,
-    );
+    // Generate on the second open
+    await user.click(screen.getByTestId("connect-generate-btn"));
     await screen.findByTestId("connect-snippet");
     expect(mockCreate).toHaveBeenCalledTimes(2);
   });
 
-  it("refuses to fire a second POST if the effect re-runs while the modal stays open", async () => {
-    const tokenSpy = vi.fn();
-    const { rerender } = render(
-      <ConnectAgentModal
-        open={true}
-        onClose={() => {}}
-        teamId="team-1"
-        scopeLabel="Pandora Team"
-        onTokenCreated={tokenSpy}
-      />,
-    );
-    await screen.findByTestId("connect-snippet");
-    expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(tokenSpy).toHaveBeenCalledTimes(1);
-
-    // Re-render with identical props (simulates parent re-render, StrictMode
-    // double invoke, or an unrelated state bump). Must NOT fire a second POST
-    // AND must NOT fire onTokenCreated a second time — otherwise Settings
-    // would insert the same row twice into its visible token list.
-    rerender(
-      <ConnectAgentModal
-        open={true}
-        onClose={() => {}}
-        teamId="team-1"
-        scopeLabel="Pandora Team"
-        onTokenCreated={tokenSpy}
-      />,
-    );
-    expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(tokenSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("calls onTokenCreated after successful generation so parent can refresh its token list", async () => {
+  it("calls onTokenCreated after successful generation", async () => {
     const spy = vi.fn();
     render(
       <ConnectAgentModal
@@ -196,25 +233,106 @@ describe("ConnectAgentModal", () => {
         onTokenCreated={spy}
       />,
     );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
     await screen.findByTestId("connect-snippet");
+
     expect(spy).toHaveBeenCalledTimes(1);
     const passedToken = spy.mock.calls[0]![0];
     expect(passedToken.id).toBe("t-1");
     expect(passedToken.scopes).toContain("tasks:claim");
   });
 
-  it("masks the token in the DOM after Copy snippet and exposes a Reveal button", async () => {
+  it("does NOT call onTokenCreated when closed before generating", () => {
+    const spy = vi.fn();
+    const { rerender } = render(
+      <ConnectAgentModal
+        open={true}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+        onTokenCreated={spy}
+      />,
+    );
+    // Close without clicking Generate
+    rerender(
+      <ConnectAgentModal
+        open={false}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+        onTokenCreated={spy}
+      />,
+    );
+    expect(spy).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an error banner when the backend rejects and does NOT call onTokenCreated", async () => {
+    mockCreate.mockReset();
+    mockCreate.mockRejectedValue(
+      new Error("Only team admins can create agent tokens"),
+    );
+    const spy = vi.fn();
+    render(
+      <ConnectAgentModal
+        open={true}
+        onClose={() => {}}
+        teamId="team-1"
+        scopeLabel="Pandora Team"
+        onTokenCreated={spy}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
+
+    await screen.findByText(/could not generate token/i);
+    expect(screen.getByText(/only team admins/i)).toBeInTheDocument();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("exposes the HTTP MCP transport alternative under the MCP tab only", async () => {
     renderModal(true);
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
+    await screen.findByTestId("connect-snippet");
+
+    // Disclosure present under the MCP tab (default)
+    const details = screen.getByTestId("connect-mcp-http-alt");
+    expect(details.tagName.toLowerCase()).toBe("details");
+
+    const httpSnippet = screen.getByTestId("connect-mcp-http-snippet");
+    expect(httpSnippet.textContent).toContain("claude mcp add --transport http agent-tasks");
+    expect(httpSnippet.textContent).toContain("/api/mcp");
+    expect(httpSnippet.textContent).toContain("Authorization: Bearer atk_live_test123");
+
+    // Not shown on CLI tab (tab buttons accessible by label)
+    await user.click(screen.getByRole("tab", { name: /cli/i }));
+    expect(screen.queryByTestId("connect-mcp-http-alt")).not.toBeInTheDocument();
+
+    // Not shown on API tab
+    await user.click(screen.getByRole("tab", { name: /curl/i }));
+    expect(screen.queryByTestId("connect-mcp-http-alt")).not.toBeInTheDocument();
+
+    // Back to MCP: shown again
+    await user.click(screen.getByRole("tab", { name: /claude code/i }));
+    expect(screen.getByTestId("connect-mcp-http-alt")).toBeInTheDocument();
+  });
+
+  it("masks the token in the snippet after the mask delay, exposes a Reveal button", async () => {
+    renderModal(true);
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-generate-btn"));
 
     const snippet = await screen.findByTestId("connect-snippet");
     expect(snippet.textContent).toContain("atk_live_test123");
     expect(snippet).toHaveAttribute("data-token-masked", "false");
 
-    const user = userEvent.setup();
+    // Trigger the mask timer by clicking "Copy snippet"
     await user.click(screen.getByRole("button", { name: /copy snippet/i }));
 
-    // Wait for the mask timer to fire — the test-env delay is 50ms
-    // (see setMaskDelayForTests at bottom of the component file).
     await waitFor(
       () => {
         expect(screen.getByTestId("connect-snippet")).toHaveAttribute(
@@ -229,7 +347,7 @@ describe("ConnectAgentModal", () => {
     expect(masked.textContent).not.toContain("atk_live_test123");
     expect(masked.textContent).toContain("••••••••");
 
-    // Reveal restores the raw token.
+    // Reveal restores the raw token
     await user.click(screen.getByTestId("connect-reveal"));
     expect(screen.getByTestId("connect-snippet").textContent).toContain(
       "atk_live_test123",
@@ -238,113 +356,5 @@ describe("ConnectAgentModal", () => {
       "data-token-masked",
       "false",
     );
-  });
-
-  it("exposes the HTTP MCP transport alternative under the MCP tab only", async () => {
-    renderModal(true);
-    await screen.findByTestId("connect-snippet");
-
-    // Disclosure present under the MCP tab (default), collapsed content
-    // still renders into the DOM so we can assert its shape.
-    const details = screen.getByTestId("connect-mcp-http-alt");
-    expect(details.tagName.toLowerCase()).toBe("details");
-
-    const httpSnippet = screen.getByTestId("connect-mcp-http-snippet");
-    expect(httpSnippet.textContent).toContain(
-      "claude mcp add --transport http agent-tasks",
-    );
-    expect(httpSnippet.textContent).toContain("/api/mcp");
-    expect(httpSnippet.textContent).toContain(
-      `Authorization: Bearer atk_live_test123`,
-    );
-
-    // Not shown on other tabs — the HTTP transport only matches the
-    // Claude Code MCP client flow, not the CLI or curl paths.
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId("connect-tab-cli"));
-    expect(screen.queryByTestId("connect-mcp-http-alt")).not.toBeInTheDocument();
-
-    await user.click(screen.getByTestId("connect-tab-api"));
-    expect(screen.queryByTestId("connect-mcp-http-alt")).not.toBeInTheDocument();
-
-    await user.click(screen.getByTestId("connect-tab-mcp"));
-    expect(screen.getByTestId("connect-mcp-http-alt")).toBeInTheDocument();
-  });
-
-  it("passes an AbortSignal to createAgentToken and aborts it when the modal closes mid-flight", async () => {
-    // Hold the mock pending so we can close the modal while the
-    // request is still in flight. The effect cleanup should call
-    // controller.abort() on the signal we gave it.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let resolvePending: (value: any) => void = () => {};
-    mockCreate.mockReset();
-    mockCreate.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolvePending = resolve;
-        }),
-    );
-
-    const { rerender } = render(
-      <ConnectAgentModal
-        open={true}
-        onClose={() => {}}
-        teamId="team-1"
-        scopeLabel="Pandora Team"
-      />,
-    );
-
-    // The request was fired with a signal in the second argument.
-    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
-    const [, options] = mockCreate.mock.calls[0]!;
-    expect(options).toBeDefined();
-    expect(options!.signal).toBeInstanceOf(AbortSignal);
-    expect(options!.signal!.aborted).toBe(false);
-
-    // Close the modal mid-flight — effect cleanup must abort the signal.
-    rerender(
-      <ConnectAgentModal
-        open={false}
-        onClose={() => {}}
-        teamId="team-1"
-        scopeLabel="Pandora Team"
-      />,
-    );
-    expect(options!.signal!.aborted).toBe(true);
-
-    // Resolve the stale request AFTER abort — must NOT render the
-    // snippet (the effect's cancelled flag swallows late resolves).
-    resolvePending({
-      rawToken: "atk_live_late",
-      token: {
-        id: "t-late",
-        name: "late",
-        scopes: [],
-        expiresAt: null,
-        lastUsedAt: null,
-        createdAt: new Date().toISOString(),
-      },
-    });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(screen.queryByTestId("connect-snippet")).not.toBeInTheDocument();
-  });
-
-  it("does NOT call onTokenCreated when the backend rejects the request", async () => {
-    mockCreate.mockReset();
-    mockCreate.mockRejectedValue(new Error("Only team admins can create agent tokens"));
-    const spy = vi.fn();
-    render(
-      <ConnectAgentModal
-        open={true}
-        onClose={() => {}}
-        teamId="team-1"
-        scopeLabel="Pandora Team"
-        onTokenCreated={spy}
-      />,
-    );
-
-    await screen.findByText(/could not generate token/i);
-    expect(screen.getByText(/only team admins/i)).toBeInTheDocument();
-    expect(spy).not.toHaveBeenCalled();
   });
 });

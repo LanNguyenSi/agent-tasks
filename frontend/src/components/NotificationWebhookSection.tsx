@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "./ui/Button";
 
 /**
  * Project settings form section for the outbound notification webhook.
  *
- * Controlled component — parent owns the draft state so it can fold the
+ * Controlled component -- parent owns the draft state so it can fold the
  * values into the existing project-settings save handler. The "Replace
  * secret" affordance is local UI state (whether the password field is
  * shown vs the redacted "•••• (set)" label) and is reset every time the
@@ -27,9 +28,9 @@ export interface NotificationWebhookSectionProps {
    * displayed back from the server (the API redacts it).
    *
    * Semantics for the parent's save handler:
-   *  - `null`  → do not touch the secret on this save
-   *  - `""`    → clear the secret on the server
-   *  - other   → set/replace the secret with this value
+   *  - `null`  -- do not touch the secret on this save
+   *  - `""`    -- clear the secret on the server
+   *  - other   -- set/replace the secret with this value
    */
   secretDraft: string | null;
   onSecretDraftChange: (value: string | null) => void;
@@ -53,18 +54,17 @@ export function NotificationWebhookSection({
   return (
     <div
       data-testid="notification-webhook-section"
-      style={{ marginBottom: "0.75rem", paddingBottom: "0.75rem", borderBottom: "1px solid var(--border)" }}
+      className="notification-webhook-section"
     >
-      <p style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: "0.4rem" }}>
-        Notification webhook
-      </p>
-      <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginBottom: "0.5rem" }}>
-        Opt-in push delivery: every Signal also POSTs here in addition to the polling channel. Leave blank to disable.
+      <p className="notification-webhook-title">Notification webhook</p>
+      <p className="notification-webhook-desc">
+        Opt-in push delivery: every Signal also POSTs here in addition to the polling
+        channel. Leave blank to disable.
       </p>
 
       <label
         htmlFor="notification-webhook-url"
-        style={{ display: "block", fontSize: "var(--text-xs)", color: "var(--muted)", marginBottom: "0.2rem" }}
+        className="notification-webhook-field-label"
       >
         Webhook URL
       </label>
@@ -74,9 +74,9 @@ export function NotificationWebhookSection({
         value={urlDraft}
         onChange={(e) => onUrlDraftChange(e.target.value)}
         placeholder={initialWebhookUrl ?? "https://example.com/agent-tasks-inbox"}
-        style={{ width: "100%", fontSize: "var(--text-sm)" }}
+        className="notification-webhook-input"
       />
-      <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginTop: "0.2rem", marginBottom: "0.5rem" }}>
+      <p className="notification-webhook-hint">
         We POST every Signal to this URL. See the{" "}
         <a
           href="https://github.com/LanNguyenSi/agent-tasks/blob/master/docs/notification-webhooks.md"
@@ -90,34 +90,40 @@ export function NotificationWebhookSection({
 
       <label
         htmlFor="notification-webhook-secret"
-        style={{ display: "block", fontSize: "var(--text-xs)", color: "var(--muted)", marginBottom: "0.2rem" }}
+        className="notification-webhook-field-label"
       >
         Signing secret (optional)
       </label>
       {showSecretInput ? (
-        <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+        <div className="notification-webhook-secret-row">
           <input
             id="notification-webhook-secret"
             type={reveal ? "text" : "password"}
             value={secretDraft ?? ""}
             onChange={(e) => onSecretDraftChange(e.target.value)}
-            placeholder={hasSecret ? "Enter a new value to replace the current secret" : "shared secret"}
+            placeholder={
+              hasSecret
+                ? "Enter a new value to replace the current secret"
+                : "shared secret"
+            }
             autoComplete="off"
-            style={{ flex: 1, fontSize: "var(--text-sm)" }}
+            className="notification-webhook-input notification-webhook-input--flex"
           />
-          <button
+          <Button
             type="button"
-            className="filter-chip"
+            variant="ghost"
+            size="sm"
             onClick={() => setReveal((r) => !r)}
             aria-label={reveal ? "Hide signing secret" : "Show signing secret"}
             aria-pressed={reveal}
           >
             {reveal ? "Hide" : "Show"}
-          </button>
+          </Button>
           {hasSecret && (
-            <button
+            <Button
               type="button"
-              className="filter-chip"
+              variant="ghost"
+              size="sm"
               onClick={() => {
                 onSecretDraftChange(null);
                 setReveal(false);
@@ -125,28 +131,31 @@ export function NotificationWebhookSection({
               aria-label="Cancel secret replacement"
             >
               Cancel
-            </button>
+            </Button>
           )}
         </div>
       ) : (
-        <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+        <div className="notification-webhook-secret-row">
           <span
             data-testid="notification-webhook-secret-redacted"
-            style={{ flex: 1, fontSize: "var(--text-sm)", color: "var(--muted)" }}
+            className="notification-webhook-redacted"
           >
             •••• (set)
           </span>
-          <button
+          <Button
             type="button"
-            className="filter-chip"
+            variant="ghost"
+            size="sm"
             onClick={() => onSecretDraftChange("")}
           >
             Replace
-          </button>
+          </Button>
         </div>
       )}
-      <p style={{ fontSize: "var(--text-xs)", color: "var(--muted)", marginTop: "0.2rem" }}>
-        If set, requests include <code>X-AgentTasks-Signature: sha256=&lt;hmac&gt;</code> over the raw body. Recommended for production endpoints.
+      <p className="notification-webhook-hint">
+        If set, requests include{" "}
+        <code>X-AgentTasks-Signature: sha256=&lt;hmac&gt;</code> over the raw body.
+        Recommended for production endpoints.
       </p>
     </div>
   );
@@ -155,23 +164,21 @@ export function NotificationWebhookSection({
 /**
  * Translate the section's draft state into the body fields the
  * `updateProject` PATCH expects. Returns `undefined` for keys that should
- * not be touched on this save (so the existing PATCH semantics — "omit =
- * leave unchanged" — are preserved for unmodified fields).
- *
- * Conventions:
- *  - URL: if the draft equals the server's current value, omit. Otherwise
- *    send the trimmed value (empty string clears, server normalizes to
- *    null).
- *  - Secret: if the draft is `null`, the operator left the redacted state
- *    untouched → omit. If the draft is `""`, clear. Otherwise send the
- *    new value.
+ * not be touched on this save (so the existing PATCH semantics -- "omit =
+ * leave unchanged" -- are preserved for unmodified fields).
  */
 export function buildWebhookPatch(args: {
   initialWebhookUrl: string | null;
   urlDraft: string;
   secretDraft: string | null;
-}): { notificationWebhookUrl?: string | null; notificationWebhookSecret?: string | null } {
-  const out: { notificationWebhookUrl?: string | null; notificationWebhookSecret?: string | null } = {};
+}): {
+  notificationWebhookUrl?: string | null;
+  notificationWebhookSecret?: string | null;
+} {
+  const out: {
+    notificationWebhookUrl?: string | null;
+    notificationWebhookSecret?: string | null;
+  } = {};
   const trimmed = args.urlDraft.trim();
   const currentUrl = args.initialWebhookUrl ?? "";
   if (trimmed !== currentUrl) {

@@ -1,5 +1,6 @@
 // FormField: associates a label with its control.
 // All geometry in .form-field-label class in globals.css.
+// Optional hint: muted helper text rendered below the control.
 
 import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from "react";
 import Select from "./Select";
@@ -7,9 +8,11 @@ import Select from "./Select";
 interface FormFieldProps {
   label: string;
   children: ReactNode;
+  /** Muted helper text shown below the control. */
+  hint?: string;
 }
 
-export default function FormField({ label, children }: FormFieldProps) {
+export default function FormField({ label, children, hint }: FormFieldProps) {
   const id = useId();
   const child = isValidElement(children)
     ? (children as ReactElement<{ id?: string; ariaLabel?: string; "aria-label"?: string }>)
@@ -43,6 +46,7 @@ export default function FormField({ label, children }: FormFieldProps) {
         {label}
       </label>
       {control}
+      {hint && <p className="form-field-hint">{hint}</p>}
     </div>
   );
 }

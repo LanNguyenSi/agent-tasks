@@ -2,13 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { getCurrentUser, getTeams, createTeam, logout, type User } from "../../lib/api";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
-import Card from "../../components/ui/Card";
 import FormField from "../../components/ui/FormField";
 import { FullPageLoader } from "../../components/ui/FullPageLoader";
+import { AuthShell } from "../../components/AuthShell";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -44,7 +43,7 @@ export default function OnboardingPage() {
     })();
   }, [router]);
 
-  // Auto-generate slug from name
+  // Auto-generate slug from name.
   function handleNameChange(name: string) {
     setTeamName(name);
     // Don't clobber a slug the user has hand-edited.
@@ -74,96 +73,102 @@ export default function OnboardingPage() {
   }
 
   if (loading || step === "loading" || step === "redirect") {
-    return <FullPageLoader label="Loading…" />;
+    return <FullPageLoader label="Loading..." />;
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "2rem",
-      }}
+    <AuthShell
+      heading="Create your first team"
+      subtitle="You will be up and running in under a minute."
     >
-      <div style={{ maxWidth: "480px", width: "100%" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-4)" }}>
-          <Link href="/" style={{ color: "var(--muted)", fontSize: "var(--text-sm)", textDecoration: "none" }}>
-            ← agent-tasks
-          </Link>
-          <button
-            type="button"
-            onClick={() => { void logout().then(() => router.replace("/")); }}
-            style={{ background: "none", border: "none", color: "var(--muted)", fontSize: "var(--text-sm)", cursor: "pointer", padding: 0, fontFamily: "inherit" }}
-          >
-            Sign out
-          </button>
-        </div>
+      {/* Sign-out link: ghost Button aligned to the right, above the card */}
+      <div className="auth-signout-row">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            void logout().then(() => router.replace("/"));
+          }}
+        >
+          Sign out
+        </Button>
+      </div>
 
+      <div className="auth-form-grid">
         {user && (
-          <div style={{ textAlign: "center", marginBottom: "var(--space-6, 1.5rem)" }}>
+          <div className="auth-welcome-header">
             {user.avatarUrl && (
+              // eslint-disable-next-line @next/next/no-img-element -- external avatar URL, not a static asset
               <img
                 src={user.avatarUrl}
                 alt={user.login}
-                style={{ width: "56px", height: "56px", borderRadius: "50%", marginBottom: "var(--space-3)" }}
+                className="auth-avatar"
               />
             )}
-            <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: "var(--space-1)" }}>
+            <p className="auth-welcome-name">
               Welcome, {user.name ?? user.login}!
-            </h1>
-            <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>Create your first team to get started.</p>
+            </p>
+            <p className="auth-welcome-sub">
+              Create a team to get started.
+            </p>
           </div>
         )}
 
-        <Card>
-          <h2 style={{ fontSize: "var(--text-base)", fontWeight: 600, marginBottom: "var(--space-4)" }}>Create a team</h2>
+        <form onSubmit={(e) => void handleCreate(e)} className="auth-form-grid">
+          <FormField label="Team name">
+            <input
+              type="text"
+              autoComplete="organization"
+              value={teamName}
+              onChange={(e) => handleNameChange(e.target.value)}
+              placeholder="My Team"
+              required
+            />
+          </FormField>
 
-          <form onSubmit={(e) => void handleCreate(e)}>
-            <FormField label="Team name">
-              <input
-                type="text"
-                value={teamName}
-                onChange={(e) => handleNameChange(e.target.value)}
-                placeholder="My Team"
-                required
-                style={{ width: "100%", display: "block" }}
-              />
-            </FormField>
+          <FormField
+            label="Slug"
+            hint={
+              "Used in URLs. Lowercase, hyphens only." +
+              (!slugTouched ? " Auto-generated from the name." : "")
+            }
+          >
+            <input
+              type="text"
+              autoComplete="off"
+              value={teamSlug}
+              onChange={(e) => {
+                setSlugTouched(true);
+                setTeamSlug(e.target.value);
+              }}
+              placeholder="my-team"
+              pattern="[a-z0-9-]+"
+              required
+              className="auth-slug-input"
+            />
+          </FormField>
 
-            <FormField label="Slug">
-              <input
-                type="text"
-                value={teamSlug}
-                onChange={(e) => { setSlugTouched(true); setTeamSlug(e.target.value); }}
-                placeholder="my-team"
-                pattern="[a-z0-9-]+"
-                required
-                style={{ width: "100%", display: "block", fontFamily: "monospace" }}
-              />
-              <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "var(--space-1)" }}>
-                Used in URLs. Lowercase, hyphens only.{!slugTouched && " Auto-generated from the name."}
-              </p>
-            </FormField>
+          {error && (
+            <AlertBanner tone="danger" title="Failed to create team">
+              {error}
+            </AlertBanner>
+          )}
 
-            {error && (
-              <AlertBanner tone="danger" title="Failed to create team">
-                {error}
-              </AlertBanner>
-            )}
+          <Button
+            type="submit"
+            disabled={creating || !teamName || !teamSlug}
+            loading={creating}
+            className="auth-btn-full"
+          >
+            Create Team
+          </Button>
+        </form>
 
-            <Button
-              type="submit"
-              disabled={creating || !teamName || !teamSlug}
-              loading={creating}
-              style={{ width: "100%" }}
-            >
-              Create Team
-            </Button>
-          </form>
-        </Card>
+        <p className="auth-muted-line">
+          Joining an existing team? Ask a teammate for an invite link instead.
+        </p>
       </div>
-    </main>
+    </AuthShell>
   );
 }

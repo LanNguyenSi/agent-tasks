@@ -26,38 +26,43 @@ import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
 import Select from "@/components/ui/Select";
+import { Skeleton } from "../../components/ui/Skeleton";
 
 type ProjectSort = "name_asc" | "name_desc" | "newest" | "recent_sync";
 const PROJECT_PAGE_SIZE = 9;
 
-function ProjectCard({ project, href, onDelete, activeTaskCount }: { project: Project; href: string; onDelete?: () => void; activeTaskCount?: number }) {
+function ProjectCard({
+  project,
+  href,
+  onDelete,
+  activeTaskCount,
+}: {
+  project: Project;
+  href: string;
+  onDelete?: () => void;
+  activeTaskCount?: number;
+}) {
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <Card interactive style={{ height: "100%", position: "relative" }}>
-      <Link href={href} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
-        <div style={{ marginBottom: "0.25rem", paddingRight: "2rem" }}>
-          <h3 style={{ fontWeight: 600, color: "var(--text)" }}>{project.name}</h3>
+    <Card interactive className="project-card">
+      <Link href={href} className="project-card-link">
+        <div className="project-card-title-row">
+          <h3 className="project-card-title">{project.name}</h3>
         </div>
         {project.githubRepo ? (
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>GitHub: {project.githubRepo}</p>
+          <p className="project-card-repo">GitHub: {project.githubRepo}</p>
         ) : (
-          <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginBottom: "0.5rem" }}>Manual project</p>
+          <p className="project-card-repo">Manual project</p>
         )}
-        {project.description && <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)", marginBottom: "0.5rem" }}>{project.description}</p>}
-        {/* Reserve the chip's space so the card doesn't reflow when the
-            async task counts arrive. */}
-        <div style={{ minHeight: "1.6rem" }}>
+        {project.description && (
+          <p className="project-card-desc">{project.description}</p>
+        )}
+        {/* Reserve chip space so the card doesn't reflow when async counts arrive. */}
+        <div className="project-card-chip-placeholder">
           {activeTaskCount !== undefined && activeTaskCount > 0 && (
-            <span
-              className="status-chip"
-              style={{
-                color: "var(--primary, #3b82f6)",
-                borderColor: "color-mix(in srgb, var(--primary, #3b82f6) 55%, var(--border) 45%)",
-                fontSize: "var(--text-xs)",
-              }}
-            >
+            <span className="status-chip project-card-chip">
               {activeTaskCount} active {activeTaskCount === 1 ? "task" : "tasks"}
             </span>
           )}
@@ -66,9 +71,11 @@ function ProjectCard({ project, href, onDelete, activeTaskCount }: { project: Pr
       <button
         ref={menuBtnRef}
         className="project-card-menu-btn"
-        onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setMenuOpen((v) => !v);
+        }}
         aria-label={`Actions for ${project.name}`}
-        style={{ position: "absolute", top: "0.75rem", right: "0.75rem" }}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <circle cx="12" cy="5" r="1.8" />
@@ -87,16 +94,29 @@ function ProjectCard({ project, href, onDelete, activeTaskCount }: { project: Pr
         {onDelete ? (
           <button
             className="app-dropdown-item app-dropdown-item-danger"
-            onClick={() => { setMenuOpen(false); onDelete(); }}
+            onClick={() => {
+              setMenuOpen(false);
+              onDelete();
+            }}
           >
             Delete project
           </button>
         ) : project.githubRepo ? (
-          <p className="app-dropdown-item" style={{ color: "var(--muted)", cursor: "default", margin: 0 }}>
+          <p className="app-dropdown-item app-dropdown-item-disabled">
             Managed by GitHub sync
           </p>
         ) : null}
       </DropdownMenu>
+    </Card>
+  );
+}
+
+function ProjectCardSkeleton() {
+  return (
+    <Card className="project-card project-card--skeleton">
+      <Skeleton height="1rem" width="60%" />
+      <Skeleton height="0.75rem" width="40%" />
+      <Skeleton height="0.75rem" width="80%" />
     </Card>
   );
 }
@@ -110,9 +130,11 @@ export default function TeamsPage() {
   const [loading, setLoading] = useState(true);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  // Single feedback banner for both sync and delete outcomes, each carrying
-  // its own title so a deleted project no longer reads as "Sync completed".
-  const [feedback, setFeedback] = useState<{ message: string; tone: "success" | "warning" | "danger"; title: string } | null>(null);
+  const [feedback, setFeedback] = useState<{
+    message: string;
+    tone: "success" | "warning" | "danger";
+    title: string;
+  } | null>(null);
 
   const [showNewProject, setShowNewProject] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -121,7 +143,9 @@ export default function TeamsPage() {
   const [githubRepo, setGithubRepo] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(
+    null,
+  );
   const [deletingProject, setDeletingProject] = useState(false);
 
   const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
@@ -146,8 +170,12 @@ export default function TeamsPage() {
       }
       setTeams(userTeams);
 
-      const lastTeamId = typeof window !== "undefined" ? window.localStorage.getItem("agent-tasks:lastTeamId") : null;
-      const initialTeam = userTeams.find((t) => t.id === lastTeamId) ?? userTeams[0]!;
+      const lastTeamId =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem("agent-tasks:lastTeamId")
+          : null;
+      const initialTeam =
+        userTeams.find((t) => t.id === lastTeamId) ?? userTeams[0]!;
       setSelectedTeam(initialTeam);
       setLoading(false);
 
@@ -170,9 +198,14 @@ export default function TeamsPage() {
 
   function handleProjectNameChange(name: string) {
     setProjectName(name);
-    // Don't clobber a slug the user has hand-edited.
     if (!slugTouched) {
-      setProjectSlug(name.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").slice(0, 50));
+      setProjectSlug(
+        name
+          .toLowerCase()
+          .replace(/[^a-z0-9\s-]/g, "")
+          .replace(/\s+/g, "-")
+          .slice(0, 50),
+      );
     }
   }
 
@@ -180,7 +213,8 @@ export default function TeamsPage() {
     const team = teams.find((t) => t.id === teamId);
     if (!team) return;
     setSelectedTeam(team);
-    if (typeof window !== "undefined") window.localStorage.setItem("agent-tasks:lastTeamId", teamId);
+    if (typeof window !== "undefined")
+      window.localStorage.setItem("agent-tasks:lastTeamId", teamId);
     void loadProjects(teamId);
   }
 
@@ -221,13 +255,18 @@ export default function TeamsPage() {
     try {
       await deleteProject(deleteTarget.id);
       setProjects((prev) => prev.filter((project) => project.id !== deleteTarget.id));
-      setFeedback({ tone: "success", title: "Project deleted", message: `Project "${deleteTarget.name}" deleted.` });
+      setFeedback({
+        tone: "success",
+        title: "Project deleted",
+        message: `Project "${deleteTarget.name}" deleted.`,
+      });
       setDeleteTarget(null);
     } catch (err) {
-      // Surface delete failures on the page-level banner; the modal-scoped
-      // `error` only renders inside the New Project modal, so a failed delete
-      // with that modal closed would otherwise be invisible.
-      setFeedback({ tone: "danger", title: "Delete failed", message: (err as Error).message });
+      setFeedback({
+        tone: "danger",
+        title: "Delete failed",
+        message: (err as Error).message,
+      });
     } finally {
       setDeletingProject(false);
     }
@@ -248,7 +287,8 @@ export default function TeamsPage() {
       if (projectSort === "name_desc") return b.name.localeCompare(a.name);
       if (projectSort === "recent_sync") {
         return (
-          new Date(b.githubSyncAt ?? 0).getTime() - new Date(a.githubSyncAt ?? 0).getTime() ||
+          new Date(b.githubSyncAt ?? 0).getTime() -
+            new Date(a.githubSyncAt ?? 0).getTime() ||
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
       }
@@ -261,7 +301,6 @@ export default function TeamsPage() {
     let cancelled = false;
 
     async function fetchTaskCounts() {
-      // allSettled so one project's failed fetch doesn't drop every count.
       const results = await Promise.allSettled(
         projects.map(async (p) => {
           const tasks = await getTasks(p.id);
@@ -278,7 +317,10 @@ export default function TeamsPage() {
 
     void fetchTaskCounts();
     const interval = setInterval(() => void fetchTaskCounts(), 15_000);
-    return () => { cancelled = true; clearInterval(interval); };
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [projects]);
 
   useEffect(() => {
@@ -303,7 +345,7 @@ export default function TeamsPage() {
           <div className="teams-header-row">
             <div>
               {teams.length > 1 && (
-                <div style={{ maxWidth: "240px", marginBottom: "0.5rem" }}>
+                <div className="teams-team-switcher">
                   <Select
                     ariaLabel="Switch team"
                     value={selectedTeam.id}
@@ -312,27 +354,16 @@ export default function TeamsPage() {
                   />
                 </div>
               )}
-              <h1 style={{ fontSize: "var(--text-xl)", fontWeight: 700 }}>{selectedTeam.name}</h1>
-              <p style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>{selectedTeam.projectCount ?? projects.length} projects</p>
+              <h1 className="teams-page-title">{selectedTeam.name}</h1>
+              <p className="teams-project-count">
+                {selectedTeam.projectCount ?? projects.length} projects
+              </p>
             </div>
             <div className="teams-actions">
               {!user?.githubConnected ? (
-                <Link
-                  href="/api/auth/github/connect"
-                  className="btn-primary"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderRadius: "var(--radius-base)",
-                    padding: "0.5rem 1rem",
-                    fontWeight: 600,
-                    fontSize: "var(--text-base)",
-                    textDecoration: "none",
-                  }}
-                >
+                <Button href="/api/auth/github/connect" variant="primary">
                   Connect GitHub
-                </Link>
+                </Button>
               ) : (
                 <Button
                   variant="secondary"
@@ -344,9 +375,22 @@ export default function TeamsPage() {
                         const result = await syncTeamFromGitHub(selectedTeam.id);
                         await loadProjects(selectedTeam.id);
                         if (result.skippedPrune) {
-                          setFeedback({ tone: "warning", title: "Sync completed", message: result.message });
-                        } else if (result.created === 0 && result.updated === 0 && result.pruned === 0) {
-                          setFeedback({ tone: "success", title: "Already up to date", message: "No projects were created, updated, or pruned." });
+                          setFeedback({
+                            tone: "warning",
+                            title: "Sync completed",
+                            message: result.message,
+                          });
+                        } else if (
+                          result.created === 0 &&
+                          result.updated === 0 &&
+                          result.pruned === 0
+                        ) {
+                          setFeedback({
+                            tone: "success",
+                            title: "Already up to date",
+                            message:
+                              "No projects were created, updated, or pruned.",
+                          });
                         } else {
                           setFeedback({
                             tone: "success",
@@ -355,7 +399,11 @@ export default function TeamsPage() {
                           });
                         }
                       } catch (err) {
-                        setFeedback({ tone: "danger", title: "Sync failed", message: (err as Error).message });
+                        setFeedback({
+                          tone: "danger",
+                          title: "Sync failed",
+                          message: (err as Error).message,
+                        });
                       } finally {
                         setSyncing(false);
                       }
@@ -380,14 +428,19 @@ export default function TeamsPage() {
 
           {!user?.githubConnected && (
             <AlertBanner tone="warning" title="GitHub is not connected yet">
-              Sync is unavailable until GitHub is connected.
-              {" "}
-              <Link href="/settings" style={{ color: "var(--primary)", textDecoration: "none" }}>Connect now</Link>
+              Sync is unavailable until GitHub is connected.{" "}
+              <Link href="/settings" className="settings-inline-link">
+                Connect now
+              </Link>
             </AlertBanner>
           )}
 
           {feedback && (
-            <AlertBanner tone={feedback.tone} title={feedback.title} onDismiss={() => setFeedback(null)}>
+            <AlertBanner
+              tone={feedback.tone}
+              title={feedback.title}
+              onDismiss={() => setFeedback(null)}
+            >
               {feedback.message}
             </AlertBanner>
           )}
@@ -396,20 +449,42 @@ export default function TeamsPage() {
             <form onSubmit={(e) => void handleCreateProject(e)}>
               <div className="project-form-grid">
                 <FormField label="Name">
-                  <input value={projectName} onChange={(e) => handleProjectNameChange(e.target.value)} placeholder="My Project" required style={{ width: "100%", display: "block" }} />
+                  <input
+                    value={projectName}
+                    onChange={(e) => handleProjectNameChange(e.target.value)}
+                    placeholder="My Project"
+                    required
+                    className="settings-input"
+                  />
                 </FormField>
                 <FormField label="Slug">
-                  <input value={projectSlug} onChange={(e) => { setSlugTouched(true); setProjectSlug(e.target.value); }} placeholder="my-project" pattern="[a-z0-9-]+" required style={{ width: "100%", display: "block", fontFamily: "monospace" }} />
+                  <input
+                    value={projectSlug}
+                    onChange={(e) => {
+                      setSlugTouched(true);
+                      setProjectSlug(e.target.value);
+                    }}
+                    placeholder="my-project"
+                    pattern="[a-z0-9-]+"
+                    required
+                    className="settings-input settings-input--mono"
+                  />
                 </FormField>
               </div>
               {!slugTouched && (
-                <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)", marginTop: "-0.4rem", marginBottom: "0.75rem" }}>
-                  The slug auto-generates from the name. Edit it to customize (lowercase letters, numbers, hyphens).
+                <p className="teams-slug-hint">
+                  The slug auto-generates from the name. Edit it to customize
+                  (lowercase letters, numbers, hyphens).
                 </p>
               )}
-              <div style={{ marginBottom: "0.75rem" }}>
+              <div className="teams-github-repo-field">
                 <FormField label="GitHub Repo (optional)">
-                  <input value={githubRepo} onChange={(e) => setGithubRepo(e.target.value)} placeholder="owner/repo" style={{ width: "100%", display: "block" }} />
+                  <input
+                    value={githubRepo}
+                    onChange={(e) => setGithubRepo(e.target.value)}
+                    placeholder="owner/repo"
+                    className="settings-input"
+                  />
                 </FormField>
               </div>
               {error && (
@@ -417,18 +492,23 @@ export default function TeamsPage() {
                   {error}
                 </AlertBanner>
               )}
-              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+              <div className="settings-modal-actions">
                 <Button type="submit" disabled={creating} loading={creating} size="sm">
                   {creating ? "Creating…" : "Create"}
                 </Button>
-                <Button variant="ghost" size="sm" type="button" onClick={closeNewProjectModal}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  onClick={closeNewProjectModal}
+                >
                   Cancel
                 </Button>
               </div>
             </form>
           </Modal>
 
-          <Card style={{ marginBottom: "0.9rem" }} padding="sm">
+          <Card padding="sm" className="teams-filter-card">
             <div className="teams-filter-bar">
               <input
                 type="search"
@@ -436,15 +516,19 @@ export default function TeamsPage() {
                 value={projectQuery}
                 onChange={(e) => setProjectQuery(e.target.value)}
                 placeholder="Search projects (name, slug, repo)..."
-                style={{ width: "100%" }}
+                className="teams-search-input"
               />
               <Select
                 value={projectSort}
                 onChange={(v) => setProjectSort(v as ProjectSort)}
-                options={[{value:"name_asc",label:"Sort: Name A-Z"},{value:"name_desc",label:"Sort: Name Z-A"},{value:"newest",label:"Sort: Newest first"},{value:"recent_sync",label:"Sort: Recently synced"}]}
-                style={{ width: "100%" }}
+                options={[
+                  { value: "name_asc", label: "Sort: Name A-Z" },
+                  { value: "name_desc", label: "Sort: Name Z-A" },
+                  { value: "newest", label: "Sort: Newest first" },
+                  { value: "recent_sync", label: "Sort: Recently synced" },
+                ]}
               />
-              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", color: "var(--muted)", fontSize: "var(--text-sm)", paddingLeft: "0.25rem" }}>
+              <label className="teams-github-only-label">
                 <input
                   type="checkbox"
                   checked={githubOnly}
@@ -453,7 +537,7 @@ export default function TeamsPage() {
                 GitHub projects only
               </label>
             </div>
-            <p style={{ color: "var(--muted)", fontSize: "var(--text-xs)" }}>
+            <p className="teams-count-hint">
               {filteredProjects.length === 0
                 ? "No projects"
                 : `Showing ${(currentProjectPage - 1) * PROJECT_PAGE_SIZE + 1}-${Math.min(currentProjectPage * PROJECT_PAGE_SIZE, filteredProjects.length)} of ${filteredProjects.length}`}
@@ -461,10 +545,21 @@ export default function TeamsPage() {
           </Card>
 
           {projectsLoading ? (
-            <p style={{ color: "var(--muted)" }}>Loading projects…</p>
+            <div className="projects-grid" aria-busy="true" aria-label="Loading projects">
+              {Array.from({ length: 6 }, (_, i) => (
+                <ProjectCardSkeleton key={i} />
+              ))}
+            </div>
           ) : filteredProjects.length === 0 ? (
             <EmptyState
-              message={projects.length === 0 ? "No projects yet." : "No projects match this filter."}
+              icon="box"
+              title={projects.length === 0 ? "No projects yet." : "No projects match this filter."}
+              description={
+                projects.length === 0
+                  ? "Create your first project to get started."
+                  : "Try adjusting the search or filter."
+              }
+              dashed
               action={
                 projects.length === 0 ? (
                   <Button
@@ -488,7 +583,12 @@ export default function TeamsPage() {
                     key={project.id}
                     project={project}
                     href={`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`}
-                    onDelete={!project.githubRepo ? () => setDeleteTarget({ id: project.id, name: project.name }) : undefined}
+                    onDelete={
+                      !project.githubRepo
+                        ? () =>
+                            setDeleteTarget({ id: project.id, name: project.name })
+                        : undefined
+                    }
                     activeTaskCount={taskCounts[project.id]}
                   />
                 ))}
