@@ -591,7 +591,7 @@ function TasksPageInner() {
           <div className="tasks-filter-row">
             {(
               [
-                ["recent", "Recent (≤14d)", counts?.doneRecent],
+                ["recent", "Recent (<=14d)", counts?.doneRecent],
                 ["older", "Older (>14d)", counts?.doneOlder],
                 ["all", "All", counts?.done],
               ] as [typeof recency, string, number | undefined][]
@@ -599,6 +599,7 @@ function TasksPageInner() {
               <button
                 key={value}
                 type="button"
+                aria-pressed={recency === value}
                 className={`filter-chip ${recency === value ? "filter-chip-active" : ""}`}
                 onClick={() => updateParams({ recency: value === "recent" ? null : value })}
               >
@@ -617,6 +618,7 @@ function TasksPageInner() {
               <button
                 key={s}
                 type="button"
+                aria-pressed={statusFilter.includes(s)}
                 className={`filter-chip ${statusFilter.includes(s) ? "filter-chip-active" : ""}`}
                 onClick={() => toggleInCsv("status", s, preset.statuses ?? [])}
               >
@@ -628,6 +630,7 @@ function TasksPageInner() {
               <button
                 key={p}
                 type="button"
+                aria-pressed={priorityFilter.includes(p)}
                 className={`filter-chip ${priorityFilter.includes(p) ? "filter-chip-active" : ""}`}
                 onClick={() => toggleInCsv("priority", p, preset.priorities ?? [])}
               >
@@ -647,6 +650,7 @@ function TasksPageInner() {
           <div className="tasks-filter-row">
             <div className="tasks-filter-select">
               <Select
+                ariaLabel="Filter by project"
                 value={projectIdFilter}
                 onChange={(v) => updateParams({ projectId: v })}
                 options={[
@@ -658,6 +662,7 @@ function TasksPageInner() {
             </div>
             <div className="tasks-filter-select">
               <Select
+                ariaLabel="Tasks per page"
                 value={String(pageSize)}
                 onChange={(v) =>
                   updateParams({ pageSize: v === String(DEFAULT_PAGE_SIZE) ? null : v })

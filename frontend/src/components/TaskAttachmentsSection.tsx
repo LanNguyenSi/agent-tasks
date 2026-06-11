@@ -8,7 +8,6 @@ import {
   type TaskAttachment,
   type User,
 } from "../lib/api";
-import { Button } from "./ui/Button";
 import CollapsibleSection from "./ui/CollapsibleSection";
 import { Icon } from "./ui/Icon";
 import InlineConfirmDelete from "./ui/InlineConfirmDelete";
@@ -183,6 +182,7 @@ export default function TaskAttachmentsSection({
       multiple
       disabled={uploading}
       className="sr-only"
+      tabIndex={-1}
       onChange={onInputChange}
     />
   );
@@ -214,12 +214,6 @@ export default function TaskAttachmentsSection({
                 ? "Uploading…"
                 : "No attachments yet. Drag a file here, or paste an image into a comment."}
             </span>
-            {!uploading && (
-              <Button size="sm" variant="ghost" onClick={(e: React.MouseEvent) => { e.stopPropagation(); inputRef.current?.click(); }}>
-                <Icon name="clip" size={13} />
-                Attach file
-              </Button>
-            )}
             {hiddenInput}
           </div>
         ) : (
@@ -332,6 +326,14 @@ export default function TaskAttachmentsSection({
             onClick={() => setPreview(null)}
             className="tas-lightbox"
           >
+            <button
+              type="button"
+              className="tas-lightbox-close"
+              aria-label="Close preview"
+              onClick={(e) => { e.stopPropagation(); setPreview(null); }}
+            >
+              Close
+            </button>
             {/* eslint-disable-next-line @next/next/no-img-element -- auth-gated raw endpoint */}
             <img
               src={rawAttachmentUrl(taskId, preview.id)}

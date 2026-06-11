@@ -898,17 +898,26 @@ export default function TaskDetail({
                   message.includes("approved") ||
                   message.includes("Changes requested") ||
                   message.includes("dismissed");
-                const dotColor = isTransition
-                  ? "var(--status-done)"
+                const eventKind = isTransition
+                  ? "transition"
                   : isReview
-                    ? "var(--status-review)"
-                    : "var(--muted)";
+                    ? "review"
+                    : "default";
+                const eventLabel = isTransition
+                  ? "Transition event"
+                  : isReview
+                    ? "Review event"
+                    : "Activity event";
                 return (
                   <div key={event.id} className="td-activity-item">
                     <span
-                      className="td-activity-dot"
-                      // eslint-disable-next-line no-restricted-syntax
-                      style={{ background: dotColor }} /* dynamic: event type color */
+                      aria-label={eventLabel}
+                      className={[
+                        "td-activity-dot",
+                        eventKind !== "default" ? `td-activity-dot--${eventKind}` : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
                     />
                     <span className="td-activity-message">{message}</span>
                     <span
