@@ -39,6 +39,7 @@ import {
   type TaskType,
   type TemplateFields,
 } from "../lib/confidence";
+import { parseChecklistProgress } from "../lib/checklist";
 import { buildSavedTemplateData } from "../lib/templateData";
 import type { TemplateDataEdits } from "../lib/templateData";
 import { formatRelativeTime, formatAbsoluteDate } from "../lib/time";
@@ -100,18 +101,6 @@ function toDateInputValue(value: string | null): string {
 function toIsoDateOrNull(value: string): string | null {
   if (!value) return null;
   return new Date(`${value}T00:00:00`).toISOString();
-}
-
-/**
- * Parse GFM task-list items in a markdown string. Returns null when none
- * found. Counts indented (nested) items and all three bullet markers.
- * Exported for unit tests.
- */
-export function parseChecklistProgress(text: string): { checked: number; total: number } | null {
-  const matches = text.match(/^\s*[-*+] \[[ xX]\]/gm);
-  if (!matches || matches.length === 0) return null;
-  const checked = matches.filter((m) => !m.endsWith("[ ]")).length;
-  return { checked, total: matches.length };
 }
 
 function buildEdits(

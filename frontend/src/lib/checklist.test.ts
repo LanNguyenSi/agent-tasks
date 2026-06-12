@@ -1,12 +1,11 @@
-/** @vitest-environment jsdom */
 /**
  * parseChecklistProgress -- the GFM checklist counter behind the
  * "{checked} of {total} checked" indicator in the task-detail header.
- * jsdom env because the host module (TaskDetail) imports React components.
+ * Pure function, node-env test per the lib/ pattern.
  */
 import { describe, it, expect } from "vitest";
 
-import { parseChecklistProgress } from "../../src/components/TaskDetail";
+import { parseChecklistProgress } from "./checklist";
 
 describe("parseChecklistProgress", () => {
   it("counts checked and unchecked dash items", () => {
@@ -36,5 +35,18 @@ describe("parseChecklistProgress", () => {
 
   it("requires the bracket to follow the bullet", () => {
     expect(parseChecklistProgress("- no box here\n* also none")).toBeNull();
+  });
+
+  // Pins the documented divergence from remark-gfm rendering: the line-regex
+  // approximation also counts checkbox-looking lines inside code blocks.
+  // If this test starts failing, the parser got smarter; update the docstring.
+  it("counts checkbox-looking lines inside code fences (known divergence)", () => {
+    const md = "```\n- [ ] inside a fence\n```\n";
+    expect(parseChecklistProgress(md)).toEqual({ checked: 0, total: 1 });
+  });
+
+  it("counts checkbox-looking lines in indented code blocks (known divergence)", () => {
+    const md = "intro paragraph\n\n    - [x] looks like code\n";
+    expect(parseChecklistProgress(md)).toEqual({ checked: 1, total: 1 });
   });
 });
