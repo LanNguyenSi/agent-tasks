@@ -323,10 +323,12 @@ export default function TaskDetail({
       editDescription !== (task.description ?? "") ||
       editPriority !== task.priority ||
       editDueAt !== toDateInputValue(task.dueAt) ||
+      editBranchName !== (task.branchName ?? "") ||
+      editPrUrl !== (task.prUrl ?? "") ||
       editTaskType !== (task.templateData?.taskType ?? "") ||
       templateDataDirty
     );
-  }, [isEditing, editTitle, editDescription, editPriority, editDueAt, editTaskType, editTemplateData, task]);
+  }, [isEditing, editTitle, editDescription, editPriority, editDueAt, editBranchName, editPrUrl, editTaskType, editTemplateData, task]);
 
   const editedTemplateData = useMemo(
     () => buildSavedTemplateData(task.templateData, buildEdits(editTemplateData, editTaskType)),

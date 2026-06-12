@@ -46,14 +46,14 @@ function makeTask(over: Partial<Task>): Task {
   } as Task;
 }
 
-function renderHeader(task: Task, onAdvance = vi.fn()) {
+function renderHeader(task: Task, onAdvance = vi.fn(), advanceBusy = false) {
   render(
     <TaskHeader
       task={task}
       user={me}
       variant="modal"
       isEditing={false}
-      advanceBusy={false}
+      advanceBusy={advanceBusy}
       onStartEditing={vi.fn()}
       onAdvance={onAdvance}
       onDeleteRequest={vi.fn()}
@@ -78,7 +78,7 @@ describe("TaskHeader transitions", () => {
     expect(screen.getByText("Record branch and PR URL via Edit first")).toBeInTheDocument();
   });
 
-  it("prUrl without prNumber does not enable the gated actions", () => {
+  it("prUrl without prNumber does not enable the gated actions and explains why", () => {
     renderHeader(
       makeTask({
         status: "in_progress",
@@ -89,6 +89,26 @@ describe("TaskHeader transitions", () => {
       }),
     );
     expect(screen.getByRole("button", { name: "Mark done" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move to Review" })).toBeDisabled();
+    expect(
+      screen.getByText(/canonical github\.com\/owner\/repo\/pull\/N form/),
+    ).toBeInTheDocument();
+  });
+
+  it("disables every transition while an advance is in flight", () => {
+    renderHeader(
+      makeTask({
+        status: "in_progress",
+        claimedByUserId: "u-1",
+        branchName: "fix/x",
+        prUrl: "https://github.com/o/r/pull/9",
+        prNumber: 9,
+      }),
+      vi.fn(),
+      true,
+    );
+    expect(screen.getByRole("button", { name: "Mark done" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move to Review" })).toBeDisabled();
   });
 
   it("with branch + PR recorded, both actions enable and fire the right advance", async () => {

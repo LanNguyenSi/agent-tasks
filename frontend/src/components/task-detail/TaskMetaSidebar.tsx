@@ -92,7 +92,10 @@ export default function TaskMetaSidebar({
                   {task.claimedByAgent ? "AI" : getAssigneeInitials(task)}
                 </span>
                 <span>{getAssigneeLabel(task)}</span>
-                {isOwnTask && (
+                {/* Never offer Release on a terminal task: the release route
+                    resets to the workflow's initial state, which would
+                    silently reopen completed work. */}
+                {isOwnTask && task.status !== "done" && (
                   <Button
                     variant="ghost"
                     size="sm"

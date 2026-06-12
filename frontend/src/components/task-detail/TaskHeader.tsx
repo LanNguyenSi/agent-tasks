@@ -89,9 +89,13 @@ export default function TaskHeader({
       task.status === "in_progress" &&
       task.claimedByUserId === user?.id
     ) {
+      // Distinguish "nothing recorded yet" from "URL saved but no PR number
+      // derived" (non-canonical URL), so the hint stays actionable.
       const gateHint = hasWorkArtifacts
         ? undefined
-        : "Record branch and PR URL via Edit first";
+        : task.prUrl && task.prNumber == null
+          ? "PR URL must be the canonical github.com/owner/repo/pull/N form, re-save it via Edit"
+          : "Record branch and PR URL via Edit first";
       transitions.push({
         action: "submit_review",
         label: "Move to Review",
