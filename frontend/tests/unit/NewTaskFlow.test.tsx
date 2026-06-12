@@ -12,7 +12,7 @@
  *   - getProject failure: error banner, flow stays on step 1.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("../../src/lib/api", () => ({
@@ -168,10 +168,14 @@ describe("NewTaskFlow", () => {
     await userEvent.click(screen.getByRole("option", { name: "Alpha" }));
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
-    // Close while the request is in flight, then let it resolve.
+    // Close while the request is in flight, then let it resolve and flush
+    // the await-continuation so the stale setProject (if unguarded) lands
+    // BEFORE the assertions below.
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalled();
-    resolveLoad!(makeProject());
+    await act(async () => {
+      resolveLoad(makeProject());
+    });
 
     rerender(
       <ToastProvider>
@@ -188,6 +192,34 @@ describe("NewTaskFlow", () => {
     // The stale resolution must not have promoted the flow to step 2.
     expect(screen.getByText(/step 1 of 2/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create task" })).not.toBeInTheDocument();
+  });
+
+  it("cancels an in-flight load when the user re-picks a project", async () => {
+    let resolveLoad!: (p: ReturnType<typeof makeProject>) => void;
+    mockGetProject.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveLoad = resolve;
+        }),
+    );
+    renderFlow();
+
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Alpha" }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    // Re-pick Beta while Alpha is still loading, then let Alpha resolve.
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Beta" }));
+    await act(async () => {
+      resolveLoad(makeProject("p-1", "Alpha"));
+    });
+
+    // The stale Alpha resolution must not open the form; the user confirms
+    // the new pick with Continue again.
+    expect(screen.getByText(/step 1 of 2/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create task" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   });
 
   it("surfaces a load failure and stays on the picker step", async () => {
