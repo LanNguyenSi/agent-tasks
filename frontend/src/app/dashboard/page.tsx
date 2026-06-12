@@ -583,6 +583,7 @@ export default function DashboardPage() {
         <BoardView
           tasks={filteredTasks}
           activeTaskId={activeTaskId}
+          templateFields={templateFields}
           onSelectTask={selectTask}
           onAddTask={(status) => {
             setNewTaskInitialStatus(status as Status);
