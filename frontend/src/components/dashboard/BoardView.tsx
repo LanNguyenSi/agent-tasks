@@ -1,14 +1,17 @@
 "use client";
 
 // Board view: 4-column kanban layout per the Quiet Precision mockup.
-// Card anatomy: PriorityLabel + (optional) PR chip | title | footer (labels, due, avatar).
-// Column header: status dot + title + tinted count Badge + add-task (+) button.
+// Card anatomy: PriorityLabel + confidence badge + (optional) PR chip | title
+// | footer (labels, due, avatar). Column header: status dot + title + tinted
+// count Badge + add-task (+) button.
 // Geometry in .db-col-*, .db-card-* classes in globals.css.
 
 import { memo, useState } from "react";
+import ConfidenceBadge from "../ConfidenceBadge";
 import { Badge, type BadgeTone } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
 import { PriorityLabel } from "../ui/PriorityLabel";
+import { calculateConfidence } from "../../lib/confidence";
 import { STATUS_LABELS } from "../../lib/status";
 import {
   normalizeStatus,
@@ -18,7 +21,7 @@ import {
   PRIORITY_RANK,
 } from "../../lib/taskDisplay";
 import { DONE_BOARD_VISIBLE_LIMIT } from "../../lib/dashboardPrefs";
-import type { Task } from "../../lib/api";
+import type { Task, TaskTemplate } from "../../lib/api";
 import { formatAbsoluteDate } from "../../lib/time";
 
 const STATUSES = ["open", "in_progress", "review", "done"] as const;
@@ -59,10 +62,12 @@ function sortColumnTasks(tasks: Task[]): Task[] {
 interface TaskCardProps {
   task: Task;
   active: boolean;
+  /** Project task template, for the client-side confidence score. */
+  templateFields: TaskTemplate["fields"] | null;
   onSelect: (taskId: string) => void;
 }
 
-const TaskCard = memo(function TaskCard({ task, active, onSelect }: TaskCardProps) {
+const TaskCard = memo(function TaskCard({ task, active, templateFields, onSelect }: TaskCardProps) {
   const overdue = isOverdue(task);
   const isDone = task.status === "done";
   const hasAssignee = !!(task.claimedByUser || task.claimedByAgent);
@@ -82,9 +87,20 @@ const TaskCard = memo(function TaskCard({ task, active, onSelect }: TaskCardProp
         .join(" ")}
       onClick={() => onSelect(task.id)}
     >
-      {/* Top row: priority + (optional) PR chip */}
+      {/* Top row: priority + confidence + (optional) PR chip */}
       <div className="db-card-top">
         <PriorityLabel priority={task.priority} />
+        <ConfidenceBadge
+          score={
+            calculateConfidence({
+              title: task.title,
+              description: task.description,
+              templateData: task.templateData,
+              templateFields,
+            }).score
+          }
+          tabIndex={-1}
+        />
         {task.prNumber != null && (
           <span className="db-card-pr-chip">
             <Icon name="pr" size={11} />
@@ -137,6 +153,8 @@ const TaskCard = memo(function TaskCard({ task, active, onSelect }: TaskCardProp
 interface BoardViewProps {
   tasks: Task[];
   activeTaskId: string | null;
+  /** Project task template, threaded to each card's confidence score. */
+  templateFields: TaskTemplate["fields"] | null;
   onSelectTask: (taskId: string) => void;
   onAddTask?: (status: Status) => void;
 }
@@ -144,6 +162,7 @@ interface BoardViewProps {
 export default function BoardView({
   tasks,
   activeTaskId,
+  templateFields,
   onSelectTask,
   onAddTask,
 }: BoardViewProps) {
@@ -190,6 +209,7 @@ export default function BoardView({
                       key={task.id}
                       task={task}
                       active={task.id === activeTaskId}
+                      templateFields={templateFields}
                       onSelect={onSelectTask}
                     />
                   ))}
