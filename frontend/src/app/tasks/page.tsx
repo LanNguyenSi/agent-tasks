@@ -389,13 +389,16 @@ function TasksPageInner() {
   // button advertises the shortcut via its KeyHint chip).
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
+      // While the create flow is up, page shortcuts must not steal focus
+      // from behind the modal overlay.
+      if (newTaskOpen) return;
       const tag = (e.target as HTMLElement).tagName;
       const isTyping = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
       if (isTyping || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "/") {
         e.preventDefault();
         searchInputRef.current?.focus();
-      } else if ((e.key === "c" || e.key === "C") && !newTaskOpen) {
+      } else if (e.key === "c" || e.key === "C") {
         e.preventDefault();
         setNewTaskOpen(true);
       }

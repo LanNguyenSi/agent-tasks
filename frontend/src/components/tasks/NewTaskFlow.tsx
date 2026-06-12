@@ -7,7 +7,7 @@
 // to the unchanged NewTaskModal. With exactly one accessible project the
 // picker step is skipped and the form opens directly.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getProject, type Project, type Task } from "../../lib/api";
 import NewTaskModal from "../dashboard/NewTaskModal";
 import AlertBanner from "../ui/AlertBanner";
@@ -40,17 +40,34 @@ export default function NewTaskFlow({
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Monotonic request generation. Bumping it invalidates any in-flight
+  // getProject so a stale resolution can neither open the form for a
+  // previously-picked project nor flash step 2 after a close/reopen.
+  const requestSeq = useRef(0);
 
   async function loadProject(id: string) {
+    const seq = ++requestSeq.current;
     setLoading(true);
     setError(null);
     try {
-      setProject(await getProject(id));
+      const loaded = await getProject(id);
+      if (seq !== requestSeq.current) return;
+      setProject(loaded);
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       setError(err instanceof Error ? err.message : "Failed to load project.");
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
+  }
+
+  // Single close path: invalidate in-flight loads and drop step-2 state
+  // synchronously so nothing stale survives into the next open.
+  function handleClose() {
+    requestSeq.current++;
+    setProject(null);
+    setLoading(false);
+    onClose();
   }
 
   // Reset per open. Deliberately NOT keyed on `projects`: the page re-fetches
@@ -69,12 +86,16 @@ export default function NewTaskFlow({
 
   if (!open) return null;
 
+  // A selection can go stale when the 30s poll drops the project from the
+  // team list; treat it as "nothing picked" so Continue cannot submit it.
+  const validSelectedId = projects.some((p) => p.id === selectedId) ? selectedId : "";
+
   // Step 2: project resolved, hand off to the existing create form.
   if (project) {
     return (
       <NewTaskModal
         open
-        onClose={onClose}
+        onClose={handleClose}
         projectId={project.id}
         templateFields={project.taskTemplate?.fields ?? null}
         templatePresets={project.taskTemplate?.presets ?? []}
@@ -88,15 +109,15 @@ export default function NewTaskFlow({
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={handleClose}
       title="New Task"
       footer={
         projects.length > 0 ? (
           <Button
             size="sm"
-            disabled={!selectedId || loading}
+            disabled={!validSelectedId || loading}
             loading={loading}
-            onClick={() => void loadProject(selectedId)}
+            onClick={() => void loadProject(validSelectedId)}
           >
             Continue
           </Button>
@@ -126,8 +147,16 @@ export default function NewTaskFlow({
             hint="Step 1 of 2: choose the project the task is created in."
           >
             <Select
-              value={selectedId}
-              onChange={setSelectedId}
+              value={validSelectedId}
+              onChange={(v) => {
+                // Re-picking while a load is in flight cancels that load;
+                // the user confirms the new pick with Continue again.
+                if (loading) {
+                  requestSeq.current++;
+                  setLoading(false);
+                }
+                setSelectedId(v);
+              }}
               options={projects.map((p) => ({ value: p.id, label: p.name }))}
               placeholder="Select project…"
             />

@@ -115,6 +115,81 @@ describe("NewTaskFlow", () => {
     expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
   });
 
+  it("resets selection and step on reopen", async () => {
+    mockGetProject.mockResolvedValue(makeProject("p-2", "Beta"));
+    const { rerender } = renderFlow();
+
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Beta" }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("button", { name: "Create task" })).toBeInTheDocument();
+
+    rerender(
+      <ToastProvider>
+        <NewTaskFlow
+          open={false}
+          onClose={vi.fn()}
+          projects={PROJECTS}
+          onTaskCreated={vi.fn()}
+          onEditTask={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+    rerender(
+      <ToastProvider>
+        <NewTaskFlow
+          open
+          onClose={vi.fn()}
+          projects={PROJECTS}
+          onTaskCreated={vi.fn()}
+          onEditTask={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+
+    // Back on step 1 with a cleared selection, not the stale form.
+    expect(screen.getByText(/step 1 of 2/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Create task" })).not.toBeInTheDocument();
+  });
+
+  it("drops a getProject resolution that lands after the flow was closed", async () => {
+    let resolveLoad!: (p: ReturnType<typeof makeProject>) => void;
+    mockGetProject.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveLoad = resolve;
+        }),
+    );
+    const onClose = vi.fn();
+    const { rerender } = renderFlow(PROJECTS, { onClose });
+
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Alpha" }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    // Close while the request is in flight, then let it resolve.
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalled();
+    resolveLoad!(makeProject());
+
+    rerender(
+      <ToastProvider>
+        <NewTaskFlow
+          open
+          onClose={onClose}
+          projects={PROJECTS}
+          onTaskCreated={vi.fn()}
+          onEditTask={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+
+    // The stale resolution must not have promoted the flow to step 2.
+    expect(screen.getByText(/step 1 of 2/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create task" })).not.toBeInTheDocument();
+  });
+
   it("surfaces a load failure and stays on the picker step", async () => {
     mockGetProject.mockRejectedValue(new Error("boom"));
     renderFlow();
