@@ -39,6 +39,7 @@ import {
   type TaskType,
   type TemplateFields,
 } from "../lib/confidence";
+import { parseChecklistProgress } from "../lib/checklist";
 import { buildSavedTemplateData } from "../lib/templateData";
 import type { TemplateDataEdits } from "../lib/templateData";
 import { formatRelativeTime, formatAbsoluteDate } from "../lib/time";
@@ -53,6 +54,7 @@ import FormField from "./ui/FormField";
 import InlineConfirmDelete from "./ui/InlineConfirmDelete";
 import Modal from "./ui/Modal";
 import Select from "@/components/ui/Select";
+import { Icon } from "./ui/Icon";
 import { KeyHint } from "./ui/KeyHint";
 import TaskHeader from "./task-detail/TaskHeader";
 import TaskMetaSidebar from "./task-detail/TaskMetaSidebar";
@@ -99,14 +101,6 @@ function toDateInputValue(value: string | null): string {
 function toIsoDateOrNull(value: string): string | null {
   if (!value) return null;
   return new Date(`${value}T00:00:00`).toISOString();
-}
-
-/** Parse GFM task-list items in a markdown string. Returns null when none found. */
-function parseChecklistProgress(text: string): { checked: number; total: number } | null {
-  const matches = text.match(/^- \[[ xX]\]/gm);
-  if (!matches || matches.length === 0) return null;
-  const checked = matches.filter((m) => m !== "- [ ]").length;
-  return { checked, total: matches.length };
 }
 
 function buildEdits(
@@ -548,7 +542,11 @@ export default function TaskDetail({
                   const p = parseChecklistProgress(task.description);
                   if (!p) return null;
                   return (
-                    <span className="td-checklist-progress num">
+                    <span
+                      className="td-checklist-progress num"
+                      title={`Checklist in description: ${p.checked} of ${p.total} items checked`}
+                    >
+                      <Icon name="check" size={12} aria-hidden="true" />
                       <span className="td-checklist-bar">
                         {/* dynamic: progress bar width = percentage */}
                         <span
@@ -557,7 +555,8 @@ export default function TaskDetail({
                           style={{ width: `${Math.round((p.checked / p.total) * 100)}%` }}
                         />
                       </span>
-                      {p.checked} of {p.total}
+                      <span className="sr-only">checklist </span>
+                      {p.checked} of {p.total} checked
                     </span>
                   );
                 })()}
