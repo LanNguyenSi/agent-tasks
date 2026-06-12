@@ -11,6 +11,7 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { getProject, type Project } from "../../../lib/api";
 import { Skeleton } from "../../../components/ui/Skeleton";
@@ -52,9 +53,27 @@ export default function ProjectLayout({ children }: { children: ReactNode }) {
     ? GOV_LABELS[project.governanceMode]
     : null;
 
+  // Back to the dashboard with the same team + project selected; the
+  // dashboard restores both from these URL params. Until the project is
+  // loaded, a plain /dashboard link keeps the row height stable.
+  const dashboardHref = project
+    ? `/dashboard?teamId=${project.teamId}&projectId=${project.id}`
+    : "/dashboard";
+
   return (
     <>
       <div className="proj-hub-header">
+        <nav className="proj-hub-breadcrumb" aria-label="Breadcrumb">
+          <Link href={dashboardHref}>Dashboard</Link>
+          {project && (
+            <>
+              <span aria-hidden="true">/</span>
+              <span className="proj-hub-breadcrumb-current" aria-current="page">
+                {project.name}
+              </span>
+            </>
+          )}
+        </nav>
         {loading ? (
           <div className="proj-hub-title-row">
             <Skeleton
