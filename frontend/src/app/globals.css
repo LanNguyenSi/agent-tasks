@@ -1704,6 +1704,9 @@ input[type="checkbox"] {
   border-radius: 4px;
   font-size: 0.9em;
   font-family: "SF Mono", "Fira Code", monospace;
+  /* A single long token (deep file path, identifier) must not force
+     horizontal overflow on narrow screens. */
+  overflow-wrap: anywhere;
 }
 
 .prose-markdown pre {
@@ -5219,19 +5222,24 @@ html[data-theme="light"] {
   border-radius: var(--radius-sm);
   cursor: default;
   vertical-align: middle;
-  margin-right: var(--space-1);
+  margin-right: var(--space-2);
 }
 
-/* GFM task list item layout */
-.prose-markdown ul:has(input[type="checkbox"]) {
+/* GFM task list item layout.
+   Direct-child selectors so only the task list itself is restyled — an
+   ancestor ul that merely contains a nested task list keeps its bullets.
+   Both GFM shapes are covered: tight (li > input) and loose (li > p > input).
+   The li must stay in normal inline flow: display:flex would turn every
+   text run between inline code spans into its own anonymous flex item and
+   shred the line layout (and force horizontal overflow on small screens). */
+.prose-markdown ul:has(> li > input[type="checkbox"]),
+.prose-markdown ul:has(> li > p:first-child > input[type="checkbox"]) {
   list-style: none;
   padding-left: 0;
 }
 
-.prose-markdown ul:has(input[type="checkbox"]) li {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
+.prose-markdown ul:has(> li > input[type="checkbox"]) > li,
+.prose-markdown ul:has(> li > p:first-child > input[type="checkbox"]) > li {
   padding: 4px 0;
 }
 
