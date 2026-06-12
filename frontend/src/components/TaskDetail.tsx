@@ -40,6 +40,7 @@ import {
   type TemplateFields,
 } from "../lib/confidence";
 import { parseChecklistProgress } from "../lib/checklist";
+import { parsePrNumberFromUrl } from "../lib/pr";
 import { buildSavedTemplateData } from "../lib/templateData";
 import type { TemplateDataEdits } from "../lib/templateData";
 import { formatRelativeTime, formatAbsoluteDate } from "../lib/time";
@@ -56,7 +57,7 @@ import Modal from "./ui/Modal";
 import Select from "@/components/ui/Select";
 import { Icon } from "./ui/Icon";
 import { KeyHint } from "./ui/KeyHint";
-import TaskHeader from "./task-detail/TaskHeader";
+import TaskHeader, { type AdvanceAction } from "./task-detail/TaskHeader";
 import TaskMetaSidebar from "./task-detail/TaskMetaSidebar";
 import ReviewPanel from "./task-detail/ReviewPanel";
 import CommentList from "./task-detail/CommentList";
@@ -189,6 +190,8 @@ export default function TaskDetail({
   const [editDescription, setEditDescription] = useState("");
   const [editPriority, setEditPriority] = useState<Priority>("MEDIUM");
   const [editDueAt, setEditDueAt] = useState("");
+  const [editBranchName, setEditBranchName] = useState("");
+  const [editPrUrl, setEditPrUrl] = useState("");
   const [editTaskType, setEditTaskType] = useState<TaskType | "">("");
   // All 9 string templateData fields consolidated into one record.
   const [editTemplateData, setEditTemplateData] = useState<Record<string, string>>({});
@@ -202,6 +205,8 @@ export default function TaskDetail({
     setEditDescription(task.description ?? "");
     setEditPriority(task.priority);
     setEditDueAt(toDateInputValue(task.dueAt));
+    setEditBranchName(task.branchName ?? "");
+    setEditPrUrl(task.prUrl ?? "");
     setEditTaskType(task.templateData?.taskType ?? "");
     const td = task.templateData as Record<string, string | undefined> | null;
     setEditTemplateData({
@@ -318,10 +323,12 @@ export default function TaskDetail({
       editDescription !== (task.description ?? "") ||
       editPriority !== task.priority ||
       editDueAt !== toDateInputValue(task.dueAt) ||
+      editBranchName !== (task.branchName ?? "") ||
+      editPrUrl !== (task.prUrl ?? "") ||
       editTaskType !== (task.templateData?.taskType ?? "") ||
       templateDataDirty
     );
-  }, [isEditing, editTitle, editDescription, editPriority, editDueAt, editTaskType, editTemplateData, task]);
+  }, [isEditing, editTitle, editDescription, editPriority, editDueAt, editBranchName, editPrUrl, editTaskType, editTemplateData, task]);
 
   const editedTemplateData = useMemo(
     () => buildSavedTemplateData(task.templateData, buildEdits(editTemplateData, editTaskType)),
@@ -393,11 +400,22 @@ export default function TaskDetail({
   async function handleSaveTask() {
     setSavingTask(true);
     try {
+      const branchName = editBranchName.trim() || null;
+      const prUrl = editPrUrl.trim() || null;
+      // prNumber follows prUrl: derive it when the URL changed, clear it when
+      // the URL was cleared, and leave it untouched when the URL is unchanged
+      // (an agent may have set a number the URL alone does not encode).
+      const prUrlChanged = prUrl !== (task.prUrl ?? null);
       const updated = await updateTask(task.id, {
         title: editTitle.trim(),
         description: editDescription.trim() || null,
         priority: editPriority,
         dueAt: toIsoDateOrNull(editDueAt),
+        branchName,
+        prUrl,
+        ...(prUrlChanged
+          ? { prNumber: prUrl ? parsePrNumberFromUrl(prUrl) : null }
+          : {}),
         templateData: editedTemplateData,
       });
       onUpdate(updated);
@@ -448,13 +466,15 @@ export default function TaskDetail({
   }
 
   // Gate-respecting workflow advance.
-  async function handleAdvance(action: "start" | "submit_review") {
+  async function handleAdvance(action: AdvanceAction) {
     setAdvanceBusy(true);
     try {
       const updated =
         action === "start"
           ? await startTask(task.id)
-          : await transitionTask(task.id, "review");
+          : action === "submit_review"
+            ? await transitionTask(task.id, "review")
+            : await transitionTask(task.id, "done");
       onUpdate(updated);
     } catch (err) {
       onError((err as Error).message);
@@ -590,12 +610,36 @@ export default function TaskDetail({
               />
             </FormField>
           </div>
-          <FormField label="Due Date">
+          <div className="td-field-row">
+            <FormField label="Due Date">
+              <input
+                type="date"
+                value={editDueAt}
+                onChange={(e) => setEditDueAt(e.target.value)}
+                className="td-form-input"
+              />
+            </FormField>
+          </div>
+          <div className="td-field-row">
+            <FormField label="Branch">
+              <input
+                value={editBranchName}
+                onChange={(e) => setEditBranchName(e.target.value)}
+                className="td-form-input"
+                placeholder="feature/my-branch"
+              />
+            </FormField>
+          </div>
+          <FormField
+            label="PR URL"
+            hint="GitHub pull-request URL; the PR number is derived automatically."
+          >
             <input
-              type="date"
-              value={editDueAt}
-              onChange={(e) => setEditDueAt(e.target.value)}
+              type="url"
+              value={editPrUrl}
+              onChange={(e) => setEditPrUrl(e.target.value)}
               className="td-form-input"
+              placeholder="https://github.com/owner/repo/pull/123"
             />
           </FormField>
         </section>

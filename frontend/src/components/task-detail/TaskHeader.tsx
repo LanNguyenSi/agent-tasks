@@ -15,7 +15,7 @@ import { StatusChip } from "@/components/ui/StatusChip";
 import { Icon } from "@/components/ui/Icon";
 import DropdownMenu from "@/components/ui/DropdownMenu";
 
-type AdvanceAction = "start" | "submit_review";
+export type AdvanceAction = "start" | "submit_review" | "mark_done";
 
 interface TaskHeaderProps {
   task: Task;
@@ -57,40 +57,60 @@ export default function TaskHeader({
   const [overflowOpen, setOverflowOpen] = useState(false);
   const overflowRef = useRef<HTMLButtonElement>(null);
 
-  const canSubmitReview = Boolean(task.branchName && task.prUrl);
+  // Mirrors the backend branchPresent + prPresent gates exactly: prPresent
+  // requires the PR number too (the edit form derives it from the PR URL).
+  const hasWorkArtifacts = Boolean(
+    task.branchName && task.prUrl && task.prNumber != null,
+  );
 
-  // Determine the single gated-workflow transition allowed from the current state.
+  // The gated-workflow transitions allowed from the current state. The
+  // default workflow allows BOTH review and done from in_progress; the
+  // sidebar's Release covers the third edge (back to open, claim cleared).
   interface TransitionDef {
     action: AdvanceAction;
     label: string;
     disabled: boolean;
     hint: string | undefined;
   }
-  let transition: TransitionDef | null = null;
+  const transitions: TransitionDef[] = [];
   if (!isEditing) {
     if (
       task.status === "open" &&
       !task.claimedByUserId &&
       !task.claimedByAgentId
     ) {
-      transition = {
+      transitions.push({
         action: "start",
         label: "Start",
         disabled: false,
         hint: undefined,
-      };
+      });
     } else if (
       task.status === "in_progress" &&
       task.claimedByUserId === user?.id
     ) {
-      transition = {
+      // Distinguish "nothing recorded yet" from "URL saved but no PR number
+      // derived" (non-canonical URL), so the hint stays actionable.
+      const gateHint = hasWorkArtifacts
+        ? undefined
+        : task.prUrl && task.prNumber == null
+          ? "PR URL must be the canonical github.com/owner/repo/pull/N form, re-save it via Edit"
+          : "Record branch and PR URL via Edit first";
+      transitions.push({
         action: "submit_review",
         label: "Move to Review",
-        disabled: !canSubmitReview,
-        hint: canSubmitReview ? undefined : "Add branch and PR first",
-      };
+        disabled: !hasWorkArtifacts,
+        hint: gateHint,
+      });
+      transitions.push({
+        action: "mark_done",
+        label: "Mark done",
+        disabled: !hasWorkArtifacts,
+        hint: gateHint,
+      });
     }
   }
+  const transitionHint = transitions.find((t) => t.hint)?.hint;
 
   const boardHref =
     teamId && projectId
@@ -133,23 +153,26 @@ export default function TaskHeader({
       <div className="td-head-row">
         <StatusChip status={normalizeStatus(task.status)} />
 
-        {/* Gated transition button (view mode only) */}
-        {!isEditing && transition && (
+        {/* Gated transition buttons (view mode only) */}
+        {!isEditing && transitions.length > 0 && (
           <>
-            <button
-              type="button"
-              className="td-btn-transition"
-              onClick={() => void onAdvance(transition.action)}
-              disabled={advanceBusy || transition.disabled}
-              title={transition.hint}
-              aria-busy={advanceBusy || undefined}
-            >
-              <Icon name="arrow-right" size={13} aria-hidden />
-              {transition.label}
-            </button>
-            <span className="td-transition-hint">
-              {transition.hint ?? "only allowed transition"}
-            </span>
+            {transitions.map((t) => (
+              <button
+                key={t.action}
+                type="button"
+                className="td-btn-transition"
+                onClick={() => void onAdvance(t.action)}
+                disabled={advanceBusy || t.disabled}
+                title={t.hint}
+                aria-busy={advanceBusy || undefined}
+              >
+                <Icon name="arrow-right" size={13} aria-hidden />
+                {t.label}
+              </button>
+            ))}
+            {transitionHint && (
+              <span className="td-transition-hint">{transitionHint}</span>
+            )}
           </>
         )}
 
