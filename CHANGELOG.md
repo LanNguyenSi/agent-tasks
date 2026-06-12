@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-06-12
+
+**Headline: the Quiet Precision UI overhaul.** Every surface of the web app (dashboard, home, tasks browser, task detail, projects hub, workflow editor, settings, teams, auth, onboarding) was rebuilt on a shared design system: design tokens v2, a component library, a de-inlined app shell, and a full accessibility, responsive and light-theme pass. Plus the first round of overhaul fallout fixes reported from live use, including an in-place task-create flow on the /tasks browser. One additive backend route; no schema changes.
+
+Operator note: no breaking changes, no migrations. Per the convention since v0.9.0, workspace `package.json` versions are not bumped; `@agent-tasks/mcp-server` (0.9.0) and `@agent-tasks/mcp-bridge` (0.7.1) are unchanged since their last tags. The web UI is visually new throughout and all URLs are preserved; two deliberate behavior changes are listed below (the agent-token modal mints only on explicit request, and the New-task button on /tasks creates in place instead of navigating to the dashboard). All changes were verified against the production deployment before this tag (checklist in the release PR).
+
+### Added
+
+- **In-place new-task flow on /tasks with a project-select step** (PR #336). The New-task button (and the empty-state CTA) no longer navigates away to the dashboard: step 1 picks the project, then the regular create form opens with that project's template fields; exactly one accessible project skips the picker. The advertised "C" shortcut is actually wired now, and an in-flight project load is invalidated on re-pick or close, so the form can never open for the wrong project.
+- **Breadcrumb back to the dashboard on project hub pages** (PR #339). Overview, settings, members and workflow show "Dashboard / {project}" above the title; the link restores the same team and project on the dashboard.
+- **Read-only `GET /projects/:id/members`** (PR #332). Any project member can list accepted members; powers the rebuilt members page. Write endpoints keep their admin guards.
+
+### Changed
+
+- **Quiet Precision UI overhaul** (PRs #328-#334; design direction, mockups and the audit digest in `docs/design/`):
+  - Foundation (PR #329): design tokens v2, shared component library (Button, Table, Modal, Select, Tabs, Badge, PageHeader, EmptyState, Skeleton and friends), AppChrome shell with the header de-inlined from pages, `/dev/ui` component gallery.
+  - Dashboard + home (PR #330): kanban board and list view rebuilt on the new cards/table, filter toolbar, project picker in the page header.
+  - Tasks browser + task detail (PR #331): shared Table with server-side sort, GFM markdown rendering for descriptions and comments, rebuilt detail view with checklist progress, review panel and meta sidebar.
+  - Projects hub + workflow editor (PR #332): per-project hub layout with subnav (overview, settings, members, workflow), rebuilt workflow and gates editor.
+  - Settings, teams, auth + onboarding (PR #333): rebuilt settings surfaces, AuthShell, and the ConnectAgentModal now mints a token only on explicit request instead of on open.
+  - Polish (PR #334): accessibility sweep (focus rings, aria encodings, keyboard menus), responsive pass, light-theme QA.
+
+### Fixed
+
+- **Task-detail checklists no longer shred into columns** (PR #335). GFM task-list items rendered every text run between inline code spans as its own narrow flex column and overflowed horizontally on mobile. Items are back in normal inline flow, the selectors only match real task lists (nested regular lists keep their bullets), and long inline-code tokens may wrap on narrow screens.
+- **Dashboard board cards show the confidence score again** (PR #337). The overhaul had dropped the per-card badge; it is back next to the priority label, computing the same score the task detail shows.
+- **The "0 of X" next to the task description is labeled now** (PR #338). It is the checklist progress over the description's checkboxes and reads "0 of 9 checked" with an icon and tooltip; the counter also counts nested and `*`/`+` checklist items, which it previously missed.
+
 ## [0.24.0] - 2026-06-09
 
 **Headline: agents can discover a project's task-template requirements before composing a task.** The project discovery surface now reports whether task-template mode is on, the required fields, the enforcement mode, and the confidence threshold, so an agent can compose a task that will clear the create-time confidence gate on the first try. Plus the 2026-05-30 audit fixes. No schema changes; deployed from `master`, so this tag is deploy provenance.
