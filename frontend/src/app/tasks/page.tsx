@@ -26,6 +26,7 @@ import { Skeleton, SkeletonList } from "../../components/ui/Skeleton";
 import Pagination from "../../components/ui/Pagination";
 import Select from "../../components/ui/Select";
 import { Table, type ColumnDef } from "../../components/ui/Table";
+import NewTaskFlow from "../../components/tasks/NewTaskFlow";
 import { normalizeStatus, toDateLabel } from "../../lib/taskDisplay";
 import { STATUS_MUTED_IN_LIST } from "../../lib/status";
 
@@ -235,8 +236,11 @@ function TasksPageInner() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [isFetching, setIsFetching] = useState(false);
   // Incrementing retryToken forces the fetch effect to re-run without
-  // changing any real filter params — used by the "Retry" button.
+  // changing any real filter params — used by the "Retry" button and to
+  // refresh the list after an in-place task create.
   const [retryToken, setRetryToken] = useState(0);
+  // In-place create flow (project picker + NewTaskModal), see NewTaskFlow.
+  const [newTaskOpen, setNewTaskOpen] = useState(false);
 
   // ── Parse URL params ──────────────────────────────────────────
 
@@ -381,19 +385,24 @@ function TasksPageInner() {
     projectIdFilter, mineOnly, searchQuery, statusKey, priorityKey, retryToken,
   ]);
 
-  // "/" shortcut focuses the search input.
+  // "/" focuses the search input, "C" opens the create flow (the New-task
+  // button advertises the shortcut via its KeyHint chip).
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement).tagName;
       const isTyping = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-      if (!isTyping && e.key === "/" && !e.metaKey && !e.ctrlKey) {
+      if (isTyping || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "/") {
         e.preventDefault();
         searchInputRef.current?.focus();
+      } else if ((e.key === "c" || e.key === "C") && !newTaskOpen) {
+        e.preventDefault();
+        setNewTaskOpen(true);
       }
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, []);
+  }, [newTaskOpen]);
 
   // Snap page back when the URL page overshoots the filtered set.
   useEffect(() => {
@@ -557,12 +566,8 @@ function TasksPageInner() {
           </button>
         )}
 
-        {/* New task primary button — navigates to dashboard create flow */}
-        <Button
-          size="sm"
-          href={`/dashboard${selectedTeam ? `?teamId=${selectedTeam.id}` : ""}`}
-          keyHint="C"
-        >
+        {/* New task primary button — opens the in-place create flow */}
+        <Button size="sm" onClick={() => setNewTaskOpen(true)} keyHint="C">
           <Icon name="plus" size={13} />
           New task
         </Button>
@@ -724,10 +729,7 @@ function TasksPageInner() {
                     Clear filters
                   </Button>
                 ) : (
-                  <Button
-                    size="sm"
-                    href={`/dashboard${selectedTeam ? `?teamId=${selectedTeam.id}` : ""}`}
-                  >
+                  <Button size="sm" onClick={() => setNewTaskOpen(true)}>
                     Create your first task
                   </Button>
                 )
@@ -780,6 +782,15 @@ function TasksPageInner() {
           )}
         </div>
       </div>
+
+      {/* In-place create flow: project picker step, then NewTaskModal */}
+      <NewTaskFlow
+        open={newTaskOpen}
+        onClose={() => setNewTaskOpen(false)}
+        projects={projects}
+        onTaskCreated={() => setRetryToken((t) => t + 1)}
+        onEditTask={(id) => router.push(`/tasks/${id}`)}
+      />
     </main>
   );
 }
