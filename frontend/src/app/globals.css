@@ -1704,6 +1704,9 @@ input[type="checkbox"] {
   border-radius: 4px;
   font-size: 0.9em;
   font-family: "SF Mono", "Fira Code", monospace;
+  /* A single long token (deep file path, identifier) must not force
+     horizontal overflow on narrow screens. */
+  overflow-wrap: anywhere;
 }
 
 .prose-markdown pre {
