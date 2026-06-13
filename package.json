@@ -24,6 +24,7 @@
     "better-sqlite3": "^11.5.0",
     "ip-address": "^10.1.1",
     "tsx": "^4.22.4",
+    "esbuild": "^0.28.1",
     "next": {
       "postcss": "^8.5.10"
     }
