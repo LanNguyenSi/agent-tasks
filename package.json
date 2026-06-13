@@ -16,10 +16,14 @@
   "engines": {
     "node": ">=22"
   },
+  "devDependencies": {
+    "tsx": "^4.22.4"
+  },
   "overrides": {
     "postcss": "^8.5.10",
     "better-sqlite3": "^11.5.0",
     "ip-address": "^10.1.1",
+    "tsx": "^4.22.4",
     "next": {
       "postcss": "^8.5.10"
     }
