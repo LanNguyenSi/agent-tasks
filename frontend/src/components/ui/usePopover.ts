@@ -137,14 +137,35 @@ export function usePopover({
     }
 
     function handleEscape(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      onClose();
+      // Restore focus to the trigger. Because the capture-phase
+      // stopPropagation below halts the event at document, the inner
+      // component's own keydown handler never runs, so any focus-restore it
+      // would have performed must happen here. DropdownMenu moves focus into
+      // the menu on open and relied on its Escape handler to return focus to
+      // the anchor; doing it centrally keeps that behavior. For Select (focus
+      // never leaves the trigger) this is a no-op.
+      anchorRef.current?.focus();
+      // Consume the event so it does not reach Modal's bubble-phase Escape
+      // handler. Capture phase (used below) always runs before bubble phase,
+      // making this deterministic regardless of listener registration order.
+      // The listener is only registered while a popover is open, so when
+      // nothing is open this stopPropagation is never called and Escape
+      // propagates normally to the Modal.
+      e.stopPropagation();
     }
 
     document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleEscape);
+    // Capture phase: fires before any bubble-phase listener (including Modal),
+    // regardless of which listener was registered first.
+    document.addEventListener("keydown", handleEscape, { capture: true });
     return () => {
       document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleEscape);
+      // Must pass { capture: true } to match the registration; omitting it
+      // would target the bubble-phase slot and leave the capture listener
+      // alive, causing a ghost handler and listener leaks.
+      document.removeEventListener("keydown", handleEscape, { capture: true });
     };
   }, [anchorRef, onClose, open]);
 
