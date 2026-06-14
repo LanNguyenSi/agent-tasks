@@ -67,10 +67,11 @@ function sortTasks(tasks: Task[], key: SortKey, dir: SortDir): Task[] {
 }
 
 // Column definitions are static; render functions close over only imports.
-// Widths are required, not cosmetic: `.db-list-wrap .table` uses
-// `table-layout: fixed` (globals.css) so the title cell clamps with an
-// ellipsis instead of growing and crowding the metadata columns. Without
-// per-column widths, fixed layout would distribute all columns equally.
+// Widths are required, not cosmetic: declaring any column width opts the
+// shared ui/Table into `table-layout: fixed` (the `table--fixed` class,
+// globals.css) so the title cell clamps with an ellipsis instead of
+// growing and crowding the metadata columns. Without per-column widths,
+// the table stays on auto layout.
 const TASK_LIST_COLS: ColumnDef<Task>[] = [
   {
     key: "title",

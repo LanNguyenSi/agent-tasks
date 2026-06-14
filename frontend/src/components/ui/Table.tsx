@@ -145,12 +145,17 @@ export function Table<T extends object>({
         })
       : rows;
 
+  // When any column declares a width, switch to fixed table layout so the
+  // declared widths are binding rather than treated as hints by the browser.
+  // Tables with no declared widths keep the default auto layout.
+  const hasWidths = columns.some((c) => Boolean(c.width));
+
   return (
     <div className={["table-wrapper", className].filter(Boolean).join(" ")}>
       {compactSort && (
         <div className="table-compact-sort">{compactSort}</div>
       )}
-      <table className="table">
+      <table className={["table", hasWidths ? "table--fixed" : ""].filter(Boolean).join(" ")}>
         <thead>
           <tr className="table-head-row">
             {columns.map((col) => (
