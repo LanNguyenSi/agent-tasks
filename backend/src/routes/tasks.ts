@@ -4473,15 +4473,26 @@ taskRouter.post(
       );
     }
 
+    // Clear work-claim fields atomically when entering a terminal state,
+    // consistent with task_finish and the review-approve path. This prevents
+    // a done task from keeping a stale assignee and unblocks the solo
+    // claim wall for the claimant's next task_start.
+    const isTerminal = isTerminalState(effectiveDef, status);
     const updated = await prisma.task.update({
       where: { id: task.id },
-      data: { status, updatedAt: new Date() },
+      data: {
+        status,
+        updatedAt: new Date(),
+        ...(isTerminal ? { claimedByUserId: null, claimedByAgentId: null, claimedAt: null } : {}),
+      },
       include: taskInclude,
     });
 
     // Ack BEFORE emitting outcome signals below — those must survive past
     // the task's terminal state, so we ack the pending work/review asks first.
-    if (status === "done" && previousStatus !== "done") {
+    // Uses isTerminal (not a hardcoded "done" check) so custom terminal states
+    // defined in project workflows are handled correctly.
+    if (isTerminal) {
       await acknowledgeSignalsForTask(task.id);
     }
 
