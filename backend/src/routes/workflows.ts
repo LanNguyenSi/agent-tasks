@@ -480,8 +480,8 @@ workflowRouter.post(
       return forbidden(c, "Agents cannot create workflows");
     }
 
-    if (!(await hasProjectAccess(actor, projectId))) {
-      return forbidden(c, "Access denied to this project");
+    if (!(await isProjectAdmin(actor, projectId))) {
+      return forbidden(c, "Only team admins can create workflows");
     }
 
     const body = c.req.valid("json");
