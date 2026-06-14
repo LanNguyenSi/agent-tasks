@@ -67,35 +67,44 @@ function sortTasks(tasks: Task[], key: SortKey, dir: SortDir): Task[] {
 }
 
 // Column definitions are static; render functions close over only imports.
+// Widths are required, not cosmetic: `.db-list-wrap .table` uses
+// `table-layout: fixed` (globals.css) so the title cell clamps with an
+// ellipsis instead of growing and crowding the metadata columns. Without
+// per-column widths, fixed layout would distribute all columns equally.
 const TASK_LIST_COLS: ColumnDef<Task>[] = [
   {
     key: "title",
     header: "Task",
     sortable: true,
+    width: "34%",
     render: (t) => <span className="db-list-cell-title">{t.title}</span>,
   },
   {
     key: "status",
     header: "Status",
     sortable: true,
+    width: "12%",
     render: (t) => <StatusChip status={normalizeStatus(t.status)} />,
   },
   {
     key: "priority",
     header: "Priority",
     sortable: true,
+    width: "12%",
     render: (t) => <PriorityLabel priority={t.priority} />,
   },
   {
     key: "assignee",
     header: "Assignee",
     sortable: true,
+    width: "16%",
     render: (t) => <span className="table-cell-secondary">{getAssigneeName(t)}</span>,
   },
   {
     key: "dueAt",
     header: "Due",
     sortable: true,
+    width: "13%",
     render: (t) => (
       <span className="table-cell-secondary num">{t.dueAt ? toDateLabel(t.dueAt) : "—"}</span>
     ),
@@ -104,6 +113,7 @@ const TASK_LIST_COLS: ColumnDef<Task>[] = [
     key: "updatedAt",
     header: "Updated",
     sortable: true,
+    width: "13%",
     render: (t) => (
       <span className="table-cell-secondary num" title={formatAbsoluteDate(t.updatedAt)}>
         {formatRelativeTime(t.updatedAt)}
