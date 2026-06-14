@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-06-14
+
+A security and fixes release on top of the Quiet Precision overhaul. No schema changes.
+
+### Security
+
+- **Enforce write-tier on the boards and workflows routers** (#344, audit 2026-06-10 H1+H2). `hasProjectAccess` admitted the read-only `PROJECT_VIEWER` role, but board create/update and workflow create gated on it, so a user invited as a viewer could still write. Board create and update now require `requireProjectWrite`; workflow create now requires `isProjectAdmin`, consistent with workflow update and reset. Every remaining `hasProjectAccess` call in both routers guards a read-only handler.
+- **Clear the esbuild advisories** (#342, #343; GHSA-gv7w-rqvm-qjhr, GHSA-g7r4-m6w7-qqqr). Bumped `tsx` to `^4.22.4` and forced `esbuild >= 0.28.1` so the dev toolchain no longer resolves the vulnerable range.
+
+### Fixed
+
+- **Humans can complete the task workflow from the UI** (#341). The web UI did not expose the final workflow-completion action for human actors; a human reviewer can now finish a task's workflow directly from the task surface.
+
 ## [0.25.0] - 2026-06-12
 
 **Headline: the Quiet Precision UI overhaul.** Every surface of the web app (dashboard, home, tasks browser, task detail, projects hub, workflow editor, settings, teams, auth, onboarding) was rebuilt on a shared design system: design tokens v2, a component library, a de-inlined app shell, and a full accessibility, responsive and light-theme pass. Plus the first round of overhaul fallout fixes reported from live use, including an in-place task-create flow on the /tasks browser. One additive backend route; no schema changes.
