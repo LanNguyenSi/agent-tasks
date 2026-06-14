@@ -2117,6 +2117,20 @@ input[type="checkbox"] {
   border-collapse: collapse;
 }
 
+/* The task-list tables (/tasks and the dashboard list) declare per-column
+   widths on their headers. Auto table layout treats those widths as hints and
+   sizes columns to content, so a long title grows the Task cell and crowds the
+   metadata columns — the title's own text-overflow ellipsis never engages
+   without a bound width. Fixed layout makes the declared widths binding, so the
+   title clamps inside its cell. Scoped via these two wrapper classes so the
+   change stays contained to the task-list surfaces; every other .table consumer
+   (including the workflow editor tables, which also declare widths) keeps auto
+   layout and is unaffected. */
+.tasks-table-region .table,
+.db-list-wrap .table {
+  table-layout: fixed;
+}
+
 .table-head-row {
   background: color-mix(in srgb, var(--surface) 74%, var(--bg) 26%);
   border-bottom: 1px solid var(--border);

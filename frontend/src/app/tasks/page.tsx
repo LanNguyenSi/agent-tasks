@@ -64,7 +64,7 @@ const TASK_PAGE_COLUMNS: ColumnDef<EnrichedTask>[] = [
     key: "project",
     header: "Project",
     sortable: true,
-    width: "15.5%",
+    width: "16%",
     render: (t) => (
       <span className="table-cell-secondary" title={t.projectName}>
         {t.projectName}
