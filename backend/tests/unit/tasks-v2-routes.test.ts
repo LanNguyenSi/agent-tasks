@@ -7,10 +7,13 @@
  * collaborating services are mocked with `vi.hoisted` so we can inspect the
  * payload of every call without standing up a real database.
  *
- * Per the project feedback memory: we deliberately avoid
- * `mockResolvedValueOnce` queues — `vi.clearAllMocks` does not drain them and
- * that has caused cross-test bleed before. Every test sets its own return
- * values explicitly with `mockResolvedValue(...)` or `mockImplementation(...)`.
+ * Per the project feedback memory: an UNDRAINED `mockResolvedValueOnce`
+ * queue leaks across tests because `vi.clearAllMocks` does not drain it, and
+ * that has caused cross-test bleed before. Default to `mockResolvedValue(...)`
+ * or `mockImplementation(...)`. A single-consumption `mockResolvedValueOnce`
+ * is acceptable only where the test provably consumes it within its own run
+ * (e.g. `workflowFindFirst`, called exactly once per transition request), so
+ * no residue survives into the next test.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
@@ -2606,6 +2609,181 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     expect(prismaMocks.workflowFindFirst).toHaveBeenCalledWith({
       where: { projectId: "proj-1", isDefault: true },
     });
+  });
+
+  it("terminal transition (in_progress -> done) clears work-claim fields atomically", async () => {
+    // Minimal workflow with no gate requires on the in_progress->done edge so
+    // the test focuses on claim-clearing, not gate evaluation.
+    const workflowDef = {
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress", label: "Start", requiredRole: "any" },
+        { from: "in_progress", to: "done", label: "Done", requiredRole: "any" },
+      ],
+      initialState: "open",
+    };
+
+    const task = {
+      ...baseTask,
+      id: "task-transition-terminal-1",
+      status: "in_progress",
+      workflowId: null,
+      workflow: null,
+      claimedByAgentId: "agent-1",
+      claimedByUserId: null,
+      claimedAt: new Date("2026-01-01T00:00:00Z"),
+      project: { ...baseTask.project, requireDistinctReviewer: false },
+    };
+
+    prismaMocks.taskFindUnique.mockResolvedValue(task);
+    // Use mockResolvedValueOnce so the value is consumed by this test's single
+    // route call and does not leak into subsequent tests (vi.clearAllMocks does
+    // not drain unreturned mockResolvedValueOnce queues, but a consumed entry
+    // leaves no residue).
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce({
+      id: "wf-terminal",
+      projectId: "proj-1",
+      isDefault: true,
+      definition: workflowDef,
+    });
+    prismaMocks.taskUpdate.mockImplementation(
+      ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
+        Promise.resolve({ ...task, id: where.id, ...data, workflow: null, project: task.project }),
+    );
+
+    const app = makeTransitionApp(HUMAN);
+    const res = await app.request("/tasks/task-transition-terminal-1/transition", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("done");
+    // Work-claim fields must be nulled atomically with the status write.
+    expect(updateCall.data.claimedByAgentId).toBeNull();
+    expect(updateCall.data.claimedByUserId).toBeNull();
+    expect(updateCall.data.claimedAt).toBeNull();
+  });
+
+  it("non-terminal transition (in_progress -> review) leaves work-claim fields intact (negative control)", async () => {
+    // Regression guard: the claim must survive a non-terminal transition so
+    // the original author resumes ownership if changes are later requested.
+    const workflowDef = {
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "review", label: "Review", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress", label: "Start", requiredRole: "any" },
+        { from: "in_progress", to: "review", label: "Submit", requiredRole: "any" },
+        { from: "review", to: "done", label: "Approve", requiredRole: "any" },
+      ],
+      initialState: "open",
+    };
+
+    const task = {
+      ...baseTask,
+      id: "task-transition-non-terminal-1",
+      status: "in_progress",
+      workflowId: null,
+      workflow: null,
+      claimedByAgentId: "agent-1",
+      claimedByUserId: null,
+      claimedAt: new Date("2026-01-01T00:00:00Z"),
+      project: { ...baseTask.project, requireDistinctReviewer: false },
+    };
+
+    prismaMocks.taskFindUnique.mockResolvedValue(task);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce({
+      id: "wf-non-terminal",
+      projectId: "proj-1",
+      isDefault: true,
+      definition: workflowDef,
+    });
+    prismaMocks.taskUpdate.mockImplementation(
+      ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
+        Promise.resolve({ ...task, id: where.id, ...data, workflow: null, project: task.project }),
+    );
+
+    const app = makeTransitionApp(HUMAN);
+    const res = await app.request("/tasks/task-transition-non-terminal-1/transition", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "review" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("review");
+    // Claim fields must NOT be present in the update data for non-terminal targets.
+    expect(updateCall.data.claimedByAgentId).toBeUndefined();
+    expect(updateCall.data.claimedByUserId).toBeUndefined();
+    expect(updateCall.data.claimedAt).toBeUndefined();
+  });
+
+  it("custom terminal state (not named 'done') clears work-claim fields via project workflow", async () => {
+    // Custom workflows can name their terminal state anything. The fix uses
+    // isTerminalState(def, status) rather than hardcoding "done", so a custom
+    // terminal state should also clear claims.
+    const customWorkflowDef = {
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "closed", label: "Closed", terminal: true }, // custom terminal state name
+      ],
+      transitions: [
+        { from: "open", to: "in_progress", label: "Start", requiredRole: "any" },
+        { from: "in_progress", to: "closed", label: "Close", requiredRole: "any" },
+      ],
+      initialState: "open",
+    };
+
+    const task = {
+      ...baseTask,
+      id: "task-transition-custom-terminal-1",
+      status: "in_progress",
+      workflowId: null,
+      workflow: null,
+      claimedByUserId: "user-1",
+      claimedByAgentId: null,
+      claimedAt: new Date("2026-01-01T00:00:00Z"),
+      project: { ...baseTask.project, requireDistinctReviewer: false },
+    };
+
+    prismaMocks.taskFindUnique.mockResolvedValue(task);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce({
+      id: "wf-custom-terminal",
+      projectId: "proj-1",
+      isDefault: true,
+      definition: customWorkflowDef,
+    });
+    prismaMocks.taskUpdate.mockImplementation(
+      ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
+        Promise.resolve({ ...task, id: where.id, ...data, workflow: null, project: task.project }),
+    );
+
+    const app = makeTransitionApp(HUMAN);
+    const res = await app.request("/tasks/task-transition-custom-terminal-1/transition", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "closed" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("closed");
+    // Custom terminal states must also clear work-claim fields.
+    expect(updateCall.data.claimedByUserId).toBeNull();
+    expect(updateCall.data.claimedByAgentId).toBeNull();
+    expect(updateCall.data.claimedAt).toBeNull();
   });
 });
 
