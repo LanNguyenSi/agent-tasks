@@ -1946,6 +1946,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           githubRepo: true,
           requireDistinctReviewer: true,
           soloMode: true,
+          governanceMode: true,
           requireGroundingForDebug: true,
         },
       },
@@ -1976,12 +1977,15 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
 
   const rawBody = await c.req.json().catch(() => ({}));
 
+  // Resolve the effective workflow definition once, before the dispatch
+  // branches, so all three branches (review-finish, self-approve, work-finish)
+  // share the same resolved definition and isReviewState can be evaluated here.
+  const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
+
   // ── Branch: review finish ─────────────────────────────────────────────────
   if (holdsReviewClaim) {
-    // Resolve once so the review-state check and gate evaluator share the same definition.
-    const effectiveReviewDefinition = await resolveEffectiveDefinition(task, prisma);
 
-    if (!isReviewState(effectiveReviewDefinition, task.status)) {
+    if (!isReviewState(effectiveDefinition, task.status)) {
       return c.json({ error: "bad_state", message: "Task must be in review status" }, 409);
     }
     const parsed = finishReviewSchema.safeParse(rawBody);
@@ -1991,8 +1995,8 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     const { outcome, result, autoMerge, mergeMethod } = parsed.data;
 
     const targetStatus = outcome === "approve"
-      ? approveTarget(effectiveReviewDefinition, task.status) ?? "done"
-      : requestChangesTarget(effectiveReviewDefinition, task.status) ?? task.status;
+      ? approveTarget(effectiveDefinition, task.status) ?? "done"
+      : requestChangesTarget(effectiveDefinition, task.status) ?? task.status;
 
     // Distinct-reviewer gate. Defense-in-depth: pickup already excludes the
     // author from the review pool, but an explicit workflow path could place
@@ -2027,8 +2031,8 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     // Transition gates (branchPresent / prPresent / ciGreen / prMerged).
     // Mirrors the /transition block; see evaluateV2TransitionGates
     // for the shared semantics. The effective workflow was resolved above
-    // (effectiveReviewDefinition) so both paths evaluate gates against
-    // the same definition.
+    // (effectiveDefinition, hoisted before the dispatch) so both paths evaluate
+    // gates against the same definition.
     // Review-finish has no prUrl / branchName payload, so the gate context
     // is just the task's current DB state.
     const gateResult = await evaluateV2TransitionGates(
@@ -2036,7 +2040,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       { branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber },
       targetStatus,
       actor,
-      effectiveReviewDefinition,
+      effectiveDefinition,
       autoMerge ? ["prMerged"] : undefined,
     );
     if (!gateResult.ok) {
@@ -2114,8 +2118,8 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
 
       // Post-check: if the workflow required prMerged, verify it now.
       const workflowHadPrMerged =
-        effectiveReviewDefinition
-          ? effectiveReviewDefinition.transitions
+        effectiveDefinition
+          ? effectiveDefinition.transitions
               .find((t) => t.from === "review" && t.to === "done")
               ?.requires?.includes("prMerged") ?? false
           : false;
@@ -2173,7 +2177,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       include: taskInclude,
     });
 
-    if (outcome === "approve" && isTerminalState(effectiveReviewDefinition, targetStatus)) {
+    if (outcome === "approve" && isTerminalState(effectiveDefinition, targetStatus)) {
       await acknowledgeSignalsForTask(task.id);
       if (reviewAutoMergeSha !== null) {
         void emitSelfMergeNoticeIfApplicable({
@@ -2236,6 +2240,299 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     }
 
     return c.json({ kind: "review", task: updated, outcome, ...(reviewAutoMergeSha !== null ? { autoMergeSha: reviewAutoMergeSha } : {}) });
+  }
+
+  // ── Branch: self-approve (work-claim holder on a review-state non-DR task) ──
+  //
+  // The webhook-merge-to-review flow lands the task in `review` status with
+  // only a work claim held (no review claim, because no separate reviewer has
+  // picked it up). For non-REQUIRES_DISTINCT_REVIEWER projects the work-claim
+  // holder may act as self-reviewer: they already own the work and the project
+  // does not enforce dual control. REQUIRES_DISTINCT_REVIEWER projects still
+  // get a 403 — they must use the separate review-claim path.
+  //
+  // Condition (at this point holdsReviewClaim is false):
+  //   holdsWorkClaim && isReviewState(effectiveDefinition, task.status)
+  //   && governanceMode !== REQUIRES_DISTINCT_REVIEWER
+  if (
+    holdsWorkClaim &&
+    isReviewState(effectiveDefinition, task.status) &&
+    resolveGovernanceMode(task.project) !== GovernanceMode.REQUIRES_DISTINCT_REVIEWER &&
+    !task.reviewClaimedByUserId &&
+    !task.reviewClaimedByAgentId
+  ) {
+    // Parse with the review schema — outcome is mandatory in this branch.
+    const selfApprParsed = finishReviewSchema.safeParse(rawBody);
+    if (!selfApprParsed.success) {
+      // Give a more helpful error than the generic Zod message: the caller
+      // reached this branch because the task is in review state and they hold
+      // only a work claim. They need to supply `outcome` to act as
+      // self-reviewer; falling through to the work-finish branch would produce
+      // a misleading "Work finish requires a work state" 409.
+      const zodMessage = selfApprParsed.error.flatten().fieldErrors.outcome?.[0];
+      return c.json(
+        {
+          error: "bad_request",
+          message:
+            `This task is in review state and you hold a work claim (no review lock). ` +
+            `Provide outcome: "approve" or "request_changes" to act as self-reviewer. ` +
+            (zodMessage ? `(${zodMessage})` : ""),
+        },
+        400,
+      );
+    }
+    const { outcome: selfApprOutcome, result: selfApprResult, autoMerge: selfApprAutoMerge, mergeMethod: selfApprMergeMethod } = selfApprParsed.data;
+
+    const selfApprTargetStatus = selfApprOutcome === "approve"
+      ? approveTarget(effectiveDefinition, task.status) ?? "done"
+      : requestChangesTarget(effectiveDefinition, task.status) ?? task.status;
+
+    // Transition gates — same path as the review-finish branch.
+    const selfApprGateResult = await evaluateV2TransitionGates(
+      task,
+      { branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber },
+      selfApprTargetStatus,
+      actor,
+      effectiveDefinition,
+      selfApprAutoMerge ? ["prMerged"] : undefined,
+    );
+    if (!selfApprGateResult.ok) {
+      if (selfApprGateResult.kind === "no_transition") {
+        return c.json({ error: "bad_request", message: selfApprGateResult.message }, 400);
+      }
+      if (selfApprGateResult.kind === "forbidden_role") {
+        return forbidden(c, `Requires role: ${selfApprGateResult.requiredRole}`);
+      }
+      if (selfApprGateResult.kind === "precondition") {
+        const { failed, ruleErrors } = selfApprGateResult;
+        return c.json(
+          {
+            error: "precondition_failed",
+            message: `Transition blocked — ${failed
+              .map((r) => (ruleErrors[r] ? `${RULE_MESSAGES[r]} (${ruleErrors[r]})` : RULE_MESSAGES[r]))
+              .join(" ")}`,
+            failed: failed.map((r) => ({
+              rule: r,
+              message: RULE_MESSAGES[r],
+              ...(ruleErrors[r] ? { error: ruleErrors[r] } : {}),
+            })),
+            canForce: false,
+          },
+          422,
+        );
+      }
+      const _exhaustive: never = selfApprGateResult;
+      return _exhaustive;
+    }
+
+    // Mode B autoMerge for self-approve (same as review-finish).
+    let selfApprAutoMergeSha: string | null = null;
+    if (selfApprAutoMerge && selfApprOutcome === "approve") {
+      if (actor.type === "agent" && !actor.scopes.includes(SCOPES.GithubPrMerge)) {
+        return c.json({ error: "forbidden", message: `Token missing scope: ${SCOPES.GithubPrMerge}` }, 403);
+      }
+      const selfMerge = checkSelfMergeGate(task, actor, task.project);
+      if (!selfMerge.allowed) {
+        void logAuditEvent({
+          action: "task.pr_merged.blocked_self_merge",
+          projectId: task.projectId,
+          taskId: task.id,
+          payload: {
+            via: "task_finish_self_approve",
+            actorType: actor.type,
+            agentTokenId: actor.type === "agent" ? actor.tokenId : undefined,
+            userId: actor.type === "human" ? actor.userId : undefined,
+            claimedByAgentId: task.claimedByAgentId,
+            claimedByUserId: task.claimedByUserId,
+          },
+        });
+        return c.json(
+          { error: "self_merge_blocked", message: selfMergeRejectionMessage() },
+          403,
+        );
+      }
+      const mergeResult = await performPrMerge(task, selfApprMergeMethod, actor);
+      if (!mergeResult.ok) {
+        const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
+        return c.json(
+          { error: mergeResult.error, message: mergeResult.message },
+          status as 403 | 502,
+        );
+      }
+
+      // Post-check: if the workflow required prMerged, verify it now.
+      // Mirrors the review-finish autoMerge post-assert (~2118-2149).
+      const selfApprWorkflowHadPrMerged =
+        effectiveDefinition
+          ? effectiveDefinition.transitions
+              .find((t) => t.from === task.status && t.to === selfApprTargetStatus)
+              ?.requires?.includes("prMerged") ?? false
+          : false;
+
+      if (selfApprWorkflowHadPrMerged) {
+        const selfApprDelegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge", {
+          preferUserId: actor.userId,
+        });
+        const selfApprPostCheck = await evaluateTransitionRules(["prMerged"], {
+          branchName: task.branchName,
+          prUrl: task.prUrl,
+          prNumber: task.prNumber,
+          projectGithubRepo: task.project.githubRepo,
+          githubToken: selfApprDelegate?.githubAccessToken ?? null,
+        });
+        if (selfApprPostCheck.failed.length > 0) {
+          void logAuditEvent({
+            action: "task.auto_merge_post_assert_failed",
+            projectId: task.projectId,
+            taskId: task.id,
+            payload: { mode: "B_self_approve", mergeSha: mergeResult.sha, postCheckFailed: selfApprPostCheck.failed },
+          });
+          return c.json(
+            { error: "github_error", message: "PR merge succeeded but post-check failed — prMerged rule not satisfied. Manual reconciliation required." },
+            502,
+          );
+        }
+      }
+
+      selfApprAutoMergeSha = mergeResult.sha;
+    }
+
+    const selfApprUpdateData: Prisma.TaskUncheckedUpdateInput = {
+      status: selfApprTargetStatus,
+      // Clear the review claim slot even though it was never set — keeps the
+      // columns at null (their current value) and avoids a separate check.
+      reviewClaimedByUserId: null,
+      reviewClaimedByAgentId: null,
+      reviewClaimedAt: null,
+      ...(selfApprResult !== undefined ? { result: selfApprResult } : {}),
+      ...(selfApprAutoMergeSha !== null ? { autoMergeSha: selfApprAutoMergeSha } : {}),
+    };
+
+    if (selfApprOutcome === "approve") {
+      // Clear the work claim on approval.
+      selfApprUpdateData.claimedByUserId = null;
+      selfApprUpdateData.claimedByAgentId = null;
+      selfApprUpdateData.claimedAt = null;
+    }
+    // On request_changes keep claimedBy* so the author resumes ownership.
+
+    const selfApprUpdated = await prisma.task.update({
+      where: { id: task.id },
+      data: selfApprUpdateData,
+      include: taskInclude,
+    });
+
+    if (selfApprOutcome === "approve" && isTerminalState(effectiveDefinition, selfApprTargetStatus)) {
+      await acknowledgeSignalsForTask(task.id);
+      if (selfApprAutoMergeSha !== null) {
+        // Mirrors review-finish ~2181-2193: notify team members on AWAITS_CONFIRMATION
+        // projects that a self-merge happened. emitSelfMergeNoticeIfApplicable
+        // is a no-op for AUTONOMOUS projects.
+        void emitSelfMergeNoticeIfApplicable({
+          taskId: task.id,
+          projectId: task.projectId,
+          actor,
+          project: {
+            governanceMode: task.project.governanceMode,
+            soloMode: task.project.soloMode,
+            requireDistinctReviewer: task.project.requireDistinctReviewer,
+          },
+          mergeSha: selfApprAutoMergeSha,
+          via: "task_finish_auto_merge",
+        });
+      }
+    }
+
+    const selfApprActorId = actor.type === "human" ? actor.userId : actor.tokenId;
+    void logAuditEvent({
+      action: "task.reviewed",
+      actorId: actor.type === "human" ? actor.userId : undefined,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: {
+        reviewAction: selfApprOutcome,
+        from: task.status,
+        to: selfApprTargetStatus,
+        actorType: actor.type,
+        reviewerId: selfApprActorId,
+        via: "task_finish_self_approve",
+      },
+    });
+
+    if (selfApprAutoMergeSha !== null) {
+      void logAuditEvent({
+        action: "task.auto_merged",
+        actorId: actor.type === "human" ? actor.userId : undefined,
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: { mode: "B_self_approve", autoMergeSha: selfApprAutoMergeSha, mergeMethod: selfApprMergeMethod, actorType: actor.type },
+      });
+    }
+
+    const selfApprActorName =
+      actor.type === "agent"
+        ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
+        : (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Reviewer";
+
+    if (selfApprOutcome === "request_changes") {
+      void emitChangesRequestedSignal(
+        task.id,
+        task.projectId,
+        task.claimedByUserId,
+        task.claimedByAgentId,
+        selfApprActorName,
+        selfApprResult,
+      );
+    } else {
+      void emitTaskApprovedSignal(
+        task.id,
+        task.projectId,
+        task.claimedByUserId,
+        task.claimedByAgentId,
+        selfApprActorName,
+        selfApprResult,
+      );
+    }
+
+    return c.json({
+      kind: "review",
+      task: selfApprUpdated,
+      outcome: selfApprOutcome,
+      ...(selfApprAutoMergeSha !== null ? { autoMergeSha: selfApprAutoMergeSha } : {}),
+    });
+  }
+
+  // Guard: work-claim holder on a non-DR review-state task, but a distinct
+  // reviewer already holds the review claim. The self-approve branch above was
+  // skipped because !task.reviewClaimedByUserId && !task.reviewClaimedByAgentId
+  // did not hold. Clobbering an in-flight reviewer's claim silently would be
+  // wrong; surface a 409 so the caller knows to wait or coordinate.
+  if (
+    holdsWorkClaim &&
+    isReviewState(effectiveDefinition, task.status) &&
+    resolveGovernanceMode(task.project) !== GovernanceMode.REQUIRES_DISTINCT_REVIEWER
+  ) {
+    return c.json(
+      {
+        error: "reviewer_conflict",
+        message:
+          "A reviewer already holds the review claim for this task. " +
+          "Wait for them to finish or release their claim, then retry.",
+      },
+      409,
+    );
+  }
+
+  // Guard: work-claim holder on a review-state REQUIRES_DISTINCT_REVIEWER
+  // project. The self-approve branch above was skipped because DR is enforced;
+  // we must reject here with a clear message before falling into the work-finish
+  // guard, which would produce a misleading "bad_state" 409.
+  if (holdsWorkClaim && isReviewState(effectiveDefinition, task.status)) {
+    return forbidden(
+      c,
+      "This task is in review state and the project requires a distinct reviewer. " +
+        "A separate agent or user must claim the review (task_start) and approve it.",
+    );
   }
 
   // ── Branch: work finish ───────────────────────────────────────────────────
@@ -2308,9 +2605,6 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       // the normal merge path (GitHub API 405 will handle idempotency).
     }
   }
-
-  // Derive expectedFinishState from the workflow
-  const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
 
   if (!isWorkState(effectiveDefinition, task.status)) {
     return c.json(
