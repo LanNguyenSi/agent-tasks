@@ -69,7 +69,7 @@ curl -s -X POST http://localhost:3001/api/agent-tokens \
     "name": "smoke-agent-1",
     "teamId": "<teamId>",
     "scopes": ["tasks:read", "tasks:claim", "tasks:transition"]
-  }' | jq '{id: .id, token: .rawToken}'
+  }' | jq '{id: .token.id, token: .rawToken}'
 ```
 
 Note the `rawToken` value — it is only shown once.  Store it as `TOKEN_1`.
@@ -86,7 +86,7 @@ curl -s -X POST http://localhost:3001/api/agent-tokens \
     "name": "smoke-agent-2",
     "teamId": "<teamId>",
     "scopes": ["tasks:read", "tasks:claim", "tasks:transition"]
-  }' | jq '{id: .id, token: .rawToken}'
+  }' | jq '{id: .token.id, token: .rawToken}'
 ```
 
 Store that value as `TOKEN_2`.
@@ -118,12 +118,14 @@ Expect exactly one `200` (body contains `task.status: "in_progress"`) and one
 
 ### Required scopes
 
-| Scope               | Purpose                                    |
-|---------------------|--------------------------------------------|
-| `tasks:read`        | Required to fetch the task before claiming |
-| `tasks:claim`       | Required to execute the claim write        |
-| `tasks:transition`  | Required to advance the task to in_progress|
+| Scope              | Enforced by `POST /tasks/:id/claim`? | Purpose                                        |
+|--------------------|--------------------------------------|------------------------------------------------|
+| `tasks:claim`      | Yes — missing → 403 before CAS write | Authorises the atomic claim write              |
+| `tasks:read`       | No — conventional only               | Conventionally granted alongside `tasks:claim` |
+| `tasks:transition` | No — conventional only               | Conventionally granted alongside `tasks:claim` |
 
-Tokens that lack any of these scopes receive a `403 forbidden` response before
-reaching the CAS write, so omitting a scope prevents the race scenario from
-being exercised end-to-end.
+`POST /tasks/:id/claim` checks **only** `tasks:claim`.  Tokens missing that
+scope receive a `403 forbidden` before the CAS write.  `tasks:read` and
+`tasks:transition` are not gated by this handler; they are included in the
+example token creation calls by convention (most agents need all three scopes)
+but their absence does not block the `/claim` path.

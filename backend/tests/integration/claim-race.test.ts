@@ -11,6 +11,12 @@
  * AgentActor (tokenId "local-1" vs "local-2") so the race is between
  * recognisably different actors.
  *
+ * Note: DB-level atomicity (the Postgres WHERE predicate that makes exactly
+ * one concurrent writer succeed at the database layer) is outside the scope
+ * of this mocked test.  What this test verifies is that the handler issues
+ * the correct CAS write arguments and treats count===0 as a 409.  Real
+ * atomicity can only be proved with a live Postgres instance.
+ *
  * Mock-queue discipline (per project feedback):
  *   - taskFindUnique: two `mockResolvedValueOnce` consumptions for the
  *     parallel initial fetches; a persistent `mockResolvedValue` fallback
@@ -240,5 +246,13 @@ describe("POST /tasks/:id/claim — parallel-claims CAS exclusion", () => {
         claimedByAgentId: null,
       });
     }
+
+    // The winning call (index 0 — the one that consumed mockResolvedValueOnce({count:1}))
+    // must write status:"in_progress" and set claimedByAgentId.  This ties the
+    // assertion to the production CAS write rather than to the re-fetch mock
+    // fallback (which would make a handler bug like `status:"done"` invisible).
+    const winningCallArgs = prismaMocks.taskUpdateMany.mock.calls[0][0];
+    expect(winningCallArgs.data.status).toBe("in_progress");
+    expect(winningCallArgs.data.claimedByAgentId).not.toBeNull();
   });
 });
