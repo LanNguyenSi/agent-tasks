@@ -2669,6 +2669,77 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     expect(updateCall.data.claimedByAgentId).toBeNull();
     expect(updateCall.data.claimedByUserId).toBeNull();
     expect(updateCall.data.claimedAt).toBeNull();
+    // Review-claim fields are cleared on every terminal transition too, for
+    // parity with task_finish (review-approve).
+    expect(updateCall.data.reviewClaimedByAgentId).toBeNull();
+    expect(updateCall.data.reviewClaimedByUserId).toBeNull();
+    expect(updateCall.data.reviewClaimedAt).toBeNull();
+  });
+
+  it("review -> done clears BOTH the work-claim and the held review-claim (parity with task_finish)", async () => {
+    // The gap this fixes: a review -> done via /transition used to null only
+    // the work-claim, leaving a stale review-claim occupying the reviewer's
+    // slot on a terminal task.
+    const workflowDef = {
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "review", label: "Review", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "in_progress", to: "review", label: "Submit", requiredRole: "any" },
+        { from: "review", to: "done", label: "Approve", requiredRole: "any" },
+      ],
+      initialState: "open",
+    };
+
+    const task = {
+      ...baseTask,
+      id: "task-transition-review-done-1",
+      status: "review",
+      workflowId: null,
+      workflow: null,
+      claimedByAgentId: "agent-1",
+      claimedByUserId: null,
+      claimedAt: new Date("2026-01-01T00:00:00Z"),
+      reviewClaimedByAgentId: "agent-reviewer",
+      reviewClaimedByUserId: null,
+      reviewClaimedAt: new Date("2026-01-02T00:00:00Z"),
+      // review -> done is permitted here because the workflow transition below
+      // declares no `requires` and requiredRole "any"; requireDistinctReviewer
+      // is set false only so the gate can never interfere.
+      project: { ...baseTask.project, requireDistinctReviewer: false },
+    };
+
+    prismaMocks.taskFindUnique.mockResolvedValue(task);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce({
+      id: "wf-review-done",
+      projectId: "proj-1",
+      isDefault: true,
+      definition: workflowDef,
+    });
+    prismaMocks.taskUpdate.mockImplementation(
+      ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
+        Promise.resolve({ ...task, id: where.id, ...data, workflow: null, project: task.project }),
+    );
+
+    const app = makeTransitionApp(HUMAN);
+    const res = await app.request("/tasks/task-transition-review-done-1/transition", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("done");
+    expect(updateCall.data.claimedByAgentId).toBeNull();
+    expect(updateCall.data.claimedAt).toBeNull();
+    // The held review-claim must be released atomically with the status write.
+    expect(updateCall.data.reviewClaimedByAgentId).toBeNull();
+    expect(updateCall.data.reviewClaimedByUserId).toBeNull();
+    expect(updateCall.data.reviewClaimedAt).toBeNull();
   });
 
   it("non-terminal transition (in_progress -> review) leaves work-claim fields intact (negative control)", async () => {
@@ -2723,10 +2794,14 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     expect(res.status).toBe(200);
     const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("review");
-    // Claim fields must NOT be present in the update data for non-terminal targets.
+    // Neither work-claim NOR review-claim fields may be present in the update
+    // data for non-terminal targets.
     expect(updateCall.data.claimedByAgentId).toBeUndefined();
     expect(updateCall.data.claimedByUserId).toBeUndefined();
     expect(updateCall.data.claimedAt).toBeUndefined();
+    expect(updateCall.data.reviewClaimedByAgentId).toBeUndefined();
+    expect(updateCall.data.reviewClaimedByUserId).toBeUndefined();
+    expect(updateCall.data.reviewClaimedAt).toBeUndefined();
   });
 
   it("custom terminal state (not named 'done') clears work-claim fields via project workflow", async () => {

@@ -4532,17 +4532,28 @@ taskRouter.post(
       );
     }
 
-    // Clear work-claim fields atomically when entering a terminal state,
-    // consistent with task_finish and the review-approve path. This prevents
-    // a done task from keeping a stale assignee and unblocks the solo
-    // claim wall for the claimant's next task_start.
+    // Clear BOTH the work-claim and the review-claim fields atomically when
+    // entering a terminal state, for full parity with the task_finish
+    // review-approve path (which nulls reviewClaimedBy*/At). A `review -> done`
+    // via /transition would otherwise leave a stale review-claim on a terminal
+    // task, occupying the reviewer's review-claim slot. Non-terminal
+    // transitions leave both claims untouched (the {} spread below).
     const isTerminal = isTerminalState(effectiveDef, status);
     const updated = await prisma.task.update({
       where: { id: task.id },
       data: {
         status,
         updatedAt: new Date(),
-        ...(isTerminal ? { claimedByUserId: null, claimedByAgentId: null, claimedAt: null } : {}),
+        ...(isTerminal
+          ? {
+              claimedByUserId: null,
+              claimedByAgentId: null,
+              claimedAt: null,
+              reviewClaimedByUserId: null,
+              reviewClaimedByAgentId: null,
+              reviewClaimedAt: null,
+            }
+          : {}),
       },
       include: taskInclude,
     });
