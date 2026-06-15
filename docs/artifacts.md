@@ -32,8 +32,29 @@ Either `content` or `url` must be supplied — never both empty.
 - **Inline (`content`):** 1 MiB per artifact. Rejected with `413` if exceeded.
 - **External (`url`):** no size cap enforced by agent-tasks; the referenced
   store is responsible for lifecycle.
-- **No explicit per-task aggregate cap today.** Track artifact row counts in
-  the dashboard and set a project-level cap once real usage numbers exist.
+- **Per-task count cap:** once a task reaches its count cap the next `POST`
+  is rejected with `429`. Default: 100 artifacts per task.
+  Override globally with the env var `ARTIFACT_MAX_COUNT_PER_TASK`.
+  Override per-project via the `Project.artifactCountCap` column (see below).
+- **Per-task aggregate bytes cap:** the sum of all `sizeBytes` values for
+  a task's artifacts must not exceed the cap. A new artifact that would push
+  the total over the cap is rejected with `413`. Default: 52 428 800 bytes
+  (50 MiB). Override globally with `ARTIFACT_MAX_TOTAL_BYTES_PER_TASK`.
+  Override per-project via `Project.artifactBytesCap`.
+
+### Per-project overrides
+
+Two nullable columns on `Project` let operators set lower (or higher) limits
+for a specific project without changing the server-wide env var:
+
+| Column              | Type   | Default (when null)               |
+| ------------------- | ------ | --------------------------------- |
+| `artifactCountCap`  | `Int?` | `ARTIFACT_MAX_COUNT_PER_TASK` (100) |
+| `artifactBytesCap`  | `Int?` | `ARTIFACT_MAX_TOTAL_BYTES_PER_TASK` (50 MiB) |
+
+Set them via a direct DB update or a future admin API endpoint. A `null`
+value — or a stray non-positive value — means "use the env-var default," so a
+mis-set `0`/negative cap can never silently block every artifact.
 
 ## REST endpoints
 

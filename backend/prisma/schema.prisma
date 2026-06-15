@@ -200,6 +200,11 @@ model Project {
   // See docs/notification-webhooks.md.
   notificationWebhookUrl    String?
   notificationWebhookSecret String?
+  // Per-task aggregate artifact caps. Null falls back to the env-var defaults
+  // ARTIFACT_MAX_COUNT_PER_TASK (100) and ARTIFACT_MAX_TOTAL_BYTES_PER_TASK (50 MiB).
+  // See docs/artifacts.md for details.
+  artifactCountCap          Int?
+  artifactBytesCap          Int?
   createdAt                DateTime        @default(now())
   updatedAt                DateTime        @updatedAt
 
