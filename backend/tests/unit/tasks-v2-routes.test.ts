@@ -3155,6 +3155,142 @@ describe("debug-flavor detection on pickup + start", () => {
     const body = (await res.json()) as { groundingHint?: { debugFlavor: boolean } };
     expect(body.groundingHint?.debugFlavor).toBe(true);
   });
+
+  // ── Reclassify opt-in ──────────────────────────────────────────────────────
+  //
+  // Four-cell matrix for the reclassify flag:
+  //   (a) task_start reclassify=true + suppression label → false, groundingSessionState cleared, audit fires
+  //   (b) pickup ?reclassify=true + suppression label  → same
+  //   (c) WITHOUT reclassify, same stale-true task     → metadata write skipped (sticky persists)
+  //   (d) reclassify=true on still-matching task       → stays true, no spurious clear, no audit
+
+  // Helper: a task that was previously classified as debug-flavored (metadata.debugFlavor=true)
+  // but now carries a suppression label, so the re-run will return false.
+  const staleDebugTask = {
+    ...baseTask,
+    title: "Fix thing",           // neutral title (no debug keywords)
+    description: "do the thing",
+    labels: ["docs"],             // suppression label — overrides keyword heuristic
+    metadata: {
+      debugFlavor: true,
+      groundingSessionState: { id: "old-session", phase: "scope-resolution" },
+    },
+  };
+
+  // (b) pickup: reclassify flag re-runs the classifier and clears stale state
+  it("(b) pickup ?reclassify=true + suppression label → debugFlavor:false, groundingSessionState cleared, audit event emitted", async () => {
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null)   // hard-limit ok
+      .mockResolvedValueOnce(null)   // no review task
+      .mockResolvedValueOnce(staleDebugTask);
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup?reclassify=true", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { kind: string; task: { metadata: unknown }; groundingHint?: unknown };
+    expect(body.kind).toBe("work");
+    // No groundingHint because the classifier now returns false
+    expect(body.groundingHint).toBeUndefined();
+
+    // Metadata written unconditionally (reclassify=true), with debugFlavor:false
+    // and groundingSessionState cleared.
+    expect(prismaMocks.taskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { metadata: { debugFlavor: false } },
+    });
+
+    // Audit event fires because the persisted value actually changed (true → false).
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.debugFlavor.reclassified",
+        taskId: "task-1",
+        payload: expect.objectContaining({ via: "task_pickup", debugFlavor: false }),
+      }),
+    );
+  });
+
+  // (a) task_start: reclassify in request body behaves the same way
+  it("(a) task_start reclassify:true + suppression label → debugFlavor:false, groundingSessionState cleared, audit event emitted", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...staleDebugTask, status: "open" });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null); // hard-limit ok
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);    // no blockers
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reclassify: true }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { kind: string; groundingHint?: unknown };
+    expect(body.kind).toBe("work");
+    expect(body.groundingHint).toBeUndefined();
+
+    // The CAS claim write includes metadata with debugFlavor:false and no groundingSessionState.
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0] as {
+      data: Record<string, unknown>;
+    };
+    expect(updateCall.data.metadata).toEqual({ debugFlavor: false });
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.debugFlavor.reclassified",
+        taskId: "task-1",
+        payload: expect.objectContaining({ via: "task_start", debugFlavor: false }),
+      }),
+    );
+  });
+
+  // (c) WITHOUT reclassify: stale debugFlavor:true is sticky — no re-run, no write
+  it("(c) pickup without reclassify=true: stale debugFlavor:true persists, no metadata write, no audit", async () => {
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(staleDebugTask);
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    // No ?reclassify query param
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { groundingHint?: { debugFlavor: boolean } };
+    // Sticky classification: old debugFlavor:true is returned as-is
+    expect(body.groundingHint?.debugFlavor).toBe(true);
+
+    // No metadata write — only the initial findFirst calls, no task.update
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.debugFlavor.reclassified" }),
+    );
+  });
+
+  // (d) reclassify=true on still-matching task → stays true, unconditional write, NO audit
+  it("(d) pickup reclassify=true on still-matching task → debugFlavor stays true, no audit event", async () => {
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        ...baseTask,
+        title: "fix login bug",  // debug keyword — still matches
+        labels: [],
+        metadata: { debugFlavor: true },
+      });
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup?reclassify=true", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { groundingHint?: { debugFlavor: boolean } };
+    expect(body.groundingHint?.debugFlavor).toBe(true);
+
+    // Value unchanged: reclassify=true triggers an unconditional write, but with
+    // the same value (true → true). No reclassification audit event.
+    expect(prismaMocks.taskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { metadata: { debugFlavor: true } },
+    });
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.debugFlavor.reclassified" }),
+    );
+  });
 });
 
 // ── Confidence gate (ADR-0011) ───────────────────────────────────────────────
