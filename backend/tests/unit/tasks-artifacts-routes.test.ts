@@ -12,20 +12,26 @@ import type { Actor } from "../../src/types/auth.js";
 
 const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
+  projectFindUnique: vi.fn(),
   artifactFindMany: vi.fn(),
   artifactFindUnique: vi.fn(),
   artifactCreate: vi.fn(),
   artifactDelete: vi.fn(),
+  artifactCount: vi.fn(),
+  artifactAggregate: vi.fn(),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
     task: { findUnique: prismaMocks.taskFindUnique },
+    project: { findUnique: prismaMocks.projectFindUnique },
     taskArtifact: {
       findMany: prismaMocks.artifactFindMany,
       findUnique: prismaMocks.artifactFindUnique,
       create: prismaMocks.artifactCreate,
       delete: prismaMocks.artifactDelete,
+      count: prismaMocks.artifactCount,
+      aggregate: prismaMocks.artifactAggregate,
     },
     // Unused by these routes but imported by the tasks module at load time.
     task_other: {},
@@ -96,6 +102,10 @@ beforeEach(() => {
   accessMocks.hasProjectAccess.mockResolvedValue(true);
   accessMocks.hasProjectRole.mockResolvedValue(false);
   prismaMocks.taskFindUnique.mockResolvedValue(task);
+  // Default: no per-project overrides, no existing artifacts.
+  prismaMocks.projectFindUnique.mockResolvedValue({ artifactCountCap: null, artifactBytesCap: null });
+  prismaMocks.artifactCount.mockResolvedValue(0);
+  prismaMocks.artifactAggregate.mockResolvedValue({ _sum: { sizeBytes: null } });
 });
 
 describe("POST /tasks/:id/artifacts", () => {
@@ -200,6 +210,67 @@ describe("POST /tasks/:id/artifacts", () => {
       body: JSON.stringify({ type: "other", name: "n", content: "x" }),
     });
     expect(res.status).toBe(404);
+  });
+
+  describe("per-task aggregate caps", () => {
+    it("creates an artifact when below both the count and bytes caps (under-cap, 201)", async () => {
+      // Project has a low count cap of 2; only 1 artifact exists so far.
+      prismaMocks.projectFindUnique.mockResolvedValue({ artifactCountCap: 2, artifactBytesCap: null });
+      prismaMocks.artifactCount.mockResolvedValue(1);
+      prismaMocks.artifactAggregate.mockResolvedValue({ _sum: { sizeBytes: 4 } });
+      prismaMocks.artifactCreate.mockResolvedValue({
+        id: "art-2",
+        taskId: "task-1",
+        type: "other",
+        name: "second.log",
+        content: "OK",
+        sizeBytes: 2,
+      });
+
+      const res = await makeApp(AGENT).request("/tasks/task-1/artifacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "other", name: "second.log", content: "OK" }),
+      });
+
+      expect(res.status).toBe(201);
+      expect(prismaMocks.artifactCreate).toHaveBeenCalledOnce();
+    });
+
+    it("returns 429 and does NOT create when the count cap is reached (at-cap)", async () => {
+      // Project cap is 1; 1 artifact already exists — next POST must be rejected.
+      prismaMocks.projectFindUnique.mockResolvedValue({ artifactCountCap: 1, artifactBytesCap: null });
+      prismaMocks.artifactCount.mockResolvedValue(1);
+
+      const res = await makeApp(AGENT).request("/tasks/task-1/artifacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "other", name: "overflow.log", content: "x" }),
+      });
+
+      expect(res.status).toBe(429);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toMatch(/count cap/);
+      expect(prismaMocks.artifactCreate).not.toHaveBeenCalled();
+    });
+
+    it("returns 413 and does NOT create when the bytes cap would be exceeded (at-cap)", async () => {
+      // Project bytes cap is 10 bytes; 8 bytes already consumed, new payload is 4 bytes → over cap.
+      prismaMocks.projectFindUnique.mockResolvedValue({ artifactCountCap: null, artifactBytesCap: 10 });
+      prismaMocks.artifactCount.mockResolvedValue(1); // below count cap
+      prismaMocks.artifactAggregate.mockResolvedValue({ _sum: { sizeBytes: 8 } });
+
+      const res = await makeApp(AGENT).request("/tasks/task-1/artifacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "other", name: "big.log", content: "four" }), // 4 bytes
+      });
+
+      expect(res.status).toBe(413);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toMatch(/size cap/);
+      expect(prismaMocks.artifactCreate).not.toHaveBeenCalled();
+    });
   });
 });
 

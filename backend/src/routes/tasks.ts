@@ -281,6 +281,23 @@ const ARTIFACT_TYPES = [
 // Larger payloads must be uploaded externally and referenced via `url`.
 const ARTIFACT_MAX_BYTES = 1_048_576;
 
+// Per-task aggregate caps — prevent runaway agent loops from filling the DB.
+// Both env vars accept a positive integer; invalid / missing values fall back
+// to the defaults. Per-project overrides (project.artifactCountCap and
+// project.artifactBytesCap) take precedence over these module-level defaults.
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+const ARTIFACT_MAX_COUNT_PER_TASK = parsePositiveInt(
+  process.env.ARTIFACT_MAX_COUNT_PER_TASK,
+  100,
+);
+const ARTIFACT_MAX_TOTAL_BYTES_PER_TASK = parsePositiveInt(
+  process.env.ARTIFACT_MAX_TOTAL_BYTES_PER_TASK,
+  52_428_800, // 50 MiB
+);
+
 const createArtifactSchema = z
   .object({
     type: z.enum(ARTIFACT_TYPES),
@@ -3854,6 +3871,48 @@ taskRouter.post("/tasks/:id/artifacts", zValidator("json", createArtifactSchema)
   if (sizeBytes > ARTIFACT_MAX_BYTES) {
     return c.json(
       { error: `Artifact exceeds inline size limit of ${ARTIFACT_MAX_BYTES} bytes; use 'url' for larger payloads` },
+      413,
+    );
+  }
+
+  // ── Per-task aggregate caps ──────────────────────────────────────────────
+  // Load per-project overrides. A per-project cap wins, but only when it is a
+  // positive value; null OR a non-positive (mis-set) cap falls back to the
+  // env-var module default — so a stray 0/negative never silently blocks every
+  // artifact. Enforcement below is best-effort / non-atomic: concurrent POSTs
+  // can overshoot the cap slightly, which is acceptable for the runaway-loop
+  // DoS bound this guards.
+  const project = await prisma.project.findUnique({
+    where: { id: task.projectId },
+    select: { artifactCountCap: true, artifactBytesCap: true },
+  });
+  const countCap =
+    project?.artifactCountCap && project.artifactCountCap > 0
+      ? project.artifactCountCap
+      : ARTIFACT_MAX_COUNT_PER_TASK;
+  const bytesCap =
+    project?.artifactBytesCap && project.artifactBytesCap > 0
+      ? project.artifactBytesCap
+      : ARTIFACT_MAX_TOTAL_BYTES_PER_TASK;
+
+  const existingCount = await prisma.taskArtifact.count({ where: { taskId: task.id } });
+  if (existingCount >= countCap) {
+    return c.json(
+      {
+        error: `Per-task artifact count cap reached (${countCap}); delete artifacts or raise the project cap`,
+      },
+      429,
+    );
+  }
+
+  const aggregateResult = await prisma.taskArtifact.aggregate({
+    where: { taskId: task.id },
+    _sum: { sizeBytes: true },
+  });
+  const existingSum = aggregateResult._sum.sizeBytes ?? 0;
+  if (existingSum + sizeBytes > bytesCap) {
+    return c.json(
+      { error: `Per-task artifact size cap reached (${bytesCap} bytes)` },
       413,
     );
   }
