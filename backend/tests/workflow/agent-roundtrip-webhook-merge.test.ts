@@ -335,4 +335,150 @@ describe("workflow round-trip — webhook-merge-to-review self-approve (task 2a6
     // Must NOT say "Work finish requires a work state" (the old misleading message).
     expect(res.body.message).not.toMatch(/work state/i);
   });
+
+  it("concurrent reviewer holds claim → 409 reviewer_conflict (not DR-message)", async () => {
+    const project = makeProject({
+      id: PROJECT_ID,
+      soloMode: false,
+      requireDistinctReviewer: false,
+      confidenceThreshold: 0,
+    });
+    setupMocks(project);
+
+    // Simulate another agent having already claimed the review slot.
+    currentTask = {
+      ...currentTask,
+      reviewClaimedByAgentId: "agent-reviewer",
+      reviewClaimedAt: new Date("2026-06-15T10:30:00Z"),
+    };
+
+    const app = makeApp(AGENT_AUTHOR);
+
+    const res = await measure<{ error: string; message: string }>(
+      app.request(`/tasks/${TASK_ID}/finish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome: "approve" }),
+      }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("reviewer_conflict");
+    expect(res.body.message).toMatch(/reviewer/i);
+    // Must NOT say "distinct reviewer required" — that message belongs to DR projects.
+    expect(res.body.message).not.toMatch(/project requires a distinct reviewer/i);
+    // Must NOT say "work state" — we should not fall through to the work-finish branch.
+    expect(res.body.message).not.toMatch(/work state/i);
+  });
+
+  it("mutation-confirm: removing reviewer-claim check allows silent clobber (guard is load-bearing)", async () => {
+    // This test verifies the guard is meaningful: a task with an active reviewer
+    // claim MUST be rejected 409, not silently approved. Without the
+    // !task.reviewClaimedByAgentId check in the self-approve condition, the
+    // self-approve branch would fire and overwrite the reviewer's claim.
+    const project = makeProject({
+      id: PROJECT_ID,
+      soloMode: false,
+      requireDistinctReviewer: false,
+      confidenceThreshold: 0,
+    });
+    setupMocks(project);
+    const app = makeApp(AGENT_AUTHOR);
+
+    // Task WITHOUT a reviewer claim → self-approve is allowed (200).
+    const resAllowed = await measure<{ kind: string }>(
+      app.request(`/tasks/${TASK_ID}/finish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome: "approve" }),
+      }),
+    );
+    expect(resAllowed.status).toBe(200);
+
+    // Reset and inject a reviewer claim → self-approve must be blocked (409).
+    setupMocks(project);
+    currentTask = {
+      ...currentTask,
+      reviewClaimedByAgentId: "agent-reviewer",
+      reviewClaimedAt: new Date("2026-06-15T10:30:00Z"),
+    };
+
+    const resBlocked = await measure<{ error: string }>(
+      app.request(`/tasks/${TASK_ID}/finish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome: "approve" }),
+      }),
+    );
+    // The guard must fire here. If it didn't, this would be 200.
+    expect(resBlocked.status).toBe(409);
+    expect(resBlocked.body.error).toBe("reviewer_conflict");
+  });
+
+  it("soloMode=true (AUTONOMOUS governanceMode) → 200 self-approve", async () => {
+    const project = makeProject({
+      id: PROJECT_ID,
+      soloMode: true,
+      requireDistinctReviewer: false,
+      governanceMode: "AUTONOMOUS",
+      confidenceThreshold: 0,
+    });
+    setupMocks(project);
+    const app = makeApp(AGENT_AUTHOR);
+
+    const res = await measure<{ kind: string; task: TaskRow; outcome: string }>(
+      app.request(`/tasks/${TASK_ID}/finish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          outcome: "approve",
+          result: "Self-approved on AUTONOMOUS project.",
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe("review");
+    expect(res.body.outcome).toBe("approve");
+    expect(currentTask.status).toBe("done");
+    expect(currentTask.claimedByAgentId).toBeNull();
+  });
+
+  it("autoMerge=true → 200 with autoMergeSha (github-merge mock called)", async () => {
+    const project = makeProject({
+      id: PROJECT_ID,
+      soloMode: false,
+      requireDistinctReviewer: false,
+      confidenceThreshold: 0,
+    });
+    setupMocks(project);
+    const app = makeApp(AGENT_AUTHOR);
+
+    const res = await measure<{
+      kind: string;
+      task: TaskRow;
+      outcome: string;
+      autoMergeSha?: string;
+    }>(
+      app.request(`/tasks/${TASK_ID}/finish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          outcome: "approve",
+          autoMerge: true,
+          result: "Self-approved with autoMerge.",
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe("review");
+    expect(res.body.outcome).toBe("approve");
+    // autoMergeSha must be present and match the mock's return value.
+    expect(res.body.autoMergeSha).toBe("aabbccddeeff00112233445566778899aabbccdd");
+    expect(currentTask.status).toBe("done");
+    expect(currentTask.autoMergeSha).toBe("aabbccddeeff00112233445566778899aabbccdd");
+    // The github-merge mock must have been invoked exactly once.
+    expect(mergeMock).toHaveBeenCalledTimes(1);
+  });
 });

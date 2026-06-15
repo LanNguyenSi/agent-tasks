@@ -1946,6 +1946,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           githubRepo: true,
           requireDistinctReviewer: true,
           soloMode: true,
+          governanceMode: true,
           requireGroundingForDebug: true,
         },
       },
@@ -2256,7 +2257,9 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   if (
     holdsWorkClaim &&
     isReviewState(effectiveDefinition, task.status) &&
-    resolveGovernanceMode(task.project) !== GovernanceMode.REQUIRES_DISTINCT_REVIEWER
+    resolveGovernanceMode(task.project) !== GovernanceMode.REQUIRES_DISTINCT_REVIEWER &&
+    !task.reviewClaimedByUserId &&
+    !task.reviewClaimedByAgentId
   ) {
     // Parse with the review schema — outcome is mandatory in this branch.
     const selfApprParsed = finishReviewSchema.safeParse(rawBody);
@@ -2356,6 +2359,41 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           status as 403 | 502,
         );
       }
+
+      // Post-check: if the workflow required prMerged, verify it now.
+      // Mirrors the review-finish autoMerge post-assert (~2118-2149).
+      const selfApprWorkflowHadPrMerged =
+        effectiveDefinition
+          ? effectiveDefinition.transitions
+              .find((t) => t.from === task.status && t.to === selfApprTargetStatus)
+              ?.requires?.includes("prMerged") ?? false
+          : false;
+
+      if (selfApprWorkflowHadPrMerged) {
+        const selfApprDelegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge", {
+          preferUserId: actor.userId,
+        });
+        const selfApprPostCheck = await evaluateTransitionRules(["prMerged"], {
+          branchName: task.branchName,
+          prUrl: task.prUrl,
+          prNumber: task.prNumber,
+          projectGithubRepo: task.project.githubRepo,
+          githubToken: selfApprDelegate?.githubAccessToken ?? null,
+        });
+        if (selfApprPostCheck.failed.length > 0) {
+          void logAuditEvent({
+            action: "task.auto_merge_post_assert_failed",
+            projectId: task.projectId,
+            taskId: task.id,
+            payload: { mode: "B_self_approve", mergeSha: mergeResult.sha, postCheckFailed: selfApprPostCheck.failed },
+          });
+          return c.json(
+            { error: "github_error", message: "PR merge succeeded but post-check failed — prMerged rule not satisfied. Manual reconciliation required." },
+            502,
+          );
+        }
+      }
+
       selfApprAutoMergeSha = mergeResult.sha;
     }
 
@@ -2386,6 +2424,23 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
 
     if (selfApprOutcome === "approve" && isTerminalState(effectiveDefinition, selfApprTargetStatus)) {
       await acknowledgeSignalsForTask(task.id);
+      if (selfApprAutoMergeSha !== null) {
+        // Mirrors review-finish ~2181-2193: notify team members on AWAITS_CONFIRMATION
+        // projects that a self-merge happened. emitSelfMergeNoticeIfApplicable
+        // is a no-op for AUTONOMOUS projects.
+        void emitSelfMergeNoticeIfApplicable({
+          taskId: task.id,
+          projectId: task.projectId,
+          actor,
+          project: {
+            governanceMode: task.project.governanceMode,
+            soloMode: task.project.soloMode,
+            requireDistinctReviewer: task.project.requireDistinctReviewer,
+          },
+          mergeSha: selfApprAutoMergeSha,
+          via: "task_finish_auto_merge",
+        });
+      }
     }
 
     const selfApprActorId = actor.type === "human" ? actor.userId : actor.tokenId;
@@ -2445,6 +2500,27 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       outcome: selfApprOutcome,
       ...(selfApprAutoMergeSha !== null ? { autoMergeSha: selfApprAutoMergeSha } : {}),
     });
+  }
+
+  // Guard: work-claim holder on a non-DR review-state task, but a distinct
+  // reviewer already holds the review claim. The self-approve branch above was
+  // skipped because !task.reviewClaimedByUserId && !task.reviewClaimedByAgentId
+  // did not hold. Clobbering an in-flight reviewer's claim silently would be
+  // wrong; surface a 409 so the caller knows to wait or coordinate.
+  if (
+    holdsWorkClaim &&
+    isReviewState(effectiveDefinition, task.status) &&
+    resolveGovernanceMode(task.project) !== GovernanceMode.REQUIRES_DISTINCT_REVIEWER
+  ) {
+    return c.json(
+      {
+        error: "reviewer_conflict",
+        message:
+          "A reviewer already holds the review claim for this task. " +
+          "Wait for them to finish or release their claim, then retry.",
+      },
+      409,
+    );
   }
 
   // Guard: work-claim holder on a review-state REQUIRES_DISTINCT_REVIEWER
