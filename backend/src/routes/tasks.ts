@@ -1156,15 +1156,22 @@ async function deriveDebugFlavor<T extends {
 }>(
   task: T,
   client?: GroundingClient,
+  forceReclassify?: boolean,
 ): Promise<{
   debugFlavor: boolean;
   isFresh: boolean;
+  // True only when forceReclassify=true AND the persisted debugFlavor value
+  // was already set AND the classifier produces a different result. Callers
+  // use this to emit the task.debugFlavor.reclassified audit event.
+  reclassified: boolean;
   mergedMetadata: TaskMetadata;
   groundingHint: GroundingHint | null;
 }> {
   const meta = readMetadata(task.metadata);
   const isFresh = meta.debugFlavor === undefined;
-  const debugFlavor = isFresh
+  // When forceReclassify=true we re-run the classifier regardless of whether
+  // the flag was already persisted, bypassing the isFresh guard.
+  const debugFlavor = isFresh || forceReclassify
     ? detectDebugFlavor({
         title: task.title,
         description: task.description,
@@ -1172,10 +1179,20 @@ async function deriveDebugFlavor<T extends {
       })
     : meta.debugFlavor === true;
 
+  // reclassified: the persisted value was defined, the caller requested a
+  // re-run, and the result is different from what was stored.
+  const reclassified = !isFresh && forceReclassify === true && meta.debugFlavor !== debugFlavor;
+
   const mergedMetadata: TaskMetadata = { ...meta, debugFlavor };
+  // When the flag flips from true → false under a forced reclassification,
+  // the grounding session state is no longer relevant — clear it.
+  if (reclassified && !debugFlavor) {
+    delete mergedMetadata.groundingSessionState;
+    delete mergedMetadata.groundingSessionId;
+  }
 
   if (!debugFlavor) {
-    return { debugFlavor, isFresh, mergedMetadata, groundingHint: null };
+    return { debugFlavor, isFresh, reclassified, mergedMetadata, groundingHint: null };
   }
 
   // Idempotent path: a session was already started on a prior request.
@@ -1187,6 +1204,7 @@ async function deriveDebugFlavor<T extends {
       return {
         debugFlavor,
         isFresh,
+        reclassified,
         mergedMetadata,
         groundingHint: buildGroundingHintWithSession(task, reconstructed),
       };
@@ -1194,6 +1212,7 @@ async function deriveDebugFlavor<T extends {
     return {
       debugFlavor,
       isFresh,
+      reclassified,
       mergedMetadata,
       groundingHint: buildGroundingHint(task),
     };
@@ -1213,6 +1232,7 @@ async function deriveDebugFlavor<T extends {
       return {
         debugFlavor,
         isFresh,
+        reclassified,
         mergedMetadata,
         groundingHint: buildGroundingHintWithSession(task, session),
       };
@@ -1223,6 +1243,7 @@ async function deriveDebugFlavor<T extends {
   return {
     debugFlavor,
     isFresh,
+    reclassified,
     mergedMetadata,
     groundingHint: buildGroundingHint(task),
   };
@@ -1357,14 +1378,29 @@ taskRouter.post("/tasks/pickup", async (c) => {
     },
   });
   if (workTask) {
-    const { isFresh, mergedMetadata, groundingHint } = await deriveDebugFlavor(
+    // ?reclassify=true opt-in: re-run the classifier regardless of whether
+    // debugFlavor is already persisted and write the result unconditionally.
+    const reclassify = c.req.query("reclassify") === "true";
+    const { isFresh, reclassified, mergedMetadata, groundingHint } = await deriveDebugFlavor(
       workTask,
       getGroundingClient(),
+      reclassify,
     );
-    if (isFresh) {
+    if (isFresh || reclassify) {
       await prisma.task.update({
         where: { id: workTask.id },
         data: { metadata: mergedMetadata as Prisma.InputJsonValue },
+      });
+    }
+    if (reclassified) {
+      void logAuditEvent({
+        action: "task.debugFlavor.reclassified",
+        projectId: workTask.projectId,
+        taskId: workTask.id,
+        payload: {
+          via: "task_pickup",
+          debugFlavor: mergedMetadata.debugFlavor,
+        },
       });
     }
     return c.json({
@@ -1415,6 +1451,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     return c.json({ error: "bad_request", message: startBody.error.message }, 400);
   }
   const providedBranchName = startBody.data.branchName;
+  const reclassify = startBody.data.reclassify === true;
 
   const task = await prisma.task.findUnique({
     where: { id: c.req.param("id") },
@@ -1575,7 +1612,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       return _exhaustive;
     }
 
-    const flavor = await deriveDebugFlavor(task, getGroundingClient());
+    const flavor = await deriveDebugFlavor(task, getGroundingClient(), reclassify);
     // Atomic compare-and-swap: only claim if the row is still unclaimed. The
     // `task.claimedBy*` null-check above is a fast path, but two actors can
     // both pass it before either writes (TOCTOU). Guarding on
@@ -1589,7 +1626,9 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         claimedAt: new Date(),
         status: startTarget,
         ...(willPersistBranchName ? { branchName: providedBranchName } : {}),
-        ...(flavor.isFresh
+        // Include metadata when it is fresh (first classification) OR when the
+        // caller requested a forced reclassification (reclassify=true).
+        ...(flavor.isFresh || reclassify
           ? { metadata: flavor.mergedMetadata as Prisma.InputJsonValue }
           : {}),
       },
@@ -1620,6 +1659,17 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         ...(willPersistBranchName ? { foldedBranchName: providedBranchName } : {}),
       },
     });
+    if (flavor.reclassified) {
+      void logAuditEvent({
+        action: "task.debugFlavor.reclassified",
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: {
+          via: "task_start",
+          debugFlavor: flavor.mergedMetadata.debugFlavor,
+        },
+      });
+    }
 
     return c.json({
       kind: "work",
@@ -1795,6 +1845,10 @@ const startTaskSchema = z.object({
     .min(1, "branchName must not be empty")
     .max(255, "branchName must be at most 255 characters")
     .optional(),
+  // Opt-in reclassification flag. When true, the debugFlavor classifier is
+  // re-run regardless of the persisted value. The result is written to metadata
+  // unconditionally and an audit event fires if the value actually changed.
+  reclassify: z.boolean().optional(),
 });
 
 // Result of evaluating workflow transition gates for a v2 `task_finish` call.

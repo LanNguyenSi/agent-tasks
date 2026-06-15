@@ -82,6 +82,10 @@ export type AuditAction =
   // shadow signal that quantifies block blast radius before a project flips to
   // BLOCK. Carries score/threshold/keystoneBlocked/caps in the payload.
   | "task.claim_would_block_shadow"
+  // Opt-in reclassification of the debugFlavor flag. Fired when a caller
+  // passes `reclassify=true` on task_pickup or task_start and the classifier
+  // produces a different result than the persisted value.
+  | "task.debugFlavor.reclassified"
   // Outbound Signal-webhook delivery. Fired by
   // services/notification-webhook.ts after every POST attempt the project's
   // `notificationWebhookUrl` produces. `delivered` records the final
