@@ -3173,6 +3173,7 @@ describe("debug-flavor detection on pickup + start", () => {
     labels: ["docs"],             // suppression label — overrides keyword heuristic
     metadata: {
       debugFlavor: true,
+      groundingSessionId: "old-session",
       groundingSessionState: { id: "old-session", phase: "scope-resolution" },
     },
   };
@@ -3193,7 +3194,7 @@ describe("debug-flavor detection on pickup + start", () => {
     expect(body.groundingHint).toBeUndefined();
 
     // Metadata written unconditionally (reclassify=true), with debugFlavor:false
-    // and groundingSessionState cleared.
+    // and both groundingSessionId and groundingSessionState cleared.
     expect(prismaMocks.taskUpdate).toHaveBeenCalledWith({
       where: { id: "task-1" },
       data: { metadata: { debugFlavor: false } },
@@ -3226,7 +3227,8 @@ describe("debug-flavor detection on pickup + start", () => {
     expect(body.kind).toBe("work");
     expect(body.groundingHint).toBeUndefined();
 
-    // The CAS claim write includes metadata with debugFlavor:false and no groundingSessionState.
+    // The CAS claim write includes metadata with debugFlavor:false and neither groundingSessionId
+    // nor groundingSessionState.
     const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0] as {
       data: Record<string, unknown>;
     };

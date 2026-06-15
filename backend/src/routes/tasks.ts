@@ -1188,6 +1188,7 @@ async function deriveDebugFlavor<T extends {
   // the grounding session state is no longer relevant — clear it.
   if (reclassified && !debugFlavor) {
     delete mergedMetadata.groundingSessionState;
+    delete mergedMetadata.groundingSessionId;
   }
 
   if (!debugFlavor) {
