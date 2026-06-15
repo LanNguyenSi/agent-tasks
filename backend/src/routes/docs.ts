@@ -2,7 +2,7 @@ import { Hono } from "hono";
 
 export const docsRouter = new Hono();
 
-const openApiSpec = {
+export const openApiSpec = {
   openapi: "3.0.3",
   info: {
     title: "agent-tasks API",

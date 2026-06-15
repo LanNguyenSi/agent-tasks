@@ -187,7 +187,7 @@ const taskListInclude = {
   },
 };
 
-const createTaskSchema = z.object({
+export const createTaskSchema = z.object({
   title: z.string().min(1).max(255),
   description: z.string().optional(),
   status: z.enum(["open", "in_progress", "review", "done"]).optional(),
