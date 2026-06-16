@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-06-16
+
+**Per-task artifact cap, two new self-service claim paths, and a state-management + UI fix batch.** The backend now enforces a configurable aggregate count and byte cap on per-task artifacts to bound runaway loops (#350). Two opt-in claim shortcuts reduce operator friction: a self-approve path clears review-state work claims on non-DR projects (#356), and `task_start`/`task_pickup` accept a `debugFlavor` reclassify flag without a separate update call (#357). Transition into a terminal state now atomically clears both work claims (#348) and review-claim fields (#354). Escape-layering in modals is fixed so a Select or DropdownMenu popover closes before its parent Modal (#349), and `table-layout: fixed` is now applied consistently so declared column widths are honored across all Table consumers (#347, #346).
+
+### Added
+
+- **Per-task aggregate artifact count and bytes cap** (#350). A configurable cap on the total artifact count and total bytes per task prevents runaway agent loops from accumulating unbounded artifact storage.
+- **Self-approve path for review-state work claim on non-DR projects** (#356). On projects without a double-review gate, an agent holding a work claim in review state can self-approve its own claim without waiting for a separate reviewer.
+- **Opt-in `debugFlavor` reclassify on `task_start` and `task_pickup`** (#357). Callers can pass an opt-in flag to reclassify a task's debug flavor at start or pickup time, enabling debug-mode pipelines without a separate update call.
+
+### Fixed
+
+- **Transition into a terminal state clears work claims** (#348). `POST /tasks/:id/transition` into a terminal state now atomically clears any outstanding work claims, preventing phantom claimed tasks after completion.
+- **Transition into a terminal state also clears review-claim fields** (#354). Completes the fix from #348 by clearing `reviewClaim` and `reviewClaimExpiresAt` on terminal transition.
+- **Escape closes a nested Select or DropdownMenu popover before the parent Modal** (#349). The first Escape press now closes the innermost open overlay; the Modal only receives the event once all popovers inside it are closed.
+- **Table fixed-layout column widths honored across all consumers** (#347). All Table usages now apply `table-layout: fixed` so declared column widths are respected rather than overridden by cell content.
+- **Long titles clamped in list views** (#346). Task titles that exceed column width in the task list and dashboard table are now truncated with an ellipsis via the fixed table layout.
+
+### Tests
+
+- **Parallel claim-race regression test and agent-credentials doc** (#355). Adds an integration test asserting that the compare-and-swap claim guard holds under concurrent requests; adds `docs/testing/agent-credentials.md` describing how to obtain test tokens.
+- **Notification-webhook e2e wire-format test against a real HTTP server** (#352). Validates the outgoing webhook payload against a live HTTP listener rather than a mock, catching serialization regressions before deploy.
+- **`CreateTaskRequest` to Zod `createTaskSchema` key parity check** (#351). A pinned test asserts that the OpenAPI `CreateTaskRequest` schema and the Zod validation schema expose the same top-level keys, preventing silent schema divergence.
+
+### Changed
+
+- **MCP bridge reconciled to the published v0.7.1** (#353). Aligns the master branch to the already-released `@agent-tasks/mcp-bridge@0.7.1` and pins `@agent-tasks/mcp-server@0.9.0`; no behavior changes.
+
 ## [0.25.1] - 2026-06-14
 
 A security and fixes release on top of the Quiet Precision overhaul. No schema changes.
