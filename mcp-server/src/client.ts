@@ -254,11 +254,12 @@ export class AgentTasksClient {
   //
   // Verb-oriented endpoints backing the v2 MCP tools. See ADR 0008.
 
-  pickupWork() {
-    return this.request<unknown>("POST", "/api/tasks/pickup");
+  pickupWork(opts?: { reclassify?: boolean }) {
+    const qs = opts?.reclassify === true ? "?reclassify=true" : "";
+    return this.request<unknown>("POST", `/api/tasks/pickup${qs}`);
   }
 
-  startTask(taskId: string, input?: { branchName?: string }) {
+  startTask(taskId: string, input?: { branchName?: string; reclassify?: boolean }) {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/start`, input);
   }
 

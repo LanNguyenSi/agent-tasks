@@ -52,14 +52,22 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_pickup",
       description:
-        "Get the next piece of work. Returns one of: a pending signal, a task ready for review, a claimable task, or idle. The response is tagged with `kind: \"signal\" | \"review\" | \"work\" | \"idle\"`. Signals are delivered at-most-once and acked atomically. Review tasks are filtered by the distinct-reviewer rule (you cannot review tasks you authored). Fails with 409 if you already hold an active claim — call task_finish or task_abandon first.",
-      inputShape: {},
-      handler: async () => wrap(() => client.pickupWork()),
+        "Get the next piece of work. Returns one of: a pending signal, a task ready for review, a claimable task, or idle. The response is tagged with `kind: \"signal\" | \"review\" | \"work\" | \"idle\"`. Signals are delivered at-most-once and acked atomically. Review tasks are filtered by the distinct-reviewer rule (you cannot review tasks you authored). Fails with 409 if you already hold an active claim — call task_finish or task_abandon first.\n\nOptional `reclassify`: opt-in flag that re-runs the debugFlavor classifier past the isFresh guard; clears stale debugFlavor and grounding-session metadata when the task no longer matches. Forwarded as `?reclassify=true` in the query string (the backend compares with `=== \"true\"`, so only the literal lowercase string `true` is honoured; any other truthy representation is a no-op).",
+      inputShape: {
+        reclassify: z
+          .boolean()
+          .optional()
+          .describe(
+            "Opt-in flag. When true, re-runs the debugFlavor classifier past the isFresh guard and clears stale debugFlavor and grounding-session metadata on a no-longer-matches flip. Sent as the literal query string `?reclassify=true` — only lowercase `true` is honoured by the backend; other truthy values are no-ops.",
+          ),
+      },
+      handler: async ({ reclassify }) =>
+        wrap(() => client.pickupWork(reclassify !== undefined ? { reclassify } : undefined)),
     }),
     def({
       name: "task_start",
       description:
-        "Begin work on a task. Polymorphic by task status: an `open` task is author-claimed and transitioned to in_progress; a `review` task is review-claimed without state change. Response includes the task data, project info, and `expectedFinishState` (the state task_finish will target for a work claim). Fails with 409 if you already hold an active claim.\n\nOptional `branchName`: for projects that enforce the `branchPresent` workflow gate on the start edge, pass the branch you intend to work on and the server folds it into the same atomic claim write. Single round-trip, no separate tasks_update needed. Ignored when the task already has a branchName (idempotent, never overwrites). Only meaningful on the open→in_progress branch; on a review-claim start the value is accepted but ignored.",
+        "Begin work on a task. Polymorphic by task status: an `open` task is author-claimed and transitioned to in_progress; a `review` task is review-claimed without state change. Response includes the task data, project info, and `expectedFinishState` (the state task_finish will target for a work claim). Fails with 409 if you already hold an active claim.\n\nOptional `branchName`: for projects that enforce the `branchPresent` workflow gate on the start edge, pass the branch you intend to work on and the server folds it into the same atomic claim write. Single round-trip, no separate tasks_update needed. Ignored when the task already has a branchName (idempotent, never overwrites). Only meaningful on the open→in_progress branch; on a review-claim start the value is accepted but ignored.\n\nOptional `reclassify`: opt-in flag that re-runs the debugFlavor classifier past the isFresh guard; clears stale debugFlavor and grounding-session metadata when the task no longer matches. Forwarded as a strict boolean in the request body (the backend schema is `z.boolean().optional()`, so pass `true` or `false` — unlike task_pickup, the wire format is a JSON boolean, not a string).",
       inputShape: {
         taskId: uuid(),
         branchName: z
@@ -71,9 +79,21 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
           .describe(
             "Optional branch name. When set and the task has no branchName yet, the server writes it as part of the claim transaction so a `branchPresent` precondition passes in one call.",
           ),
+        reclassify: z
+          .boolean()
+          .optional()
+          .describe(
+            "Opt-in flag. When true, re-runs the debugFlavor classifier past the isFresh guard and clears stale debugFlavor and grounding-session metadata on a no-longer-matches flip. Forwarded as a strict JSON boolean in the request body (unlike task_pickup where the backend compares the query string with === \"true\").",
+          ),
       },
-      handler: async ({ taskId, branchName }) =>
-        wrap(() => client.startTask(taskId, branchName ? { branchName } : undefined)),
+      handler: async ({ taskId, branchName, reclassify }) => {
+        const body: { branchName?: string; reclassify?: boolean } = {};
+        if (branchName) body.branchName = branchName;
+        if (reclassify !== undefined) body.reclassify = reclassify;
+        return wrap(() =>
+          client.startTask(taskId, Object.keys(body).length > 0 ? body : undefined),
+        );
+      },
     }),
     def({
       name: "task_note",

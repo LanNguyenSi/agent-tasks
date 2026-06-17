@@ -451,6 +451,82 @@ describe("buildTools", () => {
     expect(init.method).toBe("POST");
   });
 
+  // ── task_pickup reclassify ──────────────────────────────────────────
+
+  it("task_pickup appends ?reclassify=true when reclassify=true", async () => {
+    fetchMock.mockResolvedValue(ok({ kind: "idle" }));
+    await tool("task_pickup").handler({ reclassify: true } as never);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://example.test/api/tasks/pickup?reclassify=true");
+    expect(init.method).toBe("POST");
+  });
+
+  it("task_pickup omits the reclassify query param when reclassify is not passed", async () => {
+    fetchMock.mockResolvedValue(ok({ kind: "idle" }));
+    await tool("task_pickup").handler({} as never);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://example.test/api/tasks/pickup");
+    expect(url).not.toContain("reclassify");
+  });
+
+  it("task_pickup omits the reclassify query param when reclassify=false", async () => {
+    fetchMock.mockResolvedValue(ok({ kind: "idle" }));
+    await tool("task_pickup").handler({ reclassify: false } as never);
+    const [url] = fetchMock.mock.calls[0];
+    // Backend only honours the literal "?reclassify=true"; false means opt-out so we skip the param.
+    expect(url).toBe("https://example.test/api/tasks/pickup");
+  });
+
+  // ── task_start reclassify ───────────────────────────────────────────
+
+  it("task_start forwards reclassify as a JSON boolean in the request body", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
+    await tool("task_start").handler({
+      taskId: "11111111-1111-1111-1111-111111111111",
+      reclassify: true,
+    } as never);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://example.test/api/tasks/11111111-1111-1111-1111-111111111111/start",
+    );
+    expect(JSON.parse(init.body)).toEqual({ reclassify: true });
+  });
+
+  it("task_start forwards both branchName and reclassify in a single body", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
+    await tool("task_start").handler({
+      taskId: "11111111-1111-1111-1111-111111111111",
+      branchName: "feat/my-branch",
+      reclassify: true,
+    } as never);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      branchName: "feat/my-branch",
+      reclassify: true,
+    });
+  });
+
+  it("task_start omits body when neither branchName nor reclassify are passed", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
+    await tool("task_start").handler({
+      taskId: "22222222-2222-2222-2222-222222222222",
+    } as never);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.body).toBeUndefined();
+  });
+
+  it("task_start omits reclassify from body when not provided but branchName is", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
+    await tool("task_start").handler({
+      taskId: "33333333-3333-3333-3333-333333333333",
+      branchName: "feat/only-branch",
+    } as never);
+    const [, init] = fetchMock.mock.calls[0];
+    const parsed = JSON.parse(init.body);
+    expect(parsed).toEqual({ branchName: "feat/only-branch" });
+    expect(parsed).not.toHaveProperty("reclassify");
+  });
+
   it("pull_requests_merge propagates a 403 delegation-missing error through wrap", async () => {
     fetchMock.mockResolvedValue(
       new Response(
