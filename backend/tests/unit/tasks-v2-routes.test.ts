@@ -2804,6 +2804,75 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     expect(updateCall.data.reviewClaimedAt).toBeUndefined();
   });
 
+  it("review -> in_progress kickback clears review-claim and leaves work-claim intact", async () => {
+    // Regression pin for the pre-existing gap: a reviewer kicking a task back via
+    // raw /transition (review -> in_progress) used to leave a stale review-claim
+    // occupying the reviewer slot. task_finish request_changes already nulls
+    // reviewClaimedBy*/At; this test verifies /transition now matches that behaviour.
+    const workflowDef = {
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "review", label: "Review", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress", label: "Start", requiredRole: "any" },
+        { from: "in_progress", to: "review", label: "Submit", requiredRole: "any" },
+        { from: "review", to: "in_progress", label: "Request changes", requiredRole: "any" },
+        { from: "review", to: "done", label: "Approve", requiredRole: "any" },
+      ],
+      initialState: "open",
+    };
+
+    const task = {
+      ...baseTask,
+      id: "task-review-kickback-1",
+      status: "review",
+      workflowId: null,
+      workflow: null,
+      // Author holds the work-claim; reviewer holds the review-claim.
+      claimedByAgentId: "agent-author",
+      claimedByUserId: null,
+      claimedAt: new Date("2026-01-01T00:00:00Z"),
+      reviewClaimedByAgentId: "agent-reviewer",
+      reviewClaimedByUserId: null,
+      reviewClaimedAt: new Date("2026-01-02T00:00:00Z"),
+      project: { ...baseTask.project, requireDistinctReviewer: false },
+    };
+
+    prismaMocks.taskFindUnique.mockResolvedValue(task);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce({
+      id: "wf-review-kickback",
+      projectId: "proj-1",
+      isDefault: true,
+      definition: workflowDef,
+    });
+    prismaMocks.taskUpdate.mockImplementation(
+      ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
+        Promise.resolve({ ...task, id: where.id, ...data, workflow: null, project: task.project }),
+    );
+
+    const app = makeTransitionApp(HUMAN);
+    const res = await app.request("/tasks/task-review-kickback-1/transition", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "in_progress" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("in_progress");
+    // Review-claim must be released so the reviewer slot is freed.
+    expect(updateCall.data.reviewClaimedByAgentId).toBeNull();
+    expect(updateCall.data.reviewClaimedByUserId).toBeNull();
+    expect(updateCall.data.reviewClaimedAt).toBeNull();
+    // Work-claim must be left intact so the author can resume without re-claiming.
+    expect(updateCall.data.claimedByAgentId).toBeUndefined();
+    expect(updateCall.data.claimedByUserId).toBeUndefined();
+    expect(updateCall.data.claimedAt).toBeUndefined();
+  });
+
   it("custom terminal state (not named 'done') clears work-claim fields via project workflow", async () => {
     // Custom workflows can name their terminal state anything. The fix uses
     // isTerminalState(def, status) rather than hardcoding "done", so a custom

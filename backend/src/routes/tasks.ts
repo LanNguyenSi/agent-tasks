@@ -4880,13 +4880,27 @@ taskRouter.post(
       );
     }
 
-    // Clear BOTH the work-claim and the review-claim fields atomically when
-    // entering a terminal state, for full parity with the task_finish
-    // review-approve path (which nulls reviewClaimedBy*/At). A `review -> done`
-    // via /transition would otherwise leave a stale review-claim on a terminal
-    // task, occupying the reviewer's review-claim slot. Non-terminal
-    // transitions leave both claims untouched (the {} spread below).
+    // Claim-clearing rules (applied atomically with the status write):
+    //
+    // 1. Terminal target: clear BOTH work-claim and review-claim. Mirrors the
+    //    task_finish review-approve path so no stale claim occupies a slot on a
+    //    finished task.
+    //
+    // 2. Non-terminal exit from a review state (e.g. review -> in_progress):
+    //    clear the review-claim only — work-claim is kept so the author can
+    //    resume. Mirrors task_finish request_changes which also nulls
+    //    reviewClaimedBy*/At; without this a raw /transition kickback leaves a
+    //    stale review-claim until cleared elsewhere.
+    //
+    // 3. All other non-terminal transitions: leave both claims untouched.
     const isTerminal = isTerminalState(effectiveDef, status);
+    // `status !== previousStatus` keeps a (custom-workflow) review->review
+    // self-loop in branch 3: it is not actually LEAVING review, so the
+    // review-claim must survive. Default workflows have no such self-loop.
+    const isLeavingReview =
+      !isTerminal &&
+      status !== previousStatus &&
+      isReviewState(effectiveDef, previousStatus);
     const updated = await prisma.task.update({
       where: { id: task.id },
       data: {
@@ -4901,7 +4915,13 @@ taskRouter.post(
               reviewClaimedByAgentId: null,
               reviewClaimedAt: null,
             }
-          : {}),
+          : isLeavingReview
+            ? {
+                reviewClaimedByUserId: null,
+                reviewClaimedByAgentId: null,
+                reviewClaimedAt: null,
+              }
+            : {}),
       },
       include: taskInclude,
     });
