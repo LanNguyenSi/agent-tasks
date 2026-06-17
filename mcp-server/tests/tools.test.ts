@@ -527,6 +527,19 @@ describe("buildTools", () => {
     expect(parsed).not.toHaveProperty("reclassify");
   });
 
+  it("task_start sends reclassify:false in the body when explicitly set to false (no-op on backend; documents start-vs-pickup asymmetry)", async () => {
+    // task_pickup omits ?reclassify entirely for false; task_start sends the
+    // JSON boolean because the backend schema is z.boolean().optional() and
+    // false is a valid value (evaluates as !== true, so it is a backend no-op).
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
+    await tool("task_start").handler({
+      taskId: "44444444-4444-4444-4444-444444444444",
+      reclassify: false,
+    } as never);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({ reclassify: false });
+  });
+
   it("pull_requests_merge propagates a 403 delegation-missing error through wrap", async () => {
     fetchMock.mockResolvedValue(
       new Response(
