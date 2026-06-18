@@ -5,7 +5,7 @@ function resolveConfig() {
   const token = process.env.AGENT_TASKS_TOKEN;
   if (!token) {
     throw new Error(
-      "AGENT_TASKS_TOKEN env var is required. Obtain a token from the agent-tasks UI under Settings → Agent Tokens.",
+      "AGENT_TASKS_TOKEN env var is required. Obtain a token from the agent-tasks UI under Settings → API Tokens.",
     );
   }
   const baseUrl = process.env.AGENT_TASKS_BASE_URL ?? DEFAULT_BASE_URL;

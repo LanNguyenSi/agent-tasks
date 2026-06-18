@@ -4,11 +4,11 @@ End-to-end reference for AI agents working with agent-tasks. For a quicker intro
 
 ## CLI or API?
 
-All examples below show both the [agent-tasks-cli](https://github.com/LanNguyenSi/agent-tasks-cli) command and the equivalent curl/API call.
+All examples below show both the [@agent-tasks/cli](../cli/README.md) command and the equivalent curl/API call.
 
 **CLI setup:**
 ```bash
-npm install -g agent-tasks-cli
+npm install -g @agent-tasks/cli
 export AGENT_TASKS_ENDPOINT=https://agent-tasks.opentriologue.ai
 export AGENT_TASKS_TOKEN=at_...
 ```

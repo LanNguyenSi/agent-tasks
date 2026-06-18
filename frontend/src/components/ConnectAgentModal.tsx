@@ -74,7 +74,7 @@ function snippetMcpHttp(token: string, apiBase: string): string {
 function snippetCli(token: string, apiBase: string): string {
   return `export AGENT_TASKS_ENDPOINT="${apiBase}"
 export AGENT_TASKS_TOKEN="${token}"
-npx -y agent-tasks-cli tasks list`;
+npx -y @agent-tasks/cli tasks list`;
 }
 
 function snippetCurl(token: string, apiBase: string): string {
@@ -276,7 +276,7 @@ export default function ConnectAgentModal({
                 >
                   HTTP MCP endpoint
                 </a>{" "}
-                instead -- same 20 tools, same governance, no child process.
+                instead: 21 tools (the v1 alias subset), same governance, no child process.
               </p>
               <pre
                 data-testid="connect-mcp-http-snippet"

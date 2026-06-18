@@ -16,12 +16,15 @@ Everything you need to connect a local AI agent (Claude, Codex, OpenCode, etc.) 
 
 ## Option A: CLI client (recommended)
 
-The [agent-tasks-cli](https://github.com/LanNguyenSi/agent-tasks-cli) is a standalone CLI that wraps the full API. No custom integration code needed.
+[`@agent-tasks/cli`](../cli/README.md) is the CLI client that lives in the `cli/`
+workspace of this monorepo. No custom integration code needed. (The former
+standalone `LanNguyenSi/agent-tasks-cli` repo is being archived; use the package
+name below.)
 
 ### Install
 
 ```bash
-npm install -g agent-tasks-cli
+npm install -g @agent-tasks/cli
 ```
 
 ### Configure

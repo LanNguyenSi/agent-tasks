@@ -118,6 +118,9 @@ agent-tasks tasks instructions <task-id>
 | `--due-at <iso>` | ISO 8601 due date |
 | `--external-ref <ref>` | Idempotency key for imports |
 | `-l, --label <label>` | Repeatable |
+| `--depends-on <task-id>` | Blocking task id in the same project (repeatable) |
+| `--debug-flavor` | Force debug-flavor classification (grounding hint at pickup) |
+| `--no-debug-flavor` | Suppress debug-flavor classification (overrides the heuristic) |
 
 ## Projects
 

@@ -28,7 +28,7 @@ Two environment variables:
 | `AGENT_TASKS_TOKEN`    | yes      | —                                        |
 | `AGENT_TASKS_BASE_URL` | no       | `https://agent-tasks.opentriologue.ai`   |
 
-Obtain a token from the agent-tasks UI under **Settings → Agent Tokens**.
+Obtain a token from the agent-tasks UI under **Settings → API Tokens**.
 The token scope determines which tools succeed at runtime; tools that require
 missing scopes return an API error describing the missing scope.
 
@@ -39,7 +39,7 @@ Register globally for your user so the server is available in every project:
 ```bash
 claude mcp add agent-tasks \
   --scope user \
-  --env AGENT_TASKS_TOKEN=atk_xxx \
+  --env AGENT_TASKS_TOKEN=at_xxx \
   -- npx -y @agent-tasks/mcp-server
 ```
 
@@ -48,30 +48,66 @@ Drop `--scope user` if you want it project-local instead. See
 
 ## Tools
 
-| Tool                    | Wraps                                              |
-| ----------------------- | -------------------------------------------------- |
-| `projects_list`         | `GET /api/projects/available`                      |
-| `projects_get`          | `GET /api/projects/:slugOrId` (or `/by-slug/:slug`)|
-| `tasks_list`            | `GET /api/tasks/claimable`                         |
-| `tasks_get`             | `GET /api/tasks/:id`                               |
-| `tasks_instructions`    | `GET /api/tasks/:id/instructions`                  |
-| `tasks_create`          | `POST /api/projects/:projectId/tasks`              |
-| `tasks_claim`           | `POST /api/tasks/:id/claim`                        |
-| `tasks_release`         | `POST /api/tasks/:id/release`                      |
-| `tasks_transition`      | `POST /api/tasks/:id/transition`                   |
-| `tasks_update`          | `PATCH /api/tasks/:id`                             |
-| `tasks_comment`         | `POST /api/tasks/:id/comments`                     |
-| `review_approve`        | `POST /api/tasks/:id/review` (`action: approve`)   |
-| `review_request_changes`| `POST /api/tasks/:id/review` (`action: request_changes`) |
-| `review_claim`          | `POST /api/tasks/:id/review/claim`                 |
-| `review_release`        | `POST /api/tasks/:id/review/release`               |
-| `pull_requests_create`  | `POST /api/github/pull-requests`                   |
-| `pull_requests_merge`   | `POST /api/github/pull-requests/:prNumber/merge`   |
-| `pull_requests_comment` | `POST /api/github/pull-requests/:prNumber/comments`|
-| `signals_poll`          | `GET /api/agent/signals`                           |
-| `signals_ack`           | `POST /api/agent/signals/:id/ack`                  |
+35 tools total. All return the raw JSON response from the backend as a text block.
 
-All tools return the raw JSON response from the backend as a text block.
+### v2 verbs (task_*)
+
+The canonical agent surface. Prefer these for all new integrations.
+
+| Tool                  | Wraps                                        |
+| --------------------- | -------------------------------------------- |
+| `task_pickup`         | `POST /api/tasks/pickup`                     |
+| `task_start`          | `POST /api/tasks/:id/start`                  |
+| `task_note`           | `POST /api/tasks/:id/comments`               |
+| `task_finish`         | `POST /api/tasks/:id/finish`                 |
+| `task_create`         | `POST /api/projects/:projectId/tasks`        |
+| `task_abandon`        | `POST /api/tasks/:id/abandon`                |
+| `task_submit_pr`      | `POST /api/tasks/:id/submit-pr`              |
+| `task_merge`          | `POST /api/tasks/:id/merge`                  |
+
+### Artifacts (v2)
+
+| Tool                    | Wraps                                          |
+| ----------------------- | ---------------------------------------------- |
+| `task_artifact_create`  | `POST /api/tasks/:id/artifacts`                |
+| `task_artifact_list`    | `GET /api/tasks/:id/artifacts`                 |
+| `task_artifact_get`     | `GET /api/tasks/:id/artifacts/:artifactId`     |
+
+### Attachments (read-only, v2)
+
+| Tool                    | Wraps                                                       |
+| ----------------------- | ----------------------------------------------------------- |
+| `task_attachment_list`  | `GET /api/tasks/:id/attachments`                            |
+| `task_attachment_get`   | `GET /api/tasks/:id/attachments/:attachmentId/content`      |
+
+### v1 aliases (tasks_* / review_* / pull_requests_* / projects_* / signals_*)
+
+Still functional; most are deprecated in favour of the v2 verbs above.
+
+| Tool                     | Wraps                                                         |
+| ------------------------ | ------------------------------------------------------------- |
+| `projects_list`          | `GET /api/projects/available`                                 |
+| `projects_get`           | `GET /api/projects/:slugOrId` (or `/by-slug/:slug`)           |
+| `projects_get_effective_gates` | `GET /api/projects/:id/effective-gates`               |
+| `project_tasks`          | `GET /api/projects/:id/tasks`                                 |
+| `tasks_list`             | `GET /api/tasks/claimable`                                    |
+| `tasks_get`              | `GET /api/tasks/:id`                                          |
+| `tasks_instructions`     | `GET /api/tasks/:id/instructions`                             |
+| `tasks_create`           | `POST /api/projects/:projectId/tasks`                         |
+| `tasks_claim`            | `POST /api/tasks/:id/claim`                                   |
+| `tasks_release`          | `POST /api/tasks/:id/release`                                 |
+| `tasks_transition`       | `POST /api/tasks/:id/transition`                              |
+| `tasks_update`           | `PATCH /api/tasks/:id`                                        |
+| `tasks_comment`          | `POST /api/tasks/:id/comments`                                |
+| `review_approve`         | `POST /api/tasks/:id/review` (`action: approve`)              |
+| `review_request_changes` | `POST /api/tasks/:id/review` (`action: request_changes`)      |
+| `review_claim`           | `POST /api/tasks/:id/review/claim`                            |
+| `review_release`         | `POST /api/tasks/:id/review/release`                          |
+| `signals_poll`           | `GET /api/agent/signals`                                      |
+| `signals_ack`            | `POST /api/agent/signals/:id/ack`                             |
+| `pull_requests_create`   | `POST /api/github/pull-requests`                              |
+| `pull_requests_merge`    | `POST /api/github/pull-requests/:prNumber/merge`              |
+| `pull_requests_comment`  | `POST /api/github/pull-requests/:prNumber/comments`           |
 
 ### GitHub PR tools — delegation required
 
@@ -113,8 +149,8 @@ no running server to maintain, no network hop.
 
 Remote MCP clients that speak HTTP + JSON-RPC (e.g. Triologue's
 `mcpBridge.ts`) cannot drive a stdio child process across a network
-boundary. For those, the agent-tasks backend exposes the **same 20
-tools** over HTTP at `POST /api/mcp`:
+boundary. For those, the agent-tasks backend exposes **21 tools**
+over HTTP at `POST /api/mcp`:
 
 ```bash
 # Example: discover tools on a remote gateway
@@ -127,14 +163,18 @@ curl -X POST https://agent-tasks.opentriologue.ai/api/mcp \
 - Stateless Streamable HTTP (no session ID, one round-trip per
   request)
 - Same Bearer auth as the rest of the agent-tasks REST API
-- Same tools, same schemas, same governance — the HTTP handler
-  dispatches every tool call back through the same Hono app stack
-  the REST routes live on, so the code paths stay in sync with zero
-  duplication
+- The HTTP endpoint is a **hand-maintained subset** of the 35 tools
+  this stdio package exposes. It covers the full v1 alias surface
+  (projects_*, tasks_*, review_*, signals_*, pull_requests_*) but
+  does **not** yet include the v2 verbs (task_pickup / task_start /
+  task_finish / etc.), artifact tools (task_artifact_*), attachment
+  tools (task_attachment_*), or project_tasks. The code comment in
+  `backend/src/routes/mcp.ts` documents this gap explicitly.
 - GET / DELETE on `/api/mcp` return 405 with `Allow: POST`
 
-Pick stdio (this package) for local agents; pick `/api/mcp` for
-remote / server-side consumers.
+Pick stdio (this package) for local agents with full v2 tool access;
+pick `/api/mcp` for remote / server-side consumers that only need
+the v1 surface.
 
 ## Development
 
