@@ -31,7 +31,7 @@ __setMaskDelayForTests(50);
 
 const mockCreate = vi.mocked(createAgentToken);
 
-function makeTokenResult(rawToken = "atk_live_test123") {
+function makeTokenResult(rawToken = "at_live_test123") {
   return {
     rawToken,
     token: {
@@ -146,7 +146,7 @@ describe("ConnectAgentModal", () => {
 
     const snippet = await screen.findByTestId("connect-snippet");
     expect(snippet.textContent).toContain("claude mcp add agent-tasks");
-    expect(snippet.textContent).toContain(`AGENT_TASKS_TOKEN="atk_live_test123"`);
+    expect(snippet.textContent).toContain(`AGENT_TASKS_TOKEN="at_live_test123"`);
   });
 
   it("swaps the snippet when switching tabs but keeps the same token and does not re-mint", async () => {
@@ -158,14 +158,14 @@ describe("ConnectAgentModal", () => {
     // The shared Tabs component renders accessible tab buttons by label.
     await user.click(screen.getByRole("tab", { name: /cli/i }));
     let snippet = screen.getByTestId("connect-snippet");
-    expect(snippet.textContent).toContain(`AGENT_TASKS_TOKEN="atk_live_test123"`);
-    expect(snippet.textContent).toContain("agent-tasks-cli");
+    expect(snippet.textContent).toContain(`AGENT_TASKS_TOKEN="at_live_test123"`);
+    expect(snippet.textContent).toContain("@agent-tasks/cli");
     expect(snippet.textContent).toContain("AGENT_TASKS_ENDPOINT");
-    expect(snippet.textContent).not.toContain("@agent-tasks/cli");
+    expect(snippet.textContent).not.toContain("agent-tasks-cli");
 
     await user.click(screen.getByRole("tab", { name: /curl/i }));
     snippet = screen.getByTestId("connect-snippet");
-    expect(snippet.textContent).toContain("Authorization: Bearer atk_live_test123");
+    expect(snippet.textContent).toContain("Authorization: Bearer at_live_test123");
     expect(snippet.textContent).toContain("/api/tasks");
 
     // Only one token generation across all tab switches.
@@ -306,7 +306,7 @@ describe("ConnectAgentModal", () => {
     const httpSnippet = screen.getByTestId("connect-mcp-http-snippet");
     expect(httpSnippet.textContent).toContain("claude mcp add --transport http agent-tasks");
     expect(httpSnippet.textContent).toContain("/api/mcp");
-    expect(httpSnippet.textContent).toContain("Authorization: Bearer atk_live_test123");
+    expect(httpSnippet.textContent).toContain("Authorization: Bearer at_live_test123");
 
     // Not shown on CLI tab (tab buttons accessible by label)
     await user.click(screen.getByRole("tab", { name: /cli/i }));
@@ -327,7 +327,7 @@ describe("ConnectAgentModal", () => {
     await user.click(screen.getByTestId("connect-generate-btn"));
 
     const snippet = await screen.findByTestId("connect-snippet");
-    expect(snippet.textContent).toContain("atk_live_test123");
+    expect(snippet.textContent).toContain("at_live_test123");
     expect(snippet).toHaveAttribute("data-token-masked", "false");
 
     // Trigger the mask timer by clicking "Copy snippet"
@@ -344,13 +344,13 @@ describe("ConnectAgentModal", () => {
     );
 
     const masked = screen.getByTestId("connect-snippet");
-    expect(masked.textContent).not.toContain("atk_live_test123");
+    expect(masked.textContent).not.toContain("at_live_test123");
     expect(masked.textContent).toContain("••••••••");
 
     // Reveal restores the raw token
     await user.click(screen.getByTestId("connect-reveal"));
     expect(screen.getByTestId("connect-snippet").textContent).toContain(
-      "atk_live_test123",
+      "at_live_test123",
     );
     expect(screen.getByTestId("connect-snippet")).toHaveAttribute(
       "data-token-masked",

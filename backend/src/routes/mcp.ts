@@ -1,8 +1,14 @@
 /**
  * HTTP-transport peer of the stdio `@agent-tasks/mcp-server` package.
- * Exposes the same 20 tools over JSON-RPC via the MCP SDK's
+ * Exposes a hand-maintained 21-tool subset of that package's 35 tools
+ * over JSON-RPC via the MCP SDK's
  * `WebStandardStreamableHTTPServerTransport`, which plugs directly
  * into Hono's fetch-native request/response.
+ *
+ * The subset is the full v1 alias surface (projects_*, tasks_*,
+ * review_*, signals_*, pull_requests_*) minus project_tasks; it does
+ * not yet include the v2 verbs (task_*), artifact tools, or attachment
+ * tools. Kept in sync by hand with mcp-server/src/tools.ts.
  *
  * ## Why
  *
@@ -150,7 +156,7 @@ function errorResult(err: unknown) {
 }
 
 /**
- * Build a fresh `McpServer` with all 20 tools bound to the caller's
+ * Build a fresh `McpServer` with all 21 tools bound to the caller's
  * token. Called per request so there is no shared mutable state
  * between concurrent MCP requests.
  */
