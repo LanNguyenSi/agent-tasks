@@ -6260,9 +6260,7 @@ a.proj-chip:hover {
   color: var(--text-secondary);
   text-decoration: none;
   border-radius: var(--radius-base);
-  border-left: 2px solid transparent;
-  transition: color var(--transition-fast), background var(--transition-fast),
-    border-color var(--transition-fast);
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
 .settings-side-nav-link:hover {
@@ -6272,7 +6270,6 @@ a.proj-chip:hover {
 
 .settings-side-nav-link--active {
   color: var(--primary-text);
-  border-left-color: var(--primary);
   background: var(--primary-muted);
 }
 
