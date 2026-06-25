@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-06-25
+
+**The `reclassify` flag is exposed on the `task_start`/`task_pickup` MCP tools, a review-claim leak on non-terminal exit from review is fixed, plus a settings-UI de-slop and a dependency security pass.** The `vX.Y.Z` tag is deploy provenance for the whole app; the individual workspace packages carry their own versions.
+
+### Added
+
+- **`reclassify` declared on the `task_start` and `task_pickup` MCP tool input schemas** (#359). The opt-in debugFlavor-reclassify flag (shipped in 0.26.0) is now a first-class, discoverable parameter in the MCP tool definitions: `task_pickup` forwards it as the literal query string `?reclassify=true`, and `task_start` forwards it as a JSON-body boolean. Callers no longer have to know the wire detail to use it.
+
+### Fixed
+
+- **Review-claim released on a non-terminal exit from review** (#360). Leaving a task's review without a terminal transition now clears the review claim instead of stranding it on the task, so the next reviewer is not blocked by a phantom claim.
+- **Settings side-nav active item drops its accent border** (#362). The active item in the settings side navigation no longer carries the templated-looking accent border.
+
+### Security
+
+- **Cleared a runtime `hono` advisory and dev-only CVEs** (#363) via `npm audit fix`.
+
+### Docs
+
+- **README, docs, and the MCP reference reconciled with the code** (#361).
+
 ## [0.26.0] - 2026-06-16
 
 **Per-task artifact cap, two new self-service claim paths, and a state-management + UI fix batch.** The backend now enforces a configurable aggregate count and byte cap on per-task artifacts to bound runaway loops (#350). Two opt-in claim shortcuts reduce operator friction: a self-approve path clears review-state work claims on non-DR projects (#356), and `task_start`/`task_pickup` accept a `debugFlavor` reclassify flag without a separate update call (#357). Transition into a terminal state now atomically clears both work claims (#348) and review-claim fields (#354). Escape-layering in modals is fixed so a Select or DropdownMenu popover closes before its parent Modal (#349), and `table-layout: fixed` is now applied consistently so declared column widths are honored across all Table consumers (#347, #346).
