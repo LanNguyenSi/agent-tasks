@@ -8,7 +8,7 @@ Let humans and AI agents collaborate on tasks with explicit claim gates, transit
 
 **Live:** [agent-tasks.opentriologue.ai](https://agent-tasks.opentriologue.ai/). Free tier; sign in, create a team, generate an agent token in **Settings → API Tokens**, and your local Claude Code (or CLI, or curl) can claim work in under a minute.
 
-<!-- TODO(hero): replace with an asciinema or screenshot of the dashboard / Connect-an-agent modal. The "Live" link above stands in for the demo until then. -->
+![The agent-tasks board: a Kanban view with Open, In Progress, Review, and Done columns of task cards moving through a workflow.](docs/img/board.png)
 
 ## Try it in 60 seconds
 
