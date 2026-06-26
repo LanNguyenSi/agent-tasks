@@ -614,16 +614,16 @@ input[type="checkbox"] {
   box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 10%, transparent);
 }
 
-/* ── Project card menu ────────────────────────────────────────── */
+/* ── Project row actions kebab ──────────────────────────────────── */
 
-.project-card-menu-btn {
+.project-row-actions-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: none;
-  background: color-mix(in srgb, var(--border) 45%, transparent);
+  background: transparent;
   color: var(--muted);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -631,7 +631,7 @@ input[type="checkbox"] {
   transition: background 0.15s ease, color 0.15s ease;
 }
 
-.project-card-menu-btn:hover {
+.project-row-actions-btn:hover {
   background: var(--primary-muted);
   color: var(--text);
 }
@@ -972,7 +972,7 @@ input[type="checkbox"] {
 
 .teams-filter-bar {
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.8fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
@@ -1014,12 +1014,6 @@ input[type="checkbox"] {
   grid-template-columns: 1fr 1fr;
   gap: 0.75rem;
   margin-bottom: 0.75rem;
-}
-
-.projects-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 1rem;
 }
 
 .team-option-meta {
@@ -1294,7 +1288,7 @@ input[type="checkbox"] {
 }
 
 /* Compact, square icon-button controls in the header. Mirrors the hover
-   treatment of .project-settings-icon / .project-card-menu-btn.
+   treatment of .project-settings-icon.
    `.modal-maximize` is an anchor, so text-decoration is reset too. */
 .modal-close,
 .modal-maximize {
@@ -1589,10 +1583,6 @@ input[type="checkbox"] {
   }
 
   .teams-filter-bar {
-    grid-template-columns: 1fr;
-  }
-
-  .projects-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2222,6 +2212,11 @@ input[type="checkbox"] {
   display: block; /* fills the cell so block children (e.g. truncated spans) size correctly */
   color: inherit;
   text-decoration: none;
+}
+
+/* Monospace table cell (e.g. the /teams repo column). */
+.table-cell-mono {
+  font-family: var(--font-mono, monospace);
 }
 
 .table-row-link:hover {
@@ -6737,58 +6732,6 @@ a.proj-chip:hover {
 
 .teams-github-repo-field {
   margin-bottom: var(--space-3);
-}
-
-.project-card {
-  position: relative;
-  height: 100%;
-}
-
-.project-card-link {
-  text-decoration: none;
-  color: inherit;
-  display: block;
-}
-
-.project-card-title-row {
-  margin-bottom: var(--space-1);
-  padding-right: var(--space-5);
-}
-
-.project-card-title {
-  font-weight: 600;
-  color: var(--text);
-  margin: 0;
-  font-size: var(--text-base);
-}
-
-.project-card-repo {
-  color: var(--muted);
-  font-size: var(--text-xs);
-  margin: 0 0 var(--space-2) 0;
-}
-
-.project-card-desc {
-  color: var(--muted);
-  font-size: var(--text-sm);
-  margin: 0 0 var(--space-2) 0;
-}
-
-.project-card-chip-placeholder {
-  min-height: 1.6rem;
-}
-
-.project-card-chip {
-  color: var(--primary-text);
-  border-color: color-mix(in srgb, var(--primary) 55%, var(--border) 45%);
-  font-size: var(--text-xs);
-}
-
-.project-card--skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-4);
 }
 
 /* Disabled dropdown item (non-interactive muted text). */
