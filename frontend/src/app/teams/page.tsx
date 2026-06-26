@@ -203,10 +203,15 @@ export default function TeamsPage() {
   const [sortColumn, setSortColumn] = useState<ProjectSortColumn>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
-  // View-mode state: starts on "table" (SSR-safe default), resolved after
-  // the first project load so the auto-default can use the project count.
+  // View-mode: "table" is the SSR-safe default. `explicitView` is the user's
+  // sticky choice (persisted on toggle); when null the view auto-defaults by
+  // project count. `viewHydrated` gates resolution until the stored pref has
+  // been read on the client. `resolvedTeamRef` makes the count-based default
+  // re-resolve once per team rather than freezing after the first load.
   const [viewMode, setViewMode] = useState<TeamsViewMode>("table");
-  const [prefsLoaded, setPrefsLoaded] = useState(false);
+  const [explicitView, setExplicitView] = useState<TeamsViewMode | null>(null);
+  const [viewHydrated, setViewHydrated] = useState(false);
+  const resolvedTeamRef = useRef<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -234,28 +239,41 @@ export default function TeamsPage() {
       setLoading(false);
 
       setProjectsLoading(true);
-      const initialProjects = await getProjects(initialTeam.id);
-      setProjects(initialProjects);
-      setProjectsLoading(false);
+      try {
+        const initialProjects = await getProjects(initialTeam.id);
+        setProjects(initialProjects);
+      } finally {
+        // Always clear the flag so the view-resolution effect (which gates on
+        // !projectsLoading) is never permanently blocked by a failed load.
+        setProjectsLoading(false);
+      }
     })();
   }, [router]);
 
-  // Resolve the initial view mode once the first project load completes.
-  // We wait for selectedTeam (set) and projectsLoading (done) before
-  // resolving so we have an accurate project count for the auto-default.
-  // prefsLoaded acts as a one-shot guard so switching teams never re-resolves.
+  // Read the persisted explicit choice once on the client (SSR-safe). Applying
+  // it to viewMode immediately avoids a table->cards flash for a returning user
+  // whose stored preference is "cards".
   useEffect(() => {
-    if (prefsLoaded) return;
-    if (!selectedTeam || projectsLoading) return;
-    const count = selectedTeam.projectCount ?? projects.length;
-    setViewMode(resolveInitialView({ storedView: readStoredView(), projectCount: count }));
-    setPrefsLoaded(true);
-  }, [prefsLoaded, selectedTeam, projectsLoading, projects.length]);
+    const stored = readStoredView();
+    if (stored) {
+      setExplicitView(stored);
+      setViewMode(stored);
+    }
+    setViewHydrated(true);
+  }, []);
 
-  // Persist view-mode changes, but only after the initial resolution.
+  // Auto-default the view by project count, re-resolving once per team (so a
+  // switch to a differently sized team picks the right default instead of
+  // freezing on the first team's choice). An explicit choice always wins via
+  // resolveInitialView's `storedView ?? ...`. Persistence happens ONLY on an
+  // explicit toggle (Tabs onChange), never here — otherwise the auto-default
+  // would turn into a permanent override after the first visit.
   useEffect(() => {
-    if (prefsLoaded) storeView(viewMode);
-  }, [viewMode, prefsLoaded]);
+    if (!viewHydrated || !selectedTeam || projectsLoading) return;
+    if (resolvedTeamRef.current === selectedTeam.id) return;
+    resolvedTeamRef.current = selectedTeam.id;
+    setViewMode(resolveInitialView({ storedView: explicitView, projectCount: projects.length }));
+  }, [viewHydrated, selectedTeam, projectsLoading, explicitView, projects.length]);
 
   async function loadProjects(teamId: string) {
     setProjectsLoading(true);
@@ -728,10 +746,13 @@ export default function TeamsPage() {
               <Tabs
                 value={viewMode}
                 onChange={(v) => {
-                  setViewMode(v as TeamsViewMode);
-                  // Treat a manual selection as "prefs loaded" so the
-                  // async auto-default effect never overwrites it.
-                  setPrefsLoaded(true);
+                  const view = v as TeamsViewMode;
+                  // An explicit toggle is the sticky override: record it, apply
+                  // it, and persist it. The per-team auto-default no longer
+                  // overrides it (resolveInitialView honours storedView).
+                  setExplicitView(view);
+                  setViewMode(view);
+                  storeView(view);
                 }}
                 tabs={[
                   { value: "table", label: "Table" },

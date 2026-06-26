@@ -6772,8 +6772,9 @@ a.proj-chip:hover {
 
 .project-card-title-row {
   margin-bottom: var(--space-1);
-  /* Reserve space for the absolutely-positioned actions button. */
-  padding-right: var(--space-5);
+  /* Reserve space so a long title clears the absolutely-positioned kebab
+     (28px button + var(--space-2) offset). */
+  padding-right: calc(var(--space-6) + var(--space-2));
 }
 
 .project-card-title {
