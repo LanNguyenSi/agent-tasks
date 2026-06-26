@@ -15,6 +15,7 @@ import {
   type Team,
   type Project,
 } from "../../lib/api";
+import { formatAbsoluteDate, formatRelativeTime } from "../../lib/time";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
@@ -26,51 +27,27 @@ import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
 import Select from "@/components/ui/Select";
-import { Skeleton } from "../../components/ui/Skeleton";
+import { SkeletonList } from "../../components/ui/Skeleton";
+import { Table, type ColumnDef } from "../../components/ui/Table";
 
-type ProjectSort = "name_asc" | "name_desc" | "newest" | "recent_sync";
-const PROJECT_PAGE_SIZE = 9;
+type ProjectSortColumn = "name" | "repo" | "activeTasks" | "createdAt" | "syncedAt";
+const PROJECT_PAGE_SIZE = 25;
 
-function ProjectCard({
+function ProjectRowActions({
   project,
-  href,
   onDelete,
-  activeTaskCount,
 }: {
   project: Project;
-  href: string;
   onDelete?: () => void;
-  activeTaskCount?: number;
 }) {
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <Card interactive className="project-card">
-      <Link href={href} className="project-card-link">
-        <div className="project-card-title-row">
-          <h3 className="project-card-title">{project.name}</h3>
-        </div>
-        {project.githubRepo ? (
-          <p className="project-card-repo">GitHub: {project.githubRepo}</p>
-        ) : (
-          <p className="project-card-repo">Manual project</p>
-        )}
-        {project.description && (
-          <p className="project-card-desc">{project.description}</p>
-        )}
-        {/* Reserve chip space so the card doesn't reflow when async counts arrive. */}
-        <div className="project-card-chip-placeholder">
-          {activeTaskCount !== undefined && activeTaskCount > 0 && (
-            <span className="status-chip project-card-chip">
-              {activeTaskCount} active {activeTaskCount === 1 ? "task" : "tasks"}
-            </span>
-          )}
-        </div>
-      </Link>
+    <>
       <button
         ref={menuBtnRef}
-        className="project-card-menu-btn"
+        className="project-row-actions-btn"
         onClick={(e) => {
           e.stopPropagation();
           setMenuOpen((v) => !v);
@@ -83,7 +60,12 @@ function ProjectCard({
           <circle cx="12" cy="19" r="1.8" />
         </svg>
       </button>
-      <DropdownMenu anchorRef={menuBtnRef} open={menuOpen} onClose={() => setMenuOpen(false)} minWidth={160}>
+      <DropdownMenu
+        anchorRef={menuBtnRef}
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        minWidth={160}
+      >
         <Link
           href={`/projects/workflow?projectId=${project.id}`}
           className="app-dropdown-item"
@@ -107,17 +89,7 @@ function ProjectCard({
           </p>
         ) : null}
       </DropdownMenu>
-    </Card>
-  );
-}
-
-function ProjectCardSkeleton() {
-  return (
-    <Card className="project-card project-card--skeleton">
-      <Skeleton height="1rem" width="60%" />
-      <Skeleton height="0.75rem" width="40%" />
-      <Skeleton height="0.75rem" width="80%" />
-    </Card>
+    </>
   );
 }
 
@@ -150,9 +122,10 @@ export default function TeamsPage() {
 
   const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
   const [projectQuery, setProjectQuery] = useState("");
-  const [projectSort, setProjectSort] = useState<ProjectSort>("name_asc");
   const [githubOnly, setGithubOnly] = useState(false);
   const [projectPage, setProjectPage] = useState(1);
+  const [sortColumn, setSortColumn] = useState<ProjectSortColumn>("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
     void (async () => {
@@ -272,6 +245,19 @@ export default function TeamsPage() {
     }
   }
 
+  // Controlled sort callback: flips direction if same column, else applies natural
+  // first-click direction (ascending for name/repo, descending for counts and dates).
+  function handleSortChange(key: string): void {
+    const col = key as ProjectSortColumn;
+    const naturalAsc: ProjectSortColumn[] = ["name", "repo"];
+    if (col === sortColumn) {
+      setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortColumn(col);
+      setSortDirection(naturalAsc.includes(col) ? "asc" : "desc");
+    }
+  }
+
   const filteredProjects = useMemo(() => {
     const normalizedQuery = projectQuery.trim().toLowerCase();
     const filtered = projects.filter((project) => {
@@ -282,19 +268,19 @@ export default function TeamsPage() {
         .includes(normalizedQuery);
     });
 
-    return filtered.sort((a, b) => {
-      if (projectSort === "name_asc") return a.name.localeCompare(b.name);
-      if (projectSort === "name_desc") return b.name.localeCompare(a.name);
-      if (projectSort === "recent_sync") {
-        return (
-          new Date(b.githubSyncAt ?? 0).getTime() -
-            new Date(a.githubSyncAt ?? 0).getTime() ||
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-      }
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
-  }, [projects, projectQuery, projectSort, githubOnly]);
+    const comparators: Record<ProjectSortColumn, (a: Project, b: Project) => number> = {
+      name: (a, b) => a.name.localeCompare(b.name),
+      repo: (a, b) => (a.githubRepo ?? "").localeCompare(b.githubRepo ?? ""),
+      activeTasks: (a, b) => (taskCounts[a.id] ?? 0) - (taskCounts[b.id] ?? 0),
+      createdAt: (a, b) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      syncedAt: (a, b) =>
+        new Date(a.githubSyncAt ?? 0).getTime() - new Date(b.githubSyncAt ?? 0).getTime(),
+    };
+
+    const cmp = comparators[sortColumn];
+    return [...filtered].sort((a, b) => (sortDirection === "asc" ? cmp(a, b) : -cmp(a, b)));
+  }, [projects, projectQuery, githubOnly, sortColumn, sortDirection, taskCounts]);
 
   useEffect(() => {
     if (projects.length === 0) return;
@@ -325,7 +311,102 @@ export default function TeamsPage() {
 
   useEffect(() => {
     setProjectPage(1);
-  }, [selectedTeam?.id, projectQuery, projectSort, githubOnly]);
+  }, [selectedTeam?.id, projectQuery, sortColumn, sortDirection, githubOnly]);
+
+  // Columns are built inside the component so render closures can close over
+  // taskCounts and setDeleteTarget (component state, not module-level constants).
+  const columns = useMemo<ColumnDef<Project>[]>(
+    () => [
+      {
+        key: "name",
+        header: "Name",
+        sortable: true,
+        width: "30%",
+        render: (project) => (
+          <span className="tasks-row-title">{project.name}</span>
+        ),
+      },
+      {
+        key: "repo",
+        header: "Repo",
+        sortable: true,
+        width: "24%",
+        render: (project) => (
+          <span
+            className="table-cell-secondary"
+            // eslint-disable-next-line no-restricted-syntax
+            style={{ fontFamily: "var(--font-mono, monospace)" }}
+          >
+            {project.githubRepo ?? "Manual project"}
+          </span>
+        ),
+      },
+      {
+        key: "activeTasks",
+        header: "Active tasks",
+        sortable: true,
+        align: "right",
+        width: "12%",
+        render: (project) => {
+          const count = taskCounts[project.id];
+          return (
+            <span className="table-cell-secondary num">
+              {count !== undefined ? count : "—"}
+            </span>
+          );
+        },
+      },
+      {
+        key: "createdAt",
+        header: "Created",
+        sortable: true,
+        width: "13%",
+        render: (project) => (
+          <span
+            className="table-cell-secondary num"
+            title={formatAbsoluteDate(project.createdAt)}
+          >
+            {formatRelativeTime(project.createdAt)}
+          </span>
+        ),
+      },
+      {
+        key: "syncedAt",
+        header: "Synced",
+        sortable: true,
+        width: "13%",
+        render: (project) =>
+          project.githubSyncAt ? (
+            <span
+              className="table-cell-secondary num"
+              title={formatAbsoluteDate(project.githubSyncAt)}
+            >
+              {formatRelativeTime(project.githubSyncAt)}
+            </span>
+          ) : (
+            <span className="table-cell-secondary">—</span>
+          ),
+      },
+      {
+        key: "actions",
+        header: "Actions",
+        sortable: false,
+        align: "right",
+        width: "8%",
+        render: (project) => (
+          <ProjectRowActions
+            project={project}
+            onDelete={
+              !project.githubRepo
+                ? () => setDeleteTarget({ id: project.id, name: project.name })
+                : undefined
+            }
+          />
+        ),
+      },
+    ],
+    [taskCounts, setDeleteTarget],
+  );
 
   const totalProjectPages = Math.max(1, Math.ceil(filteredProjects.length / PROJECT_PAGE_SIZE));
   const currentProjectPage = Math.min(projectPage, totalProjectPages);
@@ -518,16 +599,6 @@ export default function TeamsPage() {
                 placeholder="Search projects (name, slug, repo)..."
                 className="teams-search-input"
               />
-              <Select
-                value={projectSort}
-                onChange={(v) => setProjectSort(v as ProjectSort)}
-                options={[
-                  { value: "name_asc", label: "Sort: Name A-Z" },
-                  { value: "name_desc", label: "Sort: Name Z-A" },
-                  { value: "newest", label: "Sort: Newest first" },
-                  { value: "recent_sync", label: "Sort: Recently synced" },
-                ]}
-              />
               <label className="teams-github-only-label">
                 <input
                   type="checkbox"
@@ -545,11 +616,7 @@ export default function TeamsPage() {
           </Card>
 
           {projectsLoading ? (
-            <div className="projects-grid" aria-busy="true" aria-label="Loading projects">
-              {Array.from({ length: 6 }, (_, i) => (
-                <ProjectCardSkeleton key={i} />
-              ))}
-            </div>
+            <SkeletonList rows={10} rowHeight="3rem" label="Loading projects" />
           ) : filteredProjects.length === 0 ? (
             <EmptyState
               icon="box"
@@ -577,22 +644,54 @@ export default function TeamsPage() {
             />
           ) : (
             <>
-              <div className="projects-grid">
-                {pagedProjects.map((project) => (
-                  <ProjectCard
-                    key={project.id}
-                    project={project}
-                    href={`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`}
-                    onDelete={
-                      !project.githubRepo
-                        ? () =>
-                            setDeleteTarget({ id: project.id, name: project.name })
-                        : undefined
-                    }
-                    activeTaskCount={taskCounts[project.id]}
-                  />
-                ))}
-              </div>
+              <Table
+                columns={columns}
+                rows={pagedProjects}
+                rowKey={(project) => project.id}
+                rowHref={
+                  selectedTeam
+                    ? (project) =>
+                        `/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`
+                    : undefined
+                }
+                sortKey={sortColumn}
+                sortDirection={sortDirection === "asc" ? "ascending" : "descending"}
+                onSortChange={handleSortChange}
+                emptyLabel="No projects match the current filters."
+                compactSort={
+                  <select
+                    className="table-sort-native"
+                    aria-label="Sort by"
+                    value={`${sortColumn}:${sortDirection}`}
+                    onChange={(e) => {
+                      const [col, dir] = e.target.value.split(":");
+                      setSortColumn(col as ProjectSortColumn);
+                      setSortDirection(dir as "asc" | "desc");
+                    }}
+                  >
+                    <optgroup label="Name">
+                      <option value="name:asc">Name: A to Z</option>
+                      <option value="name:desc">Name: Z to A</option>
+                    </optgroup>
+                    <optgroup label="Repo">
+                      <option value="repo:asc">Repo: A to Z</option>
+                      <option value="repo:desc">Repo: Z to A</option>
+                    </optgroup>
+                    <optgroup label="Active tasks">
+                      <option value="activeTasks:asc">Active tasks: Low to High</option>
+                      <option value="activeTasks:desc">Active tasks: High to Low</option>
+                    </optgroup>
+                    <optgroup label="Created">
+                      <option value="createdAt:asc">Created: Oldest first</option>
+                      <option value="createdAt:desc">Created: Newest first</option>
+                    </optgroup>
+                    <optgroup label="Synced">
+                      <option value="syncedAt:asc">Synced: Oldest first</option>
+                      <option value="syncedAt:desc">Synced: Newest first</option>
+                    </optgroup>
+                  </select>
+                }
+              />
               <Pagination
                 page={currentProjectPage}
                 totalPages={totalProjectPages}
