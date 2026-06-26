@@ -205,6 +205,10 @@ model Project {
   // See docs/artifacts.md for details.
   artifactCountCap          Int?
   artifactBytesCap          Int?
+  // Per-task aggregate attachment caps. Null falls back to the env-var defaults
+  // ATTACHMENT_MAX_COUNT_PER_TASK (20) and ATTACHMENT_MAX_TOTAL_BYTES_PER_TASK (50 MiB).
+  attachmentCountCap        Int?
+  attachmentBytesCap        Int?
   createdAt                DateTime        @default(now())
   updatedAt                DateTime        @updatedAt
 

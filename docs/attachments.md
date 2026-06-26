@@ -41,8 +41,18 @@ A `TaskAttachment` row can be one of two things:
   containers), backed by the `agent_tasks_uploads` named volume in production.
   This volume is **not** covered by the Postgres backups and must be added to
   the backup scope separately.
-- **No per-task aggregate cap today.** A count/size cap across all of a task's
-  attachments is tracked as a separate follow-up.
+- **Per-task count cap:** once a task reaches its attachment count cap the next
+  upload is rejected with `429`. Default: 20 attachments per task. Override
+  globally with the env var `ATTACHMENT_MAX_COUNT_PER_TASK`, or per-project via
+  the `Project.attachmentCountCap` column. URL-pointer attachments (which store
+  no bytes) count toward this cap too.
+- **Per-task aggregate bytes cap:** the sum of all `sizeBytes` values for a
+  task's uploaded attachments must not exceed the cap. An upload that would push
+  the total over the cap is rejected with `413`. Default: 52 428 800 bytes
+  (50 MiB). Override globally with `ATTACHMENT_MAX_TOTAL_BYTES_PER_TASK`, or
+  per-project via `Project.attachmentBytesCap`. A `null` or non-positive
+  per-project value means "use the env-var default." Enforcement is best-effort
+  (non-atomic), so concurrent uploads can overshoot the cap slightly.
 
 ## Security model
 

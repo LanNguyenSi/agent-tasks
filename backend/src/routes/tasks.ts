@@ -297,6 +297,14 @@ const ARTIFACT_MAX_TOTAL_BYTES_PER_TASK = parsePositiveInt(
   process.env.ARTIFACT_MAX_TOTAL_BYTES_PER_TASK,
   52_428_800, // 50 MiB
 );
+const ATTACHMENT_MAX_COUNT_PER_TASK = parsePositiveInt(
+  process.env.ATTACHMENT_MAX_COUNT_PER_TASK,
+  20,
+);
+const ATTACHMENT_MAX_TOTAL_BYTES_PER_TASK = parsePositiveInt(
+  process.env.ATTACHMENT_MAX_TOTAL_BYTES_PER_TASK,
+  52_428_800, // 50 MiB
+);
 
 const createArtifactSchema = z
   .object({
@@ -3844,6 +3852,25 @@ taskRouter.post("/tasks/:id/attachments", zValidator("json", createAttachmentSch
     return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
   }
 
+  // ── Per-task attachment count cap (URL pointer adds 0 bytes, count-only) ──
+  const urlProject = await prisma.project.findUnique({
+    where: { id: task.projectId },
+    select: { attachmentCountCap: true },
+  });
+  const urlCountCap =
+    urlProject?.attachmentCountCap && urlProject.attachmentCountCap > 0
+      ? urlProject.attachmentCountCap
+      : ATTACHMENT_MAX_COUNT_PER_TASK;
+  const urlExistingCount = await prisma.taskAttachment.count({ where: { taskId: task.id } });
+  if (urlExistingCount >= urlCountCap) {
+    return c.json(
+      {
+        error: `Per-task attachment count cap reached (${urlCountCap}); delete attachments or raise the project cap`,
+      },
+      429,
+    );
+  }
+
   const body = c.req.valid("json");
   const attachment = await prisma.taskAttachment.create({
     data: {
@@ -3903,6 +3930,45 @@ taskRouter.post(
     const detected = detectAttachmentType(buf, file.type);
     if (!detected.ok) {
       return c.json({ error: detected.reason }, 400);
+    }
+
+    // ── Per-task aggregate attachment caps ────────────────────────────────────
+    // Mirror the artifact cap pattern: load per-project overrides, fall back to
+    // env-var module defaults. Enforcement is best-effort / non-atomic: concurrent
+    // POSTs can overshoot slightly, which is acceptable for the runaway-loop bound.
+    const uploadProject = await prisma.project.findUnique({
+      where: { id: task.projectId },
+      select: { attachmentCountCap: true, attachmentBytesCap: true },
+    });
+    const uploadCountCap =
+      uploadProject?.attachmentCountCap && uploadProject.attachmentCountCap > 0
+        ? uploadProject.attachmentCountCap
+        : ATTACHMENT_MAX_COUNT_PER_TASK;
+    const uploadBytesCap =
+      uploadProject?.attachmentBytesCap && uploadProject.attachmentBytesCap > 0
+        ? uploadProject.attachmentBytesCap
+        : ATTACHMENT_MAX_TOTAL_BYTES_PER_TASK;
+
+    const uploadExistingCount = await prisma.taskAttachment.count({ where: { taskId: task.id } });
+    if (uploadExistingCount >= uploadCountCap) {
+      return c.json(
+        {
+          error: `Per-task attachment count cap reached (${uploadCountCap}); delete attachments or raise the project cap`,
+        },
+        429,
+      );
+    }
+
+    const uploadAggregateResult = await prisma.taskAttachment.aggregate({
+      where: { taskId: task.id },
+      _sum: { sizeBytes: true },
+    });
+    const uploadExistingSum = uploadAggregateResult._sum.sizeBytes ?? 0;
+    if (uploadExistingSum + buf.byteLength > uploadBytesCap) {
+      return c.json(
+        { error: `Per-task attachment size cap reached (${uploadBytesCap} bytes)` },
+        413,
+      );
     }
 
     const nameField = form.get("name");

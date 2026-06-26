@@ -24,16 +24,22 @@ const prismaMocks = vi.hoisted(() => ({
   attachmentFindMany: vi.fn(),
   attachmentCreate: vi.fn(),
   attachmentDelete: vi.fn(),
+  attachmentCount: vi.fn(),
+  attachmentAggregate: vi.fn(),
+  projectFindUnique: vi.fn(),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
     task: { findUnique: prismaMocks.taskFindUnique, delete: prismaMocks.taskDelete },
+    project: { findUnique: prismaMocks.projectFindUnique },
     taskAttachment: {
       findUnique: prismaMocks.attachmentFindUnique,
       findMany: prismaMocks.attachmentFindMany,
       create: prismaMocks.attachmentCreate,
       delete: prismaMocks.attachmentDelete,
+      count: prismaMocks.attachmentCount,
+      aggregate: prismaMocks.attachmentAggregate,
     },
     // Imported by the tasks module at load time but unused by these routes.
     taskArtifact: { findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), delete: vi.fn() },
@@ -117,6 +123,10 @@ beforeEach(() => {
   prismaMocks.taskFindUnique.mockResolvedValue(task);
   prismaMocks.taskDelete.mockResolvedValue(task);
   prismaMocks.attachmentFindMany.mockResolvedValue([]);
+  // Default: no per-project overrides, no existing attachments (cap checks pass).
+  prismaMocks.projectFindUnique.mockResolvedValue({ attachmentCountCap: null, attachmentBytesCap: null });
+  prismaMocks.attachmentCount.mockResolvedValue(0);
+  prismaMocks.attachmentAggregate.mockResolvedValue({ _sum: { sizeBytes: null } });
 });
 
 describe("POST /tasks/:id/attachments/upload", () => {
@@ -241,6 +251,122 @@ describe("POST /tasks/:id/attachments/upload", () => {
       body: uploadForm(file),
     });
     expect(res.status).toBe(404);
+  });
+
+  describe("per-task aggregate caps", () => {
+    it("creates an attachment when below both the count and bytes caps (under-cap, 201)", async () => {
+      // Project cap is 2; only 1 attachment exists and aggregate is small.
+      prismaMocks.projectFindUnique.mockResolvedValue({ attachmentCountCap: 2, attachmentBytesCap: null });
+      prismaMocks.attachmentCount.mockResolvedValue(1);
+      prismaMocks.attachmentAggregate.mockResolvedValue({ _sum: { sizeBytes: 4 } });
+      prismaMocks.attachmentCreate.mockResolvedValue({
+        id: "att-2",
+        taskId: "task-1",
+        name: "shot2.png",
+        url: "/uploads/uuid2.png",
+        mimeType: "image/png",
+        sizeBytes: PNG.byteLength,
+        type: "IMAGE",
+      });
+
+      const file = new File([PNG], "shot2.png", { type: "image/png" });
+      const res = await makeApp(HUMAN).request("/tasks/task-1/attachments/upload", {
+        method: "POST",
+        body: uploadForm(file),
+      });
+
+      expect(res.status).toBe(201);
+      expect(prismaMocks.attachmentCreate).toHaveBeenCalledOnce();
+    });
+
+    it("returns 429 and does NOT create when the count cap is reached (at-cap)", async () => {
+      // Project cap is 1; 1 attachment already exists — next POST must be rejected.
+      prismaMocks.projectFindUnique.mockResolvedValue({ attachmentCountCap: 1, attachmentBytesCap: null });
+      prismaMocks.attachmentCount.mockResolvedValue(1);
+
+      const file = new File([PNG], "overflow.png", { type: "image/png" });
+      const res = await makeApp(HUMAN).request("/tasks/task-1/attachments/upload", {
+        method: "POST",
+        body: uploadForm(file),
+      });
+
+      expect(res.status).toBe(429);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toMatch(/count cap/);
+      expect(prismaMocks.attachmentCreate).not.toHaveBeenCalled();
+      expect(fsMocks.writeFile).not.toHaveBeenCalled();
+    });
+
+    it("returns 413 and does NOT create when the bytes cap would be exceeded (at-cap)", async () => {
+      // Project bytes cap is 10 bytes; 8 bytes already consumed, PNG is > 2 bytes → over cap.
+      prismaMocks.projectFindUnique.mockResolvedValue({ attachmentCountCap: null, attachmentBytesCap: 10 });
+      prismaMocks.attachmentCount.mockResolvedValue(1); // below count cap
+      prismaMocks.attachmentAggregate.mockResolvedValue({ _sum: { sizeBytes: 8 } });
+
+      const file = new File([PNG], "big.png", { type: "image/png" });
+      const res = await makeApp(HUMAN).request("/tasks/task-1/attachments/upload", {
+        method: "POST",
+        body: uploadForm(file),
+      });
+
+      expect(res.status).toBe(413);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toMatch(/size cap/);
+      expect(prismaMocks.attachmentCreate).not.toHaveBeenCalled();
+      expect(fsMocks.writeFile).not.toHaveBeenCalled();
+    });
+
+    it("allows an upload that exactly fills the bytes cap (boundary, 201)", async () => {
+      // existingSum 0 + PNG (10 bytes) === cap 10 → not over → allowed. Pins the
+      // comparison as `>` (strictly over) rather than `>=`.
+      prismaMocks.projectFindUnique.mockResolvedValue({ attachmentCountCap: null, attachmentBytesCap: PNG.byteLength });
+      prismaMocks.attachmentCount.mockResolvedValue(0);
+      prismaMocks.attachmentAggregate.mockResolvedValue({ _sum: { sizeBytes: 0 } });
+      prismaMocks.attachmentCreate.mockResolvedValue({
+        id: "att-boundary",
+        taskId: "task-1",
+        name: "exact.png",
+        url: "/uploads/exact.png",
+        mimeType: "image/png",
+        sizeBytes: PNG.byteLength,
+        type: "IMAGE",
+      });
+
+      const file = new File([PNG], "exact.png", { type: "image/png" });
+      const res = await makeApp(HUMAN).request("/tasks/task-1/attachments/upload", {
+        method: "POST",
+        body: uploadForm(file),
+      });
+
+      expect(res.status).toBe(201);
+      expect(prismaMocks.attachmentCreate).toHaveBeenCalledOnce();
+    });
+
+    it("treats a non-positive per-project cap as 'use the env default' (0 does not block)", async () => {
+      // A per-project cap of 0 must fall back to the env defaults (20 / 50 MiB),
+      // not block every upload. Existing usage is well below those defaults.
+      prismaMocks.projectFindUnique.mockResolvedValue({ attachmentCountCap: 0, attachmentBytesCap: 0 });
+      prismaMocks.attachmentCount.mockResolvedValue(1);
+      prismaMocks.attachmentAggregate.mockResolvedValue({ _sum: { sizeBytes: 4 } });
+      prismaMocks.attachmentCreate.mockResolvedValue({
+        id: "att-zero-cap",
+        taskId: "task-1",
+        name: "ok.png",
+        url: "/uploads/ok.png",
+        mimeType: "image/png",
+        sizeBytes: PNG.byteLength,
+        type: "IMAGE",
+      });
+
+      const file = new File([PNG], "ok.png", { type: "image/png" });
+      const res = await makeApp(HUMAN).request("/tasks/task-1/attachments/upload", {
+        method: "POST",
+        body: uploadForm(file),
+      });
+
+      expect(res.status).toBe(201);
+      expect(prismaMocks.attachmentCreate).toHaveBeenCalledOnce();
+    });
   });
 });
 
@@ -415,6 +541,23 @@ describe("POST /tasks/:id/attachments (URL pointer)", () => {
     });
     expect(res.status).toBe(201);
     expect(prismaMocks.attachmentCreate.mock.calls[0]![0].data).toMatchObject({ type: "DOCUMENT" });
+  });
+
+  it("returns 429 and does NOT create when the count cap is reached for a URL pointer", async () => {
+    // Project cap is 1; 1 attachment already exists — count-only check must block.
+    prismaMocks.projectFindUnique.mockResolvedValue({ attachmentCountCap: 1, attachmentBytesCap: null });
+    prismaMocks.attachmentCount.mockResolvedValue(1);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1/attachments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Extra link", url: "https://example.com/extra" }),
+    });
+
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/count cap/);
+    expect(prismaMocks.attachmentCreate).not.toHaveBeenCalled();
   });
 });
 
