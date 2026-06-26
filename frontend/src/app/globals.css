@@ -972,7 +972,7 @@ input[type="checkbox"] {
 
 .teams-filter-bar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
@@ -1014,6 +1014,12 @@ input[type="checkbox"] {
   grid-template-columns: 1fr 1fr;
   gap: 0.75rem;
   margin-bottom: 0.75rem;
+}
+
+.projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
 }
 
 .team-option-meta {
@@ -1583,6 +1589,10 @@ input[type="checkbox"] {
   }
 
   .teams-filter-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .projects-grid {
     grid-template-columns: 1fr;
   }
 
@@ -6732,6 +6742,81 @@ a.proj-chip:hover {
 
 .teams-github-repo-field {
   margin-bottom: var(--space-3);
+}
+
+/* Sort control row shown above the cards grid. Constrains the native
+   <select> (which defaults to width:100%) to a reasonable inline size. */
+.teams-cards-sort-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-2);
+}
+
+.teams-cards-sort-row .table-sort-native {
+  width: auto;
+  min-width: 200px;
+}
+
+/* ── Project cards ─────────────────────────────────────────────── */
+
+.project-card {
+  position: relative;
+  height: 100%;
+}
+
+.project-card-link {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+
+.project-card-title-row {
+  margin-bottom: var(--space-1);
+  /* Reserve space for the absolutely-positioned actions button. */
+  padding-right: var(--space-5);
+}
+
+.project-card-title {
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+  font-size: var(--text-base);
+}
+
+.project-card-repo {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.project-card-desc {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.project-card-chip-placeholder {
+  min-height: 1.6rem;
+}
+
+.project-card-chip {
+  color: var(--primary-text);
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border) 45%);
+  font-size: var(--text-xs);
+}
+
+.project-card--skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+
+/* Positions the kebab-menu button at the top-right corner of the card. */
+.project-card-actions {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
 }
 
 /* Disabled dropdown item (non-interactive muted text). */

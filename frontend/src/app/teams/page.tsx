@@ -16,6 +16,12 @@ import {
   type Project,
 } from "../../lib/api";
 import { formatAbsoluteDate, formatRelativeTime } from "../../lib/time";
+import {
+  readStoredView,
+  storeView,
+  resolveInitialView,
+  type TeamsViewMode,
+} from "../../lib/teamsPrefs";
 import AlertBanner from "../../components/ui/AlertBanner";
 import { Button } from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
@@ -27,8 +33,9 @@ import { FullPageLoader } from "../../components/ui/FullPageLoader";
 import Modal from "../../components/ui/Modal";
 import Pagination from "../../components/ui/Pagination";
 import Select from "@/components/ui/Select";
-import { SkeletonList } from "../../components/ui/Skeleton";
+import { Skeleton, SkeletonList } from "../../components/ui/Skeleton";
 import { Table, type ColumnDef } from "../../components/ui/Table";
+import { Tabs } from "../../components/ui/Tabs";
 import {
   nextSort,
   sortProjects,
@@ -37,6 +44,62 @@ import {
 } from "../../lib/projectSort";
 
 const PROJECT_PAGE_SIZE = 25;
+
+// ── Project card components ────────────────────────────────────────────────
+
+function ProjectCard({
+  project,
+  href,
+  onDelete,
+  activeTaskCount,
+}: {
+  project: Project;
+  href: string;
+  onDelete?: () => void;
+  activeTaskCount?: number;
+}) {
+  return (
+    <Card interactive className="project-card">
+      <Link href={href} className="project-card-link">
+        <div className="project-card-title-row">
+          <h3 className="project-card-title">{project.name}</h3>
+        </div>
+        {project.githubRepo ? (
+          <p className="project-card-repo">GitHub: {project.githubRepo}</p>
+        ) : (
+          <p className="project-card-repo">Manual project</p>
+        )}
+        {project.description && (
+          <p className="project-card-desc">{project.description}</p>
+        )}
+        {/* Reserve chip space so the card doesn't reflow when async counts arrive. */}
+        <div className="project-card-chip-placeholder">
+          {activeTaskCount !== undefined && activeTaskCount > 0 && (
+            <span className="status-chip project-card-chip">
+              {activeTaskCount} active {activeTaskCount === 1 ? "task" : "tasks"}
+            </span>
+          )}
+        </div>
+      </Link>
+      {/* Positioned at top-right via .project-card-actions */}
+      <div className="project-card-actions">
+        <ProjectRowActions project={project} onDelete={onDelete} />
+      </div>
+    </Card>
+  );
+}
+
+function ProjectCardSkeleton() {
+  return (
+    <Card className="project-card project-card--skeleton">
+      <Skeleton height="1rem" width="60%" />
+      <Skeleton height="0.75rem" width="40%" />
+      <Skeleton height="0.75rem" width="80%" />
+    </Card>
+  );
+}
+
+// ── Table row actions (kebab menu) ────────────────────────────────────────
 
 function ProjectRowActions({
   project,
@@ -104,6 +167,8 @@ function ProjectRowActions({
   );
 }
 
+// ── Page ──────────────────────────────────────────────────────────────────
+
 export default function TeamsPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -138,6 +203,11 @@ export default function TeamsPage() {
   const [sortColumn, setSortColumn] = useState<ProjectSortColumn>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
+  // View-mode state: starts on "table" (SSR-safe default), resolved after
+  // the first project load so the auto-default can use the project count.
+  const [viewMode, setViewMode] = useState<TeamsViewMode>("table");
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
+
   useEffect(() => {
     void (async () => {
       const me = await getCurrentUser();
@@ -169,6 +239,23 @@ export default function TeamsPage() {
       setProjectsLoading(false);
     })();
   }, [router]);
+
+  // Resolve the initial view mode once the first project load completes.
+  // We wait for selectedTeam (set) and projectsLoading (done) before
+  // resolving so we have an accurate project count for the auto-default.
+  // prefsLoaded acts as a one-shot guard so switching teams never re-resolves.
+  useEffect(() => {
+    if (prefsLoaded) return;
+    if (!selectedTeam || projectsLoading) return;
+    const count = selectedTeam.projectCount ?? projects.length;
+    setViewMode(resolveInitialView({ storedView: readStoredView(), projectCount: count }));
+    setPrefsLoaded(true);
+  }, [prefsLoaded, selectedTeam, projectsLoading, projects.length]);
+
+  // Persist view-mode changes, but only after the initial resolution.
+  useEffect(() => {
+    if (prefsLoaded) storeView(viewMode);
+  }, [viewMode, prefsLoaded]);
 
   async function loadProjects(teamId: string) {
     setProjectsLoading(true);
@@ -409,6 +496,43 @@ export default function TeamsPage() {
     currentProjectPage * PROJECT_PAGE_SIZE,
   );
 
+  // Native sort select shared between both views.
+  // In table view it's passed as compactSort (shown on mobile).
+  // In cards view it's rendered visibly in teams-cards-sort-row.
+  const sortSelect = (
+    <select
+      className="table-sort-native"
+      aria-label="Sort by"
+      value={`${sortColumn}:${sortDirection}`}
+      onChange={(e) => {
+        const [col, dir] = e.target.value.split(":");
+        setSortColumn(col as ProjectSortColumn);
+        setSortDirection(dir as "asc" | "desc");
+      }}
+    >
+      <optgroup label="Name">
+        <option value="name:asc">Name: A to Z</option>
+        <option value="name:desc">Name: Z to A</option>
+      </optgroup>
+      <optgroup label="Repo">
+        <option value="repo:asc">Repo: A to Z</option>
+        <option value="repo:desc">Repo: Z to A</option>
+      </optgroup>
+      <optgroup label="Active tasks">
+        <option value="activeTasks:asc">Active tasks: Low to High</option>
+        <option value="activeTasks:desc">Active tasks: High to Low</option>
+      </optgroup>
+      <optgroup label="Created">
+        <option value="createdAt:asc">Created: Oldest first</option>
+        <option value="createdAt:desc">Created: Newest first</option>
+      </optgroup>
+      <optgroup label="Synced">
+        <option value="syncedAt:asc">Synced: Oldest first</option>
+        <option value="syncedAt:desc">Synced: Newest first</option>
+      </optgroup>
+    </select>
+  );
+
   if (loading) {
     return <FullPageLoader label="Loading teams…" />;
   }
@@ -601,6 +725,20 @@ export default function TeamsPage() {
                 />
                 GitHub projects only
               </label>
+              <Tabs
+                value={viewMode}
+                onChange={(v) => {
+                  setViewMode(v as TeamsViewMode);
+                  // Treat a manual selection as "prefs loaded" so the
+                  // async auto-default effect never overwrites it.
+                  setPrefsLoaded(true);
+                }}
+                tabs={[
+                  { value: "table", label: "Table" },
+                  { value: "cards", label: "Cards" },
+                ]}
+                label="View"
+              />
             </div>
             <p className="teams-count-hint">
               {filteredProjects.length === 0
@@ -610,7 +748,15 @@ export default function TeamsPage() {
           </Card>
 
           {projectsLoading ? (
-            <SkeletonList rows={10} rowHeight="3rem" label="Loading projects" />
+            viewMode === "cards" ? (
+              <div className="projects-grid" aria-busy="true" aria-label="Loading projects">
+                {Array.from({ length: 6 }, (_, i) => (
+                  <ProjectCardSkeleton key={i} />
+                ))}
+              </div>
+            ) : (
+              <SkeletonList rows={10} rowHeight="3rem" label="Loading projects" />
+            )
           ) : filteredProjects.length === 0 ? (
             <EmptyState
               icon="box"
@@ -636,6 +782,31 @@ export default function TeamsPage() {
                 ) : undefined
               }
             />
+          ) : viewMode === "cards" ? (
+            <>
+              <div className="teams-cards-sort-row">{sortSelect}</div>
+              <div className="projects-grid">
+                {pagedProjects.map((project) => (
+                  <ProjectCard
+                    key={project.id}
+                    project={project}
+                    href={`/dashboard?teamId=${selectedTeam.id}&projectId=${project.id}`}
+                    onDelete={
+                      !project.githubRepo
+                        ? () =>
+                            setDeleteTarget({ id: project.id, name: project.name })
+                        : undefined
+                    }
+                    activeTaskCount={taskCounts[project.id]}
+                  />
+                ))}
+              </div>
+              <Pagination
+                page={currentProjectPage}
+                totalPages={totalProjectPages}
+                onPageChange={setProjectPage}
+              />
+            </>
           ) : (
             <>
               <Table
@@ -652,39 +823,7 @@ export default function TeamsPage() {
                 sortDirection={sortDirection === "asc" ? "ascending" : "descending"}
                 onSortChange={handleSortChange}
                 emptyLabel="No projects match the current filters."
-                compactSort={
-                  <select
-                    className="table-sort-native"
-                    aria-label="Sort by"
-                    value={`${sortColumn}:${sortDirection}`}
-                    onChange={(e) => {
-                      const [col, dir] = e.target.value.split(":");
-                      setSortColumn(col as ProjectSortColumn);
-                      setSortDirection(dir as "asc" | "desc");
-                    }}
-                  >
-                    <optgroup label="Name">
-                      <option value="name:asc">Name: A to Z</option>
-                      <option value="name:desc">Name: Z to A</option>
-                    </optgroup>
-                    <optgroup label="Repo">
-                      <option value="repo:asc">Repo: A to Z</option>
-                      <option value="repo:desc">Repo: Z to A</option>
-                    </optgroup>
-                    <optgroup label="Active tasks">
-                      <option value="activeTasks:asc">Active tasks: Low to High</option>
-                      <option value="activeTasks:desc">Active tasks: High to Low</option>
-                    </optgroup>
-                    <optgroup label="Created">
-                      <option value="createdAt:asc">Created: Oldest first</option>
-                      <option value="createdAt:desc">Created: Newest first</option>
-                    </optgroup>
-                    <optgroup label="Synced">
-                      <option value="syncedAt:asc">Synced: Oldest first</option>
-                      <option value="syncedAt:desc">Synced: Newest first</option>
-                    </optgroup>
-                  </select>
-                }
+                compactSort={sortSelect}
               />
               <Pagination
                 page={currentProjectPage}
