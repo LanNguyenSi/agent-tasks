@@ -29,8 +29,13 @@ import Pagination from "../../components/ui/Pagination";
 import Select from "@/components/ui/Select";
 import { SkeletonList } from "../../components/ui/Skeleton";
 import { Table, type ColumnDef } from "../../components/ui/Table";
+import {
+  nextSort,
+  sortProjects,
+  type ProjectSortColumn,
+  type SortDirection,
+} from "../../lib/projectSort";
 
-type ProjectSortColumn = "name" | "repo" | "activeTasks" | "createdAt" | "syncedAt";
 const PROJECT_PAGE_SIZE = 25;
 
 function ProjectRowActions({
@@ -51,6 +56,12 @@ function ProjectRowActions({
         onClick={(e) => {
           e.stopPropagation();
           setMenuOpen((v) => !v);
+        }}
+        // Keep keyboard activation from bubbling to the Table row's onKeyDown,
+        // which would otherwise navigate the row instead of opening the menu.
+        // The button still activates natively (Enter/Space toggle the menu).
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") e.stopPropagation();
         }}
         aria-label={`Actions for ${project.name}`}
       >
@@ -125,7 +136,7 @@ export default function TeamsPage() {
   const [githubOnly, setGithubOnly] = useState(false);
   const [projectPage, setProjectPage] = useState(1);
   const [sortColumn, setSortColumn] = useState<ProjectSortColumn>("name");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
   useEffect(() => {
     void (async () => {
@@ -245,17 +256,15 @@ export default function TeamsPage() {
     }
   }
 
-  // Controlled sort callback: flips direction if same column, else applies natural
-  // first-click direction (ascending for name/repo, descending for counts and dates).
+  // Controlled sort callback: flips direction if same column, else applies the
+  // column's natural first-click direction (see lib/projectSort#nextSort).
   function handleSortChange(key: string): void {
-    const col = key as ProjectSortColumn;
-    const naturalAsc: ProjectSortColumn[] = ["name", "repo"];
-    if (col === sortColumn) {
-      setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortColumn(col);
-      setSortDirection(naturalAsc.includes(col) ? "asc" : "desc");
-    }
+    const { column, direction } = nextSort(
+      { column: sortColumn, direction: sortDirection },
+      key as ProjectSortColumn,
+    );
+    setSortColumn(column);
+    setSortDirection(direction);
   }
 
   const filteredProjects = useMemo(() => {
@@ -268,18 +277,7 @@ export default function TeamsPage() {
         .includes(normalizedQuery);
     });
 
-    const comparators: Record<ProjectSortColumn, (a: Project, b: Project) => number> = {
-      name: (a, b) => a.name.localeCompare(b.name),
-      repo: (a, b) => (a.githubRepo ?? "").localeCompare(b.githubRepo ?? ""),
-      activeTasks: (a, b) => (taskCounts[a.id] ?? 0) - (taskCounts[b.id] ?? 0),
-      createdAt: (a, b) =>
-        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-      syncedAt: (a, b) =>
-        new Date(a.githubSyncAt ?? 0).getTime() - new Date(b.githubSyncAt ?? 0).getTime(),
-    };
-
-    const cmp = comparators[sortColumn];
-    return [...filtered].sort((a, b) => (sortDirection === "asc" ? cmp(a, b) : -cmp(a, b)));
+    return sortProjects(filtered, sortColumn, sortDirection, taskCounts);
   }, [projects, projectQuery, githubOnly, sortColumn, sortDirection, taskCounts]);
 
   useEffect(() => {
@@ -332,11 +330,7 @@ export default function TeamsPage() {
         sortable: true,
         width: "24%",
         render: (project) => (
-          <span
-            className="table-cell-secondary"
-            // eslint-disable-next-line no-restricted-syntax
-            style={{ fontFamily: "var(--font-mono, monospace)" }}
-          >
+          <span className="table-cell-secondary table-cell-mono">
             {project.githubRepo ?? "Manual project"}
           </span>
         ),
