@@ -112,7 +112,13 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         "Finish a task. Requires an active work or review claim on this specific task; call task_start first to claim it (task_pickup alone returns a candidate but does not claim). The claim of any prior task you just finished does NOT carry over. Polymorphic based on the claim you hold.\n\nWork claim: pass { result?, prUrl?, autoMerge?, mergeMethod? }. prUrl must be a github.com pull-request URL if provided. The task transitions to its expectedFinishState (review or done depending on the workflow). The work claim is cleared when going to done and kept when going to review.\n\nautoMerge (Mode A — work claim): requires project.soloMode=true. Overrides targetStatus to 'done', evaluates gates (skipping prMerged pre-check), merges the PR via GitHub API, then transitions the task to done atomically. Sets autoMergeSha on success.\n\nReview claim: pass { result?, outcome, autoMerge?, mergeMethod? }. approve → task to done, both claims cleared. request_changes → task back to in_progress, review claim cleared, work claim kept so the author resumes, changes_requested signal emitted.\n\nautoMerge (Mode B — review claim + approve): does NOT require soloMode. Merges the PR and transitions to done atomically. outcome 'request_changes' + autoMerge is rejected.\n\nTransitions may be blocked by workflow gates (branchPresent, prPresent, ciGreen, prMerged). A 422 `precondition_failed` response lists the failing rules. See ADR-0010.",
       inputShape: {
         taskId: uuid(),
-        result: z.string().max(5000).optional(),
+        result: z
+          .string()
+          .max(5000)
+          .describe(
+            "Free-text summary of the work, recorded on the task timeline (plain prose or markdown, max 5000 chars). Not a structured payload: do not wrap it in XML or JSON tags — it is stored and rendered as text.",
+          )
+          .optional(),
         prUrl: z.string().url().optional(),
         outcome: z.enum(["approve", "request_changes"]).optional(),
         autoMerge: z.boolean().optional(),

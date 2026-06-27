@@ -33,7 +33,13 @@ npm install
 npm run build
 ```
 
-For the full stack (backend + frontend + Postgres): `docker compose up`.
+For the full stack (backend + frontend + Postgres):
+
+```bash
+cp .env.example .env
+echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env   # required, >= 32 chars
+docker compose up
+```
 
 ## Style
 

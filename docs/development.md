@@ -8,6 +8,7 @@ Running agent-tasks against a local stack: backend on `:3001`, frontend on `:300
 git clone https://github.com/LanNguyenSi/agent-tasks.git
 cd agent-tasks
 cp .env.example .env
+echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env   # required, >= 32 chars
 make dev-docker     # docker compose up: db + backend + frontend
 ```
 
@@ -19,6 +20,7 @@ Then open http://localhost:3000.
 
 ```bash
 cp .env.example .env
+echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env   # required, >= 32 chars
 make install       # install backend + frontend workspace deps
 make setup         # prepare .env + generate Prisma client
 make db-push       # sync schema to the configured DB

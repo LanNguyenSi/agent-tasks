@@ -18,6 +18,7 @@ Self-host:
 git clone https://github.com/LanNguyenSi/agent-tasks.git
 cd agent-tasks
 cp .env.example .env
+echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env   # required, >= 32 chars
 make dev-docker          # docker compose up: db + backend + frontend
 ```
 
