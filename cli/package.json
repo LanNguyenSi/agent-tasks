@@ -16,6 +16,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
+    "pretest": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
