@@ -5,7 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.28.0] - 2026-06-27
+
+**Full remediation of the 2026-06-10 security audit: all 9 MEDIUM findings and 3 LOW findings addressed, alongside per-task attachment caps and a teams-page table/cards overhaul.** The `vX.Y.Z` tag is deploy provenance for the whole app; the individual workspace packages carry their own versions.
+
+### Security
+
+- **Atomic compare-and-swap for review-lock claim and release (M1, TOCTOU)** (#370). The review-lock claim, release, and abandon paths previously read `isCurrentReviewer` then wrote unconditionally, so two concurrent reviewers could both pass the check (last-writer-wins, no error to the loser). All four write sites now use a guarded `updateMany` matching the existing work-claim pattern; a lost race returns 409.
+- **GitHub delivery-id idempotency on webhook events (M2)** (#372). GitHub redelivers webhook events on non-2xx responses, producing duplicate timeline comments and repeated transitions. A `WebhookDelivery` table keyed on `X-GitHub-Delivery` claims before dispatch; a duplicate id is short-circuited without re-dispatching (at-most-once semantics).
+- **Custom-workflow projects respect governance on webhook PR merge (M3)** (#373). Non-autonomous projects with a custom workflow previously auto-transitioned to `done` on a PR-merge event, bypassing the review gate. Custom workflows now follow the same governance logic as the default workflow; per-workflow merge-target overrides are a deferred follow-up.
+- **Constant-time HMAC comparison in webhook signature verification (L1)** (#373). `verifyWebhookSignature` now re-HMACs both sides under an ephemeral per-process key before `timingSafeEqual`, eliminating the early length-return that made verification non-constant-time on mismatched candidates.
+- **Login timing equalized to prevent email enumeration (M4)** (#369). The no-user branch returned 401 before paying the scrypt cost, leaking whether an email was registered via response time. A `fakeVerifyPassword` call on the no-user branch equalizes KDF work on both paths.
+- **HTTP(S)-scheme allowlist on all agent- and user-writable URL fields (M6, CSP sweep)** (#369, #378). The `prUrl`, artifact `url`, `notificationWebhookUrl`, and SSO `issuer` fields previously accepted `javascript:` and `data:` URLs via bare `z.string().url()`, enabling stored-XSS via rendered `<a href>` elements. All writable URL fields now use a shared `httpUrl()` Zod builder (allowlisting `http:` and `https:` only). A regression guard test scanning all of `backend/src` fails if a bare `z.string().url()` is reintroduced in a route.
+- **SSRF egress guard on outbound notification webhook delivery (M8)** (#371). The webhook delivery previously fetched the operator-configured URL with no egress controls. Delivery now resolves the target hostname and rejects private, loopback, link-local, and cloud-metadata addresses (including IPv4-mapped and NAT64 forms); redirects are disabled so a public URL cannot 3xx-bounce to an internal host. An opt-in `WEBHOOK_ALLOWED_PRIVATE_HOSTS` env var permits specific internal targets for self-hosters.
+- **CLI warns on token config file lax permissions (M7)** (#375). `loadConfigFile` now emits a warning (POSIX only) when `~/.agent-tasks.json` is accessible by other users (mode broader than `0600`), directing the user to `chmod 600`.
+- **Predictable dev `SESSION_SECRET` default removed (L3)** (#377). The dev `docker-compose.yml` and `.env.example` shipped a predictable literal `SESSION_SECRET`; the default is removed so an unset secret fails loudly via the backend's `>=32`-char validation. Dev quick-start docs now include an `openssl rand -hex 32` generation step.
+- **`AuditLog` foreign keys annotated `onDelete: SetNull` explicitly (M5)** (#374). The annotation was already the Prisma effective default for optional relations (audit rows survive project/task/user deletion with a null reference); it is now explicit to pin the audit-retention guarantee and future-proof it against Prisma default changes. No migration required.
+
+### Added
+
+- **Per-task aggregate attachment count and bytes cap** (#368). A per-task count cap (default 20, `ATTACHMENT_MAX_COUNT_PER_TASK`) and aggregate bytes cap (default 50 MiB, `ATTACHMENT_MAX_TOTAL_BYTES_PER_TASK`), each overridable per project via nullable `Project.attachmentCountCap` and `attachmentBytesCap`, prevents runaway accumulation of task file attachments. The multipart upload route returns 429 on count overage and 413 on bytes overage without writing the file.
+- **Teams: Table/Cards view switch, auto-defaulted by project count** (#367). The project card grid is available as a Cards alternative to the dense table, behind a Tabs switch. The view auto-defaults based on project count (cards for few projects, table for many); an explicit toggle persists to localStorage. The auto-default re-resolves per team, so navigating to a differently sized team picks the right default without freezing the stored preference.
+- **Teams: dense sortable project table** (#366). The `/teams` project card grid is replaced with the shared `ui/Table` primitive: sortable Name, Repo, Active tasks, Created, and Synced columns with a row-actions overflow menu, controlled sort with per-column comparators, page size 25, and existing search, GitHub-only filter, and pagination retained.
+
+### Changed
+
+- **`task_finish` result field documented as free-text in the MCP tool schema (L2)** (#377). The tool description now states the result is free-text prose/markdown, not a structured or XML payload, addressing a pattern of agents appending fake XML.
+- **CI: CLI workspace job added (M9)** (#376). A dedicated CI job now runs typecheck, build, and test for `@agent-tasks/cli`; CLI regressions previously shipped without CI verification. The CLI test suite gains a `pretest` build step and hermetic env injection so tests are clean-checkout-safe.
+
+### Docs
+
+- **README hero screenshot** (#365).
 
 ## [0.27.0] - 2026-06-25
 

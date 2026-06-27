@@ -2,6 +2,21 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## 0.10.0
+
+### Added
+
+- **`reclassify` flag on `task_pickup` and `task_start`** (#359). Both MCP tool definitions now expose an optional `reclassify?: boolean` parameter. On `task_pickup`, passing `true` appends `?reclassify=true` to the backend query string, instructing it to overwrite the task's `debugFlavor` with the result of the classifier (and delete stale grounding-session metadata on a true-to-false flip). On `task_start`, the flag is forwarded as a JSON boolean in the request body; `branchName` and `reclassify` can coexist in the same call. Both parameters are discoverable in the MCP tool catalogue: callers no longer need to know the wire-level detail.
+
+### Changed
+
+- **`task_finish` result field documented as free-text** (#377). The tool description now states the `result` field is free-text prose/markdown, not a structured or XML payload, addressing a pattern of agents appending fake XML to the field.
+- **README Tools table and server-version constant reconciled with the code** (#361). `mcp-server/README.md` is regenerated to list the actual 35 registered tools in four groups (v2 verbs, artifacts, attachments, and v1 aliases). PR #361 reconciled the `SERVER_VERSION` constant in `src/server.ts` with `package.json`; this release bumps both to `0.10.0`, so the MCP handshake reports the real version. "Settings -> Agent Tokens" references are corrected to "Settings -> API Tokens" throughout.
+
+### Security
+
+- **`tsx` devDependency bumped to `^4.22.4`** (#342). Clears esbuild advisories GHSA-gv7w-rqvm-qjhr and GHSA-g7r4-m6w7-qqqr; `tsx >=4.22.0` resolves `esbuild ~0.28.x` (patched range).
+
 ## 0.9.0
 
 ### Added
