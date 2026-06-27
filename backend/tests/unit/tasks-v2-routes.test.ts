@@ -940,6 +940,77 @@ describe("POST /tasks/:id/claim — gate enforcement (REST parity with MCP task_
   });
 });
 
+// ── PATCH /tasks/:id — prUrl scheme allowlist ────────────────────────────────
+
+describe("PATCH /tasks/:id — prUrl scheme allowlist (M6)", () => {
+  // A write-actor must not be able to store a `javascript:` (or other
+  // non-http) prUrl: it would execute as stored XSS when rendered as an
+  // <a href> in the UI. The agent and human update schemas share one
+  // http(s) allowlist.
+  const AGENT_WITH_UPDATE: Actor = { ...AGENT, scopes: [...AGENT.scopes, "tasks:update"] };
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+
+  it("agent: rejects a javascript: prUrl with 400 and does not write", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "in_progress" });
+
+    const res = await makeApp(AGENT_WITH_UPDATE).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "javascript:alert(document.cookie)" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("agent: accepts a valid https github PR url", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "in_progress" });
+    prismaMocks.taskUpdate.mockResolvedValueOnce({
+      ...baseTask,
+      prUrl: "https://github.com/acme/thing/pull/42",
+    });
+
+    const res = await makeApp(AGENT_WITH_UPDATE).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.taskUpdate).toHaveBeenCalled();
+  });
+
+  it("human: rejects a javascript: prUrl with 400 and does not write", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "in_progress" });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "javascript:alert(1)" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "data:text/html,<script>alert(1)</script>",
+    "vbscript:msgbox(1)",
+    "ftp://example.com/x",
+  ])("agent: rejects non-http prUrl scheme %s with 400", async (badUrl) => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "in_progress" });
+
+    const res = await makeApp(AGENT_WITH_UPDATE).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: badUrl }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+});
+
 // ── /tasks/:id/finish ────────────────────────────────────────────────────────
 
 describe("POST /tasks/:id/finish (work claim)", () => {

@@ -16,3 +16,13 @@ export function parsePrNumberFromUrl(url: string): number | null {
   const n = Number.parseInt(match[1], 10);
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
+
+/**
+ * True only for http(s) URLs. Guard a user/agent-supplied URL (e.g. task.prUrl)
+ * with this before rendering it as an `<a href>`: a `javascript:` / `data:` URL
+ * would otherwise execute on click (stored XSS). The backend allowlists the
+ * scheme too — this is defense in depth at the render boundary.
+ */
+export function isHttpUrl(value: string | null | undefined): value is string {
+  return typeof value === "string" && /^https?:\/\//i.test(value);
+}

@@ -168,6 +168,22 @@ describe("POST /tasks/:id/artifacts", () => {
     expect(prismaMocks.artifactCreate).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "javascript:alert(document.cookie)",
+    "data:text/html,<script>alert(1)</script>",
+    "vbscript:msgbox(1)",
+  ])("rejects a non-http(s) artifact url %s with 400 (stored-XSS guard)", async (badUrl) => {
+    // The artifact url is rendered as an <a href> in the UI; a javascript:/data:
+    // url would execute on click. zValidator rejects before the handler runs.
+    const res = await makeApp(AGENT).request("/tasks/task-1/artifacts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "other", name: "evil", url: badUrl }),
+    });
+    expect(res.status).toBe(400);
+    expect(prismaMocks.artifactCreate).not.toHaveBeenCalled();
+  });
+
   it("rejects inline content that exceeds the 1 MiB cap (via zod, before Prisma)", async () => {
     const res = await makeApp(AGENT).request("/tasks/task-1/artifacts", {
       method: "POST",

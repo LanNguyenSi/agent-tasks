@@ -10,6 +10,7 @@ import {
   type TaskArtifactType,
   type User,
 } from "../lib/api";
+import { isHttpUrl } from "../lib/pr";
 import { Button } from "./ui/Button";
 import CollapsibleSection from "./ui/CollapsibleSection";
 import { Icon } from "./ui/Icon";
@@ -189,7 +190,7 @@ export default function TaskArtifactsSection({
                           </div>
                         </div>
                         <div className="ta-artifact-actions">
-                          {a.url ? (
+                          {a.url && isHttpUrl(a.url) ? (
                             <a
                               href={a.url}
                               target="_blank"

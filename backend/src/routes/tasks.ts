@@ -211,6 +211,13 @@ export const createTaskSchema = z.object({
   debugFlavor: z.boolean().optional(),
 });
 
+// Allowlist http(s) at the boundary for user/agent-writable URL fields. Bare
+// z.string().url() also accepts javascript:/data:/vbscript: URLs, which become
+// stored XSS once rendered as an <a href> in the UI. Single-sourced so every
+// such field validates the scheme identically. (task_finish / submit-pr use the
+// stricter github PR regex below, which already implies https.)
+const isHttpScheme = (u: string) => /^https?:\/\//i.test(u);
+
 const updateTaskSchema = z.object({
   title: z.string().min(1).max(255).optional(),
   description: z.string().nullable().optional(),
@@ -218,7 +225,7 @@ const updateTaskSchema = z.object({
   status: z.enum(["open", "in_progress", "review", "done"]).optional(),
   dueAt: z.string().datetime().nullable().optional(),
   branchName: z.string().max(255).nullable().optional(),
-  prUrl: z.string().url().nullable().optional(),
+  prUrl: z.string().url().refine(isHttpScheme, "Only http(s) URLs are allowed").nullable().optional(),
   prNumber: z.number().int().positive().nullable().optional(),
   result: z.string().nullable().optional(),
   templateData: templateDataSchema.nullable().optional(),
@@ -228,7 +235,7 @@ const updateTaskSchema = z.object({
 
 const agentUpdateTaskSchema = z.object({
   branchName: z.string().max(255).nullable().optional(),
-  prUrl: z.string().url().nullable().optional(),
+  prUrl: z.string().url().refine(isHttpScheme, "Only http(s) URLs are allowed").nullable().optional(),
   prNumber: z.number().int().positive().nullable().optional(),
   result: z.string().nullable().optional(),
 });
@@ -259,7 +266,7 @@ const createAttachmentSchema = z.object({
     .string()
     .url()
     .max(2048)
-    .refine((u) => /^https?:\/\//i.test(u), "Only http(s) URLs are allowed"),
+    .refine(isHttpScheme, "Only http(s) URLs are allowed"),
 });
 
 // ── Artifact config / validation ─────────────────────────────────────────────
@@ -313,8 +320,10 @@ const createArtifactSchema = z
     description: z.string().max(1000).optional(),
     content: z.string().max(ARTIFACT_MAX_BYTES).optional(),
     // Cap URL length so a bogus multi-megabyte "url" string can't reach the DB.
-    // 2048 matches the common browser cap for hyperlinks.
-    url: z.string().url().max(2048).optional(),
+    // 2048 matches the common browser cap for hyperlinks. Allowlist http(s):
+    // the artifact url is rendered as an <a href> in the UI, so a javascript:/
+    // data: URL would be stored XSS (same class as the prUrl/attachment guards).
+    url: z.string().url().max(2048).refine(isHttpScheme, "Only http(s) URLs are allowed").optional(),
     mimeType: z.string().max(255).optional(),
   })
   .refine((v) => Boolean(v.content) || Boolean(v.url), {

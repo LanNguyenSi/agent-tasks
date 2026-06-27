@@ -40,7 +40,7 @@ import {
   type TemplateFields,
 } from "../lib/confidence";
 import { parseChecklistProgress } from "../lib/checklist";
-import { parsePrNumberFromUrl } from "../lib/pr";
+import { isHttpUrl, parsePrNumberFromUrl } from "../lib/pr";
 import { buildSavedTemplateData } from "../lib/templateData";
 import type { TemplateDataEdits } from "../lib/templateData";
 import { formatRelativeTime, formatAbsoluteDate } from "../lib/time";
@@ -849,14 +849,18 @@ export default function TaskDetail({
             {task.prUrl && (
               <div className="td-output-row">
                 <span className="td-output-label">PR</span>
-                <a
-                  href={task.prUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {task.prNumber ? `#${task.prNumber}` : "Open PR"}
-                </a>
+                {isHttpUrl(task.prUrl) ? (
+                  <a
+                    href={task.prUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {task.prNumber ? `#${task.prNumber}` : "Open PR"}
+                  </a>
+                ) : (
+                  <span>{task.prNumber ? `#${task.prNumber}` : "PR"}</span>
+                )}
               </div>
             )}
             {task.result && (
