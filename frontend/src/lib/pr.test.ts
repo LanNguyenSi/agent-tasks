@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { parsePrNumberFromUrl } from "./pr";
+import { isHttpUrl, parsePrNumberFromUrl } from "./pr";
 
 describe("parsePrNumberFromUrl", () => {
   it("parses the canonical GitHub PR URL", () => {
@@ -30,5 +30,27 @@ describe("parsePrNumberFromUrl", () => {
   it("rejects malformed numbers", () => {
     expect(parsePrNumberFromUrl("https://github.com/o/r/pull/123abc")).toBeNull();
     expect(parsePrNumberFromUrl("https://github.com/o/r/pull/0")).toBeNull();
+  });
+});
+
+describe("isHttpUrl", () => {
+  it("accepts http and https", () => {
+    expect(isHttpUrl("https://github.com/o/r/pull/1")).toBe(true);
+    expect(isHttpUrl("http://example.com")).toBe(true);
+    expect(isHttpUrl("HTTPS://EXAMPLE.COM")).toBe(true);
+  });
+
+  it("rejects javascript:, data:, and other non-http schemes (the XSS guard)", () => {
+    expect(isHttpUrl("javascript:alert(1)")).toBe(false);
+    expect(isHttpUrl("JavaScript:alert(1)")).toBe(false);
+    expect(isHttpUrl("data:text/html,<script>alert(1)</script>")).toBe(false);
+    expect(isHttpUrl("vbscript:msgbox(1)")).toBe(false);
+    expect(isHttpUrl("ftp://example.com")).toBe(false);
+  });
+
+  it("rejects null, undefined, and empty", () => {
+    expect(isHttpUrl(null)).toBe(false);
+    expect(isHttpUrl(undefined)).toBe(false);
+    expect(isHttpUrl("")).toBe(false);
   });
 });

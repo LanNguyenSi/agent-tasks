@@ -13,6 +13,7 @@ import { PriorityLabel } from "@/components/ui/PriorityLabel";
 import { Icon } from "@/components/ui/Icon";
 import { Button } from "@/components/ui/Button";
 import { formatAbsoluteDate, formatDueDate } from "@/lib/time";
+import { isHttpUrl } from "@/lib/pr";
 
 interface TaskMetaSidebarProps {
   task: Task;
@@ -158,16 +159,23 @@ export default function TaskMetaSidebar({
           <>
             <span className="td-prop-label">PR</span>
             <span className="td-prop-value">
-              <a
-                href={task.prUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="td-branch-chip"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <Icon name="pr" size={11} aria-hidden />
-                {task.prNumber ? `#${task.prNumber}` : "Open PR"}
-              </a>
+              {isHttpUrl(task.prUrl) ? (
+                <a
+                  href={task.prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="td-branch-chip"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Icon name="pr" size={11} aria-hidden />
+                  {task.prNumber ? `#${task.prNumber}` : "Open PR"}
+                </a>
+              ) : (
+                <span className="td-branch-chip">
+                  <Icon name="pr" size={11} aria-hidden />
+                  {task.prNumber ? `#${task.prNumber}` : "PR"}
+                </span>
+              )}
             </span>
           </>
         )}

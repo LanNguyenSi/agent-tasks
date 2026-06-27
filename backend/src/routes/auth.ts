@@ -24,7 +24,7 @@ import {
   connectGitHubToExistingUser,
   updateUserDelegation,
 } from "../services/user.js";
-import { verifyPassword } from "../services/password.js";
+import { fakeVerifyPassword, verifyPassword } from "../services/password.js";
 import { getTokenHealth } from "../services/github-health.js";
 import { logger } from "../lib/logger.js";
 import { logAuditEvent } from "../services/audit.js";
@@ -150,6 +150,9 @@ authRouter.post("/login", zValidator("json", loginSchema), async (c) => {
   const user = await getUserByEmail(body.email.toLowerCase().trim());
 
   if (!user || !user.passwordHash) {
+    // Equalize timing with the real-user path so login response time does not
+    // reveal whether an email is registered (user-enumeration oracle).
+    await fakeVerifyPassword(body.password);
     return c.json({ error: "unauthorized", message: "Invalid email or password" }, 401);
   }
 
