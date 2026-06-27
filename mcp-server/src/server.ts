@@ -5,7 +5,7 @@ import { buildTools } from "./tools.js";
 
 export const DEFAULT_BASE_URL = "https://agent-tasks.opentriologue.ai";
 export const SERVER_NAME = "agent-tasks-mcp";
-export const SERVER_VERSION = "0.9.0";
+export const SERVER_VERSION = "0.10.0";
 
 export function createServer(config: ClientConfig): McpServer {
   const client = new AgentTasksClient(config);
