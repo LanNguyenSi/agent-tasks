@@ -1723,13 +1723,25 @@ taskRouter.post("/tasks/:id/start", async (c) => {
 
     let updated = task;
     if (!isCurrentReviewer) {
-      updated = await prisma.task.update({
-        where: { id: task.id },
+      // Atomic compare-and-swap: only acquire the lock if it is still free.
+      // The null-check above is a fast path; two reviewers can both pass it
+      // before either writes (TOCTOU). Guarding on `reviewClaimedBy* IS NULL`
+      // makes exactly one writer win; the loser sees count===0 and gets a 409.
+      const claimResult = await prisma.task.updateMany({
+        where: { id: task.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
         data: {
           reviewClaimedByUserId: actor.type === "human" ? actor.userId : null,
           reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
           reviewClaimedAt: new Date(),
         },
+      });
+      if (claimResult.count === 0) {
+        return conflict(c, "Task is already being reviewed by another reviewer");
+      }
+
+      // updateMany cannot use `include`, so re-fetch the freshly claimed row.
+      const refetched = await prisma.task.findUnique({
+        where: { id: task.id },
         include: {
           workflow: true,
           project: {
@@ -1749,6 +1761,8 @@ taskRouter.post("/tasks/:id/start", async (c) => {
           ...taskInclude,
         },
       });
+      if (!refetched) return notFound(c);
+      updated = refetched;
 
       void logAuditEvent({
         action: "task.reviewed",
@@ -3285,7 +3299,12 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
     );
   }
 
-  const updateData: Prisma.TaskUncheckedUpdateInput = {};
+  const updateData: Prisma.TaskUncheckedUpdateManyInput = {};
+  // Build a holder-guarded where so the clear is an atomic compare-and-swap:
+  // holdsWorkClaim/holdsReviewClaim were read at load time, so a stale abandon
+  // must not wipe a work/review claim another actor acquired in the race
+  // window. Mirrors the /release and /review/release guards.
+  const claimGuard: Prisma.TaskWhereInput = { id: task.id };
   if (holdsWorkClaim) {
     updateData.claimedByUserId = null;
     updateData.claimedByAgentId = null;
@@ -3295,18 +3314,31 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
     if (isWorkState(effectiveDef, task.status)) {
       updateData.status = effectiveDef.initialState;
     }
+    if (actor.type === "human") claimGuard.claimedByUserId = actor.userId;
+    else claimGuard.claimedByAgentId = actor.tokenId;
   }
   if (holdsReviewClaim) {
     updateData.reviewClaimedByUserId = null;
     updateData.reviewClaimedByAgentId = null;
     updateData.reviewClaimedAt = null;
+    if (actor.type === "human") claimGuard.reviewClaimedByUserId = actor.userId;
+    else claimGuard.reviewClaimedByAgentId = actor.tokenId;
   }
 
-  const updated = await prisma.task.update({
-    where: { id: task.id },
+  const abandonResult = await prisma.task.updateMany({
+    where: claimGuard,
     data: updateData,
+  });
+  if (abandonResult.count === 0) {
+    return conflict(c, "Your claim on this task is no longer held");
+  }
+
+  // updateMany cannot use `include`, so re-fetch the freshly released row.
+  const updated = await prisma.task.findUnique({
+    where: { id: task.id },
     include: taskInclude,
   });
+  if (!updated) return notFound(c);
 
   void logAuditEvent({
     action: "task.released",
@@ -5243,15 +5275,28 @@ taskRouter.post("/tasks/:id/review/claim", async (c) => {
     return c.json({ task }, 200);
   }
 
-  const updated = await prisma.task.update({
-    where: { id: task.id },
+  // Atomic compare-and-swap: only acquire the lock if it is still free. The
+  // null-check above is a fast path; two reviewers can both pass it before
+  // either writes (TOCTOU). Guarding on `reviewClaimedBy* IS NULL` makes
+  // exactly one writer win; the loser sees count===0 and gets a 409.
+  const claimResult = await prisma.task.updateMany({
+    where: { id: task.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
     data: {
       reviewClaimedByUserId: actor.type === "human" ? actor.userId : null,
       reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
       reviewClaimedAt: new Date(),
     },
+  });
+  if (claimResult.count === 0) {
+    return conflict(c, "Task is already being reviewed by another reviewer");
+  }
+
+  // updateMany cannot use `include`, so re-fetch the freshly claimed row.
+  const updated = await prisma.task.findUnique({
+    where: { id: task.id },
     include: taskInclude,
   });
+  if (!updated) return notFound(c);
 
   void logAuditEvent({
     action: "task.reviewed",
@@ -5288,15 +5333,30 @@ taskRouter.post("/tasks/:id/review/release", async (c) => {
     return forbidden(c, "Only the current reviewer can release the review lock");
   }
 
-  const updated = await prisma.task.update({
-    where: { id: task.id },
+  // Atomic: only clear the lock if this actor still holds it, so a stale
+  // release cannot wipe a lock another reviewer acquired in the meantime
+  // (the isCurrentReviewer check above is a fast path with a TOCTOU window).
+  const releaseResult = await prisma.task.updateMany({
+    where:
+      actor.type === "human"
+        ? { id: task.id, reviewClaimedByUserId: actor.userId }
+        : { id: task.id, reviewClaimedByAgentId: actor.tokenId },
     data: {
       reviewClaimedByUserId: null,
       reviewClaimedByAgentId: null,
       reviewClaimedAt: null,
     },
+  });
+  if (releaseResult.count === 0) {
+    return conflict(c, "Review lock is no longer held by you");
+  }
+
+  // updateMany cannot use `include`, so re-fetch the freshly released row.
+  const updated = await prisma.task.findUnique({
+    where: { id: task.id },
     include: taskInclude,
   });
+  if (!updated) return notFound(c);
 
   void logAuditEvent({
     action: "task.reviewed",
