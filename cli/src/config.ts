@@ -26,7 +26,7 @@ function warnIfInsecurePermissions(path: string): void {
     if (mode & 0o077) {
       const octal = (mode & 0o777).toString(8).padStart(3, "0");
       console.error(
-        `Warning: ${path} is mode ${octal} and holds an API token; it should not be readable by other users. Run: chmod 600 ${path}`,
+        `Warning: ${path} is mode ${octal} and holds an API token; it should not be accessible by other users. Run: chmod 600 ${path}`,
       );
     }
   } catch {
