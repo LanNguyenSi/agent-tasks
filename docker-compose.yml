@@ -45,7 +45,11 @@ services:
       CORS_ORIGINS: http://localhost:3000
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-dev-client-id}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-dev-client-secret}
-      SESSION_SECRET: ${SESSION_SECRET:-change-me-to-a-random-32-char-string!!}
+      # No dev default: the backend rejects a secret shorter than 32 chars, so
+      # an unset value fails loud at startup instead of silently running on a
+      # predictable secret. Set SESSION_SECRET in .env (generate one with:
+      # openssl rand -hex 32).
+      SESSION_SECRET: ${SESSION_SECRET}
       # Disk location for human-uploaded task attachments (image + text). The
       # uploads_data volume mounted below at /app/uploads overlays the repo
       # bind mount so uploaded files stay out of the working tree.
