@@ -26,6 +26,7 @@ import {
 import { resolveEnforcementMode, EnforcementMode } from "../lib/enforcement-mode.js";
 import { describeTaskCreation } from "../lib/task-creation-readiness.js";
 import { computeEffectiveGates } from "../services/gates/index.js";
+import { httpUrl } from "../lib/url-guard.js";
 
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -70,7 +71,7 @@ const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, s
   // Pass an empty string OR null to clear. URL is validated for shape only —
   // we do not probe reachability here; failed deliveries surface in audit.
   notificationWebhookUrl: z
-    .union([z.string().url(), z.literal(""), z.null()])
+    .union([httpUrl(), z.literal(""), z.null()])
     .optional(),
   // Signing secret. Empty string / null clears. Never echoed in responses.
   notificationWebhookSecret: z

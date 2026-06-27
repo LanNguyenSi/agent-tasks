@@ -51,6 +51,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { z } from "zod";
 import type { AppVariables } from "../types/hono.js";
 import { logger, setLogContext } from "../lib/logger.js";
+import { httpUrl } from "../lib/url-guard.js";
 
 type HonoApp = Hono<{ Variables: AppVariables }>;
 
@@ -429,7 +430,7 @@ function buildServer(token: string): McpServer {
       inputSchema: {
         taskId: uuid(),
         branchName: z.string().max(255).nullable().optional(),
-        prUrl: z.string().url().nullable().optional(),
+        prUrl: httpUrl().nullable().optional(),
         prNumber: z.number().int().positive().nullable().optional(),
         result: z.string().nullable().optional(),
       },

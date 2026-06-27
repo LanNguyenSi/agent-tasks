@@ -41,6 +41,7 @@ import {
   upsertUserFromOidc,
 } from "../services/sso.js";
 import { createSessionToken, buildSessionCookie } from "../services/session.js";
+import { httpUrl } from "../lib/url-guard.js";
 
 // Public login-flow endpoints: mounted under /api/auth.
 export const ssoLoginRouter = new Hono<{ Variables: AppVariables }>();
@@ -231,7 +232,7 @@ ssoLoginRouter.get("/sso/:teamSlug/callback", async (c) => {
 
 const upsertSchema = z.object({
   displayName: z.string().min(1).max(100),
-  issuer: z.string().url(),
+  issuer: httpUrl(),
   clientId: z.string().min(1),
   clientSecret: z.string().min(1),
   emailDomains: z.array(z.string().min(1).max(253)).max(20).default([]),

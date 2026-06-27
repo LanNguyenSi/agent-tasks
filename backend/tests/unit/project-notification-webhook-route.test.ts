@@ -230,6 +230,72 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
     expect(res.status).toBe(400);
     expect(prismaMocks.projectUpdate).not.toHaveBeenCalled();
   });
+
+  it.each([
+    "javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "vbscript:msgbox(1)",
+  ])(
+    "rejects non-http(s) scheme %s with 400 and does not persist",
+    async (badUrl) => {
+      prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+
+      const res = await makeApp().request("/projects/proj-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ notificationWebhookUrl: badUrl }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(prismaMocks.projectUpdate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("still accepts empty string to clear the webhook URL", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      ...baseProject,
+      notificationWebhookUrl: "https://old.example/hook",
+    });
+    prismaMocks.projectUpdate.mockResolvedValue({
+      ...baseProject,
+      notificationWebhookUrl: null,
+    });
+
+    const res = await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ notificationWebhookUrl: "" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
+      where: { id: "proj-1" },
+      data: expect.objectContaining({ notificationWebhookUrl: null }),
+    });
+  });
+
+  it("still accepts null to clear the webhook URL", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      ...baseProject,
+      notificationWebhookUrl: "https://old.example/hook",
+    });
+    prismaMocks.projectUpdate.mockResolvedValue({
+      ...baseProject,
+      notificationWebhookUrl: null,
+    });
+
+    const res = await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ notificationWebhookUrl: null }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
+      where: { id: "proj-1" },
+      data: expect.objectContaining({ notificationWebhookUrl: null }),
+    });
+  });
 });
 
 describe("PATCH /projects/:id — enforcementMode (scorer-v2 T5)", () => {
