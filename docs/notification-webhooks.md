@@ -18,15 +18,13 @@ all seven Signal types — see [events.md](events.md) and
 
 ## Configuration
 
-> **Operator note (SSRF):** the URL is fetched server-side by the
-> agent-tasks backend. It is validated for URL shape only — there is no
-> denylist for loopback (`http://127.0.0.1/...`), link-local
-> (`http://169.254.169.254/...`), or RFC1918 ranges. Only team admins
-> can write this field, so this is a trust-the-operator surface, not an
-> internet-facing one. If your deployment has agent-tasks on a network
-> that can reach internal services you don't want it POSTing to, run it
-> behind an egress firewall or block those CIDRs at the host level. A
-> server-side denylist may be added in a future release.
+> **Operator note (SSRF):** the URL is fetched server-side, so delivery
+> enforces an egress guard. The host must be `http(s)` and must not be, or
+> resolve to, a private / loopback / link-local / metadata address, and
+> redirects are not followed. See [Egress / SSRF guard](#egress--ssrf-guard)
+> below. Only team admins can write this field. A self-hosted deployment that
+> legitimately targets an internal host can opt specific hosts in with
+> `WEBHOOK_ALLOWED_PRIVATE_HOSTS`.
 
 PATCH the project to set the URL and (optionally) a signing secret:
 
@@ -137,6 +135,26 @@ before JSON parsing (Express `express.raw()`, Hono `c.req.raw.text()`,
 - **Order is not guaranteed.** Different signals dispatch concurrently;
   retries reorder. If your consumer cares about ordering, sort by
   `createdAt` inside a polling window.
+
+## Egress / SSRF guard
+
+The webhook URL is project-admin-configured, so delivery enforces an egress
+allowlist before sending:
+
+- The scheme must be `http`/`https`.
+- The host must not be, or resolve to, a private / loopback / link-local /
+  metadata address (e.g. `10/8`, `127/8`, `169.254/16` including the cloud
+  metadata endpoint, `192.168/16`, `fc00::/7`, `::1`). A blocked target is
+  audited as `signal.webhook_failed` and never sent.
+- **Redirects are not followed** (`redirect: error`), so a public URL cannot
+  bounce the request into an internal host. Expose a stable, non-redirecting
+  endpoint.
+
+Self-hosted deployments that legitimately target an internal host can opt
+specific hosts in with `WEBHOOK_ALLOWED_PRIVATE_HOSTS` (comma-separated exact
+hostnames/IPs; empty by default). Note: the check resolves-then-connects, so a
+DNS-rebinding attacker who flips the record between the check and the connect is
+not fully blocked.
 
 ## Observability
 

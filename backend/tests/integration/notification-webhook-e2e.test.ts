@@ -61,6 +61,9 @@ describe("notification webhook — e2e against a real HTTP server", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    // The SSRF egress guard blocks loopback by default; this e2e binds a real
+    // server on 127.0.0.1, so opt that host in explicitly (as a self-hoster would).
+    process.env.WEBHOOK_ALLOWED_PRIVATE_HOSTS = "127.0.0.1";
     let resolveReceived!: (r: CapturedRequest) => void;
     received = new Promise<CapturedRequest>((resolve) => {
       resolveReceived = resolve;
@@ -87,6 +90,7 @@ describe("notification webhook — e2e against a real HTTP server", () => {
   });
 
   afterEach(async () => {
+    delete process.env.WEBHOOK_ALLOWED_PRIVATE_HOSTS;
     // Close the server so the port handle does not leak across tests.
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
