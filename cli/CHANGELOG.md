@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   its title/label heuristic as before. `--depends-on` declares blocking
   task ids in the same project. Both are create-time only.
 
+### Security
+
+- `loadConfig` now warns (POSIX only) when the config file
+  `~/.agent-tasks.json` — which holds the API token — is accessible by
+  group or other (mode broader than 0600), pointing the user at
+  `chmod 600`. It warns rather than refuses so existing setups keep
+  working.
+
 ## [0.3.0] - 2026-04-27
 
 Adds the v2 verb API surface (mirroring the agent-tasks MCP tools
