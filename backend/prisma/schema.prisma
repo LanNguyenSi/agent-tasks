@@ -534,9 +534,14 @@ model AuditLog {
   payload   Json     @default("{}")
   createdAt DateTime @default(now())
 
-  project Project? @relation(fields: [projectId], references: [id])
-  task    Task?    @relation(fields: [taskId], references: [id])
-  actor   User?    @relation(fields: [actorId], references: [id])
+  // onDelete: SetNull is made explicit (it is also Prisma's default for an
+  // optional relation, so this is SQL-equivalent today) to pin the audit-trail
+  // retention guarantee: deleting a project/task/user nulls the ref and keeps
+  // the audit row, rather than relying on the implicit default which a future
+  // Prisma version could change.
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  task    Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  actor   User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([projectId])
   @@index([taskId])
