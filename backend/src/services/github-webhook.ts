@@ -8,6 +8,7 @@
  * - pull_request.opened → create task
  */
 import { createHmac } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
 import { acknowledgeSignalsForTask } from "./signal.js";
@@ -420,6 +421,44 @@ export async function handlePullRequestReviewEvent(payload: GitHubPullRequestRev
         }
       }
     }
+  }
+}
+
+/**
+ * Claim a GitHub webhook delivery by its X-GitHub-Delivery id.
+ *
+ * Returns true if the delivery is new and the caller should process it.
+ * Returns false if the row already exists (P2002 unique violation), meaning
+ * this is a duplicate redelivery and the caller should skip processing.
+ * Any other error propagates — do not swallow unexpected DB failures.
+ */
+export async function claimWebhookDelivery(deliveryId: string, event: string): Promise<boolean> {
+  try {
+    await prisma.webhookDelivery.create({ data: { deliveryId, event } });
+    return true;
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      return false;
+    }
+    throw e;
+  }
+}
+
+/**
+ * Release a previously claimed webhook delivery so a GitHub redelivery can
+ * re-process it. Called in the dispatch error path only.
+ *
+ * Swallows P2025 (not-found) so it is safe to call defensively even when
+ * the row was never written or was already released.
+ */
+export async function releaseWebhookDelivery(deliveryId: string): Promise<void> {
+  try {
+    await prisma.webhookDelivery.delete({ where: { deliveryId } });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025") {
+      return;
+    }
+    throw e;
   }
 }
 

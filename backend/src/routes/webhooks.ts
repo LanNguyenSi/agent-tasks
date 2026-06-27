@@ -5,6 +5,8 @@ import {
   handlePullRequestEvent,
   handlePullRequestReviewEvent,
   updateProjectSyncAt,
+  claimWebhookDelivery,
+  releaseWebhookDelivery,
   type GitHubIssuePayload,
   type GitHubPullRequestPayload,
   type GitHubPullRequestReviewPayload,
@@ -38,6 +40,24 @@ webhookRouter.post("/github", async (c) => {
     payload = JSON.parse(rawBody);
   } catch {
     return c.json({ error: "bad_request", message: "Invalid JSON payload" }, 400);
+  }
+
+  // Dedup by GitHub delivery id (X-GitHub-Delivery). Claim before dispatch so
+  // a concurrent or retried redelivery is blocked at the DB unique constraint
+  // rather than dispatching a second time. The claim is released on dispatch
+  // failure so a GitHub redelivery can re-process. Real GitHub always sends
+  // this header; the null branch is a defensive fallthrough without dedup.
+  const deliveryId = c.req.header("X-GitHub-Delivery") ?? null;
+
+  if (deliveryId) {
+    const fresh = await claimWebhookDelivery(deliveryId, event);
+    if (!fresh) {
+      logger.info(
+        { component: "webhook", deliveryId, event },
+        "duplicate webhook delivery — skipping",
+      );
+      return c.json({ received: true, event, duplicate: true });
+    }
   }
 
   // Handle events asynchronously — respond immediately to GitHub (10s timeout)
@@ -77,6 +97,10 @@ webhookRouter.post("/github", async (c) => {
         { err, errMessage: err instanceof Error ? err.message : String(err), component: "webhook", event },
         "error processing webhook event",
       );
+      // Release the claim so GitHub redelivery can re-process the failed dispatch.
+      if (deliveryId) {
+        await releaseWebhookDelivery(deliveryId);
+      }
     }
   })();
 

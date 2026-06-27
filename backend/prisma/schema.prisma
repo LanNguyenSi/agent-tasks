@@ -577,3 +577,27 @@ model ToolInvocation {
   @@index([createdAt]) // for TTL sweeps
   @@map("tool_invocations")
 }
+
+// ── Webhook Deliveries ────────────────────────────────────────────────────────
+//
+// Idempotency log for incoming GitHub webhook deliveries. GitHub guarantees
+// at-least-once delivery and redelivers on non-2xx responses. Without dedup,
+// a redelivery re-runs addTimelineComment and transition/audit logic, producing
+// duplicate Comment rows and repeated audit entries.
+//
+// Pattern: claim-before-dispatch — the row is inserted BEFORE the fire-and-
+// forget async block runs. A duplicate delivery with the same X-GitHub-Delivery
+// id hits P2002 and is dropped at the route level without dispatching. On
+// dispatch failure the claim is released so a GitHub redelivery can re-process.
+//
+// Not project-scoped: one GitHub delivery can fan out to multiple projects, so
+// the table is keyed only on the globally unique deliveryId header value.
+model WebhookDelivery {
+  id         String   @id @default(uuid())
+  deliveryId String   @unique @db.VarChar(255) // X-GitHub-Delivery
+  event      String   @db.VarChar(64)
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt]) // for TTL sweeps
+  @@map("webhook_deliveries")
+}
