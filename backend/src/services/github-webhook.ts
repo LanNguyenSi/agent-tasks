@@ -141,6 +141,9 @@ const HMAC_COMPARE_KEY = randomBytes(32);
  * timingSafeEqual, so a length mismatch produces unequal digests in constant
  * time instead of an early return (which would leak whether the candidate is
  * the right length). Mirrors the double-HMAC verification pattern.
+ *
+ * The timing property is not unit-testable (a plain `a === b` would pass the
+ * behavioral tests), so keep the timingSafeEqual call intact on any refactor.
  */
 function constantTimeEqual(a: string, b: string): boolean {
   const ha = createHmac("sha256", HMAC_COMPARE_KEY).update(a).digest();
@@ -296,14 +299,22 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
       const tasks = await findTasksByPr(project.id, hint);
 
       if (payload.pull_request.merged) {
-        // Policy: PR merged → done (soloMode) OR → review (non-solo, default
-        // workflow, pre-review state). Projects with a custom workflow keep
-        // the legacy "→ done" behavior until custom-workflow policy lands.
+        // Policy: PR merged → done (AUTONOMOUS) OR → review (confirmation-
+        // required, pre-review state), regardless of workflow (M3 — custom
+        // workflows no longer get a `done` carve-out; see pickMergeTargetStatus).
         //
-        // Rationale: soloMode projects skip review by design (ADR-0010). For
-        // non-solo projects the review state is a real gate — merging the PR
-        // on GitHub should hand the task off for explicit approval via
-        // task_finish({ outcome: "approve" }), not terminate it silently.
+        // Rationale: AUTONOMOUS projects skip review by design (ADR-0010). For
+        // confirmation-required projects the review state is a real gate —
+        // merging the PR on GitHub should hand the task off for explicit
+        // approval via task_finish({ outcome: "approve" }), not terminate it
+        // silently.
+        //
+        // Limitation: the target is written directly, not validated against a
+        // custom workflow's state vocabulary, so a custom workflow without a
+        // `review` state (or with post-review stages) can get a backward/out-
+        // of-vocabulary transition here. Resolving the target against the
+        // workflow definition is deferred to the custom-workflow vocabulary
+        // epic.
         const mergedBy = payload.pull_request.merged_by?.login ?? "unknown";
         for (const task of tasks) {
           const toStatus = pickMergeTargetStatus({

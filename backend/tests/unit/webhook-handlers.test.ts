@@ -246,6 +246,30 @@ describe("handlePullRequestEvent", () => {
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
 
+  it("resolves the target from the governanceMode enum column (AWAITS_CONFIRMATION → review)", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", governanceMode: "AWAITS_CONFIRMATION" }]);
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress" })]);
+
+    await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
+
+    expect(mockTaskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { status: "review" },
+    });
+  });
+
+  it("resolves the target from the governanceMode enum column (AUTONOMOUS → done)", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", governanceMode: "AUTONOMOUS" }]);
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress" })]);
+
+    await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
+
+    expect(mockTaskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { status: "done" },
+    });
+  });
+
   it("does not transition already-done task on PR merged (idempotent)", async () => {
     mockTaskFindMany.mockResolvedValue([makeTask({ status: "done" })]);
 
