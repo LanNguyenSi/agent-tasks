@@ -1,24 +1,19 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { Prisma } from "@prisma/client";
 
-const { mockWebhookDeliveryCreate, mockWebhookDeliveryDelete } = vi.hoisted(() => ({
+const { mockWebhookDeliveryCreate } = vi.hoisted(() => ({
   mockWebhookDeliveryCreate: vi.fn(),
-  mockWebhookDeliveryDelete: vi.fn(),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
     webhookDelivery: {
       create: mockWebhookDeliveryCreate,
-      delete: mockWebhookDeliveryDelete,
     },
   },
 }));
 
-import {
-  claimWebhookDelivery,
-  releaseWebhookDelivery,
-} from "../../src/services/github-webhook.js";
+import { claimWebhookDelivery } from "../../src/services/github-webhook.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -62,37 +57,5 @@ describe("claimWebhookDelivery", () => {
     mockWebhookDeliveryCreate.mockRejectedValue(new Error("unexpected"));
 
     await expect(claimWebhookDelivery("abc123", "push")).rejects.toThrow("unexpected");
-  });
-});
-
-describe("releaseWebhookDelivery", () => {
-  it("calls delete with the correct where-clause", async () => {
-    mockWebhookDeliveryDelete.mockResolvedValue({});
-
-    await releaseWebhookDelivery("abc123");
-
-    expect(mockWebhookDeliveryDelete).toHaveBeenCalledWith({
-      where: { deliveryId: "abc123" },
-    });
-  });
-
-  it("swallows P2025 (not-found) without throwing — safe to call defensively", async () => {
-    const notFoundError = new Prisma.PrismaClientKnownRequestError("not found", {
-      code: "P2025",
-      clientVersion: "5",
-    });
-    mockWebhookDeliveryDelete.mockRejectedValue(notFoundError);
-
-    await expect(releaseWebhookDelivery("abc123")).resolves.toBeUndefined();
-  });
-
-  it("re-throws a non-P2025 Prisma error", async () => {
-    const dbError = new Prisma.PrismaClientKnownRequestError("db error", {
-      code: "P1001",
-      clientVersion: "5",
-    });
-    mockWebhookDeliveryDelete.mockRejectedValue(dbError);
-
-    await expect(releaseWebhookDelivery("abc123")).rejects.toThrow("db error");
   });
 });

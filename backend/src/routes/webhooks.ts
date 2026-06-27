@@ -6,7 +6,6 @@ import {
   handlePullRequestReviewEvent,
   updateProjectSyncAt,
   claimWebhookDelivery,
-  releaseWebhookDelivery,
   type GitHubIssuePayload,
   type GitHubPullRequestPayload,
   type GitHubPullRequestReviewPayload,
@@ -44,9 +43,12 @@ webhookRouter.post("/github", async (c) => {
 
   // Dedup by GitHub delivery id (X-GitHub-Delivery). Claim before dispatch so
   // a concurrent or retried redelivery is blocked at the DB unique constraint
-  // rather than dispatching a second time. The claim is released on dispatch
-  // failure so a GitHub redelivery can re-process. Real GitHub always sends
-  // this header; the null branch is a defensive fallthrough without dedup.
+  // rather than dispatching a second time. Claiming happens after signature
+  // verification so a forged/unsigned request cannot poison the dedup table.
+  // Semantics are at-most-once: the claim is never released, so a delivery
+  // whose dispatch fails is not auto-reprocessed (the handlers are not
+  // idempotent — see claimWebhookDelivery). Real GitHub always sends this
+  // header; the null branch is a defensive fallthrough without dedup.
   const deliveryId = c.req.header("X-GitHub-Delivery") ?? null;
 
   if (deliveryId) {
@@ -93,14 +95,13 @@ webhookRouter.post("/github", async (c) => {
           break;
       }
     } catch (err) {
+      // The delivery stays claimed (at-most-once): re-running a partially
+      // applied, non-idempotent handler would double-apply side effects. The
+      // failed delivery is surfaced here for operator follow-up instead.
       logger.error(
-        { err, errMessage: err instanceof Error ? err.message : String(err), component: "webhook", event },
-        "error processing webhook event",
+        { err, errMessage: err instanceof Error ? err.message : String(err), component: "webhook", event, deliveryId },
+        "error processing webhook event (delivery stays claimed, not reprocessed)",
       );
-      // Release the claim so GitHub redelivery can re-process the failed dispatch.
-      if (deliveryId) {
-        await releaseWebhookDelivery(deliveryId);
-      }
     }
   })();
 

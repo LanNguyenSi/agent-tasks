@@ -587,17 +587,25 @@ model ToolInvocation {
 //
 // Pattern: claim-before-dispatch — the row is inserted BEFORE the fire-and-
 // forget async block runs. A duplicate delivery with the same X-GitHub-Delivery
-// id hits P2002 and is dropped at the route level without dispatching. On
-// dispatch failure the claim is released so a GitHub redelivery can re-process.
+// id hits P2002 and is dropped at the route level without dispatching.
+//
+// Semantics are at-most-once: a claimed delivery is never released, so a
+// delivery whose dispatch fails is not auto-reprocessed (the handlers are not
+// idempotent — reprocessing would double-apply side effects). Failed
+// dispatches are logged for operator follow-up.
 //
 // Not project-scoped: one GitHub delivery can fan out to multiple projects, so
 // the table is keyed only on the globally unique deliveryId header value.
+//
+// Growth: a row is written per delivery and never auto-pruned today (mirrors
+// the sibling tool_invocations table). A periodic TTL sweep for both tables is
+// tracked as a follow-up.
 model WebhookDelivery {
   id         String   @id @default(uuid())
   deliveryId String   @unique @db.VarChar(255) // X-GitHub-Delivery
   event      String   @db.VarChar(64)
   createdAt  DateTime @default(now())
 
-  @@index([createdAt]) // for TTL sweeps
+  @@index([createdAt]) // supports a future TTL sweep
   @@map("webhook_deliveries")
 }
