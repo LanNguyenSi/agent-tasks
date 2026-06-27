@@ -135,3 +135,17 @@ jobs:
       - run: npm run typecheck --workspace=mcp-bridge
       - run: npm run test --workspace=mcp-bridge
       - run: npm run build --workspace=mcp-bridge
+
+  cli:
+    name: CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck --workspace=@agent-tasks/cli
+      - run: npm run test --workspace=@agent-tasks/cli
+      - run: npm run build --workspace=@agent-tasks/cli
