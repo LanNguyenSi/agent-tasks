@@ -9,7 +9,23 @@ import { describe, expect, it } from "vitest";
 const CLI = resolve(__dirname, "../dist/index.js");
 
 function run(args: string[]): { stdout: string; stderr: string; status: number | null } {
-  const res = spawnSync("node", [CLI, ...args], { encoding: "utf8" });
+  // Provide a dummy endpoint+token so loadConfig succeeds and execution
+  // reaches the argument validation under test. Without this the CLI exits
+  // early with "No endpoint configured" in any environment that lacks an
+  // ambient ~/.agent-tasks.json or AGENT_TASKS_* env (e.g. CI), which made
+  // these tests pass only on a developer machine that happened to be
+  // configured. env takes priority over the config file, so this is
+  // hermetic. The `.invalid` host is never reached: every case here exits
+  // on a validation error before the first network call (RFC 6761 reserves
+  // `.invalid` so it can never resolve even if one slipped through).
+  const res = spawnSync("node", [CLI, ...args], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      AGENT_TASKS_ENDPOINT: "https://agent-tasks.invalid",
+      AGENT_TASKS_TOKEN: "test-token",
+    },
+  });
   return { stdout: res.stdout, stderr: res.stderr, status: res.status };
 }
 
