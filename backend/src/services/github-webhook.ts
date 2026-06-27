@@ -8,6 +8,7 @@
  * - pull_request.opened → create task
  */
 import { createHmac } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
 import { acknowledgeSignalsForTask } from "./signal.js";
@@ -420,6 +421,34 @@ export async function handlePullRequestReviewEvent(payload: GitHubPullRequestRev
         }
       }
     }
+  }
+}
+
+/**
+ * Claim a GitHub webhook delivery by its X-GitHub-Delivery id.
+ *
+ * Returns true if the delivery is new and the caller should process it.
+ * Returns false if the row already exists (P2002 unique violation), meaning
+ * this is a duplicate redelivery and the caller should skip processing.
+ * Any other error propagates — the route fails closed (5xx) so the delivery
+ * is not dispatched without a dedup guarantee.
+ *
+ * Semantics are at-most-once: a claimed delivery is never released, so a
+ * delivery whose dispatch fails is NOT auto-reprocessed. This is deliberate —
+ * the webhook handlers (addTimelineComment, transitions, audit writes) are not
+ * idempotent, so re-running a partially-applied handler would double-apply the
+ * side effects this dedup exists to prevent. A failed dispatch is logged for
+ * operator follow-up instead.
+ */
+export async function claimWebhookDelivery(deliveryId: string, event: string): Promise<boolean> {
+  try {
+    await prisma.webhookDelivery.create({ data: { deliveryId, event } });
+    return true;
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      return false;
+    }
+    throw e;
   }
 }
 

@@ -5,6 +5,7 @@ import {
   handlePullRequestEvent,
   handlePullRequestReviewEvent,
   updateProjectSyncAt,
+  claimWebhookDelivery,
   type GitHubIssuePayload,
   type GitHubPullRequestPayload,
   type GitHubPullRequestReviewPayload,
@@ -40,6 +41,27 @@ webhookRouter.post("/github", async (c) => {
     return c.json({ error: "bad_request", message: "Invalid JSON payload" }, 400);
   }
 
+  // Dedup by GitHub delivery id (X-GitHub-Delivery). Claim before dispatch so
+  // a concurrent or retried redelivery is blocked at the DB unique constraint
+  // rather than dispatching a second time. Claiming happens after signature
+  // verification so a forged/unsigned request cannot poison the dedup table.
+  // Semantics are at-most-once: the claim is never released, so a delivery
+  // whose dispatch fails is not auto-reprocessed (the handlers are not
+  // idempotent — see claimWebhookDelivery). Real GitHub always sends this
+  // header; the null branch is a defensive fallthrough without dedup.
+  const deliveryId = c.req.header("X-GitHub-Delivery") ?? null;
+
+  if (deliveryId) {
+    const fresh = await claimWebhookDelivery(deliveryId, event);
+    if (!fresh) {
+      logger.info(
+        { component: "webhook", deliveryId, event },
+        "duplicate webhook delivery — skipping",
+      );
+      return c.json({ received: true, event, duplicate: true });
+    }
+  }
+
   // Handle events asynchronously — respond immediately to GitHub (10s timeout)
   void (async () => {
     try {
@@ -73,9 +95,12 @@ webhookRouter.post("/github", async (c) => {
           break;
       }
     } catch (err) {
+      // The delivery stays claimed (at-most-once): re-running a partially
+      // applied, non-idempotent handler would double-apply side effects. The
+      // failed delivery is surfaced here for operator follow-up instead.
       logger.error(
-        { err, errMessage: err instanceof Error ? err.message : String(err), component: "webhook", event },
-        "error processing webhook event",
+        { err, errMessage: err instanceof Error ? err.message : String(err), component: "webhook", event, deliveryId },
+        "error processing webhook event (delivery stays claimed, not reprocessed)",
       );
     }
   })();
