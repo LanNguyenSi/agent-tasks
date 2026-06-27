@@ -228,10 +228,39 @@ describe("handlePullRequestEvent", () => {
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("transitions task to done on PR merged when task has a custom workflow", async () => {
+  it("M3: custom-workflow non-solo project hands off to review (no done carve-out)", async () => {
+    // Regression: a custom workflow used to force "done" here, bypassing the
+    // review gate that default-workflow non-solo projects get. A confirmation-
+    // required project must keep its review gate on a webhook merge regardless
+    // of workflow.
     mockTaskFindMany.mockResolvedValue([
       makeTask({ status: "in_progress", workflowId: "workflow-1" }),
     ]);
+
+    await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
+
+    expect(mockTaskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { status: "review" },
+    });
+    expect(mockSignalUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("resolves the target from the governanceMode enum column (AWAITS_CONFIRMATION → review)", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", governanceMode: "AWAITS_CONFIRMATION" }]);
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress" })]);
+
+    await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
+
+    expect(mockTaskUpdate).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: { status: "review" },
+    });
+  });
+
+  it("resolves the target from the governanceMode enum column (AUTONOMOUS → done)", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", governanceMode: "AUTONOMOUS" }]);
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress" })]);
 
     await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
 
