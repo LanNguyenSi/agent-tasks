@@ -438,11 +438,6 @@ describe("POST /tasks/:id/start", () => {
       project: { ...baseTask.project, requireDistinctReviewer: true, soloMode: true },
     });
     prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
-    prismaMocks.taskUpdate.mockResolvedValueOnce({
-      ...baseTask,
-      status: "review",
-      reviewClaimedByAgentId: "agent-1",
-    });
 
     const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
     expect(res.status).toBe(200);
@@ -459,11 +454,6 @@ describe("POST /tasks/:id/start", () => {
       project: { ...baseTask.project, requireDistinctReviewer: false, soloMode: false },
     });
     prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
-    prismaMocks.taskUpdate.mockResolvedValueOnce({
-      ...baseTask,
-      status: "review",
-      reviewClaimedByAgentId: "agent-1",
-    });
 
     const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
     expect(res.status).toBe(200);
@@ -479,7 +469,9 @@ describe("POST /tasks/:id/start", () => {
 
     const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    // Atomic CAS: only claims when the lock is still free.
+    expect(updateCall.where).toMatchObject({ reviewClaimedByUserId: null, reviewClaimedByAgentId: null });
     expect(updateCall.data.reviewClaimedByAgentId).toBe("agent-1");
     expect(updateCall.data.status).toBeUndefined();
   });
@@ -706,7 +698,7 @@ describe("POST /tasks/:id/start — optional branchName arg", () => {
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     // The review-claim update sets reviewClaimed* + reviewClaimedAt; it
     // must NOT set branchName (the field never reaches the review branch).
     expect(updateCall.data.branchName).toBeUndefined();
@@ -1008,6 +1000,107 @@ describe("PATCH /tasks/:id — prUrl scheme allowlist (M6)", () => {
 
     expect(res.status).toBe(400);
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// ── review lock atomicity (M1) ───────────────────────────────────────────────
+
+describe("review lock is atomic (M1)", () => {
+  // The review claim/release used read-then-write (TOCTOU): two reviewers
+  // could both pass the isCurrentReviewer check and both write. The fix is the
+  // same atomic CAS the work-claim uses — updateMany guarded on the lock state,
+  // count===0 → 409.
+  const reviewTask = {
+    ...baseTask,
+    status: "review",
+    createdByAgentId: "agent-author", // distinct from the reviewer
+    claimedByAgentId: "agent-author",
+    reviewClaimedByUserId: null,
+    reviewClaimedByAgentId: null,
+    project: { ...baseTask.project, soloMode: false, requireDistinctReviewer: false },
+  };
+
+  it("review/claim: lost CAS race (count===0) returns 409", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(reviewTask);
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await makeApp(AGENT).request("/tasks/task-1/review/claim", { method: "POST" });
+    expect(res.status).toBe(409);
+  });
+
+  it("review/claim: won CAS race (count===1) returns 200, guarded on the lock being free", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(reviewTask) // initial load
+      .mockResolvedValueOnce(reviewTask); // re-fetch after CAS
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 1 });
+
+    const res = await makeApp(AGENT).request("/tasks/task-1/review/claim", { method: "POST" });
+    expect(res.status).toBe(200);
+    const where = prismaMocks.taskUpdateMany.mock.calls.at(-1)![0].where;
+    expect(where).toMatchObject({ reviewClaimedByUserId: null, reviewClaimedByAgentId: null });
+  });
+
+  it("review/release: stale release (count===0) returns 409 without clearing another's lock", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...reviewTask, reviewClaimedByAgentId: "agent-1" });
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await makeApp(AGENT).request("/tasks/task-1/review/release", { method: "POST" });
+    expect(res.status).toBe(409);
+  });
+
+  it("review/release: holder releases (count===1) returns 200, guarded on holder identity", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce({ ...reviewTask, reviewClaimedByAgentId: "agent-1" })
+      .mockResolvedValueOnce({ ...reviewTask, reviewClaimedByAgentId: null });
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 1 });
+
+    const res = await makeApp(AGENT).request("/tasks/task-1/review/release", { method: "POST" });
+    expect(res.status).toBe(200);
+    const where = prismaMocks.taskUpdateMany.mock.calls.at(-1)![0].where;
+    expect(where).toMatchObject({ reviewClaimedByAgentId: "agent-1" });
+  });
+
+  // abandon is a fourth review-lock RELEASE path (clears reviewClaimedBy*); it
+  // must be holder-guarded too so a stale abandon can't wipe another reviewer's
+  // freshly acquired lock.
+  it("abandon: stale review-claim abandon (count===0) returns 409 without wiping another's lock", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...reviewTask,
+      reviewClaimedByAgentId: "agent-1",
+      claimedByAgentId: null,
+    });
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await makeApp(AGENT).request("/tasks/task-1/abandon", { method: "POST" });
+    expect(res.status).toBe(409);
+  });
+
+  it("abandon: review-claim holder abandons (count===1) returns 200, guarded on holder identity", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce({ ...reviewTask, reviewClaimedByAgentId: "agent-1", claimedByAgentId: null })
+      .mockResolvedValueOnce({ ...reviewTask, reviewClaimedByAgentId: null });
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 1 });
+
+    const res = await makeApp(AGENT).request("/tasks/task-1/abandon", { method: "POST" });
+    expect(res.status).toBe(200);
+    const where = prismaMocks.taskUpdateMany.mock.calls.at(-1)![0].where;
+    expect(where).toMatchObject({ reviewClaimedByAgentId: "agent-1" });
+  });
+
+  it("abandon: actor holding BOTH claims clears both, AND-guarded on both", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce({ ...reviewTask, claimedByAgentId: "agent-1", reviewClaimedByAgentId: "agent-1" })
+      .mockResolvedValueOnce({ ...reviewTask, claimedByAgentId: null, reviewClaimedByAgentId: null });
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 1 });
+
+    const res = await makeApp(AGENT).request("/tasks/task-1/abandon", { method: "POST" });
+    expect(res.status).toBe(200);
+    const call = prismaMocks.taskUpdateMany.mock.calls.at(-1)![0];
+    // The CAS guards on BOTH claims the actor holds, so a stale abandon can't
+    // wipe either if the other actor took over one of them.
+    expect(call.where).toMatchObject({ claimedByAgentId: "agent-1", reviewClaimedByAgentId: "agent-1" });
+    expect(call.data.claimedByAgentId).toBeNull();
+    expect(call.data.reviewClaimedByAgentId).toBeNull();
   });
 });
 
@@ -1870,34 +1963,42 @@ describe("POST /tasks/:id/submit-pr", () => {
 
 describe("POST /tasks/:id/abandon", () => {
   it("work claim on in_progress task: clears claim and resets status to open", async () => {
-    prismaMocks.taskFindUnique.mockResolvedValueOnce({
-      ...baseTask,
-      status: "in_progress",
-      claimedByAgentId: "agent-1",
-    });
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce({
+        ...baseTask,
+        status: "in_progress",
+        claimedByAgentId: "agent-1",
+      })
+      .mockResolvedValueOnce({ ...baseTask, status: "open", claimedByAgentId: null });
 
     const res = await makeApp().request("/tasks/task-1/abandon", { method: "POST" });
     expect(res.status).toBe(200);
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
-    expect(data.status).toBe("open");
-    expect(data.claimedByAgentId).toBeNull();
-    expect(data.claimedAt).toBeNull();
+    const call = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    expect(call.data.status).toBe("open");
+    expect(call.data.claimedByAgentId).toBeNull();
+    expect(call.data.claimedAt).toBeNull();
+    // Atomic CAS guard: only clears if this actor still holds the work claim.
+    expect(call.where).toMatchObject({ claimedByAgentId: "agent-1" });
   });
 
   it("review claim: clears review claim only, does not touch status", async () => {
-    prismaMocks.taskFindUnique.mockResolvedValueOnce({
-      ...baseTask,
-      status: "review",
-      claimedByAgentId: "agent-author",
-      reviewClaimedByAgentId: "agent-1",
-    });
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce({
+        ...baseTask,
+        status: "review",
+        claimedByAgentId: "agent-author",
+        reviewClaimedByAgentId: "agent-1",
+      })
+      .mockResolvedValueOnce({ ...baseTask, status: "review", reviewClaimedByAgentId: null });
 
     const res = await makeApp().request("/tasks/task-1/abandon", { method: "POST" });
     expect(res.status).toBe(200);
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
-    expect(data.reviewClaimedByAgentId).toBeNull();
-    expect(data.status).toBeUndefined();
-    expect(data.claimedByAgentId).toBeUndefined();
+    const call = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    expect(call.data.reviewClaimedByAgentId).toBeNull();
+    expect(call.data.status).toBeUndefined();
+    expect(call.data.claimedByAgentId).toBeUndefined();
+    // Atomic CAS guard: only clears if this actor still holds the review claim.
+    expect(call.where).toMatchObject({ reviewClaimedByAgentId: "agent-1" });
   });
 
   it("returns 403 when caller does not hold any claim", async () => {
