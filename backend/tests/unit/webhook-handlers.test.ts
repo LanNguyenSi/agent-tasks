@@ -228,7 +228,11 @@ describe("handlePullRequestEvent", () => {
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("transitions task to done on PR merged when task has a custom workflow", async () => {
+  it("M3: custom-workflow non-solo project hands off to review (no done carve-out)", async () => {
+    // Regression: a custom workflow used to force "done" here, bypassing the
+    // review gate that default-workflow non-solo projects get. A confirmation-
+    // required project must keep its review gate on a webhook merge regardless
+    // of workflow.
     mockTaskFindMany.mockResolvedValue([
       makeTask({ status: "in_progress", workflowId: "workflow-1" }),
     ]);
@@ -237,8 +241,9 @@ describe("handlePullRequestEvent", () => {
 
     expect(mockTaskUpdate).toHaveBeenCalledWith({
       where: { id: "task-1" },
-      data: { status: "done" },
+      data: { status: "review" },
     });
+    expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
 
   it("does not transition already-done task on PR merged (idempotent)", async () => {

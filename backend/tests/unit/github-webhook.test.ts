@@ -41,4 +41,22 @@ describe("verifyWebhookSignature", () => {
     // Without prefix — should fail
     expect(verifyWebhookSignature(payload, rawHash, SECRET)).toBe(false);
   });
+
+  // L1: the compare must not branch on length (no early length short-circuit).
+  // These pin that a wrong-length candidate still resolves to false without
+  // throwing, the same way an equal-length wrong candidate does.
+  it("returns false for a too-short signature without throwing", () => {
+    const payload = JSON.stringify({ action: "opened" });
+    expect(verifyWebhookSignature(payload, "sha256=abc", SECRET)).toBe(false);
+  });
+
+  it("returns false for a too-long signature without throwing", () => {
+    const payload = JSON.stringify({ action: "opened" });
+    const valid = makeSignature(payload, SECRET);
+    expect(verifyWebhookSignature(payload, valid + "extra", SECRET)).toBe(false);
+  });
+
+  it("returns false for an empty signature string", () => {
+    expect(verifyWebhookSignature("payload", "", SECRET)).toBe(false);
+  });
 });
