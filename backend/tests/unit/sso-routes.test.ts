@@ -95,6 +95,7 @@ vi.mock("../../src/lib/logger.js", () => ({
 // ── Import routers AFTER mocks (vi.mock is hoisted, but make it explicit) ─────
 
 import { config } from "../../src/config/index.js";
+import { hashToken } from "../../src/middleware/auth.js";
 import { ssoLoginRouter, ssoAdminRouter } from "../../src/routes/sso.js";
 
 // ── Shared fixtures ────────────────────────────────────────────────────────────
@@ -246,6 +247,11 @@ describe("ssoAdminGuard", () => {
     // Default mocks already set VALID_TOKEN and team. This should reach the handler.
     const res = await adminGet(TEAM_ID, `Bearer ${RAW_TOKEN}`);
     expect(res.status).toBe(200);
+    // Lookup MUST be by the hashed token, never the raw bearer (hashed-at-rest):
+    // querying by the raw token would defeat the at-rest design.
+    expect(mocks.agentTokenFindUnique).toHaveBeenCalledWith({
+      where: { tokenHash: hashToken(RAW_TOKEN) },
+    });
     expect(mocks.agentTokenUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: VALID_TOKEN.id },
@@ -371,6 +377,25 @@ describe("GET /sso/:teamSlug (authorize)", () => {
       expect(c).toContain("SameSite=Lax");
       // In test env (NODE_ENV=test, not production) Secure must NOT be appended.
       expect(c).not.toContain("Secure");
+    }
+  });
+
+  it("production env: transient cookies carry the Secure flag", async () => {
+    mocks.getSsoConnectionByTeamSlug.mockResolvedValue({ connection: ENABLED_CONNECTION });
+    mocks.discover.mockResolvedValue(MOCK_DISCOVERY);
+    mocks.randomToken.mockReturnValueOnce("state-abc-123").mockReturnValueOnce("nonce-def-456");
+    mocks.generatePkcePair.mockResolvedValue({ verifier: "v", challenge: "ch" });
+    mocks.buildAuthorizeUrl.mockReturnValue("https://idp.example.com/auth?response_type=code");
+
+    const prevEnv = config.NODE_ENV;
+    config.NODE_ENV = "production";
+    try {
+      const res = await ssoLoginRouter.request("/sso/acme");
+      const cookies = res.headers.getSetCookie();
+      const stateC = cookies.find((c) => c.startsWith("sso_state="));
+      expect(stateC).toContain("Secure");
+    } finally {
+      config.NODE_ENV = prevEnv;
     }
   });
 

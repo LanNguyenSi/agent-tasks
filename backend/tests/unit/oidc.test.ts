@@ -58,6 +58,42 @@ async function makeEs256(): Promise<{
   return { publicJwk, sign };
 }
 
+// RS256 is the dominant enterprise IdP alg (Azure AD, Okta, Google), so the
+// RSA branch of importJwk/verifyAlgParams/jwkMatchesAlg needs end-to-end cover.
+async function makeRs256(): Promise<{
+  publicJwk: any;
+  sign(claims: Record<string, unknown>, header?: Record<string, unknown>): Promise<string>;
+}> {
+  const { publicKey, privateKey } = (await webcrypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+
+  const jwk = (await webcrypto.subtle.exportKey("jwk", publicKey)) as any;
+  const publicJwk = { ...jwk, kid: "rsa-kid", alg: "RS256", use: "sig" };
+
+  async function sign(
+    claims: Record<string, unknown>,
+    header: Record<string, unknown> = {},
+  ): Promise<string> {
+    const h = b64url(
+      Buffer.from(JSON.stringify({ alg: "RS256", kid: "rsa-kid", ...header })),
+    );
+    const p = b64url(Buffer.from(JSON.stringify(claims)));
+    const data = new TextEncoder().encode(`${h}.${p}`);
+    const sig = await webcrypto.subtle.sign({ name: "RSASSA-PKCS1-v1_5" }, privateKey, data);
+    return `${h}.${p}.${b64url(new Uint8Array(sig))}`;
+  }
+
+  return { publicJwk, sign };
+}
+
 // ── Shared claim factory ──────────────────────────────────────────────────────
 
 const now = Math.floor(Date.now() / 1000);
@@ -112,6 +148,51 @@ describe("verifyIdToken", () => {
     });
     expect(result.sub).toBe("user-123");
     expect(result.email).toBe("user@example.com");
+  });
+
+  it("verifies a valid RS256 token (the dominant enterprise alg) and returns the claims", async () => {
+    const rsa = await makeRs256();
+    const token = await rsa.sign(validClaims());
+    const result = await verifyIdToken({
+      idToken: token,
+      jwks: [rsa.publicJwk],
+      expectedIssuer: EXPECTED_ISSUER,
+      expectedAudience: EXPECTED_AUDIENCE,
+      expectedNonce: EXPECTED_NONCE,
+    });
+    expect(result.sub).toBe("user-123");
+  });
+
+  it("rejects a tampered RS256 signature with /signature verification failed/", async () => {
+    const rsa = await makeRs256();
+    const token = await rsa.sign(validClaims());
+    const parts = token.split(".");
+    const sig = Buffer.from(parts[2]!, "base64url");
+    sig[0] = sig[0]! ^ 0xff;
+    const tampered = `${parts[0]}.${parts[1]}.${b64url(sig)}`;
+    await expect(
+      verifyIdToken({
+        idToken: tampered,
+        jwks: [rsa.publicJwk],
+        expectedIssuer: EXPECTED_ISSUER,
+        expectedAudience: EXPECTED_AUDIENCE,
+        expectedNonce: EXPECTED_NONCE,
+      }),
+    ).rejects.toThrow(/signature verification failed/);
+  });
+
+  it("rejects a token whose exp is missing/non-numeric with /expired/", async () => {
+    const { exp: _exp, ...noExp } = validClaims();
+    const token = await pair.sign(noExp);
+    await expect(
+      verifyIdToken({
+        idToken: token,
+        jwks: [pair.publicJwk],
+        expectedIssuer: EXPECTED_ISSUER,
+        expectedAudience: EXPECTED_AUDIENCE,
+        expectedNonce: EXPECTED_NONCE,
+      }),
+    ).rejects.toThrow(/expired/);
   });
 
   it("accepts aud as an array that contains the expected audience", async () => {
