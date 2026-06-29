@@ -36,5 +36,20 @@ export default defineConfig({
     exclude: ["node_modules", ".next", "dist"],
     environment: "node",
     setupFiles: ["./tests/setup/vitest.setup.ts"],
+    coverage: {
+      provider: "v8",
+      thresholds: {
+        // Per-file floor for the import-mapping unit: measured 100% / floor 5 pts below.
+        // NOTE: vitest silently ignores a threshold key that matches no file (the gate
+        // becomes a no-op with no CI error). If this source file is renamed or moved,
+        // update the key below in lockstep or coverage enforcement is silently lost.
+        "src/lib/import-mapping.ts": {
+          statements: 95,
+          branches: 95,
+          functions: 95,
+          lines: 95,
+        },
+      },
+    },
   },
 });
