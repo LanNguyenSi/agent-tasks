@@ -78,7 +78,7 @@ jobs:
           GITHUB_CLIENT_SECRET: test-client-secret
           SESSION_SECRET: test-session-secret-must-be-32chars!!
           NODE_ENV: test
-        run: npm run test --workspace=backend
+        run: npm run test:coverage --workspace=backend
 
   frontend:
     name: Frontend
@@ -101,7 +101,7 @@ jobs:
         run: npm run lint --workspace=frontend
 
       - name: Run tests
-        run: npm run test --workspace=frontend
+        run: npm run test:coverage --workspace=frontend
 
       - name: Build
         run: npm run build --workspace=frontend
