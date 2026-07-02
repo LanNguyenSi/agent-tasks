@@ -19,6 +19,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   descriptionQuality,
   calculateConfidence,
+  extractSpecSections,
   templateDataSchema,
   taskTemplateSchema,
   prefersSchema,
@@ -702,5 +703,214 @@ describe("calculateConfidence — findings", () => {
     const titleFinding = result.findings.find((f) => f.code === "missing_title");
     expect(titleFinding).toBeDefined();
     expect(titleFinding?.suggestion).toContain("30");
+  });
+});
+
+// ── Markdown spec sections in the description (friction-log 57–99) ──────────
+// task_create v2 authors the whole spec as markdown in `description`; the
+// scorer must honour `## Goal` / `## Acceptance Criteria` / ... headings the
+// same way it honours structured templateData fields.
+
+// Exactly what a fully specced v2 create looks like: all seven scored sections
+// as `##` headings with real bodies, templateData null.
+const SECTIONED_DESC = [
+  "## Goal",
+  "",
+  "The `signup` handler in src/routes/auth.ts returns 400 on an empty body.",
+  "",
+  "## Context",
+  "",
+  "Posting an empty body 500s today; see incident 4711.",
+  "",
+  "## Acceptance Criteria",
+  "",
+  "- [ ] POST /api/signup with `{}` returns 400",
+  "- [ ] A unit test covers the empty-body branch and CI is green",
+  "",
+  "## Scope",
+  "",
+  "- src/routes/auth.ts signup handler only",
+  "",
+  "## Out of scope",
+  "",
+  "- Session middleware stays untouched",
+  "",
+  "## Dependencies",
+  "",
+  "none",
+  "",
+  "## Risk",
+  "",
+  "low: single handler, no migration",
+  "",
+  "## Agent Prompt",
+  "",
+  "1. Add a zod body schema.",
+  "2. Return 400 on parse failure.",
+  "3. Add a unit test.",
+].join("\n");
+
+describe("extractSpecSections", () => {
+  it("parses every aliased section from ## headings", () => {
+    const s = extractSpecSections(SECTIONED_DESC);
+    expect(s.goal).toContain("signup");
+    expect(s.acceptanceCriteria).toContain("returns 400");
+    expect(s.scope).toBe("- src/routes/auth.ts signup handler only");
+    expect(s.outOfScope).toContain("Session middleware");
+    expect(s.dependencies).toBe("none");
+    expect(s.risk).toContain("low");
+    expect(s.agentPrompt).toContain("zod body schema");
+    expect(s.context).toContain("500s today");
+  });
+
+  it("matches case-insensitively, with trailing colon, at any heading level", () => {
+    const s = extractSpecSections("### GOAL:\nShip it correctly.\n#### risks\nlow blast radius");
+    expect(s.goal).toBe("Ship it correctly.");
+    expect(s.risk).toBe("low blast radius");
+  });
+
+  it("maps the acceptanceCriteria aliases 'Done when', 'Evals', 'Verify', 'Verification', and 'Success criteria'", () => {
+    for (const alias of ["Done when", "Evals", "Verify", "Verification", "Success criteria"]) {
+      expect(extractSpecSections(`## ${alias}\n- endpoint returns 400`).acceptanceCriteria).toBe("- endpoint returns 400");
+    }
+  });
+
+  it("never satisfies scope via an 'Out of scope' heading", () => {
+    const s = extractSpecSections("## Out of scope\n- the session middleware");
+    expect(s.scope).toBeUndefined();
+    expect(s.outOfScope).toBe("- the session middleware");
+  });
+
+  it("treats an empty-bodied section as absent", () => {
+    const s = extractSpecSections("## Goal\n\n## Scope\n- src/x.ts");
+    expect(s.goal).toBeUndefined();
+    expect(s.scope).toBe("- src/x.ts");
+  });
+
+  it("ignores headings inside code fences", () => {
+    const s = extractSpecSections("Example spec:\n```\n## Goal\nfaked goal\n```\nplain text");
+    expect(s.goal).toBeUndefined();
+  });
+
+  it("a mismatched fence marker does not close the fence (``` stays open across ~~~)", () => {
+    const s = extractSpecSections("```\n~~~\n## Goal\nstill inside the backtick fence\n```\nafter");
+    expect(s.goal).toBeUndefined();
+  });
+
+  it("an unclosed fence swallows the rest of the description (fail-safe toward missing)", () => {
+    const s = extractSpecSections("intro\n```\n## Acceptance Criteria\n- looks real but is fenced");
+    expect(s.acceptanceCriteria).toBeUndefined();
+  });
+
+  it("handles CRLF line endings in headings, bodies, and fences", () => {
+    const s = extractSpecSections("## Goal\r\nShip it correctly.\r\n\r\n## Risk\r\nlow\r\n");
+    expect(s.goal).toBe("Ship it correctly.");
+    expect(s.risk).toBe("low");
+    const fenced = extractSpecSections("```\r\n## Goal\r\nfenced example\r\n```\r\n");
+    expect(fenced.goal).toBeUndefined();
+  });
+
+  it("keeps a fenced code block as part of the enclosing section's body", () => {
+    const s = extractSpecSections("## Agent Prompt\nRun this:\n```\n## not a heading\nnpm ci\n```");
+    expect(s.agentPrompt).toContain("npm ci");
+    expect(s.goal).toBeUndefined();
+  });
+
+  it("keeps the first occurrence when a heading repeats", () => {
+    const s = extractSpecSections("## Goal\nfirst goal\n## Goal\nsecond goal");
+    expect(s.goal).toBe("first goal");
+  });
+
+  it("does not leak an unmapped section's body into the previous section", () => {
+    const s = extractSpecSections("## Goal\nthe real goal\n## Refs\nreviewer finding on PR #379");
+    expect(s.goal).toBe("the real goal");
+  });
+
+  it("an unmapped heading closes an empty mapped section instead of donating its body", () => {
+    const s = extractSpecSections("## Goal\n\n## Refs\nleaked body");
+    expect(s.goal).toBeUndefined();
+  });
+});
+
+describe("calculateConfidence — markdown spec sections (friction #99)", () => {
+  beforeEach(() => vi.spyOn(console, "info").mockImplementation(() => {}));
+  afterEach(() => vi.restoreAllMocks());
+
+  it("reports no missing spec fields for a fully sectioned description without templateData", () => {
+    const result = calculateConfidence({
+      title: "Return 400 on empty signup body",
+      description: SECTIONED_DESC,
+      templateData: null,
+      templateFields: null,
+    });
+    for (const field of ["goal", "acceptanceCriteria", "scope", "outOfScope", "dependencies", "risk", "agentPrompt"]) {
+      expect(result.missing).not.toContain(field);
+    }
+    expect(result.findings).toEqual([]);
+    expect(result.blocking).toBe(false);
+    // Earns the section weights on top of title+description instead of
+    // clamping to the historical 66-68 false-positive band.
+    expect(result.score).toBeGreaterThan(85);
+    expect(result.subscores.testability).toBe(100);
+  });
+
+  it("still reports a section that is genuinely absent (negative control)", () => {
+    const withoutRisk = SECTIONED_DESC.replace("## Risk\n\nlow: single handler, no migration\n\n", "");
+    const result = calculateConfidence({
+      title: "Return 400 on empty signup body",
+      description: withoutRisk,
+      templateData: null,
+      templateFields: null,
+    });
+    expect(result.missing).toContain("risk");
+    expect(result.findings.find((f) => f.code === "missing_risk")).toBeDefined();
+    expect(result.missing).not.toContain("goal");
+  });
+
+  it("an empty-bodied ## Goal still counts as missing (negative control)", () => {
+    const result = calculateConfidence({
+      title: "ok",
+      description: "## Goal\n\n## Scope\n- src/x.ts verify via a unit test",
+      templateData: null,
+      templateFields: null,
+    });
+    expect(result.missing).toContain("goal");
+    expect(result.missing).not.toContain("scope");
+  });
+
+  it("an ## Acceptance Criteria section defuses the evals keystone", () => {
+    // Bodies avoid every VERIFICATION_SIGNAL word (test/run/curl/check/verify/
+    // green/CI), so acPresent can only come from the section itself.
+    const result = calculateConfidence({
+      title: "Extract signup validation",
+      description: "## Goal\nExtract the body validation from src/routes/auth.ts into a helper.\n## Acceptance Criteria\n- POST /api/signup with `{}` yields a 400 response",
+      templateData: null,
+      templateFields: null,
+    });
+    expect(result.blocking).toBe(false);
+    expect(result.subscores.testability).toBe(100);
+    expect(result.findings.find((f) => f.code === "missing_acceptance_criteria")).toBeUndefined();
+  });
+
+  it("sections without any AC or verification prose still trip the keystone (negative control)", () => {
+    const result = calculateConfidence({
+      title: "Extract signup validation",
+      description: "## Goal\nExtract the body validation from src/routes/auth.ts into a helper.\n## Scope\n- src/routes/auth.ts",
+      templateData: null,
+      templateFields: null,
+    });
+    expect(result.blocking).toBe(true);
+    expect(result.score).toBeLessThanOrEqual(EVALS_KEYSTONE_CAP);
+    expect(result.findings.find((f) => f.code === "missing_acceptance_criteria")?.severity).toBe("blocking");
+  });
+
+  it("structured templateData still satisfies fields when the description has no sections", () => {
+    const result = calculateConfidence({
+      title: "ok",
+      description: CONCRETE_DESC,
+      templateData: ALL_V2,
+      templateFields: null,
+    });
+    expect(result.missing).toEqual([]);
   });
 });
