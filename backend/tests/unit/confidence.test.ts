@@ -769,9 +769,10 @@ describe("extractSpecSections", () => {
     expect(s.risk).toBe("low blast radius");
   });
 
-  it("maps the acceptanceCriteria aliases 'Done when' and 'Evals'", () => {
-    expect(extractSpecSections("## Done when\n- endpoint returns 400").acceptanceCriteria).toBe("- endpoint returns 400");
-    expect(extractSpecSections("## Evals\n- endpoint returns 400").acceptanceCriteria).toBe("- endpoint returns 400");
+  it("maps the acceptanceCriteria aliases 'Done when', 'Evals', 'Verify', 'Verification', and 'Success criteria'", () => {
+    for (const alias of ["Done when", "Evals", "Verify", "Verification", "Success criteria"]) {
+      expect(extractSpecSections(`## ${alias}\n- endpoint returns 400`).acceptanceCriteria).toBe("- endpoint returns 400");
+    }
   });
 
   it("never satisfies scope via an 'Out of scope' heading", () => {
@@ -791,6 +792,30 @@ describe("extractSpecSections", () => {
     expect(s.goal).toBeUndefined();
   });
 
+  it("a mismatched fence marker does not close the fence (``` stays open across ~~~)", () => {
+    const s = extractSpecSections("```\n~~~\n## Goal\nstill inside the backtick fence\n```\nafter");
+    expect(s.goal).toBeUndefined();
+  });
+
+  it("an unclosed fence swallows the rest of the description (fail-safe toward missing)", () => {
+    const s = extractSpecSections("intro\n```\n## Acceptance Criteria\n- looks real but is fenced");
+    expect(s.acceptanceCriteria).toBeUndefined();
+  });
+
+  it("handles CRLF line endings in headings, bodies, and fences", () => {
+    const s = extractSpecSections("## Goal\r\nShip it correctly.\r\n\r\n## Risk\r\nlow\r\n");
+    expect(s.goal).toBe("Ship it correctly.");
+    expect(s.risk).toBe("low");
+    const fenced = extractSpecSections("```\r\n## Goal\r\nfenced example\r\n```\r\n");
+    expect(fenced.goal).toBeUndefined();
+  });
+
+  it("keeps a fenced code block as part of the enclosing section's body", () => {
+    const s = extractSpecSections("## Agent Prompt\nRun this:\n```\n## not a heading\nnpm ci\n```");
+    expect(s.agentPrompt).toContain("npm ci");
+    expect(s.goal).toBeUndefined();
+  });
+
   it("keeps the first occurrence when a heading repeats", () => {
     const s = extractSpecSections("## Goal\nfirst goal\n## Goal\nsecond goal");
     expect(s.goal).toBe("first goal");
@@ -799,6 +824,11 @@ describe("extractSpecSections", () => {
   it("does not leak an unmapped section's body into the previous section", () => {
     const s = extractSpecSections("## Goal\nthe real goal\n## Refs\nreviewer finding on PR #379");
     expect(s.goal).toBe("the real goal");
+  });
+
+  it("an unmapped heading closes an empty mapped section instead of donating its body", () => {
+    const s = extractSpecSections("## Goal\n\n## Refs\nleaked body");
+    expect(s.goal).toBeUndefined();
   });
 });
 

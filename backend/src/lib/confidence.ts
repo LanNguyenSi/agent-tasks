@@ -154,20 +154,38 @@ export function descriptionQuality(text: string): number {
 // also read `## Goal` / `## Acceptance Criteria` / ... headings, otherwise every
 // v2 task reports all spec fields missing (friction-log 57–99).
 
+// The nine string-valued spec fields a markdown section can satisfy (excludes
+// the non-string TemplateData members `prefers` and `taskType`).
+type SpecField =
+  | "goal"
+  | "acceptanceCriteria"
+  | "scope"
+  | "outOfScope"
+  | "dependencies"
+  | "risk"
+  | "agentPrompt"
+  | "context"
+  | "constraints";
+
 // Normalized heading text → TemplateData field. Aliases cover the section names
 // the spec-slicer and the task_create docs actually use; matching is exact on
 // the full heading (so "Out of scope" can never satisfy `scope`).
-const SECTION_ALIASES: Record<string, keyof TemplateData> = {
+const SECTION_ALIASES: Record<string, SpecField> = {
   "goal": "goal",
   "acceptance criteria": "acceptanceCriteria",
   "done when": "acceptanceCriteria",
   "evals": "acceptanceCriteria",
+  "verify": "acceptanceCriteria",
+  "verification": "acceptanceCriteria",
+  "success criteria": "acceptanceCriteria",
   "scope": "scope",
   "out of scope": "outOfScope",
   "out-of-scope": "outOfScope",
   "non-goals": "outOfScope",
   "non goals": "outOfScope",
+  "non-goal": "outOfScope",
   "dependencies": "dependencies",
+  "prerequisites": "dependencies",
   "risk": "risk",
   "risks": "risk",
   "agent prompt": "agentPrompt",
@@ -176,7 +194,7 @@ const SECTION_ALIASES: Record<string, keyof TemplateData> = {
 };
 
 const HEADING_LINE = /^#{1,6}\s+(.+?)\s*$/;
-const FENCE_LINE = /^(```|~~~)/;
+const FENCE_OPEN = /^(`{3,}|~{3,})/;
 
 function normalizeHeading(text: string): string {
   return text.replace(/:$/, "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -186,13 +204,18 @@ function normalizeHeading(text: string): string {
  * Derives spec fields from ATX markdown headings in a task description.
  * A section counts only when it has non-empty body text before the next
  * heading (an empty `## Goal` is not a goal). Headings inside code fences
- * are ignored so quoted examples cannot fake a section.
+ * are ignored so quoted examples cannot fake a section; a fence only closes
+ * on a matching marker (``` never closes ~~~) of at least the opening
+ * length, and an unclosed fence swallows the rest of the description
+ * (fail-safe: false-missing, never false-present). ATX headings at column 0
+ * only — setext (`Goal\n====`), blockquoted, and indented headings are
+ * deliberately not recognized.
  */
-export function extractSpecSections(description: string): Partial<Record<keyof TemplateData, string>> {
-  const sections: Partial<Record<keyof TemplateData, string>> = {};
-  let current: keyof TemplateData | null = null;
+export function extractSpecSections(description: string): Partial<Record<SpecField, string>> {
+  const sections: Partial<Record<SpecField, string>> = {};
+  let current: SpecField | null = null;
   let body: string[] = [];
-  let inFence = false;
+  let openFence: string | null = null;
 
   const commit = () => {
     if (!current) return;
@@ -201,13 +224,15 @@ export function extractSpecSections(description: string): Partial<Record<keyof T
     if (text.length > 0 && !sections[current]) sections[current] = text;
   };
 
-  for (const line of description.split("\n")) {
-    if (FENCE_LINE.test(line.trimStart())) {
-      inFence = !inFence;
+  for (const line of description.split(/\r?\n/)) {
+    const fence = line.trimStart().match(FENCE_OPEN)?.[1];
+    if (fence) {
+      if (!openFence) openFence = fence;
+      else if (fence[0] === openFence[0] && fence.length >= openFence.length) openFence = null;
       if (current) body.push(line);
       continue;
     }
-    const heading = inFence ? null : line.match(HEADING_LINE);
+    const heading = openFence ? null : line.match(HEADING_LINE);
     if (heading) {
       commit();
       current = SECTION_ALIASES[normalizeHeading(heading[1])] ?? null;
@@ -360,7 +385,7 @@ const VAGUE_TERM_PATTERN = new RegExp(
 // is owned by Milestone 5. Each dimension returns 0..100.
 function computeSubscores(
   input: ConfidenceInput,
-  sections: Partial<Record<keyof TemplateData, string>>,
+  sections: Partial<Record<SpecField, string>>,
 ): TaskQualitySubscores {
   const desc = (input.description ?? "").trim();
   const td = input.templateData;
@@ -548,7 +573,7 @@ function applyScoreCaps(
   rawScore: number,
   input: ConfidenceInput,
   subscores: TaskQualitySubscores,
-  sections: Partial<Record<keyof TemplateData, string>>,
+  sections: Partial<Record<SpecField, string>>,
 ): { cappedScore: number; capFindings: QualityFinding[] } {
   const desc = (input.description ?? "").trim();
   const td = input.templateData;
@@ -650,8 +675,7 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   // same fields as structured templateData; structured values keep precedence
   // (a section only fills a field the producer left empty).
   const sections = extractSpecSections(desc);
-  const present = (field: keyof TemplateData) =>
-    has(td?.[field] as string | undefined) || has(sections[field]);
+  const present = (field: SpecField) => has(td?.[field]) || has(sections[field]);
 
   const titlePresent = input.title.trim().length > 0;
   const goalPresent = present("goal");
