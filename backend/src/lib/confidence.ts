@@ -148,6 +148,78 @@ export function descriptionQuality(text: string): number {
   return Math.min(lenScore + densityScore + structScore + concreteScore, 1);
 }
 
+// ── Markdown spec-section extraction ────────────────────────────────────────
+// task_create v2 has no structured goal/acceptanceCriteria fields — the whole
+// spec is authored as markdown in `description`. Presence checks therefore must
+// also read `## Goal` / `## Acceptance Criteria` / ... headings, otherwise every
+// v2 task reports all spec fields missing (friction-log 57–99).
+
+// Normalized heading text → TemplateData field. Aliases cover the section names
+// the spec-slicer and the task_create docs actually use; matching is exact on
+// the full heading (so "Out of scope" can never satisfy `scope`).
+const SECTION_ALIASES: Record<string, keyof TemplateData> = {
+  "goal": "goal",
+  "acceptance criteria": "acceptanceCriteria",
+  "done when": "acceptanceCriteria",
+  "evals": "acceptanceCriteria",
+  "scope": "scope",
+  "out of scope": "outOfScope",
+  "out-of-scope": "outOfScope",
+  "non-goals": "outOfScope",
+  "non goals": "outOfScope",
+  "dependencies": "dependencies",
+  "risk": "risk",
+  "risks": "risk",
+  "agent prompt": "agentPrompt",
+  "context": "context",
+  "constraints": "constraints",
+};
+
+const HEADING_LINE = /^#{1,6}\s+(.+?)\s*$/;
+const FENCE_LINE = /^(```|~~~)/;
+
+function normalizeHeading(text: string): string {
+  return text.replace(/:$/, "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Derives spec fields from ATX markdown headings in a task description.
+ * A section counts only when it has non-empty body text before the next
+ * heading (an empty `## Goal` is not a goal). Headings inside code fences
+ * are ignored so quoted examples cannot fake a section.
+ */
+export function extractSpecSections(description: string): Partial<Record<keyof TemplateData, string>> {
+  const sections: Partial<Record<keyof TemplateData, string>> = {};
+  let current: keyof TemplateData | null = null;
+  let body: string[] = [];
+  let inFence = false;
+
+  const commit = () => {
+    if (!current) return;
+    const text = body.join("\n").trim();
+    // First occurrence wins; a duplicate heading never overwrites a filled one.
+    if (text.length > 0 && !sections[current]) sections[current] = text;
+  };
+
+  for (const line of description.split("\n")) {
+    if (FENCE_LINE.test(line.trimStart())) {
+      inFence = !inFence;
+      if (current) body.push(line);
+      continue;
+    }
+    const heading = inFence ? null : line.match(HEADING_LINE);
+    if (heading) {
+      commit();
+      current = SECTION_ALIASES[normalizeHeading(heading[1])] ?? null;
+      body = [];
+    } else if (current) {
+      body.push(line);
+    }
+  }
+  commit();
+  return sections;
+}
+
 // ── Confidence Scoring ──────────────────────────────────────────────────────
 
 export interface TemplateFields {
@@ -286,16 +358,19 @@ const VAGUE_TERM_PATTERN = new RegExp(
 
 // Heuristics that drive subscores. None of these are perfect; calibration
 // is owned by Milestone 5. Each dimension returns 0..100.
-function computeSubscores(input: ConfidenceInput): TaskQualitySubscores {
+function computeSubscores(
+  input: ConfidenceInput,
+  sections: Partial<Record<keyof TemplateData, string>>,
+): TaskQualitySubscores {
   const desc = (input.description ?? "").trim();
   const td = input.templateData;
   const hasField = (v?: string | null) => (v?.trim().length ?? 0) > 0;
 
   const titlePresent = input.title.trim().length > 0;
-  const goalPresent = hasField(td?.goal);
-  const acPresent = hasField(td?.acceptanceCriteria);
-  const ctxPresent = hasField(td?.context);
-  const consPresent = hasField(td?.constraints);
+  const goalPresent = hasField(td?.goal) || hasField(sections.goal);
+  const acPresent = hasField(td?.acceptanceCriteria) || hasField(sections.acceptanceCriteria);
+  const ctxPresent = hasField(td?.context) || hasField(sections.context);
+  const consPresent = hasField(td?.constraints) || hasField(sections.constraints);
   const descPresent = desc.length > 0;
 
   // ── completeness: ratio of present required fields
@@ -473,6 +548,7 @@ function applyScoreCaps(
   rawScore: number,
   input: ConfidenceInput,
   subscores: TaskQualitySubscores,
+  sections: Partial<Record<keyof TemplateData, string>>,
 ): { cappedScore: number; capFindings: QualityFinding[] } {
   const desc = (input.description ?? "").trim();
   const td = input.templateData;
@@ -480,7 +556,7 @@ function applyScoreCaps(
   const has = (v?: string | null) => (v?.trim().length ?? 0) > 0;
   const titlePresent = input.title.trim().length > 0;
   const descPresent = desc.length > 0;
-  const acPresent = has(td?.acceptanceCriteria);
+  const acPresent = has(td?.acceptanceCriteria) || has(sections.acceptanceCriteria);
 
   const verificationSignal = acPresent || (descPresent && VERIFICATION_SIGNAL_PATTERN.test(desc));
   // The hard evals keystone: no acceptance criteria AND no prose verification
@@ -570,18 +646,25 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const descTrim = desc.trim();
   const descQuality = descriptionQuality(desc);
 
+  // Spec sections authored as markdown headings in the description satisfy the
+  // same fields as structured templateData; structured values keep precedence
+  // (a section only fills a field the producer left empty).
+  const sections = extractSpecSections(desc);
+  const present = (field: keyof TemplateData) =>
+    has(td?.[field] as string | undefined) || has(sections[field]);
+
   const titlePresent = input.title.trim().length > 0;
-  const goalPresent = has(td?.goal);
-  const acPresent = has(td?.acceptanceCriteria);
-  const scopePresent = has(td?.scope);
-  const outOfScopePresent = has(td?.outOfScope);
+  const goalPresent = present("goal");
+  const acPresent = present("acceptanceCriteria");
+  const scopePresent = present("scope");
+  const outOfScopePresent = present("outOfScope");
   // `dependencies` is satisfied by any non-empty text, including the literal
   // "none" — explicitly declaring no prerequisite is a positive signal, not a
   // miss. (Satisfying it via the dependsOn[] graph edge is a follow-up; the
   // scorer is a pure function and does not yet receive the edge set.)
-  const dependenciesPresent = has(td?.dependencies);
-  const riskPresent = has(td?.risk);
-  const agentPromptPresent = has(td?.agentPrompt);
+  const dependenciesPresent = present("dependencies");
+  const riskPresent = present("risk");
+  const agentPromptPresent = present("agentPrompt");
 
   const verificationSignal = descTrim.length > 0 && VERIFICATION_SIGNAL_PATTERN.test(descTrim);
   const evalsKeystoneViolated = !acPresent && !verificationSignal;
@@ -616,10 +699,10 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   if (!riskPresent) missing.push("risk");
   if (!agentPromptPresent) missing.push("agentPrompt");
 
-  const subscores = computeSubscores(input);
+  const subscores = computeSubscores(input, sections);
   const findings = buildFindings(missing, subscores, descTrim.length > 0, evalsKeystoneViolated);
 
-  const { cappedScore, capFindings } = applyScoreCaps(rawScore, input, subscores);
+  const { cappedScore, capFindings } = applyScoreCaps(rawScore, input, subscores, sections);
 
   // Merge cap findings into the rule-driven list. When a code already
   // exists (e.g. rule-driven `missing_acceptance_criteria` is `blocking`
