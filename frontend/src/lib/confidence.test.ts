@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { calculateConfidence, descriptionQuality, FIELD_WEIGHTS } from "./confidence";
+import {
+  calculateConfidence,
+  descriptionQuality,
+  extractSpecSections,
+  EVALS_KEYSTONE_CAP,
+  FIELD_WEIGHTS,
+} from "./confidence";
 
 type Input = Parameters<typeof calculateConfidence>[0];
 type Result = ReturnType<typeof calculateConfidence>;
@@ -52,9 +58,9 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
     expected: {
       score: 55,
       blocking: true,
-      missing: ["goal", "acceptanceCriteria", "scope", "outOfScope", "dependencies", "risk", "agentPrompt"],
+      missing: ["acceptanceCriteria", "scope", "outOfScope", "dependencies", "risk", "agentPrompt"],
       inferredTaskType: undefined,
-      subscores: { completeness: 100, concreteness: 100, testability: 0, scopeClarity: 0, contextQuality: 67, structure: 65, ambiguityRisk: 100 },
+      subscores: { completeness: 100, concreteness: 100, testability: 0, scopeClarity: 0, contextQuality: 100, structure: 65, ambiguityRisk: 100 },
     },
   },
   {
@@ -67,11 +73,11 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
       templateFields: null,
     },
     expected: {
-      score: 62,
+      score: 75,
       blocking: false,
-      missing: ["goal", "acceptanceCriteria", "scope", "outOfScope", "dependencies", "risk", "agentPrompt"],
+      missing: ["scope", "outOfScope", "dependencies", "risk", "agentPrompt"],
       inferredTaskType: undefined,
-      subscores: { completeness: 100, concreteness: 75, testability: 60, scopeClarity: 0, contextQuality: 70, structure: 65, ambiguityRisk: 100 },
+      subscores: { completeness: 100, concreteness: 75, testability: 100, scopeClarity: 0, contextQuality: 100, structure: 65, ambiguityRisk: 100 },
     },
   },
   {
@@ -95,7 +101,7 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
       blocking: false,
       missing: ["outOfScope", "agentPrompt"],
       inferredTaskType: undefined,
-      subscores: { completeness: 100, concreteness: 100, testability: 100, scopeClarity: 100, contextQuality: 54, structure: 65, ambiguityRisk: 100 },
+      subscores: { completeness: 100, concreteness: 100, testability: 100, scopeClarity: 100, contextQuality: 100, structure: 65, ambiguityRisk: 100 },
     },
   },
   {
@@ -124,11 +130,11 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
       templateFields: { goal: true, acceptanceCriteria: true, context: true, constraints: true },
     },
     expected: {
-      score: 51,
+      score: 55,
       blocking: true,
-      missing: ["goal", "acceptanceCriteria", "scope", "outOfScope", "dependencies", "risk", "agentPrompt"],
+      missing: ["acceptanceCriteria", "scope", "outOfScope", "dependencies", "risk", "agentPrompt"],
       inferredTaskType: undefined,
-      subscores: { completeness: 33, concreteness: 75, testability: 0, scopeClarity: 0, contextQuality: 54, structure: 65, ambiguityRisk: 100 },
+      subscores: { completeness: 67, concreteness: 75, testability: 0, scopeClarity: 0, contextQuality: 100, structure: 65, ambiguityRisk: 100 },
     },
   },
   {
@@ -145,9 +151,9 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
       templateFields: null,
     },
     expected: {
-      score: 68,
+      score: 74,
       blocking: false,
-      missing: ["goal", "scope", "outOfScope", "dependencies", "risk"],
+      missing: ["scope", "outOfScope", "dependencies", "risk"],
       inferredTaskType: "feature",
       subscores: { completeness: 100, concreteness: 75, testability: 100, scopeClarity: 0, contextQuality: 43, structure: 65, ambiguityRisk: 100 },
     },
@@ -176,9 +182,10 @@ describe("calculateConfidence — backend parity", () => {
  *    "lift this cap (current ceiling N/100)" suffix onto the rule finding
  *    (missing_title/30, missing_or_thin_description/40, missing_acceptance_criteria/55),
  *    plus the standalone cap findings (low_testability/scope_clarity/concreteness).
- *  - rich-prose-with-verification: the keystone DOWNGRADE — missing_acceptance_criteria
- *    drops from blocking-keystone to a plain warning with a different message when
- *    the description carries a verification signal.
+ *  - rich-prose-with-verification: a spec whose `## Goal` and `## Verify` headings
+ *    are recognized as sections, so goal + acceptanceCriteria are satisfied from
+ *    the description and only the advisory boundary findings plus the
+ *    low_scope_clarity cap remain.
  *  - full-strong-with-ac: the minimal high-score path (only the two genuinely
  *    absent fields surface).
  * The message strings (em dashes included) are copied byte-for-byte from the
@@ -200,8 +207,6 @@ const FINDINGS_GROUND_TRUTH: Record<string, Result["findings"]> = {
     { code: "low_concreteness", severity: "warning", dimension: "concreteness", message: "Score capped at 80: no concrete anchors — no file path, code reference, URL, or number to ground the work.", suggestion: "Add the missing element to lift this cap (current ceiling 80/100)." },
   ],
   "rich-prose-with-verification": [
-    { code: "missing_goal", severity: "warning", dimension: "completeness", message: "Goal is missing.", suggestion: "Add a one-line Goal stating the intended outcome." },
-    { code: "missing_acceptance_criteria", severity: "warning", dimension: "testability", message: "No structured acceptance criteria; the description's verification signal is the only evals path.", suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals)." },
     { code: "missing_scope", severity: "warning", dimension: "scopeClarity", message: "Scope (what may change) is missing.", suggestion: "List the files, modules, or surfaces the change may touch." },
     { code: "missing_out_of_scope", severity: "info", dimension: "scopeClarity", message: "Out-of-scope boundary is missing.", suggestion: "Name what must NOT change so a weak agent does not wander." },
     { code: "missing_dependencies", severity: "info", dimension: "completeness", message: "Dependencies are unstated.", suggestion: "State prerequisite work, or 'none' if there is no prerequisite." },
@@ -223,13 +228,25 @@ describe("calculateConfidence — findings parity (keystone downgrade + cap merg
     });
   }
 
-  it("the AC keystone is blocking without a verification signal but downgrades to a warning with one", () => {
-    const noVerify = calculateConfidence(byName["rich-prose-no-verification"]);
+  it("the AC keystone is blocking without a verification signal but downgrades to a warning with a prose one", () => {
+    // Prose-only descriptions (no ## headings), so acPresent stays false and the
+    // signal comes from the verification regex, not a recognized AC section.
+    const noVerify = calculateConfidence({
+      title: "ok",
+      description: "Refactor the signup handler in src/routes/auth.ts to extract body validation",
+      templateData: { goal: "g" },
+      templateFields: null,
+    });
     const acNoVerify = noVerify.findings.find((f) => f.code === "missing_acceptance_criteria");
     expect(acNoVerify?.severity).toBe("blocking");
     expect(acNoVerify?.keystone).toBe(true);
 
-    const withVerify = calculateConfidence(byName["rich-prose-with-verification"]);
+    const withVerify = calculateConfidence({
+      title: "ok",
+      description: "Verify via `curl /api/signup` that src/routes/auth.ts returns 400 on an empty body",
+      templateData: { goal: "g" },
+      templateFields: null,
+    });
     const acWithVerify = withVerify.findings.find((f) => f.code === "missing_acceptance_criteria");
     expect(acWithVerify?.severity).toBe("warning");
     expect(acWithVerify?.keystone).toBeUndefined();
@@ -258,5 +275,298 @@ describe("scorer invariants", () => {
       templateFields: null,
     });
     expect(r.blocking).toBe(false);
+  });
+});
+
+// ── Markdown spec sections (ported from the backend suite) ──────────────────
+// The blocks below are a faithful port of backend/tests/unit/confidence.test.ts
+// (describe "extractSpecSections" + "markdown spec sections (friction #99)"),
+// asserting the mirror parses `##` headings — including the decorated house
+// style — exactly like the server. The backend's console.info spy is dropped
+// (the frontend scorer has no ops log side effect).
+
+// Fully specced v2 create: all seven scored sections as `##` headings with real
+// bodies, templateData null. Identical to the backend fixture of the same name.
+const SECTIONED_DESC = [
+  "## Goal",
+  "",
+  "The `signup` handler in src/routes/auth.ts returns 400 on an empty body.",
+  "",
+  "## Context",
+  "",
+  "Posting an empty body 500s today; see incident 4711.",
+  "",
+  "## Acceptance Criteria",
+  "",
+  "- [ ] POST /api/signup with `{}` returns 400",
+  "- [ ] A unit test covers the empty-body branch and CI is green",
+  "",
+  "## Scope",
+  "",
+  "- src/routes/auth.ts signup handler only",
+  "",
+  "## Out of scope",
+  "",
+  "- Session middleware stays untouched",
+  "",
+  "## Dependencies",
+  "",
+  "none",
+  "",
+  "## Risk",
+  "",
+  "low: single handler, no migration",
+  "",
+  "## Agent Prompt",
+  "",
+  "1. Add a zod body schema.",
+  "2. Return 400 on parse failure.",
+  "3. Add a unit test.",
+].join("\n");
+
+describe("extractSpecSections", () => {
+  it("parses every aliased section from ## headings", () => {
+    const s = extractSpecSections(SECTIONED_DESC);
+    expect(s.goal).toContain("signup");
+    expect(s.acceptanceCriteria).toContain("returns 400");
+    expect(s.scope).toBe("- src/routes/auth.ts signup handler only");
+    expect(s.outOfScope).toContain("Session middleware");
+    expect(s.dependencies).toBe("none");
+    expect(s.risk).toContain("low");
+    expect(s.agentPrompt).toContain("zod body schema");
+    expect(s.context).toContain("500s today");
+  });
+
+  it("matches case-insensitively, with trailing colon, at any heading level", () => {
+    const s = extractSpecSections("### GOAL:\nShip it correctly.\n#### risks\nlow blast radius");
+    expect(s.goal).toBe("Ship it correctly.");
+    expect(s.risk).toBe("low blast radius");
+  });
+
+  it("maps the acceptanceCriteria aliases 'Done when', 'Evals', 'Verify', 'Verification', and 'Success criteria'", () => {
+    for (const alias of ["Done when", "Evals", "Verify", "Verification", "Success criteria"]) {
+      expect(extractSpecSections(`## ${alias}\n- endpoint returns 400`).acceptanceCriteria).toBe("- endpoint returns 400");
+    }
+  });
+
+  it("never satisfies scope via an 'Out of scope' heading", () => {
+    const s = extractSpecSections("## Out of scope\n- the session middleware");
+    expect(s.scope).toBeUndefined();
+    expect(s.outOfScope).toBe("- the session middleware");
+  });
+
+  it("strips a trailing parenthetical decorator (house style of the review-created tasks)", () => {
+    const s = extractSpecSections(
+      "## Scope (harness, mechanical)\n- src/lib/confidence.ts\n## Acceptance criteria (mutation-testable)\n- decorated headings are recognized",
+    );
+    expect(s.scope).toBe("- src/lib/confidence.ts");
+    expect(s.acceptanceCriteria).toBe("- decorated headings are recognized");
+  });
+
+  it("a decorated 'Out of scope (...)' heading maps to outOfScope, never scope (negative control)", () => {
+    const s = extractSpecSections("## Out of scope (agent-dx packages/orchestrator-workflow)\n- the session middleware");
+    expect(s.outOfScope).toBe("- the session middleware");
+    expect(s.scope).toBeUndefined();
+  });
+
+  it("strips the decorator even when a colon follows it", () => {
+    const s = extractSpecSections("## Risk (blast radius):\nlow");
+    expect(s.risk).toBe("low");
+  });
+
+  it("does not recognize a heading that is only a parenthetical", () => {
+    const s = extractSpecSections("## (context)\nbody");
+    expect(s.context).toBeUndefined();
+    expect(s.goal).toBeUndefined();
+  });
+
+  it("leaves a NON-trailing parenthetical in place (only a trailing decorator is stripped)", () => {
+    const s = extractSpecSections("## Scope (a) and more\n- x");
+    expect(s.scope).toBeUndefined();
+  });
+
+  it("strips only the LAST trailing group, so multiple trailing groups stay unrecognized", () => {
+    const s = extractSpecSections("## Scope (a) (b)\n- x");
+    expect(s.scope).toBeUndefined();
+  });
+
+  it("treats an empty-bodied section as absent", () => {
+    const s = extractSpecSections("## Goal\n\n## Scope\n- src/x.ts");
+    expect(s.goal).toBeUndefined();
+    expect(s.scope).toBe("- src/x.ts");
+  });
+
+  it("ignores headings inside code fences", () => {
+    const s = extractSpecSections("Example spec:\n```\n## Goal\nfaked goal\n```\nplain text");
+    expect(s.goal).toBeUndefined();
+  });
+
+  it("a mismatched fence marker does not close the fence (``` stays open across ~~~)", () => {
+    const s = extractSpecSections("```\n~~~\n## Goal\nstill inside the backtick fence\n```\nafter");
+    expect(s.goal).toBeUndefined();
+  });
+
+  it("an unclosed fence swallows the rest of the description (fail-safe toward missing)", () => {
+    const s = extractSpecSections("intro\n```\n## Acceptance Criteria\n- looks real but is fenced");
+    expect(s.acceptanceCriteria).toBeUndefined();
+  });
+
+  it("handles CRLF line endings in headings, bodies, and fences", () => {
+    const s = extractSpecSections("## Goal\r\nShip it correctly.\r\n\r\n## Risk\r\nlow\r\n");
+    expect(s.goal).toBe("Ship it correctly.");
+    expect(s.risk).toBe("low");
+    const fenced = extractSpecSections("```\r\n## Goal\r\nfenced example\r\n```\r\n");
+    expect(fenced.goal).toBeUndefined();
+  });
+
+  it("keeps a fenced code block as part of the enclosing section's body", () => {
+    const s = extractSpecSections("## Agent Prompt\nRun this:\n```\n## not a heading\nnpm ci\n```");
+    expect(s.agentPrompt).toContain("npm ci");
+    expect(s.goal).toBeUndefined();
+  });
+
+  it("keeps the first occurrence when a heading repeats", () => {
+    const s = extractSpecSections("## Goal\nfirst goal\n## Goal\nsecond goal");
+    expect(s.goal).toBe("first goal");
+  });
+
+  it("does not leak an unmapped section's body into the previous section", () => {
+    const s = extractSpecSections("## Goal\nthe real goal\n## Refs\nreviewer finding on PR #379");
+    expect(s.goal).toBe("the real goal");
+  });
+
+  it("an unmapped heading closes an empty mapped section instead of donating its body", () => {
+    const s = extractSpecSections("## Goal\n\n## Refs\nleaked body");
+    expect(s.goal).toBeUndefined();
+  });
+});
+
+describe("calculateConfidence — markdown spec sections (friction #99)", () => {
+  it("reports no missing spec fields for a fully sectioned description without templateData", () => {
+    const result = calculateConfidence({
+      title: "Return 400 on empty signup body",
+      description: SECTIONED_DESC,
+      templateData: null,
+      templateFields: null,
+    });
+    for (const field of ["goal", "acceptanceCriteria", "scope", "outOfScope", "dependencies", "risk", "agentPrompt"]) {
+      expect(result.missing).not.toContain(field);
+    }
+    expect(result.findings).toEqual([]);
+    expect(result.blocking).toBe(false);
+    expect(result.score).toBeGreaterThan(85);
+    expect(result.subscores.testability).toBe(100);
+  });
+
+  it("still reports a section that is genuinely absent (negative control)", () => {
+    const withoutRisk = SECTIONED_DESC.replace("## Risk\n\nlow: single handler, no migration\n\n", "");
+    const result = calculateConfidence({
+      title: "Return 400 on empty signup body",
+      description: withoutRisk,
+      templateData: null,
+      templateFields: null,
+    });
+    expect(result.missing).toContain("risk");
+    expect(result.findings.find((f) => f.code === "missing_risk")).toBeDefined();
+    expect(result.missing).not.toContain("goal");
+  });
+
+  it("an empty-bodied ## Goal still counts as missing (negative control)", () => {
+    const result = calculateConfidence({
+      title: "ok",
+      description: "## Goal\n\n## Scope\n- src/x.ts verify via a unit test",
+      templateData: null,
+      templateFields: null,
+    });
+    expect(result.missing).toContain("goal");
+    expect(result.missing).not.toContain("scope");
+  });
+
+  it("an ## Acceptance Criteria section defuses the evals keystone", () => {
+    const result = calculateConfidence({
+      title: "Extract signup validation",
+      description: "## Goal\nExtract the body validation from src/routes/auth.ts into a helper.\n## Acceptance Criteria\n- POST /api/signup with `{}` yields a 400 response",
+      templateData: null,
+      templateFields: null,
+    });
+    expect(result.blocking).toBe(false);
+    expect(result.subscores.testability).toBe(100);
+    expect(result.findings.find((f) => f.code === "missing_acceptance_criteria")).toBeUndefined();
+  });
+
+  it("sections without any AC or verification prose still trip the keystone (negative control)", () => {
+    const result = calculateConfidence({
+      title: "Extract signup validation",
+      description: "## Goal\nExtract the body validation from src/routes/auth.ts into a helper.\n## Scope\n- src/routes/auth.ts",
+      templateData: null,
+      templateFields: null,
+    });
+    expect(result.blocking).toBe(true);
+    expect(result.score).toBeLessThanOrEqual(EVALS_KEYSTONE_CAP);
+    expect(result.findings.find((f) => f.code === "missing_acceptance_criteria")?.severity).toBe("blocking");
+  });
+
+  it("decorated section headings stop the false missing_scope / missing_acceptance_criteria", () => {
+    const description = [
+      "## Goal",
+      "",
+      "Recognize decorated headings in the client scorer.",
+      "",
+      "## Scope (harness, mechanical)",
+      "",
+      "- frontend/src/lib/confidence.ts normalizeHeading",
+      "",
+      "## Acceptance criteria (mutation-testable)",
+      "",
+      "- [ ] decorated `## Scope (x)` headings satisfy scope",
+      "",
+      "## Out of scope (agent-dx packages/orchestrator-workflow)",
+      "",
+      "- no new aliases",
+    ].join("\n");
+    const result = calculateConfidence({
+      title: "Recognize decorated headings",
+      description,
+      templateData: null,
+      templateFields: null,
+    });
+    for (const field of ["goal", "scope", "acceptanceCriteria", "outOfScope"]) {
+      expect(result.missing).not.toContain(field);
+    }
+    expect(result.findings.find((f) => f.code === "missing_scope")).toBeUndefined();
+    expect(result.findings.find((f) => f.code === "missing_acceptance_criteria")).toBeUndefined();
+  });
+
+  it("structured templateData still satisfies fields when the description has no sections", () => {
+    const result = calculateConfidence({
+      title: "ok",
+      description: "Add `validateSignup()` in src/routes/auth.ts:42 returning 400 on an empty body",
+      templateData: {
+        goal: "Validate the signup request body",
+        acceptanceCriteria: "- Returns 400 on empty email\n- Returns 201 on a valid body",
+        scope: "src/routes/auth.ts signup handler only",
+        outOfScope: "do not touch the session middleware",
+        dependencies: "none",
+        risk: "low — single handler, no migration",
+        agentPrompt: "1. Add a zod body schema. 2. Return 400 on parse failure. 3. Add a unit test.",
+      },
+      templateFields: null,
+    });
+    expect(result.missing).toEqual([]);
+  });
+});
+
+describe("calculateConfidence — backend parity on the fully sectioned fixture", () => {
+  it("scores SECTIONED_DESC identically to the backend (score/missing/blocking)", () => {
+    const result = calculateConfidence({
+      title: "Return 400 on empty signup body",
+      description: SECTIONED_DESC,
+      templateData: null,
+      templateFields: null,
+    });
+    // Ground truth from backend/src/lib/confidence.ts over the identical input.
+    expect(result.score).toBe(98);
+    expect(result.blocking).toBe(false);
+    expect(result.missing).toEqual([]);
   });
 });
