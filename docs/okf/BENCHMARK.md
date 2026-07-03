@@ -18,7 +18,10 @@ Protocol per question, per run:
 
 1. One `oracle_query` call, `repo="agent-tasks"`, question text verbatim.
 2. One `oracle_search` call, `repo="agent-tasks"`, question text verbatim,
-   top 5 results.
+   `limit=10`; rows from `docs/okf/BENCHMARK.md` are dropped (this file
+   contains the question text verbatim and would otherwise match itself in
+   the post-bundle run), then the first 5 remaining rows count for M2. In the
+   baseline run the filter is a no-op since this file is not yet indexed.
 
 Environment (must be identical for both runs): codebase-oracle 0.6.5 (local
 source via tsx), embeddings `openai/text-embedding-3-small`, answer LLM
