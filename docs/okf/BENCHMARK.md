@@ -105,9 +105,11 @@ Headline findings:
 - **Both affirmatively wrong baseline answers were eliminated.** Baseline
   claimed no required npm publish order exists (Q3) and presented an
   incomplete spec-section list as complete (Q10); both post-run answers are
-  fully correct, and in both cases the fix traces to an OKF concept doc as a
-  retrieval source. Wrong answers are the worst failure mode for agent
-  consumers, so this is the strongest single result.
+  fully correct, and in both cases an OKF concept doc is among the corrected
+  answer's cited sources (for Q10 alongside the implementation file that was
+  already retrieved at baseline, so causality is likely but not isolated).
+  Wrong answers are the worst failure mode for agent consumers, so this is
+  the strongest single result.
 - **M1 +2 with no regressions**, plus substance gains inside the 1-score band
   on three further questions (selection ordering, backend-side token
   validation, status-column looseness) that the integer rubric does not
@@ -116,9 +118,10 @@ Headline findings:
   rubric requires an implementation-file citation for a 2.
 - **M2 flat at 4/12.** The ground-truth set is implementation files; the
   bundle adds prose, and natural-language queries keep retrieving prose.
-  Retrieval of implementation files did not improve. The `sources:`
-  frontmatter pointers exist in the retrieved chunks but the oracle does not
-  surface them as citations today; that is consumer-side work
+  Retrieval of implementation files did not improve. The likely mechanism,
+  not directly measured in this run: the `sources:` frontmatter pointers sit
+  inside the retrieved chunks, but the oracle has no frontmatter awareness
+  and does not surface them as citations; that would be consumer-side work
   (frontmatter-aware indexing/citation), not bundle-side.
 - Observational, defined post-hoc: OKF docs appear in the post-filter top-5
   search rows for 8/12 questions and among `oracle_query` cited sources for
@@ -134,8 +137,9 @@ Headline findings:
 **Go for okf-kit Phase 1, with one adjustment.** Measurable improvement: yes
 (M1 15→17, wrong answers 2→0, on a repo that was already densely documented,
 deliberately the hardest test). The flat M2 localizes the remaining value in
-the consumer: the pointer-carrying frontmatter is retrieved but not
-exploited. Adjustment: pull the citation/pointer part of Phase 2
+the consumer: per the likely mechanism above, the pointer-carrying
+frontmatter is retrieved but not exploited. Adjustment: pull the
+citation/pointer part of Phase 2
 (codebase-oracle frontmatter awareness) forward next to the Phase-1 kit
 rather than strictly after it, and fix the M1 rubric's citation criterion
 (count pointers in the answer text) in the kit's benchmark template.
