@@ -91,8 +91,55 @@ comparison so the index cannot serve answers back to the post-run.
 | M1 | 1 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 2 | 1 | 1 | 2 | 15/24 |
 | M2 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 1 | 4/12 |
 
-### Final comparison
+### Final comparison (post-bundle run: 2026-07-03, after merge of #385 + reindex)
 
-Pending. Filled in one commit after the post-bundle run completes: per-question
-M1/M2 for both runs, comparison table, failure modes, and the go/no-go
-recommendation for okf-kit Phase 1.
+| Q | Q1 | Q2 | Q3 | Q4 | Q5 | Q6 | Q7 | Q8 | Q9 | Q10 | Q11 | Q12 | Total |
+|---|----|----|----|----|----|----|----|----|----|-----|-----|-----|-------|
+| M1 baseline | 1 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 2 | 1 | 1 | 2 | 15/24 |
+| M1 post | 1 | 2 | **2** | 1 | 1 | 1 | 1 | 1 | 2 | **2** | 1 | 2 | **17/24** |
+| M2 baseline | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 1 | 4/12 |
+| M2 post | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 1 | 4/12 |
+
+Headline findings:
+
+- **Both affirmatively wrong baseline answers were eliminated.** Baseline
+  claimed no required npm publish order exists (Q3) and presented an
+  incomplete spec-section list as complete (Q10); both post-run answers are
+  fully correct, and in both cases an OKF concept doc is among the corrected
+  answer's cited sources (for Q10 alongside the implementation file that was
+  already retrieved at baseline, so causality is likely but not isolated).
+  Wrong answers are the worst failure mode for agent consumers, so this is
+  the strongest single result.
+- **M1 +2 with no regressions**, plus substance gains inside the 1-score band
+  on three further questions (selection ordering, backend-side token
+  validation, status-column looseness) that the integer rubric does not
+  reward: those answers now contain the previously missing key facts but
+  still cite prose docs instead of implementation files, and the committed
+  rubric requires an implementation-file citation for a 2.
+- **M2 flat at 4/12.** The ground-truth set is implementation files; the
+  bundle adds prose, and natural-language queries keep retrieving prose.
+  Retrieval of implementation files did not improve. The likely mechanism,
+  not directly measured in this run: the `sources:` frontmatter pointers sit
+  inside the retrieved chunks, but the oracle has no frontmatter awareness
+  and does not surface them as citations; that would be consumer-side work
+  (frontmatter-aware indexing/citation), not bundle-side.
+- Observational, defined post-hoc: OKF docs appear in the post-filter top-5
+  search rows for 8/12 questions and among `oracle_query` cited sources for
+  11/12.
+- Integrity notes: the answer key stays uncommitted (kept outside the repo)
+  so the benchmark remains re-runnable for later consumer-side measurements
+  without the index serving answers back; BENCHMARK.md matched once in
+  search (Q3, dropped per protocol) and holds no answer content; single run
+  per question per phase, nondeterminism noise unquantified.
+
+### Decision
+
+**Go for okf-kit Phase 1, with one adjustment.** Measurable improvement: yes
+(M1 15→17, wrong answers 2→0, on a repo that was already densely documented,
+deliberately the hardest test). The flat M2 localizes the remaining value in
+the consumer: per the likely mechanism above, the pointer-carrying
+frontmatter is retrieved but not exploited. Adjustment: pull the
+citation/pointer part of Phase 2
+(codebase-oracle frontmatter awareness) forward next to the Phase-1 kit
+rather than strictly after it, and fix the M1 rubric's citation criterion
+(count pointers in the answer text) in the kit's benchmark template.
