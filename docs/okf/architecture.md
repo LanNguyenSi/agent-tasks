@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-07-03T00:00:00Z
+timestamp: 2026-07-03T10:59:39Z
 sources:
   - package.json
   - backend/src/app.ts

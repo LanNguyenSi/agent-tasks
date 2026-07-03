@@ -3,7 +3,7 @@ type: overview
 title: "The v2 verb surface and the happy-path task lifecycle"
 description: "task_create, task_pickup, task_start, task_finish, task_merge, task_abandon, the polymorphic MCP-oriented verbs layered over the classic REST CRUD, plus lazy debugFlavor classification."
 tags: [task-lifecycle, mcp, verbs, overview]
-timestamp: 2026-07-03T00:00:00Z
+timestamp: 2026-07-03T10:59:39Z
 sources:
   - backend/src/routes/tasks.ts
   - mcp-server/src/tools.ts

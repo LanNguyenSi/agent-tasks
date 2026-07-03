@@ -2,6 +2,14 @@
 
 ## 2026-07-03
 
+Upkeep after the first real `okf-kit check` staleness run (5 STALE
+warnings): all doc timestamps set to the actual verification datetime
+instead of the artificial midnight value, and `sources:` removed from
+`BENCHMARK.md`, a benchmark records a measurement rather than describing
+repo code, and its previous self-referential `docs/okf/` entry would have
+gone stale on every bundle change. No content changes; no sources changed
+between authoring and this verification.
+
 `index.md` links switched from bundle-root-absolute (`/name.md`) to
 same-directory relative (`name.md`): GitHub resolves a leading `/` against
 the repository root, so the absolute form 404s when browsing this directory

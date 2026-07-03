@@ -3,7 +3,7 @@ type: module
 title: "mcp-bridge: zero-setup CLI wrapper"
 description: "Resolves a bearer token (env, then OS keychain, then file) and hands off to mcp-server's stdio runtime; its own version constant is drift-guarded by a test."
 tags: [mcp, cli, token-store]
-timestamp: 2026-07-03T00:00:00Z
+timestamp: 2026-07-03T10:59:39Z
 sources:
   - mcp-bridge/src/cli.ts
   - mcp-bridge/src/token-store.ts
