@@ -29,6 +29,6 @@ The current model is a single three-valued `governanceMode` enum (`backend/src/l
 - **Mode A** (work-claim autoMerge, in_progress→done): requires `resolveGovernanceMode(project) === AUTONOMOUS`; any other mode returns `403 { error: "autonomous_mode_required" }`.
 - **Mode B** (review-finish or self-approve autoMerge, review→done): allowed under any governance mode, but still runs `checkSelfMergeGate`, so a `REQUIRES_DISTINCT_REVIEWER` project blocks the claimant from also being the merger even via Mode B.
 
-`POST /api/tasks/:id/merge` itself is idempotent: it accepts `status === "review"` or `status === "done"` (any other status is a `409 bad_state`); on a `done` retry the self-merge/distinct-reviewer checks are skipped (already satisfied on first pass) and `performPrMerge` detects an already-merged PR (`alreadyMerged: true`) rather than erroring.
+`POST /api/tasks/:id/merge` itself is idempotent: it accepts `status === "review"` or `status === "done"` (any other status is a `409 bad_state`); on a `done` retry the distinct-reviewer approval check is skipped (`checkReviewApprovalGate` only runs while `status === "review"`), while `checkSelfMergeGate` still runs unconditionally, it just no-ops because the first merge cleared the claimant fields and the gate does nothing outside `REQUIRES_DISTINCT_REVIEWER`; `performPrMerge` detects an already-merged PR (`alreadyMerged: true`) rather than erroring.
 
 Related: `claim-model.md`, `workflow-gates.md`, `reconcile-done-but-open.md`, `backend.md`.
