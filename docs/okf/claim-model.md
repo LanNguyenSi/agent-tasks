@@ -3,7 +3,7 @@ type: invariant
 title: "Claim model: task_pickup resolution order and single-active-claim"
 description: "Signals, then review, then open work, then idle; priority desc/createdAt asc; blockedBy filtering; one active claim per agent enforced in both pickup and start; status is an unconstrained free String."
 tags: [claim, pickup, status, dependencies]
-timestamp: 2026-07-03T00:00:00Z
+timestamp: 2026-07-03T10:59:39Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/prisma/schema.prisma

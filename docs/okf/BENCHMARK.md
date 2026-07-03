@@ -3,9 +3,7 @@ type: benchmark
 title: OKF discovery benchmark
 description: Before/after measurement of codebase-oracle discovery quality for the OKF Phase-0 pilot.
 tags: [okf, benchmark]
-timestamp: 2026-07-03T00:00:00Z
-sources:
-  - docs/okf/
+timestamp: 2026-07-03T10:59:39Z
 ---
 
 # OKF discovery benchmark
