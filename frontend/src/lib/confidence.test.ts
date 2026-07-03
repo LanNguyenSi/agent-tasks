@@ -250,6 +250,23 @@ describe("calculateConfidence — findings parity (keystone downgrade + cap merg
     const acWithVerify = withVerify.findings.find((f) => f.code === "missing_acceptance_criteria");
     expect(acWithVerify?.severity).toBe("warning");
     expect(acWithVerify?.keystone).toBeUndefined();
+    // Pin the distinctive downgrade wording byte-for-byte (parity-fragile).
+    expect(acWithVerify?.message).toBe(
+      "No structured acceptance criteria; the description's verification signal is the only evals path.",
+    );
+  });
+
+  it("pins the interpolated cap / subscore finding messages byte-for-byte (parity-fragile)", () => {
+    // vague-no-anchors is the only fixture that trips ambiguous_scope +
+    // vague_language + no_concrete_anchors; those messages are otherwise
+    // unasserted and would drift silently against the backend.
+    const r = calculateConfidence(byName["vague-no-anchors"]);
+    const msg = (code: string) => r.findings.find((f) => f.code === code)?.message;
+    expect(msg("ambiguous_scope")).toBe(
+      "Score capped at 75: 5 vague terms with no concrete anchors (file path, URL, inline code, or number).",
+    );
+    expect(msg("vague_language")).toBe("Description contains vague terms an agent cannot act on directly.");
+    expect(msg("no_concrete_anchors")).toBe("Description has no file paths, code references, URLs, or numbers.");
   });
 });
 
