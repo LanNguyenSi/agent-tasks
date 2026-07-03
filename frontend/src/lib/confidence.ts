@@ -162,6 +162,120 @@ export function descriptionQuality(text: string): number {
   return Math.min(lenScore + densityScore + structScore + concreteScore, 1);
 }
 
+// ── Markdown spec-section extraction ────────────────────────────────────────
+// task_create v2 has no structured goal/acceptanceCriteria fields — the whole
+// spec is authored as markdown in `description`. Presence checks therefore must
+// also read `## Goal` / `## Acceptance Criteria` / ... headings, otherwise a
+// markdown-authored spec reports every field missing. FAITHFUL MIRROR of the
+// backend extractSpecSections (backend/src/lib/confidence.ts); keep in sync.
+
+// The nine string-valued spec fields a markdown section can satisfy (excludes
+// the non-string TemplateData members `prefers` and `taskType`).
+type SpecField =
+  | "goal"
+  | "acceptanceCriteria"
+  | "scope"
+  | "outOfScope"
+  | "dependencies"
+  | "risk"
+  | "agentPrompt"
+  | "context"
+  | "constraints";
+
+// Normalized heading text → TemplateData field. `normalizeHeading` strips a
+// trailing colon and a single trailing "(...)" decorator, then the lookup is
+// exact on the remainder — so "Out of scope (x)" maps to outOfScope and can
+// never satisfy `scope`, while "Scope (harness, mechanical)" still maps to
+// `scope`.
+const SECTION_ALIASES: Record<string, SpecField> = {
+  "goal": "goal",
+  "acceptance criteria": "acceptanceCriteria",
+  "done when": "acceptanceCriteria",
+  "evals": "acceptanceCriteria",
+  "verify": "acceptanceCriteria",
+  "verification": "acceptanceCriteria",
+  "success criteria": "acceptanceCriteria",
+  "scope": "scope",
+  "out of scope": "outOfScope",
+  "out-of-scope": "outOfScope",
+  "non-goals": "outOfScope",
+  "non goals": "outOfScope",
+  "non-goal": "outOfScope",
+  "dependencies": "dependencies",
+  "prerequisites": "dependencies",
+  "risk": "risk",
+  "risks": "risk",
+  "agent prompt": "agentPrompt",
+  "context": "context",
+  "constraints": "constraints",
+};
+
+const HEADING_LINE = /^#{1,6}\s+(.+?)\s*$/;
+const FENCE_OPEN = /^(`{3,}|~{3,})/;
+
+// Reduce a raw heading to its canonical alias key. Strips a trailing colon
+// ("Goal:") and a single trailing parenthetical decorator ("Scope (harness,
+// mechanical)", "Acceptance criteria (mutation-testable)"). The alias lookup
+// stays EXACT on the stripped remainder, so the decorator strip widens
+// recognition without ever collapsing distinct sections ("Out of scope (x)" →
+// "out of scope", never "scope"). Only the last trailing "(...)" is removed;
+// inline suffixes ("Scope: xyz") and multiple trailing groups stay
+// unrecognized by design.
+function normalizeHeading(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/:$/, "")
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .trim();
+}
+
+/**
+ * Derives spec fields from ATX markdown headings in a task description.
+ * A section counts only when it has non-empty body text before the next
+ * heading (an empty `## Goal` is not a goal). Headings inside code fences
+ * are ignored so quoted examples cannot fake a section; a fence only closes
+ * on a matching marker (``` never closes ~~~) of at least the opening
+ * length, and an unclosed fence swallows the rest of the description
+ * (fail-safe: false-missing, never false-present). ATX headings at column 0
+ * only — setext (`Goal\n====`), blockquoted, and indented headings are
+ * deliberately not recognized.
+ */
+export function extractSpecSections(description: string): Partial<Record<SpecField, string>> {
+  const sections: Partial<Record<SpecField, string>> = {};
+  let current: SpecField | null = null;
+  let body: string[] = [];
+  let openFence: string | null = null;
+
+  const commit = () => {
+    if (!current) return;
+    const text = body.join("\n").trim();
+    // First occurrence wins; a duplicate heading never overwrites a filled one.
+    if (text.length > 0 && !sections[current]) sections[current] = text;
+  };
+
+  for (const line of description.split(/\r?\n/)) {
+    const fence = line.trimStart().match(FENCE_OPEN)?.[1];
+    if (fence) {
+      if (!openFence) openFence = fence;
+      else if (fence[0] === openFence[0] && fence.length >= openFence.length) openFence = null;
+      if (current) body.push(line);
+      continue;
+    }
+    const heading = openFence ? null : line.match(HEADING_LINE);
+    if (heading) {
+      commit();
+      current = SECTION_ALIASES[normalizeHeading(heading[1])] ?? null;
+      body = [];
+    } else if (current) {
+      body.push(line);
+    }
+  }
+  commit();
+  return sections;
+}
+
 // ── scorer-v2: fixed-denominator field weights ──────────────────────────────
 // Every core field is ALWAYS scored, so the denominator is a fixed 100 (no
 // template-gated dilution). PROSE-FIRST calibration (2026-06-05): the spec
@@ -203,16 +317,19 @@ const VAGUE_TERM_PATTERN = new RegExp(
 const VERIFICATION_SIGNAL_PATTERN = /\b(test|run|curl|check|verify|green|CI)\b/i;
 
 // Heuristics that drive subscores. Each dimension returns 0..100.
-function computeSubscores(input: ConfidenceInput): TaskQualitySubscores {
+function computeSubscores(
+  input: ConfidenceInput,
+  sections: Partial<Record<SpecField, string>>,
+): TaskQualitySubscores {
   const desc = (input.description ?? "").trim();
   const td = input.templateData;
   const hasField = (v?: string | null) => (v?.trim().length ?? 0) > 0;
 
   const titlePresent = input.title.trim().length > 0;
-  const goalPresent = hasField(td?.goal);
-  const acPresent = hasField(td?.acceptanceCriteria);
-  const ctxPresent = hasField(td?.context);
-  const consPresent = hasField(td?.constraints);
+  const goalPresent = hasField(td?.goal) || hasField(sections.goal);
+  const acPresent = hasField(td?.acceptanceCriteria) || hasField(sections.acceptanceCriteria);
+  const ctxPresent = hasField(td?.context) || hasField(sections.context);
+  const consPresent = hasField(td?.constraints) || hasField(sections.constraints);
   const descPresent = desc.length > 0;
 
   // ── completeness: ratio of present required fields
@@ -364,6 +481,7 @@ function applyScoreCaps(
   rawScore: number,
   input: ConfidenceInput,
   subscores: TaskQualitySubscores,
+  sections: Partial<Record<SpecField, string>>,
 ): { cappedScore: number; capFindings: QualityFinding[] } {
   const desc = (input.description ?? "").trim();
   const td = input.templateData;
@@ -371,7 +489,7 @@ function applyScoreCaps(
   const has = (v?: string | null) => (v?.trim().length ?? 0) > 0;
   const titlePresent = input.title.trim().length > 0;
   const descPresent = desc.length > 0;
-  const acPresent = has(td?.acceptanceCriteria);
+  const acPresent = has(td?.acceptanceCriteria) || has(sections.acceptanceCriteria);
 
   const verificationSignal = acPresent || (descPresent && VERIFICATION_SIGNAL_PATTERN.test(desc));
   const evalsKeystoneViolated = !acPresent && !verificationSignal;
@@ -440,14 +558,20 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const descTrim = desc.trim();
   const descQuality = descriptionQuality(desc);
 
+  // Spec sections authored as markdown headings in the description satisfy the
+  // same fields as structured templateData; structured values keep precedence
+  // (a section only fills a field the producer left empty).
+  const sections = extractSpecSections(desc);
+  const present = (field: SpecField) => has(td?.[field]) || has(sections[field]);
+
   const titlePresent = input.title.trim().length > 0;
-  const goalPresent = has(td?.goal);
-  const acPresent = has(td?.acceptanceCriteria);
-  const scopePresent = has(td?.scope);
-  const outOfScopePresent = has(td?.outOfScope);
-  const dependenciesPresent = has(td?.dependencies);
-  const riskPresent = has(td?.risk);
-  const agentPromptPresent = has(td?.agentPrompt);
+  const goalPresent = present("goal");
+  const acPresent = present("acceptanceCriteria");
+  const scopePresent = present("scope");
+  const outOfScopePresent = present("outOfScope");
+  const dependenciesPresent = present("dependencies");
+  const riskPresent = present("risk");
+  const agentPromptPresent = present("agentPrompt");
 
   const verificationSignal = descTrim.length > 0 && VERIFICATION_SIGNAL_PATTERN.test(descTrim);
   const evalsKeystoneViolated = !acPresent && !verificationSignal;
@@ -479,10 +603,10 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   if (!riskPresent) missing.push("risk");
   if (!agentPromptPresent) missing.push("agentPrompt");
 
-  const subscores = computeSubscores(input);
+  const subscores = computeSubscores(input, sections);
   const findings = buildFindings(missing, subscores, descTrim.length > 0, evalsKeystoneViolated);
 
-  const { cappedScore, capFindings } = applyScoreCaps(rawScore, input, subscores);
+  const { cappedScore, capFindings } = applyScoreCaps(rawScore, input, subscores, sections);
 
   // Merge cap findings into the rule-driven list (keep higher-severity entry,
   // enrich its suggestion with the cap ceiling text).
