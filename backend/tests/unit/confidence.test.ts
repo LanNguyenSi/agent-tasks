@@ -781,6 +781,31 @@ describe("extractSpecSections", () => {
     expect(s.outOfScope).toBe("- the session middleware");
   });
 
+  it("strips a trailing parenthetical decorator (house style of the review-created tasks)", () => {
+    const s = extractSpecSections(
+      "## Scope (harness, mechanical)\n- backend/src/lib/confidence.ts\n## Acceptance criteria (mutation-testable)\n- decorated headings are recognized",
+    );
+    expect(s.scope).toBe("- backend/src/lib/confidence.ts");
+    expect(s.acceptanceCriteria).toBe("- decorated headings are recognized");
+  });
+
+  it("a decorated 'Out of scope (...)' heading maps to outOfScope, never scope (negative control)", () => {
+    const s = extractSpecSections("## Out of scope (agent-dx packages/orchestrator-workflow)\n- the session middleware");
+    expect(s.outOfScope).toBe("- the session middleware");
+    expect(s.scope).toBeUndefined();
+  });
+
+  it("strips the decorator even when a colon follows it", () => {
+    const s = extractSpecSections("## Risk (blast radius):\nlow");
+    expect(s.risk).toBe("low");
+  });
+
+  it("does not recognize a heading that is only a parenthetical", () => {
+    const s = extractSpecSections("## (context)\nbody");
+    expect(s.context).toBeUndefined();
+    expect(s.goal).toBeUndefined();
+  });
+
   it("treats an empty-bodied section as absent", () => {
     const s = extractSpecSections("## Goal\n\n## Scope\n- src/x.ts");
     expect(s.goal).toBeUndefined();
@@ -912,5 +937,38 @@ describe("calculateConfidence — markdown spec sections (friction #99)", () => 
       templateFields: null,
     });
     expect(result.missing).toEqual([]);
+  });
+
+  it("decorated section headings stop the false missing_scope / missing_acceptance_criteria on the live corpus", () => {
+    // The parenthetical-suffix heading style of the review-created tasks
+    // (2026-07-02 session: tasks 348a4d42, c21b0def, 3a2543f3).
+    const description = [
+      "## Goal",
+      "",
+      "Recognize decorated headings in the scorer.",
+      "",
+      "## Scope (harness, mechanical)",
+      "",
+      "- backend/src/lib/confidence.ts normalizeHeading",
+      "",
+      "## Acceptance criteria (mutation-testable)",
+      "",
+      "- [ ] decorated `## Scope (x)` headings satisfy scope",
+      "",
+      "## Out of scope (agent-dx packages/orchestrator-workflow)",
+      "",
+      "- no new aliases",
+    ].join("\n");
+    const result = calculateConfidence({
+      title: "Recognize decorated headings",
+      description,
+      templateData: null,
+      templateFields: null,
+    });
+    for (const field of ["goal", "scope", "acceptanceCriteria", "outOfScope"]) {
+      expect(result.missing).not.toContain(field);
+    }
+    expect(result.findings.find((f) => f.code === "missing_scope")).toBeUndefined();
+    expect(result.findings.find((f) => f.code === "missing_acceptance_criteria")).toBeUndefined();
   });
 });
