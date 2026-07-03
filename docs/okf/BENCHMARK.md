@@ -1,3 +1,13 @@
+---
+type: benchmark
+title: OKF discovery benchmark
+description: Before/after measurement of codebase-oracle discovery quality for the OKF Phase-0 pilot.
+tags: [okf, benchmark]
+timestamp: 2026-07-03T00:00:00Z
+sources:
+  - docs/okf/
+---
+
 # OKF discovery benchmark
 
 Measures whether the curated OKF bundle in this directory improves
@@ -70,6 +80,18 @@ source via tsx), embeddings `openai/text-embedding-3-small`, answer LLM
 | Q12 | What is debugFlavor on a task, and when/where is it decided if the creator didn't set it? |
 
 ## Results
+
+### Baseline (committed before bundle authoring started)
+
+Scores only; per-question rationale and the answer key land with the final
+comparison so the index cannot serve answers back to the post-run.
+
+| Q | Q1 | Q2 | Q3 | Q4 | Q5 | Q6 | Q7 | Q8 | Q9 | Q10 | Q11 | Q12 | Total |
+|---|----|----|----|----|----|----|----|----|----|-----|-----|-----|-------|
+| M1 | 1 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 2 | 1 | 1 | 2 | 15/24 |
+| M2 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 1 | 4/12 |
+
+### Final comparison
 
 Pending. Filled in one commit after the post-bundle run completes: per-question
 M1/M2 for both runs, comparison table, failure modes, and the go/no-go
