@@ -806,6 +806,16 @@ describe("extractSpecSections", () => {
     expect(s.goal).toBeUndefined();
   });
 
+  it("leaves a NON-trailing parenthetical in place (only a trailing decorator is stripped)", () => {
+    const s = extractSpecSections("## Scope (a) and more\n- x");
+    expect(s.scope).toBeUndefined();
+  });
+
+  it("strips only the LAST trailing group, so multiple trailing groups stay unrecognized", () => {
+    const s = extractSpecSections("## Scope (a) (b)\n- x");
+    expect(s.scope).toBeUndefined();
+  });
+
   it("treats an empty-bodied section as absent", () => {
     const s = extractSpecSections("## Goal\n\n## Scope\n- src/x.ts");
     expect(s.goal).toBeUndefined();
