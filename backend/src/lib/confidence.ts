@@ -168,8 +168,11 @@ type SpecField =
   | "constraints";
 
 // Normalized heading text → TemplateData field. Aliases cover the section names
-// the spec-slicer and the task_create docs actually use; matching is exact on
-// the full heading (so "Out of scope" can never satisfy `scope`).
+// the spec-slicer and the task_create docs actually use. `normalizeHeading`
+// strips a trailing colon and a single trailing "(...)" decorator, then the
+// lookup is exact on the remainder — so "Out of scope (x)" maps to outOfScope
+// and can never satisfy `scope`, while "Scope (harness, mechanical)" still maps
+// to `scope`.
 const SECTION_ALIASES: Record<string, SpecField> = {
   "goal": "goal",
   "acceptance criteria": "acceptanceCriteria",
@@ -196,8 +199,23 @@ const SECTION_ALIASES: Record<string, SpecField> = {
 const HEADING_LINE = /^#{1,6}\s+(.+?)\s*$/;
 const FENCE_OPEN = /^(`{3,}|~{3,})/;
 
+// Reduce a raw heading to its canonical alias key. Beyond lower-casing and
+// whitespace collapse, this strips a trailing colon ("Goal:") and a single
+// trailing parenthetical decorator ("Scope (harness, mechanical)",
+// "Acceptance criteria (mutation-testable)") — the house style of the
+// review-created tasks. The alias lookup stays EXACT on the stripped remainder,
+// so the decorator strip widens recognition without ever collapsing distinct
+// sections ("Out of scope (x)" → "out of scope", never "scope"). Only the last
+// trailing "(...)" is removed; inline suffixes ("Scope: xyz") and multiple
+// trailing groups stay unrecognized by design.
 function normalizeHeading(text: string): string {
-  return text.replace(/:$/, "").trim().toLowerCase().replace(/\s+/g, " ");
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/:$/, "")
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .trim();
 }
 
 /**
