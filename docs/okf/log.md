@@ -2,6 +2,11 @@
 
 ## 2026-07-03
 
+`index.md` links switched from bundle-root-absolute (`/name.md`) to
+same-directory relative (`name.md`): GitHub resolves a leading `/` against
+the repository root, so the absolute form 404s when browsing this directory
+on GitHub. Relative links are equally OKF-conformant.
+
 Benchmark comparison recorded in `BENCHMARK.md`: M1 15/24 → 17/24, M2 flat
 4/12, both affirmatively wrong baseline answers eliminated. Decision: go for
 okf-kit Phase 1, with the oracle frontmatter-awareness work pulled forward.
