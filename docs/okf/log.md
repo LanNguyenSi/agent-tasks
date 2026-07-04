@@ -2,6 +2,17 @@
 
 ## 2026-07-04
 
+P3 sources-expansion measured in `BENCHMARK.md` (fifth point, first
+search-side treatment, oracle 0.9.0): M2 4/12 → 5/12 (first-ever hits on Q3
+and Q11, one displacement regression on Q12), M1/P unchanged. Two integrity
+findings: the benchmark caught the feature silently no-opping in production
+(namespace bug, fixed as oracle #64 pre-measurement), and
+`backend/src/routes/tasks.ts` turned out to be absent from the index
+(codebase-oracle `004f9577`), capping M2 reachability for Q7 in all five
+runs and causing the Q12 regression. Pre-registered +2 criterion missed as
+measured; operator kept default-on with the deviation recorded, point 6
+after the index fix confirms or reverts. Task: codebase-oracle `89f02fa4`.
+
 Answer-LLM comparison recorded in `BENCHMARK.md`: oracle answer LLM swapped
 from Groq llama-3.3-70b-versatile to local gemma4-26b-a4b-64k (Mac mini
 Ollama, `.env` only). M1 17/24, M2 4/12, P 10/12, all per-question identical
