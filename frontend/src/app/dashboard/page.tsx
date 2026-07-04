@@ -7,12 +7,16 @@ import {
   getCurrentUser,
   getTeams,
   getProjects,
+  getProject,
   getTasks,
   getTask,
+  getEffectiveWorkflow,
+  isProjectAdminRole,
   type User,
   type Team,
   type Project,
   type Task,
+  type WorkflowTransition,
 } from "../../lib/api";
 import {
   DEFAULT_DONE_VISIBILITY,
@@ -135,6 +139,49 @@ export default function DashboardPage() {
   );
 
   const templateFields = selectedProject?.taskTemplate?.fields ?? null;
+
+  // The list projection (getProjects) omits `accessRole`, so fetch the single
+  // project (GET /projects/:id) for the selected project to learn the caller's
+  // role — needed to gate the admin status-override / claim-release controls in
+  // the task modal, exactly as the full /tasks/[id] page does. Admins also get
+  // the effective-workflow edges so the status-override dropdown only offers
+  // valid targets. Failure-tolerant: the board keeps working, controls just
+  // stay ungated (as before this change).
+  const [selectedProjectAccessRole, setSelectedProjectAccessRole] = useState<
+    string | null | undefined
+  >(undefined);
+  const [workflowTransitions, setWorkflowTransitions] = useState<
+    WorkflowTransition[] | null
+  >(null);
+
+  useEffect(() => {
+    setSelectedProjectAccessRole(undefined);
+    setWorkflowTransitions(null);
+    if (!selectedProjectId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const detail = await getProject(selectedProjectId);
+        if (cancelled) return;
+        setSelectedProjectAccessRole(detail.accessRole);
+        if (isProjectAdminRole(detail.accessRole)) {
+          try {
+            const wf = await getEffectiveWorkflow(selectedProjectId);
+            if (!cancelled) setWorkflowTransitions(wf.definition.transitions);
+          } catch {
+            /* fall back to base states */
+          }
+        }
+      } catch {
+        /* controls stay ungated; board is unaffected */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProjectId]);
+
+  const isProjectAdmin = isProjectAdminRole(selectedProjectAccessRole);
 
   // ── Restore persisted view preferences once after mount ──────
 
@@ -648,6 +695,8 @@ export default function DashboardPage() {
           templateFields={templateFields}
           confidenceThreshold={selectedProject?.confidenceThreshold ?? 60}
           requireDistinctReviewer={selectedProject?.requireDistinctReviewer ?? false}
+          isProjectAdmin={isProjectAdmin}
+          workflowTransitions={workflowTransitions}
           onUpdate={handleTaskUpdate}
           onDelete={handleTaskDelete}
           onClose={() => selectTask(null)}

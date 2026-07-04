@@ -93,4 +93,25 @@ describe("TaskDetail — variant", () => {
     // The shared detail body still renders (the task title is shown).
     expect(screen.getByText("Fix the thing")).toBeInTheDocument();
   });
+
+  // Regression for the board-modal gap: the admin status-override control must
+  // render in the MODAL variant (the operator's primary surface), not just the
+  // full page. It lives in the header view-mode row, so it shows whenever
+  // isProjectAdmin is threaded — which the dashboard now does.
+  it("modal variant shows the admin status-override control when isProjectAdmin", () => {
+    render(
+      <TaskDetail task={makeTask({ id: "task-9" })} {...baseProps} isProjectAdmin />,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Change task status (admin override)" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set status" })).toBeInTheDocument();
+  });
+
+  it("modal variant shows the override disabled with a reason for a non-admin", () => {
+    render(<TaskDetail task={makeTask({ id: "task-9" })} {...baseProps} isProjectAdmin={false} />);
+    const btn = screen.getByRole("button", { name: "Change status" });
+    expect(btn).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Set status" })).toBeNull();
+  });
 });
