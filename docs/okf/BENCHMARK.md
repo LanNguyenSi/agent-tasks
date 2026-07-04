@@ -3,7 +3,7 @@ type: benchmark
 title: OKF discovery benchmark
 description: Before/after measurement of codebase-oracle discovery quality for the OKF Phase-0 pilot.
 tags: [okf, benchmark]
-timestamp: 2026-07-04T04:02:09Z
+timestamp: 2026-07-04T05:04:18Z
 ---
 
 # OKF discovery benchmark
@@ -213,3 +213,59 @@ retrieval miss) and `sources:` granularity on coarse docs (Q8). A
 ranking/boost experiment is warranted as the next consumer-side lever;
 bundle-side, splitting architecture.md's coarse `sources:` into
 per-subsystem docs would lift pointer quality where it is currently bounded.
+
+### Answer-LLM comparison (2026-07-04, local gemma4-26b vs Groq llama-3.3-70b)
+
+Fourth measurement point, about the ANSWER MODEL, not the consumer: same
+bundle, same index content (master aef195e, no reindex since the P2c run),
+same embeddings (openai/text-embedding-3-small), same oracle version
+(0.8.0), same judge and rubric. The only change vs the P2c run: the answer
+LLM behind oracle_query moved from Groq `llama-3.3-70b-versatile` (the
+hosted openai-compatible lane of all prior runs; its 100k-tokens/day cap
+stalled the P2c collection twice) to `gemma4-26b-a4b-64k` on a local Mac
+mini via Ollama's OpenAI-compatible endpoint (`.env` swap only, no code
+change). Task: codebase-oracle `772874fc` (oracle-answer-llm-local-ollama).
+
+Collection note: answers were collected via the oracle CLI (same
+queryCodebase/searchCodebase pipeline as the MCP tools; the running MCP
+server keeps its pre-swap environment until reconnect). Runner/judge
+separation kept as in all prior runs.
+
+| Q | Q1 | Q2 | Q3 | Q4 | Q5 | Q6 | Q7 | Q8 | Q9 | Q10 | Q11 | Q12 | Total |
+|---|----|----|----|----|----|----|----|----|----|-----|-----|-----|-------|
+| M1 llama-70b (P2c) | 1 | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 2 | 2 | 1 | 2 | 17/24 |
+| M1 gemma4-26b | 1 | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 2 | 2 | 1 | 2 | 17/24 |
+| M2 llama-70b (P2c) | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 1 | 4/12 |
+| M2 gemma4-26b | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 1 | 4/12 |
+| P llama-70b (P2c) | 1 | 1 | 1 | 1 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 | 10/12 |
+| P gemma4-26b | 1 | 1 | 1 | 1 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 | 10/12 |
+
+Headline findings:
+
+- **Per-question identical on every metric.** M1 17/24 with the same
+  question-level scores, M2 the same hit set (Q2/Q9/Q10/Q12), P the same two
+  misses (Q6 retrieval gap, Q8 `sources:` granularity). The 26B (4B active)
+  local model gives up nothing measurable against the hosted 70B on this
+  benchmark.
+- **Substance inside the 1-score band moved up, not down.** Q7 is the first
+  answer across all four runs with every key fact (selection ordering,
+  blockedBy filter, atomic signal ack, both 409 claim walls, CAS race);
+  Q11 recovered the status-is-a-free-String nuance the P2c re-run had lost;
+  Q12's heuristic description is the richest yet. No substance regressions
+  were found anywhere.
+- **The failure modes are consumer/bundle-shaped, not model-shaped.** The
+  same questions fail the same way under two very different answer models:
+  M2 stays 4/12 (ranking), Q6 stays pointer-less (no OKF doc retrieved),
+  Q8's pointers stay off-target (coarse `sources:`). This strengthens the
+  P2c conclusion that the next levers are retrieval ranking and `sources:`
+  granularity, not answer-model quality.
+- **Cost profile**: local synthesis averaged 29.2s per query (range
+  22.6-44.7s) vs Groq's near-instant responses; in exchange the daily token
+  cap disappears (the P2c run lost most of a day to it) and repo content no
+  longer leaves the tailnet for inference.
+
+Decision: **keep the local Ollama answer LLM as the default.** Criterion was
+M1/P delta + latency: the delta is zero on all metrics, and ~30s per query is
+acceptable for agent workflows while removing the hard operational blocker.
+Revert path stays documented in the oracle `.env` (Groq lane commented out
+in place).
