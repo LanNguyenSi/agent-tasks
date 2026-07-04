@@ -338,6 +338,14 @@ function buildServer(token: string): McpServer {
         dependsOn: z.array(uuid()).max(50).optional(),
         debugFlavor: z.boolean().optional(),
         templateData: z.record(z.string(), z.unknown()).optional(),
+        deliverableRepo: z
+          .string()
+          .trim()
+          .max(255)
+          .optional()
+          .describe(
+            "Cross-repo deliverable override ('owner/repo'). Set only when this task's legitimate output is a PR in a DIFFERENT repo than the project's linked githubRepo (benchmark/measurement/docs tasks). Post-create changes are project-admin-only.",
+          ),
       },
     },
     async ({ projectId, ...body }) => {

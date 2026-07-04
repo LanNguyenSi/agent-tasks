@@ -17,6 +17,10 @@ import {
   selfMergeRejectionMessage,
   checkTaskStatusForMerge,
   taskStatusForMergeRejectionMessage,
+  checkOwnerRepoMatchesProject,
+  prRepoMatchesProjectRejectionMessage,
+  effectiveDeliverableRepo,
+  isForeignDeliverable,
 } from "../services/gates/index.js";
 import { performPrMerge } from "../services/github-merge.js";
 import { SCOPES } from "../services/scopes.js";
@@ -57,7 +61,7 @@ githubRouter.post(
     // 1. Find the task and verify it exists
     const task = await prisma.task.findUnique({
       where: { id: body.taskId },
-      include: { project: { select: { id: true, teamId: true } } },
+      include: { project: { select: { id: true, teamId: true, githubRepo: true } } },
     });
 
     if (!task) {
@@ -71,6 +75,25 @@ githubRouter.post(
     // had consented. Now the agent must have legitimate project access.
     if (!(await hasProjectAccess(actor, task.project.id))) {
       return c.json({ error: "forbidden", message: "Access denied to this project" }, 403);
+    }
+
+    // Cross-repo guard (ADR-0010 §5b/§5c), checked BEFORE creating the PR on
+    // GitHub. Without this, the requested owner/repo was written to
+    // task.prUrl/prNumber unchecked — the same hole task_finish/submit_pr
+    // close for their own prUrl payloads, just reached from the create side.
+    const crossRepo = checkOwnerRepoMatchesProject(body.owner, body.repo, task, task.project);
+    if (!crossRepo.ok) {
+      return c.json(
+        {
+          error: "cross_repo_pr_rejected",
+          message: prRepoMatchesProjectRejectionMessage(
+            crossRepo.prOwner,
+            crossRepo.prRepo,
+            crossRepo.projectRepo,
+          ),
+        },
+        400,
+      );
     }
 
     // 2. Find a user with GitHub connected + allowAgentPrCreate consent.
@@ -164,6 +187,25 @@ githubRouter.post(
             prUrl: pr.html_url,
           },
         });
+
+        // Audit a foreign-deliverable PR link — only when the effective
+        // repo actually diverges from project.githubRepo (an active override).
+        if (isForeignDeliverable(task, task.project)) {
+          const effectiveRepo = effectiveDeliverableRepo(task, task.project);
+          await logAuditEvent({
+            action: "task.foreign_pr_linked",
+            actorId: delegationUser.userId,
+            projectId: task.project.id,
+            taskId: task.id,
+            payload: {
+              prUrl: pr.html_url,
+              deliverableRepo: effectiveRepo,
+              projectRepo: task.project.githubRepo,
+              actorType: "agent",
+              via: "pull_requests_create",
+            },
+          });
+        }
 
         return {
           status: 201,

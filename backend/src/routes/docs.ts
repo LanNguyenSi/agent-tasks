@@ -433,6 +433,13 @@ export const openApiSpec = {
             type: "boolean",
             description: "Explicit debug-flavor opt-in/out. When omitted the backend runs its title/label heuristic at task pickup; when set, the value is persisted verbatim to metadata.debugFlavor.",
           },
+          deliverableRepo: {
+            type: "string",
+            minLength: 3,
+            maxLength: 255,
+            pattern: "^[^/\\s]+/[^/\\s]+$",
+            description: "Cross-repo deliverable override ('owner/repo'). For tasks whose legitimate deliverable is a PR in a different GitHub repo than the project's linked githubRepo. Post-create changes are project-admin-only.",
+          },
         },
         required: ["title"],
       },

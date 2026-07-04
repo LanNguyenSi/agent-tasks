@@ -93,7 +93,15 @@ export type AuditAction =
   // after the retry. Both carry the signalId so operators can correlate
   // with the originating Signal row.
   | "signal.webhook_delivered"
-  | "signal.webhook_failed";
+  | "signal.webhook_failed"
+  // Cross-repo deliverable override (ADR-0010 §5c). `_set` fires at create
+  // time (non-null only); `_changed` fires on a PATCH set/change/clear (the
+  // admin-only path — see routes/tasks.ts). `foreign_pr_linked` fires on any
+  // write path that links a prUrl while the task's effective deliverable
+  // repo diverges from project.githubRepo.
+  | "task.deliverable_repo_set"
+  | "task.deliverable_repo_changed"
+  | "task.foreign_pr_linked";
 
 export interface AuditPayload {
   [key: string]: unknown;

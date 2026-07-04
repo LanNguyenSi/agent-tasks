@@ -345,6 +345,18 @@ model Task {
   result       String?
   autoMergeSha String? // Merge commit SHA set by task_finish { autoMerge: true }; used for retry idempotency
 
+  // Cross-repo deliverable override (ADR-0010 §5c). Null (the common case)
+  // means the task's deliverable PR lives in `project.githubRepo`. When set,
+  // it names the "owner/repo" that actually owns this task's PR lifecycle —
+  // for tasks whose legitimate output is a PR in a different GitHub repo
+  // (benchmark/measurement/docs tasks). The cross-repo PR guard compares
+  // against this effective repo instead of always the project's; merge
+  // automation hard-refuses when it diverges from project.githubRepo (the
+  // foreign repo owns its own merge lifecycle). Settable at create time by
+  // humans or agents; post-create changes are human-project-admin-only (see
+  // PATCH /api/tasks/:id). See docs/workflow-preconditions.md.
+  deliverableRepo String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -122,7 +122,12 @@ Always set `branchName` and `prNumber` on your task so webhooks can reliably mat
 `prUrl` whose `owner/repo` does not match the bound `project.githubRepo`.
 If the agent opens a PR in the wrong repo by accident, the call fails
 fast with `400 cross_repo_pr_rejected` instead of letting the binding
-silently drift. Verify `project.githubRepo` before opening the PR.
+silently drift. Verify `project.githubRepo` before opening the PR. Tasks
+whose legitimate deliverable is a PR in a *different* repo (benchmark/
+measurement/docs tasks) can set `deliverableRepo` at `task_create` time —
+the guard then compares against that repo instead. Merge automation still
+refuses to merge a foreign deliverable; see
+[workflow-preconditions.md](workflow-preconditions.md#cross-repo-deliverable-override-deliverablerepo).
 
 **Two merge-event paths land tasks in different states.** Calling
 `task_merge` (or `pull_requests_merge`) hits the REST endpoint
