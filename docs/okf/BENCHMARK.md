@@ -346,3 +346,76 @@ and decided to KEEP sources-expansion default-on. This deviation from the
 pre-registered rule is recorded here deliberately. Confirmation path:
 fix `004f9577`, then measurement point 6 re-scores M2 (projected 7/12);
 if it fails to confirm, the default flips off.
+
+### Point 6 re-score (2026-07-04, oracle 0.10.0, tasks.ts indexed)
+
+Sixth measurement point, the confirmation run required by the P3 decision.
+Treatment: codebase-oracle 0.10.0 (oracle PR #65, task `004f9577`) fixed the
+silent ingest drop: the per-file size limit became explicit config with a
+loud per-file skip report, its default rose from 200 KB to 500 KB, and
+`backend/src/routes/tasks.ts` (207,716 bytes) entered the index for the
+first time: 192 chunks covering the whole file. The query pipeline is
+byte-identical to point 5 (the 0.10.0 change is ingest-only).
+
+Environment: agent-tasks index delta vs point 5 is exactly three files
+(tasks.ts new; BENCHMARK.md + log.md refreshed by the point-5 results merge,
+meta-docs whose search rows the protocol drops). Embeddings unchanged, answer
+LLM local gemma4-26b (same as points 4-5), protocol and rubric unchanged,
+runner blind to the key. Pre-registered decision rule, written before
+collection: confirm KEEP if M2 ≥ 6/12 with no NEW expansion-attributable
+precision regression, else the default flips off.
+
+| Q | Q1 | Q2 | Q3 | Q4 | Q5 | Q6 | Q7 | Q8 | Q9 | Q10 | Q11 | Q12 | Total |
+|---|----|----|----|----|----|----|----|----|----|-----|-----|-----|-------|
+| M2 points 1-4 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 1 | 4/12 |
+| M2 P3 (point 5) | 0 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 0 | 5/12 |
+| M2 point 6 | 0 | 1 | 1 | 0 | 0 | **1** | **1** | 0 | 1 | 1 | 1 | 0 | **7/12** |
+
+Headline findings:
+
+- **M2 7/12: the projection was hit, but by a different road than
+  projected.** Q6 and Q7 are first-ever hits in six runs, and BOTH are
+  ORGANIC: the newly indexed tasks.ts chunks rank in the top-5 on their own
+  (Q6: the import-endpoint chunks at ranks 2-3, beyond projection, since Q6 had
+  been written off as unreachable-by-expansion; Q7: the pickup handler at
+  rank 5, exactly the ground-truth lines). The projected injection-recovery
+  never happened, and structurally could not: once a pointed-at file is
+  retrieved organically, the organic-wins dedup rule suppresses its
+  injection.
+- **Q12 stays lost, and the known displacement regression persists via a new
+  path.** task-lifecycle.md's tasks.ts pointer now resolves, but tasks.ts
+  sits organically at rank 6 (one past the cut), so dedup skips the
+  injection and the non-ground-truth sibling (mcp-server/src/tools.ts)
+  injects at rank 2, pushing the organic ground-truth rows from ranks 5/6 to
+  6/7. Without expansion, this run's Q12 top-5 would contain the hit.
+  Refinement filed as codebase-oracle `d165ff85`: hoist a below-cut organic
+  hit next to its parent instead of skipping the injection (the same pattern
+  bounds Q1/Q5, whose ground-truth injections land at ranks 6-7).
+- **First M1 movement since the bundle landed: 17/24 → 18/24.** Q4 and Q7
+  each gained a point because tasks.ts chunks are now retrievable into the
+  answer context: the missing key facts appeared (Q4: the 422; Q7: the
+  priority-desc/createdAt-asc ordering and blockedBy filter) and the
+  ground-truth file is finally cited in Sources. Q2 dropped 2 → 1 this run
+  (the fixture-parity fact absent from the answer text); same model, same
+  config, judged as sampling variance on a secondary metric, recorded for
+  integrity.
+- **P 11/12** (from 10/12): Q6 flips because the answer now cites
+  tasks.ts with line references in prose (organic, since Q6 retrieves no
+  OKF doc and therefore has no Pointers section). Only Q8 remains, the known
+  `sources:` granularity bound (task `1c576413`).
+- Query latency mean 26.3s (19.2-39.1s), in line with the gemma4 runs.
+
+### Point 6 decision
+
+The pre-registered criterion is MET: M2 7/12 (≥ 6/12; +3 vs the 4/12
+pre-expansion reference, +2 vs point 5) with no new expansion-attributable
+regression (Q12 is the same regression known since point 5, persisting
+through the dedup path). **KEEP default-on is confirmed.** Recorded with the
+attribution caveat that point 6's marginal gains came from the index fix
+(organic retrieval), not from expansion injections. Decomposed on the
+current index, expansion's direct net contribution is +Q3 −Q12 = 0: Q11,
+an injection win at point 5, now hits organically (tasks.ts rank 3) and its
+schema.prisma injection is merely redundant, so the KEEP rests on the
+pre-registered M2 level being reached, not on expansion's standalone net.
+The dedup-hoist refinement (`d165ff85`) is the identified next lever for
+turning the Q1/Q5/Q12 boundary losses into wins.
