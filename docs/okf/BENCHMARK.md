@@ -3,7 +3,7 @@ type: benchmark
 title: OKF discovery benchmark
 description: Before/after measurement of codebase-oracle discovery quality for the OKF Phase-0 pilot.
 tags: [okf, benchmark]
-timestamp: 2026-07-04T05:04:18Z
+timestamp: 2026-07-04T07:00:42Z
 ---
 
 # OKF discovery benchmark
@@ -269,3 +269,80 @@ M1/P delta + latency: the delta is zero on all metrics, and ~30s per query is
 acceptable for agent workflows while removing the hard operational blocker.
 Revert path stays documented in the oracle `.env` (Groq lane commented out
 in place).
+
+### P3 sources-expansion re-run (2026-07-04, oracle 0.9.0)
+
+Fifth measurement point, the first SEARCH-side treatment: codebase-oracle
+0.9.0 ships sources-expansion (oracle PRs #63 + namespace fix #64) — when a
+retrieved chunk carries OKF `sources:` frontmatter, the pointed-at files are
+injected into the oracle_search result list directly after their parent row,
+marked `[expanded from <doc>]`, capped and deduped, default-on. Task:
+codebase-oracle `89f02fa4` (oracle-okf-ranking-boost-experiment); the
+operator-approved design chose this treatment over type-aware boosting.
+
+Environment: index content unchanged since the P2c reindex (expansion works
+at query time, no reindex), embeddings unchanged, answer LLM = local
+gemma4-26b (the answer-LLM comparison run above is the same-LLM reference).
+Measured build: oracle 0.9.0 PLUS the namespace fix #64 (master a3f48d3);
+plain 0.9.0 exhibits the no-op described below. M2 is the PRIMARY endpoint;
+M1/P secondary.
+
+Two findings this run surfaced, recorded for integrity:
+
+1. **The benchmark caught a production no-op.** The feature passed 299 unit
+   tests plus a purpose-built eval fixture and still did nothing on real
+   repos: OKF `sources:` entries are repo-root-relative while the store
+   indexes file paths with a repo prefix, and every test fixture had been
+   written in a self-consistent wrong namespace. The first collection run
+   showed zero expanded rows; fix merged as oracle #64 before this
+   measurement. Fixtures must be derived from production data shape.
+2. **Ground-truth reachability caveat for ALL runs:** `backend/src/routes/
+   tasks.ts` (the largest, most load-bearing implementation file) has zero
+   chunks in the index (silent ingest drop, filed as codebase-oracle
+   `004f9577`). M2 was therefore never winnable for Q7 (its only
+   ground-truth file) in ANY of the five measurement points, and expansion
+   cannot inject it either.
+
+Known self-reference caveat, restated for this section: BENCHMARK.md is
+itself indexed, and its accumulating aggregate findings name ground-truth
+files. M2 stays unaffected (BENCHMARK.md search rows are dropped by
+protocol), but future M1/P scores can be inflated by answers grounding in
+this file; the integrity rules already discount BENCHMARK.md citations as
+evidence.
+
+| Q | Q1 | Q2 | Q3 | Q4 | Q5 | Q6 | Q7 | Q8 | Q9 | Q10 | Q11 | Q12 | Total |
+|---|----|----|----|----|----|----|----|----|----|-----|-----|-----|-------|
+| M2 all four prior runs | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 1 | 4/12 |
+| M2 P3 (expansion) | 0 | 1 | **1** | 0 | 0 | 0 | 0 | 0 | 1 | 1 | **1** | **0** | **5/12** |
+
+Headline findings:
+
+- **The mechanism works where its inputs exist.** Q3 and Q11 are the first
+  M2 hits for those questions in five runs: release-flow.md injected
+  `.github/workflows/release.yml` at rank 2, claim-model.md injected
+  `backend/prisma/schema.prisma` at rank 4. Expanded rows appeared on 11/12
+  questions (Q6: no OKF doc retrieved, the known retrieval gap — expansion
+  correctly did nothing).
+- **The one regression shares a root cause with the biggest blocked win.**
+  Q12 dropped 1→0: task-lifecycle.md's FIRST source is the unindexed
+  tasks.ts, so its second source (non-ground-truth `mcp-server/src/tools.ts`)
+  was injected instead and displaced the organic ground-truth hit from rank
+  5 to 6. With tasks.ts indexed, both Q12's and Q7's first-source injections
+  become ground-truth hits: projected M2 7/12.
+- **Boundary effects bound two further wins:** Q1 and Q5 inject their
+  ground-truth files at ranks 6-7, just past the top-5 cut (the parent doc
+  ranks 3rd/5th and the ground-truth file is not the first source).
+- M1 17/24 and P 10/12 are unchanged vs the answer-LLM run, as designed:
+  the treatment touches oracle_search only. Query latency mean 21.0s.
+
+### P3 decision
+
+The pre-registered keep/revert criterion (M2 gain ≥ +2 without precision
+regression) was NOT met as measured: net +1 with one displacement
+regression. The operator reviewed the attribution — the regression and the
+largest blocked gains share the single orthogonal root cause `004f9577`
+(unindexed file), and the mechanism itself performed exactly as designed —
+and decided to KEEP sources-expansion default-on. This deviation from the
+pre-registered rule is recorded here deliberately. Confirmation path:
+fix `004f9577`, then measurement point 6 re-scores M2 (projected 7/12);
+if it fails to confirm, the default flips off.
