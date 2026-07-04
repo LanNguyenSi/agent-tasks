@@ -2,6 +2,13 @@
 
 ## 2026-07-04
 
+Answer-LLM comparison recorded in `BENCHMARK.md`: oracle answer LLM swapped
+from Groq llama-3.3-70b-versatile to local gemma4-26b-a4b-64k (Mac mini
+Ollama, `.env` only). M1 17/24, M2 4/12, P 10/12, all per-question identical
+to the P2c run; mean query latency 29.2s. Decision: keep the local model
+(removes the 100k-tokens/day cap that stalled P2c; repo content stays
+local). Task: codebase-oracle `772874fc`.
+
 P2c consumer re-run recorded in `BENCHMARK.md`: same bundle and index
 content, consumer upgraded to codebase-oracle 0.8.0 (frontmatter ingest +
 retrieval surfacing). M1 17/24 (= post-bundle, no regressions), M2 4/12
