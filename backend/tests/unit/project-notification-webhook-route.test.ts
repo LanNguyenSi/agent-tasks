@@ -53,6 +53,7 @@ vi.mock("../../src/services/gates/index.js", () => ({
 }));
 
 import { projectRouter } from "../../src/routes/projects.js";
+import { getProjectMembership } from "../../src/services/team-access.js";
 
 const HUMAN: Actor = { type: "human", userId: "u-admin" };
 
@@ -412,6 +413,51 @@ describe("GET /projects/:id — secret redaction", () => {
     const res = await makeApp().request("/projects/proj-1");
     const body = (await res.json()) as { project: Record<string, unknown> };
     expect(body.project.hasNotificationWebhookSecret).toBe(false);
+  });
+});
+
+// Additive `accessRole` field alongside `accessSource` (task: human sovereignty
+// claim/status override). Lets the frontend gate admin-only controls (e.g.
+// the claim admin-release action) for per-project-only PROJECT_ADMINs, who
+// hold no team-level role and are otherwise invisible to GET /teams.
+describe("GET /projects/:id — accessRole", () => {
+  it("exposes accessRole alongside accessSource for a per-project admin", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+    vi.mocked(getProjectMembership).mockResolvedValueOnce({
+      source: "project",
+      role: "PROJECT_ADMIN",
+    });
+
+    const res = await makeApp().request("/projects/proj-1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { project: Record<string, unknown> };
+    expect(body.project.accessSource).toBe("project");
+    expect(body.project.accessRole).toBe("PROJECT_ADMIN");
+  });
+
+  it("exposes accessRole for a viewer", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+    vi.mocked(getProjectMembership).mockResolvedValueOnce({
+      source: "project",
+      role: "PROJECT_VIEWER",
+    });
+
+    const res = await makeApp().request("/projects/proj-1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { project: Record<string, unknown> };
+    expect(body.project.accessSource).toBe("project");
+    expect(body.project.accessRole).toBe("PROJECT_VIEWER");
+  });
+
+  it("returns accessRole:null for the agent-via-team membership shape", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+    vi.mocked(getProjectMembership).mockResolvedValueOnce({ source: "team", role: null });
+
+    const res = await makeApp().request("/projects/proj-1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { project: Record<string, unknown> };
+    expect(body.project.accessSource).toBe("team");
+    expect(body.project.accessRole).toBeNull();
   });
 });
 

@@ -82,6 +82,15 @@ export interface Project {
    * Optional because some legacy API responses may omit it; treat
    * `undefined` as `"team"` for backward-compatibility. */
   accessSource?: "team" | "project";
+  /** The caller's role on this project: team role (e.g. `"ADMIN"`) when
+   * `accessSource` is `"team"`, or a `ProjectMemberRole` (e.g.
+   * `"PROJECT_ADMIN"`) when access comes from a per-project share. Only
+   * returned by `GET /projects/:id` (not the list endpoint) — `null` when
+   * the role itself is unset, `undefined` on responses that predate this
+   * field. Admin-ness is `accessRole === "ADMIN" || accessRole === "PROJECT_ADMIN"`,
+   * which — unlike `team?.role === "ADMIN"` — also covers per-project-only
+   * admins who hold no team-level role. */
+  accessRole?: string | null;
 }
 
 export interface Task {
@@ -114,6 +123,24 @@ export interface Task {
     avatarUrl: string | null;
   } | null;
   claimedByAgent?: {
+    id: string;
+    name: string;
+  } | null;
+  /** The review claim: set while the task is under review and someone has
+   * claimed the reviewer slot (mirrors claimedBy* for the work claim). The
+   * backend's task-fetch `include` does not currently join a resolved
+   * `reviewClaimedByUser` / `reviewClaimedByAgent` object (unlike the work
+   * claim above), so only the raw id is reliably available today — the UI
+   * falls back to a truncated id when no resolved user/agent is present. */
+  reviewClaimedByUserId?: string | null;
+  reviewClaimedByAgentId?: string | null;
+  reviewClaimedByUser?: {
+    id: string;
+    login: string;
+    name: string | null;
+    avatarUrl: string | null;
+  } | null;
+  reviewClaimedByAgent?: {
     id: string;
     name: string;
   } | null;
@@ -210,6 +237,14 @@ export interface ApiError {
   message: string;
 }
 
+/** One failed workflow-transition precondition, as returned in the 422
+ * `precondition_failed` body from `POST /tasks/:id/transition`. */
+export interface TransitionRuleFailure {
+  rule: string;
+  message: string;
+  error?: string;
+}
+
 // ── Core request ──────────────────────────────────────────────────────────────
 
 /**
@@ -218,15 +253,29 @@ export interface ApiError {
  * the code on the floor, forcing callers to string-match on the
  * human-readable message — brittle and i18n-unfriendly. Callers can
  * now branch on `e instanceof ApiRequestError && e.code === "..."`.
+ *
+ * `failed` and `canForce` are populated only for the `precondition_failed`
+ * 422 shape returned by the transition endpoint (see docs/workflow-preconditions.md);
+ * every other error response leaves them `undefined`, so existing callers
+ * that only read `.code` / `.message` / `.status` are unaffected.
  */
 export class ApiRequestError extends Error {
   readonly code: string;
   readonly status: number;
-  constructor(code: string, message: string, status: number) {
+  readonly failed?: TransitionRuleFailure[];
+  readonly canForce?: boolean;
+  constructor(
+    code: string,
+    message: string,
+    status: number,
+    extra?: { failed?: TransitionRuleFailure[]; canForce?: boolean },
+  ) {
     super(message);
     this.name = "ApiRequestError";
     this.code = code;
     this.status = status;
+    this.failed = extra?.failed;
+    this.canForce = extra?.canForce;
   }
 }
 
@@ -238,11 +287,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
-    const err = (await res.json().catch(() => ({ message: "Request failed" }))) as ApiError;
+    const err = (await res.json().catch(() => ({ message: "Request failed" }))) as ApiError & {
+      failed?: TransitionRuleFailure[];
+      canForce?: boolean;
+    };
     throw new ApiRequestError(
       err.error ?? "request_failed",
       err.message ?? "Request failed",
       res.status,
+      { failed: err.failed, canForce: err.canForce },
     );
   }
 
@@ -742,6 +795,21 @@ export async function claimTask(taskId: string, force = false): Promise<Task> {
 export async function releaseTask(taskId: string): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/tasks/${taskId}/release`, { method: "POST" });
   return data.task;
+}
+
+/** Project-admin escape hatch: force-release a work and/or review claim held
+ * by anyone (self-service `releaseTask` above only releases the caller's own
+ * claim and resets status). Does not touch `task.status`. 403 for agents and
+ * non-admins; 400 if neither boolean is set. Idempotent — releasing an
+ * already-absent claim returns `released.<x>: false` rather than erroring. */
+export async function adminReleaseClaim(
+  taskId: string,
+  body: { releaseWorkClaim?: boolean; releaseReviewClaim?: boolean; reason?: string },
+): Promise<{ task: Task; released: { workClaim: boolean; reviewClaim: boolean } }> {
+  return request<{ task: Task; released: { workClaim: boolean; reviewClaim: boolean } }>(
+    `/api/tasks/${taskId}/admin-release`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
 }
 
 // Claim + advance an open task to in_progress in one call (the v2 `/start`

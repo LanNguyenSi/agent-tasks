@@ -29,6 +29,8 @@ import {
   removeDependency,
   reviewTask,
   transitionTask,
+  adminReleaseClaim,
+  ApiRequestError,
   type User,
   type Task,
   type Comment,
@@ -57,7 +59,7 @@ import Modal from "./ui/Modal";
 import Select from "@/components/ui/Select";
 import { Icon } from "./ui/Icon";
 import { KeyHint } from "./ui/KeyHint";
-import TaskHeader, { type AdvanceAction } from "./task-detail/TaskHeader";
+import TaskHeader, { type AdvanceAction, type StatusOverrideResult } from "./task-detail/TaskHeader";
 import TaskMetaSidebar from "./task-detail/TaskMetaSidebar";
 import ReviewPanel from "./task-detail/ReviewPanel";
 import CommentList from "./task-detail/CommentList";
@@ -131,6 +133,15 @@ export interface TaskDetailProps {
   templateFields: TemplateFields | null;
   confidenceThreshold: number;
   requireDistinctReviewer?: boolean;
+  /** True for a human who is a team ADMIN or a per-project PROJECT_ADMIN
+   * (derived from `project.accessRole`, which — unlike `team?.role` —
+   * also covers per-project-only admins). Gates the status-override and
+   * admin claim-release controls in TaskHeader / TaskMetaSidebar. Defaults
+   * to false so callers that don't thread it (e.g. the dashboard board
+   * modal, which currently only has the project *list* projection without
+   * `accessRole`) simply don't expose the admin controls, rather than
+   * erroring. */
+  isProjectAdmin?: boolean;
   /** Open directly in edit mode (e.g. from the create-confidence panel's
    *  "Edit task"), so the user lands on the editors for the missing fields. */
   initialEditing?: boolean;
@@ -157,6 +168,7 @@ export default function TaskDetail({
   templateFields,
   confidenceThreshold,
   requireDistinctReviewer = false,
+  isProjectAdmin = false,
   onUpdate,
   onDelete,
   onClose,
@@ -174,6 +186,7 @@ export default function TaskDetail({
   const [showDeleteTaskConfirm, setShowDeleteTaskConfirm] = useState(false);
   const [claimBusy, setClaimBusy] = useState(false);
   const [advanceBusy, setAdvanceBusy] = useState(false);
+  const [adminReleaseBusy, setAdminReleaseBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [resultExpanded, setResultExpanded] = useState(false);
   const [reviewComment, setReviewComment] = useState("");
@@ -483,6 +496,55 @@ export default function TaskDetail({
     }
   }
 
+  // Admin status override (TaskHeader owns the target/forceReason UI state;
+  // this handler owns the actual fetch, mirroring handleAdvance above). On a
+  // 422 precondition_failed it returns the failing rules + canForce instead
+  // of calling onError, so TaskHeader can render them inline with a retry
+  // affordance rather than a dead-end toast. Any other error still goes
+  // through onError like every other handler in this file.
+  const handleStatusOverride = useCallback(
+    async (
+      target: string,
+      options?: { force?: boolean; forceReason?: string },
+    ): Promise<StatusOverrideResult> => {
+      try {
+        const updated = await transitionTask(task.id, target, options);
+        onUpdate(updated);
+        return { kind: "success" };
+      } catch (err) {
+        if (err instanceof ApiRequestError && err.code === "precondition_failed") {
+          return {
+            kind: "blocked",
+            message: err.message,
+            failed: err.failed ?? [],
+            canForce: err.canForce ?? false,
+          };
+        }
+        onError((err as Error).message);
+        return { kind: "error" };
+      }
+    },
+    [task.id, onUpdate, onError],
+  );
+
+  // Admin claim release (work and/or review claim, held by anyone).
+  const handleAdminRelease = useCallback(
+    async (opts: { releaseWorkClaim?: boolean; releaseReviewClaim?: boolean }): Promise<boolean> => {
+      setAdminReleaseBusy(true);
+      try {
+        const { task: updated } = await adminReleaseClaim(task.id, opts);
+        onUpdate(updated);
+        return true;
+      } catch (err) {
+        onError((err as Error).message);
+        return false;
+      } finally {
+        setAdminReleaseBusy(false);
+      }
+    },
+    [task.id, onUpdate, onError],
+  );
+
   const webhookEvents = (task.comments ?? []).filter((c: Comment) =>
     c.content.startsWith("[webhook]"),
   );
@@ -523,6 +585,8 @@ export default function TaskDetail({
       onScrollToReview={() =>
         reviewSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
       }
+      isProjectAdmin={isProjectAdmin}
+      onOverrideStatus={handleStatusOverride}
     />
   );
 
@@ -1039,6 +1103,9 @@ export default function TaskDetail({
         onClaim={() => void handleClaim()}
         onRelease={() => void handleRelease()}
         claimBusy={claimBusy}
+        isProjectAdmin={isProjectAdmin}
+        onAdminRelease={handleAdminRelease}
+        adminReleaseBusy={adminReleaseBusy}
       />
     </aside>
   );

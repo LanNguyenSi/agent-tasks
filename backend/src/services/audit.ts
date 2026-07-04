@@ -101,7 +101,13 @@ export type AuditAction =
   // repo diverges from project.githubRepo.
   | "task.deliverable_repo_set"
   | "task.deliverable_repo_changed"
-  | "task.foreign_pr_linked";
+  | "task.foreign_pr_linked"
+  // Human-project-admin escape hatch (POST /tasks/:id/admin-release): an
+  // admin force-releases a work or review claim held by ANYONE, without
+  // touching task.status. One event per claim actually released (no event
+  // for an idempotent no-op where the claim was already gone).
+  | "task.claim_released_by_admin"
+  | "task.review_claim_released_by_admin";
 
 export interface AuditPayload {
   [key: string]: unknown;

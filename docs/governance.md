@@ -29,6 +29,15 @@ Per-transition rules like `branchPresent`, `prPresent`, `prMerged`, `ciGreen` ar
 
 Server-side enforcement, not prompt suggestion. Every rule is checked by the API, not by the agent's prompt. Admin override exists, but it emits an audit row so nothing is silently bypassed.
 
+### Human override from the task page
+
+A project admin (team `ADMIN`, or a per-project `PROJECT_ADMIN` with no team-level role) gets two escape hatches directly on the task detail page, both audited and both absent for agents:
+
+- **Force a status transition** past a failed precondition. Picking a target state that a blocked transition would reject surfaces the failing rules inline with a "force" affordance; confirming requires a non-empty reason and is audited as `task.transitioned.forced`.
+- **Release a work or review claim held by anyone** — a stuck agent, an absent teammate, or their own claim — via an admin-only release control next to the assignee/reviewer, audited as `task.claim_released_by_admin` / `task.review_claim_released_by_admin`.
+
+Non-admin humans see both controls disabled with the reason, never hidden. See [docs/workflow-preconditions.md](workflow-preconditions.md#forcing-a-transition-past-a-failed-precondition) for the forced-transition wire format.
+
 ## Governance modes (per project)
 
 `governanceMode` (formerly `soloMode` + `requireDistinctReviewer`, see ADR-0010) decides what happens when a PR is merged and how strict the reviewer rule is.

@@ -6,14 +6,18 @@
 // Confidence score is passed pre-calculated by the parent (TaskDetail) so it
 // reflects the live editing state without this component importing calculateConfidence.
 
+import { useState } from "react";
 import type { Task, User } from "@/lib/api";
 import { normalizeStatus } from "@/lib/status";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { PriorityLabel } from "@/components/ui/PriorityLabel";
 import { Icon } from "@/components/ui/Icon";
 import { Button } from "@/components/ui/Button";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { formatAbsoluteDate, formatDueDate } from "@/lib/time";
 import { isHttpUrl } from "@/lib/pr";
+
+type AdminReleaseKind = "work" | "review";
 
 interface TaskMetaSidebarProps {
   task: Task;
@@ -22,6 +26,15 @@ interface TaskMetaSidebarProps {
   onClaim: () => void;
   onRelease: () => void;
   claimBusy: boolean;
+  /** True for a human who is a team ADMIN or a per-project PROJECT_ADMIN.
+   * Gates the admin claim-release controls below (see TaskHeader's
+   * isProjectAdmin doc for the same derivation). */
+  isProjectAdmin: boolean;
+  /** Force-releases a claim held by anyone via `adminReleaseClaim`
+   * (implemented in TaskDetail.tsx). Resolves `true` on success so this
+   * component knows whether to close the confirm dialog. */
+  onAdminRelease: (opts: { releaseWorkClaim?: boolean; releaseReviewClaim?: boolean }) => Promise<boolean>;
+  adminReleaseBusy: boolean;
 }
 
 function isOverdue(task: Task): boolean {
@@ -44,6 +57,18 @@ function getAssigneeInitials(task: Task): string {
   return name.slice(0, 2).toUpperCase();
 }
 
+function getReviewerLabel(task: Task): string {
+  if (!task.reviewClaimedByUserId && !task.reviewClaimedByAgentId) return "Unassigned";
+  if (task.reviewClaimedByUser) return task.reviewClaimedByUser.name ?? task.reviewClaimedByUser.login;
+  if (task.reviewClaimedByAgent) return `Agent ${task.reviewClaimedByAgent.name}`;
+  // The task-fetch include doesn't currently resolve reviewClaimedByUser/Agent
+  // (unlike the work claim above) — fall back to a truncated id rather than
+  // showing nothing, so the admin release confirm still names *something*.
+  if (task.reviewClaimedByUserId) return `User ${task.reviewClaimedByUserId.slice(0, 8)}…`;
+  if (task.reviewClaimedByAgentId) return `Agent ${task.reviewClaimedByAgentId.slice(0, 8)}…`;
+  return "Assigned";
+}
+
 // Maps in_progress to the workflow-note text (what the next step is).
 const NEXT_STEP: Record<string, string> = {
   open: "can be started",
@@ -59,12 +84,31 @@ export default function TaskMetaSidebar({
   onClaim,
   onRelease,
   claimBusy,
+  isProjectAdmin,
+  onAdminRelease,
+  adminReleaseBusy,
 }: TaskMetaSidebarProps) {
   const overdue = isOverdue(task);
   const assigned = Boolean(task.claimedByUserId || task.claimedByAgentId);
   const isOwnTask = task.claimedByUserId === user?.id;
   const canClaim = !assigned && task.status !== "open";
   const nextStep = NEXT_STEP[task.status] ?? "in an unknown state";
+  const hasReviewClaim = Boolean(task.reviewClaimedByUserId || task.reviewClaimedByAgentId);
+
+  // Admin release: which confirm dialog (if any) is open. Self-service
+  // release (above) already covers "the claimant releases their own work
+  // claim", so the admin control here is scoped to claims held by someone
+  // else (or an agent, which has no self-service release affordance at all)
+  // — the case the self-service Release button can't reach.
+  const [adminReleaseConfirm, setAdminReleaseConfirm] = useState<AdminReleaseKind | null>(null);
+
+  async function confirmAdminRelease() {
+    if (!adminReleaseConfirm) return;
+    const ok = await onAdminRelease(
+      adminReleaseConfirm === "review" ? { releaseReviewClaim: true } : { releaseWorkClaim: true },
+    );
+    if (ok) setAdminReleaseConfirm(null);
+  }
 
   return (
     <div>
@@ -107,6 +151,20 @@ export default function TaskMetaSidebar({
                     Release
                   </Button>
                 )}
+                {/* Admin escape hatch: releases a claim the claimant can't
+                    (someone else's, or an agent's — self-service Release
+                    above only ever covers the current human's own claim). */}
+                {isProjectAdmin && !isOwnTask && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setAdminReleaseConfirm("work")}
+                    disabled={adminReleaseBusy}
+                    title="Release this claim as a project admin"
+                  >
+                    Release (admin)
+                  </Button>
+                )}
               </>
             ) : (
               <>
@@ -126,6 +184,29 @@ export default function TaskMetaSidebar({
             )}
           </span>
         </span>
+
+        {/* Reviewer (review claim) + admin release */}
+        {hasReviewClaim && (
+          <>
+            <span className="td-prop-label">Reviewer</span>
+            <span className="td-prop-value">
+              <span className="td-assignee-row">
+                <span>{getReviewerLabel(task)}</span>
+                {isProjectAdmin && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setAdminReleaseConfirm("review")}
+                    disabled={adminReleaseBusy}
+                    title="Release this review claim as a project admin"
+                  >
+                    Release
+                  </Button>
+                )}
+              </span>
+            </span>
+          </>
+        )}
 
         {/* Labels */}
         {task.labels && task.labels.length > 0 && (
@@ -252,6 +333,24 @@ export default function TaskMetaSidebar({
           </>
         )}
       </p>
+
+      <ConfirmDialog
+        open={adminReleaseConfirm !== null}
+        title={adminReleaseConfirm === "review" ? "Release review claim?" : "Release claim?"}
+        message={
+          adminReleaseConfirm === "review"
+            ? `${getReviewerLabel(task)} currently holds the review claim on this task. Releasing it may interrupt an in-progress review.`
+            : `${getAssigneeLabel(task)} currently holds the work claim on this task. Releasing it may interrupt work in progress.`
+        }
+        confirmLabel="Release"
+        cancelLabel="Cancel"
+        tone="danger"
+        busy={adminReleaseBusy}
+        onConfirm={() => void confirmAdminRelease()}
+        onCancel={() => {
+          if (!adminReleaseBusy) setAdminReleaseConfirm(null);
+        }}
+      />
     </div>
   );
 }

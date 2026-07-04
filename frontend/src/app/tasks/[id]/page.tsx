@@ -87,6 +87,12 @@ export default function TaskDetailPage() {
       ? `/dashboard?teamId=${project.teamId}&projectId=${task.projectId}`
       : "/dashboard";
 
+  // `accessRole` (from GET /projects/:id, fetched above via getProject) covers
+  // both a team ADMIN and a per-project-only PROJECT_ADMIN — unlike
+  // `team?.role === "ADMIN"`, which misses the latter (see workflow/page.tsx).
+  const isProjectAdmin =
+    project?.accessRole === "ADMIN" || project?.accessRole === "PROJECT_ADMIN";
+
   function goToBoard() {
     router.push(boardHref);
   }
@@ -118,6 +124,7 @@ export default function TaskDetailPage() {
           templateFields={project.taskTemplate?.fields ?? null}
           confidenceThreshold={project.confidenceThreshold ?? 60}
           requireDistinctReviewer={project.requireDistinctReviewer ?? false}
+          isProjectAdmin={isProjectAdmin}
           onUpdate={handleUpdate}
           onDelete={goToBoard}
           onClose={goToBoard}

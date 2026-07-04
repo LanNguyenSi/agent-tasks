@@ -294,8 +294,19 @@ projectRouter.get("/projects/:id", async (c) => {
   // for each registered gate, whether it would evaluate on this project
   // and why. Lets clients (agents, UI, external integrations) learn the
   // invariant surface BEFORE tripping a 4xx. See services/gates/.
+  // `accessRole` is additive alongside `accessSource`: it lets the frontend
+  // gate admin-only controls (e.g. the claim admin-release action) for
+  // per-project-only PROJECT_ADMINs, who hold no team-level role and are
+  // otherwise invisible to GET /teams. `membership` is guaranteed non-null
+  // here (the forbidden check above already returned), but role itself can
+  // be null for the agent-via-team case — pass it through as-is rather than
+  // coercing, so the frontend can distinguish "no role info" from a role.
   return c.json({
-    project: redactProject({ ...project, accessSource: membership.source }),
+    project: redactProject({
+      ...project,
+      accessSource: membership.source,
+      accessRole: membership.role,
+    }),
     effectiveGates: computeEffectiveGates(project),
     taskCreation: describeTaskCreation(project),
   });
