@@ -452,12 +452,17 @@ project's GitHub delegation token has no standing on a foreign repo, so
 these rules cannot be meaningfully evaluated there. v1 treats them as
 **skipped** (trivially satisfied) rather than evaluated or force-failed —
 the alternative would either fail closed forever with no recovery path, or
-silently pretend the rule ran. The skip is recorded, not hidden: a
-`task_finish` response on a foreign-deliverable task carries an additive
-`skippedGates: [{ rule, reason }]` array when this applies. Task-level
+silently pretend the rule ran. The skip is recorded, not hidden: both a
+`task_finish` response and a `POST /api/tasks/:id/transition` response (the
+endpoint the MCP `tasks_transition` verb uses) on a foreign-deliverable
+task carry an additive `skippedGates: [{ rule, reason }]` array when this
+applies, and the transition audit event carries the same list. Task-level
 introspection (`GET /api/tasks/:id/instructions`) surfaces the override
 itself via an additive `crossRepoDeliverable: { deliverableRepo,
-effectiveRepo, overridden }` block.
+effectiveRepo, overridden, foreign }` block; `foreign` is the
+case-insensitive foreign-vs-home decision every enforcement point uses
+(GitHub repo names are case-insensitive, so an override that differs from
+the project repo only by case counts as home).
 
 **Audit trail**: `task.deliverable_repo_set` (create, non-null only),
 `task.deliverable_repo_changed` (PATCH, set/changed/cleared), and

@@ -296,6 +296,24 @@ describe("PATCH /tasks/:id — deliverableRepo authoring", () => {
     );
   });
 
+  it("audits task.foreign_pr_linked when one human PATCH sets the override AND links the foreign prUrl", async () => {
+    // Regression for the re-review finding: the audit condition must use the
+    // PENDING override (set in this same call), not the stale task row.
+    prismaMocks.taskFindUnique.mockResolvedValue({ ...baseTask, deliverableRepo: null, project: baseProject });
+    const res = await makeApp(HUMAN).request(`/tasks/${TASK_ID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deliverableRepo: FOREIGN_REPO, prUrl: FOREIGN_PR_URL }),
+    });
+    expect(res.status).toBe(200);
+    expect(logAuditEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.foreign_pr_linked",
+        payload: expect.objectContaining({ prUrl: FOREIGN_PR_URL, deliverableRepo: FOREIGN_REPO, via: "patch" }),
+      }),
+    );
+  });
+
   it("lets a project admin clear deliverableRepo and audits the change", async () => {
     prismaMocks.taskFindUnique.mockResolvedValue({ ...baseTask, deliverableRepo: FOREIGN_REPO, project: baseProject });
     const res = await makeApp(HUMAN).request(`/tasks/${TASK_ID}`, {

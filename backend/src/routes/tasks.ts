@@ -4055,17 +4055,21 @@ taskRouter.patch("/tasks/:id", async (c) => {
   }
 
   if (body.prUrl) {
-    const effectiveRepo = effectiveDeliverableRepo(
-      { deliverableRepo: body.deliverableRepo !== undefined ? body.deliverableRepo : task.deliverableRepo },
-      task.project,
-    );
-    if (isForeignDeliverable(task, task.project)) {
+    // The human lane can set/clear deliverableRepo in the SAME PATCH that
+    // links the prUrl, so both the condition and the payload must use the
+    // pending (post-write) override — gating on the stale task would drop
+    // the audit for a same-call set+link and mis-audit a same-call clear.
+    const pending = {
+      deliverableRepo:
+        body.deliverableRepo !== undefined ? body.deliverableRepo : task.deliverableRepo,
+    };
+    if (isForeignDeliverable(pending, task.project)) {
       void logAuditEvent({
         action: "task.foreign_pr_linked",
         actorId: actor.userId,
         projectId: task.projectId,
         taskId: task.id,
-        payload: { prUrl: body.prUrl, deliverableRepo: effectiveRepo, projectRepo: task.project.githubRepo, actorType: "human", via: "patch" },
+        payload: { prUrl: body.prUrl, deliverableRepo: effectiveDeliverableRepo(pending, task.project), projectRepo: task.project.githubRepo, actorType: "human", via: "patch" },
       });
     }
   }
