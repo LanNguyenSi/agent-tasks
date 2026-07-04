@@ -34,6 +34,7 @@ import {
   type User,
   type Task,
   type Comment,
+  type WorkflowTransition,
 } from "../lib/api";
 import {
   calculateConfidence,
@@ -142,6 +143,10 @@ export interface TaskDetailProps {
    * `accessRole`) simply don't expose the admin controls, rather than
    * erroring. */
   isProjectAdmin?: boolean;
+  /** Effective-workflow edges, used to constrain the admin status-override
+   * dropdown to targets the backend will accept (force bypasses `requires`
+   * gates, not edge existence). null = not loaded → fall back to base states. */
+  workflowTransitions?: WorkflowTransition[] | null;
   /** Open directly in edit mode (e.g. from the create-confidence panel's
    *  "Edit task"), so the user lands on the editors for the missing fields. */
   initialEditing?: boolean;
@@ -169,6 +174,7 @@ export default function TaskDetail({
   confidenceThreshold,
   requireDistinctReviewer = false,
   isProjectAdmin = false,
+  workflowTransitions = null,
   onUpdate,
   onDelete,
   onClose,
@@ -520,6 +526,19 @@ export default function TaskDetail({
             canForce: err.canForce ?? false,
           };
         }
+        // A 400 bad_request means the target is not a defined edge of the
+        // effective workflow (force bypasses `requires` preconditions, NOT
+        // edge existence). Surface it inline in the same blocked panel with
+        // canForce=false instead of a bare toast — so the admin sees WHY the
+        // pick did nothing rather than hitting a silent dead end.
+        if (err instanceof ApiRequestError && err.code === "bad_request") {
+          return {
+            kind: "blocked",
+            message: err.message,
+            failed: [],
+            canForce: false,
+          };
+        }
         onError((err as Error).message);
         return { kind: "error" };
       }
@@ -586,6 +605,13 @@ export default function TaskDetail({
         reviewSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
       }
       isProjectAdmin={isProjectAdmin}
+      statusOverrideTargets={
+        workflowTransitions
+          ? workflowTransitions
+              .filter((t) => t.from === task.status)
+              .map((t) => t.to)
+          : null
+      }
       onOverrideStatus={handleStatusOverride}
     />
   );

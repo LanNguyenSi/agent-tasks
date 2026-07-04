@@ -205,7 +205,11 @@ describe("POST /tasks/:id/admin-release — releasing claims", () => {
     const call = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(call.data).toEqual({ claimedByUserId: null, claimedByAgentId: null, claimedAt: null });
     expect(call.data.status).toBeUndefined();
-    expect(call.where).toMatchObject({ id: TASK_ID });
+    // CAS guard is PINNED to the observed holder (not a loose "any claim"
+    // OR) so a hand-off race between snapshot and write matches nothing
+    // instead of clobbering a new claimant.
+    expect(call.where).toMatchObject({ id: TASK_ID, claimedByAgentId: "agent-77" });
+    expect(call.where.OR).toBeUndefined();
 
     expect(logAuditEventMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -244,6 +248,9 @@ describe("POST /tasks/:id/admin-release — releasing claims", () => {
       reviewClaimedByAgentId: null,
       reviewClaimedAt: null,
     });
+    // Pinned to the observed review holder (hand-off-race safe).
+    expect(call.where).toMatchObject({ id: TASK_ID, reviewClaimedByUserId: "user-99" });
+    expect(call.where.OR).toBeUndefined();
 
     expect(logAuditEventMock).toHaveBeenCalledWith(
       expect.objectContaining({

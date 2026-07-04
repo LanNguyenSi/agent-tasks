@@ -62,6 +62,7 @@ function renderHeader(
   advanceBusy = false,
   overrides: {
     isProjectAdmin?: boolean;
+    statusOverrideTargets?: string[] | null;
     onOverrideStatus?: (
       target: string,
       options?: { force?: boolean; forceReason?: string },
@@ -80,6 +81,7 @@ function renderHeader(
       onDeleteRequest={vi.fn()}
       onScrollToReview={vi.fn()}
       isProjectAdmin={overrides.isProjectAdmin ?? false}
+      statusOverrideTargets={overrides.statusOverrideTargets ?? null}
       onOverrideStatus={overrides.onOverrideStatus ?? vi.fn().mockResolvedValue({ kind: "success" })}
     />,
   );
@@ -262,5 +264,56 @@ describe("TaskHeader admin status override", () => {
       force: true,
       forceReason: "short enough now",
     });
+  });
+
+  it("constrains the dropdown to the effective-workflow outgoing edges", async () => {
+    // in_progress → only review + done are defined edges; open must NOT be
+    // offered (picking it would 400 on a non-edge — the dead end this avoids).
+    renderHeader(makeTask({ status: "in_progress" }), vi.fn(), false, {
+      isProjectAdmin: true,
+      statusOverrideTargets: ["review", "done"],
+    });
+    await userEvent.click(screen.getByRole("combobox"));
+    expect(screen.getByRole("option", { name: "Review" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Done" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Open" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "In Progress" })).not.toBeInTheDocument();
+  });
+
+  it("renders a note instead of an empty dropdown when the state has no outgoing edges", () => {
+    renderHeader(makeTask({ status: "done" }), vi.fn(), false, {
+      isProjectAdmin: true,
+      statusOverrideTargets: [],
+    });
+    expect(
+      screen.getByText("No status changes are defined from this state in the workflow."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Set status" })).not.toBeInTheDocument();
+  });
+
+  it("a non-forceable blocked result (e.g. a 400 non-edge) is shown inline as 'cannot be forced', not a dead-end toast", async () => {
+    const onOverrideStatus = vi.fn().mockResolvedValue({
+      kind: "blocked",
+      message: "Transition from 'open' to 'done' is not allowed by workflow",
+      failed: [],
+      canForce: false,
+    } satisfies StatusOverrideResult);
+    renderHeader(makeTask({ status: "open" }), vi.fn(), false, {
+      isProjectAdmin: true,
+      // base-4 fallback (targets null) so "Done" is offered and the handler
+      // decides it is a non-edge; the result is surfaced inline.
+      onOverrideStatus,
+    });
+
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Done" }));
+    await userEvent.click(screen.getByRole("button", { name: "Set status" }));
+
+    expect(
+      await screen.findByText("Transition from 'open' to 'done' is not allowed by workflow"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("This transition cannot be forced.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Override anyway…" })).not.toBeInTheDocument();
   });
 });

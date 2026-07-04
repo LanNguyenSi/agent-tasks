@@ -3,8 +3,9 @@
  * TaskMetaSidebar -- admin claim-release controls.
  *
  * Contract under test:
- *   - a non-admin human never sees the admin release affordances, even
- *     when a work or review claim is held by someone else.
+ *   - a non-admin human sees the admin release affordances DISABLED with a
+ *     reason (never hidden), when a work or review claim is held by someone
+ *     else.
  *   - an admin sees "Release (admin)" on a work claim held by someone else
  *     (or an agent) — not on their OWN claim, which the pre-existing
  *     self-service "Release" button already covers.
@@ -72,12 +73,17 @@ function renderSidebar(
 }
 
 describe("TaskMetaSidebar admin work-claim release", () => {
-  it("non-admin sees no admin release affordance even when someone else holds the claim", () => {
+  it("non-admin sees the admin release control DISABLED with a reason, not hidden", () => {
     renderSidebar(makeTask({ claimedByUserId: "u-2", claimedByUser: { id: "u-2", login: "other", name: "Other Person", avatarUrl: null } }), {
       isProjectAdmin: false,
     });
     expect(screen.getByText("Other Person")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Release (admin)" })).not.toBeInTheDocument();
+    const btn = screen.getByRole("button", { name: "Release (admin)" });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute(
+      "title",
+      "Only project admins can release another actor's claim",
+    );
   });
 
   it("admin sees Release (admin) on a claim held by someone else, naming the holder in the confirm", async () => {
@@ -123,13 +129,18 @@ describe("TaskMetaSidebar admin review-claim release", () => {
     expect(screen.queryByText("Reviewer")).not.toBeInTheDocument();
   });
 
-  it("non-admin sees the Reviewer name but no release control", () => {
+  it("non-admin sees the Reviewer name and a DISABLED release control (not hidden)", () => {
     renderSidebar(
       makeTask({ reviewClaimedByUserId: "u-3", reviewClaimedByUser: { id: "u-3", login: "rev", name: "Reviewer Person", avatarUrl: null } }),
       { isProjectAdmin: false },
     );
     expect(screen.getByText("Reviewer Person")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Release" })).not.toBeInTheDocument();
+    const btn = screen.getByRole("button", { name: "Release" });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute(
+      "title",
+      "Only project admins can release another actor's claim",
+    );
   });
 
   it("admin sees a Release control on the review claim, naming the holder, and calls onAdminRelease with releaseReviewClaim", async () => {

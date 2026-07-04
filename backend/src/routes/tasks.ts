@@ -5125,29 +5125,35 @@ taskRouter.post(
     const released = { workClaim: false, reviewClaim: false };
 
     if (body.releaseWorkClaim) {
-      // priorHolder is read from the task loaded above the CAS write, before
-      // it is nulled — best-effort attribution for the audit trail.
+      // priorHolder is the claim observed at load time. Only attempt a release
+      // when a claim actually exists in the snapshot, and PIN the CAS guard to
+      // that exact holder: if the claim changed hands (holder released, another
+      // actor re-claimed) between this snapshot and the write, the pinned where
+      // matches nothing (count 0), so we neither clobber the new claimant nor
+      // log a stale priorHolder. An "any claim present" guard would do both.
       const priorHolder = task.claimedByUserId
         ? { type: "human" as const, id: task.claimedByUserId }
         : task.claimedByAgentId
           ? { type: "agent" as const, id: task.claimedByAgentId }
           : null;
-      const result = await prisma.task.updateMany({
-        where: {
-          id: task.id,
-          OR: [{ claimedByUserId: { not: null } }, { claimedByAgentId: { not: null } }],
-        },
-        data: { claimedByUserId: null, claimedByAgentId: null, claimedAt: null },
-      });
-      if (result.count > 0) {
-        released.workClaim = true;
-        void logAuditEvent({
-          action: "task.claim_released_by_admin",
-          actorId: actor.userId,
-          projectId: task.projectId,
-          taskId: task.id,
-          payload: { priorHolder, reason: body.reason ?? null },
+      if (priorHolder) {
+        const result = await prisma.task.updateMany({
+          where:
+            priorHolder.type === "human"
+              ? { id: task.id, claimedByUserId: priorHolder.id }
+              : { id: task.id, claimedByAgentId: priorHolder.id },
+          data: { claimedByUserId: null, claimedByAgentId: null, claimedAt: null },
         });
+        if (result.count > 0) {
+          released.workClaim = true;
+          void logAuditEvent({
+            action: "task.claim_released_by_admin",
+            actorId: actor.userId,
+            projectId: task.projectId,
+            taskId: task.id,
+            payload: { priorHolder, reason: body.reason ?? null },
+          });
+        }
       }
     }
 
@@ -5157,22 +5163,24 @@ taskRouter.post(
         : task.reviewClaimedByAgentId
           ? { type: "agent" as const, id: task.reviewClaimedByAgentId }
           : null;
-      const result = await prisma.task.updateMany({
-        where: {
-          id: task.id,
-          OR: [{ reviewClaimedByUserId: { not: null } }, { reviewClaimedByAgentId: { not: null } }],
-        },
-        data: { reviewClaimedByUserId: null, reviewClaimedByAgentId: null, reviewClaimedAt: null },
-      });
-      if (result.count > 0) {
-        released.reviewClaim = true;
-        void logAuditEvent({
-          action: "task.review_claim_released_by_admin",
-          actorId: actor.userId,
-          projectId: task.projectId,
-          taskId: task.id,
-          payload: { priorHolder, reason: body.reason ?? null },
+      if (priorHolder) {
+        const result = await prisma.task.updateMany({
+          where:
+            priorHolder.type === "human"
+              ? { id: task.id, reviewClaimedByUserId: priorHolder.id }
+              : { id: task.id, reviewClaimedByAgentId: priorHolder.id },
+          data: { reviewClaimedByUserId: null, reviewClaimedByAgentId: null, reviewClaimedAt: null },
         });
+        if (result.count > 0) {
+          released.reviewClaim = true;
+          void logAuditEvent({
+            action: "task.review_claim_released_by_admin",
+            actorId: actor.userId,
+            projectId: task.projectId,
+            taskId: task.id,
+            payload: { priorHolder, reason: body.reason ?? null },
+          });
+        }
       }
     }
 

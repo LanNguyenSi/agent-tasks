@@ -61,9 +61,10 @@ function getReviewerLabel(task: Task): string {
   if (!task.reviewClaimedByUserId && !task.reviewClaimedByAgentId) return "Unassigned";
   if (task.reviewClaimedByUser) return task.reviewClaimedByUser.name ?? task.reviewClaimedByUser.login;
   if (task.reviewClaimedByAgent) return `Agent ${task.reviewClaimedByAgent.name}`;
-  // The task-fetch include doesn't currently resolve reviewClaimedByUser/Agent
-  // (unlike the work claim above) — fall back to a truncated id rather than
-  // showing nothing, so the admin release confirm still names *something*.
+  // The backend task-fetch include now resolves reviewClaimedByUser/Agent
+  // (symmetric with the work claim), so the branches above normally win.
+  // This truncated-id fallback is defensive, for a response that predates the
+  // include or omits it — still names *something* in the release confirm.
   if (task.reviewClaimedByUserId) return `User ${task.reviewClaimedByUserId.slice(0, 8)}…`;
   if (task.reviewClaimedByAgentId) return `Agent ${task.reviewClaimedByAgentId.slice(0, 8)}…`;
   return "Assigned";
@@ -153,14 +154,20 @@ export default function TaskMetaSidebar({
                 )}
                 {/* Admin escape hatch: releases a claim the claimant can't
                     (someone else's, or an agent's — self-service Release
-                    above only ever covers the current human's own claim). */}
-                {isProjectAdmin && !isOwnTask && (
+                    above only ever covers the current human's own claim).
+                    Shown DISABLED with a reason to non-admins rather than
+                    hidden, so the boundary is visible, not a dead end. */}
+                {!isOwnTask && (
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => setAdminReleaseConfirm("work")}
-                    disabled={adminReleaseBusy}
-                    title="Release this claim as a project admin"
+                    disabled={!isProjectAdmin || adminReleaseBusy}
+                    title={
+                      isProjectAdmin
+                        ? "Release this claim as a project admin"
+                        : "Only project admins can release another actor's claim"
+                    }
                   >
                     Release (admin)
                   </Button>
@@ -192,17 +199,21 @@ export default function TaskMetaSidebar({
             <span className="td-prop-value">
               <span className="td-assignee-row">
                 <span>{getReviewerLabel(task)}</span>
-                {isProjectAdmin && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setAdminReleaseConfirm("review")}
-                    disabled={adminReleaseBusy}
-                    title="Release this review claim as a project admin"
-                  >
-                    Release
-                  </Button>
-                )}
+                {/* Disabled-with-reason for non-admins, mirroring the work
+                    claim + status-override controls (never hidden). */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setAdminReleaseConfirm("review")}
+                  disabled={!isProjectAdmin || adminReleaseBusy}
+                  title={
+                    isProjectAdmin
+                      ? "Release this review claim as a project admin"
+                      : "Only project admins can release another actor's claim"
+                  }
+                >
+                  Release
+                </Button>
               </span>
             </span>
           </>

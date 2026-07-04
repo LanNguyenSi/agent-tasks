@@ -93,6 +93,15 @@ export interface Project {
   accessRole?: string | null;
 }
 
+/** Whether a project `accessRole` (from GET /projects/:id) grants admin
+ * override rights — a team `ADMIN` or a per-project `PROJECT_ADMIN`. The
+ * single source of truth for gating the admin status-override and claim-
+ * release controls; anything else (HUMAN_MEMBER / REVIEWER / CONTRIBUTOR /
+ * VIEWER / null / undefined) is not admin. */
+export function isProjectAdminRole(accessRole: string | null | undefined): boolean {
+  return accessRole === "ADMIN" || accessRole === "PROJECT_ADMIN";
+}
+
 export interface Task {
   id: string;
   projectId: string;
@@ -128,10 +137,10 @@ export interface Task {
   } | null;
   /** The review claim: set while the task is under review and someone has
    * claimed the reviewer slot (mirrors claimedBy* for the work claim). The
-   * backend's task-fetch `include` does not currently join a resolved
-   * `reviewClaimedByUser` / `reviewClaimedByAgent` object (unlike the work
-   * claim above), so only the raw id is reliably available today — the UI
-   * falls back to a truncated id when no resolved user/agent is present. */
+   * backend's task-fetch `include` now joins the resolved
+   * `reviewClaimedByUser` / `reviewClaimedByAgent` object (symmetric with the
+   * work claim), so the resolved name is normally present; the UI keeps a
+   * truncated-id fallback for responses that predate or omit the include. */
   reviewClaimedByUserId?: string | null;
   reviewClaimedByAgentId?: string | null;
   reviewClaimedByUser?: {

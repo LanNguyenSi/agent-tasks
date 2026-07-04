@@ -69,6 +69,11 @@ interface TaskHeaderProps {
    * Gates the admin status-override control below; false renders it
    * disabled with an inline reason (never hidden). */
   isProjectAdmin: boolean;
+  /** Valid target states for the admin status-override dropdown, derived from
+   * the effective workflow's outgoing edges from the current status (so no
+   * pick can 400 on a non-edge). null = not loaded → fall back to the base
+   * states; [] = a terminal state with no outgoing edges. */
+  statusOverrideTargets?: string[] | null;
   /** Attempts `transitionTask(task.id, target, options)`. Implemented in
    * TaskDetail.tsx so the actual fetch + task refresh stays alongside the
    * other status-mutating handlers (handleAdvance, handleClaim, ...). */
@@ -93,6 +98,7 @@ export default function TaskHeader({
   onDeleteRequest,
   onScrollToReview,
   isProjectAdmin,
+  statusOverrideTargets = null,
   onOverrideStatus,
 }: TaskHeaderProps) {
   const [overflowOpen, setOverflowOpen] = useState(false);
@@ -107,7 +113,18 @@ export default function TaskHeader({
   const [showForceForm, setShowForceForm] = useState(false);
   const [forceReason, setForceReason] = useState("");
 
-  const statusOptions = BASE_STATES.filter((s) => s.value !== task.status);
+  // When the effective-workflow edges are known, offer ONLY the reachable
+  // targets (so no pick can 400 on a non-edge); otherwise fall back to the
+  // base states minus the current one. A known-but-empty list means the
+  // current state is terminal (no outgoing edges) — the control renders a
+  // note instead of an empty dropdown.
+  const statusOptions =
+    statusOverrideTargets === null
+      ? BASE_STATES.filter((s) => s.value !== task.status)
+      : statusOverrideTargets
+          .filter((to) => to !== task.status)
+          .map((to) => BASE_STATES.find((s) => s.value === to) ?? { value: to, label: to });
+  const noOutgoingEdges = statusOverrideTargets !== null && statusOptions.length === 0;
 
   async function submitOverride(target: string, options?: { force?: boolean; forceReason?: string }) {
     setOverrideBusy(true);
@@ -316,25 +333,31 @@ export default function TaskHeader({
         <div className="td-admin-row">
           <span className="td-admin-row-kicker">Admin</span>
           {isProjectAdmin ? (
-            <>
-              <Select
-                value={overrideTarget}
-                onChange={setOverrideTarget}
-                options={statusOptions}
-                placeholder="Change status to…"
-                ariaLabel="Change task status (admin override)"
-                className="td-admin-select"
-              />
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={!overrideTarget || overrideBusy}
-                loading={overrideBusy}
-                onClick={() => void submitOverride(overrideTarget)}
-              >
-                Set status
-              </Button>
-            </>
+            noOutgoingEdges ? (
+              <span className="td-transition-hint">
+                No status changes are defined from this state in the workflow.
+              </span>
+            ) : (
+              <>
+                <Select
+                  value={overrideTarget}
+                  onChange={setOverrideTarget}
+                  options={statusOptions}
+                  placeholder="Change status to…"
+                  ariaLabel="Change task status (admin override)"
+                  className="td-admin-select"
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={!overrideTarget || overrideBusy}
+                  loading={overrideBusy}
+                  onClick={() => void submitOverride(overrideTarget)}
+                >
+                  Set status
+                </Button>
+              </>
+            )
           ) : (
             <button
               type="button"
