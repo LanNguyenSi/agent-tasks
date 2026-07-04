@@ -94,10 +94,11 @@ describe("TaskDetail — variant", () => {
     expect(screen.getByText("Fix the thing")).toBeInTheDocument();
   });
 
-  // Regression for the board-modal gap: the admin status-override control must
-  // render in the MODAL variant (the operator's primary surface), not just the
-  // full page. It lives in the header view-mode row, so it shows whenever
-  // isProjectAdmin is threaded — which the dashboard now does.
+  // The admin controls must render in the MODAL variant (the operator's
+  // primary surface), gated by isProjectAdmin. These assert the COMPONENT
+  // contract for the modal variant; the dashboard-page threading of the prop
+  // is verified by typecheck + live operator check (there is no DashboardPage
+  // unit harness), so a silent revert of that threading is not caught here.
   it("modal variant shows the admin status-override control when isProjectAdmin", () => {
     render(
       <TaskDetail task={makeTask({ id: "task-9" })} {...baseProps} isProjectAdmin />,
@@ -113,5 +114,21 @@ describe("TaskDetail — variant", () => {
     const btn = screen.getByRole("button", { name: "Change status" });
     expect(btn).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Set status" })).toBeNull();
+  });
+
+  it("modal variant shows the admin claim-release control on a claim held by someone else", () => {
+    // The other half of the isProjectAdmin-gated capability (TaskMetaSidebar).
+    render(
+      <TaskDetail
+        task={makeTask({
+          id: "task-9",
+          claimedByUserId: "u-other",
+          claimedByUser: { id: "u-other", login: "other", name: "Other Person", avatarUrl: null },
+        })}
+        {...baseProps}
+        isProjectAdmin
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Release (admin)" })).toBeEnabled();
   });
 });
