@@ -166,6 +166,24 @@ const taskInclude = {
       name: true,
     },
   },
+  // Mirror the work-claim includes so a task response can NAME the review
+  // claim holder (the admin claim-release UI warns with the holder's name,
+  // not a raw id). Additive: consumers that ignore these fields are
+  // unaffected.
+  reviewClaimedByUser: {
+    select: {
+      id: true,
+      login: true,
+      name: true,
+      avatarUrl: true,
+    },
+  },
+  reviewClaimedByAgent: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
   blockedBy: {
     select: { id: true, title: true, status: true },
   },
@@ -5059,6 +5077,121 @@ taskRouter.post("/tasks/:id/release", async (c) => {
 
   return c.json({ task: updated });
 });
+
+// ── Admin release: force-release a work/review claim held by ANYONE ─────────
+//
+// Human-project-admin-only escape hatch for a stuck claim. Unlike the
+// self-service /release above (which resets task.status to the workflow's
+// initialState), this endpoint deliberately leaves task.status UNCHANGED —
+// the admin drives status separately via the existing
+// POST /tasks/:id/transition{force:true} path. CAS-guarded like every other
+// claim mutation in this file (see /release and /abandon above) so a
+// concurrent claim/release cannot be silently clobbered.
+//
+// Response shape (stable contract — the frontend depends on this exact
+// shape): { task: <standard taskInclude row>, released: { workClaim: boolean,
+// reviewClaim: boolean } }. Each `released.*` flag is true only when a claim
+// was ACTUALLY cleared by this call (updateMany count > 0). A requested
+// release that finds no claim to clear (already released, or lost a race) is
+// a 200 idempotent no-op for that claim — reflected via `released.*: false`
+// — never a 404/409 for the whole call.
+const adminReleaseSchema = z.object({
+  releaseWorkClaim: z.boolean().optional(),
+  releaseReviewClaim: z.boolean().optional(),
+  reason: z.string().max(500).optional(),
+});
+
+taskRouter.post(
+  "/tasks/:id/admin-release",
+  zValidator("json", adminReleaseSchema),
+  async (c) => {
+    const actor = c.get("actor") as Actor;
+    if (actor.type !== "human") {
+      return forbidden(c, "Agents cannot admin-release claims");
+    }
+
+    const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+    if (!task) return notFound(c);
+
+    if (!(await isProjectAdmin(actor, task.projectId))) {
+      return forbidden(c, "Only project admins can release another actor's claim");
+    }
+
+    const body = c.req.valid("json");
+    if (!body.releaseWorkClaim && !body.releaseReviewClaim) {
+      return c.json({ error: "bad_request", message: "nothing to release" }, 400);
+    }
+
+    const released = { workClaim: false, reviewClaim: false };
+
+    if (body.releaseWorkClaim) {
+      // priorHolder is the claim observed at load time. Only attempt a release
+      // when a claim actually exists in the snapshot, and PIN the CAS guard to
+      // that exact holder: if the claim changed hands (holder released, another
+      // actor re-claimed) between this snapshot and the write, the pinned where
+      // matches nothing (count 0), so we neither clobber the new claimant nor
+      // log a stale priorHolder. An "any claim present" guard would do both.
+      const priorHolder = task.claimedByUserId
+        ? { type: "human" as const, id: task.claimedByUserId }
+        : task.claimedByAgentId
+          ? { type: "agent" as const, id: task.claimedByAgentId }
+          : null;
+      if (priorHolder) {
+        const result = await prisma.task.updateMany({
+          where:
+            priorHolder.type === "human"
+              ? { id: task.id, claimedByUserId: priorHolder.id }
+              : { id: task.id, claimedByAgentId: priorHolder.id },
+          data: { claimedByUserId: null, claimedByAgentId: null, claimedAt: null },
+        });
+        if (result.count > 0) {
+          released.workClaim = true;
+          void logAuditEvent({
+            action: "task.claim_released_by_admin",
+            actorId: actor.userId,
+            projectId: task.projectId,
+            taskId: task.id,
+            payload: { priorHolder, reason: body.reason ?? null },
+          });
+        }
+      }
+    }
+
+    if (body.releaseReviewClaim) {
+      const priorHolder = task.reviewClaimedByUserId
+        ? { type: "human" as const, id: task.reviewClaimedByUserId }
+        : task.reviewClaimedByAgentId
+          ? { type: "agent" as const, id: task.reviewClaimedByAgentId }
+          : null;
+      if (priorHolder) {
+        const result = await prisma.task.updateMany({
+          where:
+            priorHolder.type === "human"
+              ? { id: task.id, reviewClaimedByUserId: priorHolder.id }
+              : { id: task.id, reviewClaimedByAgentId: priorHolder.id },
+          data: { reviewClaimedByUserId: null, reviewClaimedByAgentId: null, reviewClaimedAt: null },
+        });
+        if (result.count > 0) {
+          released.reviewClaim = true;
+          void logAuditEvent({
+            action: "task.review_claim_released_by_admin",
+            actorId: actor.userId,
+            projectId: task.projectId,
+            taskId: task.id,
+            payload: { priorHolder, reason: body.reason ?? null },
+          });
+        }
+      }
+    }
+
+    // updateMany cannot use `include`, so re-fetch the (possibly) freshly
+    // released row once, after both requested releases are attempted.
+    const updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
+    if (!updated) return notFound(c);
+
+    return c.json({ task: updated, released });
+  },
+);
 
 // ── Transition task status ────────────────────────────────────────────────────
 

@@ -8,10 +8,13 @@ import {
   getProject,
   getTasks,
   getTeams,
+  getEffectiveWorkflow,
+  isProjectAdminRole,
   type User,
   type Task,
   type Project,
   type Team,
+  type WorkflowTransition,
 } from "../../../lib/api";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import TaskDetail from "../../../components/TaskDetail";
@@ -39,6 +42,10 @@ export default function TaskDetailPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [team, setTeam] = useState<Team | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  // Effective-workflow edges, fetched only for admins to constrain the status-
+  // override dropdown to the transitions the backend will actually accept
+  // (null = not loaded / not admin → the control falls back to the base states).
+  const [workflowTransitions, setWorkflowTransitions] = useState<WorkflowTransition[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,6 +72,19 @@ export default function TaskDetailPage() {
         setTeam(matchedTeam);
         setTasks(projectTasks);
         setError(null);
+
+        // Only admins get the status-override control, so only they need the
+        // workflow edges. A failure here must not break the page — the control
+        // falls back to the base states when transitions stay null. Same
+        // helper the render path uses, so both admin derivations stay in sync.
+        if (isProjectAdminRole(fetchedProject.accessRole)) {
+          try {
+            const wf = await getEffectiveWorkflow(fetchedProject.id);
+            if (!cancelled) setWorkflowTransitions(wf.definition.transitions);
+          } catch {
+            /* fall back to base states */
+          }
+        }
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : String(err));
@@ -86,6 +106,11 @@ export default function TaskDetailPage() {
     project && task
       ? `/dashboard?teamId=${project.teamId}&projectId=${task.projectId}`
       : "/dashboard";
+
+  // `accessRole` (from GET /projects/:id, fetched above via getProject) covers
+  // both a team ADMIN and a per-project-only PROJECT_ADMIN — unlike
+  // `team?.role === "ADMIN"`, which misses the latter (see workflow/page.tsx).
+  const isProjectAdmin = isProjectAdminRole(project?.accessRole);
 
   function goToBoard() {
     router.push(boardHref);
@@ -118,6 +143,8 @@ export default function TaskDetailPage() {
           templateFields={project.taskTemplate?.fields ?? null}
           confidenceThreshold={project.confidenceThreshold ?? 60}
           requireDistinctReviewer={project.requireDistinctReviewer ?? false}
+          isProjectAdmin={isProjectAdmin}
+          workflowTransitions={workflowTransitions}
           onUpdate={handleUpdate}
           onDelete={goToBoard}
           onClose={goToBoard}

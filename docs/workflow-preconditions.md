@@ -250,6 +250,19 @@ Rules:
   state. See [signal-payload-design.md](signal-payload-design.md) for
   the payload shape.
 
+### Forcing a transition from the UI
+
+The task detail page exposes this as an admin-only "change status" control
+(disabled with a reason for everyone else). Picking a blocked target shows
+the failing rules from the 422 body above and an "override anyway" form
+that collects the required `forceReason` before retrying with
+`force: true` — the same request shape shown above, just typed by a human
+instead of an agent. The same admin also gets a release control next to
+the task's assignee/reviewer to force-release a work or review claim held
+by anyone (`POST /tasks/:id/admin-release`), independent of the transition
+force lever above and audited separately (`task.claim_released_by_admin` /
+`task.review_claim_released_by_admin`).
+
 ## How agents see the rules
 
 `GET /api/tasks/:id/instructions` returns `allowedTransitions` where each

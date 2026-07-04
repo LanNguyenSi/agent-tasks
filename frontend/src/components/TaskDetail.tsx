@@ -29,9 +29,12 @@ import {
   removeDependency,
   reviewTask,
   transitionTask,
+  adminReleaseClaim,
+  ApiRequestError,
   type User,
   type Task,
   type Comment,
+  type WorkflowTransition,
 } from "../lib/api";
 import {
   calculateConfidence,
@@ -57,7 +60,7 @@ import Modal from "./ui/Modal";
 import Select from "@/components/ui/Select";
 import { Icon } from "./ui/Icon";
 import { KeyHint } from "./ui/KeyHint";
-import TaskHeader, { type AdvanceAction } from "./task-detail/TaskHeader";
+import TaskHeader, { type AdvanceAction, type StatusOverrideResult } from "./task-detail/TaskHeader";
 import TaskMetaSidebar from "./task-detail/TaskMetaSidebar";
 import ReviewPanel from "./task-detail/ReviewPanel";
 import CommentList from "./task-detail/CommentList";
@@ -131,6 +134,19 @@ export interface TaskDetailProps {
   templateFields: TemplateFields | null;
   confidenceThreshold: number;
   requireDistinctReviewer?: boolean;
+  /** True for a human who is a team ADMIN or a per-project PROJECT_ADMIN
+   * (derived from `project.accessRole`, which — unlike `team?.role` —
+   * also covers per-project-only admins). Gates the status-override and
+   * admin claim-release controls in TaskHeader / TaskMetaSidebar. Defaults
+   * to false so callers that don't thread it (e.g. the dashboard board
+   * modal, which currently only has the project *list* projection without
+   * `accessRole`) simply don't expose the admin controls, rather than
+   * erroring. */
+  isProjectAdmin?: boolean;
+  /** Effective-workflow edges, used to constrain the admin status-override
+   * dropdown to targets the backend will accept (force bypasses `requires`
+   * gates, not edge existence). null = not loaded → fall back to base states. */
+  workflowTransitions?: WorkflowTransition[] | null;
   /** Open directly in edit mode (e.g. from the create-confidence panel's
    *  "Edit task"), so the user lands on the editors for the missing fields. */
   initialEditing?: boolean;
@@ -157,6 +173,8 @@ export default function TaskDetail({
   templateFields,
   confidenceThreshold,
   requireDistinctReviewer = false,
+  isProjectAdmin = false,
+  workflowTransitions = null,
   onUpdate,
   onDelete,
   onClose,
@@ -174,6 +192,7 @@ export default function TaskDetail({
   const [showDeleteTaskConfirm, setShowDeleteTaskConfirm] = useState(false);
   const [claimBusy, setClaimBusy] = useState(false);
   const [advanceBusy, setAdvanceBusy] = useState(false);
+  const [adminReleaseBusy, setAdminReleaseBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [resultExpanded, setResultExpanded] = useState(false);
   const [reviewComment, setReviewComment] = useState("");
@@ -483,6 +502,68 @@ export default function TaskDetail({
     }
   }
 
+  // Admin status override (TaskHeader owns the target/forceReason UI state;
+  // this handler owns the actual fetch, mirroring handleAdvance above). On a
+  // 422 precondition_failed it returns the failing rules + canForce instead
+  // of calling onError, so TaskHeader can render them inline with a retry
+  // affordance rather than a dead-end toast. Any other error still goes
+  // through onError like every other handler in this file.
+  const handleStatusOverride = useCallback(
+    async (
+      target: string,
+      options?: { force?: boolean; forceReason?: string },
+    ): Promise<StatusOverrideResult> => {
+      try {
+        const updated = await transitionTask(task.id, target, options);
+        onUpdate(updated);
+        return { kind: "success" };
+      } catch (err) {
+        if (err instanceof ApiRequestError && err.code === "precondition_failed") {
+          return {
+            kind: "blocked",
+            message: err.message,
+            failed: err.failed ?? [],
+            canForce: err.canForce ?? false,
+          };
+        }
+        // A 400 bad_request means the target is not a defined edge of the
+        // effective workflow (force bypasses `requires` preconditions, NOT
+        // edge existence). Surface it inline in the same blocked panel with
+        // canForce=false instead of a bare toast — so the admin sees WHY the
+        // pick did nothing rather than hitting a silent dead end.
+        if (err instanceof ApiRequestError && err.code === "bad_request") {
+          return {
+            kind: "blocked",
+            message: err.message,
+            failed: [],
+            canForce: false,
+          };
+        }
+        onError((err as Error).message);
+        return { kind: "error" };
+      }
+    },
+    [task.id, onUpdate, onError],
+  );
+
+  // Admin claim release (work and/or review claim, held by anyone).
+  const handleAdminRelease = useCallback(
+    async (opts: { releaseWorkClaim?: boolean; releaseReviewClaim?: boolean }): Promise<boolean> => {
+      setAdminReleaseBusy(true);
+      try {
+        const { task: updated } = await adminReleaseClaim(task.id, opts);
+        onUpdate(updated);
+        return true;
+      } catch (err) {
+        onError((err as Error).message);
+        return false;
+      } finally {
+        setAdminReleaseBusy(false);
+      }
+    },
+    [task.id, onUpdate, onError],
+  );
+
   const webhookEvents = (task.comments ?? []).filter((c: Comment) =>
     c.content.startsWith("[webhook]"),
   );
@@ -523,6 +604,15 @@ export default function TaskDetail({
       onScrollToReview={() =>
         reviewSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
       }
+      isProjectAdmin={isProjectAdmin}
+      statusOverrideTargets={
+        workflowTransitions
+          ? workflowTransitions
+              .filter((t) => t.from === task.status)
+              .map((t) => t.to)
+          : null
+      }
+      onOverrideStatus={handleStatusOverride}
     />
   );
 
@@ -1039,6 +1129,9 @@ export default function TaskDetail({
         onClaim={() => void handleClaim()}
         onRelease={() => void handleRelease()}
         claimBusy={claimBusy}
+        isProjectAdmin={isProjectAdmin}
+        onAdminRelease={handleAdminRelease}
+        adminReleaseBusy={adminReleaseBusy}
       />
     </aside>
   );
