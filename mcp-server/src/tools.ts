@@ -151,7 +151,9 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         deliverableRepo: z
           .string()
           .trim()
+          .min(3)
           .max(255)
+          .regex(/^[^/\s]+\/[^/\s]+$/, "Expected 'owner/repo'")
           .optional()
           .describe(
             "Cross-repo deliverable override ('owner/repo'). Set only when this task's legitimate deliverable is a PR in a DIFFERENT GitHub repo than the project's linked githubRepo (benchmark/measurement/docs tasks) — the cross-repo PR guard and merge automation then key off this repo instead. Post-create changes are project-admin-only (human, PATCH); agents cannot retarget it later.",

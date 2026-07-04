@@ -78,6 +78,7 @@ import {
   checkPrRepoMatchesProject,
   prRepoMatchesProjectRejectionMessage,
   effectiveDeliverableRepo,
+  isForeignDeliverable,
 } from "../services/gates/index.js";
 import { SCOPES } from "../services/scopes.js";
 import { bodyLimit } from "hono/body-limit";
@@ -2025,8 +2026,8 @@ async function evaluateV2TransitionGates(task: {
   // silently drop them (which would hide the skip from callers/audits).
   const skipped: Array<{ rule: TransitionRule; reason: string }> = [];
   const effectiveRepo = effectiveDeliverableRepo(task, task.project);
-  const isForeignDeliverable = effectiveRepo !== task.project.githubRepo;
-  if (isForeignDeliverable && resolvedRequires) {
+  const foreignDeliverable = isForeignDeliverable(task, task.project);
+  if (foreignDeliverable && resolvedRequires) {
     const githubBacked = resolvedRequires.filter((r) => GITHUB_BACKED_RULES.has(r as never));
     for (const r of githubBacked) {
       skipped.push({
@@ -3078,7 +3079,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   // ordinary same-repo tasks don't drown the log.
   if (prUrl) {
     const effectiveRepo = effectiveDeliverableRepo(task, task.project);
-    if (effectiveRepo && effectiveRepo !== task.project.githubRepo) {
+    if (isForeignDeliverable(task, task.project)) {
       void logAuditEvent({
         action: "task.foreign_pr_linked",
         actorId: actor.type === "human" ? actor.userId : undefined,
@@ -3352,7 +3353,7 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
   // actually diverges from project.githubRepo (an active override).
   {
     const effectiveRepo = effectiveDeliverableRepo(task, task.project);
-    if (effectiveRepo && effectiveRepo !== task.project.githubRepo) {
+    if (isForeignDeliverable(task, task.project)) {
       void logAuditEvent({
         action: "task.foreign_pr_linked",
         actorId: actor.type === "human" ? actor.userId : undefined,
@@ -3826,6 +3827,9 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
       deliverableRepo: task.deliverableRepo,
       effectiveRepo: effectiveDeliverableRepo(task, task.project),
       overridden: task.deliverableRepo !== null,
+      // foreign = the override points OUTSIDE project.githubRepo
+      // (case-insensitive); an equal-but-recased override is home.
+      foreign: isForeignDeliverable(task, task.project),
     },
   });
 });
@@ -3909,7 +3913,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
 
     if (body.prUrl) {
       const effectiveRepo = effectiveDeliverableRepo(task, task.project);
-      if (effectiveRepo && effectiveRepo !== task.project.githubRepo) {
+      if (isForeignDeliverable(task, task.project)) {
         void logAuditEvent({
           action: "task.foreign_pr_linked",
           projectId: task.projectId,
@@ -4055,7 +4059,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
       { deliverableRepo: body.deliverableRepo !== undefined ? body.deliverableRepo : task.deliverableRepo },
       task.project,
     );
-    if (effectiveRepo && effectiveRepo !== task.project.githubRepo) {
+    if (isForeignDeliverable(task, task.project)) {
       void logAuditEvent({
         action: "task.foreign_pr_linked",
         actorId: actor.userId,
@@ -5103,8 +5107,28 @@ taskRouter.post(
         400,
       );
     }
-    const resolvedRequires = transition.requires;
+    let resolvedRequires = transition.requires;
     const requiredRole = transition.requiredRole;
+
+    // Foreign-deliverable skip (ADR-0010 §5c v1) — parity with
+    // evaluateV2TransitionGates: ciGreen/prMerged cannot be evaluated on a
+    // repo this project's GitHub token has no standing on. Without this,
+    // MCP tasks_transition (which lands here, not on /finish) would re-create
+    // the exact cross-repo deadlock this mechanism exists to solve.
+    const transitionSkippedGates: Array<{ rule: TransitionRule; reason: string }> = [];
+    if (isForeignDeliverable(task, task.project) && resolvedRequires) {
+      const githubBacked = resolvedRequires.filter((r) => GITHUB_BACKED_RULES.has(r as never));
+      if (githubBacked.length > 0) {
+        const effectiveRepo = effectiveDeliverableRepo(task, task.project);
+        for (const r of githubBacked) {
+          transitionSkippedGates.push({
+            rule: r as TransitionRule,
+            reason: `Task deliverable is ${effectiveRepo ?? "an external repo"}; this project's GitHub token has no standing there, so '${r}' cannot be evaluated and is treated as satisfied (v1 semantics).`,
+          });
+        }
+        resolvedRequires = resolvedRequires.filter((r) => !GITHUB_BACKED_RULES.has(r as never));
+      }
+    }
 
     // A status transition is always a state mutation. Even when the workflow
     // sets no concrete requiredRole (undefined / "any"), the actor must hold
@@ -5282,6 +5306,9 @@ taskRouter.post(
         ...(forcedRules.length > 0
           ? { forcedRules, forceReason: forceReason ?? null }
           : {}),
+        ...(transitionSkippedGates.length > 0
+          ? { skippedGates: transitionSkippedGates }
+          : {}),
       },
     });
 
@@ -5320,7 +5347,12 @@ taskRouter.post(
       void emitTaskAvailableSignal(task.id, task.projectId, actor.type, actorName);
     }
 
-    return c.json({ task: updated });
+    return c.json({
+      task: updated,
+      ...(transitionSkippedGates.length > 0
+        ? { skippedGates: transitionSkippedGates }
+        : {}),
+    });
   },
 );
 

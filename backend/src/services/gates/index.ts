@@ -50,6 +50,7 @@ export {
   checkPrRepoMatchesProject,
   checkOwnerRepoMatchesProject,
   effectiveDeliverableRepo,
+  isForeignDeliverable,
   prRepoMatchesProjectGate,
   prRepoMatchesProjectRejectionMessage,
 } from "./pr-repo-matches-project.js";

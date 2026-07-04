@@ -554,6 +554,28 @@ describe("Merge automation refuses a foreign deliverable — 409, every caller",
     expect(body.error).toBe("foreign_deliverable_merge_refused");
   });
 
+  it("task_finish autoMerge on the self-approve branch (work-claim holder approves own review task)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({
+      ...baseTask,
+      status: "review",
+      claimedByAgentId: AGENT.tokenId,
+      reviewClaimedByAgentId: null,
+      branchName: "feat/x",
+      prUrl: FOREIGN_PR_URL,
+      prNumber: 9,
+      deliverableRepo: FOREIGN_REPO,
+      project: { ...baseProject, soloMode: true },
+    });
+    const res = await makeApp(AGENT).request(`/tasks/${TASK_ID}/finish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome: "approve", autoMerge: true }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("foreign_deliverable_merge_refused");
+  });
+
   it("the direct GitHub merge route", async () => {
     prismaMocks.taskFindUnique.mockResolvedValue({
       id: TASK_ID,
@@ -642,6 +664,32 @@ describe("ciGreen/prMerged skip on a foreign-deliverable task", () => {
     expect(findDelegationUserMock).not.toHaveBeenCalled();
   });
 
+  it("evaluates ciGreen normally on an override that differs from the home repo only by case (same repo, no fail-open skip)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: AGENT.tokenId,
+      branchName: "feat/x",
+      workflowId: "wf-cigreen",
+      workflow: workflowRequiringCiGreen,
+      // Same repo as HOME_REPO ("acme/thing"), recased. GitHub treats
+      // owner/repo case-insensitively, so this must NOT count as foreign —
+      // a raw string compare here would skip ciGreen on a home-repo task.
+      deliverableRepo: "Acme/Thing",
+      project: baseProject,
+    });
+    const res = await makeApp(AGENT).request(`/tasks/${TASK_ID}/finish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prUrl: `https://github.com/${HOME_REPO}/pull/9` }),
+    });
+    // ciGreen WAS evaluated (fails closed with no delegation token) — the
+    // 422 is the proof that the case-variant override did not fail open.
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { failed?: Array<{ rule: string }> };
+    expect(body.failed?.some((f) => f.rule === "ciGreen")).toBe(true);
+  });
+
   it("evaluates ciGreen normally (fails closed) on the same workflow without a deliverableRepo override", async () => {
     prismaMocks.taskFindUnique.mockResolvedValue({
       ...baseTask,
@@ -662,5 +710,85 @@ describe("ciGreen/prMerged skip on a foreign-deliverable task", () => {
     // to null) → ciGreen fails closed → 422, proving the rule WAS evaluated
     // (not silently skipped) on a same-repo task.
     expect(res.status).toBe(422);
+  });
+});
+
+// ── v1 /transition parity: foreign-deliverable skip (MCP tasks_transition) ──
+
+describe("POST /tasks/:id/transition — foreign-deliverable ciGreen skip (v1 parity)", () => {
+  const workflowRequiringCiGreen = {
+    id: "wf-cigreen-v1",
+    projectId: PROJECT_ID,
+    isDefault: false,
+    definition: {
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "review", label: "Review", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress", requiredRole: "any" },
+        {
+          from: "in_progress",
+          to: "review",
+          requiredRole: "any",
+          requires: ["branchPresent", "prPresent", "ciGreen"],
+        },
+        { from: "review", to: "done", requiredRole: "any" },
+      ],
+      initialState: "open",
+    },
+  };
+
+  it("transitions without evaluating ciGreen and reports skippedGates", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: AGENT.tokenId,
+      branchName: "feat/x",
+      prUrl: FOREIGN_PR_URL,
+      prNumber: 9,
+      workflowId: "wf-cigreen-v1",
+      workflow: workflowRequiringCiGreen,
+      deliverableRepo: FOREIGN_REPO,
+      project: baseProject,
+    });
+    const res = await makeApp(AGENT).request(`/tasks/${TASK_ID}/transition`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "review" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      skippedGates?: Array<{ rule: string; reason: string }>;
+    };
+    // Without the parity skip, MCP tasks_transition (which lands on this v1
+    // endpoint, not on /finish) would re-create the cross-repo deadlock.
+    expect(body.skippedGates?.some((s) => s.rule === "ciGreen")).toBe(true);
+    expect(findDelegationUserMock).not.toHaveBeenCalled();
+  });
+
+  it("still evaluates ciGreen on the same transition without an override (negative control)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: AGENT.tokenId,
+      branchName: "feat/x",
+      prUrl: `https://github.com/${HOME_REPO}/pull/9`,
+      prNumber: 9,
+      workflowId: "wf-cigreen-v1",
+      workflow: workflowRequiringCiGreen,
+      deliverableRepo: null,
+      project: baseProject,
+    });
+    const res = await makeApp(AGENT).request(`/tasks/${TASK_ID}/transition`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "review" }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("precondition_failed");
   });
 });

@@ -19,7 +19,10 @@
 import { findDelegationUser } from "./github-delegation.js";
 import { logAuditEvent } from "./audit.js";
 import { parseOwnerRepo } from "./transition-rules.js";
-import { effectiveDeliverableRepo } from "./gates/pr-repo-matches-project.js";
+import {
+  effectiveDeliverableRepo,
+  isForeignDeliverable,
+} from "./gates/pr-repo-matches-project.js";
 import type { Actor } from "../types/auth.js";
 
 export interface MergeTask {
@@ -50,9 +53,10 @@ export async function performPrMerge(
   // Foreign-deliverable hard refusal. A task whose effective deliverable
   // repo diverges from project.githubRepo has its PR lifecycle owned by
   // that foreign repo — merge it there directly. An override equal to
-  // project.githubRepo is a harmless no-op and does NOT trip this.
-  const effectiveRepo = effectiveDeliverableRepo(task, task.project);
-  if (effectiveRepo !== task.project.githubRepo) {
+  // project.githubRepo (in any casing — GitHub names are case-insensitive)
+  // is a harmless no-op and does NOT trip this.
+  if (isForeignDeliverable(task, task.project)) {
+    const effectiveRepo = effectiveDeliverableRepo(task, task.project);
     return {
       ok: false,
       error: "foreign_deliverable_merge_refused",

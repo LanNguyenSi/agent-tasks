@@ -20,6 +20,7 @@ import {
   checkOwnerRepoMatchesProject,
   prRepoMatchesProjectRejectionMessage,
   effectiveDeliverableRepo,
+  isForeignDeliverable,
 } from "../services/gates/index.js";
 import { performPrMerge } from "../services/github-merge.js";
 import { SCOPES } from "../services/scopes.js";
@@ -189,8 +190,8 @@ githubRouter.post(
 
         // Audit a foreign-deliverable PR link — only when the effective
         // repo actually diverges from project.githubRepo (an active override).
-        const effectiveRepo = effectiveDeliverableRepo(task, task.project);
-        if (effectiveRepo && effectiveRepo !== task.project.githubRepo) {
+        if (isForeignDeliverable(task, task.project)) {
+          const effectiveRepo = effectiveDeliverableRepo(task, task.project);
           await logAuditEvent({
             action: "task.foreign_pr_linked",
             actorId: delegationUser.userId,

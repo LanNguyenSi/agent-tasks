@@ -44,13 +44,42 @@ export type PrRepoMatchesProjectResult =
  * The repo a task's PR lifecycle is actually bound to: the task-level
  * override when set, otherwise the project's linked repo. An override equal
  * to `project.githubRepo` is a harmless no-op — deliberately not special-
- * cased, callers compare the resolved string either way.
+ * cased here; foreign-vs-home decisions go through `isForeignDeliverable`.
  */
 export function effectiveDeliverableRepo(
   task: PrRepoMatchesProjectTask,
   project: PrRepoMatchesProjectProject,
 ): string | null {
   return task.deliverableRepo ?? project.githubRepo;
+}
+
+/**
+ * Whether the task's PR lifecycle lives OUTSIDE the project's linked repo.
+ * The single decision point for merge refusal, the ciGreen/prMerged skip,
+ * and foreign-link auditing — every consumer must use this instead of
+ * comparing repo strings inline, because GitHub owner/repo names are
+ * case-insensitive: an override differing from `project.githubRepo` only
+ * by case is the SAME repo (the documented no-op), and a raw `!==` would
+ * both fail-open the CI gates ("foreign" → skipped on a home-repo task)
+ * and falsely refuse merges. Mirrors the lowercased comparison the
+ * cross-repo guard itself uses.
+ */
+export function isForeignDeliverable(
+  task: PrRepoMatchesProjectTask,
+  project: PrRepoMatchesProjectProject,
+): boolean {
+  const effective = effectiveDeliverableRepo(task, project);
+  if (effective === project.githubRepo) return false; // both null, or identical strings
+  if (effective === null || project.githubRepo === null) return true;
+  const a = parseOwnerRepo(effective);
+  const b = parseOwnerRepo(project.githubRepo);
+  // Malformed on either side: fall back to a whole-string case-insensitive
+  // compare rather than guessing owner/repo boundaries.
+  if (!a || !b) return effective.toLowerCase() !== project.githubRepo.toLowerCase();
+  return (
+    a.owner.toLowerCase() !== b.owner.toLowerCase() ||
+    a.repo.toLowerCase() !== b.repo.toLowerCase()
+  );
 }
 
 /**

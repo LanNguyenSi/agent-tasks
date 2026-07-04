@@ -52,6 +52,15 @@ const NOOP_OVERRIDE_TASK: MergeTask = {
   project: { id: "proj-1", teamId: "team-1", githubRepo: "acme/thing" },
 };
 
+// GitHub owner/repo names are case-insensitive: this is the SAME repo as
+// the project's, only recased. isForeignDeliverable must treat it as home.
+const CASE_VARIANT_OVERRIDE_TASK: MergeTask = {
+  id: "task-4",
+  prNumber: 7,
+  deliverableRepo: "Acme/Thing",
+  project: { id: "proj-1", teamId: "team-1", githubRepo: "acme/thing" },
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   findDelegationUserMock.mockResolvedValue({
@@ -93,6 +102,18 @@ describe("performPrMerge — foreign-deliverable hard refusal", () => {
     ) as unknown as typeof fetch;
 
     const result = await performPrMerge(NOOP_OVERRIDE_TASK, "squash", ACTOR);
+    expect(result.ok).toBe(true);
+
+    globalThis.fetch = originalFetch;
+  });
+
+  it("treats a deliverableRepo differing from project.githubRepo only by case as home (does not refuse)", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ sha: "abc123", merged: true }), { status: 200 }),
+    ) as unknown as typeof fetch;
+
+    const result = await performPrMerge(CASE_VARIANT_OVERRIDE_TASK, "squash", ACTOR);
     expect(result.ok).toBe(true);
 
     globalThis.fetch = originalFetch;

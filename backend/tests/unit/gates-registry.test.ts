@@ -15,6 +15,7 @@ import {
   checkPrRepoMatchesProject,
   checkOwnerRepoMatchesProject,
   effectiveDeliverableRepo,
+  isForeignDeliverable,
 } from "../../src/services/gates/index.js";
 import { GovernanceMode } from "../../src/lib/governance-mode.js";
 
@@ -301,6 +302,40 @@ describe("effectiveDeliverableRepo", () => {
 
   it("resolves to null when neither is set", () => {
     expect(effectiveDeliverableRepo({}, { githubRepo: null })).toBeNull();
+  });
+});
+
+describe("isForeignDeliverable", () => {
+  const project = { githubRepo: "LanNguyenSi/agent-tasks" };
+
+  it("is false without an override, and false for an exact-equal override", () => {
+    expect(isForeignDeliverable({}, project)).toBe(false);
+    expect(isForeignDeliverable({ deliverableRepo: null }, project)).toBe(false);
+    expect(
+      isForeignDeliverable({ deliverableRepo: "LanNguyenSi/agent-tasks" }, project),
+    ).toBe(false);
+  });
+
+  it("is false for an override differing only by case — GitHub names are case-insensitive", () => {
+    expect(
+      isForeignDeliverable({ deliverableRepo: "lannguyensi/AGENT-TASKS" }, project),
+    ).toBe(false);
+  });
+
+  it("is true for an override pointing at a different repo (owner or name)", () => {
+    expect(
+      isForeignDeliverable({ deliverableRepo: "foreign-org/agent-tasks" }, project),
+    ).toBe(true);
+    expect(
+      isForeignDeliverable({ deliverableRepo: "LanNguyenSi/other-repo" }, project),
+    ).toBe(true);
+  });
+
+  it("is true for an override on a project with no linked repo, false when neither is set", () => {
+    expect(
+      isForeignDeliverable({ deliverableRepo: "foreign-org/foreign-repo" }, { githubRepo: null }),
+    ).toBe(true);
+    expect(isForeignDeliverable({}, { githubRepo: null })).toBe(false);
   });
 });
 
