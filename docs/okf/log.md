@@ -1,5 +1,15 @@
 # Change log
 
+## 2026-07-04
+
+P2c consumer re-run recorded in `BENCHMARK.md`: same bundle and index
+content, consumer upgraded to codebase-oracle 0.8.0 (frontmatter ingest +
+retrieval surfacing). M1 17/24 (= post-bundle, no regressions), M2 4/12
+(flat, third identical run), new pointer metric P 10/12 vs 5/12 post-bundle
+proxy — the `Pointers` section closes the pointer gap where OKF docs are
+retrieved. Next lever: ranking/boost experiment (M2) and finer `sources:`
+granularity on coarse docs (Q8 miss). Task: codebase-oracle `707b51ac`.
+
 ## 2026-07-03
 
 Upkeep after the first real `okf-kit check` staleness run (5 STALE
