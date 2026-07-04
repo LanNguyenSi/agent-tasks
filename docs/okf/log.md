@@ -2,6 +2,16 @@
 
 ## 2026-07-04
 
+Point 6 re-score recorded in `BENCHMARK.md` (sixth point, confirmation run
+for the P3 KEEP decision): after codebase-oracle 0.10.0's fail-loud ingest
+fix put `backend/src/routes/tasks.ts` into the index (192 chunks), M2 rose
+5/12 → 7/12 (first-ever hits on Q6 and Q7, both organic), M1 17/24 → 18/24,
+P 10/12 → 11/12. Pre-registered criterion met, KEEP default-on confirmed,
+with the recorded caveat that the gains came from organic retrieval of the
+newly indexed file, not from expansion injections, and that the Q12
+displacement regression persists via the organic-wins dedup rule (refinement
+filed as codebase-oracle `d165ff85`). Task: agent-tasks `1190c227`.
+
 P3 sources-expansion measured in `BENCHMARK.md` (fifth point, first
 search-side treatment, oracle 0.9.0): M2 4/12 → 5/12 (first-ever hits on Q3
 and Q11, one displacement regression on Q12), M1/P unchanged. Two integrity
