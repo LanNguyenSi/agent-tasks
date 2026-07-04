@@ -75,11 +75,9 @@ export default function TaskDetailPage() {
 
         // Only admins get the status-override control, so only they need the
         // workflow edges. A failure here must not break the page — the control
-        // falls back to the base states when transitions stay null.
-        const admin =
-          fetchedProject.accessRole === "ADMIN" ||
-          fetchedProject.accessRole === "PROJECT_ADMIN";
-        if (admin) {
+        // falls back to the base states when transitions stay null. Same
+        // helper the render path uses, so both admin derivations stay in sync.
+        if (isProjectAdminRole(fetchedProject.accessRole)) {
           try {
             const wf = await getEffectiveWorkflow(fetchedProject.id);
             if (!cancelled) setWorkflowTransitions(wf.definition.transitions);
