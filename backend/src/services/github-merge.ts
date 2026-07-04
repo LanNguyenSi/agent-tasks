@@ -5,18 +5,27 @@
  * GitHub Merge API is called. Used by:
  *   1. The existing `POST /api/github/pull-requests/:prNumber/merge` route
  *   2. `task_finish { autoMerge: true }` (Mode A and Mode B)
+ *   3. `POST /tasks/:id/merge`
  *
  * Owner/repo is derived from `task.project.githubRepo` — NOT from any
  * request body — closing the cross-repo exploit path (ADR-0010 §5b).
+ *
+ * ADR-0010 §5c: a task's PR lifecycle may belong to a foreign repo via
+ * `deliverableRepo`. This project's GitHub delegation token has no standing
+ * there, so merge automation refuses outright — checked HERE, at the single
+ * choke point every caller already goes through, so no call site can forget
+ * the refusal.
  */
 import { findDelegationUser } from "./github-delegation.js";
 import { logAuditEvent } from "./audit.js";
 import { parseOwnerRepo } from "./transition-rules.js";
+import { effectiveDeliverableRepo } from "./gates/pr-repo-matches-project.js";
 import type { Actor } from "../types/auth.js";
 
 export interface MergeTask {
   id: string;
   prNumber: number | null;
+  deliverableRepo?: string | null;
   project: {
     id: string;
     teamId: string;
@@ -26,13 +35,32 @@ export interface MergeTask {
 
 export type MergeResult =
   | { ok: true; sha: string | null; alreadyMerged: boolean }
-  | { ok: false; error: "no_delegation" | "github_error"; message: string; status?: number };
+  | {
+      ok: false;
+      error: "no_delegation" | "github_error" | "foreign_deliverable_merge_refused";
+      message: string;
+      status?: number;
+    };
 
 export async function performPrMerge(
   task: MergeTask,
   mergeMethod: "squash" | "merge" | "rebase",
   actor: Actor,
 ): Promise<MergeResult> {
+  // Foreign-deliverable hard refusal. A task whose effective deliverable
+  // repo diverges from project.githubRepo has its PR lifecycle owned by
+  // that foreign repo — merge it there directly. An override equal to
+  // project.githubRepo is a harmless no-op and does NOT trip this.
+  const effectiveRepo = effectiveDeliverableRepo(task, task.project);
+  if (effectiveRepo !== task.project.githubRepo) {
+    return {
+      ok: false,
+      error: "foreign_deliverable_merge_refused",
+      message: `This task's deliverable PR lives in ${effectiveRepo ?? "an external repo"}, not this project's linked repo (${task.project.githubRepo ?? "none"}). ${effectiveRepo ?? "The foreign repo"} owns its own merge lifecycle — merge automation refuses to act on it. Merge the PR directly on the foreign repo.`,
+      status: 409,
+    };
+  }
+
   // Derive owner/repo from the project — never from request body.
   const parsed = parseOwnerRepo(task.project.githubRepo);
   if (!parsed) {

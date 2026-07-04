@@ -2,6 +2,12 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## 0.11.0
+
+### Added
+
+- **`deliverableRepo` on `task_create`** (agent-tasks task cab4d048). Optional `owner/repo` override for tasks whose legitimate deliverable is a PR in a different GitHub repo than the project's linked `githubRepo` (benchmark/measurement/docs tasks) — the backend's cross-repo PR guard and merge-automation refusal key off this repo instead. Post-create changes are project-admin-only (human, via `PATCH /api/tasks/:id`); agents cannot retarget it later. See `docs/workflow-preconditions.md` in the backend repo for the full mechanism.
+
 ## 0.10.0
 
 ### Added

@@ -13,6 +13,8 @@ import {
   registry,
   checkTaskStatusForMerge,
   checkPrRepoMatchesProject,
+  checkOwnerRepoMatchesProject,
+  effectiveDeliverableRepo,
 } from "../../src/services/gates/index.js";
 import { GovernanceMode } from "../../src/lib/governance-mode.js";
 
@@ -196,17 +198,20 @@ describe("pr-repo-matches-project gate.describe()", () => {
 
 describe("pr-repo-matches-project check", () => {
   const project = { githubRepo: "LanNguyenSi/agent-tasks" };
+  const noOverride = {};
 
   it("accepts matching owner/repo (case-insensitive)", () => {
     expect(
       checkPrRepoMatchesProject(
         "https://github.com/LanNguyenSi/agent-tasks/pull/42",
+        noOverride,
         project,
       ),
     ).toEqual({ ok: true });
     expect(
       checkPrRepoMatchesProject(
         "https://github.com/lannguyensi/AGENT-TASKS/pull/42",
+        noOverride,
         project,
       ),
     ).toEqual({ ok: true });
@@ -215,6 +220,7 @@ describe("pr-repo-matches-project check", () => {
   it("rejects cross-repo PR URL with structured details", () => {
     const r = checkPrRepoMatchesProject(
       "https://github.com/someone-else/their-repo/pull/7",
+      noOverride,
       project,
     );
     expect(r.ok).toBe(false);
@@ -228,7 +234,7 @@ describe("pr-repo-matches-project check", () => {
 
   it("passes through non-PR URLs (URL validation belongs upstream)", () => {
     expect(
-      checkPrRepoMatchesProject("https://example.com/not-a-pr", project),
+      checkPrRepoMatchesProject("https://example.com/not-a-pr", noOverride, project),
     ).toEqual({ ok: true });
   });
 
@@ -236,9 +242,98 @@ describe("pr-repo-matches-project check", () => {
     expect(
       checkPrRepoMatchesProject(
         "https://github.com/a/b/pull/1",
+        noOverride,
         { githubRepo: null },
       ),
     ).toEqual({ ok: true });
+  });
+
+  // ADR-0010 §5c: task.deliverableRepo overrides which repo the guard
+  // compares against.
+  it("compares against task.deliverableRepo, not project.githubRepo, when the override is set", () => {
+    const r = checkPrRepoMatchesProject(
+      "https://github.com/someone-else/their-repo/pull/7",
+      { deliverableRepo: "foreign-org/foreign-repo" },
+      project,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.projectRepo).toBe("foreign-org/foreign-repo");
+    }
+  });
+
+  it("accepts a PR matching the deliverableRepo override even though it mismatches project.githubRepo", () => {
+    expect(
+      checkPrRepoMatchesProject(
+        "https://github.com/foreign-org/foreign-repo/pull/7",
+        { deliverableRepo: "foreign-org/foreign-repo" },
+        project,
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it("treats an override equal to project.githubRepo as a harmless no-op", () => {
+    expect(
+      checkPrRepoMatchesProject(
+        "https://github.com/LanNguyenSi/agent-tasks/pull/42",
+        { deliverableRepo: project.githubRepo },
+        project,
+      ),
+    ).toEqual({ ok: true });
+  });
+});
+
+describe("effectiveDeliverableRepo", () => {
+  const project = { githubRepo: "LanNguyenSi/agent-tasks" };
+
+  it("resolves to project.githubRepo when the task has no override", () => {
+    expect(effectiveDeliverableRepo({}, project)).toBe("LanNguyenSi/agent-tasks");
+    expect(effectiveDeliverableRepo({ deliverableRepo: null }, project)).toBe(
+      "LanNguyenSi/agent-tasks",
+    );
+  });
+
+  it("resolves to task.deliverableRepo when set", () => {
+    expect(
+      effectiveDeliverableRepo({ deliverableRepo: "foreign-org/foreign-repo" }, project),
+    ).toBe("foreign-org/foreign-repo");
+  });
+
+  it("resolves to null when neither is set", () => {
+    expect(effectiveDeliverableRepo({}, { githubRepo: null })).toBeNull();
+  });
+});
+
+describe("checkOwnerRepoMatchesProject", () => {
+  const project = { githubRepo: "LanNguyenSi/agent-tasks" };
+
+  it("accepts an owner/repo pair matching the effective repo", () => {
+    expect(
+      checkOwnerRepoMatchesProject("LanNguyenSi", "agent-tasks", {}, project),
+    ).toEqual({ ok: true });
+  });
+
+  it("rejects an owner/repo pair that mismatches the effective repo", () => {
+    const r = checkOwnerRepoMatchesProject("someone-else", "their-repo", {}, project);
+    expect(r.ok).toBe(false);
+  });
+
+  it("compares against the deliverableRepo override when set", () => {
+    expect(
+      checkOwnerRepoMatchesProject(
+        "foreign-org",
+        "foreign-repo",
+        { deliverableRepo: "foreign-org/foreign-repo" },
+        project,
+      ),
+    ).toEqual({ ok: true });
+    const r = checkOwnerRepoMatchesProject(
+      "LanNguyenSi",
+      "agent-tasks",
+      { deliverableRepo: "foreign-org/foreign-repo" },
+      project,
+    );
+    expect(r.ok).toBe(false);
   });
 });
 

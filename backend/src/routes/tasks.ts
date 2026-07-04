@@ -77,6 +77,7 @@ import {
   selfMergeRejectionMessage,
   checkPrRepoMatchesProject,
   prRepoMatchesProjectRejectionMessage,
+  effectiveDeliverableRepo,
 } from "../services/gates/index.js";
 import { SCOPES } from "../services/scopes.js";
 import { bodyLimit } from "hono/body-limit";
@@ -187,6 +188,17 @@ const taskListInclude = {
     select: { id: true, title: true, status: true },
   },
 };
+// Cross-repo deliverable override (ADR-0010 §5c): exactly one slash, both
+// sides non-empty, no whitespace. Deliberately stricter than parseOwnerRepo()
+// (which tolerates a repo segment containing a slash, e.g. "a/b/c" parses as
+// owner="a" repo="b/c") — task-authored input should not silently accept a
+// multi-segment repo pointer.
+const deliverableRepoSchema = z
+  .string()
+  .trim()
+  .min(3)
+  .max(255)
+  .regex(/^[^/\s]+\/[^/\s]+$/, "deliverableRepo must be in 'owner/repo' format");
 
 export const createTaskSchema = z.object({
   title: z.string().min(1).max(255),
@@ -210,6 +222,12 @@ export const createTaskSchema = z.object({
   // pickup-time heuristic is skipped — `true` forces the grounding hint,
   // `false` suppresses it deterministically.
   debugFlavor: z.boolean().optional(),
+  // Cross-repo deliverable override (ADR-0010 §5c). Accepted from both
+  // agents and humans at create time — safe because post-create changes are
+  // human-project-admin-only (see updateTaskSchema / agentUpdateTaskSchema
+  // below). A value equal to the project's own githubRepo is a harmless
+  // no-op and is NOT rejected.
+  deliverableRepo: deliverableRepoSchema.optional(),
 });
 
 // updateTaskSchema and agentUpdateTaskSchema use httpUrl() from lib/url-guard
@@ -229,6 +247,11 @@ const updateTaskSchema = z.object({
   templateData: templateDataSchema.nullable().optional(),
   externalRef: z.string().trim().min(1).max(255).nullable().optional(),
   labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+  // Cross-repo deliverable override (ADR-0010 §5c). Human-project-admin-only
+  // to set OR clear — enforced in the route handler, not here (this schema
+  // has no actor context). Agents never see this field: agentUpdateTaskSchema
+  // omits it and the route rejects any agent PATCH body that names it.
+  deliverableRepo: deliverableRepoSchema.nullable().optional(),
 });
 
 const agentUpdateTaskSchema = z.object({
@@ -739,6 +762,7 @@ taskRouter.post(
           ...(body.dependsOn && body.dependsOn.length > 0
             ? { blockedBy: { connect: Array.from(new Set(body.dependsOn)).map((id) => ({ id })) } }
             : {}),
+          ...(body.deliverableRepo !== undefined ? { deliverableRepo: body.deliverableRepo } : {}),
           createdByUserId: actor.type === "human" ? actor.userId : null,
           createdByAgentId: actor.type === "agent" ? actor.tokenId : null,
         },
@@ -758,6 +782,18 @@ taskRouter.post(
         ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
         : (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Human";
       void emitTaskAvailableSignal(task.id, projectId, actor.type, actorName);
+    }
+
+    // Audit the cross-repo override — only when actually set (create-time
+    // absence is the common case and would drown the log).
+    if (body.deliverableRepo) {
+      void logAuditEvent({
+        action: "task.deliverable_repo_set",
+        actorId: actor.type === "human" ? actor.userId : undefined,
+        projectId,
+        taskId: task.id,
+        payload: { deliverableRepo: body.deliverableRepo, actorType: actor.type, via: "create" },
+      });
     }
 
     // Create-time confidence surfacing (scorer-v2 T4). INFORMATIONAL only — a low
@@ -886,6 +922,7 @@ taskRouter.post(
             ...(item.debugFlavor !== undefined
               ? { metadata: { debugFlavor: item.debugFlavor } satisfies TaskMetadata }
               : {}),
+            ...(item.deliverableRepo !== undefined ? { deliverableRepo: item.deliverableRepo } : {}),
             createdByUserId: actor.type === "human" ? actor.userId : null,
             createdByAgentId: actor.type === "agent" ? actor.tokenId : null,
           },
@@ -906,6 +943,15 @@ taskRouter.post(
           action: "task.imported",
           payload: { externalRef: item.externalRef ?? null, source: "batch_import" },
         });
+        if (item.deliverableRepo) {
+          void logAuditEvent({
+            action: "task.deliverable_repo_set",
+            actorId: actor.type === "human" ? actor.userId : undefined,
+            projectId,
+            taskId: task.id,
+            payload: { deliverableRepo: item.deliverableRepo, actorType: actor.type, via: "batch_import" },
+          });
+        }
       } catch (e) {
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
           skipped.push(item.externalRef ?? item.title);
@@ -1881,8 +1927,18 @@ const startTaskSchema = z.object({
 // stays free of Hono Context coupling. Distinct-reviewer is checked by the
 // caller in the review-finish branch (not here) because the audit-event
 // payload needs caller-only fields (actor identity, claim columns).
+//
+// `skipped` (additive, ADR-0010 §5c v1): GITHUB_BACKED_RULES that were NOT
+// evaluated because the task's effective deliverable repo is foreign to
+// project.githubRepo — this project's GitHub token has no standing there,
+// so ciGreen/prMerged are treated as trivially satisfied rather than
+// evaluated against the wrong repo (or forced to fail closed forever).
 type FinishGateResult =
-  | { ok: true; resolvedRequires: string[] | undefined }
+  | {
+      ok: true;
+      resolvedRequires: string[] | undefined;
+      skipped: Array<{ rule: TransitionRule; reason: string }>;
+    }
   | { ok: false; kind: "no_transition"; message: string }
   | { ok: false; kind: "forbidden_role"; requiredRole: string }
   | {
@@ -1919,6 +1975,7 @@ type FinishGateResult =
 async function evaluateV2TransitionGates(task: {
   projectId: string;
   status: string;
+  deliverableRepo?: string | null;
   project: { teamId: string; githubRepo: string | null };
 }, gateContext: {
   branchName: string | null;
@@ -1957,6 +2014,29 @@ async function evaluateV2TransitionGates(task: {
   // during autoMerge — the merge hasn't happened yet at pre-check time).
   if (skipRules && skipRules.length > 0 && resolvedRequires) {
     resolvedRequires = resolvedRequires.filter((r) => !skipRules.includes(r));
+  }
+
+  // Foreign-deliverable skip (ADR-0010 §5c v1). A task whose effective
+  // deliverable repo diverges from project.githubRepo has its PR lifecycle
+  // in a repo this project's GitHub token has no standing on — ciGreen and
+  // prMerged cannot be evaluated there. v1 semantics: treat them as
+  // trivially satisfied and record why, rather than fail closed forever (no
+  // recovery path exists on a repo this project can never query) or
+  // silently drop them (which would hide the skip from callers/audits).
+  const skipped: Array<{ rule: TransitionRule; reason: string }> = [];
+  const effectiveRepo = effectiveDeliverableRepo(task, task.project);
+  const isForeignDeliverable = effectiveRepo !== task.project.githubRepo;
+  if (isForeignDeliverable && resolvedRequires) {
+    const githubBacked = resolvedRequires.filter((r) => GITHUB_BACKED_RULES.has(r as never));
+    for (const r of githubBacked) {
+      skipped.push({
+        rule: r as TransitionRule,
+        reason: `Task deliverable is ${effectiveRepo ?? "an external repo"}; this project's GitHub token has no standing there, so '${r}' cannot be evaluated and is treated as satisfied (v1 semantics).`,
+      });
+    }
+    if (githubBacked.length > 0) {
+      resolvedRequires = resolvedRequires.filter((r) => !GITHUB_BACKED_RULES.has(r as never));
+    }
   }
 
   // Role gate. "any" is the common path and bypasses the DB round-trip, per
@@ -2002,7 +2082,7 @@ async function evaluateV2TransitionGates(task: {
     );
   }
 
-  return { ok: true, resolvedRequires };
+  return { ok: true, resolvedRequires, skipped };
 }
 
 taskRouter.post("/tasks/:id/finish", async (c) => {
@@ -2191,7 +2271,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
         return c.json(
           { error: mergeResult.error, message: mergeResult.message },
-          status as 403 | 502,
+          status as 403 | 409 | 502,
         );
       }
 
@@ -2318,7 +2398,13 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       );
     }
 
-    return c.json({ kind: "review", task: updated, outcome, ...(reviewAutoMergeSha !== null ? { autoMergeSha: reviewAutoMergeSha } : {}) });
+    return c.json({
+      kind: "review",
+      task: updated,
+      outcome,
+      ...(reviewAutoMergeSha !== null ? { autoMergeSha: reviewAutoMergeSha } : {}),
+      ...(gateResult.skipped.length > 0 ? { skippedGates: gateResult.skipped } : {}),
+    });
   }
 
   // ── Branch: self-approve (work-claim holder on a review-state non-DR task) ──
@@ -2435,7 +2521,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
         return c.json(
           { error: mergeResult.error, message: mergeResult.message },
-          status as 403 | 502,
+          status as 403 | 409 | 502,
         );
       }
 
@@ -2578,6 +2664,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       task: selfApprUpdated,
       outcome: selfApprOutcome,
       ...(selfApprAutoMergeSha !== null ? { autoMergeSha: selfApprAutoMergeSha } : {}),
+      ...(selfApprGateResult.skipped.length > 0 ? { skippedGates: selfApprGateResult.skipped } : {}),
     });
   }
 
@@ -2774,10 +2861,12 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     targetStatus = expectedFinishStateFromDefinition(effectiveDefinition);
   }
 
-  // Cross-repo validation on prUrl payload (ADR-0010 §5b). Shared gate —
-  // same logic is used by submit-pr below. See services/gates/.
+  // Cross-repo validation on prUrl payload (ADR-0010 §5b/§5c). Shared gate —
+  // same logic is used by submit-pr below. See services/gates/. Compares
+  // against the task's EFFECTIVE deliverable repo (task.deliverableRepo when
+  // set, else project.githubRepo).
   if (prUrl) {
-    const crossRepo = checkPrRepoMatchesProject(prUrl, task.project);
+    const crossRepo = checkPrRepoMatchesProject(prUrl, task, task.project);
     if (!crossRepo.ok) {
       return c.json(
         {
@@ -2881,7 +2970,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
       return c.json(
         { error: mergeResult.error, message: mergeResult.message },
-        status as 403 | 502,
+        status as 403 | 409 | 502,
       );
     }
 
@@ -2984,6 +3073,22 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     });
   }
 
+  // Audit a foreign-deliverable prUrl link — only when the effective repo
+  // actually diverges from project.githubRepo (an active override), so
+  // ordinary same-repo tasks don't drown the log.
+  if (prUrl) {
+    const effectiveRepo = effectiveDeliverableRepo(task, task.project);
+    if (effectiveRepo && effectiveRepo !== task.project.githubRepo) {
+      void logAuditEvent({
+        action: "task.foreign_pr_linked",
+        actorId: actor.type === "human" ? actor.userId : undefined,
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: { prUrl, deliverableRepo: effectiveRepo, projectRepo: task.project.githubRepo, actorType: actor.type, via: "task_finish" },
+      });
+    }
+  }
+
   // If we just moved the task into a review state, notify potential reviewers
   if (isReviewState(effectiveDefinition, targetStatus)) {
     void emitReviewSignal(
@@ -2994,7 +3099,13 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     );
   }
 
-  return c.json({ kind: "work", task: updated, targetStatus, ...(workAutoMergeSha !== null ? { autoMergeSha: workAutoMergeSha } : {}) });
+  return c.json({
+    kind: "work",
+    task: updated,
+    targetStatus,
+    ...(workAutoMergeSha !== null ? { autoMergeSha: workAutoMergeSha } : {}),
+    ...(gateResult.skipped.length > 0 ? { skippedGates: gateResult.skipped } : {}),
+  });
 });
 
 // ── Agent PR submission (v2 MCP) ─────────────────────────────────────────────
@@ -3109,9 +3220,9 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
   }
   const { branchName, prUrl, prNumber } = parsed.data;
 
-  // Cross-repo hardening (ADR-0010 §5b). Same gate as the task_finish
+  // Cross-repo hardening (ADR-0010 §5b/§5c). Same gate as the task_finish
   // branch above — see services/gates/pr-repo-matches-project.ts.
-  const crossRepo = checkPrRepoMatchesProject(prUrl, task.project);
+  const crossRepo = checkPrRepoMatchesProject(prUrl, task, task.project);
   if (!crossRepo.ok) {
     return c.json(
       {
@@ -3236,6 +3347,21 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
       previousPrNumber,
     },
   });
+
+  // Audit a foreign-deliverable prUrl link — only when the effective repo
+  // actually diverges from project.githubRepo (an active override).
+  {
+    const effectiveRepo = effectiveDeliverableRepo(task, task.project);
+    if (effectiveRepo && effectiveRepo !== task.project.githubRepo) {
+      void logAuditEvent({
+        action: "task.foreign_pr_linked",
+        actorId: actor.type === "human" ? actor.userId : undefined,
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: { prUrl, deliverableRepo: effectiveRepo, projectRepo: task.project.githubRepo, actorType: actor.type, via: "submit_pr" },
+      });
+    }
+  }
 
   return c.json({ kind: "submit_pr", task: updated });
 });
@@ -3596,7 +3722,7 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     where: { id: c.req.param("id") },
     include: {
       workflow: true,
-      project: { select: { confidenceThreshold: true, taskTemplate: true } },
+      project: { select: { confidenceThreshold: true, taskTemplate: true, githubRepo: true } },
       ...taskInclude,
     },
   });
@@ -3693,6 +3819,14 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
       findings,
       inferredTaskType,
     },
+    // Cross-repo deliverable override (ADR-0010 §5c). Additive: surfaces the
+    // task-level context the pr_repo_matches_project gate actually enforces
+    // against (task.deliverableRepo when set, else project.githubRepo).
+    crossRepoDeliverable: {
+      deliverableRepo: task.deliverableRepo,
+      effectiveRepo: effectiveDeliverableRepo(task, task.project),
+      overridden: task.deliverableRepo !== null,
+    },
   });
 });
 
@@ -3700,7 +3834,13 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
 
 taskRouter.patch("/tasks/:id", async (c) => {
   const actor = c.get("actor") as Actor;
-  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    // githubRepo is needed for the cross-repo guard on prUrl writes below
+    // (both actor lanes); deliverableRepo lives on `task` itself (no select
+    // restricts it — full scalar row).
+    include: { project: { select: { id: true, githubRepo: true } } },
+  });
   if (!task) return notFound(c);
 
   if (!(await hasProjectAccess(actor, task.projectId))) {
@@ -3719,7 +3859,9 @@ taskRouter.patch("/tasks/:id", async (c) => {
       return forbidden(c, "Missing scope: tasks:update");
     }
 
-    const forbiddenFields = ["title", "description", "priority", "status", "dueAt", "templateData"];
+    // deliverableRepo is human-project-admin-only (ADR-0010 §5c): an agent
+    // must never retarget its own task's merge-lifecycle ownership mid-flight.
+    const forbiddenFields = ["title", "description", "priority", "status", "dueAt", "templateData", "deliverableRepo"];
     const attempted = Object.keys(rawBody).filter((k) => forbiddenFields.includes(k));
     if (attempted.length > 0) {
       return c.json({ error: "forbidden", message: `Agents cannot update: ${attempted.join(", ")}` }, 403);
@@ -3731,6 +3873,28 @@ taskRouter.patch("/tasks/:id", async (c) => {
     }
 
     const body = parsed.data;
+
+    // Cross-repo guard (ADR-0010 §5b/§5c). Compares against the task's
+    // EFFECTIVE deliverable repo — agents can't set deliverableRepo (see
+    // forbiddenFields above), but a prior admin-set override still applies
+    // to their prUrl writes.
+    if (body.prUrl) {
+      const crossRepo = checkPrRepoMatchesProject(body.prUrl, task, task.project);
+      if (!crossRepo.ok) {
+        return c.json(
+          {
+            error: "cross_repo_pr_rejected",
+            message: prRepoMatchesProjectRejectionMessage(
+              crossRepo.prOwner,
+              crossRepo.prRepo,
+              crossRepo.projectRepo,
+            ),
+          },
+          400,
+        );
+      }
+    }
+
     const updated = await prisma.task.update({
       where: { id: task.id },
       data: {
@@ -3742,6 +3906,18 @@ taskRouter.patch("/tasks/:id", async (c) => {
       },
       include: taskInclude,
     });
+
+    if (body.prUrl) {
+      const effectiveRepo = effectiveDeliverableRepo(task, task.project);
+      if (effectiveRepo && effectiveRepo !== task.project.githubRepo) {
+        void logAuditEvent({
+          action: "task.foreign_pr_linked",
+          projectId: task.projectId,
+          taskId: task.id,
+          payload: { prUrl: body.prUrl, deliverableRepo: effectiveRepo, projectRepo: task.project.githubRepo, actorType: "agent", via: "patch" },
+        });
+      }
+    }
 
     return c.json({ task: updated });
   }
@@ -3758,6 +3934,38 @@ taskRouter.patch("/tasks/:id", async (c) => {
   }
 
   const body = parsed.data;
+
+  // deliverableRepo is project-admin-only to set OR clear (ADR-0010 §5c):
+  // prevents a contributor from silently retargeting a task's merge-
+  // automation ownership.
+  if (body.deliverableRepo !== undefined) {
+    if (!(await isProjectAdmin(actor, task.projectId))) {
+      return forbidden(c, "Only project admins may set or clear deliverableRepo");
+    }
+  }
+
+  // Cross-repo guard, human lane. Uses the PATCH-payload deliverableRepo
+  // when this same call is also changing it, so a same-call "set override +
+  // link foreign prUrl" doesn't spuriously reject against the stale value.
+  if (body.prUrl) {
+    const pendingTask = {
+      deliverableRepo: body.deliverableRepo !== undefined ? body.deliverableRepo : task.deliverableRepo,
+    };
+    const crossRepo = checkPrRepoMatchesProject(body.prUrl, pendingTask, task.project);
+    if (!crossRepo.ok) {
+      return c.json(
+        {
+          error: "cross_repo_pr_rejected",
+          message: prRepoMatchesProjectRejectionMessage(
+            crossRepo.prOwner,
+            crossRepo.prRepo,
+            crossRepo.projectRepo,
+          ),
+        },
+        400,
+      );
+    }
+  }
 
   // Distinct-reviewer gate applies to ALL paths that can change status,
   // not just /transition. Previously the frontend "Mark Done" button and
@@ -3816,6 +4024,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
           : {}),
         ...(body.externalRef !== undefined ? { externalRef: body.externalRef } : {}),
         ...(body.labels !== undefined ? { labels: body.labels } : {}),
+        ...(body.deliverableRepo !== undefined ? { deliverableRepo: body.deliverableRepo } : {}),
         updatedAt: new Date(),
       },
       include: taskInclude,
@@ -3829,6 +4038,32 @@ taskRouter.patch("/tasks/:id", async (c) => {
 
   if (body.status === "done" && task.status !== "done") {
     await acknowledgeSignalsForTask(task.id);
+  }
+
+  if (body.deliverableRepo !== undefined && body.deliverableRepo !== task.deliverableRepo) {
+    void logAuditEvent({
+      action: "task.deliverable_repo_changed",
+      actorId: actor.userId,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: { from: task.deliverableRepo, to: body.deliverableRepo, actorType: "human" },
+    });
+  }
+
+  if (body.prUrl) {
+    const effectiveRepo = effectiveDeliverableRepo(
+      { deliverableRepo: body.deliverableRepo !== undefined ? body.deliverableRepo : task.deliverableRepo },
+      task.project,
+    );
+    if (effectiveRepo && effectiveRepo !== task.project.githubRepo) {
+      void logAuditEvent({
+        action: "task.foreign_pr_linked",
+        actorId: actor.userId,
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: { prUrl: body.prUrl, deliverableRepo: effectiveRepo, projectRepo: task.project.githubRepo, actorType: "human", via: "patch" },
+      });
+    }
   }
 
   return c.json({ task: updated });

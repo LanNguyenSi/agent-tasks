@@ -148,6 +148,14 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
           .describe(
             "Structured spec fields, forwarded to the backend which validates + scores them: goal, acceptanceCriteria (the task's evals), context, constraints, scope, outOfScope, dependencies, risk, agentPrompt, taskType, and prefers { testBeforeImplementation, verticalSlices, smallDiffs, explicitStopConditions, noSpeculativeRefactoring }. Populate goal + acceptanceCriteria at minimum so the task is executable.",
           ),
+        deliverableRepo: z
+          .string()
+          .trim()
+          .max(255)
+          .optional()
+          .describe(
+            "Cross-repo deliverable override ('owner/repo'). Set only when this task's legitimate deliverable is a PR in a DIFFERENT GitHub repo than the project's linked githubRepo (benchmark/measurement/docs tasks) — the cross-repo PR guard and merge automation then key off this repo instead. Post-create changes are project-admin-only (human, PATCH); agents cannot retarget it later.",
+          ),
       },
       handler: async ({ projectId, ...input }) =>
         wrap(() => client.createTask(projectId, input)),

@@ -48,10 +48,15 @@ export {
 export type { TaskStatusForMergeResult } from "./task-status-for-merge.js";
 export {
   checkPrRepoMatchesProject,
+  checkOwnerRepoMatchesProject,
+  effectiveDeliverableRepo,
   prRepoMatchesProjectGate,
   prRepoMatchesProjectRejectionMessage,
 } from "./pr-repo-matches-project.js";
-export type { PrRepoMatchesProjectResult } from "./pr-repo-matches-project.js";
+export type {
+  PrRepoMatchesProjectResult,
+  PrRepoMatchesProjectTask,
+} from "./pr-repo-matches-project.js";
 
 export const registry: readonly Gate[] = [
   distinctReviewerGate,

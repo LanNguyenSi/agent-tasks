@@ -402,6 +402,68 @@ first (defense-in-depth). `emitTaskApprovedSignal` fires as usual.
 `owner/repo` exclusively from the project — body-supplied values are
 ignored.
 
+### Cross-repo deliverable override (`deliverableRepo`)
+
+Some tasks have a legitimate deliverable that is a PR in a **different**
+GitHub repo than the one the project is linked to — benchmark runs,
+cross-repo measurement, or docs tasks that land their output elsewhere.
+Without an escape hatch, such a task deadlocks: `branchPresent`/`prPresent`
+require a PR, but the cross-repo PR guard rejects any PR that isn't in
+`project.githubRepo`.
+
+`Task.deliverableRepo` (nullable, `owner/repo` format) is the escape hatch.
+When set, every place that would otherwise compare against
+`project.githubRepo` compares against the **effective deliverable repo**
+instead: `task.deliverableRepo ?? project.githubRepo`. A value equal to the
+project's own repo is a harmless no-op.
+
+**When to use it**: a task whose PR genuinely belongs in another repo (the
+task itself still lives in this project). Do not use it to route around the
+guard for a same-repo task — that's what the guard is for.
+
+**Where it's enforced** (all task-side `prUrl` write paths, plus PR
+creation):
+
+- `task_finish { prUrl }` and `task_submit_pr`
+- `PATCH /api/tasks/:id` (`prUrl`), both the agent and the human lane
+- `POST /api/github/pull-requests` — validated against the requested
+  `owner`/`repo` **before** the PR is created on GitHub
+
+All five reject a mismatch with the same `400 cross_repo_pr_rejected` shape.
+
+**What stays forbidden**:
+
+- **Merge automation never merges a foreign deliverable.** `performPrMerge`
+  — the single choke point behind `task_merge`, `task_finish { autoMerge:
+  true }` (both Mode A and Mode B), and `POST /api/github/pull-requests/:n/merge`
+  — refuses with `409 foreign_deliverable_merge_refused` whenever the
+  effective deliverable repo diverges from `project.githubRepo`. The foreign
+  repo owns its own merge lifecycle; merge it there directly.
+- **Agents cannot set or change it.** `deliverableRepo` may be supplied at
+  `task_create` time by either a human or an agent (safe, because the
+  point above already blocks the abuse case). Once the task exists, only a
+  human **project admin** may set, change, or clear it via
+  `PATCH /api/tasks/:id`. An agent PATCH body naming `deliverableRepo` is
+  rejected with `403`, even if the value is unchanged — this prevents
+  mid-flight retargeting of a task's merge-automation ownership.
+
+**`ciGreen` / `prMerged` on a foreign deliverable (v1 semantics)**: this
+project's GitHub delegation token has no standing on a foreign repo, so
+these rules cannot be meaningfully evaluated there. v1 treats them as
+**skipped** (trivially satisfied) rather than evaluated or force-failed —
+the alternative would either fail closed forever with no recovery path, or
+silently pretend the rule ran. The skip is recorded, not hidden: a
+`task_finish` response on a foreign-deliverable task carries an additive
+`skippedGates: [{ rule, reason }]` array when this applies. Task-level
+introspection (`GET /api/tasks/:id/instructions`) surfaces the override
+itself via an additive `crossRepoDeliverable: { deliverableRepo,
+effectiveRepo, overridden }` block.
+
+**Audit trail**: `task.deliverable_repo_set` (create, non-null only),
+`task.deliverable_repo_changed` (PATCH, set/changed/cleared), and
+`task.foreign_pr_linked` (any write path that links a `prUrl` under an
+active override) are all logged via the standard audit-event pipeline.
+
 ### Branch protection
 
 Solo mode raises the trust placed in the `allowAgentPrMerge` delegation
