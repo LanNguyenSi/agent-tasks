@@ -1,5 +1,25 @@
 # Change log
 
+## 2026-07-05
+
+New invariant doc `auth.md` authored to close the `sources:` granularity gap
+the P2c benchmark located (`docs/okf/BENCHMARK.md`, Q8: "How does the MCP
+bridge authenticate its requests to the agent-tasks backend?"): the pointers
+section on that answer was sourced from `architecture.md`, whose coarse
+`sources:` (the four deployables only) don't name any auth-specific file.
+Chose the "add a focused concept doc" option over tightening
+`architecture.md`'s own `sources:`: a doc scoped tightly to the auth/token
+subsystem is both more likely to be the chunk retrieved for auth-shaped
+questions and carries the real implementation files
+(`mcp-bridge/src/token-store.ts`, `mcp-bridge/src/cli.ts`,
+`mcp-server/src/client.ts`, `backend/src/middleware/auth.ts`,
+`backend/prisma/schema.prisma`) identified by reading the code, not from
+memory. `architecture.md` is left unchanged, keeping its overview role and
+coarse `sources:`; `auth.md` is linked from `index.md`'s Invariants section
+so it stays reachable. Every claim verified against source at authoring
+time. No benchmark re-run in this task, the next measurement point picks it
+up. Task: agent-tasks `1c576413-a559-43af-a181-c524710d4ebd`.
+
 ## 2026-07-04
 
 Point 6 re-score recorded in `BENCHMARK.md` (sixth point, confirmation run
