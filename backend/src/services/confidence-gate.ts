@@ -116,5 +116,17 @@ export async function evaluateConfidenceGate(
         ok: false,
         response: c.json({ error: "bad_request", message: decision.message }, 400),
       };
+    default:
+      // Exhaustiveness guard: a future `ClaimDecision.kind` added to the
+      // evaluator without a matching case here is a COMPILE error (the
+      // argument is not assignable to `never`), not a runtime `undefined`.
+      return assertNever(decision);
   }
+}
+
+/** Minimal local exhaustiveness helper: no shared `assertNever` exists in this
+ *  codebase, so it is defined locally. Never called at runtime; its only job is
+ *  to make an unhandled `ClaimDecision.kind` a compile error. */
+function assertNever(value: never): never {
+  throw new Error(`Unhandled ClaimDecision.kind: ${JSON.stringify(value)}`);
 }
