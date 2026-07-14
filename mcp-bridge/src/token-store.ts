@@ -131,6 +131,16 @@ class MultiSourceStore implements TokenStore {
     if (this.keytarStore) {
       try {
         await this.keytarStore.set(token);
+        // Write-through: clear any stale file-store copy left over from a
+        // period when keytar was unusable. Without this, a later call
+        // where keytar dies again (get() throwing) would silently fall
+        // back to the *old* file token instead of reporting "no token" —
+        // a stale credential masquerading as current. Best-effort: the
+        // keychain write already succeeded, so a file-clear failure here
+        // must not fail the login.
+        await this.fileStore.clear().catch(() => {
+          // ignore — best-effort cleanup of a now-redundant mirror
+        });
         this.kind = "keytar";
         return;
       } catch {
