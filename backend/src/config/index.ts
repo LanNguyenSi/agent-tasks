@@ -36,6 +36,18 @@ const configSchema = z.object({
   // 1 in production behind Traefik so per-client limits key on the real
   // client IP instead of the proxy's address.
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
+  // Retention window (days) for the webhook_deliveries / tool_invocations
+  // idempotency dedup tables before the periodic TTL sweep prunes rows
+  // older than it (see services/idempotency-sweep.ts). Both tables grow
+  // one row per webhook delivery / per idempotent MCP call and are never
+  // otherwise pruned, so this must stay well above:
+  // - GitHub's webhook redelivery window (automatic retries back off over
+  //   at most a few hours; manual "Redeliver" from the UI covers a
+  //   similarly short recent window), and
+  // - any realistic MCP client idempotency-key retry window (retries
+  //   happen within minutes-to-hours of the original attempt, not days).
+  // 30 days comfortably clears both without weakening dedup.
+  IDEMPOTENCY_TTL_DAYS: z.coerce.number().int().min(1).default(30),
 });
 
 function loadConfig() {
