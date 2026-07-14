@@ -48,6 +48,20 @@ When a client calls `POST /api/tasks/:id/transition` with
 3. If any rule fails, responds with **HTTP 422** and a structured body
    listing the failed rules. The task is **not** transitioned.
 
+**`PATCH /api/tasks/:id` with a `status` field goes through the identical
+pipeline** (human actor lane only — agents cannot PATCH `status` at all,
+see below): the same from→to workflow lookup, the same `requiredRole`
+check, the same `requires` preconditions, and the same claim-clearing on a
+terminal target. The one difference is that **PATCH never accepts
+`force`/`forceReason`** — that audited, admin-only bypass stays exclusive
+to `/transition`, so a PATCH status write that fails a precondition is
+always rejected with 422 (`canForce` is always `false` in that response).
+A no-op PATCH that echoes the task's current status back is not treated as
+a transition and skips this pipeline entirely. Before this, `PATCH
+/api/tasks/:id` wrote `status` straight to the row with no workflow
+validation, no preconditions, and no audit trail — a silent bypass of
+everything below.
+
 Example failure response:
 
 ```json
