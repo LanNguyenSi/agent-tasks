@@ -86,6 +86,107 @@ class FileStore implements TokenStore {
   }
 }
 
+/**
+ * Wraps a keychain store (keytar) with a file-store fallback so token
+ * resolution degrades gracefully instead of hard-failing.
+ *
+ * Unlike the previous design (a one-time startup probe that permanently
+ * committed to either KeytarStore or FileStore), this store re-checks on
+ * every call: keytar may load fine at startup and still throw later (a
+ * flaky native binding, a revoked keychain entitlement, a missing D-Bus
+ * session that only manifests on first real use). Every operation tries
+ * keytar first and transparently falls back to the file store on any
+ * failure or empty result, updating `kind` to reflect where the value
+ * actually came from so `status`/`login` report the true source.
+ */
+class MultiSourceStore implements TokenStore {
+  kind: "keytar" | "file";
+  constructor(
+    private readonly keytarStore: KeytarStore | null,
+    private readonly fileStore: FileStore,
+  ) {
+    this.kind = keytarStore ? "keytar" : "file";
+  }
+
+  async get(): Promise<string | null> {
+    if (this.keytarStore) {
+      try {
+        const value = await this.keytarStore.get();
+        if (value) {
+          this.kind = "keytar";
+          return value;
+        }
+        // keytar reachable but has no entry — still check the file, since a
+        // prior login may have written there while keytar was unusable.
+      } catch {
+        // keytar dead on this call — fall through to file store
+      }
+    }
+    const value = await this.fileStore.get();
+    this.kind = "file";
+    return value;
+  }
+
+  async set(token: string): Promise<void> {
+    if (this.keytarStore) {
+      try {
+        await this.keytarStore.set(token);
+        // Write-through: clear any stale file-store copy left over from a
+        // period when keytar was unusable. Without this, a later call
+        // where keytar dies again (get() throwing) would silently fall
+        // back to the *old* file token instead of reporting "no token" —
+        // a stale credential masquerading as current. Best-effort: the
+        // keychain write already succeeded, so a file-clear failure here
+        // must not fail the login.
+        await this.fileStore.clear().catch(() => {
+          // ignore — best-effort cleanup of a now-redundant mirror
+        });
+        this.kind = "keytar";
+        return;
+      } catch {
+        // keytar dead — fall back to the file store
+      }
+    }
+    await this.fileStore.set(token);
+    this.kind = "file";
+  }
+
+  async clear(): Promise<void> {
+    let clearedKeytar = false;
+    if (this.keytarStore) {
+      try {
+        await this.keytarStore.clear();
+        clearedKeytar = true;
+      } catch {
+        // ignore — keytar dead or nothing stored there
+      }
+    }
+    // Always clear the file too, even when keytar succeeded: a stale file
+    // token left over from a period when keytar was unusable must not
+    // resurface as a valid credential on a later get().
+    await this.fileStore.clear();
+    this.kind = clearedKeytar ? "keytar" : "file";
+  }
+}
+
+/**
+ * Human-readable guidance for when no source (env, keychain, file) resolves
+ * to a token. Always names all three sources plus the concrete remedy for
+ * each — never blames a single source (e.g. "keytar") for what may be a
+ * multi-source miss.
+ */
+export function noTokenAvailableMessage(filePath?: string): string {
+  const path = filePath ?? fileStorePath();
+  return (
+    "No token available from any source: " +
+    "env (AGENT_TASKS_TOKEN is not set), " +
+    "OS keychain (no entry stored, or the keychain is unavailable), " +
+    `file (${path} does not exist or is empty). ` +
+    "Fix one of: set AGENT_TASKS_TOKEN, run 'agent-tasks-mcp-bridge login', " +
+    `or write the token directly to ${path}.`
+  );
+}
+
 export async function resolveTokenStore(options?: {
   envToken?: string | undefined;
   filePath?: string;
@@ -95,6 +196,9 @@ export async function resolveTokenStore(options?: {
     return new EnvStore(envToken);
   }
 
+  const fileStore = new FileStore(options?.filePath ?? fileStorePath());
+
+  let keytarStore: KeytarStore | null = null;
   try {
     const mod = (await import("keytar")) as unknown as {
       default?: unknown;
@@ -103,17 +207,23 @@ export async function resolveTokenStore(options?: {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const keytar: any = mod.getPassword ? mod : (mod as any).default;
     if (keytar?.getPassword) {
-      // Runtime probe: on Linux without libsecret-1 at runtime, keytar
-      // imports cleanly but throws on first call. Probe here so we can
-      // fall through to FileStore before returning a broken store.
-      await keytar.getPassword(SERVICE, ACCOUNT);
-      return new KeytarStore(keytar);
+      keytarStore = new KeytarStore(keytar);
     }
   } catch {
-    // keytar native module failed to load or probe — fall through to file store
+    // keytar native module failed to load — treat as unavailable, use file store.
+    // Any failure that instead surfaces on a real call (not just import) is
+    // handled per-call by MultiSourceStore, so no eager probe call is needed
+    // here.
+    keytarStore = null;
   }
 
-  return new FileStore(options?.filePath ?? fileStorePath());
+  return new MultiSourceStore(keytarStore, fileStore);
 }
 
-export const __testing = { FileStore, EnvStore, KeytarStore, fileStorePath };
+export const __testing = {
+  FileStore,
+  EnvStore,
+  KeytarStore,
+  MultiSourceStore,
+  fileStorePath,
+};

@@ -1,5 +1,6 @@
 import { stdin as input, stderr, stdout } from "node:process";
 import type { TokenStore } from "./token-store.js";
+import { noTokenAvailableMessage } from "./token-store.js";
 
 export interface LoginOptions {
   baseUrl: string;
@@ -191,7 +192,7 @@ export async function runStatus(
 ): Promise<void> {
   const token = await store.get();
   if (!token) {
-    stderr.write(`No token stored (${store.kind}). Run 'login' first.\n`);
+    stderr.write(`${noTokenAvailableMessage()}\n`);
     process.exitCode = 1;
     return;
   }
