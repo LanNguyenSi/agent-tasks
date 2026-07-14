@@ -1003,6 +1003,255 @@ describe("PATCH /tasks/:id — prUrl scheme allowlist (M6)", () => {
   });
 });
 
+// ── PATCH /tasks/:id — human status write goes through the workflow engine
+// (task 68537f17) ────────────────────────────────────────────────────────────
+//
+// Previously the human PATCH lane wrote body.status straight to the DB
+// behind nothing but the updateTaskSchema enum constraint: no from→to
+// workflow validation, no requiredRole check, no branchPresent/prPresent
+// preconditions, no audit trail, and terminal writes did not clear stale
+// claims. POST /tasks/:id/transition enforced all of that. This suite
+// exercises the PATCH lane now reusing the same underlying primitives
+// (resolveEffectiveDefinition / evaluateTransitionRules /
+// checkReviewApprovalGate) so it can no longer silently bypass the engine —
+// but, unlike /transition, PATCH never accepts `force`: a failing
+// precondition is always rejected outright.
+describe("PATCH /tasks/:id — status write goes through workflow-engine gates (68537f17)", () => {
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+
+  it("rejects a status write not allowed by the workflow (400) and does not write", async () => {
+    // Default workflow has no open -> done edge (must pass through
+    // in_progress and/or review first).
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "open" });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toContain("not allowed by workflow");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("blocks a precondition-failing status write outright — no force escape hatch (422)", async () => {
+    // in_progress -> review requires branchPresent + prPresent in the
+    // default workflow; this task has neither.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      branchName: null,
+      prUrl: null,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "review" }),
+    });
+
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string; canForce: boolean; failed: Array<{ rule: string }> };
+    expect(body.error).toBe("precondition_failed");
+    // No force capability on PATCH: canForce is always false, unlike
+    // /transition's admin-derived hint.
+    expect(body.canForce).toBe(false);
+    expect(body.failed.map((f) => f.rule)).toEqual(expect.arrayContaining(["branchPresent", "prPresent"]));
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("applies a valid status write, clears the work-claim, and audits the transition", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      claimedByUserId: null,
+      claimedAt: new Date("2026-01-01T00:00:00Z"),
+      branchName: "feat/test-branch",
+      prUrl: "https://github.com/acme/thing/pull/1",
+      prNumber: 1,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("done");
+    // Dangling-claim fix: PATCH status='done' used to leave the work-claim
+    // in place. Terminal writes now clear it, mirroring /transition.
+    expect(updateCall.data.claimedByAgentId).toBeNull();
+    expect(updateCall.data.claimedByUserId).toBeNull();
+    expect(updateCall.data.claimedAt).toBeNull();
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.transitioned",
+        payload: expect.objectContaining({ from: "in_progress", to: "done", actorType: "human", via: "patch" }),
+      }),
+    );
+  });
+
+  it("review -> done via PATCH clears BOTH the work-claim and the held review-claim", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      claimedByAgentId: "agent-1",
+      claimedByUserId: null,
+      claimedAt: new Date("2026-01-01T00:00:00Z"),
+      reviewClaimedByAgentId: "agent-reviewer",
+      reviewClaimedByUserId: null,
+      reviewClaimedAt: new Date("2026-01-02T00:00:00Z"),
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("done");
+    expect(updateCall.data.claimedByAgentId).toBeNull();
+    expect(updateCall.data.claimedByUserId).toBeNull();
+    expect(updateCall.data.reviewClaimedByAgentId).toBeNull();
+    expect(updateCall.data.reviewClaimedByUserId).toBeNull();
+    expect(updateCall.data.reviewClaimedAt).toBeNull();
+  });
+
+  it("non-terminal transition (in_progress -> review) leaves the work-claim intact", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      claimedByUserId: null,
+      branchName: "feat/test-branch",
+      prUrl: "https://github.com/acme/thing/pull/1",
+      prNumber: 1,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "review" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("review");
+    expect(updateCall.data.claimedByAgentId).toBeUndefined();
+    expect(updateCall.data.claimedAt).toBeUndefined();
+  });
+
+  it("enforces the distinct-reviewer gate on review -> done via PATCH and audits the rejection", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      claimedByUserId: "user-1",
+      claimedByAgentId: null,
+      reviewClaimedByUserId: "user-1", // same actor as claimant: self-review
+      reviewClaimedByAgentId: null,
+      project: { ...baseTask.project, requireDistinctReviewer: true },
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.review_rejected_self_reviewer",
+        payload: expect.objectContaining({ endpoint: "patch", actorType: "human" }),
+      }),
+    );
+  });
+
+  it("enforces a workflow requiredRole gate on a PATCH status write (custom workflow)", async () => {
+    const workflowDef = {
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "review", label: "Review", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress", label: "Start", requiredRole: "any" },
+        { from: "in_progress", to: "review", label: "Submit", requiredRole: "REVIEWER" },
+        { from: "review", to: "done", label: "Approve", requiredRole: "any" },
+      ],
+      initialState: "open",
+    };
+
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      branchName: "feat/test-branch",
+      prUrl: "https://github.com/acme/thing/pull/1",
+      prNumber: 1,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce({
+      id: "wf-role",
+      projectId: "proj-1",
+      isDefault: true,
+      definition: workflowDef,
+    });
+    accessMocks.hasProjectRole.mockResolvedValueOnce(false);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "review" }),
+    });
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toContain("Requires role: REVIEWER");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("no-op status write (unchanged value) skips workflow resolution entirely", async () => {
+    // A full-object PATCH that echoes the current status back must not be
+    // gated: the workflow may have no explicit self-loop transition for
+    // the state, and there is no actual transition being requested. Uses a
+    // task with no branch/PR (would fail branchPresent/prPresent if the
+    // pipeline ran) to prove the gate never fires.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      branchName: null,
+      prUrl: null,
+    });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "in_progress", title: "Renamed" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.title).toBe("Renamed");
+  });
+});
+
 // ── review lock atomicity (M1) ───────────────────────────────────────────────
 
 describe("review lock is atomic (M1)", () => {

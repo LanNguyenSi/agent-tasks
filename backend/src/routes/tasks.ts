@@ -3860,8 +3860,24 @@ taskRouter.patch("/tasks/:id", async (c) => {
     where: { id: c.req.param("id") },
     // githubRepo is needed for the cross-repo guard on prUrl writes below
     // (both actor lanes); deliverableRepo lives on `task` itself (no select
-    // restricts it — full scalar row).
-    include: { project: { select: { id: true, githubRepo: true } } },
+    // restricts it — full scalar row). `workflow` plus the governance
+    // columns (teamId/requireDistinctReviewer/soloMode/governanceMode) are
+    // needed by the human-lane status-transition enforcement below, which
+    // reuses the same resolveEffectiveDefinition / checkReviewApprovalGate /
+    // GitHub-delegation pipeline as POST /tasks/:id/transition.
+    include: {
+      workflow: true,
+      project: {
+        select: {
+          id: true,
+          teamId: true,
+          githubRepo: true,
+          requireDistinctReviewer: true,
+          soloMode: true,
+          governanceMode: true,
+        },
+      },
+    },
   });
   if (!task) return notFound(c);
 
@@ -3989,23 +4005,87 @@ taskRouter.patch("/tasks/:id", async (c) => {
     }
   }
 
-  // Distinct-reviewer gate applies to ALL paths that can change status,
-  // not just /transition. Previously the frontend "Mark Done" button and
-  // any human calling PATCH with { status: "done" } bypassed the gate
-  // entirely, making the governance feature cosmetic. Apply the same
-  // check here. Status changes for the review→done transition through
-  // PATCH get the same structural backstop.
-  if (body.status === "done" && task.status === "review") {
-    const project = await prisma.project.findUnique({
-      where: { id: task.projectId },
-      select: {
-        requireDistinctReviewer: true,
-        soloMode: true,
-        governanceMode: true,
-      },
-    });
-    if (project && resolveGovernanceMode(project) === GovernanceMode.REQUIRES_DISTINCT_REVIEWER) {
-      const gate = checkReviewApprovalGate(task, actor, project);
+  // ── Human status write: full workflow-engine enforcement, parity with
+  // POST /tasks/:id/transition ────────────────────────────────────────────
+  //
+  // Previously this endpoint wrote body.status straight to the DB behind
+  // nothing but the updateTaskSchema enum constraint: no from→to workflow
+  // validation, no requiredRole check, no branchPresent/prPresent/ciGreen
+  // preconditions, and no audit trail — while /transition enforces all of
+  // it. A CLI/MCP/integration caller PATCHing status directly silently
+  // bypassed the whole workflow engine (task 68537f17). This block reuses
+  // the same resolveEffectiveDefinition / evaluateTransitionRules /
+  // checkReviewApprovalGate primitives /transition uses (rather than a
+  // second, drift-prone reimplementation) and supersedes the narrower
+  // review→done-only distinct-reviewer check that used to live here.
+  //
+  // PATCH deliberately does NOT accept `force`/`forceReason`: the audited,
+  // admin-only precondition-bypass escape hatch stays exclusive to
+  // /transition. A PATCH status write that fails a precondition is
+  // rejected outright (422) with a pointer to /transition — never silently
+  // forced through.
+  //
+  // A no-op status (body.status === task.status, e.g. a full-object PATCH
+  // that happens to echo the current value back) skips this pipeline
+  // entirely: the workflow definition may have no explicit self-loop
+  // transition for that state, and gating an unchanged value would reject
+  // callers that never intended a transition at all.
+  const previousStatus = task.status;
+  let didStatusChange = false;
+  let statusClaimPatch: Record<string, unknown> = {};
+  let isTerminalTransition = false;
+  const transitionSkippedGates: Array<{ rule: TransitionRule; reason: string }> = [];
+
+  if (body.status !== undefined && body.status !== previousStatus) {
+    const targetStatus = body.status;
+    didStatusChange = true;
+
+    const effectiveDef = await resolveEffectiveDefinition(task, prisma);
+    const transition = effectiveDef.transitions.find(
+      (t) => t.from === previousStatus && t.to === targetStatus,
+    );
+    if (!transition) {
+      return c.json(
+        {
+          error: "bad_request",
+          message: `Transition from '${previousStatus}' to '${targetStatus}' is not allowed by workflow`,
+        },
+        400,
+      );
+    }
+    let resolvedRequires = transition.requires;
+    const requiredRole = transition.requiredRole;
+
+    // Foreign-deliverable skip (ADR-0010 §5c v1), mirrored from
+    // /transition: ciGreen/prMerged cannot be evaluated on a repo this
+    // project's GitHub token has no standing on.
+    if (isForeignDeliverable(task, task.project) && resolvedRequires) {
+      const githubBacked = resolvedRequires.filter((r) => GITHUB_BACKED_RULES.has(r as never));
+      if (githubBacked.length > 0) {
+        const effectiveRepo = effectiveDeliverableRepo(task, task.project);
+        for (const r of githubBacked) {
+          transitionSkippedGates.push({
+            rule: r as TransitionRule,
+            reason: `Task deliverable is ${effectiveRepo ?? "an external repo"}; this project's GitHub token has no standing there, so '${r}' cannot be evaluated and is treated as satisfied (v1 semantics).`,
+          });
+        }
+        resolvedRequires = resolvedRequires.filter((r) => !GITHUB_BACKED_RULES.has(r as never));
+      }
+    }
+
+    if (requiredRole && requiredRole !== "any") {
+      if (!(await hasProjectRole(actor, task.projectId, requiredRole as ProjectRole))) {
+        return forbidden(c, `Requires role: ${requiredRole}`);
+      }
+    }
+    // requiredRole undefined/"any" falls back to the write-tier check
+    // already enforced above for the whole PATCH (requireProjectWrite).
+
+    // Distinct-reviewer gate: same structural backstop /transition applies
+    // on review → done, now driven by the shared pipeline instead of the
+    // narrower inline special case this replaces.
+    if (previousStatus === "review" && targetStatus === "done") {
+      const gate = checkReviewApprovalGate(task, actor, task.project);
       if (!gate.allowed) {
         void logAuditEvent({
           action: "task.review_rejected_self_reviewer",
@@ -4025,6 +4105,82 @@ taskRouter.patch("/tasks/:id", async (c) => {
         return forbidden(c, distinctReviewerRejectionMessage());
       }
     }
+
+    let githubToken: string | null = null;
+    const needsGithub =
+      resolvedRequires?.some((r) => GITHUB_BACKED_RULES.has(r as never)) ?? false;
+    if (needsGithub && task.project.githubRepo) {
+      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate", {
+        preferUserId: actor.userId,
+      });
+      githubToken = delegate?.githubAccessToken ?? null;
+    }
+
+    // Evaluated against the PENDING (post-write) branchName/prUrl/prNumber
+    // so a same-call "set branchName + move to review" doesn't spuriously
+    // fail branchPresent against the stale pre-write task.
+    const { failed, unknown, errors: ruleErrors } = await evaluateTransitionRules(
+      resolvedRequires,
+      {
+        branchName: body.branchName !== undefined ? body.branchName : task.branchName,
+        prUrl: body.prUrl !== undefined ? body.prUrl : task.prUrl,
+        prNumber: body.prNumber !== undefined ? body.prNumber : task.prNumber,
+        projectGithubRepo: task.project.githubRepo,
+        githubToken,
+      },
+    );
+
+    if (failed.length > 0) {
+      // No force escape hatch on PATCH — always the "blocked" branch.
+      // canForce is always false (unlike /transition's admin-derived
+      // hint): this endpoint never accepts force=true.
+      return c.json(
+        {
+          error: "precondition_failed",
+          message: `Transition blocked — ${failed
+            .map((r) => (ruleErrors[r] ? `${RULE_MESSAGES[r]} (${ruleErrors[r]})` : RULE_MESSAGES[r]))
+            .join(" ")} Use POST /tasks/:id/transition with force:true (project admin only) to bypass.`,
+          failed: failed.map((r) => ({
+            rule: r,
+            message: RULE_MESSAGES[r],
+            ...(ruleErrors[r] ? { error: ruleErrors[r] } : {}),
+          })),
+          canForce: false,
+        },
+        422,
+      );
+    }
+
+    if (unknown.length > 0) {
+      logger.warn(
+        { component: "workflow", taskId: task.id, fromStatus: previousStatus, toStatus: targetStatus, unknown },
+        "task status patch references unknown rules",
+      );
+    }
+
+    // Claim-clearing rules, mirrored from /transition: terminal target
+    // clears both claims; leaving a review state (non-terminal) clears
+    // only the review-claim. Closes the dangling-claim gap this task also
+    // flagged: PATCH status='done' used to leave claims untouched.
+    isTerminalTransition = isTerminalState(effectiveDef, targetStatus);
+    const isLeavingReview =
+      !isTerminalTransition && isReviewState(effectiveDef, previousStatus);
+    statusClaimPatch = isTerminalTransition
+      ? {
+          claimedByUserId: null,
+          claimedByAgentId: null,
+          claimedAt: null,
+          reviewClaimedByUserId: null,
+          reviewClaimedByAgentId: null,
+          reviewClaimedAt: null,
+        }
+      : isLeavingReview
+        ? {
+            reviewClaimedByUserId: null,
+            reviewClaimedByAgentId: null,
+            reviewClaimedAt: null,
+          }
+        : {};
   }
 
   let updated;
@@ -4047,6 +4203,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
         ...(body.externalRef !== undefined ? { externalRef: body.externalRef } : {}),
         ...(body.labels !== undefined ? { labels: body.labels } : {}),
         ...(body.deliverableRepo !== undefined ? { deliverableRepo: body.deliverableRepo } : {}),
+        ...statusClaimPatch,
         updatedAt: new Date(),
       },
       include: taskInclude,
@@ -4058,7 +4215,23 @@ taskRouter.patch("/tasks/:id", async (c) => {
     throw e;
   }
 
-  if (body.status === "done" && task.status !== "done") {
+  if (didStatusChange) {
+    void logAuditEvent({
+      action: "task.transitioned",
+      actorId: actor.userId,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: {
+        from: previousStatus,
+        to: body.status,
+        actorType: "human",
+        via: "patch",
+        ...(transitionSkippedGates.length > 0 ? { skippedGates: transitionSkippedGates } : {}),
+      },
+    });
+  }
+
+  if (isTerminalTransition) {
     await acknowledgeSignalsForTask(task.id);
   }
 
@@ -4092,7 +4265,10 @@ taskRouter.patch("/tasks/:id", async (c) => {
     }
   }
 
-  return c.json({ task: updated });
+  return c.json({
+    task: updated,
+    ...(transitionSkippedGates.length > 0 ? { skippedGates: transitionSkippedGates } : {}),
+  });
 });
 
 // ── Delete task ───────────────────────────────────────────────────────────────
