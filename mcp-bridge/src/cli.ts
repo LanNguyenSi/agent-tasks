@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { runStdioServer, DEFAULT_BASE_URL } from "@agent-tasks/mcp-server";
-import { resolveTokenStore } from "./token-store.js";
+import { resolveTokenStore, noTokenAvailableMessage } from "./token-store.js";
 import { runLogin, runLogout, runStatus } from "./login.js";
 
 // Single source of truth for the version string emitted by `--version`.
@@ -89,9 +89,7 @@ async function main() {
 
   const token = await store.get();
   if (!token) {
-    throw new Error(
-      "No token available. Run 'agent-tasks-mcp-bridge login' or set AGENT_TASKS_TOKEN.",
-    );
+    throw new Error(noTokenAvailableMessage());
   }
   await runStdioServer({ token, baseUrl });
 }
