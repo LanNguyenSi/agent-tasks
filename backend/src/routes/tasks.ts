@@ -4242,6 +4242,41 @@ taskRouter.patch("/tasks/:id", async (c) => {
     await acknowledgeSignalsForTask(task.id);
   }
 
+  // Signal parity with POST /tasks/:id/transition (task 05ad9bf3): the human
+  // PATCH status lane now enforces the same workflow engine as /transition
+  // (task 68537f17) but, until this change, emitted no workflow signals — a
+  // human moving a task into review (or reopening it) via PATCH woke no
+  // reviewer/agent over the Monitor/SSE signal path. Mirrors /transition's
+  // exact conditions and arguments (task/projectId/claim fields from the
+  // PRE-update `task`, not `updated`) so there is exactly one code path per
+  // signal, not a second drift-prone copy. Ack (above) runs before these so
+  // a terminal transition's pending asks are cleared first, same ordering
+  // /transition uses.
+  if (didStatusChange) {
+    if (body.status === "review" && previousStatus !== "review") {
+      void emitReviewSignal(
+        task.id,
+        task.projectId,
+        task.claimedByUserId,
+        task.claimedByAgentId,
+      );
+    }
+
+    if (body.status === "open" && previousStatus !== "open") {
+      // Safe to look up `actor.userId` directly (no agent branch, unlike
+      // /transition's reopen block): agents get a hard 403 at the
+      // status-field guard near the top of this handler (forbiddenFields
+      // includes "status"), so this whole PATCH status block — and hence
+      // this signal — only ever runs for a HumanActor. If that agent
+      // restriction is ever loosened, this lookup must be widened the same
+      // way /transition's is (agentToken.findUnique for actor.type
+      // "agent"), or it will call findUnique({ id: undefined }).
+      const actorName =
+        (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Human";
+      void emitTaskAvailableSignal(task.id, task.projectId, actor.type, actorName);
+    }
+  }
+
   if (body.deliverableRepo !== undefined && body.deliverableRepo !== task.deliverableRepo) {
     void logAuditEvent({
       action: "task.deliverable_repo_changed",
