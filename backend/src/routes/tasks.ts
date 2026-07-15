@@ -4058,11 +4058,18 @@ taskRouter.patch("/tasks/:id", async (c) => {
 
     // Foreign-deliverable skip (ADR-0010 §5c v1), mirrored from
     // /transition: ciGreen/prMerged cannot be evaluated on a repo this
-    // project's GitHub token has no standing on.
-    if (isForeignDeliverable(task, task.project) && resolvedRequires) {
+    // project's GitHub token has no standing on. Uses the PENDING
+    // (post-write) deliverableRepo, same pattern as the cross-repo prUrl
+    // guard above: a same-call "set deliverableRepo + move status" must not
+    // evaluate this skip against the stale pre-write value.
+    const pendingDeliverableTask = {
+      ...task,
+      deliverableRepo: body.deliverableRepo !== undefined ? body.deliverableRepo : task.deliverableRepo,
+    };
+    if (isForeignDeliverable(pendingDeliverableTask, task.project) && resolvedRequires) {
       const githubBacked = resolvedRequires.filter((r) => GITHUB_BACKED_RULES.has(r as never));
       if (githubBacked.length > 0) {
-        const effectiveRepo = effectiveDeliverableRepo(task, task.project);
+        const effectiveRepo = effectiveDeliverableRepo(pendingDeliverableTask, task.project);
         for (const r of githubBacked) {
           transitionSkippedGates.push({
             rule: r as TransitionRule,
