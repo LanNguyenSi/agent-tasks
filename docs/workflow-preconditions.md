@@ -62,6 +62,22 @@ a transition and skips this pipeline entirely. Before this, `PATCH
 validation, no preconditions, and no audit trail — a silent bypass of
 everything below.
 
+**Signal parity with `/transition` also applies.** A PATCH status write
+that lands on `review` fires the same `review_needed` signal
+(`emitReviewSignal`) that `/transition` fires when entering review, and a
+PATCH write that lands on `open` (a reopen) fires the same `task_available`
+signal (`emitTaskAvailableSignal`) — same conditions (`previousStatus` vs.
+the new status), same recipients, same arguments; see
+[events.md](events.md) and [signal-payload-design.md](signal-payload-design.md)
+for the general trigger tables, which now hold regardless of which endpoint
+drove the transition. A no-op PATCH (see above) never reaches this and
+emits nothing. Before this, `PATCH /api/tasks/:id` emitted no workflow
+signals at all, so a human moving a task into review (or reopening it) via
+PATCH woke no reviewer or agent over the Monitor/SSE signal path — a
+pre-existing gap (PATCH never emitted signals), not a regression, but one
+that became a visible asymmetry once PATCH status writes started running
+the same gated pipeline as `/transition` above.
+
 Example failure response:
 
 ```json

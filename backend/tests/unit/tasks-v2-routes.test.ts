@@ -1063,6 +1063,10 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
     expect(body.canForce).toBe(false);
     expect(body.failed.map((f) => f.rule)).toEqual(expect.arrayContaining(["branchPresent", "prPresent"]));
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    // Negative control (agent-tasks 05ad9bf3): a gate-blocked write never
+    // reaches the update, so it must emit neither workflow signal either.
+    expect(signalEmitters.emitReviewSignal).not.toHaveBeenCalled();
+    expect(signalEmitters.emitTaskAvailableSignal).not.toHaveBeenCalled();
   });
 
   it("applies a valid status write, clears the work-claim, and audits the transition", async () => {
@@ -1249,6 +1253,118 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
     expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
     const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
     expect(updateCall.data.title).toBe("Renamed");
+    // Negative control (agent-tasks 05ad9bf3): a no-op status write is not a
+    // transition at all, so neither workflow signal may fire.
+    expect(signalEmitters.emitReviewSignal).not.toHaveBeenCalled();
+    expect(signalEmitters.emitTaskAvailableSignal).not.toHaveBeenCalled();
+  });
+
+  // ── Signal parity with POST /tasks/:id/transition (agent-tasks 05ad9bf3) ──
+  //
+  // Before this, the PATCH status lane enforced the same workflow-engine
+  // gates as /transition (68537f17) but emitted none of /transition's
+  // review-entered / task-available signals: a human moving a task into
+  // review — or reopening it — via PATCH woke no reviewer/agent over the
+  // Monitor/SSE signal path. These mirror /transition's exact conditions
+  // and arguments (see the `status === "review"` / `status === "open"`
+  // blocks in POST /tasks/:id/transition).
+
+  it("in_progress -> review via PATCH emits the review-needed signal, same args as /transition", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      claimedByUserId: null,
+      branchName: "feat/test-branch",
+      prUrl: "https://github.com/acme/thing/pull/1",
+      prNumber: 1,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "review" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(signalEmitters.emitReviewSignal).toHaveBeenCalledTimes(1);
+    expect(signalEmitters.emitReviewSignal).toHaveBeenCalledWith(
+      "task-1",
+      "proj-1",
+      null, // claimedByUserId (pre-update task)
+      "agent-1", // claimedByAgentId (pre-update task)
+    );
+    expect(signalEmitters.emitTaskAvailableSignal).not.toHaveBeenCalled();
+  });
+
+  it("in_progress -> open (reopen/'Release') via PATCH emits the task_available signal, same args as /transition", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.userFindUnique.mockResolvedValueOnce({ name: "Lan" });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "open" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(signalEmitters.emitTaskAvailableSignal).toHaveBeenCalledTimes(1);
+    expect(signalEmitters.emitTaskAvailableSignal).toHaveBeenCalledWith(
+      "task-1",
+      "proj-1",
+      "human",
+      "Lan",
+    );
+    expect(signalEmitters.emitReviewSignal).not.toHaveBeenCalled();
+  });
+
+  it("reopen via PATCH falls back to the 'Human' actor name (and does not crash) when the user record is missing", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.userFindUnique.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "open" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(signalEmitters.emitTaskAvailableSignal).toHaveBeenCalledTimes(1);
+    expect(signalEmitters.emitTaskAvailableSignal).toHaveBeenCalledWith(
+      "task-1",
+      "proj-1",
+      "human",
+      "Human",
+    );
+  });
+
+  it("a status write that does not target review/open (e.g. review -> done) emits neither workflow signal", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      claimedByAgentId: "agent-1",
+      claimedByUserId: null,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(signalEmitters.emitReviewSignal).not.toHaveBeenCalled();
+    expect(signalEmitters.emitTaskAvailableSignal).not.toHaveBeenCalled();
   });
 });
 
