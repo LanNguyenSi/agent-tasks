@@ -1252,6 +1252,159 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
   });
 });
 
+// ── PATCH /tasks/:id — foreign-deliverable skip uses the PENDING
+// deliverableRepo (agent-tasks 4237f26d) ────────────────────────────────────
+//
+// The status block's ciGreen/prMerged skip used to call
+// isForeignDeliverable/effectiveDeliverableRepo against the PRE-write
+// `task.deliverableRepo`, so a single PATCH that sets BOTH `deliverableRepo`
+// and `status` evaluated the skip against the stale value — while the
+// neighboring cross-repo prUrl guard already built a `pendingTask` from
+// `body.deliverableRepo`. This aligns the status block with that pattern.
+describe("PATCH /tasks/:id — foreign-deliverable skip evaluates the PENDING deliverableRepo (4237f26d)", () => {
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+  const FOREIGN_REPO = "other-org/other-repo";
+
+  // in_progress -> review requires ciGreen (GitHub-backed), on top of the
+  // usual branchPresent/prPresent, so the foreign skip has something to
+  // remove from `resolvedRequires`.
+  const workflowRequiringCiGreen = {
+    id: "wf-cigreen-patch",
+    projectId: "proj-1",
+    isDefault: false,
+    definition: {
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "review", label: "Review", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress", requiredRole: "any" },
+        {
+          from: "in_progress",
+          to: "review",
+          requiredRole: "any",
+          requires: ["branchPresent", "prPresent", "ciGreen"],
+        },
+        { from: "review", to: "done", requiredRole: "any" },
+      ],
+      initialState: "open",
+    },
+  };
+
+  it("a same-call admin PATCH { deliverableRepo, status } evaluates the skip against the PENDING (new) deliverableRepo, not the stale pre-write value", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      branchName: "feat/test-branch",
+      prUrl: "https://github.com/acme/thing/pull/1",
+      prNumber: 1,
+      deliverableRepo: null, // home repo BEFORE this PATCH — not foreign yet
+      workflowId: "wf-cigreen-patch",
+      workflow: workflowRequiringCiGreen,
+    });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deliverableRepo: FOREIGN_REPO, status: "review" }),
+    });
+
+    // Pre-fix: isForeignDeliverable/effectiveDeliverableRepo read the stale
+    // task.deliverableRepo (null → falls back to project.githubRepo → NOT
+    // foreign), so ciGreen was evaluated for real. No delegation token is
+    // configured (findDelegationUserMock defaults to null), so it fails
+    // closed with 422. Post-fix: the skip fires against the PENDING value
+    // set by this same PATCH → 200 with ciGreen reported as skipped.
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      skippedGates?: Array<{ rule: string; reason: string }>;
+    };
+    expect(body.skippedGates?.some((s) => s.rule === "ciGreen")).toBe(true);
+    // Proves the skip fired instead of a real (fail-closed) evaluation.
+    expect(findDelegationUserMock).not.toHaveBeenCalled();
+
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.deliverableRepo).toBe(FOREIGN_REPO);
+    expect(updateCall.data.status).toBe("review");
+  });
+
+  it("PATCH status write on an already-foreign deliverable (no deliverableRepo change this call) returns skippedGates in the 200 body AND in the audit payload", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      branchName: "feat/test-branch",
+      prUrl: `https://github.com/${FOREIGN_REPO}/pull/9`,
+      prNumber: 9,
+      deliverableRepo: FOREIGN_REPO,
+      workflowId: "wf-cigreen-patch",
+      workflow: workflowRequiringCiGreen,
+    });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "review" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      skippedGates?: Array<{ rule: string; reason: string }>;
+    };
+    expect(body.skippedGates?.some((s) => s.rule === "ciGreen")).toBe(true);
+    expect(findDelegationUserMock).not.toHaveBeenCalled();
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.transitioned",
+        payload: expect.objectContaining({
+          from: "in_progress",
+          to: "review",
+          skippedGates: expect.arrayContaining([expect.objectContaining({ rule: "ciGreen" })]),
+        }),
+      }),
+    );
+  });
+
+  it("a same-call admin PATCH { deliverableRepo: null, status } resetting an already-foreign override back to the home repo does NOT skip GitHub-backed rules (fail-open reset direction, security-relevant)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      branchName: "feat/test-branch",
+      prUrl: `https://github.com/${FOREIGN_REPO}/pull/9`,
+      prNumber: 9,
+      deliverableRepo: FOREIGN_REPO, // foreign BEFORE this PATCH
+      workflowId: "wf-cigreen-patch",
+      workflow: workflowRequiringCiGreen,
+    });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deliverableRepo: null, status: "review" }),
+    });
+
+    // Pre-fix, the skip read the stale (still-foreign) task.deliverableRepo
+    // and fired even though this PATCH resets the override back to the home
+    // repo in the SAME call — a fail-open hole (ciGreen silently skipped on
+    // a task that, post-write, is no longer foreign). Post-fix, the pending
+    // value (null → falls back to project.githubRepo) is NOT foreign, so
+    // ciGreen is evaluated for real: no delegation token is configured
+    // (findDelegationUserMock defaults to null) → 422 fail-closed.
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as {
+      failed?: Array<{ rule: string }>;
+      skippedGates?: Array<{ rule: string; reason: string }>;
+    };
+    expect(body.failed?.some((f) => f.rule === "ciGreen")).toBe(true);
+    expect(body.skippedGates?.some((s) => s.rule === "ciGreen")).not.toBe(true);
+    // Proves the rule was actually evaluated (delegation lookup consulted),
+    // not fail-open skipped against the stale foreign value.
+    expect(findDelegationUserMock).toHaveBeenCalled();
+  });
+});
+
 // ── review lock atomicity (M1) ───────────────────────────────────────────────
 
 describe("review lock is atomic (M1)", () => {
