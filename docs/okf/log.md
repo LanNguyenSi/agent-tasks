@@ -1,5 +1,10 @@
 # Change log
 
+## 2026-07-16
+
+CI now watches staleness: warn-only `okf-kit check` on every PR
+(.github/workflows/okf-staleness.yml, canonical pattern from harness#350).
+
 ## 2026-07-05
 
 New invariant doc `auth.md` authored to close the `sources:` granularity gap
