@@ -9,7 +9,11 @@
  *   2. `RealGroundingClient.start`: snake_case → camelCase mapping and the
  *      "wrapper throws → null" failure-soft behavior.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createRequire } from "node:module";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Mock the wrapper module before importing the client. We re-`vi.doMock`
 // inside individual tests when we need a different `initSession`
@@ -41,6 +45,12 @@ import {
   getGroundingClient,
   __resetGroundingClientCacheForTests,
 } from "../../src/services/grounding-client.js";
+
+// Same bridge the production client uses (`createRequire`, which bypasses
+// `vi.mock`). Used below to write through the *real* evidence-ledger module
+// surface so a default-DB-path or API rename drifts loudly instead of the
+// client silently soft-degrading to `{ entryCount: 0 }`.
+const requireForDriftGuard = createRequire(import.meta.url);
 
 beforeEach(() => {
   __resetGroundingClientCacheForTests();
@@ -194,6 +204,79 @@ describe("NullGroundingClient.getLedgerSummary", () => {
   it("returns zero entries without touching the filesystem", async () => {
     const client = new NullGroundingClient();
     const result = await client.getLedgerSummary("any-session");
+    expect(result).toEqual({ entryCount: 0 });
+  });
+});
+
+describe("RealGroundingClient.getLedgerSummary — real evidence-ledger module (drift guard)", () => {
+  // Loads the installed `@lannguyensi/evidence-ledger` package the same way
+  // production code does. A renamed/reshaped export here would throw at
+  // require-time. Note the round-trip alone cannot catch default-path drift:
+  // writer and reader share the module's `_db` singleton, so they move
+  // together — the explicit `existsSync` assertion below is what pins the
+  // on-disk default path. This block is a forward drift guard for future
+  // ledger versions, not a version pin for the 0.5.1 upgrade itself.
+  const ledgerModule = requireForDriftGuard("@lannguyensi/evidence-ledger") as {
+    getDb: (dbPath?: string) => unknown;
+    addEntry: (
+      db: unknown,
+      opts: { type: string; content: string; session?: string },
+    ) => unknown;
+    resetDb: () => void;
+  };
+
+  let originalHome: string | undefined;
+  let tempHome: string;
+
+  beforeEach(() => {
+    // Point $HOME at a throwaway directory so the module's *default*
+    // (argless) path resolution — `~/.evidence-ledger/ledger.db` — runs for
+    // real instead of touching the developer's actual ledger. Injecting a
+    // custom dbPath instead would leave default-path drift undetected.
+    originalHome = process.env.HOME;
+    tempHome = mkdtempSync(join(tmpdir(), "evidence-ledger-drift-"));
+    process.env.HOME = tempHome;
+    ledgerModule.resetDb();
+  });
+
+  afterEach(() => {
+    ledgerModule.resetDb();
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it("counts an entry written via the real API at the module's default DB path", async () => {
+    const db = ledgerModule.getDb();
+    ledgerModule.addEntry(db, {
+      type: "fact",
+      content: "drift-guard probe entry",
+      session: "drift-guard-session",
+    });
+
+    // Pin the on-disk default path independently of the shared singleton:
+    // if a future ledger version renames `~/.evidence-ledger/ledger.db`,
+    // this fails loudly even though writer and reader still agree.
+    expect(existsSync(join(tempHome, ".evidence-ledger", "ledger.db"))).toBe(true);
+
+    // `client` uses the default (production) loader, i.e. the same
+    // `createRequire` path and therefore the same module instance — and
+    // singleton DB handle — as `ledgerModule` above.
+    const client = new RealGroundingClient(vi.fn());
+    const result = await client.getLedgerSummary("drift-guard-session");
+    expect(result).toEqual({ entryCount: 1 });
+  });
+
+  it("reports zero entries for a session with no writes (negative control)", async () => {
+    const db = ledgerModule.getDb();
+    ledgerModule.addEntry(db, {
+      type: "fact",
+      content: "belongs to a different session",
+      session: "drift-guard-session-other",
+    });
+
+    const client = new RealGroundingClient(vi.fn());
+    const result = await client.getLedgerSummary("drift-guard-session-unused");
     expect(result).toEqual({ entryCount: 0 });
   });
 });
