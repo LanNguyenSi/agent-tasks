@@ -139,7 +139,7 @@ export class RealGroundingClient implements GroundingClient {
     if (!mod) return { entryCount: 0 };
     try {
       // `getDb` opens (or creates) the SQLite file at the default location
-      // (~/.evidence-ledger/db.sqlite). We pass no path so the module's
+      // (~/.evidence-ledger/ledger.db). We pass no path so the module's
       // own resolution applies. `listEntries` filters to the session.
       const db = mod.getDb();
       const entries = mod.listEntries(db, { session: sessionId });
