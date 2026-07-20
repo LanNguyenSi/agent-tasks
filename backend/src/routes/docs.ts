@@ -443,6 +443,16 @@ export const openApiSpec = {
         },
         required: ["title"],
       },
+      RespecTaskRequest: {
+        type: "object",
+        description:
+          "Corrects description and/or templateData on an OPEN+UNCLAIMED task without delete+recreate. At least one of the two properties is required (enforced by the Zod schema; not expressible as a flat JSON Schema `required` array — see the `anyOf` below).",
+        properties: {
+          description: { type: "string", maxLength: 50000 },
+          templateData: { $ref: "#/components/schemas/TemplateData" },
+        },
+        anyOf: [{ required: ["description"] }, { required: ["templateData"] }],
+      },
       TransitionTaskRequest: {
         type: "object",
         properties: {
@@ -851,6 +861,72 @@ export const openApiSpec = {
           },
           "404": {
             description: "Task not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/tasks/{id}/respec": {
+      post: {
+        tags: ["Tasks"],
+        summary: "Correct description/templateData on an open, unclaimed task",
+        description:
+          "Updates ONLY description and/or templateData — no other field (title included) is respec-able. The task must be status=open and unclaimed (work and review) or this returns 409. Agents: requires scope tasks:update, and by default only the task's own creator may respec it (the project's allowNonCreatorRespec flag relaxes that to any agent with project access). Humans: project write access is sufficient, no creator restriction. Every actually-changed field is audited with its full before/after value (capped per field beyond 8KB serialized). The response's `confidence` is re-scored on the new values and is purely informational — it never blocks the respec.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/RespecTaskRequest" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Task respec'd. `confidence` reflects the NEW description/templateData.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    task: { $ref: "#/components/schemas/Task" },
+                    confidence: { $ref: "#/components/schemas/Confidence" },
+                  },
+                  required: ["task", "confidence"],
+                },
+              },
+            },
+          },
+          "403": {
+            description: "Missing scope, no project access, or not the task's creator (and allowNonCreatorRespec is not set)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "404": {
+            description: "Task not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "409": {
+            description: "Task is not open, or is claimed (work or review)",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorResponse" },

@@ -4577,3 +4577,266 @@ describe("GET /tasks/:id/instructions: confidence shape", () => {
     }
   });
 });
+
+// ── POST /tasks/:id/respec ──────────────────────────────────────────────────
+
+describe("POST /tasks/:id/respec", () => {
+  const AGENT_WITH_UPDATE: Actor = { ...AGENT, scopes: [...AGENT.scopes, "tasks:update"] };
+  const AGENT_NO_UPDATE_SCOPE: Actor = {
+    ...AGENT,
+    scopes: AGENT.scopes.filter((s) => s !== "tasks:update"),
+  };
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+
+  // Open + fully unclaimed, authored by the AGENT actor's own token — the
+  // baseline eligible state for every "allowed" test below. Individual tests
+  // override the fields they need to exercise (status, claims, creator,
+  // allowNonCreatorRespec).
+  const RESPEC_TASK = {
+    ...baseTask,
+    id: "task-1",
+    status: "open",
+    description: "old description",
+    templateData: null,
+    createdByAgentId: "agent-1",
+    createdByUserId: null,
+    claimedByAgentId: null,
+    claimedByUserId: null,
+    claimedAt: null,
+    reviewClaimedByAgentId: null,
+    reviewClaimedByUserId: null,
+    project: {
+      ...baseTask.project,
+      allowNonCreatorRespec: false,
+    },
+  };
+
+  function respecRequest(actor: Actor, body: Record<string, unknown>) {
+    return makeApp(actor).request("/tasks/task-1/respec", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("agent creator can respec description; response carries {task, confidence} and audit carries full {from,to} + score from->to", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(RESPEC_TASK) // initial fetch (guard checks)
+      .mockResolvedValueOnce({ ...RESPEC_TASK, description: "new, much better description" }); // re-fetch after write
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: "new, much better description" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      task: { description: string };
+      confidence: {
+        score: number;
+        threshold: number;
+        blocking: boolean;
+        missing: string[];
+        findings: unknown[];
+        nextActions: string[];
+        enforcementMode: string;
+      };
+    };
+    expect(body.task.description).toBe("new, much better description");
+    expect(typeof body.confidence.score).toBe("number");
+    expect(body.confidence.threshold).toBe(0);
+    expect(typeof body.confidence.enforcementMode).toBe("string");
+    expect(Array.isArray(body.confidence.missing)).toBe(true);
+    expect(Array.isArray(body.confidence.findings)).toBe(true);
+    expect(Array.isArray(body.confidence.nextActions)).toBe(true);
+
+    // Atomic CAS guard: open + fully unclaimed.
+    const casCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    expect(casCall.where).toMatchObject({
+      id: "task-1",
+      status: "open",
+      claimedByUserId: null,
+      claimedByAgentId: null,
+      reviewClaimedByUserId: null,
+      reviewClaimedByAgentId: null,
+    });
+    expect(casCall.data.description).toBe("new, much better description");
+    expect(casCall.data.templateData).toBeUndefined();
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.respec",
+        taskId: "task-1",
+        projectId: "proj-1",
+        payload: expect.objectContaining({
+          actorType: "agent",
+          actorId: "agent-1",
+          changes: {
+            description: { from: "old description", to: "new, much better description" },
+          },
+          score: { from: expect.any(Number), to: expect.any(Number) },
+        }),
+      }),
+    );
+  });
+
+  it("agent creator can respec templateData only; audit carries only the templateData diff", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(RESPEC_TASK)
+      .mockResolvedValueOnce({ ...RESPEC_TASK, templateData: { goal: "ship the thing" } });
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, { templateData: { goal: "ship the thing" } });
+    expect(res.status).toBe(200);
+
+    const casCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    expect(casCall.data.templateData).toEqual({ goal: "ship the thing" });
+    expect(casCall.data.description).toBeUndefined();
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.respec",
+        payload: expect.objectContaining({
+          changes: {
+            templateData: { from: null, to: { goal: "ship the thing" } },
+          },
+        }),
+      }),
+    );
+  });
+
+  it("rejects a body with neither description nor templateData (400) and never reads the task", async () => {
+    const res = await respecRequest(AGENT_WITH_UPDATE, {});
+    expect(res.status).toBe(400);
+    expect(prismaMocks.taskFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("404s when the task does not exist", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(null);
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: "x" });
+    expect(res.status).toBe(404);
+  });
+
+  it("agent without tasks:update scope gets 403 with the exact scope message, before touching the task", async () => {
+    const res = await respecRequest(AGENT_NO_UPDATE_SCOPE, { description: "x" });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe("Missing scope: tasks:update");
+    expect(prismaMocks.taskFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("agent that is not the task's creator, without allowNonCreatorRespec, gets 403 and does not write", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...RESPEC_TASK, createdByAgentId: "some-other-agent" });
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: "hostile takeover" });
+    expect(res.status).toBe(403);
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("agent that is not the task's creator CAN respec when the project sets allowNonCreatorRespec", async () => {
+    const task = {
+      ...RESPEC_TASK,
+      createdByAgentId: "some-other-agent",
+      project: { ...RESPEC_TASK.project, allowNonCreatorRespec: true },
+    };
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(task)
+      .mockResolvedValueOnce({ ...task, description: "fixed by a different agent" });
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: "fixed by a different agent" });
+    expect(res.status).toBe(200);
+  });
+
+  it("human with project write access can respec regardless of who created the task (no creator check)", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce({ ...RESPEC_TASK, createdByAgentId: "some-agent", createdByUserId: null })
+      .mockResolvedValueOnce({ ...RESPEC_TASK, description: "human fixed this" });
+
+    const res = await respecRequest(HUMAN, { description: "human fixed this" });
+    expect(res.status).toBe(200);
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.respec",
+        actorId: "user-1",
+        payload: expect.objectContaining({ actorType: "human", actorId: "user-1" }),
+      }),
+    );
+  });
+
+  it("human without project write access (PROJECT_VIEWER) gets 403 and does not write", async () => {
+    accessMocks.requireProjectWrite.mockResolvedValueOnce(false);
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(RESPEC_TASK);
+
+    const res = await respecRequest(HUMAN, { description: "nope" });
+    expect(res.status).toBe(403);
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it.each(["in_progress", "review", "done"])(
+    "agent creator gets 409 when task.status is %s",
+    async (status) => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...RESPEC_TASK, status });
+      const res = await respecRequest(AGENT_WITH_UPDATE, { description: "x" });
+      expect(res.status).toBe(409);
+      expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it("agent creator gets 409 when the task is (work-)claimed even though status is still open (defense-in-depth)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...RESPEC_TASK, claimedByAgentId: "agent-1" });
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: "x" });
+    expect(res.status).toBe(409);
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("agent creator gets 409 when the task is review-claimed even though status is still open (defense-in-depth)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...RESPEC_TASK, reviewClaimedByAgentId: "agent-1" });
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: "x" });
+    expect(res.status).toBe(409);
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("loses the CAS race (another actor mutated the row between read and write) -> 409 (TOCTOU regression)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(RESPEC_TASK);
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: "x" });
+    expect(res.status).toBe(409);
+  });
+
+  it("caps an oversized description in the audit payload to hash+length+preview instead of the raw value", async () => {
+    const bigDescription = "a".repeat(9000); // > 8KB serialized, well under the 50KB schema max
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(RESPEC_TASK)
+      .mockResolvedValueOnce({ ...RESPEC_TASK, description: bigDescription });
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: bigDescription });
+    expect(res.status).toBe(200);
+
+    const auditCalls = (logAuditEvent as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const respecCall = auditCalls.find(
+      (call) => (call[0] as { action: string }).action === "task.respec",
+    )![0] as {
+      payload: {
+        changes: {
+          description: {
+            from: unknown;
+            to: { truncated: boolean; length: number; sha256: string; preview: string };
+          };
+        };
+      };
+    };
+    expect(respecCall.payload.changes.description.from).toBe("old description");
+    expect(respecCall.payload.changes.description.to.truncated).toBe(true);
+    expect(respecCall.payload.changes.description.to.length).toBeGreaterThan(8192);
+    expect(typeof respecCall.payload.changes.description.to.sha256).toBe("string");
+    expect(respecCall.payload.changes.description.to.preview.length).toBeLessThanOrEqual(500);
+  });
+
+  it("does not emit an audit event when the respec value equals the current value (no-op)", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(RESPEC_TASK)
+      .mockResolvedValueOnce(RESPEC_TASK);
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: "old description" });
+    expect(res.status).toBe(200);
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.respec" }));
+  });
+});

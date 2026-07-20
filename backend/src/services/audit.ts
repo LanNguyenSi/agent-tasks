@@ -107,7 +107,16 @@ export type AuditAction =
   // touching task.status. One event per claim actually released (no event
   // for an idempotent no-op where the claim was already gone).
   | "task.claim_released_by_admin"
-  | "task.review_claim_released_by_admin";
+  | "task.review_claim_released_by_admin"
+  // Respec verb (POST /tasks/:id/respec): an agent (creator, or any agent
+  // when the project's allowNonCreatorRespec flag is set) or a human with
+  // project write access corrected description/templateData on an OPEN+
+  // UNCLAIMED task instead of delete+recreate. Payload carries the full
+  // {from,to} of every changed field (capped per field beyond 8KB
+  // serialized — see respecAuditValue in routes/tasks.ts) plus the
+  // before/after confidence score. Fired only when at least one field
+  // actually changed.
+  | "task.respec";
 
 export interface AuditPayload {
   [key: string]: unknown;

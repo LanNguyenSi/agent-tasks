@@ -191,6 +191,14 @@ model Project {
   // the common multi-host deployment; the backend cannot read it from
   // there. See docs/adr/0002-grounding-finish-gate.md.
   requireGroundingForDebug Boolean         @default(false)
+  // Respec verb (POST /api/tasks/:id/respec, ADR pending). Agents can
+  // correct description/templateData on an OPEN+UNCLAIMED task without
+  // delete+recreate, but only the task's own creator by default. Setting
+  // this true relaxes that to any agent with project access and the
+  // tasks:update scope. Humans are never restricted by this flag — they
+  // already have unrestricted description/templateData writes via
+  // PATCH /tasks/:id. See routes/tasks.ts POST /tasks/:id/respec.
+  allowNonCreatorRespec    Boolean         @default(false)
   // Outbound push delivery for Signals. When `notificationWebhookUrl` is
   // set, every successful Signal create also POSTs the payload to that URL
   // (best-effort, one retry). Optional `notificationWebhookSecret` is used

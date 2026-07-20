@@ -67,6 +67,10 @@ const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, s
   // in single-host setups can flip it on per-project.
   // See docs/adr/0002-grounding-finish-gate.md.
   requireGroundingForDebug: z.boolean().optional(),
+  // Respec verb (POST /api/tasks/:id/respec). Default false: only the
+  // task's own creator may respec it. True relaxes that to any agent with
+  // project access and the tasks:update scope. See routes/tasks.ts.
+  allowNonCreatorRespec: z.boolean().optional(),
   // Outbound Signal-webhook target. See docs/notification-webhooks.md.
   // Pass an empty string OR null to clear. URL is validated for shape only —
   // we do not probe reachability here; failed deliveries surface in audit.
@@ -470,6 +474,15 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
     governanceChange.requireGroundingForDebug = {
       from: project.requireGroundingForDebug,
       to: body.requireGroundingForDebug,
+    };
+  }
+  if (
+    body.allowNonCreatorRespec !== undefined &&
+    body.allowNonCreatorRespec !== project.allowNonCreatorRespec
+  ) {
+    governanceChange.allowNonCreatorRespec = {
+      from: project.allowNonCreatorRespec,
+      to: body.allowNonCreatorRespec,
     };
   }
   // Notification-webhook config is ops-sensitive: a flipped URL changes
