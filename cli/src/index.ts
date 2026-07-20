@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { loadConfig } from "./config.js";
 import * as api from "./api.js";
@@ -11,6 +12,7 @@ import {
   formatPickup,
   formatStart,
   formatGates,
+  formatRespec,
   type OutputMode,
 } from "./format.js";
 
@@ -31,6 +33,56 @@ function warnDeprecated(oldCmd: string, newCmd: string): void {
   process.stderr.write(
     `[deprecated] '${oldCmd}' is a v1 alias; use '${newCmd}' (v2 verb API). Aliases will be removed in a future release.\n`,
   );
+}
+
+// Reads a `--file` argument for `tasks respec`: a JSON object with an
+// optional `description` (string) and/or `templateData` (object) key. Exits
+// with a usage error (before any network call) on a missing file, invalid
+// JSON, wrong top-level shape, or a file that supplies neither key.
+function readRespecFile(path: string): api.RespecInput {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf-8");
+  } catch (err) {
+    console.error(`Error: could not read --file '${path}': ${(err as Error).message}`);
+    process.exit(1);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.error(`Error: --file '${path}' is not valid JSON: ${(err as Error).message}`);
+    process.exit(1);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    console.error(
+      `Error: --file '${path}' must contain a JSON object with 'description' and/or 'templateData'.`,
+    );
+    process.exit(1);
+  }
+  const obj = parsed as Record<string, unknown>;
+  const input: api.RespecInput = {};
+  if (obj.description !== undefined) {
+    if (typeof obj.description !== "string") {
+      console.error(`Error: --file '${path}': 'description' must be a string.`);
+      process.exit(1);
+    }
+    input.description = obj.description;
+  }
+  if (obj.templateData !== undefined) {
+    if (typeof obj.templateData !== "object" || obj.templateData === null || Array.isArray(obj.templateData)) {
+      console.error(`Error: --file '${path}': 'templateData' must be a JSON object.`);
+      process.exit(1);
+    }
+    input.templateData = obj.templateData as Record<string, unknown>;
+  }
+  if (input.description === undefined && input.templateData === undefined) {
+    console.error(
+      `Error: --file '${path}' must contain 'description' and/or 'templateData'.`,
+    );
+    process.exit(1);
+  }
+  return input;
 }
 
 program
@@ -471,6 +523,71 @@ tasks
     }
     const task = await api.updateTask(config, taskId, data);
     console.log(formatTask(task, getMode(opts)));
+  });
+
+tasks
+  .command("respec <task-id>")
+  .description(
+    "Update a task's description/templateData in place and show the recalculated confidence " +
+      "score. Requires the task to be open and unclaimed (no work claim, no review claim). " +
+      "Agent callers must be the task's creator, unless the project has allowNonCreatorRespec " +
+      "enabled; human callers need project write access.",
+  )
+  .option("--description <text>", "New task description (mutually exclusive with --file)")
+  .option(
+    "--template-data <json>",
+    "New templateData as a JSON object string (mutually exclusive with --file)",
+  )
+  .option(
+    "--file <path>",
+    "JSON file with { description?, templateData? } (mutually exclusive with --description/--template-data)",
+  )
+  .option("--json", "JSON output")
+  .option("--quiet", "Only task ID")
+  .action(async (taskId, opts) => {
+    const hasDescription = opts.description !== undefined;
+    const hasTemplateData = opts.templateData !== undefined;
+    const hasFile = opts.file !== undefined;
+
+    if (hasFile && (hasDescription || hasTemplateData)) {
+      console.error(
+        "Error: --file cannot be combined with --description or --template-data. " +
+          "Use --file alone, or --description/--template-data alone.",
+      );
+      process.exit(1);
+    }
+    if (!hasFile && !hasDescription && !hasTemplateData) {
+      console.error(
+        "Error: provide at least one of --description, --template-data, or --file.",
+      );
+      process.exit(1);
+    }
+
+    let input: api.RespecInput;
+    if (hasFile) {
+      input = readRespecFile(opts.file);
+    } else {
+      input = {};
+      if (hasDescription) input.description = opts.description;
+      if (hasTemplateData) {
+        try {
+          const parsed = JSON.parse(opts.templateData);
+          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+            throw new Error("not an object");
+          }
+          input.templateData = parsed as Record<string, unknown>;
+        } catch {
+          console.error(
+            `Error: --template-data must be a valid JSON object string (got: ${opts.templateData}).`,
+          );
+          process.exit(1);
+        }
+      }
+    }
+
+    const config = loadConfig();
+    const result = await api.respecTask(config, taskId, input);
+    console.log(formatRespec(result, getMode(opts)));
   });
 
 tasks

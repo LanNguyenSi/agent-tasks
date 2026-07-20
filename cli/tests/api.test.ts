@@ -9,6 +9,7 @@ import {
   submitPr,
   getEffectiveGates,
   listProjectTasks,
+  respecTask,
 } from "../src/api.js";
 import type { Config } from "../src/config.js";
 
@@ -192,6 +193,66 @@ describe("submitPr", () => {
       branchName: "feat/x",
       prUrl: "https://github.com/o/r/pull/42",
       prNumber: 42,
+    });
+  });
+});
+
+describe("respecTask", () => {
+  const confidence = {
+    score: 72,
+    threshold: 60,
+    enforcementMode: "WARN",
+    blocking: false,
+    missing: [],
+    findings: [],
+    nextActions: [],
+  };
+
+  it("POSTs the input to /api/tasks/:id/respec and returns the full { task, confidence } envelope", async () => {
+    const task = { id: "t1", title: "x", status: "open", priority: "MEDIUM", description: "new desc" };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ task, confidence }));
+    const result = await respecTask(config, "t1", { description: "new desc" });
+    // Full envelope, not just the task — respec must NOT drop confidence the
+    // way createTask drops it from the caller-visible return value.
+    expect(result).toEqual({ task, confidence });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://api.test/api/tasks/t1/respec");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ description: "new desc" });
+  });
+
+  it("forwards templateData in the request body", async () => {
+    const task = { id: "t1", title: "x", status: "open", priority: "MEDIUM" };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ task, confidence }));
+    await respecTask(config, "t1", { templateData: { taskType: "feature" } });
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({
+      templateData: { taskType: "feature" },
+    });
+  });
+
+  it("throws ApiError with the backend message on 403 (not creator, not allowed)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        { error: "forbidden", message: "Only the task's creator can respec it" },
+        403,
+      ),
+    );
+    await expect(respecTask(config, "t1", { description: "x" })).rejects.toMatchObject({
+      status: 403,
+      body: { error: "forbidden", message: "Only the task's creator can respec it" },
+    });
+  });
+
+  it("throws ApiError with the backend message on 409 (task not open/unclaimed)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        { error: "conflict", message: "Task must be open and unclaimed to respec" },
+        409,
+      ),
+    );
+    await expect(respecTask(config, "t1", { description: "x" })).rejects.toMatchObject({
+      status: 409,
+      body: { error: "conflict", message: "Task must be open and unclaimed to respec" },
     });
   });
 });

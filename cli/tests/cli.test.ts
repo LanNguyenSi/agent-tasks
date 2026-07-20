@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
 // Subprocess-based tests: the CLI's argument validation lives in commander
 // `.action` callbacks that call `process.exit`, which is awkward to unit-test
@@ -160,5 +162,110 @@ describe("tasks list browse-mode argument validation", () => {
     const res = run(["tasks", "list", "--project", "agent-tasks", "--limit", "0"]);
     expect(res.status).toBe(1);
     expect(res.stderr).toContain("--limit must be a positive integer");
+  });
+});
+
+describe("tasks respec argument validation", () => {
+  const TASK_ID = "00000000-0000-0000-0000-000000000000";
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  it("rejects when no source is provided (no --description/--template-data/--file)", () => {
+    const res = run(["tasks", "respec", TASK_ID]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain(
+      "provide at least one of --description, --template-data, or --file",
+    );
+    expect(res.stdout).toBe("");
+  });
+
+  it("rejects --file combined with --description", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "agent-tasks-respec-"));
+    const filePath = join(tmpDir, "respec.json");
+    writeFileSync(filePath, JSON.stringify({ description: "from file" }));
+    const res = run([
+      "tasks",
+      "respec",
+      TASK_ID,
+      "--file",
+      filePath,
+      "--description",
+      "inline",
+    ]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain(
+      "--file cannot be combined with --description or --template-data",
+    );
+  });
+
+  it("rejects --file combined with --template-data", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "agent-tasks-respec-"));
+    const filePath = join(tmpDir, "respec.json");
+    writeFileSync(filePath, JSON.stringify({ description: "from file" }));
+    const res = run([
+      "tasks",
+      "respec",
+      TASK_ID,
+      "--file",
+      filePath,
+      "--template-data",
+      "{}",
+    ]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain(
+      "--file cannot be combined with --description or --template-data",
+    );
+  });
+
+  it("rejects invalid JSON in --template-data", () => {
+    const res = run(["tasks", "respec", TASK_ID, "--template-data", "{not json"]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("--template-data must be a valid JSON object string");
+  });
+
+  it("rejects a non-object --template-data value", () => {
+    const res = run(["tasks", "respec", TASK_ID, "--template-data", "[1,2,3]"]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("--template-data must be a valid JSON object string");
+  });
+
+  it("rejects a missing --file path", () => {
+    const res = run(["tasks", "respec", TASK_ID, "--file", "/nonexistent/path/respec.json"]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("could not read --file");
+  });
+
+  it("rejects a --file with invalid JSON content", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "agent-tasks-respec-"));
+    const filePath = join(tmpDir, "respec.json");
+    writeFileSync(filePath, "{not json");
+    const res = run(["tasks", "respec", TASK_ID, "--file", filePath]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("is not valid JSON");
+  });
+
+  it("rejects a --file with neither description nor templateData", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "agent-tasks-respec-"));
+    const filePath = join(tmpDir, "respec.json");
+    writeFileSync(filePath, JSON.stringify({ foo: "bar" }));
+    const res = run(["tasks", "respec", TASK_ID, "--file", filePath]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("must contain 'description' and/or 'templateData'");
+  });
+
+  it("documents the open+unclaimed state guard and the creator/flag rule in --help", () => {
+    const res = run(["tasks", "respec", "--help"]);
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain("open and unclaimed");
+    expect(res.stdout).toContain("allowNonCreatorRespec");
+    expect(res.stdout).toContain("--description");
+    expect(res.stdout).toContain("--template-data");
+    expect(res.stdout).toContain("--file");
   });
 });

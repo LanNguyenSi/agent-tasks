@@ -214,6 +214,63 @@ export async function updateTask(config: Config, taskId: string, data: Record<st
   return task;
 }
 
+// ── Respec ──────────────────────────────────────────────────────────────────
+//
+// Mirrors the QualityFinding/confidence shape computed by
+// backend/src/lib/confidence.ts and echoed by POST /tasks/:id/respec (same
+// shape as the create-time confidence surfacing). The CLI only renders
+// score/threshold/blocking/missing/nextActions today (see
+// format.ts#formatConfidence); `findings` is still typed and forwarded so
+// --json consumers get the full payload.
+export interface ConfidenceFinding {
+  code: string;
+  severity: "info" | "warning" | "blocking";
+  dimension: string;
+  message: string;
+  suggestion?: string;
+  keystone?: boolean;
+}
+
+export interface Confidence {
+  score: number;
+  threshold: number;
+  enforcementMode: string;
+  blocking: boolean;
+  missing: string[];
+  findings: ConfidenceFinding[];
+  nextActions: string[];
+}
+
+export interface RespecInput {
+  description?: string;
+  templateData?: Record<string, unknown>;
+}
+
+export interface RespecResult {
+  task: Task;
+  confidence: Confidence;
+}
+
+/**
+ * Re-spec a task's description/templateData in place. Backend requires the
+ * task to be open and unclaimed (no work or review claim), and — for agent
+ * actors — that the caller is the task's creator, unless the project has
+ * allowNonCreatorRespec set. Returns the updated task plus the recalculated
+ * confidence score (purely informational; a low score never blocks the
+ * respec itself).
+ */
+export async function respecTask(
+  config: Config,
+  taskId: string,
+  input: RespecInput,
+): Promise<RespecResult> {
+  return request<RespecResult>(
+    config,
+    `/api/tasks/${taskId}/respec`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
 export async function addComment(config: Config, taskId: string, content: string): Promise<unknown> {
   return request(config, `/api/tasks/${taskId}/comments`, {
     method: "POST",
