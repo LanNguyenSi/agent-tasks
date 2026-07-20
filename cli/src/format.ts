@@ -91,6 +91,36 @@ export function formatStart(result: import("./api.js").StartResult, mode: Output
   ].join("\n");
 }
 
+// Minimal confidence renderer (D7): score/threshold, blocking status,
+// missing fields, next actions. Deliberately reusable across verbs that
+// surface a confidence score — today only `tasks respec` calls it. Retrofitting
+// `tasks create`'s output to use it is a separate task (e7911cdd) and is
+// intentionally NOT done here.
+export function formatConfidence(confidence: import("./api.js").Confidence): string {
+  const lines = [
+    `Confidence: ${confidence.score}/${confidence.threshold}${confidence.blocking ? " (blocking)" : ""}`,
+  ];
+  if (confidence.missing.length > 0) {
+    lines.push(`Missing:    ${confidence.missing.join(", ")}`);
+  }
+  if (confidence.nextActions.length > 0) {
+    lines.push("Next actions:");
+    for (const action of confidence.nextActions) {
+      lines.push(`  - ${action}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+export function formatRespec(
+  result: import("./api.js").RespecResult,
+  mode: OutputMode,
+): string {
+  if (mode === "json") return JSON.stringify(result, null, 2);
+  if (mode === "quiet") return result.task.id;
+  return [formatTask(result.task, "table"), "", formatConfidence(result.confidence)].join("\n");
+}
+
 export function formatGates(
   gates: import("./api.js").EffectiveGate[],
   mode: OutputMode,

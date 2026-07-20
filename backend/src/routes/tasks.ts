@@ -82,7 +82,7 @@ import {
 } from "../services/gates/index.js";
 import { SCOPES } from "../services/scopes.js";
 import { bodyLimit } from "hono/body-limit";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { writeFile, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -4311,6 +4311,267 @@ taskRouter.patch("/tasks/:id", async (c) => {
     task: updated,
     ...(transitionSkippedGates.length > 0 ? { skippedGates: transitionSkippedGates } : {}),
   });
+});
+
+// ── Respec task (agent-safe description/templateData correction) ──────────────
+//
+// Historically the only way to fix a task's thin/vague description or
+// templateData was delete+recreate — losing the audit trail, comments, and
+// (for externalRef-idempotent producers) the create-time dedupe key. This
+// dedicated verb lets the task's own creator (or, with the project's
+// `allowNonCreatorRespec` flag, any agent with project access and
+// tasks:update) correct EXACTLY those two fields while the task is still
+// open and unclaimed. It intentionally does NOT loosen the PATCH
+// /tasks/:id agent-lane blacklist (title/description/templateData/etc.
+// stay forbidden there, see forbiddenFields above) — this is the one
+// sanctioned path for an agent to touch its own task's spec, not a
+// backdoor into general field-level PATCH.
+//
+// Humans already have unrestricted description/templateData writes via
+// PATCH /tasks/:id (project write access, no creator check), so the human
+// lane here mirrors that: project write access is sufficient, no creator
+// restriction — only the open+unclaimed state guard applies (shared with
+// the agent lane, to avoid overwriting a field another actor is mid-claim
+// on and to keep one state rule for the whole verb).
+// D8: a respec that blanks the field it's supposed to be improving is a
+// spec-drift amplifier, not a fix — reject empty values outright rather than
+// silently persisting them. `description` is trimmed and must be non-empty
+// after trimming (so a whitespace-only string is rejected, not silently
+// stored); `templateData`, when provided, must carry at least one key (an
+// empty `{}` is rejected the same way).
+export const respecTaskSchema = z.object({
+  description: z.string().trim().min(1, "description must not be empty").max(50_000).optional(),
+  templateData: templateDataSchema
+    .refine((v) => Object.keys(v).length > 0, { message: "templateData must not be an empty object" })
+    .optional(),
+});
+
+const respecTaskValidator = respecTaskSchema.refine(
+  (v) => v.description !== undefined || v.templateData !== undefined,
+  { message: "At least one of description or templateData is required" },
+);
+
+// Audit payloads carry the FULL {from,to} of every changed field — a
+// deliberate exception to the "diff summary, not a snapshot" convention
+// used elsewhere in this file (e.g. workflow.updated's summarizeWorkflowDiff)
+// because operators investigating a respec need to see exactly what text an
+// agent substituted, not just that a change happened. To keep one huge
+// description/templateData write from bloating audit_logs, each value is
+// capped at 8KB serialized; beyond that we record a hash+length+preview
+// instead of the raw value.
+const RESPEC_AUDIT_FIELD_CAP_BYTES = 8 * 1024;
+
+function respecAuditValue(value: unknown): unknown {
+  const serialized = JSON.stringify(value) ?? "null";
+  if (Buffer.byteLength(serialized, "utf8") <= RESPEC_AUDIT_FIELD_CAP_BYTES) {
+    return value;
+  }
+  return {
+    truncated: true,
+    length: serialized.length,
+    sha256: createHash("sha256").update(serialized).digest("hex"),
+    preview: serialized.slice(0, 500),
+  };
+}
+
+const RESPEC_STATE_CONFLICT_MESSAGE = "Task must be open and unclaimed to respec";
+
+taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:update")) {
+    return forbidden(c, "Missing scope: tasks:update");
+  }
+
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    include: {
+      project: {
+        select: {
+          id: true,
+          confidenceThreshold: true,
+          taskTemplate: true,
+          enforcementMode: true,
+          allowNonCreatorRespec: true,
+        },
+      },
+    },
+  });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  if (actor.type === "agent") {
+    const isCreator = task.createdByAgentId === actor.tokenId;
+    if (!isCreator && !task.project.allowNonCreatorRespec) {
+      return forbidden(
+        c,
+        "Only the task's creator can respec it (a project admin can set allowNonCreatorRespec to relax this)",
+      );
+    }
+  } else {
+    // Write-tier gate: PROJECT_VIEWER is read-only. Unlike the agent lane,
+    // write access alone is sufficient here — no creator check (see the
+    // block comment above this route).
+    if (!(await requireProjectWrite(actor, task.projectId))) {
+      return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
+    }
+  }
+
+  // Fast-path state check. The atomic updateMany below is the real guard
+  // (TOCTOU-safe); this lets the common "wrong state" case short-circuit
+  // with a clear message before attempting the write. `notFound` is already
+  // ruled out by the findUnique above, so a CAS miss below can only mean
+  // this same "not open/unclaimed" condition (raced after this check) — no
+  // second read is needed to disambiguate the failure.
+  if (
+    task.status !== "open" ||
+    task.claimedByUserId ||
+    task.claimedByAgentId ||
+    task.reviewClaimedByUserId ||
+    task.reviewClaimedByAgentId
+  ) {
+    return conflict(c, RESPEC_STATE_CONFLICT_MESSAGE);
+  }
+
+  const body = c.req.valid("json");
+  const fromDescription = task.description;
+  const fromTemplateData = task.templateData;
+  const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
+  const projectConfidenceContext = {
+    threshold: task.project.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
+    enforcementMode: resolveEnforcementMode(task.project),
+  };
+
+  // D9: decide against the pre-write read whether this call would ACTUALLY
+  // change anything, before touching the database. A same-value respec
+  // (e.g. a retry, or a caller that always sends the full spec back) must
+  // not bump updatedAt or emit an audit event — nothing changed, so there is
+  // nothing to write and nothing to audit. JSON.stringify is a pragmatic
+  // deep-equality check for templateData (no deep-equal utility exists
+  // elsewhere in this codebase); sufficient for the JSON-serializable
+  // TemplateData shape Prisma round-trips with a stable key order.
+  const descriptionChanges = body.description !== undefined && body.description !== fromDescription;
+  const templateDataChanges =
+    body.templateData !== undefined && JSON.stringify(fromTemplateData) !== JSON.stringify(body.templateData);
+
+  if (!descriptionChanges && !templateDataChanges) {
+    // True no-op: skip the write AND the audit entirely (D9). This is a
+    // plain read, not a write, so there's no CAS/race to guard — re-fetch
+    // with the full include purely so the response shape matches the write
+    // path exactly.
+    const unchanged = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
+    if (!unchanged) return notFound(c);
+    const conf = calculateConfidence({
+      title: task.title,
+      description: fromDescription,
+      templateData: fromTemplateData as TemplateData | null,
+      templateFields: tpl?.fields ?? null,
+    });
+    return c.json({
+      task: unchanged,
+      confidence: {
+        score: conf.score,
+        ...projectConfidenceContext,
+        blocking: conf.blocking,
+        missing: conf.missing,
+        findings: conf.findings,
+        nextActions: deriveNextActions(conf.findings),
+      },
+    });
+  }
+
+  // Atomic compare-and-swap: only respec if the row is STILL open and
+  // unclaimed. The check above is a fast path; two actors (or a claim
+  // racing this respec) can both pass it before either writes (TOCTOU).
+  // Guarding the WHERE clause on the same state makes exactly one writer
+  // win; the loser sees count===0 and gets the same 409 (mirrors the claim
+  // CAS pattern used by /tasks/:id/start above).
+  const respecResult = await prisma.task.updateMany({
+    where: {
+      id: task.id,
+      status: "open",
+      claimedByUserId: null,
+      claimedByAgentId: null,
+      reviewClaimedByUserId: null,
+      reviewClaimedByAgentId: null,
+    },
+    data: {
+      ...(descriptionChanges ? { description: body.description } : {}),
+      ...(templateDataChanges ? { templateData: body.templateData } : {}),
+      updatedAt: new Date(),
+    },
+  });
+  if (respecResult.count === 0) {
+    return conflict(c, RESPEC_STATE_CONFLICT_MESSAGE);
+  }
+
+  // updateMany cannot use `include`, so re-fetch the freshly written row.
+  const updated = await prisma.task.findUnique({
+    where: { id: task.id },
+    include: taskInclude,
+  });
+  if (!updated) return notFound(c);
+
+  // Re-score AFTER the write, on the NEW values (D5) — purely informational,
+  // same as the create-time confidence surfacing above; a low or worsened
+  // score never blocks or reverts the respec. The hard gate stays at
+  // task_pickup/task_start.
+  const beforeConf = calculateConfidence({
+    title: task.title,
+    description: fromDescription,
+    templateData: fromTemplateData as TemplateData | null,
+    templateFields: tpl?.fields ?? null,
+  });
+  const afterConf = calculateConfidence({
+    title: updated.title,
+    description: updated.description,
+    templateData: updated.templateData as TemplateData | null,
+    templateFields: tpl?.fields ?? null,
+  });
+  const confidence = {
+    score: afterConf.score,
+    ...projectConfidenceContext,
+    blocking: afterConf.blocking,
+    missing: afterConf.missing,
+    findings: afterConf.findings,
+    nextActions: deriveNextActions(afterConf.findings),
+  };
+
+  // Full {from,to} per changed field (D4) — see the block comment above
+  // respecTaskSchema for why this deviates from the diff-summary
+  // convention. At least one of these is always populated here — the
+  // all-unchanged case already returned above (D9).
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  if (descriptionChanges) {
+    changes.description = {
+      from: respecAuditValue(fromDescription),
+      to: respecAuditValue(body.description),
+    };
+  }
+  if (templateDataChanges) {
+    changes.templateData = {
+      from: respecAuditValue(fromTemplateData),
+      to: respecAuditValue(body.templateData),
+    };
+  }
+
+  void logAuditEvent({
+    action: "task.respec",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: {
+      actorType: actor.type,
+      actorId: actor.type === "agent" ? actor.tokenId : actor.userId,
+      changes,
+      score: { from: beforeConf.score, to: afterConf.score },
+    },
+  });
+
+  return c.json({ task: updated, confidence });
 });
 
 // ── Delete task ───────────────────────────────────────────────────────────────
