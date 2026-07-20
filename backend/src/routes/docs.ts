@@ -446,10 +446,14 @@ export const openApiSpec = {
       RespecTaskRequest: {
         type: "object",
         description:
-          "Corrects description and/or templateData on an OPEN+UNCLAIMED task without delete+recreate. At least one of the two properties is required (enforced by the Zod schema; not expressible as a flat JSON Schema `required` array — see the `anyOf` below).",
+          "Corrects description and/or templateData on an OPEN+UNCLAIMED task without delete+recreate. At least one of the two properties is required (enforced by the Zod schema; not expressible as a flat JSON Schema `required` array — see the `anyOf` below). Neither property accepts an empty value: description is trimmed and must be non-empty, templateData must carry at least one key.",
         properties: {
-          description: { type: "string", maxLength: 50000 },
-          templateData: { $ref: "#/components/schemas/TemplateData" },
+          description: { type: "string", minLength: 1, maxLength: 50000, description: "Trimmed server-side; a whitespace-only string is rejected, not silently stored." },
+          templateData: {
+            allOf: [{ $ref: "#/components/schemas/TemplateData" }],
+            minProperties: 1,
+            description: "An empty object ({}) is rejected — respec must carry at least one populated field.",
+          },
         },
         anyOf: [{ required: ["description"] }, { required: ["templateData"] }],
       },

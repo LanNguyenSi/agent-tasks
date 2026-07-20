@@ -133,6 +133,7 @@ vi.mock("../../src/services/grounding-client.js", () => ({
 
 import { taskRouter } from "../../src/routes/tasks.js";
 import { logAuditEvent } from "../../src/services/audit.js";
+import { calculateConfidence } from "../../src/lib/confidence.js";
 
 const AGENT: Actor = {
   type: "agent",
@@ -4830,13 +4831,121 @@ describe("POST /tasks/:id/respec", () => {
     expect(respecCall.payload.changes.description.to.preview.length).toBeLessThanOrEqual(500);
   });
 
-  it("does not emit an audit event when the respec value equals the current value (no-op)", async () => {
+  it("D9: a same-value respec skips the write AND the audit entirely, still returns {task, confidence}", async () => {
     prismaMocks.taskFindUnique
-      .mockResolvedValueOnce(RESPEC_TASK)
-      .mockResolvedValueOnce(RESPEC_TASK);
+      .mockResolvedValueOnce(RESPEC_TASK) // guard fetch
+      .mockResolvedValueOnce(RESPEC_TASK); // D9 no-op re-fetch (no CAS in between)
 
     const res = await respecRequest(AGENT_WITH_UPDATE, { description: "old description" });
     expect(res.status).toBe(200);
+    const body = (await res.json()) as { task: { description: string }; confidence: { score: number } };
+    expect(body.task.description).toBe("old description");
+    expect(typeof body.confidence.score).toBe("number");
+
+    // D9: no write, no audit — a same-value call must not bump updatedAt or
+    // leave an audit trail implying a change happened.
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
     expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.respec" }));
+  });
+
+  it("D9: templateData deep-equal to the current value is also a no-op (no write, no audit)", async () => {
+    const task = { ...RESPEC_TASK, templateData: { goal: "ship the thing" } };
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(task).mockResolvedValueOnce(task);
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, { templateData: { goal: "ship the thing" } });
+    expect(res.status).toBe(200);
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.respec" }));
+  });
+
+  // ── D8: empty values are rejected, not silently persisted ────────────────
+
+  it.each([
+    ["empty string", { description: "" }],
+    ["whitespace-only string", { description: "   " }],
+    ["empty templateData object", { templateData: {} }],
+  ])("D8: rejects %s with 400 and never reads the task", async (_label, payload) => {
+    const res = await respecRequest(AGENT_WITH_UPDATE, payload);
+    expect(res.status).toBe(400);
+    expect(prismaMocks.taskFindUnique).not.toHaveBeenCalled();
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("D8: a whitespace-padded non-empty description is trimmed and accepted", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(RESPEC_TASK)
+      .mockResolvedValueOnce({ ...RESPEC_TASK, description: "padded but real" });
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: "  padded but real  " });
+    expect(res.status).toBe(200);
+    const casCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    expect(casCall.data.description).toBe("padded but real");
+  });
+
+  // ── Reviewer medium finding: re-score must reflect the NEW values ────────
+
+  it("re-scores on the NEW values: a thin old spec respec'd to a substantial spec raises the score, both in the response and in the audit's score.to (pinned against a direct calculateConfidence call)", async () => {
+    const thinTask = {
+      ...RESPEC_TASK,
+      title: "x",
+      description: "todo",
+      templateData: null,
+    };
+    const substantialTemplateData = {
+      goal: "Ship the password-reset flow end to end",
+      acceptanceCriteria: "A user can request a reset email and set a new password; covered by an integration test",
+      context: "backend/src/routes/auth.ts; existing session service",
+      constraints: "Must not invalidate other active sessions",
+      scope: "backend/src/routes/auth.ts, backend/src/services/session.ts",
+      outOfScope: "Frontend form styling",
+      dependencies: "none",
+      risk: "low",
+      agentPrompt: "Implement POST /auth/reset-password following the existing auth route conventions.",
+    };
+    const substantialDescription =
+      "Add a password-reset flow: request a reset email, verify the token, and set a new password.";
+
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(thinTask) // guard fetch — the OLD, thin spec
+      .mockResolvedValueOnce({
+        ...thinTask,
+        description: substantialDescription,
+        templateData: substantialTemplateData,
+      }); // re-fetch after write — the NEW, substantial spec
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, {
+      description: substantialDescription,
+      templateData: substantialTemplateData,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { confidence: { score: number } };
+
+    // Pin the expectation against a direct call on the NEW values — if the
+    // implementation regresses to re-scoring on the OLD (thin) values, this
+    // comparison goes red instead of merely "some number".
+    const expectedNewScore = calculateConfidence({
+      title: thinTask.title,
+      description: substantialDescription,
+      templateData: substantialTemplateData,
+      templateFields: null,
+    }).score;
+    const oldScore = calculateConfidence({
+      title: thinTask.title,
+      description: thinTask.description,
+      templateData: thinTask.templateData,
+      templateFields: null,
+    }).score;
+
+    expect(expectedNewScore).toBeGreaterThan(oldScore); // sanity: fixture actually improves
+    expect(body.confidence.score).toBe(expectedNewScore);
+
+    const auditCall = (
+      logAuditEvent as unknown as { mock: { calls: { 0: { payload: { score: { from: number; to: number } } } }[] } }
+    ).mock.calls.find(
+      (call) => (call[0] as unknown as { action: string }).action === "task.respec",
+    )![0] as unknown as { payload: { score: { from: number; to: number } } };
+    expect(auditCall.payload.score.to).toBe(expectedNewScore);
+    expect(auditCall.payload.score.from).toBe(oldScore);
+    expect(auditCall.payload.score.to).toBeGreaterThan(auditCall.payload.score.from);
   });
 });

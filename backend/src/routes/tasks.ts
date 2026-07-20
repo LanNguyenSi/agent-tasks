@@ -4333,9 +4333,17 @@ taskRouter.patch("/tasks/:id", async (c) => {
 // restriction — only the open+unclaimed state guard applies (shared with
 // the agent lane, to avoid overwriting a field another actor is mid-claim
 // on and to keep one state rule for the whole verb).
+// D8: a respec that blanks the field it's supposed to be improving is a
+// spec-drift amplifier, not a fix — reject empty values outright rather than
+// silently persisting them. `description` is trimmed and must be non-empty
+// after trimming (so a whitespace-only string is rejected, not silently
+// stored); `templateData`, when provided, must carry at least one key (an
+// empty `{}` is rejected the same way).
 export const respecTaskSchema = z.object({
-  description: z.string().max(50_000).optional(),
-  templateData: templateDataSchema.optional(),
+  description: z.string().trim().min(1, "description must not be empty").max(50_000).optional(),
+  templateData: templateDataSchema
+    .refine((v) => Object.keys(v).length > 0, { message: "templateData must not be an empty object" })
+    .optional(),
 });
 
 const respecTaskValidator = respecTaskSchema.refine(
@@ -4431,6 +4439,49 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
   const body = c.req.valid("json");
   const fromDescription = task.description;
   const fromTemplateData = task.templateData;
+  const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
+  const projectConfidenceContext = {
+    threshold: task.project.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
+    enforcementMode: resolveEnforcementMode(task.project),
+  };
+
+  // D9: decide against the pre-write read whether this call would ACTUALLY
+  // change anything, before touching the database. A same-value respec
+  // (e.g. a retry, or a caller that always sends the full spec back) must
+  // not bump updatedAt or emit an audit event — nothing changed, so there is
+  // nothing to write and nothing to audit. JSON.stringify is a pragmatic
+  // deep-equality check for templateData (no deep-equal utility exists
+  // elsewhere in this codebase); sufficient for the JSON-serializable
+  // TemplateData shape Prisma round-trips with a stable key order.
+  const descriptionChanges = body.description !== undefined && body.description !== fromDescription;
+  const templateDataChanges =
+    body.templateData !== undefined && JSON.stringify(fromTemplateData) !== JSON.stringify(body.templateData);
+
+  if (!descriptionChanges && !templateDataChanges) {
+    // True no-op: skip the write AND the audit entirely (D9). This is a
+    // plain read, not a write, so there's no CAS/race to guard — re-fetch
+    // with the full include purely so the response shape matches the write
+    // path exactly.
+    const unchanged = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
+    if (!unchanged) return notFound(c);
+    const conf = calculateConfidence({
+      title: task.title,
+      description: fromDescription,
+      templateData: fromTemplateData as TemplateData | null,
+      templateFields: tpl?.fields ?? null,
+    });
+    return c.json({
+      task: unchanged,
+      confidence: {
+        score: conf.score,
+        ...projectConfidenceContext,
+        blocking: conf.blocking,
+        missing: conf.missing,
+        findings: conf.findings,
+        nextActions: deriveNextActions(conf.findings),
+      },
+    });
+  }
 
   // Atomic compare-and-swap: only respec if the row is STILL open and
   // unclaimed. The check above is a fast path; two actors (or a claim
@@ -4448,8 +4499,8 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
       reviewClaimedByAgentId: null,
     },
     data: {
-      ...(body.description !== undefined ? { description: body.description } : {}),
-      ...(body.templateData !== undefined ? { templateData: body.templateData } : {}),
+      ...(descriptionChanges ? { description: body.description } : {}),
+      ...(templateDataChanges ? { templateData: body.templateData } : {}),
       updatedAt: new Date(),
     },
   });
@@ -4468,7 +4519,6 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
   // same as the create-time confidence surfacing above; a low or worsened
   // score never blocks or reverts the respec. The hard gate stays at
   // task_pickup/task_start.
-  const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
   const beforeConf = calculateConfidence({
     title: task.title,
     description: fromDescription,
@@ -4483,8 +4533,7 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
   });
   const confidence = {
     score: afterConf.score,
-    threshold: task.project.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
-    enforcementMode: resolveEnforcementMode(task.project),
+    ...projectConfidenceContext,
     blocking: afterConf.blocking,
     missing: afterConf.missing,
     findings: afterConf.findings,
@@ -4493,41 +4542,34 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
 
   // Full {from,to} per changed field (D4) — see the block comment above
   // respecTaskSchema for why this deviates from the diff-summary
-  // convention. Only fields that actually changed are recorded.
+  // convention. At least one of these is always populated here — the
+  // all-unchanged case already returned above (D9).
   const changes: Record<string, { from: unknown; to: unknown }> = {};
-  if (body.description !== undefined && body.description !== fromDescription) {
+  if (descriptionChanges) {
     changes.description = {
       from: respecAuditValue(fromDescription),
       to: respecAuditValue(body.description),
     };
   }
-  if (
-    body.templateData !== undefined &&
-    JSON.stringify(fromTemplateData) !== JSON.stringify(body.templateData)
-  ) {
+  if (templateDataChanges) {
     changes.templateData = {
       from: respecAuditValue(fromTemplateData),
       to: respecAuditValue(body.templateData),
     };
   }
 
-  // Only audit when something actually changed — mirrors the
-  // governanceChange gate in PATCH /projects/:id (a same-value respec call
-  // is a harmless no-op, not worth a log line).
-  if (Object.keys(changes).length > 0) {
-    void logAuditEvent({
-      action: "task.respec",
-      actorId: actor.type === "human" ? actor.userId : undefined,
-      projectId: task.projectId,
-      taskId: task.id,
-      payload: {
-        actorType: actor.type,
-        actorId: actor.type === "agent" ? actor.tokenId : actor.userId,
-        changes,
-        score: { from: beforeConf.score, to: afterConf.score },
-      },
-    });
-  }
+  void logAuditEvent({
+    action: "task.respec",
+    actorId: actor.type === "human" ? actor.userId : undefined,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: {
+      actorType: actor.type,
+      actorId: actor.type === "agent" ? actor.tokenId : actor.userId,
+      changes,
+      score: { from: beforeConf.score, to: afterConf.score },
+    },
+  });
 
   return c.json({ task: updated, confidence });
 });
