@@ -110,6 +110,8 @@ function lastFindManyArgs() {
     include?: Record<string, unknown>;
     select?: Record<string, unknown>;
     orderBy: unknown;
+    cursor?: { id: string };
+    skip?: number;
   };
 }
 
@@ -286,5 +288,94 @@ describe("GET /tasks/claimable — projectId and team scoping", () => {
     expect(where.priority).toBe("HIGH");
     expect(where.labels).toEqual({ hasEvery: ["mcp", "friction"] });
     expect(where.claimedByAgentId).toBe("agent-token-1");
+  });
+});
+
+// ── Sort + cursor pagination (task 14c947a7) ────────────────────────────────
+//
+// tasks_list (this endpoint's MCP verb) previously hard-coded `createdAt asc`
+// with no way to page — with a small limit an agent only ever saw the OLDEST
+// tasks, and a large limit blew the harness's tool-result token cap. `sort`
+// adds an explicit override (default stays `asc` for API backward
+// compatibility); `cursor` + `nextCursor` add stable pagination so a caller
+// can fetch the N newest tasks in one call via `sort=createdAt:desc` with a
+// small limit, or page through more via cursor without raising the limit.
+
+describe("GET /tasks/claimable — sort", () => {
+  it("defaults to ascending createdAt+id order (unchanged, pre-existing behavior)", async () => {
+    await makeApp().request("/tasks/claimable");
+    expect(lastFindManyArgs().orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+  });
+
+  it("sort=createdAt:desc reverses both the primary and tiebreaker direction", async () => {
+    await makeApp().request("/tasks/claimable?sort=createdAt:desc");
+    expect(lastFindManyArgs().orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+  });
+
+  it("sort=createdAt:asc is accepted explicitly (same as the default)", async () => {
+    await makeApp().request("/tasks/claimable?sort=createdAt:asc");
+    expect(lastFindManyArgs().orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+  });
+
+  it("rejects an unrecognized sort value with 400 and does not call Prisma", async () => {
+    const res = await makeApp().request("/tasks/claimable?sort=title:asc");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toContain("createdAt:asc");
+    expect(prismaMocks.taskFindMany).not.toHaveBeenCalled();
+  });
+
+  it("applies sort to the verbose (full include) branch too", async () => {
+    await makeApp().request("/tasks/claimable?verbose=true&sort=createdAt:desc");
+    expect(lastFindManyArgs().orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+  });
+});
+
+describe("GET /tasks/claimable — cursor pagination", () => {
+  it("omits cursor/skip from the Prisma call when no cursor is supplied", async () => {
+    await makeApp().request("/tasks/claimable");
+    const args = lastFindManyArgs();
+    expect(args.cursor).toBeUndefined();
+    expect(args.skip).toBeUndefined();
+  });
+
+  it("forwards cursor as { id } with skip: 1 to exclude the cursor row itself", async () => {
+    const cursorId = "11111111-1111-1111-1111-111111111111";
+    await makeApp().request(`/tasks/claimable?cursor=${cursorId}`);
+    const args = lastFindManyArgs();
+    expect(args.cursor).toEqual({ id: cursorId });
+    expect(args.skip).toBe(1);
+  });
+
+  it("forwards cursor + skip on the verbose branch too", async () => {
+    const cursorId = "22222222-2222-2222-2222-222222222222";
+    await makeApp().request(`/tasks/claimable?verbose=true&cursor=${cursorId}`);
+    const args = lastFindManyArgs();
+    expect(args.cursor).toEqual({ id: cursorId });
+    expect(args.skip).toBe(1);
+  });
+});
+
+describe("GET /tasks/claimable — nextCursor", () => {
+  it("returns the last row's id as nextCursor when the page comes back full", async () => {
+    prismaMocks.taskFindMany.mockResolvedValueOnce([{ id: "task-1" }, { id: "task-2" }]);
+    const res = await makeApp().request("/tasks/claimable?limit=2");
+    const body = (await res.json()) as { nextCursor: string | null };
+    expect(body.nextCursor).toBe("task-2");
+  });
+
+  it("returns null when the page comes back short of the limit (end of results)", async () => {
+    prismaMocks.taskFindMany.mockResolvedValueOnce([{ id: "task-1" }]);
+    const res = await makeApp().request("/tasks/claimable?limit=5");
+    const body = (await res.json()) as { nextCursor: string | null };
+    expect(body.nextCursor).toBeNull();
+  });
+
+  it("returns null on an empty page", async () => {
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    const res = await makeApp().request("/tasks/claimable?limit=5");
+    const body = (await res.json()) as { nextCursor: string | null };
+    expect(body.nextCursor).toBeNull();
   });
 });

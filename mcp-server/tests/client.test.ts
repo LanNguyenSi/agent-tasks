@@ -92,6 +92,26 @@ describe("AgentTasksClient", () => {
     expect(url).toBe("https://example.test/api/tasks/claimable");
   });
 
+  // ── sort + cursor (task 14c947a7) ───────────────────────────────────────
+
+  it("forwards sort and cursor as query params on listClaimableTasks", async () => {
+    fetchMock.mockResolvedValue(ok({ tasks: [], nextCursor: null }));
+    const client = new AgentTasksClient(config);
+    await client.listClaimableTasks({ sort: "createdAt:desc", cursor: "task-1" });
+    const [url] = fetchMock.mock.calls[0];
+    const u = new URL(url);
+    expect(u.searchParams.get("sort")).toBe("createdAt:desc");
+    expect(u.searchParams.get("cursor")).toBe("task-1");
+  });
+
+  it("omits sort and cursor from the query string when not provided", async () => {
+    fetchMock.mockResolvedValue(ok({ tasks: [] }));
+    const client = new AgentTasksClient(config);
+    await client.listClaimableTasks();
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://example.test/api/tasks/claimable");
+  });
+
   it("serializes body and sets Content-Type on POST", async () => {
     fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
     const client = new AgentTasksClient(config);
@@ -242,6 +262,28 @@ describe("AgentTasksClient", () => {
       const client = new AgentTasksClient(config);
       await client.listProjectTasks("00000000-0000-0000-0000-000000000001", {});
       expect(fetchMock.mock.calls[0][0]).not.toContain("unclaimed");
+    });
+
+    it("forwards sort and cursor as query params (task 14c947a7)", async () => {
+      fetchMock.mockResolvedValueOnce(ok({ tasks: [], nextCursor: null }));
+      const client = new AgentTasksClient(config);
+      await client.listProjectTasks("00000000-0000-0000-0000-000000000001", {
+        sort: "createdAt:asc",
+        cursor: "task-42",
+      });
+      const url = fetchMock.mock.calls[0][0] as string;
+      const u = new URL(url);
+      expect(u.searchParams.get("sort")).toBe("createdAt:asc");
+      expect(u.searchParams.get("cursor")).toBe("task-42");
+    });
+
+    it("omits sort and cursor from the query string when not provided", async () => {
+      fetchMock.mockResolvedValueOnce(ok({ tasks: [] }));
+      const client = new AgentTasksClient(config);
+      await client.listProjectTasks("00000000-0000-0000-0000-000000000001", {});
+      const url = fetchMock.mock.calls[0][0] as string;
+      expect(url).not.toContain("sort");
+      expect(url).not.toContain("cursor");
     });
 
     it("URL-encodes slugs containing special characters", async () => {

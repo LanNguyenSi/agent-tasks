@@ -360,7 +360,9 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       description:
         "Browse tasks scoped to a single project. Use this when you want to answer 'what is open in project X?' (the question task_pickup and the deprecated tasks_list cannot reliably answer — pickup returns one item, tasks_list returns only the claimable slice). " +
         "`project` accepts a slug ('agent-tasks') or a UUID; slugs are resolved server-side so you do not need to chain projects_get first. " +
-        "Filters (status, priority, labels, unclaimed) combine with AND semantics; status and priority accept either a single value or an array. limit defaults to unbounded on the backend, but clamps to 500 if supplied — pass an explicit limit when calling from an LLM harness so the response stays inside the tool-result token cap.",
+        "Filters (status, priority, labels, unclaimed) combine with AND semantics; status and priority accept either a single value or an array. limit defaults to unbounded on the backend, but clamps to 500 if supplied — pass an explicit limit when calling from an LLM harness so the response stays inside the tool-result token cap. " +
+        "DEFAULT sort is `createdAt:desc` (newest tasks first) — pass `sort: \"createdAt:asc\"` to reverse it. Combined with a small `limit`, the default lets you fetch the N newest open tasks in a single call without blowing the tool-result token cap. " +
+        "The response carries `nextCursor` (a task id, or null once the last page is reached) — pass it back as `cursor` to page forward; combined with `sort` + `id` as a tiebreaker, page order is stable even when many tasks share the same createdAt timestamp.",
       inputShape: {
         project: z.string().min(1),
         status: z
@@ -377,8 +379,21 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         labels: z.array(z.string().min(1).max(100)).min(1).max(20).optional(),
         unclaimed: z.boolean().optional(),
         limit: z.number().int().positive().max(500).optional(),
+        sort: z
+          .enum(["createdAt:asc", "createdAt:desc"])
+          .default("createdAt:desc")
+          .describe(
+            "Only `createdAt` is sortable. Default `createdAt:desc` (newest first) — matches this route's backend default, and is the recommended setting for browsing recently-triaged tasks under the token cap.",
+          ),
+        cursor: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Task id to page forward from — pass the previous call's `nextCursor`. Omit for the first page.",
+          ),
       },
-      handler: async ({ project, status, priority, labels, unclaimed, limit }) =>
+      handler: async ({ project, status, priority, labels, unclaimed, limit, sort, cursor }) =>
         wrap(() =>
           client.listProjectTasks(project, {
             status,
@@ -386,6 +401,8 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
             labels,
             unclaimed,
             limit,
+            sort,
+            cursor,
           }),
         ),
     }),
@@ -397,7 +414,9 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         "For 'what is open in project X' use project_tasks (the browse-scoped verb). " +
         "Pass status/priority/labels/claimedByAgentId/projectId to broaden the search; verbose=true switches to the full task payload " +
         "(default returns a summary projection without descriptions/comments to stay inside the harness's tool-result token cap). " +
-        "claimedByAgentId='me' resolves to the calling agent's tokenId. Default limit 25.",
+        "claimedByAgentId='me' resolves to the calling agent's tokenId. Default limit 25. " +
+        "DEFAULT sort is `createdAt:desc` (newest tasks first) — the backend API itself still defaults to `createdAt:asc` for backward compatibility, but this tool overrides that at the tool layer so calling with no `sort` returns the N most-recently-created tasks, not the oldest. Pass `sort: \"createdAt:asc\"` to get the old behavior back. " +
+        "The response carries `nextCursor` (a task id, or null once the last page is reached) — pass it back as `cursor` to page forward through more results than fit in one call, instead of raising `limit` past the token cap.",
       inputShape: {
         limit: z.number().int().positive().max(200).optional(),
         projectId: uuid().optional(),
@@ -413,6 +432,19 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         labels: z.array(z.string().min(1).max(100)).min(1).max(20).optional(),
         claimedByAgentId: z.union([uuid(), z.literal("me")]).optional(),
         verbose: z.boolean().optional(),
+        sort: z
+          .enum(["createdAt:asc", "createdAt:desc"])
+          .default("createdAt:desc")
+          .describe(
+            "Only `createdAt` is sortable. Default `createdAt:desc` (newest first) — a tool-layer override of the backend's `createdAt:asc` API default, so the N newest tasks are reachable in one call under the token cap.",
+          ),
+        cursor: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Task id to page forward from — pass the previous call's `nextCursor`. Omit for the first page.",
+          ),
       },
       handler: async (args) =>
         wrap(() => client.listClaimableTasks(args)),
