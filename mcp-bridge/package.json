@@ -29,7 +29,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@agent-tasks/mcp-server": "0.10.0"
+    "@agent-tasks/mcp-server": "0.12.0"
   },
   "optionalDependencies": {
     "keytar": "^7.9.0"
