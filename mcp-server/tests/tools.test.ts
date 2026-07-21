@@ -296,6 +296,22 @@ describe("buildTools", () => {
     ).rejects.toThrow(/agent-tasks API 400.*must not be empty/);
   });
 
+  it("task_respec forwards an empty templateData object (client guard is presence-only) and maps the backend 400", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: "bad_request", message: "templateData must not be an empty object" }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+    await expect(
+      tool("task_respec").handler({
+        taskId: "99999999-9999-9999-9999-999999999999",
+        templateData: {},
+      } as never),
+    ).rejects.toThrow(/agent-tasks API 400.*empty object/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("task_respec maps 404 (unknown task) with the backend message", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ message: "not found" }), {
@@ -308,7 +324,7 @@ describe("buildTools", () => {
         taskId: "88888888-8888-8888-8888-888888888888",
         description: "new desc",
       } as never),
-    ).rejects.toThrow(/agent-tasks API 404/);
+    ).rejects.toThrow(/agent-tasks API 404.*not found/);
   });
 
   it("tasks_transition passes status and force fields", async () => {
