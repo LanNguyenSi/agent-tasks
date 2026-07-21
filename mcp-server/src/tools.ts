@@ -130,7 +130,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_create",
       description:
-        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. The response carries a non-blocking `confidence` object ({score, threshold, enforcementMode, missing[], findings[], nextActions[]}) so you see what's missing immediately — a low score does NOT block creation; `enforcementMode` tells you whether the hard gate at task_pickup/task_start (BLOCK) will reject it or it is advisory (OFF/WARN). When a project uses task-template mode, call projects_get_effective_gates first and populate the templateData fields it lists under taskCreation.requiredFields.",
+        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. The response carries a non-blocking `confidence` object ({score, threshold, enforcementMode, blocking, missing[], findings[], nextActions[]}) so you see what's missing immediately — a low score does NOT block creation; `enforcementMode` tells you whether the hard gate at task_pickup/task_start (BLOCK) will reject it or it is advisory (OFF/WARN). When a project uses task-template mode, call projects_get_effective_gates first and populate the templateData fields it lists under taskCreation.requiredFields.",
       inputShape: {
         projectId: uuid(),
         title: z.string().min(1).max(255),
@@ -161,6 +161,40 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       },
       handler: async ({ projectId, ...input }) =>
         wrap(() => client.createTask(projectId, input)),
+    }),
+    def({
+      name: "task_respec",
+      description:
+        "Edit an OPEN, UNCLAIMED task's description and/or structured templateData in place — fix a low-confidence or under-specified spec instead of abandoning and recreating the task. Wraps POST /api/tasks/:id/respec. Requires at least one of description or templateData (checked client-side before the request, and enforced authoritatively by the backend with 400 — the backend also rejects empty values: a blank/whitespace-only description, or an empty templateData object). templateData is a WHOLESALE REPLACE of the task's stored templateData, not a merge — send the full object you want stored. By default only the task's creator may respec it; a project admin can relax this via project.allowNonCreatorRespec (403 otherwise; missing tasks:update scope for agent callers is also 403). Any task that is claimed (work or review) or not status=open is rejected with 409 'Task must be open and unclaimed to respec'. 404 if the task does not exist. Response is { task, confidence } — confidence is freshly re-scored by the backend on the STORED (new) values and uses the same shape as task_create's create-time confidence: { score, threshold, enforcementMode, blocking, missing, findings, nextActions }. A call that would not actually change anything (same values resubmitted) is a no-op: no write, no audit entry, current task + confidence returned.",
+      inputShape: {
+        taskId: uuid(),
+        description: z
+          .string()
+          .optional()
+          .describe(
+            "Replacement description text. Backend rejects a blank/whitespace-only value and anything over 50000 chars with 400. At least one of description or templateData is required.",
+          ),
+        templateData: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            "Replacement structured spec fields (same shape as task_create's templateData: goal, acceptanceCriteria, context, constraints, scope, outOfScope, dependencies, risk, agentPrompt, taskType, prefers). This WHOLESALE REPLACES the task's stored templateData — it is not merged with the existing value. Backend rejects an empty object with 400. At least one of description or templateData is required.",
+          ),
+      },
+      handler: async ({ taskId, description, templateData }) => {
+        if (description === undefined && templateData === undefined) {
+          throw new Error(
+            "task_respec requires at least one of description or templateData",
+          );
+        }
+        const body: {
+          description?: string;
+          templateData?: Record<string, unknown>;
+        } = {};
+        if (description !== undefined) body.description = description;
+        if (templateData !== undefined) body.templateData = templateData;
+        return wrap(() => client.respecTask(taskId, body));
+      },
     }),
     def({
       name: "task_abandon",

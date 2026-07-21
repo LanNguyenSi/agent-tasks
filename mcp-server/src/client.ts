@@ -294,6 +294,13 @@ export class AgentTasksClient {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/submit-pr`, input);
   }
 
+  respecTask(
+    taskId: string,
+    input: { description?: string; templateData?: Record<string, unknown> },
+  ) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/respec`, input);
+  }
+
   pollSignals() {
     return this.request<unknown>("GET", "/api/agent/signals");
   }

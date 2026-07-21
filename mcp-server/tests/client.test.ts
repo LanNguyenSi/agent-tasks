@@ -164,6 +164,24 @@ describe("AgentTasksClient", () => {
     expect(JSON.parse(init.body)).toEqual({ content: "hello" });
   });
 
+  it("respecTask POSTs description + templateData to /tasks/:id/respec", async () => {
+    fetchMock.mockResolvedValue(
+      ok({ task: { id: "t1" }, confidence: { score: 75 } }),
+    );
+    const client = new AgentTasksClient(config);
+    await client.respecTask("t1", {
+      description: "new desc",
+      templateData: { goal: "ship it" },
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://example.test/api/tasks/t1/respec");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({
+      description: "new desc",
+      templateData: { goal: "ship it" },
+    });
+  });
+
   it("ackSignal uses POST with no body", async () => {
     fetchMock.mockResolvedValue(ok({ ok: true }));
     const client = new AgentTasksClient(config);

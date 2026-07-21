@@ -48,7 +48,7 @@ Drop `--scope user` if you want it project-local instead. See
 
 ## Tools
 
-35 tools total. All return the raw JSON response from the backend as a text block.
+36 tools total. All return the raw JSON response from the backend as a text block.
 
 ### v2 verbs (task_*)
 
@@ -61,6 +61,7 @@ The canonical agent surface. Prefer these for all new integrations.
 | `task_note`           | `POST /api/tasks/:id/comments`               |
 | `task_finish`         | `POST /api/tasks/:id/finish`                 |
 | `task_create`         | `POST /api/projects/:projectId/tasks`        |
+| `task_respec`         | `POST /api/tasks/:id/respec`                 |
 | `task_abandon`        | `POST /api/tasks/:id/abandon`                |
 | `task_submit_pr`      | `POST /api/tasks/:id/submit-pr`              |
 | `task_merge`          | `POST /api/tasks/:id/merge`                  |
@@ -163,12 +164,12 @@ curl -X POST https://agent-tasks.opentriologue.ai/api/mcp \
 - Stateless Streamable HTTP (no session ID, one round-trip per
   request)
 - Same Bearer auth as the rest of the agent-tasks REST API
-- The HTTP endpoint is a **hand-maintained subset** of the 35 tools
+- The HTTP endpoint is a **hand-maintained subset** of the 36 tools
   this stdio package exposes. It covers the full v1 alias surface
   (projects_*, tasks_*, review_*, signals_*, pull_requests_*) but
   does **not** yet include the v2 verbs (task_pickup / task_start /
-  task_finish / etc.), artifact tools (task_artifact_*), attachment
-  tools (task_attachment_*), or project_tasks. The code comment in
+  task_finish / task_respec / etc.), artifact tools (task_artifact_*),
+  attachment tools (task_attachment_*), or project_tasks. The code comment in
   `backend/src/routes/mcp.ts` documents this gap explicitly.
 - GET / DELETE on `/api/mcp` return 405 with `Allow: POST`
 
