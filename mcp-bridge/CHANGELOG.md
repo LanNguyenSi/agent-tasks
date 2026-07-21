@@ -2,6 +2,12 @@
 
 All notable changes to `@agent-tasks/mcp-bridge` are documented here.
 
+## 0.7.3
+
+### Changed
+
+- **`@agent-tasks/mcp-server` dependency bumped to `0.12.0`** (#412). Ships the current tool set to npx consumers: `task_respec` (respec an open, unclaimed task's description/templateData and get a fresh confidence score) from 0.12.0, and `deliverableRepo` support from 0.11.0. Until this release the published bridge pinned `0.10.0`, so a fresh `npx @agent-tasks/mcp-bridge` served the older tool set regardless of what the server had shipped.
+
 ## 0.7.2
 
 ### Security
