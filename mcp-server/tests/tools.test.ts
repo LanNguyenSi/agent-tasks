@@ -58,6 +58,7 @@ describe("buildTools", () => {
         "task_merge",
         "task_note",
         "task_pickup",
+        "task_respec",
         "task_start",
         "task_submit_pr",
         "tasks_claim",
@@ -168,6 +169,146 @@ describe("buildTools", () => {
         prefers: { smallDiffs: true },
       },
     });
+  });
+
+  // ── task_respec ────────────────────────────────────────────────────
+
+  it("task_respec POSTs description to /api/tasks/:id/respec and returns task+confidence", async () => {
+    fetchMock.mockResolvedValue(
+      ok({
+        task: { id: "t1", description: "new desc" },
+        confidence: {
+          score: 80,
+          threshold: 70,
+          enforcementMode: "BLOCK",
+          blocking: false,
+          missing: [],
+          findings: [],
+          nextActions: [],
+        },
+      }),
+    );
+    const result = await tool("task_respec").handler({
+      taskId: "11111111-1111-1111-1111-111111111111",
+      description: "new desc",
+    } as never);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://example.test/api/tasks/11111111-1111-1111-1111-111111111111/respec",
+    );
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ description: "new desc" });
+    // confidence must be passed through, not dropped.
+    expect(result).toMatchObject({
+      task: { id: "t1" },
+      confidence: { score: 80, blocking: false },
+    });
+  });
+
+  it("task_respec POSTs templateData only (description omitted from body)", async () => {
+    fetchMock.mockResolvedValue(
+      ok({ task: { id: "t1" }, confidence: { score: 60 } }),
+    );
+    await tool("task_respec").handler({
+      taskId: "22222222-2222-2222-2222-222222222222",
+      templateData: { goal: "ship it" },
+    } as never);
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(body).toEqual({ templateData: { goal: "ship it" } });
+    expect(body).not.toHaveProperty("description");
+  });
+
+  it("task_respec forwards both description and templateData when both are provided", async () => {
+    fetchMock.mockResolvedValue(
+      ok({ task: { id: "t1" }, confidence: { score: 90 } }),
+    );
+    await tool("task_respec").handler({
+      taskId: "33333333-3333-3333-3333-333333333333",
+      description: "new desc",
+      templateData: { goal: "ship it" },
+    } as never);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      description: "new desc",
+      templateData: { goal: "ship it" },
+    });
+  });
+
+  it("task_respec rejects client-side when neither description nor templateData is provided (no HTTP call made)", async () => {
+    await expect(
+      tool("task_respec").handler({
+        taskId: "44444444-4444-4444-4444-444444444444",
+      } as never),
+    ).rejects.toThrow(/at least one of description or templateData/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("task_respec maps 409 (claimed/non-open task) with the backend message", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "conflict",
+          message: "Task must be open and unclaimed to respec",
+        }),
+        { status: 409, headers: { "content-type": "application/json" } },
+      ),
+    );
+    await expect(
+      tool("task_respec").handler({
+        taskId: "55555555-5555-5555-5555-555555555555",
+        description: "new desc",
+      } as never),
+    ).rejects.toThrow(/agent-tasks API 409.*open and unclaimed/);
+  });
+
+  it("task_respec maps 403 (non-creator, allowNonCreatorRespec unset) with the backend message", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "forbidden",
+          message:
+            "Only the task's creator can respec it (a project admin can set allowNonCreatorRespec to relax this)",
+        }),
+        { status: 403, headers: { "content-type": "application/json" } },
+      ),
+    );
+    await expect(
+      tool("task_respec").handler({
+        taskId: "66666666-6666-6666-6666-666666666666",
+        description: "new desc",
+      } as never),
+    ).rejects.toThrow(/agent-tasks API 403.*creator/);
+  });
+
+  it("task_respec maps 400 (empty description/templateData rejected by backend) with the backend message", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: "bad_request", message: "description must not be empty" }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+    await expect(
+      tool("task_respec").handler({
+        taskId: "77777777-7777-7777-7777-777777777777",
+        description: "   ",
+      } as never),
+    ).rejects.toThrow(/agent-tasks API 400.*must not be empty/);
+  });
+
+  it("task_respec maps 404 (unknown task) with the backend message", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ message: "not found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await expect(
+      tool("task_respec").handler({
+        taskId: "88888888-8888-8888-8888-888888888888",
+        description: "new desc",
+      } as never),
+    ).rejects.toThrow(/agent-tasks API 404/);
   });
 
   it("tasks_transition passes status and force fields", async () => {

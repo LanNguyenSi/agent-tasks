@@ -2,6 +2,16 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## 0.12.0
+
+### Added
+
+- **`task_respec` verb** (backend PR #409). Wraps `POST /api/tasks/:id/respec`: edit an **open, unclaimed** task's `description` and/or `templateData` in place, so an under-specified or low-confidence task can be fixed without abandoning and recreating it. At least one of `description`/`templateData` is required — checked client-side before the request for fast feedback, and enforced authoritatively by the backend (400), which also rejects individually-empty values (blank/whitespace-only `description`, empty `templateData` object). `templateData` is a **wholesale replace** of the stored value, not a merge. By default only the task's creator may respec it; a project admin can relax this via `project.allowNonCreatorRespec` (403 otherwise; missing `tasks:update` scope for agent callers is also 403). Any claimed (work or review) or non-`open` task is rejected with 409 `Task must be open and unclaimed to respec`; unknown task ids 404. Response is `{ task, confidence }`, passed through unchanged — `confidence` uses the same shape as `task_create`'s create-time confidence (`{score, threshold, enforcementMode, blocking, missing, findings, nextActions}`).
+
+### Changed
+
+- README Tools table regenerated for the new 36-tool count.
+
 ## 0.11.0
 
 ### Added
