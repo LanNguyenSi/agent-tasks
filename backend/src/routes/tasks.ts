@@ -626,6 +626,24 @@ function parseCsv(raw: string | undefined): string[] {
   return raw.split(",").map((v) => v.trim()).filter(Boolean);
 }
 
+// Sort direction for the two list/browse surfaces this task touches
+// (`/tasks/claimable` and `/projects/:projectId/tasks` — task 14c947a7).
+// `createdAt` is the only exposed sort key here — no other columns, unlike
+// the generic `?sort=col:dir` on the `/teams/:teamId/tasks` aggregation
+// route above. Returns `fallback` when the param is absent, and the literal
+// string "invalid" when present but not one of the two accepted values, so
+// callers 400 instead of silently coercing a typo'd value.
+type SortDirection = "asc" | "desc";
+function parseCreatedAtSort(
+  raw: string | undefined,
+  fallback: SortDirection,
+): SortDirection | "invalid" {
+  if (raw === undefined) return fallback;
+  if (raw === "createdAt:asc") return "asc";
+  if (raw === "createdAt:desc") return "desc";
+  return "invalid";
+}
+
 taskRouter.get("/projects/:projectId/tasks", async (c) => {
   const actor = c.get("actor") as Actor;
   const projectId = c.req.param("projectId");
@@ -681,6 +699,29 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
     limit = Math.min(parsed, 500);
   }
 
+  // `sort=createdAt:asc|desc` (task 14c947a7). Default stays `desc` — this
+  // route's pre-existing, unchanged default — so browse callers (CLI `tasks
+  // list --project`, MCP `project_tasks`) see the newest tasks first without
+  // passing the param.
+  const sortDir = parseCreatedAtSort(c.req.query("sort"), "desc");
+  if (sortDir === "invalid") {
+    return c.json(
+      {
+        error: "bad_request",
+        message: "invalid sort; expected 'createdAt:asc' or 'createdAt:desc'",
+      },
+      400,
+    );
+  }
+
+  // Cursor pagination: cursor = id of the last task from the previous page;
+  // `skip: 1` excludes the cursor row itself (Prisma's cursor semantics
+  // otherwise return that row again as the first result). createdAt is not
+  // unique, so the compound orderBy below (createdAt, then id, both in the
+  // same direction) is required for a stable seek across page boundaries —
+  // without it, rows sharing a createdAt could be skipped or repeated.
+  const cursor = c.req.query("cursor");
+
   const where: Record<string, unknown> = { projectId };
   if (labels.length > 0) {
     where.labels = { hasSome: labels };
@@ -704,10 +745,24 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
   const tasks = await prisma.task.findMany({
     where,
     include: detail === "full" ? taskInclude : taskListInclude,
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ createdAt: sortDir }, { id: sortDir }],
     ...(limit !== undefined ? { take: limit } : {}),
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
-  return c.json({ tasks });
+  // nextCursor: only meaningful when the caller supplied a `limit` — an
+  // unbounded fetch (limit omitted, the frontend dashboard's call shape)
+  // already returns everything, so there is no next page by definition. A
+  // full page (tasks.length === limit) yields the last row's id as the next
+  // cursor; this is a size heuristic rather than an exact has-more check —
+  // if the result set ends exactly on a page boundary, the next call
+  // legitimately comes back empty (nextCursor: null) rather than the caller
+  // never being offered a next page. That trade-off avoids an extra
+  // look-ahead row fetch on every call.
+  const nextCursor =
+    limit !== undefined && tasks.length === limit
+      ? (tasks[tasks.length - 1] as { id: string }).id
+      : null;
+  return c.json({ tasks, nextCursor });
 });
 
 // ── Create task ───────────────────────────────────────────────────────────────
@@ -1055,6 +1110,29 @@ taskRouter.get("/tasks/claimable", async (c) => {
 
   const verbose = verboseRaw === "true" || verboseRaw === "1";
 
+  // `sort=createdAt:asc|desc` (task 14c947a7). Default stays `asc` — this
+  // endpoint's pre-existing, API-level default — for backward compatibility.
+  // The MCP `tasks_list` tool documents/defaults to `createdAt:desc` at the
+  // tool layer for the "N newest open tasks in one call" browse case.
+  const sortDir = parseCreatedAtSort(c.req.query("sort"), "asc");
+  if (sortDir === "invalid") {
+    return c.json(
+      {
+        error: "bad_request",
+        message: "invalid sort; expected 'createdAt:asc' or 'createdAt:desc'",
+      },
+      400,
+    );
+  }
+  // Compound orderBy — createdAt is not unique, so pair it with `id` (same
+  // direction) as a tiebreaker for a stable cursor seek across page
+  // boundaries. See the project-browse route above for the same rationale.
+  const orderBy = [{ createdAt: sortDir }, { id: sortDir }];
+
+  // Cursor pagination: cursor = id of the last task from the previous page;
+  // `skip: 1` excludes the cursor row itself.
+  const cursorRaw = c.req.query("cursor");
+
   const statusList = parseCsvParam(statusRaw);
   if (statusList) {
     for (const s of statusList) {
@@ -1160,8 +1238,9 @@ taskRouter.get("/tasks/claimable", async (c) => {
   const tasks = verbose
     ? await prisma.task.findMany({
         where,
-        orderBy: { createdAt: "asc" },
+        orderBy,
         take: limit,
+        ...(cursorRaw ? { cursor: { id: cursorRaw }, skip: 1 } : {}),
         include: {
           ...taskInclude,
           project: { select: { id: true, name: true, slug: true } },
@@ -1169,12 +1248,20 @@ taskRouter.get("/tasks/claimable", async (c) => {
       })
     : await prisma.task.findMany({
         where,
-        orderBy: { createdAt: "asc" },
+        orderBy,
         take: limit,
+        ...(cursorRaw ? { cursor: { id: cursorRaw }, skip: 1 } : {}),
         select: claimableSummarySelect,
       });
 
-  return c.json({ tasks });
+  // nextCursor heuristic: a full page (tasks.length === limit) yields the
+  // last row's id as the next cursor. Same size-based trade-off as the
+  // project-browse route above — not an exact has-more check, but avoids an
+  // extra look-ahead row fetch on every call.
+  const nextCursor =
+    tasks.length === limit ? (tasks[tasks.length - 1] as { id: string }).id : null;
+
+  return c.json({ tasks, nextCursor });
 });
 
 // Best-effort attempt to recover Phase 2 session fields from previously

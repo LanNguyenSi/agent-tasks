@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import { z } from "zod";
 import { buildTools } from "../src/tools.js";
 import { AgentTasksClient, AgentTasksApiError } from "../src/client.js";
 
@@ -27,6 +28,17 @@ describe("buildTools", () => {
     const t = tools.find((x) => x.name === name);
     if (!t) throw new Error(`tool ${name} not registered`);
     return t;
+  }
+
+  // Calling `tool(name).handler(rawArgs)` directly (as most tests in this
+  // file do) bypasses the zod parsing step the real MCP SDK performs before
+  // invoking the handler (McpServer.registerTool builds a zod object from
+  // `inputShape` and parses incoming args against it, applying any
+  // `.default()`s). Tests that specifically exercise a default value need
+  // that parsing step, so run it explicitly here rather than asserting on
+  // the raw, unparsed input.
+  function parseArgs(name: string, raw: Record<string, unknown>) {
+    return z.object(tool(name).inputShape).parse(raw);
   }
 
   it("registers all expected tools", () => {
@@ -549,6 +561,59 @@ describe("buildTools", () => {
     expect(fetchMock.mock.calls[0][0]).toBe(
       "https://example.test/api/projects/00000000-0000-0000-0000-000000000001/tasks",
     );
+  });
+
+  // ── project_tasks / tasks_list — sort default + cursor (task 14c947a7) ──
+  //
+  // Both tools expose `sort`/`cursor`. `project_tasks` defaults its zod
+  // `sort` field to `createdAt:desc`, matching the backend route's own
+  // pre-existing default (documented, not a behavior change). `tasks_list`
+  // ALSO defaults to `createdAt:desc` at the tool layer even though the
+  // backend `/tasks/claimable` route itself still defaults to `createdAt:asc`
+  // for API-level backward compatibility — the override exists so an agent
+  // calling tasks_list with no `sort` sees the N newest tasks, not the
+  // oldest (the bug this task fixes).
+
+  it("project_tasks zod-defaults sort to createdAt:desc when the caller omits it", () => {
+    const parsed = parseArgs("project_tasks", {
+      project: "00000000-0000-0000-0000-000000000001",
+    });
+    expect(parsed.sort).toBe("createdAt:desc");
+  });
+
+  it("project_tasks forwards an explicit sort override and cursor to GET /projects/:id/tasks", async () => {
+    fetchMock.mockResolvedValueOnce(ok({ tasks: [], nextCursor: null }));
+    const parsed = parseArgs("project_tasks", {
+      project: "00000000-0000-0000-0000-000000000001",
+      sort: "createdAt:asc",
+      cursor: "task-7",
+    });
+    await tool("project_tasks").handler(parsed);
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("sort=createdAt%3Aasc");
+    expect(url).toContain("cursor=task-7");
+  });
+
+  it("tasks_list zod-defaults sort to createdAt:desc when the caller omits it", () => {
+    const parsed = parseArgs("tasks_list", {});
+    expect(parsed.sort).toBe("createdAt:desc");
+  });
+
+  it("tasks_list forwards the defaulted sort to GET /tasks/claimable", async () => {
+    fetchMock.mockResolvedValue(ok({ tasks: [], nextCursor: null }));
+    const parsed = parseArgs("tasks_list", {});
+    await tool("tasks_list").handler(parsed);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain("sort=createdAt%3Adesc");
+  });
+
+  it("tasks_list forwards an explicit sort override and cursor", async () => {
+    fetchMock.mockResolvedValue(ok({ tasks: [], nextCursor: null }));
+    const parsed = parseArgs("tasks_list", { sort: "createdAt:asc", cursor: "task-9" });
+    await tool("tasks_list").handler(parsed);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain("sort=createdAt%3Aasc");
+    expect(url).toContain("cursor=task-9");
   });
 
   // ── review_* ───────────────────────────────────────────────────────

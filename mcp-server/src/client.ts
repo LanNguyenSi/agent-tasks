@@ -88,6 +88,14 @@ export class AgentTasksClient {
     labels?: string[];
     claimedByAgentId?: string;
     verbose?: boolean;
+    // `createdAt:asc` | `createdAt:desc` — forwarded verbatim, no client-side
+    // default. The backend keeps `createdAt:asc` when omitted (API-level
+    // backward compatibility); a tool-layer default of `createdAt:desc`, if
+    // any, is applied by the tools.ts caller, not here (task 14c947a7).
+    sort?: string;
+    // Task id to page forward from (typically a previous response's
+    // `nextCursor`).
+    cursor?: string;
   }) {
     const sp = new URLSearchParams();
     if (params?.limit !== undefined) sp.set("limit", String(params.limit));
@@ -101,6 +109,8 @@ export class AgentTasksClient {
     if (params?.labels && params.labels.length > 0) sp.set("labels", params.labels.join(","));
     if (params?.claimedByAgentId) sp.set("claimedByAgentId", params.claimedByAgentId);
     if (params?.verbose) sp.set("verbose", "true");
+    if (params?.sort) sp.set("sort", params.sort);
+    if (params?.cursor) sp.set("cursor", params.cursor);
     const qs = sp.toString();
     return this.request<unknown>(
       "GET",
@@ -121,6 +131,13 @@ export class AgentTasksClient {
       labels?: string[];
       unclaimed?: boolean;
       limit?: number;
+      // `createdAt:asc` | `createdAt:desc` — forwarded verbatim. The backend
+      // keeps `createdAt:desc` when omitted (unchanged, pre-existing default
+      // for this route; task 14c947a7).
+      sort?: string;
+      // Task id to page forward from (typically a previous response's
+      // `nextCursor`).
+      cursor?: string;
     },
   ) {
     const isUuid =
@@ -158,6 +175,8 @@ export class AgentTasksClient {
     }
     if (params?.unclaimed) sp.set("unclaimed", "true");
     if (params?.limit !== undefined) sp.set("limit", String(params.limit));
+    if (params?.sort) sp.set("sort", params.sort);
+    if (params?.cursor) sp.set("cursor", params.cursor);
 
     const qs = sp.toString();
     return this.request<unknown>(

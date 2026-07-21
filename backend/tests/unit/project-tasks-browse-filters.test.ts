@@ -99,6 +99,8 @@ function lastFindManyArgs() {
     take?: number;
     include?: Record<string, unknown>;
     orderBy: unknown;
+    cursor?: { id: string };
+    skip?: number;
   };
 }
 
@@ -248,5 +250,79 @@ describe("GET /projects/:projectId/tasks — composite filters", () => {
       claimedByAgentId: null,
       claimedByUserId: null,
     });
+  });
+});
+
+// ── Sort + cursor pagination (task 14c947a7) ────────────────────────────────
+//
+// This route already defaulted to `createdAt desc` (newest first) before
+// this task; `sort` adds an explicit override (asc) and a compound
+// `[createdAt, id]` orderBy for a stable tiebreaker. `cursor` + `nextCursor`
+// add pagination so MCP `project_tasks` can page through more tasks than fit
+// under the harness's tool-result token cap without raising `limit`.
+
+describe("GET /projects/:projectId/tasks — sort", () => {
+  it("defaults to descending createdAt+id order (unchanged, pre-existing behavior)", async () => {
+    await makeApp().request(`/projects/${PROJECT_ID}/tasks`);
+    expect(lastFindManyArgs().orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+  });
+
+  it("sort=createdAt:asc reverses both the primary and tiebreaker direction", async () => {
+    await makeApp().request(`/projects/${PROJECT_ID}/tasks?sort=createdAt:asc`);
+    expect(lastFindManyArgs().orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+  });
+
+  it("sort=createdAt:desc is accepted explicitly (same as the default)", async () => {
+    await makeApp().request(`/projects/${PROJECT_ID}/tasks?sort=createdAt:desc`);
+    expect(lastFindManyArgs().orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+  });
+
+  it("rejects an unrecognized sort value with 400 and does not call Prisma", async () => {
+    const res = await makeApp().request(`/projects/${PROJECT_ID}/tasks?sort=priority:desc`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toContain("createdAt:asc");
+    expect(prismaMocks.taskFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /projects/:projectId/tasks — cursor pagination", () => {
+  it("omits cursor/skip from the Prisma call when no cursor is supplied", async () => {
+    await makeApp().request(`/projects/${PROJECT_ID}/tasks`);
+    const args = lastFindManyArgs();
+    expect(args.cursor).toBeUndefined();
+    expect(args.skip).toBeUndefined();
+  });
+
+  it("forwards cursor as { id } with skip: 1 to exclude the cursor row itself", async () => {
+    const cursorId = "33333333-3333-3333-3333-333333333333";
+    await makeApp().request(`/projects/${PROJECT_ID}/tasks?cursor=${cursorId}`);
+    const args = lastFindManyArgs();
+    expect(args.cursor).toEqual({ id: cursorId });
+    expect(args.skip).toBe(1);
+  });
+});
+
+describe("GET /projects/:projectId/tasks — nextCursor", () => {
+  it("returns the last row's id as nextCursor when a limited page comes back full", async () => {
+    prismaMocks.taskFindMany.mockResolvedValueOnce([{ id: "task-1" }, { id: "task-2" }]);
+    const res = await makeApp().request(`/projects/${PROJECT_ID}/tasks?limit=2`);
+    const body = (await res.json()) as { nextCursor: string | null };
+    expect(body.nextCursor).toBe("task-2");
+  });
+
+  it("returns null when a limited page comes back short of the limit (end of results)", async () => {
+    prismaMocks.taskFindMany.mockResolvedValueOnce([{ id: "task-1" }]);
+    const res = await makeApp().request(`/projects/${PROJECT_ID}/tasks?limit=5`);
+    const body = (await res.json()) as { nextCursor: string | null };
+    expect(body.nextCursor).toBeNull();
+  });
+
+  it("returns null when limit is omitted, even if many rows come back (already unbounded)", async () => {
+    prismaMocks.taskFindMany.mockResolvedValueOnce([{ id: "task-1" }, { id: "task-2" }]);
+    const res = await makeApp().request(`/projects/${PROJECT_ID}/tasks`);
+    const body = (await res.json()) as { nextCursor: string | null };
+    expect(body.nextCursor).toBeNull();
   });
 });

@@ -603,6 +603,8 @@ export const openApiSpec = {
       get: {
         tags: ["Tasks"],
         summary: "List tasks for a project",
+        description:
+          "Defaults to `sort=createdAt:desc` (newest first) — unchanged, pre-existing behavior for this route. Pass `sort=createdAt:asc` to reverse it. `cursor` (a task id from a previous page's `nextCursor`) pages forward from that point; `nextCursor` in the response is the id to pass next, or `null`/absent once the last page has been reached. `limit`, when supplied, is clamped to 500; when omitted the route stays unbounded (see `/api/tasks/claimable` for the MCP `tasks_list`-facing sibling of this endpoint).",
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -610,6 +612,27 @@ export const openApiSpec = {
             in: "path",
             required: true,
             schema: { type: "string", format: "uuid" },
+          },
+          {
+            name: "sort",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["createdAt:asc", "createdAt:desc"], default: "createdAt:desc" },
+            description: "Only `createdAt` is sortable here. Default `createdAt:desc` (newest first, unchanged pre-existing behavior).",
+          },
+          {
+            name: "cursor",
+            in: "query",
+            required: false,
+            schema: { type: "string", format: "uuid" },
+            description: "Task id to page forward from (typically the previous response's `nextCursor`). Combine with `limit` to page through results.",
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 500 },
+            description: "Clamped to 500. Omit for the pre-existing unbounded behavior (e.g. the frontend dashboard's full-project fetch).",
           },
         ],
         responses: {
@@ -623,6 +646,12 @@ export const openApiSpec = {
                     tasks: {
                       type: "array",
                       items: { $ref: "#/components/schemas/Task" },
+                    },
+                    nextCursor: {
+                      type: "string",
+                      format: "uuid",
+                      nullable: true,
+                      description: "Pass as `cursor` to fetch the next page. `null` when a `limit` was supplied and this page came back short of it (no more results) or when `limit` was omitted (already unbounded).",
                     },
                   },
                   required: ["tasks"],
@@ -695,7 +724,8 @@ export const openApiSpec = {
         description:
           "For agents, team scope is inferred from token; optionally narrow by projectId. For humans, provide projectId or teamId. " +
           "Pass status/priority/labels/claimedByAgentId to broaden the search beyond claimable. " +
-          "verbose=false (the default) returns a summary projection without the long-form description, comments, attachments, or artifacts.",
+          "verbose=false (the default) returns a summary projection without the long-form description, comments, attachments, or artifacts. " +
+          "Defaults to `sort=createdAt:asc` — unchanged, pre-existing API-level behavior kept for backward compatibility; the deprecated MCP `tasks_list` tool defaults/documents `createdAt:desc` at the tool layer so agents see the N newest tasks by default. Pass `cursor` (a task id from a previous page's `nextCursor`) to page forward; `nextCursor` in the response is the id to pass next, or `null`/absent once the last page is reached.",
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -716,6 +746,20 @@ export const openApiSpec = {
             in: "query",
             required: false,
             schema: { type: "integer", minimum: 1, maximum: 200, default: 25 },
+          },
+          {
+            name: "sort",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["createdAt:asc", "createdAt:desc"], default: "createdAt:asc" },
+            description: "Only `createdAt` is sortable here. Default `createdAt:asc` (unchanged, pre-existing behavior — API-level backward compatibility). Pass `createdAt:desc` to see the newest tasks first.",
+          },
+          {
+            name: "cursor",
+            in: "query",
+            required: false,
+            schema: { type: "string", format: "uuid" },
+            description: "Task id to page forward from (typically the previous response's `nextCursor`).",
           },
           {
             name: "status",
@@ -766,6 +810,12 @@ export const openApiSpec = {
                     tasks: {
                       type: "array",
                       items: { $ref: "#/components/schemas/ClaimableTask" },
+                    },
+                    nextCursor: {
+                      type: "string",
+                      format: "uuid",
+                      nullable: true,
+                      description: "Pass as `cursor` to fetch the next page. `null` when this page came back short of `limit` (no more results).",
                     },
                   },
                   required: ["tasks"],
