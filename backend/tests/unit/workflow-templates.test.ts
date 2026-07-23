@@ -219,11 +219,17 @@ describe("branch-pr-merge-gated template", () => {
 
 describe("release-ops-no-pr template", () => {
   const template = findWorkflowTemplate("release-ops-no-pr");
-  const def = template!.definition;
 
   it("is registered", () => {
     expect(template).toBeDefined();
   });
+
+  // Guard: a missing registration must surface as the clean "is registered"
+  // failure above, not as a collection-time crash from `template!.definition`
+  // for every subsequent `it()` below. Bail out of registering the rest of
+  // this suite if the template lookup came back empty.
+  if (!template) return;
+  const def = template.definition;
 
   it("uses exactly the four locked states with the correct terminal flags", () => {
     const states = def.states.map((s) => s.name).sort();

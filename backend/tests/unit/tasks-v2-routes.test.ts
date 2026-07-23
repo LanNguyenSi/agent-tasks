@@ -2129,7 +2129,16 @@ describe("POST /tasks/:id/finish — gate enforcement (regression)", () => {
 // block the default workflow (agent-tasks 5107416c) ────────────────────────
 describe("release-ops-no-pr template — task_finish runs without branchName/prUrl", () => {
   const template = findWorkflowTemplate("release-ops-no-pr");
-  const templateWorkflow = { definition: template!.definition };
+
+  it("is registered (prerequisite for this suite)", () => {
+    expect(template).toBeDefined();
+  });
+
+  // Guard: a missing registration must surface as the clean "is registered"
+  // failure above, not as a collection-time crash from `template!.definition`
+  // for every subsequent `it()` below.
+  if (!template) return;
+  const templateWorkflow = { definition: template.definition };
 
   it("in_progress → review: passes with neither branchName nor prUrl set", async () => {
     prismaMocks.taskFindUnique.mockResolvedValueOnce({
@@ -2210,7 +2219,11 @@ describe("release-ops-no-pr template — task_finish runs without branchName/prU
   it("counterprobe: the same PR-less in_progress → review still 422s under the default workflow", async () => {
     // Same task shape as the first test in this suite, minus the template
     // workflow — proves the template is what relaxed the gate, not some
-    // unrelated change to the default.
+    // unrelated change to the default. Also stands in for review-followup
+    // Finding 4(b): the template being *registered* changes nothing on its
+    // own — `workflowFindFirst` resolving null here means no project has
+    // applied it as a default, and no task references it, so this task
+    // still resolves to the built-in default and stays gated.
     prismaMocks.taskFindUnique.mockResolvedValueOnce({
       ...baseTask,
       status: "in_progress",
@@ -2235,6 +2248,39 @@ describe("release-ops-no-pr template — task_finish runs without branchName/prU
       expect.arrayContaining(["branchPresent", "prPresent"]),
     );
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("applied as the project default (apply-template/:slug): a workflowId=null task also resolves to the relaxed gates", async () => {
+    // Pins review-followup Finding 1/4(a): apply-template always persists
+    // isDefault:true (workflows.ts ~369). A task created afterwards WITHOUT
+    // an explicit workflowId (workflowId: null, workflow: null on the row)
+    // falls through resolveEffectiveDefinition's project-default lookup —
+    // simulated here by workflowFindFirst resolving the applied template —
+    // and inherits the relaxed gates just like an explicitly-assigned task
+    // does. This is the project-wide exposure the operator guidance in
+    // workflow-templates.ts / workflow-gates.md warns about: EVERY task in
+    // the project loses branchPresent/prPresent on these edges, not just
+    // the release/ops ones.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      branchName: null,
+      prUrl: null,
+      prNumber: null,
+      workflowId: null,
+      workflow: null,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(templateWorkflow);
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ result: "Tagged and published v1.2.3 to npm" }),
+    });
+    expect(res.status).toBe(200);
+    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    expect(data.status).toBe("review");
   });
 });
 

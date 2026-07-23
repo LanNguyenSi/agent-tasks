@@ -225,27 +225,51 @@ const branchPrMergeGatedDefinition: WorkflowDefinitionShape = {
 // `422 precondition_failed` with `canForce: false` (agents cannot force;
 // only an admin can, and only via v1 `/transition`).
 //
-// This template is the audited escape hatch for that case: applying it
-// (at `task_create({ workflowId })` or via `apply-template/:slug`) is an
-// explicit, visible choice recorded on the task, not a silent gate bypass.
-// A reviewer can see at a glance — from the task's `workflowId` — that its
-// branch/PR gates were intentionally relaxed, and the task's `result` text
-// (written on `task_finish`) becomes the audit trail an actual PR link
-// would otherwise have provided. `ciGreen`/`prMerged` are not on any edge
-// of the default workflow this template is derived from, so there is
-// nothing PR-shaped left to drop from those edges either.
+// This template is an escape hatch for that case, not a bypass of the gate
+// evaluator — but whether it stays PER-TASK auditable depends on HOW it is
+// applied:
+//   - `task_create({ workflowId })` against a *non-default* Workflow row
+//     (create one with `POST /workflows { isDefault: false }`, seeded from
+//     this template's `definition`) leaves `task.workflowId` set on that
+//     one task only — a reviewer can see, per task, that its branch/PR
+//     gates were intentionally relaxed, and the task's `result` text
+//     (written on `task_finish`) stands in for the evidence an actual PR
+//     link would otherwise have provided.
+//   - `apply-template/:slug` (`../routes/workflows.ts`, the apply-template
+//     handler) always persists the workflow with `isDefault: true` for the
+//     project — there is no "apply but stay non-default" mode on that
+//     route. Every task subsequently created WITHOUT an explicit
+//     `workflowId` (the common case) resolves to it silently via the
+//     project-default lookup and itself carries `workflowId: null`; the
+//     audit trail for those tasks is the project's default-workflow row
+//     plus the `workflow.template_applied` audit event logged when it was
+//     applied — not a per-task marker. Applying it this way relaxes the
+//     branch/PR gates for EVERY task in the project, not just release/ops
+//     ones.
+//   Operator guidance for a mixed project (regular code tasks + release/ops
+//   tasks): do NOT `apply-template` this one as the project default —
+//   create it as a non-default named Workflow instead and assign it per
+//   task via `task_create({ workflowId })`.
+//
+// `ciGreen`/`prMerged` are not on any edge of the default workflow this
+// template is derived from, so there is nothing PR-shaped left to drop
+// from those edges either.
 //
 // Every other edge — including `review → done`, `review → in_progress`,
 // and `in_progress → open` — is carried over unchanged from the default:
 // the normal review flow stays intact, only the branch/PR preconditions on
 // the two `in_progress →` edges are gone.
 //
-// `Task.workflowId` is create-time-only (`updateTaskSchema` rejects it), so
-// a task already created under the default workflow cannot be moved onto
-// this template after the fact. Recovery for an already-stuck task stays
-// the existing, audited admin-only escape hatch: `POST /tasks/:id/transition
-// {force: true}` (project-admin-only, logs `task.transitioned.forced`).
-// This template does not add or change that path.
+// `Task.workflowId` can only be set at task-create time: `updateTaskSchema`
+// (the PATCH body schema, `../routes/tasks.ts`) has no `workflowId` field
+// at all, so a PATCH payload naming one has it silently stripped/ignored by
+// Zod — `z.object()` strips unrecognized keys by default, this is not a
+// rejected/400 request. A task already created under the default workflow
+// therefore cannot be moved onto this template after the fact. Recovery
+// for an already-stuck task stays the existing, audited admin-only escape
+// hatch: `POST /tasks/:id/transition {force: true}` (project-admin-only,
+// logs `task.transitioned.forced`). This template does not add or change
+// that path.
 
 const releaseOpsNoPrDefinition: WorkflowDefinitionShape = {
   states: [
@@ -321,7 +345,7 @@ export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
     slug: "release-ops-no-pr",
     name: "Release / Ops, No PR Required",
     description:
-      "The default four-state workflow, minus the branchPresent/prPresent gates on in_progress → review and in_progress → done. For task classes that legitimately never produce a branch or a PR (tag-only releases, config/ops actions) — applying this template is the audited, visible exception path: the task's workflowId records that its gates were intentionally relaxed, and `result` becomes the evidence trail a PR link would otherwise have provided. Review stays a normal, non-skippable-by-default stage; only the branch/PR preconditions are gone.",
+      "The default four-state workflow, minus the branchPresent/prPresent gates on in_progress → review and in_progress → done. For task classes that legitimately never produce a branch or a PR (tag-only releases, config/ops actions). Stays per-task auditable only when assigned via task_create({workflowId}) against a non-default Workflow row; applying it here via apply-template makes it the project's DEFAULT workflow, relaxing these gates for every task in the project, not just release/ops ones — for a mixed project, create a non-default named workflow from this definition instead. Review stays a normal, non-skippable-by-default stage; only the branch/PR preconditions on the two in_progress edges are gone.",
     definition: releaseOpsNoPrDefinition,
   },
 ] as const;
