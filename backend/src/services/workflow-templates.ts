@@ -212,6 +212,92 @@ const branchPrMergeGatedDefinition: WorkflowDefinitionShape = {
   initialState: "open",
 };
 
+// ── Release / Ops, No PR Required ───────────────────────────────────────────
+//
+// Same four locked states and the same shape as the built-in default
+// workflow (see `default-workflow.ts` DEFAULT_TRANSITIONS) — with one
+// deliberate difference: `branchPresent`/`prPresent` are dropped from
+// `in_progress → review` and `in_progress → done`. The default workflow
+// requires both there so "submit for review" always has something to
+// review; that assumption breaks for task classes that legitimately never
+// produce a branch or a PR — tag-only releases, config/ops actions,
+// anything that ships by other means. Those tasks used to hang on
+// `422 precondition_failed` with `canForce: false` (agents cannot force;
+// only an admin can, and only via v1 `/transition`).
+//
+// This template is the audited escape hatch for that case: applying it
+// (at `task_create({ workflowId })` or via `apply-template/:slug`) is an
+// explicit, visible choice recorded on the task, not a silent gate bypass.
+// A reviewer can see at a glance — from the task's `workflowId` — that its
+// branch/PR gates were intentionally relaxed, and the task's `result` text
+// (written on `task_finish`) becomes the audit trail an actual PR link
+// would otherwise have provided. `ciGreen`/`prMerged` are not on any edge
+// of the default workflow this template is derived from, so there is
+// nothing PR-shaped left to drop from those edges either.
+//
+// Every other edge — including `review → done`, `review → in_progress`,
+// and `in_progress → open` — is carried over unchanged from the default:
+// the normal review flow stays intact, only the branch/PR preconditions on
+// the two `in_progress →` edges are gone.
+//
+// `Task.workflowId` is create-time-only (`updateTaskSchema` rejects it), so
+// a task already created under the default workflow cannot be moved onto
+// this template after the fact. Recovery for an already-stuck task stays
+// the existing, audited admin-only escape hatch: `POST /tasks/:id/transition
+// {force: true}` (project-admin-only, logs `task.transitioned.forced`).
+// This template does not add or change that path.
+
+const releaseOpsNoPrDefinition: WorkflowDefinitionShape = {
+  states: [
+    {
+      name: "open",
+      label: "Open",
+      terminal: false,
+      agentInstructions:
+        "Claim this task, then transition to in_progress. This workflow has no branch requirement — it is meant for release/ops task classes (e.g. tag-only releases, config changes) that legitimately never produce a branch or a PR.",
+    },
+    {
+      name: "in_progress",
+      label: "In progress",
+      terminal: false,
+      agentInstructions:
+        "Do the work. This workflow does not require a branch or a PR before review or done — record what happened in `result` (via task_finish or tasks_update) since there is no PR link to serve as evidence. Transition to review when ready, or straight to done to skip review.",
+    },
+    {
+      name: "review",
+      label: "In review",
+      terminal: false,
+      agentInstructions:
+        "Review the recorded result/evidence for this release or ops action — there is no PR to inspect. Approve to move to done, or request changes to send it back to in_progress.",
+    },
+    {
+      name: "done",
+      label: "Done",
+      terminal: true,
+      agentInstructions:
+        "Task is complete. There is no PR to merge under this workflow; the audit trail is the task's `result` text plus its `workflowId`, which records that branch/PR gates were intentionally not applied to this task.",
+    },
+  ],
+  transitions: [
+    // open → in_progress: identical to the default workflow (already
+    // ungated there — see the rationale in default-workflow.ts).
+    { from: "open", to: "in_progress", label: "Start", requiredRole: "any" },
+    // in_progress → review: the default requires branchPresent + prPresent
+    // here. Dropped — that is the entire point of this template.
+    { from: "in_progress", to: "review", label: "Submit for review", requiredRole: "any" },
+    // in_progress → done: the default requires branchPresent + prPresent
+    // here too (skip-review path). Dropped for the same reason.
+    { from: "in_progress", to: "done", label: "Mark done", requiredRole: "any" },
+    // in_progress → open: unchanged from the default — always allowed.
+    { from: "in_progress", to: "open", label: "Release", requiredRole: "any" },
+    // review → done: unchanged from the default — no extra gate.
+    { from: "review", to: "done", label: "Approve", requiredRole: "any" },
+    // review → in_progress: unchanged from the default — always allowed.
+    { from: "review", to: "in_progress", label: "Request changes", requiredRole: "any" },
+  ],
+  initialState: "open",
+};
+
 // ── Template registry ───────────────────────────────────────────────────────
 //
 // The "AI Coding Agent Pipeline" template (backlog → spec → plan →
@@ -230,6 +316,13 @@ export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
     description:
       "The locked four-state workflow with stricter gates than the default: a branch is required before work starts, a branch and PR before review, and a merged PR before any transition into done.",
     definition: branchPrMergeGatedDefinition,
+  },
+  {
+    slug: "release-ops-no-pr",
+    name: "Release / Ops, No PR Required",
+    description:
+      "The default four-state workflow, minus the branchPresent/prPresent gates on in_progress → review and in_progress → done. For task classes that legitimately never produce a branch or a PR (tag-only releases, config/ops actions) — applying this template is the audited, visible exception path: the task's workflowId records that its gates were intentionally relaxed, and `result` becomes the evidence trail a PR link would otherwise have provided. Review stays a normal, non-skippable-by-default stage; only the branch/PR preconditions are gone.",
+    definition: releaseOpsNoPrDefinition,
   },
 ] as const;
 

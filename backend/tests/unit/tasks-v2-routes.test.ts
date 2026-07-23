@@ -134,6 +134,7 @@ vi.mock("../../src/services/grounding-client.js", () => ({
 import { taskRouter } from "../../src/routes/tasks.js";
 import { logAuditEvent } from "../../src/services/audit.js";
 import { calculateConfidence } from "../../src/lib/confidence.js";
+import { findWorkflowTemplate } from "../../src/services/workflow-templates.js";
 
 const AGENT: Actor = {
   type: "agent",
@@ -2120,6 +2121,119 @@ describe("POST /tasks/:id/finish — gate enforcement (regression)", () => {
     expect(res.status).toBe(422);
     const body = (await res.json()) as { failed: { rule: string }[] };
     expect(body.failed.map((f) => f.rule)).toContain("prPresent");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// ── release-ops-no-pr template: PR-less task classes clear the gates that
+// block the default workflow (agent-tasks 5107416c) ────────────────────────
+describe("release-ops-no-pr template — task_finish runs without branchName/prUrl", () => {
+  const template = findWorkflowTemplate("release-ops-no-pr");
+  const templateWorkflow = { definition: template!.definition };
+
+  it("in_progress → review: passes with neither branchName nor prUrl set", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      branchName: null,
+      prUrl: null,
+      prNumber: null,
+      workflowId: "wf-release-ops",
+      workflow: templateWorkflow,
+    });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ result: "Tagged and published v1.2.3 to npm" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { targetStatus: string };
+    expect(body.targetStatus).toBe("review");
+    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    expect(data.status).toBe("review");
+    expect(data.result).toBe("Tagged and published v1.2.3 to npm");
+  });
+
+  it("review → done (approve): passes with no prUrl set — the review edge is unchanged from the default", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      claimedByAgentId: "agent-author",
+      reviewClaimedByAgentId: "agent-1",
+      branchName: null,
+      prUrl: null,
+      prNumber: null,
+      workflowId: "wf-release-ops",
+      workflow: templateWorkflow,
+    });
+    prismaMocks.agentTokenFindUnique.mockResolvedValueOnce({ name: "Reviewer" });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ outcome: "approve", result: "verified on npm" }),
+    });
+    expect(res.status).toBe(200);
+    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    expect(data.status).toBe("done");
+  });
+
+  it("in_progress → done (skip review, via PATCH): passes with neither branchName nor prUrl set", async () => {
+    // task_finish always targets the review state when one is reachable
+    // (expectedFinishStateFromDefinition prefers review), so the
+    // skip-review edge is exercised through the same PATCH-goes-through-
+    // the-engine lane as the default-workflow suite above.
+    const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      branchName: null,
+      prUrl: null,
+      prNumber: null,
+      workflowId: "wf-release-ops",
+      workflow: templateWorkflow,
+    });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+    expect(res.status).toBe(200);
+    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    expect(data.status).toBe("done");
+  });
+
+  it("counterprobe: the same PR-less in_progress → review still 422s under the default workflow", async () => {
+    // Same task shape as the first test in this suite, minus the template
+    // workflow — proves the template is what relaxed the gate, not some
+    // unrelated change to the default.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      branchName: null,
+      prUrl: null,
+      prNumber: null,
+      workflowId: null,
+      workflow: null,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ result: "Tagged and published v1.2.3 to npm" }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string; failed: { rule: string }[] };
+    expect(body.error).toBe("precondition_failed");
+    expect(body.failed.map((f) => f.rule)).toEqual(
+      expect.arrayContaining(["branchPresent", "prPresent"]),
+    );
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 });
