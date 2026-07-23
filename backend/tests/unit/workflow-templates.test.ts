@@ -216,3 +216,74 @@ describe("branch-pr-merge-gated template", () => {
     });
   });
 });
+
+describe("release-ops-no-pr template", () => {
+  const template = findWorkflowTemplate("release-ops-no-pr");
+
+  it("is registered", () => {
+    expect(template).toBeDefined();
+  });
+
+  // Guard: a missing registration must surface as the clean "is registered"
+  // failure above, not as a collection-time crash from `template!.definition`
+  // for every subsequent `it()` below. Bail out of registering the rest of
+  // this suite if the template lookup came back empty.
+  if (!template) return;
+  const def = template.definition;
+
+  it("uses exactly the four locked states with the correct terminal flags", () => {
+    const states = def.states.map((s) => s.name).sort();
+    expect(states).toEqual(["done", "in_progress", "open", "review"]);
+    const terminal = def.states.filter((s) => s.terminal).map((s) => s.name);
+    expect(terminal).toEqual(["done"]);
+  });
+
+  it("has initialState open", () => {
+    expect(def.initialState).toBe("open");
+  });
+
+  it("gives every state non-empty agentInstructions", () => {
+    for (const s of def.states) {
+      expect(s.agentInstructions, `state "${s.name}"`).toBeTruthy();
+      expect(s.agentInstructions!.length).toBeGreaterThan(10);
+    }
+  });
+
+  it("drops branchPresent/prPresent on both in_progress → edges, unlike the default workflow", () => {
+    expect(transition(def, "in_progress", "review")?.requires).toBeUndefined();
+    expect(transition(def, "in_progress", "done")?.requires).toBeUndefined();
+  });
+
+  it("carries every other edge over ungated, same as the default workflow", () => {
+    expect(transition(def, "open", "in_progress")?.requires).toBeUndefined();
+    expect(transition(def, "in_progress", "open")?.requires).toBeUndefined();
+    expect(transition(def, "review", "done")?.requires).toBeUndefined();
+    expect(transition(def, "review", "in_progress")?.requires).toBeUndefined();
+  });
+
+  it("has no ciGreen/prMerged anywhere — there is no PR-shaped artifact left to gate on", () => {
+    for (const t of def.transitions) {
+      expect(t.requires ?? []).not.toContain("ciGreen");
+      expect(t.requires ?? []).not.toContain("prMerged");
+    }
+  });
+
+  it("has the same transition shape as the default workflow, minus the two dropped gates", () => {
+    // Same (from, to, label) pairs as DEFAULT_TRANSITIONS — this template
+    // is the default with exactly two `requires` arrays removed, nothing
+    // else changed.
+    const pairs = def.transitions
+      .map((t) => `${t.from}→${t.to}:${t.label ?? ""}`)
+      .sort();
+    expect(pairs).toEqual(
+      [
+        "in_progress→done:Mark done",
+        "in_progress→open:Release",
+        "in_progress→review:Submit for review",
+        "open→in_progress:Start",
+        "review→done:Approve",
+        "review→in_progress:Request changes",
+      ].sort(),
+    );
+  });
+});
