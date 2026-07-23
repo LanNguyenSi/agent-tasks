@@ -45,3 +45,7 @@ backend/uploads/
 # OS
 .DS_Store
 Thumbs.db
+
+# orchestrator-workflow local run state (orchestration bookkeeping,
+# never committed)
+.ai/
