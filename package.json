@@ -1,7 +1,13 @@
 {
   "name": "agent-tasks",
   "private": true,
-  "workspaces": ["backend", "frontend", "mcp-server", "mcp-bridge", "cli"],
+  "workspaces": [
+    "backend",
+    "frontend",
+    "mcp-server",
+    "mcp-bridge",
+    "cli"
+  ],
   "scripts": {
     "dev:backend": "npm run dev --workspace=backend",
     "dev:frontend": "npm run dev --workspace=frontend",
@@ -26,6 +32,7 @@
     "esbuild": "^0.28.1",
     "next": {
       "postcss": "^8.5.10"
-    }
+    },
+    "sharp": "^0.35.3"
   }
 }
