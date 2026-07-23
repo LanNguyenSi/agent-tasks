@@ -812,6 +812,29 @@ taskRouter.post(
       }
     }
 
+    // Validate workflowId belongs to the same project as the task being
+    // created. Without this, an agent with tasks:create scope could route a
+    // task through a workflow UUID borrowed from a DIFFERENT project —
+    // including a gate-relaxing template like release-ops-no-pr — bypassing
+    // this project's branchPresent/prPresent preconditions (review finding
+    // from task 5107416c). Same id+projectId filter style as the dependsOn
+    // check above.
+    if (body.workflowId) {
+      const workflow = await prisma.workflow.findFirst({
+        where: { id: body.workflowId, projectId },
+        select: { id: true },
+      });
+      if (!workflow) {
+        return c.json(
+          {
+            error: "bad_request",
+            message: "workflowId does not belong to this project",
+          },
+          400,
+        );
+      }
+    }
+
     let task;
     try {
       task = await prisma.task.create({
