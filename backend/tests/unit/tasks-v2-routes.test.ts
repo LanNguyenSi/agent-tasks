@@ -26,12 +26,17 @@ const prismaMocks = vi.hoisted(() => ({
   taskFindMany: vi.fn(),
   taskUpdate: vi.fn(),
   taskUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
+  taskCreate: vi.fn(),
   signalFindFirst: vi.fn(),
   signalUpdate: vi.fn(),
   signalUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
   workflowFindFirst: vi.fn(),
   agentTokenFindUnique: vi.fn(),
   userFindUnique: vi.fn(),
+  // task_create's create-time confidence surfacing (scorer-v2 T4) reads the
+  // project row; only exercised by the "POST /projects/:projectId/tasks —
+  // workflowId project validation" suite below.
+  projectFindUnique: vi.fn(),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -42,6 +47,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
       findMany: prismaMocks.taskFindMany,
       update: prismaMocks.taskUpdate,
       updateMany: prismaMocks.taskUpdateMany,
+      create: prismaMocks.taskCreate,
     },
     signal: {
       findFirst: prismaMocks.signalFindFirst,
@@ -56,6 +62,9 @@ vi.mock("../../src/lib/prisma.js", () => ({
     },
     user: {
       findUnique: prismaMocks.userFindUnique,
+    },
+    project: {
+      findUnique: prismaMocks.projectFindUnique,
     },
   },
 }));
@@ -5107,5 +5116,89 @@ describe("POST /tasks/:id/respec", () => {
     expect(auditCall.payload.score.to).toBe(expectedNewScore);
     expect(auditCall.payload.score.from).toBe(oldScore);
     expect(auditCall.payload.score.to).toBeGreaterThan(auditCall.payload.score.from);
+  });
+});
+
+// ── POST /projects/:projectId/tasks — workflowId project validation ────────
+//
+// Review finding from task 5107416c: with the first gate-relaxing registered
+// template (release-ops-no-pr), an agent with tasks:create that knows a
+// workflow UUID from ANOTHER project could assign it to a code task and
+// bypass this project's branchPresent/prPresent gates. workflowId must be
+// validated against the target project before the task is created.
+describe("POST /projects/:projectId/tasks — workflowId project validation", () => {
+  const CREATE_PROJECT_ID = "proj-create-1";
+  const OWN_WORKFLOW_ID = "11111111-1111-1111-1111-111111111111";
+  const FOREIGN_WORKFLOW_ID = "22222222-2222-2222-2222-222222222222";
+
+  function postCreate(body: Record<string, unknown>) {
+    return makeApp(AGENT).request(`/projects/${CREATE_PROJECT_ID}/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  beforeEach(() => {
+    prismaMocks.taskCreate.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({
+        id: "task-new",
+        ...data,
+        attachments: [],
+        comments: [],
+        claimedByUser: null,
+        claimedByAgent: null,
+        blockedBy: [],
+        blocks: [],
+      }),
+    );
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      confidenceThreshold: 60,
+      taskTemplate: null,
+      enforcementMode: null,
+    });
+  });
+
+  it("rejects a workflowId that belongs to a different project (400, task not created)", async () => {
+    // The workflow row exists, but `findFirst({ where: { id, projectId } })`
+    // returns null because it lives under a different project — mirroring
+    // how Prisma actually enforces the compound filter.
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await postCreate({ title: "Steal a workflow", workflowId: FOREIGN_WORKFLOW_ID });
+
+    expect([400, 404]).toContain(res.status);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.message).toMatch(/workflow/i);
+    expect(prismaMocks.workflowFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: FOREIGN_WORKFLOW_ID, projectId: CREATE_PROJECT_ID }),
+      }),
+    );
+    expect(prismaMocks.taskCreate).not.toHaveBeenCalled();
+  });
+
+  it("accepts a workflowId that belongs to the task's own project", async () => {
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce({ id: OWN_WORKFLOW_ID });
+
+    const res = await postCreate({ title: "Use own workflow", workflowId: OWN_WORKFLOW_ID });
+
+    expect(res.status).toBe(201);
+    expect(prismaMocks.workflowFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: OWN_WORKFLOW_ID, projectId: CREATE_PROJECT_ID }),
+      }),
+    );
+    const createArg = prismaMocks.taskCreate.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(createArg.data.workflowId).toBe(OWN_WORKFLOW_ID);
+  });
+
+  it("skips the workflow lookup and creates the task when workflowId is omitted", async () => {
+    const res = await postCreate({ title: "No workflow" });
+
+    expect(res.status).toBe(201);
+    expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
+    const createArg = prismaMocks.taskCreate.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(createArg.data.workflowId).toBeUndefined();
   });
 });
