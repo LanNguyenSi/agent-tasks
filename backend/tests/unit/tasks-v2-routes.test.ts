@@ -5117,6 +5117,32 @@ describe("POST /tasks/:id/respec", () => {
     expect(auditCall.payload.score.from).toBe(oldScore);
     expect(auditCall.payload.score.to).toBeGreaterThan(auditCall.payload.score.from);
   });
+
+  // ── templateData field length cap (hardening, 769df3c4) ───────────────────
+  //
+  // respecTaskSchema reuses templateDataSchema unmodified, so this exercises
+  // the SAME per-field cap as create/PATCH through the respec write path.
+  it("accepts a templateData string field at exactly the 50_000-char cap", async () => {
+    const value = "a".repeat(50_000);
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(RESPEC_TASK)
+      .mockResolvedValueOnce({ ...RESPEC_TASK, templateData: { goal: value } });
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, { templateData: { goal: value } });
+    expect(res.status).toBe(200);
+    expect(prismaMocks.taskUpdateMany).toHaveBeenCalled();
+  });
+
+  it("rejects a templateData string field one character over the 50_000-char cap with a clear 400, and never writes", async () => {
+    const value = "a".repeat(50_001);
+    const res = await respecRequest(AGENT_WITH_UPDATE, { templateData: { goal: value } });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { success: false; error: unknown };
+    expect(body.success).toBe(false);
+    expect(body.error).toBeTruthy();
+    expect(prismaMocks.taskFindUnique).not.toHaveBeenCalled();
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
 });
 
 // ── POST /projects/:projectId/tasks — workflowId project validation ────────
@@ -5200,5 +5226,127 @@ describe("POST /projects/:projectId/tasks — workflowId project validation", ()
     expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
     const createArg = prismaMocks.taskCreate.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(createArg.data.workflowId).toBeUndefined();
+  });
+});
+
+// ── POST /projects/:projectId/tasks — templateData field length cap
+// (hardening, 769df3c4) ──────────────────────────────────────────────────────
+//
+// createTaskSchema reuses templateDataSchema unmodified (routes/tasks.ts),
+// so an over-limit field here is rejected by the same zValidator("json", ...)
+// middleware that already handles every other create-time validation error.
+describe("POST /projects/:projectId/tasks — templateData field length cap", () => {
+  const CREATE_PROJECT_ID = "proj-create-2";
+
+  function postCreate(body: Record<string, unknown>) {
+    return makeApp(AGENT).request(`/projects/${CREATE_PROJECT_ID}/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  beforeEach(() => {
+    prismaMocks.taskCreate.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({
+        id: "task-new",
+        ...data,
+        attachments: [],
+        comments: [],
+        claimedByUser: null,
+        claimedByAgent: null,
+        blockedBy: [],
+        blocks: [],
+      }),
+    );
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      confidenceThreshold: 60,
+      taskTemplate: null,
+      enforcementMode: null,
+    });
+  });
+
+  it("accepts a templateData string field at exactly the 50_000-char cap", async () => {
+    const value = "a".repeat(50_000);
+    const res = await postCreate({ title: "Boundary ok", templateData: { goal: value } });
+    expect(res.status).toBe(201);
+    expect(prismaMocks.taskCreate).toHaveBeenCalled();
+  });
+
+  it("rejects a templateData string field one character over the 50_000-char cap with a clear 400, and never creates the task", async () => {
+    const value = "a".repeat(50_001);
+    const res = await postCreate({ title: "Boundary over", templateData: { goal: value } });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { success: false; error: unknown };
+    expect(body.success).toBe(false);
+    expect(body.error).toBeTruthy();
+    expect(prismaMocks.taskCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ── PATCH /tasks/:id — templateData field length cap (hardening, 769df3c4) ──
+//
+// updateTaskSchema (the human PATCH lane) reuses templateDataSchema
+// unmodified, so an over-limit field is rejected by the handler's existing
+// `updateTaskSchema.safeParse(rawBody)` -> { error: "bad_request", ... } 400
+// path — the same shape every other PATCH validation failure already uses.
+describe("PATCH /tasks/:id — templateData field length cap", () => {
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+
+  it("accepts a templateData string field at exactly the 50_000-char cap", async () => {
+    const value = "a".repeat(50_000);
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "in_progress" });
+    prismaMocks.taskUpdate.mockResolvedValueOnce({ ...baseTask, templateData: { goal: value } });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ templateData: { goal: value } }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.taskUpdate).toHaveBeenCalled();
+  });
+
+  it("rejects a templateData string field one character over the 50_000-char cap with a clear 400, and never writes", async () => {
+    const value = "a".repeat(50_001);
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "in_progress" });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ templateData: { goal: value } }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toBeTruthy();
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// ── GET /tasks/:id — reads an already-stored over-limit templateData value
+// unaffected (hardening, 769df3c4) ───────────────────────────────────────────
+//
+// The new per-field cap is enforced on WRITE paths only. A task written
+// before the cap existed (or written directly, bypassing this API) that
+// already has an over-limit templateData string must keep reading back
+// unchanged — GET never re-validates against templateDataSchema, it casts
+// `task.templateData as TemplateData | null` straight through.
+describe("GET /tasks/:id — pre-existing over-limit templateData round-trips unaffected", () => {
+  it("returns the full over-limit value (no truncation, no rejection)", async () => {
+    const overLimitValue = "a".repeat(50_001);
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      templateData: { goal: overLimitValue },
+    });
+
+    const res = await makeApp(AGENT).request("/tasks/task-1", { method: "GET" });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { task: { templateData: { goal: string } } };
+    expect(body.task.templateData.goal).toBe(overLimitValue);
+    expect(body.task.templateData.goal.length).toBe(50_001);
   });
 });
