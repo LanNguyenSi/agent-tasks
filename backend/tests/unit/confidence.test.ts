@@ -21,6 +21,7 @@ import {
   calculateConfidence,
   extractSpecSections,
   templateDataSchema,
+  templatePresetSchema,
   taskTemplateSchema,
   prefersSchema,
   FIELD_WEIGHTS,
@@ -677,6 +678,43 @@ describe("templateDataSchema — per-field length cap (hardening)", () => {
       const issue = parsed.error.issues.find((i) => i.path.join(".") === field);
       expect(issue).toBeDefined();
       expect(issue?.message.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ── templatePresetSchema shares the same per-field cap (hardening) ─────────
+//
+// A project's taskTemplate can carry up to 20 presets (taskTemplateSchema
+// above); before this, a project admin could store an unbounded string in
+// any of these same nine fields on every one of those 20 presets. It reuses
+// the exact same TEMPLATE_DATA_FIELD_MAX_CHARS constant/helper as
+// templateDataSchema, not a second number.
+describe("templatePresetSchema — per-field length cap (hardening)", () => {
+  const FIELDS = [
+    "goal",
+    "acceptanceCriteria",
+    "context",
+    "constraints",
+    "scope",
+    "outOfScope",
+    "dependencies",
+    "risk",
+    "agentPrompt",
+  ] as const;
+
+  it.each(FIELDS)("accepts %s at exactly the cap", (field) => {
+    const value = "a".repeat(TEMPLATE_DATA_FIELD_MAX_CHARS);
+    const parsed = templatePresetSchema.safeParse({ name: "Preset", [field]: value });
+    expect(parsed.success).toBe(true);
+  });
+
+  it.each(FIELDS)("rejects %s one character over the cap", (field) => {
+    const value = "a".repeat(TEMPLATE_DATA_FIELD_MAX_CHARS + 1);
+    const parsed = templatePresetSchema.safeParse({ name: "Preset", [field]: value });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      const issue = parsed.error.issues.find((i) => i.path.join(".") === field);
+      expect(issue).toBeDefined();
     }
   });
 });

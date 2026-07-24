@@ -36,8 +36,9 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   // App-wide request-body-size ceiling (hardening, 769df3c4). Runs before
   // any router/validator so an oversized body is rejected at the transport
   // level, not after being buffered/parsed. Exempts the multipart
-  // attachment-upload route, which sets its own larger bodyLimit further
-  // down the stack. See middleware/json-body-limit.ts for sizing rationale.
+  // attachment-upload route (its own, larger bodyLimit governs further down
+  // the stack) and gives the public GitHub webhook route its own, larger
+  // ceiling. See middleware/json-body-limit.ts for sizing rationale.
   app.use("*", jsonBodyLimit);
 
   // Security headers
