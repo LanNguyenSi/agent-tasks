@@ -19,6 +19,7 @@ import { docsRouter } from "./routes/docs.js";
 import { ssoLoginRouter, ssoAdminRouter } from "./routes/sso.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { rateLimit } from "./middleware/rate-limit.js";
+import { jsonBodyLimit } from "./middleware/json-body-limit.js";
 import { appErrorHandler } from "./lib/error-handler.js";
 import type { AppVariables } from "./types/hono.js";
 
@@ -31,6 +32,14 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   // method, path — plus actorId/actorType (after auth) and verb (in
   // /api/mcp). See lib/logger.ts and middleware/request-context.ts.
   app.use("*", requestContextMiddleware);
+
+  // App-wide request-body-size ceiling (hardening, 769df3c4). Runs before
+  // any router/validator so an oversized body is rejected at the transport
+  // level, not after being buffered/parsed. Exempts the multipart
+  // attachment-upload route (its own, larger bodyLimit governs further down
+  // the stack) and gives the public GitHub webhook route its own, larger
+  // ceiling. See middleware/json-body-limit.ts for sizing rationale.
+  app.use("*", jsonBodyLimit);
 
   // Security headers
   app.use("*", async (c, next) => {

@@ -17,19 +17,40 @@ export const taskTypeSchema = z.enum([
 
 export type TaskType = z.infer<typeof taskTypeSchema>;
 
+// Per-field cap shared by every "spec section" string field this module
+// declares — templateDataSchema below AND templatePresetSchema's matching
+// nine fields (hardening, 769df3c4). Before this, these fields were
+// unbounded — only the sibling `description` field on the respec endpoint
+// carried a max(50_000). 50KB matches that existing respec `description` cap
+// (routes/tasks.ts) rather than introducing a second, drifting number: it's
+// generous enough for a real spec section (goal/acceptanceCriteria/etc. are
+// prose, not attachments) while still bounding a single write to a few
+// hundred KB total across all nine fields. This is a WRITE-time cap only —
+// enforced wherever templateDataSchema/templatePresetSchema validate a
+// payload (POST /tasks create, PATCH /tasks/:id human lane, POST
+// /tasks/:id/respec, and project taskTemplate preset writes). It does not
+// run on read paths (GET handlers cast stored JSON without re-validating
+// it), so a row written before this cap landed keeps reading back unchanged.
+export const TEMPLATE_DATA_FIELD_MAX_CHARS = 50_000;
+
+const templateDataStringField = () =>
+  z.string().max(TEMPLATE_DATA_FIELD_MAX_CHARS, {
+    message: `Must be at most ${TEMPLATE_DATA_FIELD_MAX_CHARS} characters`,
+  });
+
 export const templatePresetSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().optional(),
-  goal: z.string().optional(),
-  acceptanceCriteria: z.string().optional(),
-  context: z.string().optional(),
-  constraints: z.string().optional(),
+  goal: templateDataStringField().optional(),
+  acceptanceCriteria: templateDataStringField().optional(),
+  context: templateDataStringField().optional(),
+  constraints: templateDataStringField().optional(),
   // scorer-v2 executability fields (1:1 with the spec-slicer schema)
-  scope: z.string().optional(),
-  outOfScope: z.string().optional(),
-  dependencies: z.string().optional(),
-  risk: z.string().optional(),
-  agentPrompt: z.string().optional(),
+  scope: templateDataStringField().optional(),
+  outOfScope: templateDataStringField().optional(),
+  dependencies: templateDataStringField().optional(),
+  risk: templateDataStringField().optional(),
+  agentPrompt: templateDataStringField().optional(),
   taskType: taskTypeSchema.optional(),
 });
 
@@ -67,20 +88,21 @@ export const prefersSchema = z.object({
 
 export type Prefers = z.infer<typeof prefersSchema>;
 
+// Same per-field cap as templatePresetSchema above (TEMPLATE_DATA_FIELD_MAX_CHARS).
 export const templateDataSchema = z.object({
-  goal: z.string().optional(),
+  goal: templateDataStringField().optional(),
   // Canonical wire key for "evals" (the spec-slicer's Evals section). Keep this
   // single key; "evals" is only an alias at the producer edge, never stored.
-  acceptanceCriteria: z.string().optional(),
-  context: z.string().optional(),
-  constraints: z.string().optional(),
+  acceptanceCriteria: templateDataStringField().optional(),
+  context: templateDataStringField().optional(),
+  constraints: templateDataStringField().optional(),
   // scorer-v2 executability fields (1:1 with the spec-slicer schema). Stored and
   // round-tripped now; weighting/scoring against them is a later slice.
-  scope: z.string().optional(),
-  outOfScope: z.string().optional(),
-  dependencies: z.string().optional(),
-  risk: z.string().optional(),
-  agentPrompt: z.string().optional(),
+  scope: templateDataStringField().optional(),
+  outOfScope: templateDataStringField().optional(),
+  dependencies: templateDataStringField().optional(),
+  risk: templateDataStringField().optional(),
+  agentPrompt: templateDataStringField().optional(),
   prefers: prefersSchema.optional(),
   taskType: taskTypeSchema.optional(),
 });

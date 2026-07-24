@@ -21,10 +21,12 @@ import {
   calculateConfidence,
   extractSpecSections,
   templateDataSchema,
+  templatePresetSchema,
   taskTemplateSchema,
   prefersSchema,
   FIELD_WEIGHTS,
   EVALS_KEYSTONE_CAP,
+  TEMPLATE_DATA_FIELD_MAX_CHARS,
   type TaskQualitySubscores,
 } from "../../src/lib/confidence.js";
 
@@ -633,6 +635,87 @@ describe("templateData/taskTemplate — scorer-v2 fields (T2)", () => {
   it("backward-compat: old-shape templateData and empty payloads still parse", () => {
     expect(templateDataSchema.safeParse({ goal: "g", acceptanceCriteria: "a", context: "c", constraints: "k" }).success).toBe(true);
     expect(templateDataSchema.safeParse({}).success).toBe(true);
+  });
+});
+
+// ── templateData string field length caps (hardening, 769df3c4) ────────────
+//
+// Before this change every templateDataSchema string field was unbounded —
+// only the respec `description` sibling field carried a max(50_000). One
+// shared constant now caps all nine templateData string fields, so this
+// covers the schema boundary itself; the route-level 400s on create/PATCH/
+// respec are covered in tasks-v2-routes.test.ts (all three write paths
+// share this exact schema, so a schema-level pass there is a route-level
+// pass here too).
+describe("templateDataSchema — per-field length cap (hardening)", () => {
+  const FIELDS = [
+    "goal",
+    "acceptanceCriteria",
+    "context",
+    "constraints",
+    "scope",
+    "outOfScope",
+    "dependencies",
+    "risk",
+    "agentPrompt",
+  ] as const;
+
+  it("TEMPLATE_DATA_FIELD_MAX_CHARS matches the respec description cap (50_000)", () => {
+    expect(TEMPLATE_DATA_FIELD_MAX_CHARS).toBe(50_000);
+  });
+
+  it.each(FIELDS)("accepts %s at exactly the cap", (field) => {
+    const value = "a".repeat(TEMPLATE_DATA_FIELD_MAX_CHARS);
+    const parsed = templateDataSchema.safeParse({ [field]: value });
+    expect(parsed.success).toBe(true);
+  });
+
+  it.each(FIELDS)("rejects %s one character over the cap with a clear message", (field) => {
+    const value = "a".repeat(TEMPLATE_DATA_FIELD_MAX_CHARS + 1);
+    const parsed = templateDataSchema.safeParse({ [field]: value });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      const issue = parsed.error.issues.find((i) => i.path.join(".") === field);
+      expect(issue).toBeDefined();
+      expect(issue?.message.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ── templatePresetSchema shares the same per-field cap (hardening) ─────────
+//
+// A project's taskTemplate can carry up to 20 presets (taskTemplateSchema
+// above); before this, a project admin could store an unbounded string in
+// any of these same nine fields on every one of those 20 presets. It reuses
+// the exact same TEMPLATE_DATA_FIELD_MAX_CHARS constant/helper as
+// templateDataSchema, not a second number.
+describe("templatePresetSchema — per-field length cap (hardening)", () => {
+  const FIELDS = [
+    "goal",
+    "acceptanceCriteria",
+    "context",
+    "constraints",
+    "scope",
+    "outOfScope",
+    "dependencies",
+    "risk",
+    "agentPrompt",
+  ] as const;
+
+  it.each(FIELDS)("accepts %s at exactly the cap", (field) => {
+    const value = "a".repeat(TEMPLATE_DATA_FIELD_MAX_CHARS);
+    const parsed = templatePresetSchema.safeParse({ name: "Preset", [field]: value });
+    expect(parsed.success).toBe(true);
+  });
+
+  it.each(FIELDS)("rejects %s one character over the cap", (field) => {
+    const value = "a".repeat(TEMPLATE_DATA_FIELD_MAX_CHARS + 1);
+    const parsed = templatePresetSchema.safeParse({ name: "Preset", [field]: value });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      const issue = parsed.error.issues.find((i) => i.path.join(".") === field);
+      expect(issue).toBeDefined();
+    }
   });
 });
 
