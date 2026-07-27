@@ -19,7 +19,7 @@ Thanks for your interest. agent-tasks is a collaborative task platform for human
    npm run test  --workspace=<surface>
    ```
 
-   The root-level `npm run build` / `npm test` fan out across all workspaces; only use them when a change actually crosses surfaces.
+   The root-level `npm run build` fans out across all workspaces; `npm test` only covers `frontend`, `cli`, and `backend` (not `mcp-server` or `mcp-bridge`). Only use them when a change actually crosses surfaces.
 
 4. For backend changes, run the dev stack with `docker compose up` and exercise affected endpoints.
 5. Open the PR with a clear summary, motivation, and test plan.
