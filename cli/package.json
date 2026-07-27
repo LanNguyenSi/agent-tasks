@@ -47,5 +47,6 @@
   },
   "overrides": {
     "postcss": "^8.5.18"
-  }
+  },
+  "//overrides": "Inert for the monorepo workspace install (npm reads `overrides` only from the root manifest of an install) and for consumers of the published package; kept in case cli/ is ever cloned and installed as a standalone project again, as it originally was before joining this workspace."
 }
