@@ -47,5 +47,8 @@ backend/uploads/
 Thumbs.db
 
 # orchestrator-workflow local run state (orchestration bookkeeping,
-# never committed)
-.ai/
+# never committed). Root-anchored so it only matches the top-level .ai/,
+# not an unrelated .ai fixture nested inside a package or test tree.
+# .ai/workflow/ (kit templates + manifest.json) is intentionally NOT
+# ignored: those files are committed so the kit survives fresh clones.
+/.ai/runs/
