@@ -24,6 +24,27 @@ import react from "@vitejs/plugin-react";
  * The `.next/` build output is excluded so `next build` artifacts can't
  * be discovered as tests.
  */
+
+// Node 22.4+ ships an experimental global `localStorage` (unflagged by
+// default on newer Node releases, e.g. Node 26) that vitest's jsdom
+// environment does not override: its populateGlobal helper only copies a
+// jsdom-owned key onto the worker's global when that key is either absent
+// from the host global or in its hardcoded allowlist of DOM class names,
+// and `localStorage` is in neither. Node's own accessor (non-functional
+// unless --localstorage-file is set) therefore shadows jsdom's real
+// Storage implementation, and any `window.localStorage` access in a jsdom
+// test throws "Cannot read properties of undefined (reading 'clear')"
+// (see tests/unit/dashboardPrefs.test.ts, src/lib/teamsPrefs.dom.test.ts).
+// Disabling the flag on the worker processes vitest spawns restores the
+// jsdom-backed localStorage this suite has always relied on. Guarded by
+// allowedNodeEnvironmentFlags so this is a no-op on Node versions without
+// the flag (e.g. CI's Node 22 baseline, or Node 20).
+const execArgv = process.allowedNodeEnvironmentFlags.has(
+  "--no-experimental-webstorage",
+)
+  ? ["--no-experimental-webstorage"]
+  : [];
+
 export default defineConfig({
   plugins: [react()],
   // Mirror the tsconfig `@/* -> ./src/*` path alias so component tests can
@@ -32,6 +53,7 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   test: {
+    execArgv,
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx", "src/**/*.test.ts"],
     exclude: ["node_modules", ".next", "dist"],
     environment: "node",
