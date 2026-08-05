@@ -5,9 +5,14 @@
 // grounding stack) rather than diving straight into code. This module
 // detects that flavor from the task's title, description, and labels.
 //
-// Phase 1: detect + persist `task.metadata.debugFlavor`. The auto-start
-// of a grounding session and the finish-gate on evidence-ledger entries
-// land in follow-up phases.
+// Phase 1: detect + persist `task.metadata.debugFlavor` (this module).
+// Phase 2: auto-start a grounding session via the wrapper's
+// GroundingClient and persist its session id/state (implemented in
+// backend/src/routes/tasks.ts; see `deriveDebugFlavor` and
+// `reconstructSessionFromMetadata`). Phase 3: the finish-gate on
+// evidence-ledger entries (implemented in backend/src/routes/tasks.ts,
+// task_finish handler, "Phase 3 grounding finish-gate"; reads state via
+// `getSessionPhase` below). All three phases are implemented.
 
 // Keywords match against a lowercased "title + description" string. Short,
 // generic words (bug / debug / broken / failing) are word-boundaried so
@@ -142,8 +147,13 @@ export interface GroundingHint {
   mcpToolHint: string;
   // Phase 2 additions, only set when the backend successfully started a
   // session via the GroundingClient. Phase 1 fallback hints leave them
-  // undefined.
-  sessionId?: string;
+  // undefined. Named `backendSessionRef` rather than `sessionId`: this id
+  // was minted in-process by the wrapper, not by the real grounding-mcp
+  // MCP server, so it is not usable as an argument to any grounding-mcp
+  // tool (which all take a `sessionId` for a server-minted session). The
+  // distinct field name keeps it from being mistaken for one at a glance,
+  // even though the value is still useful for forensic/debugging purposes.
+  backendSessionRef?: string;
   currentPhase?: string;
   mandatorySequence?: string[];
   activeGuardrails?: string[];
@@ -200,8 +210,8 @@ export function buildGroundingHintWithSession(
   return {
     ...base,
     recommendedAction:
-      "This task looks like a bug, incident, or investigation. Start a grounding session before reading code so you resolve scope first instead of jumping into the implementation. The backend tracks session state for this task internally, but that session isn't addressable from your tools — use the recipe below to start your own.",
-    sessionId: session.sessionId,
+      "This task looks like a bug, incident, or investigation. Start a grounding session before reading code so you resolve scope first instead of jumping into the implementation. The backend tracks session state for this task internally, but that session isn't addressable from your tools. Use the recipe below to start your own.",
+    backendSessionRef: session.sessionId,
     currentPhase: session.currentPhase,
     mandatorySequence: session.mandatorySequence,
     activeGuardrails: session.activeGuardrails,

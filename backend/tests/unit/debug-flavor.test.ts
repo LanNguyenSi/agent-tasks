@@ -371,7 +371,7 @@ describe("buildGroundingHintWithSession", () => {
 
   it("still surfaces the session fields (informational — not part of the followable recipe)", () => {
     const hint = buildGroundingHintWithSession(task, session);
-    expect(hint.sessionId).toBe("sess-abc");
+    expect(hint.backendSessionRef).toBe("sess-abc");
     expect(hint.currentPhase).toBe("scope-resolution");
     expect(hint.mandatorySequence).toEqual(["domain-router", "readme-resolver"]);
     expect(hint.activeGuardrails).toEqual(["no-root-cause-before-readme"]);
@@ -380,6 +380,18 @@ describe("buildGroundingHintWithSession", () => {
   it("does not claim the backend already started a session the agent can advance", () => {
     const hint = buildGroundingHintWithSession(task, session);
     expect(hint.recommendedAction).not.toMatch(/advance/i);
+  });
+
+  // Mutation-proven gap: deleting the recommendedAction override in
+  // buildGroundingHintWithSession (falling back to the spread `...base`
+  // recommendedAction from buildGroundingHint) previously left the full
+  // suite green. These two assertions pin the override: the session-aware
+  // string must differ from the Phase-1 default AND must carry its
+  // distinctive disclaimer phrasing.
+  it("overrides recommendedAction with the session-aware disclaimer, not the Phase-1 default", () => {
+    const hint = buildGroundingHintWithSession(task, session);
+    expect(hint.recommendedAction).not.toBe(buildGroundingHint(task).recommendedAction);
+    expect(hint.recommendedAction).toMatch(/isn't addressable from your tools/i);
   });
 });
 
@@ -404,16 +416,19 @@ describe("grounding hint prefix drift guard", () => {
   };
 
   it.each([
-    ["buildGroundingHint", buildGroundingHint(task)],
-    ["buildGroundingHintWithSession", buildGroundingHintWithSession(task, session)],
-  ] as const)("%s uses the current mcp__grounding-mcp__ prefix, not the stale mcp__grounding__ one", (_name, hint) => {
+    ["buildGroundingHint", () => buildGroundingHint(task)],
+    ["buildGroundingHintWithSession", () => buildGroundingHintWithSession(task, session)],
+  ] as const)("%s uses the current mcp__grounding-mcp__ prefix, not the stale mcp__grounding__ one", (_name, buildHint) => {
+    // Hint construction happens inside the test body (not at `it.each`
+    // collection time) so a builder throw fails this test, not collection
+    // of the whole suite.
+    const hint = buildHint();
     expect(hint.mcpToolHint).toContain("mcp__grounding-mcp__grounding_start");
-    // The stale prefix is exactly `mcp__grounding__` directly followed by a
-    // verb character (e.g. `mcp__grounding__grounding_advance`). The fixed
-    // prefix `mcp__grounding-mcp__` does NOT match this pattern (a hyphen
-    // sits where the stale pattern needs a second underscore), so this
-    // assertion is a true negative today and a red flag if the prefix ever
-    // regresses.
+    // Secondary guard, belt-and-braces for hybrid strings that could carry
+    // both the fixed prefix and a stale fragment. In the regression this
+    // guards against (prefix reverted to `mcp__grounding__`), the toContain
+    // assertion above fires first; this one is a backstop, not the primary
+    // signal.
     expect(hint.mcpToolHint).not.toMatch(/mcp__grounding__[a-z]/);
   });
 });

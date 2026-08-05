@@ -3941,7 +3941,7 @@ describe("debug-flavor detection on pickup + start", () => {
       kind: string;
       groundingHint?: {
         debugFlavor: boolean;
-        sessionId?: string;
+        backendSessionRef?: string;
         currentPhase?: string;
         mandatorySequence?: string[];
         activeGuardrails?: string[];
@@ -3950,7 +3950,7 @@ describe("debug-flavor detection on pickup + start", () => {
     };
     expect(body.kind).toBe("work");
     expect(body.groundingHint?.debugFlavor).toBe(true);
-    expect(body.groundingHint?.sessionId).toBe("sess-abc");
+    expect(body.groundingHint?.backendSessionRef).toBe("sess-abc");
     expect(body.groundingHint?.currentPhase).toBe("scope-resolution");
     expect(body.groundingHint?.mandatorySequence).toEqual([
       "domain-router",
@@ -3960,15 +3960,20 @@ describe("debug-flavor detection on pickup + start", () => {
       "no-root-cause-before-readme",
     ]);
     // Phase 2's mcpToolHint is now the same followable grounding_start
-    // recipe as Phase 1 — grounding_advance would target a sessionId the
+    // recipe as Phase 1; grounding_advance would target a sessionId the
     // real grounding-mcp MCP server never minted (it was minted in-process
     // by the wrapper), so the hint must not reference it. The session
-    // fields above remain on the payload as informational context.
+    // fields above remain on the payload as informational context, under
+    // `backendSessionRef` rather than `sessionId` so it isn't mistaken for
+    // an id usable with the grounding-mcp toolset's sessionId-taking tools.
     expect(body.groundingHint?.mcpToolHint).toContain("mcp__grounding-mcp__grounding_start");
     expect(body.groundingHint?.mcpToolHint).toContain('keyword="agent-tasks"');
     expect(body.groundingHint?.mcpToolHint).toContain('problem="fix login bug"');
     expect(body.groundingHint?.mcpToolHint).not.toContain("grounding_advance");
-    expect(body.groundingHint?.mcpToolHint).not.toContain('sessionId="sess-abc"');
+    // Bare id, not just the old `sessionId="..."` shape, and scoped to the
+    // mcpToolHint text specifically (not the whole payload) — the payload
+    // still legitimately carries the id under `backendSessionRef` above.
+    expect(body.groundingHint?.mcpToolHint).not.toContain("sess-abc");
 
     expect(groundingClientMock.start).toHaveBeenCalledWith({
       keyword: "agent-tasks",
@@ -4007,12 +4012,12 @@ describe("debug-flavor detection on pickup + start", () => {
     const body = (await res.json()) as {
       groundingHint?: {
         debugFlavor: boolean;
-        sessionId?: string;
+        backendSessionRef?: string;
         mcpToolHint: string;
       };
     };
     expect(body.groundingHint?.debugFlavor).toBe(true);
-    expect(body.groundingHint?.sessionId).toBeUndefined();
+    expect(body.groundingHint?.backendSessionRef).toBeUndefined();
     // Phase 1 advisory hint references grounding_start, not grounding_advance.
     expect(body.groundingHint?.mcpToolHint).toContain("grounding_start");
 
@@ -4047,10 +4052,23 @@ describe("debug-flavor detection on pickup + start", () => {
     const res = await makeApp().request("/tasks/pickup", { method: "POST" });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      groundingHint?: { sessionId?: string; currentPhase?: string };
+      groundingHint?: {
+        backendSessionRef?: string;
+        currentPhase?: string;
+        mcpToolHint: string;
+      };
     };
-    expect(body.groundingHint?.sessionId).toBe("sess-stored");
+    expect(body.groundingHint?.backendSessionRef).toBe("sess-stored");
     expect(body.groundingHint?.currentPhase).toBe("doc-reading");
+    // This exercises the RECONSTRUCTED path (reconstructSessionFromMetadata
+    // + buildGroundingHintWithSession), not the fresh-start path. Pin it the
+    // same way the fresh path is pinned above: the hint text must still be
+    // the followable grounding_start recipe, and must never leak the
+    // persisted (backend-only, non-addressable) session id into the text an
+    // agent would actually paste into a tool call.
+    expect(body.groundingHint?.mcpToolHint).toContain("mcp__grounding-mcp__grounding_start");
+    expect(body.groundingHint?.mcpToolHint).not.toContain("grounding_advance");
+    expect(body.groundingHint?.mcpToolHint).not.toContain("sess-stored");
 
     expect(groundingClientMock.start).not.toHaveBeenCalled();
     // No re-classification → no metadata write.
