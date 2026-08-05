@@ -3959,8 +3959,16 @@ describe("debug-flavor detection on pickup + start", () => {
     expect(body.groundingHint?.activeGuardrails).toEqual([
       "no-root-cause-before-readme",
     ]);
-    expect(body.groundingHint?.mcpToolHint).toContain("grounding_advance");
-    expect(body.groundingHint?.mcpToolHint).toContain('sessionId="sess-abc"');
+    // Phase 2's mcpToolHint is now the same followable grounding_start
+    // recipe as Phase 1 — grounding_advance would target a sessionId the
+    // real grounding-mcp MCP server never minted (it was minted in-process
+    // by the wrapper), so the hint must not reference it. The session
+    // fields above remain on the payload as informational context.
+    expect(body.groundingHint?.mcpToolHint).toContain("mcp__grounding-mcp__grounding_start");
+    expect(body.groundingHint?.mcpToolHint).toContain('keyword="agent-tasks"');
+    expect(body.groundingHint?.mcpToolHint).toContain('problem="fix login bug"');
+    expect(body.groundingHint?.mcpToolHint).not.toContain("grounding_advance");
+    expect(body.groundingHint?.mcpToolHint).not.toContain('sessionId="sess-abc"');
 
     expect(groundingClientMock.start).toHaveBeenCalledWith({
       keyword: "agent-tasks",

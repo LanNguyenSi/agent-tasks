@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   detectDebugFlavor,
   buildGroundingHint,
+  buildGroundingHintWithSession,
   getSessionPhase,
   readMetadata,
+  type GroundingSessionFields,
 } from "../../src/lib/debug-flavor.js";
 
 describe("detectDebugFlavor", () => {
@@ -344,6 +346,75 @@ describe("buildGroundingHint", () => {
     // Must not contain a real newline or carriage-return that would split
     // the tool-hint across lines.
     expect(hint.mcpToolHint).not.toMatch(/\n|\r/);
+  });
+});
+
+describe("buildGroundingHintWithSession", () => {
+  const task = { title: "fix login bug", project: { slug: "agent-tasks" } };
+  const session: GroundingSessionFields = {
+    sessionId: "sess-abc",
+    currentPhase: "scope-resolution",
+    mandatorySequence: ["domain-router", "readme-resolver"],
+    activeGuardrails: ["no-root-cause-before-readme"],
+  };
+
+  it("emits the same grounding_start recipe as buildGroundingHint, not a grounding_advance call", () => {
+    const hint = buildGroundingHintWithSession(task, session);
+    expect(hint.mcpToolHint).toBe(buildGroundingHint(task).mcpToolHint);
+    expect(hint.mcpToolHint).toContain('keyword="agent-tasks"');
+    expect(hint.mcpToolHint).toContain('problem="fix login bug"');
+    // The old Phase-2 shape told the agent to advance a session id the real
+    // grounding-mcp server never minted. That recipe must be gone.
+    expect(hint.mcpToolHint).not.toContain("grounding_advance");
+    expect(hint.mcpToolHint).not.toContain(session.sessionId);
+  });
+
+  it("still surfaces the session fields (informational — not part of the followable recipe)", () => {
+    const hint = buildGroundingHintWithSession(task, session);
+    expect(hint.sessionId).toBe("sess-abc");
+    expect(hint.currentPhase).toBe("scope-resolution");
+    expect(hint.mandatorySequence).toEqual(["domain-router", "readme-resolver"]);
+    expect(hint.activeGuardrails).toEqual(["no-root-cause-before-readme"]);
+  });
+
+  it("does not claim the backend already started a session the agent can advance", () => {
+    const hint = buildGroundingHintWithSession(task, session);
+    expect(hint.recommendedAction).not.toMatch(/advance/i);
+  });
+});
+
+// Drift guard: grounding-mcp's real MCP tool prefix is `mcp__grounding-mcp__`
+// (rename ca9b0026). The old prefix `mcp__grounding__` is stale and, worse,
+// paired with a foreign sessionId it produces a hint that always fails with
+// "grounding session not found" when followed literally. Every hint this
+// module builds must carry the current prefix and must not regress to the
+// old one.
+//
+// Mutation-verified: reverting the prefix fix in debug-flavor.ts (swapping
+// `mcp__grounding-mcp__` back to `mcp__grounding__` in both builders) turns
+// this test red — see task 3fc348b7's implementer report for the captured
+// failure output.
+describe("grounding hint prefix drift guard", () => {
+  const task = { title: "fix login bug", project: { slug: "agent-tasks" } };
+  const session: GroundingSessionFields = {
+    sessionId: "sess-abc",
+    currentPhase: "scope-resolution",
+    mandatorySequence: ["domain-router"],
+    activeGuardrails: ["no-root-cause-before-readme"],
+  };
+
+  it.each([
+    ["buildGroundingHint", buildGroundingHint(task)],
+    ["buildGroundingHintWithSession", buildGroundingHintWithSession(task, session)],
+  ] as const)("%s uses the current mcp__grounding-mcp__ prefix, not the stale mcp__grounding__ one", (_name, hint) => {
+    expect(hint.mcpToolHint).toContain("mcp__grounding-mcp__grounding_start");
+    // The stale prefix is exactly `mcp__grounding__` directly followed by a
+    // verb character (e.g. `mcp__grounding__grounding_advance`). The fixed
+    // prefix `mcp__grounding-mcp__` does NOT match this pattern (a hyphen
+    // sits where the stale pattern needs a second underscore), so this
+    // assertion is a true negative today and a red flag if the prefix ever
+    // regresses.
+    expect(hint.mcpToolHint).not.toMatch(/mcp__grounding__[a-z]/);
   });
 });
 

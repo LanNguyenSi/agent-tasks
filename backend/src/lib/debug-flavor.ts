@@ -167,7 +167,7 @@ export function buildGroundingHint(task: { title: string; project: { slug: strin
     debugFlavor: true,
     recommendedAction:
       "This task looks like a bug, incident, or investigation. Start a grounding session before reading code so you resolve scope first instead of jumping into the implementation.",
-    mcpToolHint: `mcp__grounding__grounding_start with keyword="${escapeForToolHint(task.project.slug)}", problem="${escapeForToolHint(task.title)}"`,
+    mcpToolHint: `mcp__grounding-mcp__grounding_start with keyword="${escapeForToolHint(task.project.slug)}", problem="${escapeForToolHint(task.title)}"`,
   };
 }
 
@@ -181,18 +181,26 @@ export interface GroundingSessionFields {
   activeGuardrails: string[];
 }
 
-// Phase 2: produce a hint that surfaces the session that the backend just
-// initialized via the GroundingClient. The agent uses these fields to
-// advance the session via `mcp__grounding__grounding_advance`.
+// Phase 2: the backend has already started a grounding session for this
+// task via the GroundingClient and persisted its id/state (the Phase-3
+// finish-gate in `getSessionPhase` below reads that persisted state). But
+// that session was minted in-process by the wrapper — the real grounding-mcp
+// MCP server the agent talks to has never seen that session id, so a hint
+// telling the agent to `grounding_advance` it would fail with "session not
+// found". Instead this reuses the same `grounding_start` recipe as Phase 1
+// (same keyword/problem, same escaping), which the agent's own tools can
+// actually follow. The session fields are still surfaced on the returned
+// hint for callers that want them (e.g. the Phase-3 gate reads persisted
+// metadata directly, not this return value).
 export function buildGroundingHintWithSession(
-  _task: { title: string; project: { slug: string } },
+  task: { title: string; project: { slug: string } },
   session: GroundingSessionFields,
 ): GroundingHint {
+  const base = buildGroundingHint(task);
   return {
-    debugFlavor: true,
+    ...base,
     recommendedAction:
-      "This task looks like a bug, incident, or investigation. The backend has already started a grounding session for you. Advance through the mandatory sequence before claiming a root cause.",
-    mcpToolHint: `mcp__grounding__grounding_advance(sessionId="${escapeForToolHint(session.sessionId)}")`,
+      "This task looks like a bug, incident, or investigation. Start a grounding session before reading code so you resolve scope first instead of jumping into the implementation. The backend tracks session state for this task internally, but that session isn't addressable from your tools — use the recipe below to start your own.",
     sessionId: session.sessionId,
     currentPhase: session.currentPhase,
     mandatorySequence: session.mandatorySequence,
