@@ -81,14 +81,21 @@ jobs:
         run: npm run test:coverage --workspace=backend
 
   frontend:
-    name: Frontend
+    name: Frontend (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+
+    # Node 22 is the production baseline; Node 26 exists to keep the
+    # webstorage execArgv guard in frontend/vitest.config.ts falsifiable
+    # (localStorage is global there, so deleting the guard turns this leg red).
+    strategy:
+      matrix:
+        node-version: [22, 26]
 
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
