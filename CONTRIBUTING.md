@@ -26,6 +26,10 @@ Thanks for your interest. agent-tasks is a collaborative task platform for human
 
 ## Dev Setup
 
+This repo uses the orchestrator-workflow kit; what is versioned and what
+deliberately is not (and why fresh clones carry no AGENTS.md) is
+recorded in [.ai/workflow/README.md](.ai/workflow/README.md).
+
 ```bash
 git clone https://github.com/LanNguyenSi/agent-tasks.git
 cd agent-tasks

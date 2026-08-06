@@ -52,3 +52,22 @@ Thumbs.db
 # .ai/workflow/ (kit templates + manifest.json) is intentionally NOT
 # ignored: those files are committed so the kit survives fresh clones.
 /.ai/runs/
+
+# Locally-installed agent tooling (orchestrator-workflow kit adapter layer,
+# deliberately NOT versioned here - decision recorded in task c0c672f0,
+# matching the harness precedent). The versioned kit surface is
+# .ai/workflow/** only; the adapter layer (AGENTS.md marker section,
+# CLAUDE.md, .claude/, plus .agents/ and .opencode/ for the codex and
+# opencode harnesses) is materialized per machine by
+# `npx orchestrator-workflow init`, and the operating procedure lives in
+# the orchestrator-workflow package (github.com/LanNguyenSi/agent-dx).
+# See .ai/workflow/README.md. Root-anchored per this file's convention:
+# the installer only writes at repo root, and unanchored patterns would
+# also swallow nested fixtures in a repo whose product domain is agent
+# instructions. These lines keep a plain `init` from leaving
+# accidentally-commitable files behind.
+/.claude/
+/AGENTS.md
+/CLAUDE.md
+/.agents/
+/.opencode/
