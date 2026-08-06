@@ -408,6 +408,78 @@ describe("calculateConfidence — structural + subscore caps", () => {
     expect(result.missing).toContain("description");
   });
 
+  // ── HIGH fix: gate inversion (reviewer-found mutant) ──────────────────────
+  // descEquivalentQuality must use Math.max(descQuality, goal+context quality),
+  // never absence-only substitution. Absence-only meant deleting a thin
+  // description could RAISE the score by falling back to a richer
+  // goal+context equivalent — the exact inversion the reviewer's mutant
+  // exercised. Every fixture below shares RICH_TEMPLATE_DATA_NO_DESC and pins
+  // the SAME score (75) regardless of what (if anything) sits in description.
+
+  it("goal-only templateData (no context) contributes only goal's own text to the description equivalent (exact score; a mutant dropping goal from the join array goes red)", () => {
+    const result = calculateConfidence({
+      title: "Some title",
+      description: "",
+      templateData: { goal: RICH_TEMPLATE_DATA_NO_DESC.goal },
+      templateFields: null,
+    });
+    expect(result.score).toBe(42);
+  });
+
+  it("context-only templateData (no goal) contributes only context's own text to the description equivalent (exact score; a mutant dropping context from the join array goes red)", () => {
+    const result = calculateConfidence({
+      title: "Some title",
+      description: "",
+      templateData: { context: RICH_TEMPLATE_DATA_NO_DESC.context },
+      templateFields: null,
+    });
+    expect(result.score).toBe(45);
+  });
+
+  it("a present-but-thin description ('x') plus rich templateData scores the SAME as an absent description (MAX semantics, not absence-only)", () => {
+    const result = calculateConfidence({
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "x",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    });
+    expect(result.score).toBe(75);
+    expect(result.findings.find((f) => f.code === "missing_or_thin_description")).toBeUndefined();
+    expect(result.missing).not.toContain("description");
+  });
+
+  it("monotonicity guard: on identical rich templateData, an absent description never scores HIGHER than a short one added on top (no gate inversion)", () => {
+    const absent = calculateConfidence({
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    });
+    const withShortDesc = calculateConfidence({
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "See the goal field.",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    });
+    expect(withShortDesc.score).toBeGreaterThanOrEqual(absent.score);
+  });
+
+  it("a whitespace-only description behaves identically to an absent one (same score/missing/blocking/findings/subscores)", () => {
+    const absent = calculateConfidence({
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    });
+    const whitespace = calculateConfidence({
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "   \n  ",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    });
+    expect(whitespace).toEqual(absent);
+  });
+
   it("emits ambiguous_scope when >=3 vague terms and no concrete anchors (AC present, so keystone does not mask it)", () => {
     const result = calculateConfidence({
       title: "Some title",

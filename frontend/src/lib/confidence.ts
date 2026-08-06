@@ -446,6 +446,12 @@ function buildFindings(
       ...(tpl.keystone ? { keystone: true } : {}),
     });
   }
+  // Subscore-driven warnings evaluate the literal `description` text only,
+  // and only run when a literal description is present. When description is
+  // absent — even if templateData.goal/context substitutes for it via the
+  // MAX-semantics equivalence check above and defuses missing_or_thin_description
+  // — these two warnings are intentionally skipped rather than evaluated
+  // against the substitute text. FAITHFUL MIRROR of the backend; keep in sync.
   if (descPresent) {
     if (subscores.ambiguityRisk < 70) {
       findings.push({
@@ -492,13 +498,19 @@ function applyScoreCaps(
   const acPresent = has(td?.acceptanceCriteria) || has(sections.acceptanceCriteria);
 
   // Same description-equivalence substitution as calculateConfidence's
-  // missing[] check above (absence-only) — keeps this cap and that finding in
-  // agreement. FAITHFUL MIRROR of the backend; keep in sync.
-  const descEquivalentQuality = descPresent
-    ? descriptionQuality(desc)
-    : descriptionQuality(
-        [td?.goal, td?.context].filter((v) => (v?.trim().length ?? 0) > 0).join("\n\n"),
-      );
+  // missing[] check above — keeps this cap and that finding in agreement, so
+  // a rich goal+context pair defuses both together. MAX semantics: the
+  // higher of the literal description's own quality and the goal+context
+  // equivalent's quality wins, so a present-but-thin description can never
+  // score WORSE than an absent one just because a rich goal+context pair
+  // exists (deleting text must never raise the score). FAITHFUL MIRROR of
+  // the backend; keep in sync.
+  const descEquivalentQuality = Math.max(
+    descriptionQuality(desc),
+    descriptionQuality(
+      [td?.goal, td?.context].filter((v) => (v?.trim().length ?? 0) > 0).join("\n\n"),
+    ),
+  );
 
   const verificationSignal = acPresent || (descPresent && VERIFICATION_SIGNAL_PATTERN.test(desc));
   const evalsKeystoneViolated = !acPresent && !verificationSignal;
@@ -514,7 +526,7 @@ function applyScoreCaps(
     {
       cap: 40, applies: !descPresent && descEquivalentQuality < 0.4,
       code: "missing_or_thin_description", dimension: "structure",
-      message: "Score capped at 40: description is empty.",
+      message: "Score capped at 40: description is empty and templateData goal/context are missing or too thin to substitute.",
     },
     {
       cap: EVALS_KEYSTONE_CAP, applies: evalsKeystoneViolated,
@@ -569,18 +581,26 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const descQuality = descriptionQuality(desc);
 
   // A substantial templateData.goal + templateData.context pair is an
-  // adequate description equivalent when description is entirely absent —
-  // an agent should not have to duplicate that text into `description` just
-  // to clear the quality bar or earn the description field weight below. Same
-  // descriptionQuality() heuristic, same 0.4 threshold used below (no new
-  // threshold, no new weight). Absence-only: a present-but-thin description
-  // is still judged, and scored, on its own text alone.
+  // adequate description equivalent — an agent should not have to duplicate
+  // that text into `description` just to clear the quality bar or earn the
+  // description field weight below. Same descriptionQuality() heuristic, same
+  // 0.4 threshold used below (no new threshold, no new weight).
+  //
+  // MAX semantics, not absence-only: we take the HIGHER of the literal
+  // description's own quality and the goal+context equivalent's quality.
+  // Absence-only substitution (equivalent applied only when description is
+  // entirely empty) creates a gate inversion — deleting a thin-but-present
+  // description to fall back on a rich goal+context pair would RAISE the
+  // score, which must never happen. Math.max keeps the score monotonic: a
+  // present description can only add to what the equivalent already earns,
+  // never subtract from it.
   // FAITHFUL MIRROR of the backend; keep in sync.
-  const descEquivalentQuality = descPresent
-    ? descQuality
-    : descriptionQuality(
-        [td?.goal, td?.context].filter((v) => (v?.trim().length ?? 0) > 0).join("\n\n"),
-      );
+  const descEquivalentQuality = Math.max(
+    descQuality,
+    descriptionQuality(
+      [td?.goal, td?.context].filter((v) => (v?.trim().length ?? 0) > 0).join("\n\n"),
+    ),
+  );
 
   // Spec sections authored as markdown headings in the description satisfy the
   // same fields as structured templateData; structured values keep precedence
@@ -604,7 +624,7 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const W = FIELD_WEIGHTS;
   let earned = 0;
   if (titlePresent) earned += W.title;
-  earned += Math.round(W.description * descEquivalentQuality); // absence-only goal+context credit
+  earned += Math.round(W.description * descEquivalentQuality); // max of description vs. goal+context credit
   if (goalPresent) earned += W.goal;
   if (acPresent) earned += W.evals;
   else if (verificationSignal) earned += EVALS_PARTIAL_POINTS;
