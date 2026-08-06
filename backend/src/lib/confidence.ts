@@ -637,7 +637,13 @@ function applyScoreCaps(
   const descEquivalentQuality = Math.max(
     descriptionQuality(desc),
     descriptionQuality(
-      [td?.goal, td?.context].filter((v) => (v?.trim().length ?? 0) > 0).join("\n\n"),
+      [td?.goal, td?.context]
+        .filter((v) => (v?.trim().length ?? 0) > 0)
+        .join("\n\n")
+        // Bounded: the quality heuristic saturates far below this, and an
+        // unbounded 50k templateData field made the analysis blow the
+        // 5s route-test budget in CI (measured on PR #431).
+        .slice(0, 10_000),
     ),
   );
 
@@ -752,7 +758,13 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const descEquivalentQuality = Math.max(
     descQuality,
     descriptionQuality(
-      [td?.goal, td?.context].filter((v) => (v?.trim().length ?? 0) > 0).join("\n\n"),
+      [td?.goal, td?.context]
+        .filter((v) => (v?.trim().length ?? 0) > 0)
+        .join("\n\n")
+        // Bounded: the quality heuristic saturates far below this, and an
+        // unbounded 50k templateData field made the analysis blow the
+        // 5s route-test budget in CI (measured on PR #431).
+        .slice(0, 10_000),
     ),
   );
 
