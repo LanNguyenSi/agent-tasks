@@ -623,6 +623,15 @@ function applyScoreCaps(
   const descPresent = desc.length > 0;
   const acPresent = has(td?.acceptanceCriteria) || has(sections.acceptanceCriteria);
 
+  // Same description-equivalence substitution as calculateConfidence's
+  // missing[] check above (absence-only) — keeps this cap and that finding in
+  // agreement, so a rich goal+context pair defuses both together.
+  const descEquivalentQuality = descPresent
+    ? descriptionQuality(desc)
+    : descriptionQuality(
+        [td?.goal, td?.context].filter((v) => (v?.trim().length ?? 0) > 0).join("\n\n"),
+      );
+
   const verificationSignal = acPresent || (descPresent && VERIFICATION_SIGNAL_PATTERN.test(desc));
   // The hard evals keystone: no acceptance criteria AND no prose verification
   // path. There is no way to know the task is done. Cap ABSOLUTE below the
@@ -639,7 +648,7 @@ function applyScoreCaps(
       message: "Score capped at 30: title is empty.",
     },
     {
-      cap: 40, applies: !descPresent,
+      cap: 40, applies: !descPresent && descEquivalentQuality < 0.4,
       code: "missing_or_thin_description", dimension: "structure",
       message: "Score capped at 40: description is empty.",
     },
@@ -709,7 +718,25 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const has = (v?: string | null) => (v?.trim().length ?? 0) > 0;
   const desc = input.description ?? "";
   const descTrim = desc.trim();
+  const descPresent = descTrim.length > 0;
   const descQuality = descriptionQuality(desc);
+
+  // A literal `description` and templateData.goal + templateData.context are
+  // both ways to author a task's "what and why". When description is entirely
+  // absent, a substantial goal+context pair is an adequate description
+  // equivalent — an agent should not be forced to duplicate that text into
+  // `description` just to clear the quality bar or earn the description field
+  // weight below (measured: real tasks c71de504/d58b3409 scored 40, below the
+  // 60 default threshold, with rich templateData.goal/context and only passed
+  // by copying it into description via task_respec). Runs through the SAME
+  // descriptionQuality() heuristic and the SAME 0.4 threshold used below — no
+  // new threshold, no new weight. Absence-only: a present-but-thin description
+  // is still judged, and scored, on its own text alone.
+  const descEquivalentQuality = descPresent
+    ? descQuality
+    : descriptionQuality(
+        [td?.goal, td?.context].filter((v) => (v?.trim().length ?? 0) > 0).join("\n\n"),
+      );
 
   // Spec sections authored as markdown headings in the description satisfy the
   // same fields as structured templateData; structured values keep precedence
@@ -739,7 +766,7 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const W = FIELD_WEIGHTS;
   let earned = 0;
   if (titlePresent) earned += W.title;
-  earned += Math.round(W.description * descQuality); // proportional, like v1
+  earned += Math.round(W.description * descEquivalentQuality); // proportional, like v1 (absence-only goal+context credit)
   if (goalPresent) earned += W.goal;
   if (acPresent) earned += W.evals;
   else if (verificationSignal) earned += EVALS_PARTIAL_POINTS; // prose path, no AC
@@ -754,7 +781,7 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   // missing[]: every absent core field, in surfacing-priority order.
   const missing: string[] = [];
   if (!titlePresent) missing.push("title");
-  if (descQuality < 0.4) missing.push("description");
+  if (descEquivalentQuality < 0.4) missing.push("description");
   if (!goalPresent) missing.push("goal");
   if (!acPresent) missing.push("acceptanceCriteria");
   if (!scopePresent) missing.push("scope");

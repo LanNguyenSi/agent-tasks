@@ -60,6 +60,19 @@ const ALL_V2 = {
   constraints: "No DB migration",
 };
 
+// Modeled on the real task c71de504's create: substantial goal + context with
+// concrete measurements and file:line anchors, plus scope/acceptanceCriteria/
+// agentPrompt, but NO literal `description` — this is the exact shape that
+// used to score 40/100 and block on missing_or_thin_description until an
+// agent duplicated goal+context verbatim into description via task_respec.
+const RICH_TEMPLATE_DATA_NO_DESC = {
+  goal: "Apply the same description-quality heuristic to templateData.goal + templateData.context so rich structured tasks are not forced to duplicate that text into description.",
+  context: "Measured on real tasks: c71de504 scored 40/100 and went to 83 after copying goal+context into description; d58b3409 went 40->75 the same way. The structure check only reads backend/src/lib/confidence.ts:526 (missing_or_thin_description) and the cap at backend/src/lib/confidence.ts:643.",
+  scope: "backend/src/lib/confidence.ts and frontend/src/lib/confidence.ts, the missing_or_thin_description path only",
+  acceptanceCriteria: "- A repro shaped like c71de504's create no longer triggers missing_or_thin_description\n- A negative control with all-empty templateData still triggers it",
+  agentPrompt: "1. Read both confidence.ts copies. 2. Feed description + templateData.goal + templateData.context through the existing quality check. 3. Update both test files.",
+};
+
 // Concrete description with NO verification word (test/run/curl/check/verify/
 // green/CI), so fixtures control the verification signal purely via the
 // acceptanceCriteria field.
@@ -357,15 +370,42 @@ describe("calculateConfidence — structural + subscore caps", () => {
     expect(result.findings.find((f) => f.code === "missing_title")).toBeDefined();
   });
 
-  it("caps at 40 when description is empty", () => {
+  it("caps at 40 when description is empty AND templateData is empty (negative control)", () => {
     const result = calculateConfidence({
       title: "Some title",
       description: "",
-      templateData: ALL_V2,
+      templateData: null,
       templateFields: null,
     });
     expect(result.score).toBeLessThanOrEqual(40);
     expect(result.findings.find((f) => f.code === "missing_or_thin_description")).toBeDefined();
+    expect(result.missing).toContain("description");
+  });
+
+  it("does NOT cap at 40 / trigger missing_or_thin_description when templateData.goal + context are substantial (c71de504 repro)", () => {
+    const result = calculateConfidence({
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    });
+    expect(result.findings.find((f) => f.code === "missing_or_thin_description")).toBeUndefined();
+    expect(result.missing).not.toContain("description");
+    // Clears the project default threshold (60) without any text duplicated
+    // into `description` — the respec friction this task fixes.
+    expect(result.score).toBeGreaterThanOrEqual(60);
+  });
+
+  it("still caps at 40 / triggers missing_or_thin_description when templateData.goal + context are thin one-liners (below the quality threshold combined)", () => {
+    const result = calculateConfidence({
+      title: "Some title",
+      description: "",
+      templateData: { goal: "fix", context: "the bug" },
+      templateFields: null,
+    });
+    expect(result.score).toBeLessThanOrEqual(40);
+    expect(result.findings.find((f) => f.code === "missing_or_thin_description")).toBeDefined();
+    expect(result.missing).toContain("description");
   });
 
   it("emits ambiguous_scope when >=3 vague terms and no concrete anchors (AC present, so keystone does not mask it)", () => {
