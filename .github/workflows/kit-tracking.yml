@@ -1,0 +1,63 @@
+name: Kit tracking
+
+# Guards the orchestrator-workflow kit tracking invariant (tasks 37b8d03e,
+# c0c672f0): the versioned kit surface (.ai/workflow/templates, exactly 7
+# files, plus manifest.json) must stay tracked and must not match any
+# gitignore pattern. A blanket `.ai/` line would not untrack existing
+# files, but it WOULD make `git add -A` silently skip newly shipped kit
+# files, so the tracked kit drifts out of sync with the installed one
+# (measured during review of task c0c672f0). Deliberately a separate
+# workflow, not a ci.yml job: ci.yml carries `paths-ignore: "**.md"`, and
+# a template add/remove PR - the exact shape the count assert exists for -
+# is md-only and would skip the whole workflow there. If a kit upgrade
+# legitimately changes the template set, bump the expected count below in
+# the same PR.
+
+on:
+  pull_request:
+    branches: [master, main, develop]
+  push:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+jobs:
+  kit-tracking:
+    name: Kit tracking
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: OW-kit tracking invariant
+        run: |
+          count=$(git ls-files .ai/workflow/templates | wc -l)
+          if [ "$count" -ne 7 ]; then
+            echo "expected exactly 7 tracked kit templates, found $count:"
+            git ls-files .ai/workflow/templates
+            echo "(if a kit upgrade changed the template set, bump the expected count in this workflow in the same PR)"
+            exit 1
+          fi
+          if ! git ls-files --error-unmatch .ai/workflow/manifest.json >/dev/null 2>&1; then
+            echo ".ai/workflow/manifest.json is not tracked - kit tracking invariant broken"
+            exit 1
+          fi
+          # Whole tracked kit surface against gitignore patterns.
+          # --no-index is load-bearing: for TRACKED files plain
+          # check-ignore always reports not-ignored (the index wins), so a
+          # blanket `.ai/` line would pass vacuously - measured during
+          # task c0c672f0. check-ignore exits 0 when something matched
+          # (bad here), 1 when nothing matched (good), >1 on error.
+          set +e
+          matched=$(git ls-files .ai/workflow | git check-ignore --no-index --stdin)
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "tracked kit files match gitignore patterns - kit tracking invariant broken:"
+            echo "$matched"
+            exit 1
+          fi
+          if [ "$rc" -ne 1 ]; then
+            echo "git check-ignore failed with rc=$rc"
+            exit 1
+          fi
