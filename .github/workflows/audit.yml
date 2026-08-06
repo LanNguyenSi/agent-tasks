@@ -1,0 +1,46 @@
+name: Audit
+
+# npm-audit regression gate. Deliberately a SEPARATE workflow: ci.yml is
+# reused by release.yml via workflow_call and must stay decoupled from
+# newly published external advisories (a fresh advisory must not turn a
+# tag release red with zero code change). Same split okf-staleness.yml
+# already documents; pattern precedent: the agent-grounding/triologue
+# audit.yml gates from the 2026-06/07 CVE sweeps.
+#
+# Threshold: HIGH and CRITICAL advisories fail the gate step; moderate
+# and low are report-only (first step, never red). npm audit covers the
+# full hoisted tree INCLUDING devDependencies, so a red run here can be
+# a dev-tool advisory rather than a runtime regression - read the audit
+# report before reaching for version bumps.
+#
+# agent-tasks is a workspace monorepo with ONE root lockfile, so a
+# single root audit covers every workspace. npm audit reads
+# package-lock.json directly; no npm ci, zero added install time.
+#
+# If a HIGH/CRITICAL has no upstream fix, resolution is an operator
+# decision (documented override or allowlist), never a silent threshold
+# bump in this file.
+
+on:
+  pull_request:
+    branches: [master, main, develop]
+  push:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: npm audit (full report, non-blocking)
+        run: npm audit || true
+      - name: npm audit gate (high/critical fail)
+        run: npm audit --audit-level=high
