@@ -15,6 +15,23 @@ type Result = ReturnType<typeof calculateConfidence>;
 // breaks a test instead of silently drifting.
 type Expected = Omit<Result, "findings">;
 
+// ── templateData.goal + context as a description equivalent (ported from the
+// backend suite) ─────────────────────────────────────────────────────────────
+// Modeled on the real task c71de504's create: substantial goal + context with
+// concrete measurements and file:line anchors, plus scope/acceptanceCriteria/
+// agentPrompt, but NO literal `description` — the shape that used to score
+// 40/100 and block on missing_or_thin_description until an agent duplicated
+// goal+context verbatim into description via task_respec. Declared here
+// (above FIXTURES) so both the parity fixture below and the dedicated
+// describe block further down share the exact same object.
+const RICH_TEMPLATE_DATA_NO_DESC = {
+  goal: "Apply the same description-quality heuristic to templateData.goal + templateData.context so rich structured tasks are not forced to duplicate that text into description.",
+  context: "Measured on real tasks: c71de504 scored 40/100 and went to 83 after copying goal+context into description; d58b3409 went 40->75 the same way. The structure check only reads backend/src/lib/confidence.ts:526 (missing_or_thin_description) and the cap at backend/src/lib/confidence.ts:643.",
+  scope: "backend/src/lib/confidence.ts and frontend/src/lib/confidence.ts, the missing_or_thin_description path only",
+  acceptanceCriteria: "- A repro shaped like c71de504's create no longer triggers missing_or_thin_description\n- A negative control with all-empty templateData still triggers it",
+  agentPrompt: "1. Read both confidence.ts copies. 2. Feed description + templateData.goal + templateData.context through the existing quality check. 3. Update both test files.",
+};
+
 /**
  * Parity fixtures. The `expected` values are GROUND TRUTH: produced by running
  * the authoritative backend scorer (backend/src/lib/confidence.ts, prose-first
@@ -158,6 +175,27 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
       subscores: { completeness: 100, concreteness: 75, testability: 100, scopeClarity: 0, contextQuality: 43, structure: 65, ambiguityRisk: 100 },
     },
   },
+  {
+    // MEDIUM fix: parity guard. The c71de504 shape (rich templateData.goal +
+    // templateData.context, NO literal description) ported into the
+    // byte-for-byte backend-ground-truth loop, not just the dedicated
+    // describe block further down — a future mirror drift on the MAX-semantics
+    // equivalence path fails HERE, in the same loop as every other fixture.
+    name: "rich-templatedata-no-desc-c71de504",
+    input: {
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    },
+    expected: {
+      score: 75,
+      blocking: false,
+      missing: ["outOfScope", "dependencies", "risk"],
+      inferredTaskType: undefined,
+      subscores: { completeness: 50, concreteness: 0, testability: 100, scopeClarity: 0, contextQuality: 100, structure: 0, ambiguityRisk: 100 },
+    },
+  },
 ];
 
 const byName = Object.fromEntries(FIXTURES.map((f) => [f.name, f.input] as const));
@@ -292,6 +330,122 @@ describe("scorer invariants", () => {
       templateFields: null,
     });
     expect(r.blocking).toBe(false);
+  });
+});
+
+// ── templateData.goal + context as a description equivalent (ported from the
+// backend suite) ─────────────────────────────────────────────────────────────
+// RICH_TEMPLATE_DATA_NO_DESC is declared once, above FIXTURES, and reused here.
+describe("calculateConfidence — templateData.goal + context as description equivalent", () => {
+  it("caps at 40 when description is empty AND templateData is empty (negative control)", () => {
+    const result = calculateConfidence({
+      title: "Some title",
+      description: "",
+      templateData: null,
+      templateFields: null,
+    });
+    expect(result.score).toBeLessThanOrEqual(40);
+    expect(result.findings.find((f) => f.code === "missing_or_thin_description")).toBeDefined();
+    expect(result.missing).toContain("description");
+  });
+
+  it("does NOT cap at 40 / trigger missing_or_thin_description when templateData.goal + context are substantial (c71de504 repro)", () => {
+    const result = calculateConfidence({
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    });
+    expect(result.findings.find((f) => f.code === "missing_or_thin_description")).toBeUndefined();
+    expect(result.missing).not.toContain("description");
+    // Clears the project default threshold (60) without any text duplicated
+    // into `description` — the respec friction this task fixes.
+    expect(result.score).toBeGreaterThanOrEqual(60);
+  });
+
+  it("still caps at 40 / triggers missing_or_thin_description when templateData.goal + context are thin one-liners (below the quality threshold combined)", () => {
+    const result = calculateConfidence({
+      title: "Some title",
+      description: "",
+      templateData: { goal: "fix", context: "the bug" },
+      templateFields: null,
+    });
+    expect(result.score).toBeLessThanOrEqual(40);
+    expect(result.findings.find((f) => f.code === "missing_or_thin_description")).toBeDefined();
+    expect(result.missing).toContain("description");
+  });
+
+  // ── HIGH fix: gate inversion (reviewer-found mutant) ──────────────────────
+  // descEquivalentQuality must use Math.max(descQuality, goal+context quality),
+  // never absence-only substitution. Absence-only meant deleting a thin
+  // description could RAISE the score by falling back to a richer
+  // goal+context equivalent — the exact inversion the reviewer's mutant
+  // exercised. Every fixture below shares RICH_TEMPLATE_DATA_NO_DESC and pins
+  // the SAME score (75) regardless of what (if anything) sits in description.
+  // Ported from the backend suite; scores must match byte-for-byte.
+
+  it("goal-only templateData (no context) contributes only goal's own text to the description equivalent (exact score; a mutant dropping goal from the join array goes red)", () => {
+    const result = calculateConfidence({
+      title: "Some title",
+      description: "",
+      templateData: { goal: RICH_TEMPLATE_DATA_NO_DESC.goal },
+      templateFields: null,
+    });
+    expect(result.score).toBe(42);
+  });
+
+  it("context-only templateData (no goal) contributes only context's own text to the description equivalent (exact score; a mutant dropping context from the join array goes red)", () => {
+    const result = calculateConfidence({
+      title: "Some title",
+      description: "",
+      templateData: { context: RICH_TEMPLATE_DATA_NO_DESC.context },
+      templateFields: null,
+    });
+    expect(result.score).toBe(45);
+  });
+
+  it("a present-but-thin description ('x') plus rich templateData scores the SAME as an absent description (MAX semantics, not absence-only)", () => {
+    const result = calculateConfidence({
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "x",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    });
+    expect(result.score).toBe(75);
+    expect(result.findings.find((f) => f.code === "missing_or_thin_description")).toBeUndefined();
+    expect(result.missing).not.toContain("description");
+  });
+
+  it("monotonicity guard: on identical rich templateData, an absent description never scores HIGHER than a short one added on top (no gate inversion)", () => {
+    const absent = calculateConfidence({
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    });
+    const withShortDesc = calculateConfidence({
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "See the goal field.",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    });
+    expect(withShortDesc.score).toBeGreaterThanOrEqual(absent.score);
+  });
+
+  it("a whitespace-only description behaves identically to an absent one (same score/missing/blocking/findings/subscores)", () => {
+    const absent = calculateConfidence({
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    });
+    const whitespace = calculateConfidence({
+      title: "Fix confidence scorer templateData description-equivalence",
+      description: "   \n  ",
+      templateData: RICH_TEMPLATE_DATA_NO_DESC,
+      templateFields: null,
+    });
+    expect(whitespace).toEqual(absent);
   });
 });
 
