@@ -4,48 +4,42 @@ import {
   DEFAULT_WORKFLOW_AGENT_INSTRUCTIONS,
   DEFAULT_WORKFLOW_TRANSITIONS,
 } from "../src/default-workflow.js";
+import {
+  DEFAULT_STATES as BACKEND_DEFAULT_STATES,
+  DEFAULT_TRANSITIONS as BACKEND_DEFAULT_TRANSITIONS,
+} from "../../backend/src/services/default-workflow.js";
 
 // rc-v1-C003 acceptance criterion: "Removed static text is content-equal
-// preserved in the exported constant". These are hardcoded, verbatim
-// expectations (not derived from the constant itself) so a future edit that
-// silently drifts the text is caught here, not just a "the constant exists"
-// smoke test. Source of truth for the verbatim strings:
+// preserved in the exported constant". The real source of truth is
 // backend/src/services/default-workflow.ts's DEFAULT_STATES /
-// DEFAULT_TRANSITIONS (out of scope to import directly — see
-// src/default-workflow.ts's file doc comment on why this is a hand-copied
-// mirror, not a shared import).
+// DEFAULT_TRANSITIONS, so the primary assertions below import it directly
+// and compare against it (constant==backend, not just constant==test's own
+// hardcoded copy — a cross-workspace import that is test-only: it never
+// reaches `npm run build`'s tsc output, since mcp-server's tsconfig.json
+// excludes `tests/`; see src/default-workflow.ts's file doc comment).
+//
+// One hardcoded expectation is kept as a positive control alongside the
+// cross-package comparisons: if this file's mirror AND the backend source
+// ever drifted the SAME way at the SAME time (e.g. a find-and-replace
+// across the whole repo), a toEqual against the backend constant alone
+// would stay green while silently validating the wrong text. The hardcoded
+// assertion is independent of both source files and would still catch
+// that.
 
 describe("DEFAULT_WORKFLOW_STATES / DEFAULT_WORKFLOW_AGENT_INSTRUCTIONS", () => {
-  it("carries all four default-workflow states with their exact agentInstructions prose", () => {
-    expect(DEFAULT_WORKFLOW_STATES).toEqual([
-      {
-        name: "open",
-        label: "Open",
-        terminal: false,
-        agentInstructions: "Claim this task, create a branch, then transition to in_progress.",
-      },
-      {
-        name: "in_progress",
-        label: "In progress",
-        terminal: false,
-        agentInstructions:
-          "Implement the changes. When done, push the branch, create a PR, update prUrl and branchName, then transition to review.",
-      },
-      {
-        name: "review",
-        label: "In review",
-        terminal: false,
-        agentInstructions:
-          "Review is a code-review state. Approve or request changes here. Merge, deploy, and production verification are external follow-up actions unless your project defines a custom workflow for them.",
-      },
-      {
-        name: "done",
-        label: "Done",
-        terminal: true,
-        agentInstructions:
-          "Task is complete. Merge, deploy, and production verification are operational follow-ups outside the modeled task states unless a custom workflow models them explicitly.",
-      },
-    ]);
+  it("is content-equal to the backend's DEFAULT_STATES (the real source of truth, not just this file's own copy)", () => {
+    expect(DEFAULT_WORKFLOW_STATES).toEqual(BACKEND_DEFAULT_STATES);
+  });
+
+  // Positive control (see file header): hand-verified, independent of both
+  // source files.
+  it("carries the exact, hand-verified agentInstructions prose for the open state", () => {
+    expect(DEFAULT_WORKFLOW_STATES[0]).toEqual({
+      name: "open",
+      label: "Open",
+      terminal: false,
+      agentInstructions: "Claim this task, create a branch, then transition to in_progress.",
+    });
   });
 
   it("DEFAULT_WORKFLOW_AGENT_INSTRUCTIONS is a state-name-keyed lookup over the same text", () => {
@@ -59,20 +53,8 @@ describe("DEFAULT_WORKFLOW_STATES / DEFAULT_WORKFLOW_AGENT_INSTRUCTIONS", () => 
 });
 
 describe("DEFAULT_WORKFLOW_TRANSITIONS", () => {
-  it("matches the default workflow's exact edges and requires[] gate lists", () => {
-    expect(DEFAULT_WORKFLOW_TRANSITIONS).toEqual({
-      open: [{ to: "in_progress", label: "Start" }],
-      in_progress: [
-        { to: "review", label: "Submit for review", requires: ["branchPresent", "prPresent"] },
-        { to: "done", label: "Mark done", requires: ["branchPresent", "prPresent"] },
-        { to: "open", label: "Release" },
-      ],
-      review: [
-        { to: "done", label: "Approve" },
-        { to: "in_progress", label: "Request changes" },
-      ],
-      done: [],
-    });
+  it("is content-equal to the backend's DEFAULT_TRANSITIONS (the real source of truth, not just this file's own copy)", () => {
+    expect(DEFAULT_WORKFLOW_TRANSITIONS).toEqual(BACKEND_DEFAULT_TRANSITIONS);
   });
 
   it("deliberately has no requires on the open -> in_progress edge (would self-checkmate task_start's own gate enforcement)", () => {

@@ -1078,6 +1078,7 @@ describe("buildTools", () => {
       inferredTaskType: "bugfix",
       expectedFinishState: "review",
       gateExpectations: ["branchPresent", "prPresent"],
+      gateExpectationsSource: "assumed-default-workflow",
     });
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain("SECRET");

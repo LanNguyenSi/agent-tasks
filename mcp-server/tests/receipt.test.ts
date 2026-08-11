@@ -561,9 +561,21 @@ describe("malformed backend success bodies (no task.id)", () => {
 
 // rc-v1-C003: task_start default is a receipt PLUS a small per-task slice
 // (inferredTaskType, expectedFinishState, gateExpectations), not the full
-// task_pickup-style spec and not a bare receipt either — its own budget
-// (1200 chars) is wider than the generic tier-1 cap because of that slice.
+// task_pickup-style spec and not a bare receipt either. START_BUDGET_CHARS
+// is the documented CONTRACT CEILING (docs/response-contract-v1.md's Token
+// budgets section, "Named exception: task_start"): 1200 emitted chars
+// (~300 tokens), wider than the generic tier-1 cap because of that slice.
+// It is asserted directly below (not just documented in this comment) so
+// the contract number stays executable.
 const START_BUDGET_CHARS = 1200;
+
+// A much tighter bound, asserted against the actual default-slice fixtures
+// (not the 1200-char ceiling alone): at 244 measured chars for the happy
+// path today, 1200 alone has ~5x headroom and would not catch a
+// re-fattening regression until it was already large. 400 leaves real
+// headroom over the measured fixtures while still catching drift long
+// before it reaches the contract ceiling.
+const START_BUDGET_TIGHT_CHARS = 400;
 
 describe("receiptForStart", () => {
   const workResponse: StartResponse = {
@@ -580,7 +592,7 @@ describe("receiptForStart", () => {
     project: { id: "p1", name: "Proj", slug: "proj" },
   };
 
-  it("happy path: receipt + inferredTaskType + expectedFinishState + gateExpectations (default-workflow fallback), within the 1200-char budget", () => {
+  it("happy path: receipt + inferredTaskType + expectedFinishState + gateExpectations (default-workflow fallback, marked as assumed), within budget", () => {
     const slice = receiptForStart(workResponse) as StartSlice;
     expect(slice).toEqual({
       ok: true,
@@ -588,7 +600,9 @@ describe("receiptForStart", () => {
       inferredTaskType: "bugfix",
       expectedFinishState: "review",
       gateExpectations: ["branchPresent", "prPresent"],
+      gateExpectationsSource: "assumed-default-workflow",
     });
+    expect(size(slice)).toBeLessThanOrEqual(START_BUDGET_TIGHT_CHARS);
     expect(size(slice)).toBeLessThanOrEqual(START_BUDGET_CHARS);
   });
 
@@ -609,15 +623,16 @@ describe("receiptForStart", () => {
     expect(slice).not.toHaveProperty("inferredTaskType");
   });
 
-  it("omits gateExpectations when the task runs a custom workflow whose definition was not embedded in the response (known gap: does not guess)", () => {
+  it("omits gateExpectations (and gateExpectationsSource) when the task runs a custom workflow whose definition was not embedded in the response (known gap: does not guess)", () => {
     const slice = receiptForStart({
       ...workResponse,
       task: { ...workResponse.task, workflowId: "custom-wf-1" },
     }) as StartSlice;
     expect(slice).not.toHaveProperty("gateExpectations");
+    expect(slice).not.toHaveProperty("gateExpectationsSource");
   });
 
-  it("uses the dynamic workflow definition over the static fallback when task.workflow is embedded (review-claim branch)", () => {
+  it("uses the dynamic workflow definition over the static fallback when task.workflow is embedded (review-claim branch), with no gateExpectationsSource marker", () => {
     const slice = receiptForStart({
       kind: "review",
       task: {
@@ -633,6 +648,28 @@ describe("receiptForStart", () => {
       expectedFinishState: "done",
     }) as StartSlice;
     expect(slice.gateExpectations).toEqual(["ciGreen"]);
+    expect(slice).not.toHaveProperty("gateExpectationsSource");
+  });
+
+  it("gateExpectationsSource: 'assumed-default-workflow' appears only on the static-fallback path, never on the embedded-workflow path (rc-v1-C003 fix round 1, HIGH finding)", () => {
+    const fallbackSlice = receiptForStart(workResponse) as StartSlice;
+    expect(fallbackSlice.gateExpectationsSource).toBe("assumed-default-workflow");
+
+    const embeddedSlice = receiptForStart({
+      kind: "review",
+      task: {
+        id: "t1",
+        status: "review",
+        workflowId: "custom-wf-1",
+        workflow: {
+          definition: {
+            transitions: [{ from: "review", to: "done", requires: ["ciGreen"] }],
+          },
+        },
+      },
+      expectedFinishState: "done",
+    }) as StartSlice;
+    expect(embeddedSlice.gateExpectationsSource).toBeUndefined();
   });
 
   it("carries the bare confidence scalar when the backend response provides one (defensive support; not present on the live backend today)", () => {
@@ -650,7 +687,7 @@ describe("receiptForStart", () => {
     expect(slice).not.toHaveProperty("next");
   });
 
-  it("compacts a debugFlavor groundingHint into `next`: keeps the callable recipe + session ref, drops the verbose fields, and stays within budget", () => {
+  it("compacts a debugFlavor groundingHint into `next`: keeps only the callable recipe, drops backendSessionRef and the other verbose fields, and stays within budget", () => {
     const debugResponse: StartResponse = {
       ...workResponse,
       groundingHint: {
@@ -667,12 +704,23 @@ describe("receiptForStart", () => {
     };
     const slice = receiptForStart(debugResponse) as StartSlice;
     expect(slice.next).toEqual([
-      'mcp__grounding-mcp__grounding_start with keyword="proj", problem="Fix the bug" (session sess-123)',
+      'mcp__grounding-mcp__grounding_start with keyword="proj", problem="Fix the bug"',
     ]);
     const serialized = JSON.stringify(slice);
+    // backendSessionRef is forensic, not actionable (backend/src/lib/
+    // debug-flavor.ts names it precisely because it is NOT usable as a
+    // grounding-mcp sessionId) — dropped entirely from next[], not just
+    // de-prioritized. Still reachable via include:["task"].
+    expect(serialized).not.toContain("sess-123");
     expect(serialized).not.toContain("mandatorySequence");
     expect(serialized).not.toContain("activeGuardrails");
     expect(serialized).not.toContain("scope_resolution");
+    // Not held to START_BUDGET_TIGHT_CHARS like the plain happy-path fixture
+    // above: this fixture's size is dominated by a realistic, caller/
+    // keyword-dependent mcpToolHint recipe string, not by receipt-envelope
+    // bloat, so the tight bound would be testing content length rather than
+    // catching an envelope regression. Still held to the documented
+    // contract ceiling.
     expect(size(slice)).toBeLessThanOrEqual(START_BUDGET_CHARS);
   });
 
@@ -749,6 +797,30 @@ describe("receiptForStart", () => {
       ["instructions"],
     ) as StartSlice;
     expect(slice.instructions).toBe("CUSTOM REVIEW PROSE");
+  });
+
+  it("include:[\"instructions\"] omits instructions (does not guess) when workflowId is set but no embedded workflow.definition.states is sent, mirroring deriveGateExpectations' custom-workflow guard (rc-v1-C003 fix round 1, MEDIUM finding)", () => {
+    const slice = receiptForStart(
+      { ...workResponse, task: { ...workResponse.task, workflowId: "custom-wf-1" } },
+      ["instructions"],
+    ) as StartSlice;
+    expect(slice).not.toHaveProperty("instructions");
+  });
+
+  // ── include:["task"] valve ────────────────────────────────────────────
+  //
+  // Previously handled in tools.ts's task_start handler before calling
+  // receiptForStart at all; now owned by receiptForStart itself, the same
+  // layer projectPickup already handles it at for task_pickup.
+
+  it("include:[\"task\"] returns the raw response unchanged (identity)", () => {
+    const slice = receiptForStart(workResponse, ["task"]);
+    expect(slice).toBe(workResponse);
+  });
+
+  it("mixed include:[\"task\",\"description\"] still returns the raw response: \"task\" wins over any other requested field", () => {
+    const slice = receiptForStart(workResponse, ["task", "description"]);
+    expect(slice).toBe(workResponse);
   });
 });
 

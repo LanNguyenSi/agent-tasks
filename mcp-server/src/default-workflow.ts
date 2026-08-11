@@ -2,10 +2,11 @@
 // backend/src/services/default-workflow.ts's `DEFAULT_STATES` (per-state
 // `agentInstructions`) and `DEFAULT_TRANSITIONS` (per-edge `requires` gate
 // lists). backend/** is out of scope for the task that added this file
-// (rc-v1-C003, docs/response-contract-v1.md), so this module does NOT import
-// from or otherwise couple to the backend package — it is a plain,
-// hand-copied snapshot kept in sync by convention, not a shared import. See
-// "Keep in sync" below.
+// (rc-v1-C003, docs/response-contract-v1.md), so this RUNTIME module does
+// NOT import from or otherwise couple to the backend package at build/run
+// time — it is a plain, hand-copied snapshot kept in sync by convention,
+// not a shared import (tests DO cross-import the backend module directly to
+// verify the mirror stays honest; see "Keep in sync" below).
 //
 // Why this file exists: rc-v1-C003 stops task_start's DEFAULT response from
 // embedding the full per-task workflow object (docs/response-contract-v1.md's
@@ -28,21 +29,32 @@
 //   2. The per-edge `requires` gate list (e.g. "in_progress -> review needs
 //      branchPresent + prPresent") is exactly the "task-specific gate
 //      expectations" rc-v1-C003 surfaces on task_start's default response
-//      (see `deriveGateExpectations` in receipt.ts). It is used live, as the
-//      fallback for tasks that run the built-in default workflow (no custom
-//      Workflow row: `task.workflowId === null`) — the common case per
+//      (see `deriveGateExpectations` in receipt.ts). It is used live, as
+//      the fallback whenever a task's `workflowId` is `null`. That is NOT
+//      proof the built-in default workflow governs the task: per
 //      backend/src/services/default-workflow.ts's
-//      `resolveEffectiveDefinition`. A task governed by a CUSTOM workflow is
-//      never guessed against this table; its gates are only surfaced when
-//      the raw `task.workflow` relation happens to be embedded in the
-//      response (today: the review-claim branch's re-fetch only — see the
-//      KNOWN GAP comment on `deriveGateExpectations`).
+//      `resolveEffectiveDefinition` (ADR-0008 §50-56), `workflowId === null`
+//      is equally consistent with a project-default customized Workflow row
+//      (isDefault: true, looked up by projectId, created via POST
+//      /projects/:projectId/workflow/customize) whose gates can differ from
+//      this table. `deriveGateExpectations` therefore marks its fallback
+//      result with `source: "assumed-default-workflow"` rather than
+//      presenting it as authoritative. A task governed by a CUSTOM workflow
+//      (non-null `workflowId`) is never guessed against this table at all;
+//      its gates are only surfaced when the raw `task.workflow` relation
+//      happens to be embedded in the response (today: both sub-paths of the
+//      review-claim branch — see the KNOWN GAP comment on
+//      `deriveGateExpectations`).
 //
-// Keep in sync: if backend/src/services/default-workflow.ts's
-// DEFAULT_STATES or DEFAULT_TRANSITIONS ever change, this file's
-// content-equality test (tests/default-workflow.test.ts) will NOT catch the
-// drift automatically — there is deliberately no cross-package import, so a
-// change to the backend defaults needs a matching manual update here.
+// Keep in sync: tests/default-workflow.test.ts DOES cross-import
+// backend/src/services/default-workflow.ts's DEFAULT_STATES /
+// DEFAULT_TRANSITIONS directly and asserts content-equality against this
+// file's exports, so drift between the two IS caught automatically by
+// `npm test` — the cross-workspace import is test-only (mcp-server's
+// tsconfig.json excludes `tests/`, so it never reaches `npm run build`'s
+// tsc output or this runtime module's own import graph). If backend's
+// defaults ever change, that test fails until this file's mirror is
+// updated to match.
 
 export interface DefaultWorkflowState {
   name: string;

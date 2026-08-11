@@ -12,9 +12,14 @@
 //   Tier 3 (next)      — optional, 1-3 free-form hints, present only when
 //                          there is an obvious follow-up call.
 //
-// Every verb's `include: ["task"]` valve bypasses this module entirely and
-// returns the backend object verbatim (see the per-verb handlers in
-// tools.ts) — the old projection path stays reachable, unchanged.
+// Every verb's `include: ["task"]` valve returns the backend object
+// verbatim, bypassing the tier machinery entirely — the old, pre-contract
+// shape stays reachable unchanged. Most write verbs check this in their
+// tools.ts handler before calling into this module at all; task_pickup's
+// projectPickup and task_start's receiptForStart instead own the check
+// themselves, since both verbs' `include` vocabulary is wider than the
+// single "task" value the other write verbs accept, so the valve lives at
+// the same layer as the rest of their include handling.
 
 import {
   DEFAULT_WORKFLOW_AGENT_INSTRUCTIONS,
@@ -519,12 +524,16 @@ export interface StartTask extends BackendTask {
   templateData?: { taskType?: unknown } | null;
   description?: string | null;
   comments?: unknown[];
-  // KNOWN GAP: the live backend's POST /tasks/:id/start only fetches this
-  // relation on the review-claim branch's re-fetch (backend/src/routes/
-  // tasks.ts); the far more common work-claim branch (open -> in_progress)
-  // never includes it. When absent, deriveGateExpectations/
-  // deriveStartInstructions fall back to the static default-workflow.ts
-  // mirror instead of guessing.
+  // KNOWN GAP: the live backend's POST /tasks/:id/start includes this
+  // relation on BOTH sub-paths of the review-claim branch (backend/src/
+  // routes/tasks.ts): the handler's initial `findUnique` already has
+  // `workflow: true` and is reused as-is when the caller is already the
+  // current reviewer (no re-claim write needed); a fresh review-claim
+  // re-fetches with the same `workflow: true` include. The far more common
+  // work-claim branch (open -> in_progress) re-fetches through the
+  // narrower `taskInclude` after its `updateMany`, which does NOT include
+  // `workflow`. When absent, deriveGateExpectations/deriveStartInstructions
+  // fall back to the static default-workflow.ts mirror instead of guessing.
   workflow?: { definition?: StartWorkflowDefinition } | null;
 }
 
@@ -569,6 +578,14 @@ export interface StartSlice {
    *  state to `expectedFinishState`. See deriveGateExpectations for the
    *  dynamic-vs-static-fallback resolution and its documented gap. */
   gateExpectations?: string[];
+  /** Present only alongside `gateExpectations`, only when it was derived
+   *  from the static default-workflow.ts fallback table rather than an
+   *  embedded `task.workflow.definition`. A `null` `task.workflowId` does
+   *  NOT prove the built-in default workflow governs this task — it can
+   *  also mean a project-default customized Workflow row applies (see the
+   *  KNOWN GAP note on deriveGateExpectations) — so this marks the gate
+   *  list as an assumption the caller should not treat as authoritative. */
+  gateExpectationsSource?: "assumed-default-workflow";
   next?: string[];
   // ── include-gated fields (tools.ts's task_start includeSchema) ──────────
   description?: string;
@@ -581,77 +598,127 @@ function deriveInferredTaskType(task: StartTask): string | undefined {
   return typeof taskType === "string" && taskType.length > 0 ? taskType : undefined;
 }
 
+interface GateExpectationsResult {
+  gates?: string[];
+  /** Set only when `gates` came from the static default-workflow.ts
+   *  fallback table (see the "Static fallback" section below), never on
+   *  the dynamic path. */
+  source?: "assumed-default-workflow";
+}
+
 /**
  * Resolves the `requires` gate list for task.status -> expectedFinishState.
  *
  * Dynamic path: when the raw response embeds `task.workflow.definition`
- * (today: the review-claim branch of POST /tasks/:id/start only — see the
- * KNOWN GAP on StartTask.workflow above), it is authoritative for this
- * project and takes priority.
+ * (today: both sub-paths of the review-claim branch of POST
+ * /tasks/:id/start — see the KNOWN GAP on StartTask.workflow above), it is
+ * authoritative for this project and takes priority.
  *
- * Static fallback: `task.workflowId === null` means the task genuinely runs
- * the built-in default workflow (ADR-0008 resolution chain), whose gate
- * structure is fixed and mirrored in default-workflow.ts. A non-null
- * `workflowId` without an embedded `workflow` relation means a CUSTOM
- * workflow governs this task but its definition was not sent — guessing its
- * gates from the default table would be actively wrong, so gateExpectations
- * is omitted rather than guessed in that case.
+ * Static fallback: `task.workflowId === null` does NOT prove the task runs
+ * the built-in default workflow. Per the backend's resolveEffectiveDefinition
+ * chain (backend/src/services/default-workflow.ts, ADR-0008 §50-56):
+ *   1. task.workflowId set -> that Workflow row's definition (the dynamic
+ *      path above, when embedded).
+ *   2. a project-default Workflow row (isDefault: true, looked up by
+ *      projectId) -> a CUSTOMIZED workflow that a project admin created via
+ *      POST /projects/:projectId/workflow/customize. Tasks governed by this
+ *      row still carry `workflowId === null`, and its gate structure can
+ *      differ from the built-in table below.
+ *   3. the built-in defaultWorkflowDefinition() -> what DEFAULT_WORKFLOW_
+ *      TRANSITIONS mirrors.
+ * `workflowId === null` is therefore consistent with EITHER step 2 or step
+ * 3, and this function cannot distinguish them without the embedded
+ * definition. Falling back to the built-in table is an assumption, not a
+ * guarantee, so the result carries `source: "assumed-default-workflow"`
+ * whenever it fires, so the caller can tell the gate list is unconfirmed.
+ *
+ * A non-null `workflowId` without an embedded `workflow` relation means a
+ * CUSTOM workflow governs this task but its definition was not sent —
+ * guessing its gates from the default table would be actively wrong, so
+ * gates is omitted (no source marker either) rather than guessed in that
+ * case.
  */
 function deriveGateExpectations(
   task: StartTask,
   expectedFinishState: string | undefined,
-): string[] | undefined {
-  if (!expectedFinishState || !task.status) return undefined;
+): GateExpectationsResult {
+  if (!expectedFinishState || !task.status) return {};
 
   const dynamicTransitions = task.workflow?.definition?.transitions;
   if (dynamicTransitions) {
     const match = dynamicTransitions.find(
       (t) => t.from === task.status && t.to === expectedFinishState,
     );
-    return match?.requires && match.requires.length > 0 ? match.requires : undefined;
+    const gates = match?.requires && match.requires.length > 0 ? match.requires : undefined;
+    return gates ? { gates } : {};
   }
 
-  if (task.workflowId) return undefined; // custom workflow, definition not sent: do not guess
+  if (task.workflowId) return {}; // custom workflow, definition not sent: do not guess
 
   const fallback = DEFAULT_WORKFLOW_TRANSITIONS[task.status]?.find(
     (t) => t.to === expectedFinishState,
   );
-  return fallback?.requires && fallback.requires.length > 0 ? fallback.requires : undefined;
+  const gates = fallback?.requires && fallback.requires.length > 0 ? fallback.requires : undefined;
+  return gates ? { gates, source: "assumed-default-workflow" } : {};
 }
 
-/** Same dynamic-then-static resolution as deriveGateExpectations, for the
- *  per-state instructions prose instead of the per-edge gate list. */
+/**
+ * Same dynamic-then-static resolution as deriveGateExpectations, for the
+ * per-state instructions prose instead of the per-edge gate list — with one
+ * deliberate asymmetry. deriveGateExpectations surfaces its static fallback
+ * WITH a `gateExpectationsSource` provenance marker: an array the caller can
+ * sanity-check against `task.status`/`expectedFinishState` and discard if it
+ * looks wrong. Prose has no equivalent cheap self-check — a caller reading
+ * English text cannot verify it against their own project's customized
+ * workflow, and wrong instructions read as authoritative are actively
+ * harmful (they can tell an agent to do the wrong thing next), whereas no
+ * instructions at all is safe: include:["task"] still recovers the full
+ * response on request. So here, unlike deriveGateExpectations, the static
+ * fallback is never surfaced at all once `task.workflowId` is set without an
+ * embedded `workflow.definition.states` entry — `instructions` is omitted
+ * outright, not labeled as an assumption.
+ */
 function deriveStartInstructions(task: StartTask): string | undefined {
   const dynamicState = task.workflow?.definition?.states?.find((s) => s.name === task.status);
   if (dynamicState?.agentInstructions) return dynamicState.agentInstructions;
+  if (task.workflowId) return undefined; // custom workflow, definition not sent: do not guess wrong prose
   if (!task.status) return undefined;
   return DEFAULT_WORKFLOW_AGENT_INSTRUCTIONS[task.status];
 }
 
 /**
  * Compacts a debugFlavor groundingHint down to its actionable part: the
- * callable recipe (`mcpToolHint`), plus the session ref when one exists, for
- * forensic/debugging purposes (see GroundingHint's own doc comment in
- * backend/src/lib/debug-flavor.ts — the backendSessionRef is NOT itself
- * addressable by the agent's own grounding-mcp tools, `mcpToolHint` already
- * carries a self-sufficient recipe). Deliberately drops `recommendedAction`
- * (a restated sentence, not an action), `currentPhase`, `mandatorySequence`,
- * and `activeGuardrails` (verbose, not actionable for THIS call) — the full
- * hint remains reachable via include:["task"]. This is also where
- * `metadata.groundingSessionState` (the large persisted session blob) is
- * kept OUT of the default response: this function never reads `metadata` at
- * all, only the already-compact `groundingHint` field.
+ * callable recipe (`mcpToolHint`) alone. `backendSessionRef` is deliberately
+ * dropped from this string entirely, not merely de-prioritized: per
+ * GroundingHint's own doc comment in backend/src/lib/debug-flavor.ts, that
+ * field is named "backendSessionRef" (not "sessionId") specifically because
+ * it is NOT usable as a grounding-mcp sessionId — appending it into the
+ * actionable `next[]` string would present a value the caller cannot
+ * actually pass to any grounding-mcp tool as if it were one. `mcpToolHint`
+ * already carries a self-sufficient recipe on its own. `backendSessionRef`
+ * remains reachable via include:["task"] for forensic/debugging purposes;
+ * it just does not belong in the actionable hint. Also deliberately drops
+ * `recommendedAction` (a restated sentence, not an action), `currentPhase`,
+ * `mandatorySequence`, and `activeGuardrails` (verbose, not actionable for
+ * THIS call) — the full hint remains reachable via include:["task"]. This is
+ * also where `metadata.groundingSessionState` (the large persisted session
+ * blob) is kept OUT of the default response: this function never reads
+ * `metadata` at all, only the already-compact `groundingHint` field.
  */
 function deriveGroundingNext(hint: StartGroundingHint | undefined): string[] | undefined {
   if (!hint) return undefined;
-  const suffix = hint.backendSessionRef ? ` (session ${hint.backendSessionRef})` : "";
-  return [`${hint.mcpToolHint}${suffix}`];
+  return [hint.mcpToolHint];
 }
 
 export function receiptForStart(
   response: StartResponse,
   include?: readonly string[],
 ): StartSlice | StartResponse {
+  // Compatibility valve: bypasses the tier machinery entirely, same as
+  // projectPickup's own include:["task"] check for task_pickup. Checked
+  // first, unconditionally, regardless of whether `response` even carries
+  // a task.id — the caller asked for the raw object back.
+  if (include?.includes("task")) return response;
   if (!hasTaskId(response)) return response;
 
   const slice: StartSlice = {
@@ -665,8 +732,12 @@ export function receiptForStart(
   const inferredTaskType = deriveInferredTaskType(response.task);
   if (inferredTaskType) slice.inferredTaskType = inferredTaskType;
   if (response.expectedFinishState) slice.expectedFinishState = response.expectedFinishState;
-  const gateExpectations = deriveGateExpectations(response.task, response.expectedFinishState);
+  const { gates: gateExpectations, source: gateExpectationsSource } = deriveGateExpectations(
+    response.task,
+    response.expectedFinishState,
+  );
   if (gateExpectations) slice.gateExpectations = gateExpectations;
+  if (gateExpectationsSource) slice.gateExpectationsSource = gateExpectationsSource;
   const next = deriveGroundingNext(response.groundingHint);
   if (next) slice.next = next;
 
