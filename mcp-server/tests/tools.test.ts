@@ -185,10 +185,10 @@ describe("buildTools", () => {
 
   // ── task_respec ────────────────────────────────────────────────────
 
-  it("task_respec POSTs description to /api/tasks/:id/respec and returns task+confidence", async () => {
+  it("task_respec POSTs description to /api/tasks/:id/respec and returns a receipt (bare confidence scalar, no echo)", async () => {
     fetchMock.mockResolvedValue(
       ok({
-        task: { id: "t1", description: "new desc" },
+        task: { id: "t1", status: "open", description: "new desc" },
         confidence: {
           score: 80,
           threshold: 70,
@@ -210,11 +210,58 @@ describe("buildTools", () => {
     );
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body)).toEqual({ description: "new desc" });
-    // confidence must be passed through, not dropped.
+    // Receipt default: confidence is a bare scalar, score above threshold means
+    // no deviation, and the sent description is never echoed back.
+    expect(result).toEqual({ ok: true, task: { id: "t1", status: "open" }, confidence: 80 });
+    expect(JSON.stringify(result)).not.toContain("new desc");
+  });
+
+  it("task_respec include:[\"task\"] returns the full pre-contract { task, confidence } object", async () => {
+    const backendBody = {
+      task: { id: "t1", status: "open", description: "new desc" },
+      confidence: { score: 80, threshold: 70, enforcementMode: "BLOCK", blocking: false, missing: [], findings: [], nextActions: [] },
+    };
+    fetchMock.mockResolvedValue(ok(backendBody));
+    const result = await tool("task_respec").handler({
+      taskId: "11111111-1111-1111-1111-111111111111",
+      description: "new desc",
+      include: ["task"],
+    } as never);
+    expect(result).toEqual(backendBody);
+  });
+
+  it("task_respec receipt carries a CONFIDENCE_BELOW_THRESHOLD deviation when the re-scored value is still below threshold", async () => {
+    fetchMock.mockResolvedValue(
+      ok({
+        task: { id: "t1", status: "open" },
+        confidence: {
+          score: 40,
+          threshold: 60,
+          enforcementMode: "BLOCK",
+          blocking: true,
+          missing: ["acceptanceCriteria"],
+          findings: [],
+          nextActions: [],
+        },
+      }),
+    );
+    const result = await tool("task_respec").handler({
+      taskId: "22222222-2222-2222-2222-222222222222",
+      description: "still thin",
+    } as never);
     expect(result).toMatchObject({
-      task: { id: "t1" },
-      confidence: { score: 80, blocking: false },
+      ok: true,
+      task: { id: "t1", status: "open" },
+      confidence: 40,
+      deviations: [
+        {
+          code: "CONFIDENCE_BELOW_THRESHOLD",
+          detail: { score: 40, threshold: 60, enforcementMode: "BLOCK", missing: ["acceptanceCriteria"] },
+        },
+      ],
     });
+    const dev = (result as { deviations: { next?: string[] }[] }).deviations[0];
+    expect(dev.next).toEqual(["task_respec to raise the score above the threshold"]);
   });
 
   it("task_respec POSTs templateData only (description omitted from body)", async () => {
@@ -781,5 +828,169 @@ describe("buildTools", () => {
         prNumber: 7,
       }),
     ).rejects.toThrow(/agent-tasks API 403.*delegation/);
+  });
+
+  // ── Receipt layer wiring (rc-v1-C002) ────────────────────────────────
+  //
+  // receipt.ts owns the projection logic and has its own dedicated unit
+  // tests (tests/receipt.test.ts). These tests only prove the handler
+  // wiring in tools.ts: receipt-by-default, the include:["task"] valve
+  // bypassing the projection, and no-echo end to end through a real
+  // handler call (not just the pure builder).
+
+  const TASK_ID = "11111111-1111-1111-1111-111111111111";
+
+  it("task_create returns a receipt by default and never echoes description/templateData", async () => {
+    fetchMock.mockResolvedValue(
+      ok({
+        task: {
+          id: "t1",
+          status: "open",
+          description: "SECRET DESCRIPTION",
+          templateData: { goal: "SECRET GOAL TEXT" },
+          labels: [],
+        },
+        confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK", blocking: false, missing: [], findings: [], nextActions: [] },
+      }),
+    );
+    const result = await tool("task_create").handler({
+      projectId: "22222222-2222-2222-2222-222222222222",
+      title: "Specced task",
+      description: "SECRET DESCRIPTION",
+      templateData: { goal: "SECRET GOAL TEXT" },
+    } as never);
+    expect(result).toEqual({
+      ok: true,
+      task: { id: "t1", status: "open" },
+      confidence: 90,
+      next: ["task_start to begin work on this task"],
+    });
+    expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+
+  it("task_create include:[\"task\"] returns the full pre-contract { task, confidence } object", async () => {
+    const backendBody = {
+      task: { id: "t1", status: "open", description: "d" },
+      confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK", blocking: false, missing: [], findings: [], nextActions: [] },
+    };
+    fetchMock.mockResolvedValue(ok(backendBody));
+    const result = await tool("task_create").handler({
+      projectId: "22222222-2222-2222-2222-222222222222",
+      title: "Specced task",
+      include: ["task"],
+    } as never);
+    expect(result).toEqual(backendBody);
+  });
+
+  it("task_finish returns a receipt by default and never echoes the result text", async () => {
+    fetchMock.mockResolvedValue(
+      ok({ kind: "work", task: { id: "t1", status: "review" }, targetStatus: "review" }),
+    );
+    const result = await tool("task_finish").handler({
+      taskId: TASK_ID,
+      result: "SECRET PROGRESS NOTES",
+    } as never);
+    expect(result).toEqual({ ok: true, task: { id: "t1", status: "review" } });
+    expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+
+  it("task_finish include:[\"task\"] returns the full backend object", async () => {
+    const backendBody = { kind: "work", task: { id: "t1", status: "review" }, targetStatus: "review" };
+    fetchMock.mockResolvedValue(ok(backendBody));
+    const result = await tool("task_finish").handler({ taskId: TASK_ID, include: ["task"] } as never);
+    expect(result).toEqual(backendBody);
+  });
+
+  it("task_submit_pr returns a receipt by default and never echoes branchName/prUrl", async () => {
+    fetchMock.mockResolvedValue(
+      ok({ kind: "submit_pr", task: { id: "t1", status: "in_progress" } }),
+    );
+    const result = await tool("task_submit_pr").handler({
+      taskId: TASK_ID,
+      branchName: "feat/secret-branch-name",
+      prUrl: "https://github.com/o/r/pull/1",
+      prNumber: 1,
+    } as never);
+    expect(result).toEqual({
+      ok: true,
+      task: { id: "t1", status: "in_progress" },
+      next: ["task_finish once CI is green"],
+    });
+    expect(JSON.stringify(result)).not.toContain("secret-branch-name");
+  });
+
+  it("task_note returns a receipt with task.id only (no status field) and never echoes content", async () => {
+    fetchMock.mockResolvedValue(ok({ comment: { id: "c1", taskId: "t1", content: "SECRET NOTE" } }));
+    const result = await tool("task_note").handler({ taskId: TASK_ID, content: "SECRET NOTE" } as never);
+    expect(result).toEqual({ ok: true, task: { id: "t1" } });
+    expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+
+  it("tasks_comment (deprecated v1 alias) returns the same receipt shape as task_note", async () => {
+    fetchMock.mockResolvedValue(ok({ comment: { id: "c1", taskId: "t1" } }));
+    const result = await tool("tasks_comment").handler({ taskId: TASK_ID, content: "progress" } as never);
+    expect(result).toEqual({ ok: true, task: { id: "t1" } });
+  });
+
+  it("task_merge returns a receipt with a review→done transition by default", async () => {
+    fetchMock.mockResolvedValue(
+      ok({ task: { id: "t1", status: "done" }, merged: true, sha: "abc123", alreadyMerged: false }),
+    );
+    const result = await tool("task_merge").handler({ taskId: TASK_ID } as never);
+    expect(result).toEqual({
+      ok: true,
+      task: { id: "t1", status: "done" },
+      transition: { from: "review", to: "done" },
+    });
+  });
+
+  it("task_merge include:[\"task\"] returns the full { task, merged, sha, alreadyMerged } object", async () => {
+    const backendBody = { task: { id: "t1", status: "done" }, merged: true, sha: "abc123", alreadyMerged: false };
+    fetchMock.mockResolvedValue(ok(backendBody));
+    const result = await tool("task_merge").handler({ taskId: TASK_ID, include: ["task"] } as never);
+    expect(result).toEqual(backendBody);
+  });
+
+  it("task_abandon returns a receipt by default", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1", status: "open" } }));
+    const result = await tool("task_abandon").handler({ taskId: TASK_ID } as never);
+    expect(result).toEqual({ ok: true, task: { id: "t1", status: "open" } });
+  });
+
+  it("task_abandon include:[\"task\"] returns the full backend object", async () => {
+    const backendBody = { task: { id: "t1", status: "open" } };
+    fetchMock.mockResolvedValue(ok(backendBody));
+    const result = await tool("task_abandon").handler({ taskId: TASK_ID, include: ["task"] } as never);
+    expect(result).toEqual(backendBody);
+  });
+
+  it("every converted write verb's happy-path receipt serializes within the tier-1 budget (~240 chars / ~60 tokens)", async () => {
+    const cases: Array<{ tool: string; args: Record<string, unknown>; body: unknown }> = [
+      {
+        tool: "task_create",
+        args: { projectId: "22222222-2222-2222-2222-222222222222", title: "t" },
+        body: { task: { id: "t1", status: "open" }, confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK", blocking: false, missing: [], findings: [], nextActions: [] } },
+      },
+      {
+        tool: "task_respec",
+        args: { taskId: TASK_ID, description: "d" },
+        body: { task: { id: "t1", status: "open" }, confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK", blocking: false, missing: [], findings: [], nextActions: [] } },
+      },
+      { tool: "task_finish", args: { taskId: TASK_ID }, body: { kind: "work", task: { id: "t1", status: "review" }, targetStatus: "review" } },
+      {
+        tool: "task_submit_pr",
+        args: { taskId: TASK_ID, branchName: "b", prUrl: "https://github.com/o/r/pull/1", prNumber: 1 },
+        body: { kind: "submit_pr", task: { id: "t1", status: "in_progress" } },
+      },
+      { tool: "task_note", args: { taskId: TASK_ID, content: "c" }, body: { comment: { id: "c1", taskId: "t1" } } },
+      { tool: "tasks_comment", args: { taskId: TASK_ID, content: "c" }, body: { comment: { id: "c1", taskId: "t1" } } },
+      { tool: "task_merge", args: { taskId: TASK_ID }, body: { task: { id: "t1", status: "done" }, merged: true, sha: "abc", alreadyMerged: false } },
+      { tool: "task_abandon", args: { taskId: TASK_ID }, body: { task: { id: "t1", status: "open" } } },
+    ];
+    for (const { tool: name, args, body } of cases) {
+      fetchMock.mockResolvedValue(ok(body));
+      const result = await tool(name).handler(args as never);
+      expect(JSON.stringify(result).length, `${name} happy-path receipt`).toBeLessThanOrEqual(240);
+    }
   });
 });

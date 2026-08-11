@@ -1,5 +1,20 @@
 import { z, ZodRawShape } from "zod";
 import { AgentTasksClient, AgentTasksApiError } from "./client.js";
+import {
+  receiptForCreate,
+  receiptForRespec,
+  receiptForFinish,
+  receiptForSubmitPr,
+  receiptForMerge,
+  receiptForAbandon,
+  receiptForNote,
+  type CreateOrRespecResponse,
+  type FinishResponse,
+  type SubmitPrResponse,
+  type MergeResponse,
+  type AbandonResponse,
+  type NoteResponse,
+} from "./receipt.js";
 
 export interface ToolDefinition<Shape extends ZodRawShape = ZodRawShape> {
   name: string;
@@ -17,6 +32,24 @@ const transitionStatusEnum = z.enum([
 const priorityEnum = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 
 const uuid = () => z.string().uuid();
+
+// ── Receipt contract (docs/response-contract-v1.md) ─────────────────────────
+//
+// Write verbs return a receipt by default (see the wrap() choke point below
+// and receipt.ts, which owns the projection logic). `include: ["task"]` is
+// the compatibility valve: it skips the projection and returns the full,
+// pre-contract backend object for that call, unchanged. Only "task" has
+// defined behavior on write verbs today — the other enum values are the
+// read-verb vocabulary (rc-v1-C006) and are accepted here but currently a
+// no-op, so a caller that passes one doesn't get a schema-validation error
+// while that follow-up work lands.
+const includeSchema = z
+  .array(z.enum(["task", "description", "comments", "instructions", "artifacts"]))
+  .max(5)
+  .optional()
+  .describe(
+    'Receipt v1: pass ["task"] to get the full, pre-contract object back for this call instead of the small receipt (recovery path after context loss, or when you need the whole task in one call). Other values are reserved for read verbs and are currently a no-op here.',
+  );
 
 async function wrap<T>(fn: () => Promise<T>): Promise<T> {
   try {
@@ -98,18 +131,22 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_note",
       description:
-        "Comment on a task. Works for both work and review claims — use this to record progress, ask questions, or leave review feedback. Requires taskId today; a future revision may infer it from the active claim.",
+        "Comment on a task. Works for both work and review claims — use this to record progress, ask questions, or leave review feedback. Requires taskId today; a future revision may infer it from the active claim.\n\nReturns a receipt by default ({ ok, task: { id } }, no status — the backend comment endpoint does not report task status). Pass include:[\"task\"] for the full { comment } object.",
       inputShape: {
         taskId: uuid(),
         content: z.string().min(1).max(5000),
+        include: includeSchema,
       },
-      handler: async ({ taskId, content }) =>
-        wrap(() => client.addTaskComment(taskId, content)),
+      handler: async ({ taskId, content, include }) => {
+        const response = await wrap(() => client.addTaskComment(taskId, content));
+        if (include?.includes("task")) return response;
+        return receiptForNote(taskId, response as NoteResponse);
+      },
     }),
     def({
       name: "task_finish",
       description:
-        "Finish a task. Requires an active work or review claim on this specific task; call task_start first to claim it (task_pickup alone returns a candidate but does not claim). The claim of any prior task you just finished does NOT carry over. Polymorphic based on the claim you hold.\n\nWork claim: pass { result?, prUrl?, autoMerge?, mergeMethod? }. prUrl must be a github.com pull-request URL if provided. The task transitions to its expectedFinishState (review or done depending on the workflow). The work claim is cleared when going to done and kept when going to review.\n\nautoMerge (Mode A — work claim): requires project.soloMode=true. Overrides targetStatus to 'done', evaluates gates (skipping prMerged pre-check), merges the PR via GitHub API, then transitions the task to done atomically. Sets autoMergeSha on success.\n\nReview claim: pass { result?, outcome, autoMerge?, mergeMethod? }. approve → task to done, both claims cleared. request_changes → task back to in_progress, review claim cleared, work claim kept so the author resumes, changes_requested signal emitted.\n\nautoMerge (Mode B — review claim + approve): does NOT require soloMode. Merges the PR and transitions to done atomically. outcome 'request_changes' + autoMerge is rejected.\n\nTransitions may be blocked by workflow gates (branchPresent, prPresent, ciGreen, prMerged). A 422 `precondition_failed` response lists the failing rules. See ADR-0010.",
+        "Finish a task. Requires an active work or review claim on this specific task; call task_start first to claim it (task_pickup alone returns a candidate but does not claim). The claim of any prior task you just finished does NOT carry over. Polymorphic based on the claim you hold.\n\nWork claim: pass { result?, prUrl?, autoMerge?, mergeMethod? }. prUrl must be a github.com pull-request URL if provided. The task transitions to its expectedFinishState (review or done depending on the workflow). The work claim is cleared when going to done and kept when going to review.\n\nautoMerge (Mode A — work claim): requires project.soloMode=true. Overrides targetStatus to 'done', evaluates gates (skipping prMerged pre-check), merges the PR via GitHub API, then transitions the task to done atomically. Sets autoMergeSha on success.\n\nReview claim: pass { result?, outcome, autoMerge?, mergeMethod? }. approve → task to done, both claims cleared. request_changes → task back to in_progress, review claim cleared, work claim kept so the author resumes, changes_requested signal emitted.\n\nautoMerge (Mode B — review claim + approve): does NOT require soloMode. Merges the PR and transitions to done atomically. outcome 'request_changes' + autoMerge is rejected.\n\nTransitions may be blocked by workflow gates (branchPresent, prPresent, ciGreen, prMerged). A 422 `precondition_failed` response lists the failing rules. See ADR-0010.\n\nReturns a receipt by default ({ ok, task: { id, status }, deviations? }) — a WORKFLOW_GATE_SKIPPED deviation appears when autoMerge bypassed a normally-required gate. Pass include:[\"task\"] for the full backend object.",
       inputShape: {
         taskId: uuid(),
         result: z
@@ -123,14 +160,18 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         outcome: z.enum(["approve", "request_changes"]).optional(),
         autoMerge: z.boolean().optional(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
+        include: includeSchema,
       },
-      handler: async ({ taskId, ...body }) =>
-        wrap(() => client.finishTask(taskId, body)),
+      handler: async ({ taskId, include, ...body }) => {
+        const response = await wrap(() => client.finishTask(taskId, body));
+        if (include?.includes("task")) return response;
+        return receiptForFinish(response as FinishResponse);
+      },
     }),
     def({
       name: "task_create",
       description:
-        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. The response carries a non-blocking `confidence` object ({score, threshold, enforcementMode, blocking, missing[], findings[], nextActions[]}) so you see what's missing immediately — a low score does NOT block creation; `enforcementMode` tells you whether the hard gate at task_pickup/task_start (BLOCK) will reject it or it is advisory (OFF/WARN). When a project uses task-template mode, call projects_get_effective_gates first and populate the templateData fields it lists under taskCreation.requiredFields.",
+        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. When a project uses task-template mode, call projects_get_effective_gates first and populate the templateData fields it lists under taskCreation.requiredFields.\n\nReturns a receipt by default ({ ok, task: { id, status }, confidence: <score>, deviations? }) — description/templateData are NOT echoed back. A CONFIDENCE_BELOW_THRESHOLD deviation appears when score < threshold, with detail ({score, threshold, enforcementMode, missing[]}) and a task_respec hint; low confidence never blocks creation itself, only the hard gate at task_pickup/task_start (when enforcementMode=BLOCK) does. Pass include:[\"task\"] for the full { task, confidence } object.",
       inputShape: {
         projectId: uuid(),
         title: z.string().min(1).max(255),
@@ -158,14 +199,18 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
           .describe(
             "Cross-repo deliverable override ('owner/repo'). Set only when this task's legitimate deliverable is a PR in a DIFFERENT GitHub repo than the project's linked githubRepo (benchmark/measurement/docs tasks) — the cross-repo PR guard and merge automation then key off this repo instead. Post-create changes are project-admin-only (human, PATCH); agents cannot retarget it later.",
           ),
+        include: includeSchema,
       },
-      handler: async ({ projectId, ...input }) =>
-        wrap(() => client.createTask(projectId, input)),
+      handler: async ({ projectId, include, ...input }) => {
+        const response = await wrap(() => client.createTask(projectId, input));
+        if (include?.includes("task")) return response;
+        return receiptForCreate(response as CreateOrRespecResponse, input);
+      },
     }),
     def({
       name: "task_respec",
       description:
-        "Edit an OPEN, UNCLAIMED task's description and/or structured templateData in place — fix a low-confidence or under-specified spec instead of abandoning and recreating the task. Wraps POST /api/tasks/:id/respec. Requires at least one of description or templateData (checked client-side before the request, and enforced authoritatively by the backend with 400 — the backend also rejects empty values: a blank/whitespace-only description, or an empty templateData object). templateData is a WHOLESALE REPLACE of the task's stored templateData, not a merge — send the full object you want stored. By default only the task's creator may respec it; a project admin can relax this via project.allowNonCreatorRespec (403 otherwise; missing tasks:update scope for agent callers is also 403). Any task that is claimed (work or review) or not status=open is rejected with 409 'Task must be open and unclaimed to respec'. 404 if the task does not exist. Response is { task, confidence } — confidence is freshly re-scored by the backend on the STORED (new) values and uses the same shape as task_create's create-time confidence: { score, threshold, enforcementMode, blocking, missing, findings, nextActions }. A call that would not actually change anything (same values resubmitted) is a no-op: no write, no audit entry, current task + confidence returned.",
+        "Edit an OPEN, UNCLAIMED task's description and/or structured templateData in place — fix a low-confidence or under-specified spec instead of abandoning and recreating the task. Wraps POST /api/tasks/:id/respec. Requires at least one of description or templateData (checked client-side before the request, and enforced authoritatively by the backend with 400 — the backend also rejects empty values: a blank/whitespace-only description, or an empty templateData object). templateData is a WHOLESALE REPLACE of the task's stored templateData, not a merge — send the full object you want stored. By default only the task's creator may respec it; a project admin can relax this via project.allowNonCreatorRespec (403 otherwise; missing tasks:update scope for agent callers is also 403). Any task that is claimed (work or review) or not status=open is rejected with 409 'Task must be open and unclaimed to respec'. 404 if the task does not exist. A call that would not actually change anything (same values resubmitted) is a no-op: no write, no audit entry.\n\nReturns a receipt by default ({ ok, task: { id, status }, confidence: <score>, deviations? }) — description/templateData are NOT echoed back. confidence is freshly re-scored on the STORED (new) values; a CONFIDENCE_BELOW_THRESHOLD deviation appears when the new score is still below threshold. Pass include:[\"task\"] for the full { task, confidence } object (confidence there keeps its detailed shape: { score, threshold, enforcementMode, blocking, missing, findings, nextActions }).",
       inputShape: {
         taskId: uuid(),
         description: z
@@ -180,8 +225,9 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
           .describe(
             "Replacement structured spec fields (same shape as task_create's templateData: goal, acceptanceCriteria, context, constraints, scope, outOfScope, dependencies, risk, agentPrompt, taskType, prefers). This WHOLESALE REPLACES the task's stored templateData — it is not merged with the existing value. Backend rejects an empty object with 400. At least one of description or templateData is required.",
           ),
+        include: includeSchema,
       },
-      handler: async ({ taskId, description, templateData }) => {
+      handler: async ({ taskId, description, templateData, include }) => {
         if (description === undefined && templateData === undefined) {
           throw new Error(
             "task_respec requires at least one of description or templateData",
@@ -193,20 +239,26 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         } = {};
         if (description !== undefined) body.description = description;
         if (templateData !== undefined) body.templateData = templateData;
-        return wrap(() => client.respecTask(taskId, body));
+        const response = await wrap(() => client.respecTask(taskId, body));
+        if (include?.includes("task")) return response;
+        return receiptForRespec(response as CreateOrRespecResponse);
       },
     }),
     def({
       name: "task_abandon",
       description:
-        "Explicit bail-out: release the active claim on a task without finishing. A work claim on an in_progress task returns it to open; a review claim simply releases the review lock. Use this sparingly — task_finish is the normal path. Separate intent from finish so audit trails distinguish abandonment from completion.",
-      inputShape: { taskId: uuid() },
-      handler: async ({ taskId }) => wrap(() => client.abandonTask(taskId)),
+        "Explicit bail-out: release the active claim on a task without finishing. A work claim on an in_progress task returns it to open; a review claim simply releases the review lock. Use this sparingly — task_finish is the normal path. Separate intent from finish so audit trails distinguish abandonment from completion.\n\nReturns a receipt by default ({ ok, task: { id, status } }). Pass include:[\"task\"] for the full backend object.",
+      inputShape: { taskId: uuid(), include: includeSchema },
+      handler: async ({ taskId, include }) => {
+        const response = await wrap(() => client.abandonTask(taskId));
+        if (include?.includes("task")) return response;
+        return receiptForAbandon(response as AbandonResponse);
+      },
     }),
     def({
       name: "task_submit_pr",
       description:
-        "Record the branch + pull request metadata on a work-claimed task. Atomic metadata write, not a state transition. Use this after `gh pr create` to satisfy the `branchPresent` / `prPresent` workflow gates before calling task_finish. The canonical v2 flow for projects that enforce branch gates is: task_start → (work + gh pr create) → task_submit_pr → task_finish. For projects that only need prPresent, the shorthand `task_finish { prUrl }` still works and this verb is optional. This is the v2-native replacement for the deprecated v1 `tasks_update { branchName, prUrl, prNumber }` path, which is being sunset 4 weeks after 2026-04-15. Re-submission is allowed and overwrites the prior values (supports the request_changes rework loop). Caller must hold the work claim; task must be in a non-terminal state and not `open`. Cross-repo hardening: prUrl must point at the same repo as project.githubRepo; mismatches are rejected with 400 cross_repo_pr_rejected. Authorship verification: the PR must be authored by the delegation user; mismatches are rejected with 403 pr_author_mismatch (fails open on GitHub API errors).",
+        "Record the branch + pull request metadata on a work-claimed task. Atomic metadata write, not a state transition. Use this after `gh pr create` to satisfy the `branchPresent` / `prPresent` workflow gates before calling task_finish. The canonical v2 flow for projects that enforce branch gates is: task_start → (work + gh pr create) → task_submit_pr → task_finish. For projects that only need prPresent, the shorthand `task_finish { prUrl }` still works and this verb is optional. This is the v2-native replacement for the deprecated v1 `tasks_update { branchName, prUrl, prNumber }` path, which is being sunset 4 weeks after 2026-04-15. Re-submission is allowed and overwrites the prior values (supports the request_changes rework loop). Caller must hold the work claim; task must be in a non-terminal state and not `open`. Cross-repo hardening: prUrl must point at the same repo as project.githubRepo; mismatches are rejected with 400 cross_repo_pr_rejected. Authorship verification: the PR must be authored by the delegation user; mismatches are rejected with 403 pr_author_mismatch (fails open on GitHub API errors).\n\nReturns a receipt by default ({ ok, task: { id, status }, next: [\"task_finish once CI is green\"] }). Not a state transition, so no `transition` field. Pass include:[\"task\"] for the full backend object.",
       inputShape: {
         taskId: uuid(),
         branchName: z.string().trim().min(1).max(255),
@@ -217,9 +269,13 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
             "prUrl must be a github.com pull request URL",
           ),
         prNumber: z.number().int().positive(),
+        include: includeSchema,
       },
-      handler: async ({ taskId, ...input }) =>
-        wrap(() => client.submitPr(taskId, input)),
+      handler: async ({ taskId, include, ...input }) => {
+        const response = await wrap(() => client.submitPr(taskId, input));
+        if (include?.includes("task")) return response;
+        return receiptForSubmitPr(response as SubmitPrResponse);
+      },
     }),
 
     // ── Artifacts (v2) ───────────────────────────────────────────────────
@@ -321,13 +377,17 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_merge",
       description:
-        "Merge the PR attached to a task. Task-scoped verb (not a GitHub-identifier verb): derives owner/repo/PR number from the task/project metadata and uses the team's GitHub delegation. Requires `github:pr_merge` scope for agent callers, and — when `project.requireDistinctReviewer` is enabled and the project is not in `soloMode` — refuses with 403 `self_merge_blocked` if the caller also holds the work claim. Idempotent on an already-merged PR (task stays at `done`).",
+        "Merge the PR attached to a task. Task-scoped verb (not a GitHub-identifier verb): derives owner/repo/PR number from the task/project metadata and uses the team's GitHub delegation. Requires `github:pr_merge` scope for agent callers, and — when `project.requireDistinctReviewer` is enabled and the project is not in `soloMode` — refuses with 403 `self_merge_blocked` if the caller also holds the work claim. Idempotent on an already-merged PR (task stays at `done`).\n\nReturns a receipt by default ({ ok, task: { id, status }, transition? }) — transition is { from: \"review\", to: \"done\" } except on an idempotent already-merged retry, where the task was already done and nothing changed. Pass include:[\"task\"] for the full { task, merged, sha, alreadyMerged } object.",
       inputShape: {
         taskId: uuid(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
+        include: includeSchema,
       },
-      handler: async ({ taskId, mergeMethod }) =>
-        wrap(() => client.mergeTask(taskId, mergeMethod)),
+      handler: async ({ taskId, mergeMethod, include }) => {
+        const response = await wrap(() => client.mergeTask(taskId, mergeMethod));
+        if (include?.includes("task")) return response;
+        return receiptForMerge(response as MergeResponse);
+      },
     }),
 
     // ── v1 surface (deprecated) ──────────────────────────────────────────
@@ -537,13 +597,17 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       name: "tasks_comment",
       description:
         DEPRECATED +
-        "Use task_note instead (same behavior, v2 naming).",
+        "Use task_note instead (same behavior, v2 naming, including the receipt default).",
       inputShape: {
         taskId: uuid(),
         content: z.string().min(1).max(5000),
+        include: includeSchema,
       },
-      handler: async ({ taskId, content }) =>
-        wrap(() => client.addTaskComment(taskId, content)),
+      handler: async ({ taskId, content, include }) => {
+        const response = await wrap(() => client.addTaskComment(taskId, content));
+        if (include?.includes("task")) return response;
+        return receiptForNote(taskId, response as NoteResponse);
+      },
     }),
     def({
       name: "review_approve",
