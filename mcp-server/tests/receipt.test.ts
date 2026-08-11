@@ -8,6 +8,8 @@ import {
   receiptForMerge,
   receiptForAbandon,
   receiptForNote,
+  type Receipt,
+  type Deviation,
 } from "../src/receipt.js";
 import { serializeResult } from "../src/server.js";
 
@@ -127,7 +129,7 @@ describe("receiptForCreate", () => {
       findings: [],
       nextActions: [],
     };
-    const receipt = receiptForCreate({ task: freshTask, confidence: lowConfidence }, {});
+    const receipt = receiptForCreate({ task: freshTask, confidence: lowConfidence }, {}) as Receipt;
     expect(receipt.confidence).toBe(42);
     expect(receipt.deviations).toHaveLength(1);
     const dev = receipt.deviations![0];
@@ -137,6 +139,7 @@ describe("receiptForCreate", () => {
       threshold: 60,
       enforcementMode: "BLOCK",
       missing: ["acceptanceCriteria", "goal"],
+      totalMissing: 2,
     });
     expect(dev.actNow).toMatch(/immutable|not editable/i);
     expect(dev.actNow).toMatch(/BLOCK/);
@@ -154,7 +157,7 @@ describe("receiptForCreate", () => {
       findings: [],
       nextActions: [],
     };
-    const receipt = receiptForCreate({ task: freshTask, confidence: warnConfidence }, {});
+    const receipt = receiptForCreate({ task: freshTask, confidence: warnConfidence }, {}) as Receipt;
     const dev = receipt.deviations![0];
     expect(dev.detail).toMatchObject({ enforcementMode: "WARN" });
     expect(dev.actNow).toMatch(/advisory/i);
@@ -177,7 +180,7 @@ describe("receiptForCreate", () => {
     const receipt = receiptForCreate(
       { task: dedupedTask, confidence: highConfidence },
       { externalRef: "jira-PROJ-42" },
-    );
+    ) as Receipt;
     expect(receipt.deviations).toContainEqual({
       code: "DEDUPED_EXTERNAL_REF",
       detail: { existingTaskId: "t1", existingStatus: "in_progress" },
@@ -212,7 +215,7 @@ describe("receiptForCreate", () => {
     const receipt = receiptForCreate(
       { task: taskWithBlockers, confidence: highConfidence },
       { dependsOn: ["blocker-a", "blocker-b"] },
-    );
+    ) as Receipt;
     expect(receipt.deviations).toContainEqual({
       code: "DEPENDS_ON_REJECTED",
       detail: { rejected: ["blocker-b"], reason: "not found or cross-project", totalRejected: 1 },
@@ -234,7 +237,7 @@ describe("receiptForCreate", () => {
     const receipt = receiptForCreate(
       { task: taskWithFewerLabels, confidence: highConfidence },
       { labels: ["backend", "urgent"] },
-    );
+    ) as Receipt;
     expect(receipt.deviations).toContainEqual({
       code: "LABELS_DROPPED",
       detail: { dropped: ["urgent"], totalDropped: 1 },
@@ -274,36 +277,52 @@ describe("receiptForCreate", () => {
         labels: ["backend", "urgent", "p0"],
         dependsOn: ["blocker-a", "blocker-b", "blocker-c"],
       },
-    );
+    ) as Receipt;
     expect(receipt.deviations).toHaveLength(4);
     expect(size(receipt)).toBeLessThanOrEqual(TIER2_BUDGET_CHARS);
   });
 
-  it("clamps DEPENDS_ON_REJECTED/LABELS_DROPPED detail at the schemas' declared maxima (dependsOn 50, labels 20; tools.ts task_create inputShape) and stays within the tier-2 budget", () => {
+  it("clamps DEPENDS_ON_REJECTED/LABELS_DROPPED/CONFIDENCE_BELOW_THRESHOLD detail at the schemas' and backend's declared maxima (dependsOn 50, labels 20 from tools.ts task_create inputShape; missing[] 9 from backend/src/lib/confidence.ts's fixed field list) and stays within the tier-2 budget", () => {
     const dependsOnIds = Array.from(
       { length: 50 },
       (_, i) => `11111111-1111-1111-1111-${String(100000000000 + i).padStart(12, "0")}`,
     );
     const labels = Array.from({ length: 20 }, (_, i) => `label-${String(i).padStart(2, "0")}`);
     const maxedTask = { ...freshTask, blockedBy: [], labels: [] };
+    // The backend scorer (backend/src/lib/confidence.ts ~lines 812-821) can
+    // populate at most these 9 fields, in this surfacing-priority order.
+    const missingAtMax = [
+      "title",
+      "description",
+      "goal",
+      "acceptanceCriteria",
+      "scope",
+      "outOfScope",
+      "dependencies",
+      "risk",
+      "agentPrompt",
+    ];
     const lowConfidence = {
       score: 42,
       threshold: 60,
       enforcementMode: "BLOCK",
       blocking: true,
-      missing: ["acceptanceCriteria", "goal", "context"],
+      missing: missingAtMax,
       findings: [],
       nextActions: [],
     };
     const receipt = receiptForCreate(
       { task: maxedTask, confidence: lowConfidence },
       { dependsOn: dependsOnIds, labels },
-    );
+    ) as Receipt;
     expect(receipt.deviations).toHaveLength(3);
-    const dependsOnDev = receipt.deviations!.find((d) => d.code === "DEPENDS_ON_REJECTED")!;
+    const confDev = receipt.deviations!.find((d: Deviation) => d.code === "CONFIDENCE_BELOW_THRESHOLD")!;
+    expect((confDev.detail!.missing as string[]).length).toBeLessThanOrEqual(5);
+    expect(confDev.detail!.totalMissing).toBe(9);
+    const dependsOnDev = receipt.deviations!.find((d: Deviation) => d.code === "DEPENDS_ON_REJECTED")!;
     expect((dependsOnDev.detail!.rejected as string[]).length).toBeLessThanOrEqual(5);
     expect(dependsOnDev.detail!.totalRejected).toBe(50);
-    const labelsDev = receipt.deviations!.find((d) => d.code === "LABELS_DROPPED")!;
+    const labelsDev = receipt.deviations!.find((d: Deviation) => d.code === "LABELS_DROPPED")!;
     expect((labelsDev.detail!.dropped as string[]).length).toBeLessThanOrEqual(5);
     expect(labelsDev.detail!.totalDropped).toBe(20);
     expect(size(receipt)).toBeLessThanOrEqual(TIER2_BUDGET_CHARS);
@@ -332,7 +351,7 @@ describe("receiptForRespec", () => {
     const receipt = receiptForRespec({
       task: { id: "t1", status: "open" },
       confidence: { score: 40, threshold: 60, enforcementMode: "BLOCK", blocking: true, missing: ["goal"], findings: [], nextActions: [] },
-    });
+    }) as Receipt;
     expect(receipt.deviations).toHaveLength(1);
     expect(receipt.deviations![0].code).toBe("CONFIDENCE_BELOW_THRESHOLD");
   });
@@ -340,7 +359,7 @@ describe("receiptForRespec", () => {
 
 describe("receiptForFinish", () => {
   it("happy path (work branch): no deviations, within the tier-1 budget", () => {
-    const receipt = receiptForFinish({ kind: "work", task: { id: "t1", status: "review" }, targetStatus: "review" });
+    const receipt = receiptForFinish({ kind: "work", task: { id: "t1", status: "review" }, targetStatus: "review" }) as Receipt;
     expect(receipt).toEqual({ ok: true, task: { id: "t1", status: "review" } });
     expect(receipt.confidence).toBeUndefined();
     expect(size(receipt)).toBeLessThanOrEqual(TIER1_BUDGET_CHARS);
@@ -358,11 +377,11 @@ describe("receiptForFinish", () => {
       targetStatus: "done",
       autoMergeSha: "abc123",
       skippedGates: ["prMerged"],
-    });
+    }) as Receipt;
     expect(receipt.deviations).toEqual([
       {
         code: "WORKFLOW_GATE_SKIPPED",
-        detail: { skipped: ["prMerged"] },
+        detail: { skipped: ["prMerged"], totalSkipped: 1 },
         actNow: "autoMerge bypassed the normally-required workflow gate(s) before this transition: prMerged.",
       },
     ]);

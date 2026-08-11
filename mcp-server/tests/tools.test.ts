@@ -1024,4 +1024,22 @@ describe("buildTools", () => {
       expect(result, `${name} include:["task"]`).toEqual(body);
     }
   });
+
+  // Schema-level regression coverage for the write/read `include` narrowing
+  // (docs/response-contract-v1.md's "include semantics" section): today the
+  // write verbs' includeSchema accepts only ["task"], the read-verb
+  // vocabulary ("description", "comments", "instructions", "artifacts")
+  // belongs to rc-v1-C006 and MUST be a validation error on a write verb,
+  // not a silent no-op. Asserted at the zod schema level (not just via the
+  // handler) so re-widening the enum back to the full vocabulary fails this
+  // test even if every handler-level test stays green.
+  it("write verbs' include schema rejects the read-verb vocabulary and accepts \"task\"", () => {
+    for (const { tool: name, args } of writeVerbCases) {
+      const shape = tool(name).inputShape;
+      const rejected = z.object(shape).safeParse({ ...args, include: ["description"] });
+      expect(rejected.success, `${name} include:["description"] should fail schema validation`).toBe(false);
+      const accepted = z.object(shape).safeParse({ ...args, include: ["task"] });
+      expect(accepted.success, `${name} include:["task"] should pass schema validation`).toBe(true);
+    }
+  });
 });

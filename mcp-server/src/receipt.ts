@@ -96,6 +96,18 @@ export interface ConfidenceObj {
   nextActions?: unknown[];
 }
 
+// Shared clamp for every deviation's array-valued detail field (`missing[]`
+// on CONFIDENCE_BELOW_THRESHOLD, `rejected[]` on DEPENDS_ON_REJECTED,
+// `dropped[]` on LABELS_DROPPED, `skipped[]` on WORKFLOW_GATE_SKIPPED):
+// first N entries plus an explicit total count, so a caller at the tail of
+// a long list still learns "there were more" instead of the array being
+// silently truncated with no signal. This is a contract-wide rule (see
+// docs/response-contract-v1.md's "Detail arrays are clamped" paragraph),
+// applied unconditionally so it holds without exceptions, even for fields
+// (like `skipped[]`, bounded by the fixed set of workflow gates) that can
+// never actually reach the clamp in practice.
+const DETAIL_CLAMP = 5;
+
 // ── task_create / task_respec: confidence deviation ─────────────────────────
 //
 // Trigger per the contract's create catalog: "confidence score is below the
@@ -105,18 +117,29 @@ export interface ConfidenceObj {
 // it here would under-report the contract's stated trigger).
 function confidenceDeviation(c: ConfidenceObj | undefined): Deviation | null {
   if (!c || c.score >= c.threshold) return null;
+  const missing = c.missing ?? [];
   return {
     code: "CONFIDENCE_BELOW_THRESHOLD",
     detail: {
       score: c.score,
       threshold: c.threshold,
       enforcementMode: c.enforcementMode,
-      missing: c.missing ?? [],
+      // Clamped like DEPENDS_ON_REJECTED/LABELS_DROPPED below: the backend
+      // scorer (backend/src/lib/confidence.ts) can populate up to 9 entries
+      // (title, description, goal, acceptanceCriteria, scope, outOfScope,
+      // dependencies, risk, agentPrompt), already in surfacing-priority
+      // order, so the clamp keeps the entries that matter most.
+      missing: missing.slice(0, DETAIL_CLAMP),
+      totalMissing: missing.length,
     },
+    // Kept short on purpose: at the missing[]/dependsOn/labels maxima, all
+    // four task_create deviations firing together leaves little headroom
+    // under the tier-2 cap (see the "clamps ... at the schemas' and
+    // backend's declared maxima" test in tests/receipt.test.ts).
     actNow:
       c.enforcementMode === "BLOCK"
-        ? "Description and templateData are not editable after create except via task_respec; at BLOCK enforcement, task_pickup/task_start will reject this task until the score improves."
-        : "Description and templateData are not editable after create except via task_respec; enforcementMode is not BLOCK, so this is advisory only for now.",
+        ? "Not editable after create except via task_respec; at BLOCK, task_pickup/task_start rejects until the score improves."
+        : "Not editable after create except via task_respec; not BLOCK, so advisory only for now.",
     next: ["task_respec to raise the score above the threshold"],
   };
 }
@@ -162,11 +185,9 @@ function dedupedExternalRefDeviation(
 // own input back in `detail`. Both schema fields have generous array
 // maxima (dependsOn 50, labels 20; see tools.ts's task_create inputShape),
 // and at those maxima an unclamped detail array alone blows past the
-// tier-2 budget several times over. Clamp to the first few entries plus an
-// explicit total count so a caller at the tail of a long rejection list
-// still learns "there were more" instead of the array being silently
-// truncated with no signal.
-const DETAIL_CLAMP = 5;
+// tier-2 budget several times over. They reuse DETAIL_CLAMP (defined above,
+// next to ConfidenceObj) for the same reason CONFIDENCE_BELOW_THRESHOLD's
+// `missing[]` does.
 
 // ── task_create: DEPENDS_ON_REJECTED ─────────────────────────────────────────
 //
@@ -236,7 +257,12 @@ function labelsDroppedDeviation(
 // TypeError on a malformed body. Every builder therefore checks
 // `response?.task?.id` up front and, when it's missing, returns the raw
 // response unprojected instead of crashing: the caller still gets
-// something machine-usable, just not the small receipt.
+// something machine-usable, just not the small receipt. This is a
+// deliberate, documented exemption from the contract's "no echo, ever"
+// rule (docs/response-contract-v1.md): a malformed success body falls
+// outside the receipt/tier machinery entirely, so returning it raw is not
+// an echo of caller-sent content, it's the only fallback that avoids
+// crashing on an unexpected backend shape.
 function hasTaskId(response: { task?: { id?: string } } | null | undefined): boolean {
   return !!response?.task?.id;
 }
@@ -308,7 +334,16 @@ export function receiptForFinish(response: FinishResponse): Receipt | FinishResp
   if (response.skippedGates && response.skippedGates.length > 0) {
     deviations.push({
       code: "WORKFLOW_GATE_SKIPPED",
-      detail: { skipped: response.skippedGates },
+      detail: {
+        // Clamped like every other deviation's array-valued detail field
+        // (see DETAIL_CLAMP above), even though the fixed set of workflow
+        // gates (branchPresent, prPresent, ciGreen, prMerged) means this
+        // can never actually reach 5 entries today. The point is that the
+        // clamping rule holds unconditionally, not just where it currently
+        // bites.
+        skipped: response.skippedGates.slice(0, DETAIL_CLAMP),
+        totalSkipped: response.skippedGates.length,
+      },
       actNow: `autoMerge bypassed the normally-required workflow gate(s) before this transition: ${response.skippedGates.join(", ")}.`,
     });
   }
