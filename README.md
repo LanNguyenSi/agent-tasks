@@ -37,6 +37,7 @@ Or skip the install: open the **Live** link above and click **Connect an agent**
 | Walk through full CLI task lifecycles (auto-merge, request-changes, bulk ops) | [cli/docs/workflows.md](cli/docs/workflows.md) |
 | Browse the verb-by-verb API | [docs/v2-api.md](docs/v2-api.md), or interactive [Swagger UI](https://agent-tasks.opentriologue.ai/docs) |
 | Understand confidence gates, governance modes, audit | [docs/governance.md](docs/governance.md) |
+| Build against the MCP response shapes (receipts, `include`, errors) | [docs/response-contract-v1.md](docs/response-contract-v1.md) |
 | Run agent-tasks locally for development | [docs/development.md](docs/development.md) |
 | Understand the architecture | [docs/architecture.md](docs/architecture.md) |
 
@@ -95,7 +96,7 @@ Real teams need enforceable rules for:
 
 ## Repo layout
 
-The monorepo holds five workspace packages: `backend`, `frontend`, `cli`, `mcp-server`, and `mcp-bridge`. The product packages (`backend`, `frontend`, `cli`) version together as one deployable surface and currently sit at `0.3.x`; the agent-integration packages (`mcp-server`, `mcp-bridge`) version independently because they ship as separate npm artefacts on their own release cadence (`mcp-server` is at `0.9.x`, `mcp-bridge` at `0.7.x`). The skew is intentional and does not signal a stale package.
+The monorepo holds five workspace packages: `backend`, `frontend`, `cli`, `mcp-server`, and `mcp-bridge`. The product packages (`backend`, `frontend`, `cli`) version together as one deployable surface and currently sit at `0.3.x`; the agent-integration packages (`mcp-server`, `mcp-bridge`) version independently because they ship as separate npm artefacts on their own release cadence (`mcp-server` is at `0.12.x`, `mcp-bridge` at `0.7.x`). The skew is intentional and does not signal a stale package. The `mcp-server` response shapes (receipts, `include`, error catalog) follow [docs/response-contract-v1.md](docs/response-contract-v1.md).
 
 ## License
 
