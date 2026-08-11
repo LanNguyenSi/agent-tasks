@@ -83,7 +83,8 @@ The receipt has three tiers, layered in a single response object:
         "score": 42,
         "threshold": 60,
         "enforcementMode": "BLOCK",
-        "missing": ["acceptanceCriteria"]
+        "missing": ["acceptanceCriteria"],
+        "totalMissing": 1
       },
       "actNow": "Description is not editable after create except via task_respec; at BLOCK, task_pickup will reject this task.",
       "next": ["task_respec to raise the score above the threshold"]
@@ -126,6 +127,11 @@ Each rule below is normative for every write verb, present and future.
   motivating example and MUST NOT recur in any verb.
   *Why:* the caller already has what it sent; echoing it back is a pure
   token tax with no information gain.
+  One documented exemption: a malformed backend success body (no
+  `task.id`) falls outside the receipt/tier machinery entirely and is
+  returned raw instead of crashing. This is not an echo of caller-sent
+  content, so it sits outside both the echo and the tier-budget rules.
+  See `hasTaskId` in `mcp-server/src/receipt.ts`.
 - **Actionable counter-rule.** Deviation detail belongs only in the verb
   where the caller can act on it. Confidence detail (`score`, `missing[]`,
   etc.) belongs on `task_create` / `task_respec`, where the caller can fix
@@ -142,10 +148,29 @@ shapes below are normative for that verb.
 
 | Code | Trigger | `detail` payload | `next` |
 |---|---|---|---|
-| `CONFIDENCE_BELOW_THRESHOLD` | confidence score is below the project's threshold | `score`, `threshold`, `enforcementMode`, `missing[]` | `task_respec` |
+| `CONFIDENCE_BELOW_THRESHOLD` | confidence score is below the project's threshold | `score`, `threshold`, `enforcementMode`, `missing[]` (clamped), `totalMissing` | `task_respec` |
 | `DEDUPED_EXTERNAL_REF` | `(projectId, externalRef)` already exists | `existingTaskId`, `existingStatus` | `tasks_get` |
-| `DEPENDS_ON_REJECTED` | one or more `dependsOn` ids are invalid or cross-project | `rejected[]`, each with a reason | `task_create` again with corrected `dependsOn` |
-| `LABELS_DROPPED` | one or more labels were rejected or normalized away | `dropped[]` | `task_create` again (agents cannot set labels post-create) |
+| `DEPENDS_ON_REJECTED` | one or more `dependsOn` ids are invalid or cross-project | `rejected[]` (clamped), `reason` (shared), `totalRejected` | `task_create` again with corrected `dependsOn` |
+| `LABELS_DROPPED` | one or more labels were rejected or normalized away | `dropped[]` (clamped), `totalDropped` | `task_create` again (agents cannot set labels post-create) |
+
+Detail arrays are clamped: a deviation's array-valued detail field
+carries at most the first 5 entries plus an explicit total count
+(`totalRejected`, `totalDropped`, `totalMissing`, `totalSkipped`), so a
+long list cannot blow the advise-tier budget and is never silently
+truncated. This rule is unconditional: it applies to every deviation with
+an array-valued detail field, not only `task_create`'s catalog above (for
+example `task_finish`'s `WORKFLOW_GATE_SKIPPED` clamps `skipped[]` the
+same way, even though the fixed set of workflow gates means that field can
+never actually reach the clamp today). Fields whose per-entry annotations
+would repeat the same value (e.g. one shared rejection reason) hoist that
+value out of the array. The clamp also bounds each surviving entry's own
+length (not just the array's element count): an entry longer than the
+per-entry budget is cut short with a trailing `...` marker, so a single
+long caller-supplied string (e.g. a 100-char label) cannot blow the budget
+even while under the 5-entry cap.
+*Why:* at the input schemas' and backend's declared maxima an unclamped
+detail array alone exceeds the tier-2 budget several times over; the
+count keeps the truncation honest.
 
 Other write verbs define their own deviation catalog analogously, in their
 own implementation task spec, following the same code/trigger/detail/next
@@ -170,6 +195,15 @@ pre-contract object for that verb. Use it as the recovery path after
 context loss (a fresh session that needs the whole task, not just the
 receipt) or when a caller genuinely needs the full object in one call
 instead of composing several narrow ones.
+
+The full five-value vocabulary above is the target surface across both
+write and read verbs. Today, the write verbs converted under this
+contract (`task_create`, `task_respec`, `task_finish`, `task_submit_pr`,
+`task_merge`, `task_abandon`, `task_note` and its `tasks_comment`
+equivalent) accept only `include: ["task"]`; passing any other value
+(`"description"`, `"comments"`, `"instructions"`, `"artifacts"`) on one of
+these verbs is a schema validation error, not a silent no-op. The
+remaining vocabulary is the read-verb surface, landing with rc-v1-C006.
 
 Per-verb defaults without `include`:
 

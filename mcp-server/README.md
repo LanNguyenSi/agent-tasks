@@ -48,7 +48,13 @@ Drop `--scope user` if you want it project-local instead. See
 
 ## Tools
 
-36 tools total. All return the raw JSON response from the backend as a text block.
+36 tools total. The 8 converted v2 write verbs (`task_create`, `task_respec`,
+`task_finish`, `task_submit_pr`, `task_note`, `task_merge`, `task_abandon`,
+and the deprecated `tasks_comment` alias) return a small receipt by default
+(`{ ok, task: { id, status? }, ... }`, per `docs/response-contract-v1.md`)
+instead of the raw backend body; pass `include: ["task"]` on any of them to
+get the full, pre-contract object back for that call. Every other tool
+still returns the raw JSON response from the backend as a text block.
 
 ### v2 verbs (task_*)
 
