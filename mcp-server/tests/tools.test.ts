@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { z } from "zod";
 import { buildTools } from "../src/tools.js";
 import { AgentTasksClient, AgentTasksApiError } from "../src/client.js";
+import { serializeResult } from "../src/server.js";
 
 describe("buildTools", () => {
   const config = { baseUrl: "https://example.test", token: "tok_abc" };
@@ -932,7 +933,7 @@ describe("buildTools", () => {
     expect(result).toEqual({ ok: true, task: { id: "t1" } });
   });
 
-  it("task_merge returns a receipt with a review→done transition by default", async () => {
+  it("task_merge returns a receipt with task status but no transition field by default (transition would be fabricated: alreadyMerged describes the GitHub PR, not the task's prior DB state)", async () => {
     fetchMock.mockResolvedValue(
       ok({ task: { id: "t1", status: "done" }, merged: true, sha: "abc123", alreadyMerged: false }),
     );
@@ -940,8 +941,20 @@ describe("buildTools", () => {
     expect(result).toEqual({
       ok: true,
       task: { id: "t1", status: "done" },
-      transition: { from: "review", to: "done" },
     });
+    expect(result).not.toHaveProperty("transition");
+  });
+
+  it("task_merge receipt carries no transition field even on an idempotent already-merged retry", async () => {
+    fetchMock.mockResolvedValue(
+      ok({ task: { id: "t1", status: "done" }, merged: true, sha: "abc123", alreadyMerged: true }),
+    );
+    const result = await tool("task_merge").handler({ taskId: TASK_ID } as never);
+    expect(result).toEqual({
+      ok: true,
+      task: { id: "t1", status: "done" },
+    });
+    expect(result).not.toHaveProperty("transition");
   });
 
   it("task_merge include:[\"task\"] returns the full { task, merged, sha, alreadyMerged } object", async () => {
@@ -964,33 +977,51 @@ describe("buildTools", () => {
     expect(result).toEqual(backendBody);
   });
 
+  // Shared fixture for the two loops below: one entry per converted write
+  // verb, its happy-path call args, and the mocked backend body. Both the
+  // receipt-budget loop and the include:["task"] bypass loop drive off this
+  // same list so the two stay in sync as verbs are added.
+  const writeVerbCases: Array<{ tool: string; args: Record<string, unknown>; body: unknown }> = [
+    {
+      tool: "task_create",
+      args: { projectId: "22222222-2222-2222-2222-222222222222", title: "t" },
+      body: { task: { id: "t1", status: "open" }, confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK", blocking: false, missing: [], findings: [], nextActions: [] } },
+    },
+    {
+      tool: "task_respec",
+      args: { taskId: TASK_ID, description: "d" },
+      body: { task: { id: "t1", status: "open" }, confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK", blocking: false, missing: [], findings: [], nextActions: [] } },
+    },
+    { tool: "task_finish", args: { taskId: TASK_ID }, body: { kind: "work", task: { id: "t1", status: "review" }, targetStatus: "review" } },
+    {
+      tool: "task_submit_pr",
+      args: { taskId: TASK_ID, branchName: "b", prUrl: "https://github.com/o/r/pull/1", prNumber: 1 },
+      body: { kind: "submit_pr", task: { id: "t1", status: "in_progress" } },
+    },
+    { tool: "task_note", args: { taskId: TASK_ID, content: "c" }, body: { comment: { id: "c1", taskId: "t1" } } },
+    { tool: "tasks_comment", args: { taskId: TASK_ID, content: "c" }, body: { comment: { id: "c1", taskId: "t1" } } },
+    { tool: "task_merge", args: { taskId: TASK_ID }, body: { task: { id: "t1", status: "done" }, merged: true, sha: "abc", alreadyMerged: false } },
+    { tool: "task_abandon", args: { taskId: TASK_ID }, body: { task: { id: "t1", status: "open" } } },
+  ];
+
   it("every converted write verb's happy-path receipt serializes within the tier-1 budget (~240 chars / ~60 tokens)", async () => {
-    const cases: Array<{ tool: string; args: Record<string, unknown>; body: unknown }> = [
-      {
-        tool: "task_create",
-        args: { projectId: "22222222-2222-2222-2222-222222222222", title: "t" },
-        body: { task: { id: "t1", status: "open" }, confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK", blocking: false, missing: [], findings: [], nextActions: [] } },
-      },
-      {
-        tool: "task_respec",
-        args: { taskId: TASK_ID, description: "d" },
-        body: { task: { id: "t1", status: "open" }, confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK", blocking: false, missing: [], findings: [], nextActions: [] } },
-      },
-      { tool: "task_finish", args: { taskId: TASK_ID }, body: { kind: "work", task: { id: "t1", status: "review" }, targetStatus: "review" } },
-      {
-        tool: "task_submit_pr",
-        args: { taskId: TASK_ID, branchName: "b", prUrl: "https://github.com/o/r/pull/1", prNumber: 1 },
-        body: { kind: "submit_pr", task: { id: "t1", status: "in_progress" } },
-      },
-      { tool: "task_note", args: { taskId: TASK_ID, content: "c" }, body: { comment: { id: "c1", taskId: "t1" } } },
-      { tool: "tasks_comment", args: { taskId: TASK_ID, content: "c" }, body: { comment: { id: "c1", taskId: "t1" } } },
-      { tool: "task_merge", args: { taskId: TASK_ID }, body: { task: { id: "t1", status: "done" }, merged: true, sha: "abc", alreadyMerged: false } },
-      { tool: "task_abandon", args: { taskId: TASK_ID }, body: { task: { id: "t1", status: "open" } } },
-    ];
-    for (const { tool: name, args, body } of cases) {
+    // Measured through serializeResult (server.ts): the exact
+    // JSON.stringify(x, null, 2) transform the MCP server applies to the
+    // handler's return value before it goes out as the tool's text block. A
+    // compact JSON.stringify(result) here would under-measure the real wire
+    // payload and let a budget regression pass unnoticed.
+    for (const { tool: name, args, body } of writeVerbCases) {
       fetchMock.mockResolvedValue(ok(body));
       const result = await tool(name).handler(args as never);
-      expect(JSON.stringify(result).length, `${name} happy-path receipt`).toBeLessThanOrEqual(240);
+      expect(serializeResult(result).length, `${name} happy-path receipt`).toBeLessThanOrEqual(240);
+    }
+  });
+
+  it("every converted write verb's include:[\"task\"] call bypasses the receipt and returns the raw backend body", async () => {
+    for (const { tool: name, args, body } of writeVerbCases) {
+      fetchMock.mockResolvedValue(ok(body));
+      const result = await tool(name).handler({ ...args, include: ["task"] } as never);
+      expect(result, `${name} include:["task"]`).toEqual(body);
     }
   });
 });

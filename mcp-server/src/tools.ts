@@ -38,17 +38,18 @@ const uuid = () => z.string().uuid();
 // Write verbs return a receipt by default (see the wrap() choke point below
 // and receipt.ts, which owns the projection logic). `include: ["task"]` is
 // the compatibility valve: it skips the projection and returns the full,
-// pre-contract backend object for that call, unchanged. Only "task" has
-// defined behavior on write verbs today — the other enum values are the
-// read-verb vocabulary (rc-v1-C006) and are accepted here but currently a
-// no-op, so a caller that passes one doesn't get a schema-validation error
-// while that follow-up work lands.
+// pre-contract backend object for that call, unchanged. "task" is the only
+// value this schema accepts today: the richer read-verb vocabulary
+// ("description", "comments", "instructions", "artifacts") belongs to the
+// read verbs (rc-v1-C006, not yet converted) and is deliberately NOT
+// accepted here: passing one of those values on a write verb is a zod
+// validation error, not a silent no-op.
 const includeSchema = z
-  .array(z.enum(["task", "description", "comments", "instructions", "artifacts"]))
-  .max(5)
+  .array(z.enum(["task"]))
+  .max(1)
   .optional()
   .describe(
-    'Receipt v1: pass ["task"] to get the full, pre-contract object back for this call instead of the small receipt (recovery path after context loss, or when you need the whole task in one call). Other values are reserved for read verbs and are currently a no-op here.',
+    'Receipt v1: pass ["task"] to get the full, pre-contract object back for this call instead of the small receipt (recovery path after context loss, or when you need the whole task in one call). "task" is the only supported value on write verbs today.',
   );
 
 async function wrap<T>(fn: () => Promise<T>): Promise<T> {
@@ -377,7 +378,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_merge",
       description:
-        "Merge the PR attached to a task. Task-scoped verb (not a GitHub-identifier verb): derives owner/repo/PR number from the task/project metadata and uses the team's GitHub delegation. Requires `github:pr_merge` scope for agent callers, and — when `project.requireDistinctReviewer` is enabled and the project is not in `soloMode` — refuses with 403 `self_merge_blocked` if the caller also holds the work claim. Idempotent on an already-merged PR (task stays at `done`).\n\nReturns a receipt by default ({ ok, task: { id, status }, transition? }) — transition is { from: \"review\", to: \"done\" } except on an idempotent already-merged retry, where the task was already done and nothing changed. Pass include:[\"task\"] for the full { task, merged, sha, alreadyMerged } object.",
+        "Merge the PR attached to a task. Task-scoped verb (not a GitHub-identifier verb): derives owner/repo/PR number from the task/project metadata and uses the team's GitHub delegation. Requires `github:pr_merge` scope for agent callers, and, when `project.requireDistinctReviewer` is enabled and the project is not in `soloMode`, refuses with 403 `self_merge_blocked` if the caller also holds the work claim. Idempotent on an already-merged PR (task stays at `done`).\n\nReturns a receipt by default ({ ok, task: { id, status } }), no `transition` field: the route accepts both `review` and an idempotent `done` retry as valid starting states, and the backend's `alreadyMerged` flag describes the GitHub PR's own merge state, not whether a DB transition happened on this call, so the receipt reports the outcome via `task.status` alone. Pass include:[\"task\"] for the full { task, merged, sha, alreadyMerged } object.",
       inputShape: {
         taskId: uuid(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),

@@ -9,6 +9,7 @@ import {
   receiptForAbandon,
   receiptForNote,
 } from "../src/receipt.js";
+import { serializeResult } from "../src/server.js";
 
 // Token budgets are approximated as character counts (the convention the
 // task brief and docs/response-contract-v1.md both specify: "character-count
@@ -16,8 +17,13 @@ import {
 const TIER1_BUDGET_CHARS = 240; // ~60 tokens
 const TIER2_BUDGET_CHARS = 1600; // ~400 tokens
 
+// Measure through serializeResult (server.ts), the exact transform the MCP
+// server applies before a result goes out as the tool's text block
+// (JSON.stringify(x, null, 2) for a non-string result). A compact
+// JSON.stringify(x) here would under-measure the real wire payload by
+// 27-49% and let a budget regression pass the suite unnoticed.
 function size(x: unknown): number {
-  return JSON.stringify(x).length;
+  return serializeResult(x).length;
 }
 
 describe("buildReceipt", () => {
@@ -161,14 +167,17 @@ describe("receiptForCreate", () => {
     expect(receipt).not.toHaveProperty("deviations");
   });
 
-  it("DEDUPED_EXTERNAL_REF fires when createdAt !== updatedAt (best-effort heuristic; see receipt.ts doc comment for why)", () => {
+  it("DEDUPED_EXTERNAL_REF fires when the caller sent externalRef and createdAt !== updatedAt (best-effort heuristic; see receipt.ts doc comment for why)", () => {
     const dedupedTask = {
       ...freshTask,
       createdAt: "2026-08-01T00:00:00.000Z",
       updatedAt: "2026-08-10T00:00:00.000Z",
       status: "in_progress",
     };
-    const receipt = receiptForCreate({ task: dedupedTask, confidence: highConfidence }, {});
+    const receipt = receiptForCreate(
+      { task: dedupedTask, confidence: highConfidence },
+      { externalRef: "jira-PROJ-42" },
+    );
     expect(receipt.deviations).toContainEqual({
       code: "DEDUPED_EXTERNAL_REF",
       detail: { existingTaskId: "t1", existingStatus: "in_progress" },
@@ -176,8 +185,22 @@ describe("receiptForCreate", () => {
     });
   });
 
-  it("does NOT fire DEDUPED_EXTERNAL_REF on a genuinely fresh task (createdAt === updatedAt) — distinguishes fresh creation from dedupe return", () => {
-    const receipt = receiptForCreate({ task: freshTask, confidence: highConfidence }, {});
+  it("does NOT fire DEDUPED_EXTERNAL_REF on a genuinely fresh task (createdAt === updatedAt) even with externalRef sent: distinguishes fresh creation from dedupe return", () => {
+    const receipt = receiptForCreate(
+      { task: freshTask, confidence: highConfidence },
+      { externalRef: "jira-PROJ-42" },
+    );
+    expect(JSON.stringify(receipt)).not.toContain("DEDUPED_EXTERNAL_REF");
+  });
+
+  it("does NOT fire DEDUPED_EXTERNAL_REF when the caller sent no externalRef, even if createdAt !== updatedAt (the contract trigger is (projectId, externalRef) already exists)", () => {
+    const dedupedTask = {
+      ...freshTask,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+      status: "in_progress",
+    };
+    const receipt = receiptForCreate({ task: dedupedTask, confidence: highConfidence }, {});
     expect(JSON.stringify(receipt)).not.toContain("DEDUPED_EXTERNAL_REF");
   });
 
@@ -192,7 +215,7 @@ describe("receiptForCreate", () => {
     );
     expect(receipt.deviations).toContainEqual({
       code: "DEPENDS_ON_REJECTED",
-      detail: { rejected: [{ id: "blocker-b", reason: "not found or cross-project" }] },
+      detail: { rejected: ["blocker-b"], reason: "not found or cross-project", totalRejected: 1 },
       next: ["task_create again with corrected dependsOn"],
     });
   });
@@ -214,7 +237,7 @@ describe("receiptForCreate", () => {
     );
     expect(receipt.deviations).toContainEqual({
       code: "LABELS_DROPPED",
-      detail: { dropped: ["urgent"] },
+      detail: { dropped: ["urgent"], totalDropped: 1 },
       next: ["task_create again (agents cannot set labels post-create)"],
     });
   });
@@ -246,9 +269,43 @@ describe("receiptForCreate", () => {
     };
     const receipt = receiptForCreate(
       { task: worstCase, confidence: lowConfidence },
-      { labels: ["backend", "urgent", "p0"], dependsOn: ["blocker-a", "blocker-b", "blocker-c"] },
+      {
+        externalRef: "jira-PROJ-42",
+        labels: ["backend", "urgent", "p0"],
+        dependsOn: ["blocker-a", "blocker-b", "blocker-c"],
+      },
     );
     expect(receipt.deviations).toHaveLength(4);
+    expect(size(receipt)).toBeLessThanOrEqual(TIER2_BUDGET_CHARS);
+  });
+
+  it("clamps DEPENDS_ON_REJECTED/LABELS_DROPPED detail at the schemas' declared maxima (dependsOn 50, labels 20; tools.ts task_create inputShape) and stays within the tier-2 budget", () => {
+    const dependsOnIds = Array.from(
+      { length: 50 },
+      (_, i) => `11111111-1111-1111-1111-${String(100000000000 + i).padStart(12, "0")}`,
+    );
+    const labels = Array.from({ length: 20 }, (_, i) => `label-${String(i).padStart(2, "0")}`);
+    const maxedTask = { ...freshTask, blockedBy: [], labels: [] };
+    const lowConfidence = {
+      score: 42,
+      threshold: 60,
+      enforcementMode: "BLOCK",
+      blocking: true,
+      missing: ["acceptanceCriteria", "goal", "context"],
+      findings: [],
+      nextActions: [],
+    };
+    const receipt = receiptForCreate(
+      { task: maxedTask, confidence: lowConfidence },
+      { dependsOn: dependsOnIds, labels },
+    );
+    expect(receipt.deviations).toHaveLength(3);
+    const dependsOnDev = receipt.deviations!.find((d) => d.code === "DEPENDS_ON_REJECTED")!;
+    expect((dependsOnDev.detail!.rejected as string[]).length).toBeLessThanOrEqual(5);
+    expect(dependsOnDev.detail!.totalRejected).toBe(50);
+    const labelsDev = receipt.deviations!.find((d) => d.code === "LABELS_DROPPED")!;
+    expect((labelsDev.detail!.dropped as string[]).length).toBeLessThanOrEqual(5);
+    expect(labelsDev.detail!.totalDropped).toBe(20);
     expect(size(receipt)).toBeLessThanOrEqual(TIER2_BUDGET_CHARS);
   });
 });
@@ -339,18 +396,30 @@ describe("receiptForSubmitPr", () => {
 });
 
 describe("receiptForMerge", () => {
-  it("a genuine merge reports transition {from: review, to: done}, within the tier-1 budget", () => {
+  // Regression coverage for the fabricated-transition bug: `transition` must
+  // never appear, in either alreadyMerged direction. The route admits both
+  // `review` and an idempotent `done` retry as valid starting states, and
+  // `alreadyMerged` describes the GitHub PR's own merge state, not whether a
+  // DB transition happened on this call: task.status alone reports the
+  // outcome (see receipt.ts's receiptForMerge doc comment for the full
+  // out-of-band-merge scenario that made keying off alreadyMerged wrong).
+
+  it("a fresh merge (alreadyMerged: false) carries task status but no transition field, within the tier-1 budget", () => {
     const receipt = receiptForMerge({ task: { id: "t1", status: "done" }, merged: true, sha: "abc", alreadyMerged: false });
     expect(receipt).toEqual({
       ok: true,
       task: { id: "t1", status: "done" },
-      transition: { from: "review", to: "done" },
     });
+    expect(receipt).not.toHaveProperty("transition");
     expect(size(receipt)).toBeLessThanOrEqual(TIER1_BUDGET_CHARS);
   });
 
-  it("an idempotent already-merged retry carries no transition (nothing changed)", () => {
+  it("an idempotent already-merged retry (alreadyMerged: true) also carries no transition field", () => {
     const receipt = receiptForMerge({ task: { id: "t1", status: "done" }, merged: true, sha: "abc", alreadyMerged: true });
+    expect(receipt).toEqual({
+      ok: true,
+      task: { id: "t1", status: "done" },
+    });
     expect(receipt).not.toHaveProperty("transition");
   });
 });
@@ -385,5 +454,38 @@ describe("receiptForNote", () => {
       comment: { taskId: "11111111-1111-1111-1111-111111111111" },
     });
     expect(size(receipt)).toBeLessThanOrEqual(TIER1_BUDGET_CHARS);
+  });
+});
+
+describe("malformed backend success bodies (no task.id)", () => {
+  // A success body without a `task` object would otherwise throw a raw
+  // TypeError from `response.task.id` inside the builder. Every builder that
+  // reads task.id falls back to returning the raw, unprojected response
+  // instead of crashing.
+  it("every builder that reads task.id falls back to the raw response instead of throwing", () => {
+    const malformed = { ok: true, weird: "shape" };
+    expect(() => receiptForCreate(malformed as never, {})).not.toThrow();
+    expect(receiptForCreate(malformed as never, {})).toBe(malformed);
+
+    expect(() => receiptForRespec(malformed as never)).not.toThrow();
+    expect(receiptForRespec(malformed as never)).toBe(malformed);
+
+    expect(() => receiptForFinish(malformed as never)).not.toThrow();
+    expect(receiptForFinish(malformed as never)).toBe(malformed);
+
+    expect(() => receiptForSubmitPr(malformed as never)).not.toThrow();
+    expect(receiptForSubmitPr(malformed as never)).toBe(malformed);
+
+    expect(() => receiptForMerge(malformed as never)).not.toThrow();
+    expect(receiptForMerge(malformed as never)).toBe(malformed);
+
+    expect(() => receiptForAbandon(malformed as never)).not.toThrow();
+    expect(receiptForAbandon(malformed as never)).toBe(malformed);
+  });
+
+  it("also falls back when `task` is present but `task.id` itself is missing", () => {
+    const malformed = { ok: true, task: { status: "open" } };
+    expect(() => receiptForAbandon(malformed as never)).not.toThrow();
+    expect(receiptForAbandon(malformed as never)).toBe(malformed);
   });
 });

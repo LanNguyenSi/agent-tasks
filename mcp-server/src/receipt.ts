@@ -138,7 +138,17 @@ function confidenceDeviation(c: ConfidenceObj | undefined): Deviation | null {
 // coincidentally have createdAt === updatedAt and be missed — but it is the
 // best signal available without a backend change, per the task brief's
 // explicit fallback ("createdAt != updatedAt or a backend flag").
-function dedupedExternalRefDeviation(task: BackendTask): Deviation | null {
+//
+// Scope gate: the contract's trigger for this deviation is "(projectId,
+// externalRef) already exists", the dedupe is keyed on externalRef, so a
+// create call that sent no externalRef at all cannot have hit that path,
+// regardless of what the createdAt/updatedAt heuristic says. Callers that
+// omit externalRef must never see this code.
+function dedupedExternalRefDeviation(
+  task: BackendTask,
+  externalRef: string | undefined,
+): Deviation | null {
+  if (!externalRef) return null;
   if (!task.createdAt || !task.updatedAt) return null;
   if (task.createdAt === task.updatedAt) return null;
   return {
@@ -147,6 +157,16 @@ function dedupedExternalRefDeviation(task: BackendTask): Deviation | null {
     next: ["tasks_get"],
   };
 }
+
+// Both DEPENDS_ON_REJECTED and LABELS_DROPPED echo a slice of the caller's
+// own input back in `detail`. Both schema fields have generous array
+// maxima (dependsOn 50, labels 20; see tools.ts's task_create inputShape),
+// and at those maxima an unclamped detail array alone blows past the
+// tier-2 budget several times over. Clamp to the first few entries plus an
+// explicit total count so a caller at the tail of a long rejection list
+// still learns "there were more" instead of the array being silently
+// truncated with no signal.
+const DETAIL_CLAMP = 5;
 
 // ── task_create: DEPENDS_ON_REJECTED ─────────────────────────────────────────
 //
@@ -164,13 +184,19 @@ function dependsOnRejectedDeviation(
 ): Deviation | null {
   if (!sentDependsOn || sentDependsOn.length === 0) return null;
   const present = new Set((blockedBy ?? []).map((b) => b.id));
-  const rejected = sentDependsOn
-    .filter((id) => !present.has(id))
-    .map((id) => ({ id, reason: "not found or cross-project" }));
-  if (rejected.length === 0) return null;
+  const rejectedIds = sentDependsOn.filter((id) => !present.has(id));
+  if (rejectedIds.length === 0) return null;
   return {
     code: "DEPENDS_ON_REJECTED",
-    detail: { rejected },
+    detail: {
+      // Every rejected id shares the same reason today (the backend gives
+      // no per-id detail), so the reason is hoisted out of the array
+      // instead of repeated per entry: that repetition was itself most
+      // of the bloat this clamp fixes.
+      rejected: rejectedIds.slice(0, DETAIL_CLAMP),
+      reason: "not found or cross-project",
+      totalRejected: rejectedIds.length,
+    },
     next: ["task_create again with corrected dependsOn"],
   };
 }
@@ -193,12 +219,27 @@ function labelsDroppedDeviation(
   if (dropped.length === 0) return null;
   return {
     code: "LABELS_DROPPED",
-    detail: { dropped },
+    detail: {
+      dropped: dropped.slice(0, DETAIL_CLAMP),
+      totalDropped: dropped.length,
+    },
     next: ["task_create again (agents cannot set labels post-create)"],
   };
 }
 
 // ── Per-verb receipt builders ────────────────────────────────────────────────
+//
+// Defensive guard shared by every builder below: each one is fed a `response`
+// that arrived through an `as` cast in tools.ts (the real runtime shape is
+// only as trustworthy as the backend's success body). Dereferencing
+// `response.task.id` without checking first throws a raw, unhelpful
+// TypeError on a malformed body. Every builder therefore checks
+// `response?.task?.id` up front and, when it's missing, returns the raw
+// response unprojected instead of crashing: the caller still gets
+// something machine-usable, just not the small receipt.
+function hasTaskId(response: { task?: { id?: string } } | null | undefined): boolean {
+  return !!response?.task?.id;
+}
 
 export interface CreateOrRespecResponse {
   task: BackendTask;
@@ -207,12 +248,13 @@ export interface CreateOrRespecResponse {
 
 export function receiptForCreate(
   response: CreateOrRespecResponse,
-  input: { labels?: string[]; dependsOn?: string[] },
-): Receipt {
+  input: { labels?: string[]; dependsOn?: string[]; externalRef?: string },
+): Receipt | CreateOrRespecResponse {
+  if (!hasTaskId(response)) return response;
   const deviations: Deviation[] = [];
   const confDev = confidenceDeviation(response.confidence);
   if (confDev) deviations.push(confDev);
-  const dedupeDev = dedupedExternalRefDeviation(response.task);
+  const dedupeDev = dedupedExternalRefDeviation(response.task, input.externalRef);
   if (dedupeDev) deviations.push(dedupeDev);
   const dependsOnDev = dependsOnRejectedDeviation(input.dependsOn, response.task.blockedBy);
   if (dependsOnDev) deviations.push(dependsOnDev);
@@ -228,7 +270,8 @@ export function receiptForCreate(
   });
 }
 
-export function receiptForRespec(response: CreateOrRespecResponse): Receipt {
+export function receiptForRespec(response: CreateOrRespecResponse): Receipt | CreateOrRespecResponse {
+  if (!hasTaskId(response)) return response;
   const deviations: Deviation[] = [];
   const confDev = confidenceDeviation(response.confidence);
   if (confDev) deviations.push(confDev);
@@ -259,7 +302,8 @@ export interface FinishResponse {
 // `skippedGates`, populated when autoMerge skips the normally-required
 // `prMerged` precondition (tasks.ts work/review/self-approve branches all
 // echo it back verbatim when non-empty).
-export function receiptForFinish(response: FinishResponse): Receipt {
+export function receiptForFinish(response: FinishResponse): Receipt | FinishResponse {
+  if (!hasTaskId(response)) return response;
   const deviations: Deviation[] = [];
   if (response.skippedGates && response.skippedGates.length > 0) {
     deviations.push({
@@ -289,7 +333,8 @@ export interface SubmitPrResponse {
 // round trip (defeats the budget goal) or duplicating the backend's gate
 // engine client-side (out of scope). No deviation catalog is implemented
 // for this verb; see open_questions in the implementer's report.
-export function receiptForSubmitPr(response: SubmitPrResponse): Receipt {
+export function receiptForSubmitPr(response: SubmitPrResponse): Receipt | SubmitPrResponse {
+  if (!hasTaskId(response)) return response;
   return buildReceipt({
     taskId: response.task.id,
     status: response.task.status,
@@ -304,16 +349,23 @@ export interface MergeResponse {
   alreadyMerged?: boolean;
 }
 
-// task_merge: unlike task_finish, the merge route's precondition checks
-// compare `task.status` against hardcoded literals ("review" / "done"),
-// not a dynamic workflow definition (tasks.ts ~lines 3664-3701) — so
-// `from: "review"` is a route-guaranteed fact, not a guess, whenever a real
-// transition happened (i.e. not an idempotent already-merged retry).
-export function receiptForMerge(response: MergeResponse): Receipt {
+// task_merge: no `transition` field. The route admits both `review` and an
+// idempotent `done` retry as valid starting states (tasks.ts ~lines
+// 3697-3700), and `alreadyMerged` describes the GitHub PR's own merge
+// state (github-merge.ts ~lines 158-161), not whether a DB transition
+// happened on THIS call: a PR merged out-of-band via the GitHub UI can
+// leave the task at `review`, and a subsequent task_merge call both gets
+// `alreadyMerged: true` from GitHub AND performs a real review→done
+// transition in the DB. Keying `transition` off `alreadyMerged` would
+// therefore report a fabricated transition in that case (and a missing one
+// on the true idempotent retry, where it happens to be correct by
+// coincidence). `task.status` alone reports the outcome; it needs no
+// inference.
+export function receiptForMerge(response: MergeResponse): Receipt | MergeResponse {
+  if (!hasTaskId(response)) return response;
   return buildReceipt({
     taskId: response.task.id,
     status: response.task.status,
-    transition: response.alreadyMerged ? undefined : { from: "review", to: "done" },
   });
 }
 
@@ -321,7 +373,8 @@ export interface AbandonResponse {
   task: BackendTask;
 }
 
-export function receiptForAbandon(response: AbandonResponse): Receipt {
+export function receiptForAbandon(response: AbandonResponse): Receipt | AbandonResponse {
+  if (!hasTaskId(response)) return response;
   return buildReceipt({
     taskId: response.task.id,
     status: response.task.status,
@@ -338,9 +391,10 @@ export interface NoteResponse {
 // (which would double the round trip for the cheapest verb in the surface).
 // The receipt therefore carries `task.id` only, sourced from the response's
 // `comment.taskId` when present (falling back to the caller's own taskId,
-// which is safe to surface — see the no-echo note on identifiers in
-// receiptForCreate's module doc: correlation ids are not the "content" the
-// no-echo rule targets).
+// which is safe to surface: the no-echo rule throughout this module targets
+// CONTENT the caller sent (description, templateData, comment body, and
+// so on), not correlation ids. Every other receipt in this module already
+// carries `task.id` unconditionally).
 export function receiptForNote(taskId: string, response: NoteResponse): Receipt {
   return buildReceipt({ taskId: response.comment?.taskId ?? taskId });
 }

@@ -7,6 +7,16 @@ export const DEFAULT_BASE_URL = "https://agent-tasks.opentriologue.ai";
 export const SERVER_NAME = "agent-tasks-mcp";
 export const SERVER_VERSION = "0.12.0";
 
+// Wire-format serializer: the exact transform applied to every tool
+// handler's return value before it goes out as the MCP text block. Exported
+// so tests measuring a receipt's emitted size (the response-contract-v1.md
+// token budgets) serialize through this same function instead of a
+// hand-rolled compact JSON.stringify that would under-measure the real,
+// pretty-printed payload and let a budget regression slip past the suite.
+export function serializeResult(result: unknown): string {
+  return typeof result === "string" ? result : JSON.stringify(result, null, 2);
+}
+
 export function createServer(config: ClientConfig): McpServer {
   const client = new AgentTasksClient(config);
   const tools = buildTools(client);
@@ -30,10 +40,7 @@ export function createServer(config: ClientConfig): McpServer {
             content: [
               {
                 type: "text",
-                text:
-                  typeof result === "string"
-                    ? result
-                    : JSON.stringify(result, null, 2),
+                text: serializeResult(result),
               },
             ],
           };
