@@ -24,8 +24,8 @@ Per-verb, the outliers were:
 | `tasks_list` | 32 | 109k | deprecated v1 verb, still in active use |
 | `task_submit_pr` | 65 | 102k | a metadata write returning a full task object |
 | `task_create` | 67 | 98k | the request's own `description` and `templateData` echoed back in the response |
-| `projects_list` | 4.9k/call | | used only to resolve a project id to a slug |
-| `signals_poll` | 9.5k in one call | | deprecated verb, single-call outlier |
+| `projects_list` | - | 4.9k per call | deprecated v1 verb; used only to resolve a project slug to the UUID that write verbs require |
+| `signals_poll` | - | 9.5k in a single observed call | deprecated verb, single-call outlier |
 
 Schema cost (the MCP tool-definition payload itself) is already solved
 client-side by deferred tool loading and is out of scope for this contract;
@@ -38,9 +38,10 @@ Two design facts explain the shape of the problem, not just its size:
   `task_start` response". The bulk of `task_start` is therefore intentional
   design (onboarding folded into the transition call), not an oversight.
 - Responses today are backend JSON passed through verbatim. There is one
-  place to fix this: the `wrap()` layer in `mcp-server/src/client.ts` and
-  the per-verb handlers in `mcp-server/src/tools.ts`, not the backend
-  itself.
+  place to fix this: the `wrap()` helper in `mcp-server/src/tools.ts`
+  (today it only maps API errors; the receipt projection is a new
+  responsibility at that choke point) and the per-verb handlers around
+  it, not the backend itself.
 
 This contract exists to cut the write-verb token cost by roughly an order
 of magnitude without losing the information a caller actually needs to act,
@@ -50,11 +51,17 @@ attention).
 
 ## Receipt shape for write verbs
 
-Every write verb (`task_pickup`, `task_start`, `task_create`, `task_respec`,
-`task_submit_pr`, `task_finish`, `task_merge`, `task_abandon`, `task_note`,
-and their v1 equivalents) returns a **receipt**, not the full backend
-object, unless the caller explicitly asks for the full object via
-`include` (see [include semantics](#include-semantics-replacing-verbose)).
+Every state-transition write verb (`task_start`, `task_create`,
+`task_respec`, `task_submit_pr`, `task_finish`, `task_merge`,
+`task_abandon`, `task_note`, and their v1 equivalents) returns a
+**receipt**, not the full backend object, unless the caller explicitly
+asks for the full object via `include` (see
+[include semantics](#include-semantics-replacing-verbose)).
+
+`task_pickup` is the deliberate exception: delivering the task spec is
+its purpose (see [onboarding channels](#onboarding-channels-by-rate-of-change)),
+so its default is the full spec without `comments`. Its confirm fields
+and deviation handling still follow the receipt rules below.
 
 The receipt has three tiers, layered in a single response object:
 
@@ -64,7 +71,7 @@ The receipt has three tiers, layered in a single response object:
   "ok": true,
   "task": { "id": "…", "status": "in_progress" },
   "transition": { "from": "open", "to": "in_progress" }, // only on a state change
-  "confidence": 87, // bare scalar, create/respec only
+  "confidence": 87, // bare scalar on create, respec, and start; detail only on create/respec
 
   // Tier 2: advise, present ONLY on deviation. Normative cap: <= ~400 tokens.
   "deviations": [
@@ -90,6 +97,13 @@ Tier 1 (`confirm`) is the receipt: it answers "did it work, and what is
 the task's identity and status now". Tier 2 (`deviations`) is present only
 when something needs the caller's attention. Tier 3 (`next`) is an optional
 hint at the next verb, not a menu.
+
+`next` (both the top-level field and the per-deviation field) is
+free-form hint text addressed to the calling model, not a
+machine-parseable field; each entry SHOULD lead with the verb name it
+suggests. The error shape's `allowedNext` is the strict counterpart:
+verb names only, machine-checkable (see
+[error shape](#error-shape-block-tier)).
 
 ### Core rules
 
@@ -169,6 +183,10 @@ Per-verb defaults without `include`:
 MUST remain available at minimum via `include: ["task"]` during the
 deprecation window.
 
+Deprecated v1 verbs remain in scope of this contract for as long as they
+ship in the default tool registration: deprecation shortens their
+lifetime, it does not exempt them from the shape rules.
+
 ## Error shape (block tier)
 
 A call that cannot proceed at all is the third receipt tier: a **teaching
@@ -191,8 +209,10 @@ verbatim.
 problem. `allowedNext` MUST list verb names the caller can call immediately,
 not a general suggestion. *Why:* a block that only reports failure sends
 the caller back to trial and error; a block that also teaches the fix is
-what makes minimal responses safe to ship in the first place (see the
-Discoverability-regression risk in the plan this contract implements).
+what makes minimal responses safe to ship in the first place. A
+first-time integrator facing narrow defaults must be corrected by the
+error itself, or the contract's minimalism becomes a discoverability
+regression.
 
 ### Catalog seed
 
@@ -200,17 +220,18 @@ The block-tier catalog MUST cover at least the following known traps,
 each already documented as a 4xx behavior in `mcp-server/src/tools.ts` /
 `backend/src/routes/tasks.ts`:
 
-- **Start without a claim.** `task_start` / `task_pickup` return 409 when
-  the caller already holds an active claim ("You already hold an active
-  claim. Call task_finish or task_abandon on it before picking up new
-  work / before starting another.").
+- **Acting without a claim.** `task_finish`, `task_submit_pr`, and
+  `task_abandon` return 403 when the caller does not hold the claim on
+  the task; the message names `task_start` as the corrective call. This
+  is the trap behind the error-shape example above.
 - **Branch precondition.** A `branchPresent` / `prPresent` / `ciGreen`
   workflow gate not yet satisfied blocks `task_finish` with 422
   `precondition_failed` and a list of the failing rules.
-- **Claim wall / solo multi-task.** The same 409 "already hold an active
-  claim" case above, called out separately because it is the common trap
-  for callers that try to pick up a second task before finishing the
-  first.
+- **Claim wall / solo multi-task.** `task_pickup` / `task_start` return
+  409 when the caller already holds an active claim; the message tells
+  the caller to `task_finish` or `task_abandon` the current task first.
+  The common trap is trying to pick up a second task before finishing
+  the first.
 - **`cross_repo_pr_rejected`.** `task_submit_pr` rejects a `prUrl` that
   does not point at `project.githubRepo` with 400.
 - **`transition force=admin-only`.** The `tasks_transition` /
@@ -268,6 +289,13 @@ this contract, not aspirational targets:
   absent when there is no deviation.
 - Error shape (`block`): sized to be a teaching error, not a payload cap;
   `recipe` and `allowedNext` are required fields regardless of size.
+
+The caps apply to the receipt envelope. Content the caller explicitly
+requested via `include`, and `task_pickup`'s default full spec, are
+exempt from the tier caps; they are bounded instead by the calibrated
+byte budgets of the workflow test suite (`BYTES_BUDGET` in
+`backend/tests/workflow/fixtures.ts`), which the implementing task MUST
+extend to cover any new response variant it introduces.
 
 A verb that exceeds its tier's budget on the happy path is a contract
 violation, not a judgment call. Implementation tasks MUST include a
