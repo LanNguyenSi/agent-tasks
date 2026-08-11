@@ -144,8 +144,18 @@ shapes below are normative for that verb.
 |---|---|---|---|
 | `CONFIDENCE_BELOW_THRESHOLD` | confidence score is below the project's threshold | `score`, `threshold`, `enforcementMode`, `missing[]` | `task_respec` |
 | `DEDUPED_EXTERNAL_REF` | `(projectId, externalRef)` already exists | `existingTaskId`, `existingStatus` | `tasks_get` |
-| `DEPENDS_ON_REJECTED` | one or more `dependsOn` ids are invalid or cross-project | `rejected[]`, each with a reason | `task_create` again with corrected `dependsOn` |
-| `LABELS_DROPPED` | one or more labels were rejected or normalized away | `dropped[]` | `task_create` again (agents cannot set labels post-create) |
+| `DEPENDS_ON_REJECTED` | one or more `dependsOn` ids are invalid or cross-project | `rejected[]` (clamped), `reason` (shared), `totalRejected` | `task_create` again with corrected `dependsOn` |
+| `LABELS_DROPPED` | one or more labels were rejected or normalized away | `dropped[]` (clamped), `totalDropped` | `task_create` again (agents cannot set labels post-create) |
+
+Detail arrays are clamped: a deviation's array-valued detail field
+carries at most the first 5 entries plus an explicit total count
+(`totalRejected`, `totalDropped`), so a long rejection list cannot blow
+the advise-tier budget and is never silently truncated. Fields whose
+per-entry annotations would repeat the same value (e.g. one shared
+rejection reason) hoist that value out of the array.
+*Why:* at the input schemas' declared maxima an unclamped detail array
+alone exceeds the tier-2 budget several times over; the count keeps the
+truncation honest.
 
 Other write verbs define their own deviation catalog analogously, in their
 own implementation task spec, following the same code/trigger/detail/next
