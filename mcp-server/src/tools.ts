@@ -8,12 +8,16 @@ import {
   receiptForMerge,
   receiptForAbandon,
   receiptForNote,
+  receiptForStart,
+  projectPickup,
   type CreateOrRespecResponse,
   type FinishResponse,
   type SubmitPrResponse,
   type MergeResponse,
   type AbandonResponse,
   type NoteResponse,
+  type StartResponse,
+  type PickupResponse,
 } from "./receipt.js";
 
 export interface ToolDefinition<Shape extends ZodRawShape = ZodRawShape> {
@@ -52,6 +56,36 @@ const includeSchema = z
     'Receipt v1: pass ["task"] to get the full, pre-contract object back for this call instead of the small receipt (recovery path after context loss, or when you need the whole task in one call). "task" is the only supported value on write verbs today.',
   );
 
+// task_start's own include enum. Wider than the other write verbs' (which
+// accept only "task") because task_start's default response is a receipt
+// PLUS a small per-task slice (inferredTaskType, expectedFinishState,
+// gateExpectations) rather than the raw full task — description, comments,
+// and the per-state instructions prose are each reachable individually via
+// include, without paying for the whole object. include:["task"] is still
+// the full, pre-contract object valve, same as every other write verb. See
+// receipt.ts's receiptForStart.
+const startIncludeSchema = z
+  .array(z.enum(["description", "instructions", "comments", "task"]))
+  .max(4)
+  .optional()
+  .describe(
+    'Default response is a receipt + a small per-task slice (inferredTaskType, expectedFinishState, gateExpectations), not the full task. Pass one or more of "description", "instructions" (the state\'s agent-facing prose), "comments" to add just that field back, or "task" for the full, pre-contract object (recovery path after context loss).',
+  );
+
+// task_pickup's include enum. Its default is already the (near-)full task
+// spec per docs/response-contract-v1.md ("full spec, without comments") —
+// the only thing include can add back today is comments; "task" is the
+// uniform full-object escape hatch every other verb has. Both currently
+// resolve to the same content for this verb (see receipt.ts's projectPickup
+// doc comment for why that duplication is deliberate, not a bug).
+const pickupIncludeSchema = z
+  .array(z.enum(["comments", "task"]))
+  .max(2)
+  .optional()
+  .describe(
+    'Default response is the full task spec WITHOUT comments. Pass ["comments"] or ["task"] to get comments back too (both return the same full, pre-contract object for this verb today).',
+  );
+
 async function wrap<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
@@ -86,7 +120,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_pickup",
       description:
-        "Get the next piece of work. Returns one of: a pending signal, a task ready for review, a claimable task, or idle. The response is tagged with `kind: \"signal\" | \"review\" | \"work\" | \"idle\"`. Signals are delivered at-most-once and acked atomically. Review tasks are filtered by the distinct-reviewer rule (you cannot review tasks you authored). Fails with 409 if you already hold an active claim — call task_finish or task_abandon first.\n\nOptional `reclassify`: opt-in flag that re-runs the debugFlavor classifier past the isFresh guard and overwrites debugFlavor with the new result; on a true-to-false flip it also deletes the now-stale grounding-session metadata. Forwarded as `?reclassify=true` in the query string (the backend compares with `=== \"true\"`, so only the literal lowercase string `true` is honoured; any other truthy representation is a no-op).",
+        "Get the next piece of work. Returns one of: a pending signal, a task ready for review, a claimable task, or idle. The response is tagged with `kind: \"signal\" | \"review\" | \"work\" | \"idle\"`. Signals are delivered at-most-once and acked atomically. Review tasks are filtered by the distinct-reviewer rule (you cannot review tasks you authored). Fails with 409 if you already hold an active claim — call task_finish or task_abandon first.\n\nOn a review/work `kind`, returns the full task spec by default — description, templateData, acceptance criteria, everything you need to do the work — WITHOUT `comments` (docs/response-contract-v1.md: task_pickup is the one write verb whose default is the full spec, not a receipt). Pass include:[\"comments\"] or include:[\"task\"] to get comments back too.\n\nOptional `reclassify`: opt-in flag that re-runs the debugFlavor classifier past the isFresh guard and overwrites debugFlavor with the new result; on a true-to-false flip it also deletes the now-stale grounding-session metadata. Forwarded as `?reclassify=true` in the query string (the backend compares with `=== \"true\"`, so only the literal lowercase string `true` is honoured; any other truthy representation is a no-op).",
       inputShape: {
         reclassify: z
           .boolean()
@@ -94,14 +128,19 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
           .describe(
             "Opt-in flag. When true, re-runs the debugFlavor classifier past the isFresh guard and overwrites debugFlavor with the new result; on a true-to-false flip it also deletes the now-stale grounding-session metadata. Sent as the literal query string `?reclassify=true` — only lowercase `true` is honoured by the backend; other truthy values are no-ops.",
           ),
+        include: pickupIncludeSchema,
       },
-      handler: async ({ reclassify }) =>
-        wrap(() => client.pickupWork(reclassify !== undefined ? { reclassify } : undefined)),
+      handler: async ({ reclassify, include }) => {
+        const response = await wrap(() =>
+          client.pickupWork(reclassify !== undefined ? { reclassify } : undefined),
+        );
+        return projectPickup(response as PickupResponse, include);
+      },
     }),
     def({
       name: "task_start",
       description:
-        "Begin work on a task. Polymorphic by task status: an `open` task is author-claimed and transitioned to in_progress; a `review` task is review-claimed without state change. Response includes the task data, project info, and `expectedFinishState` (the state task_finish will target for a work claim). Fails with 409 if you already hold an active claim.\n\nOptional `branchName`: for projects that enforce the `branchPresent` workflow gate on the start edge, pass the branch you intend to work on and the server folds it into the same atomic claim write. Single round-trip, no separate tasks_update needed. Ignored when the task already has a branchName (idempotent, never overwrites). Only meaningful on the open→in_progress branch; on a review-claim start the value is accepted but ignored.\n\nOptional `reclassify`: opt-in flag that re-runs the debugFlavor classifier past the isFresh guard and overwrites debugFlavor with the new result; on a true-to-false flip it also deletes the now-stale grounding-session metadata. Forwarded as a strict JSON boolean in the request body (unlike task_pickup where only the literal query string `true` is honoured).",
+        "Begin work on a task. Polymorphic by task status: an `open` task is author-claimed and transitioned to in_progress; a `review` task is review-claimed without state change. Fails with 409 if you already hold an active claim.\n\nOptional `branchName`: for projects that enforce the `branchPresent` workflow gate on the start edge, pass the branch you intend to work on and the server folds it into the same atomic claim write. Single round-trip, no separate tasks_update needed. Ignored when the task already has a branchName (idempotent, never overwrites). Only meaningful on the open→in_progress branch; on a review-claim start the value is accepted but ignored.\n\nOptional `reclassify`: opt-in flag that re-runs the debugFlavor classifier past the isFresh guard and overwrites debugFlavor with the new result; on a true-to-false flip it also deletes the now-stale grounding-session metadata. Forwarded as a strict JSON boolean in the request body (unlike task_pickup where only the literal query string `true` is honoured).\n\nReturns a receipt by default ({ ok, task: { id, status }, expectedFinishState, gateExpectations?, inferredTaskType? }) — no description, no per-state instructions prose, no comments, and no project object; a compact grounding-session recipe replaces the debugFlavor hint's verbose fields when the task is debug-flavored, and the large metadata.groundingSessionState blob never appears. Pass include:[\"description\" | \"instructions\" | \"comments\"] to add one field back, or include:[\"task\"] for the full, pre-contract object (recovery path after context loss).",
       inputShape: {
         taskId: uuid(),
         branchName: z
@@ -119,14 +158,17 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
           .describe(
             "Opt-in flag. When true, re-runs the debugFlavor classifier past the isFresh guard and overwrites debugFlavor with the new result; on a true-to-false flip it also deletes the now-stale grounding-session metadata. Forwarded as a strict JSON boolean in the request body (unlike task_pickup where the backend compares the query string with === \"true\").",
           ),
+        include: startIncludeSchema,
       },
-      handler: async ({ taskId, branchName, reclassify }) => {
+      handler: async ({ taskId, branchName, reclassify, include }) => {
         const body: { branchName?: string; reclassify?: boolean } = {};
         if (branchName) body.branchName = branchName;
         if (reclassify !== undefined) body.reclassify = reclassify;
-        return wrap(() =>
+        const response = await wrap(() =>
           client.startTask(taskId, Object.keys(body).length > 0 ? body : undefined),
         );
+        if (include?.includes("task")) return response;
+        return receiptForStart(response as StartResponse, include);
       },
     }),
     def({

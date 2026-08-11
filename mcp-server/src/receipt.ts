@@ -16,6 +16,11 @@
 // returns the backend object verbatim (see the per-verb handlers in
 // tools.ts) — the old projection path stays reachable, unchanged.
 
+import {
+  DEFAULT_WORKFLOW_AGENT_INSTRUCTIONS,
+  DEFAULT_WORKFLOW_TRANSITIONS,
+} from "./default-workflow.js";
+
 /** One entry in the Tier 2 `deviations` array. */
 export interface Deviation {
   code: string;
@@ -483,4 +488,228 @@ export interface NoteResponse {
 // carries `task.id` unconditionally).
 export function receiptForNote(taskId: string, response: NoteResponse): Receipt {
   return buildReceipt({ taskId: response.comment?.taskId ?? taskId });
+}
+
+// ── task_start: receipt + per-task slice ────────────────────────────────────
+//
+// docs/response-contract-v1.md's per-verb defaults table lists task_start's
+// default as "receipt only", but the contract also says task_start needs
+// enough for the caller to act without a second round trip. rc-v1-C003
+// implements that as the C002-style receipt PLUS a small, task-specific
+// slice: inferredTaskType, expectedFinishState, and gateExpectations. None
+// of it is the caller's own request content (no-echo is satisfied), and none
+// of it is the large, rarely-changing static material (full task payload,
+// comments, description, per-state instructions prose) the contract wants
+// out of the default path — that material stays reachable via `include`
+// (see the per-verb include enum in tools.ts) or, for the truly static
+// prose, in default-workflow.ts's exported constants (the rc-v1-C004
+// handover point).
+
+export interface StartWorkflowDefinition {
+  states?: { name: string; agentInstructions?: string }[];
+  transitions?: { from: string; to: string; requires?: string[] }[];
+}
+
+export interface StartTask extends BackendTask {
+  // Plain scalar columns, always present on the raw response regardless of
+  // `include` (only relations need an explicit include) — see the KNOWN GAP
+  // comment on deriveGateExpectations for why `workflow` itself is the
+  // exception.
+  workflowId?: string | null;
+  templateData?: { taskType?: unknown } | null;
+  description?: string | null;
+  comments?: unknown[];
+  // KNOWN GAP: the live backend's POST /tasks/:id/start only fetches this
+  // relation on the review-claim branch's re-fetch (backend/src/routes/
+  // tasks.ts); the far more common work-claim branch (open -> in_progress)
+  // never includes it. When absent, deriveGateExpectations/
+  // deriveStartInstructions fall back to the static default-workflow.ts
+  // mirror instead of guessing.
+  workflow?: { definition?: StartWorkflowDefinition } | null;
+}
+
+export interface StartGroundingHint {
+  debugFlavor: true;
+  recommendedAction: string;
+  mcpToolHint: string;
+  // Phase 2 only (a real grounding session was started server-side).
+  backendSessionRef?: string;
+  currentPhase?: string;
+  mandatorySequence?: string[];
+  activeGuardrails?: string[];
+}
+
+export interface StartResponse {
+  kind: "work" | "review";
+  task: StartTask;
+  expectedFinishState?: string;
+  groundingHint?: StartGroundingHint;
+  project?: unknown;
+  // KNOWN GAP: not present on the live backend's /start success response
+  // today (the confidence gate discards its computed score once the claim
+  // is allowed — see backend/src/services/confidence-gate.ts). Read
+  // defensively, in case a future backend change starts returning it,
+  // matching the "actionable counter-rule": task_start cannot change the
+  // spec, so only the bare scalar belongs here, never `missing[]`/detail.
+  confidence?: { score: number };
+}
+
+export interface StartSlice {
+  ok: true;
+  task: { id: string; status?: string };
+  /** Bare scalar only — see the KNOWN GAP note on StartResponse.confidence. */
+  confidence?: number;
+  /** Derived from task.templateData.taskType (the same source
+   *  backend/src/lib/confidence.ts's own inferredTaskType uses), not echoed
+   *  from the caller's own request (taskType is set once, at task_create
+   *  time, by whoever created the task — not by this call's caller). */
+  inferredTaskType?: string;
+  expectedFinishState?: string;
+  /** The `requires` gate list for the transition out of the task's current
+   *  state to `expectedFinishState`. See deriveGateExpectations for the
+   *  dynamic-vs-static-fallback resolution and its documented gap. */
+  gateExpectations?: string[];
+  next?: string[];
+  // ── include-gated fields (tools.ts's task_start includeSchema) ──────────
+  description?: string;
+  comments?: unknown[];
+  instructions?: string;
+}
+
+function deriveInferredTaskType(task: StartTask): string | undefined {
+  const taskType = task.templateData?.taskType;
+  return typeof taskType === "string" && taskType.length > 0 ? taskType : undefined;
+}
+
+/**
+ * Resolves the `requires` gate list for task.status -> expectedFinishState.
+ *
+ * Dynamic path: when the raw response embeds `task.workflow.definition`
+ * (today: the review-claim branch of POST /tasks/:id/start only — see the
+ * KNOWN GAP on StartTask.workflow above), it is authoritative for this
+ * project and takes priority.
+ *
+ * Static fallback: `task.workflowId === null` means the task genuinely runs
+ * the built-in default workflow (ADR-0008 resolution chain), whose gate
+ * structure is fixed and mirrored in default-workflow.ts. A non-null
+ * `workflowId` without an embedded `workflow` relation means a CUSTOM
+ * workflow governs this task but its definition was not sent — guessing its
+ * gates from the default table would be actively wrong, so gateExpectations
+ * is omitted rather than guessed in that case.
+ */
+function deriveGateExpectations(
+  task: StartTask,
+  expectedFinishState: string | undefined,
+): string[] | undefined {
+  if (!expectedFinishState || !task.status) return undefined;
+
+  const dynamicTransitions = task.workflow?.definition?.transitions;
+  if (dynamicTransitions) {
+    const match = dynamicTransitions.find(
+      (t) => t.from === task.status && t.to === expectedFinishState,
+    );
+    return match?.requires && match.requires.length > 0 ? match.requires : undefined;
+  }
+
+  if (task.workflowId) return undefined; // custom workflow, definition not sent: do not guess
+
+  const fallback = DEFAULT_WORKFLOW_TRANSITIONS[task.status]?.find(
+    (t) => t.to === expectedFinishState,
+  );
+  return fallback?.requires && fallback.requires.length > 0 ? fallback.requires : undefined;
+}
+
+/** Same dynamic-then-static resolution as deriveGateExpectations, for the
+ *  per-state instructions prose instead of the per-edge gate list. */
+function deriveStartInstructions(task: StartTask): string | undefined {
+  const dynamicState = task.workflow?.definition?.states?.find((s) => s.name === task.status);
+  if (dynamicState?.agentInstructions) return dynamicState.agentInstructions;
+  if (!task.status) return undefined;
+  return DEFAULT_WORKFLOW_AGENT_INSTRUCTIONS[task.status];
+}
+
+/**
+ * Compacts a debugFlavor groundingHint down to its actionable part: the
+ * callable recipe (`mcpToolHint`), plus the session ref when one exists, for
+ * forensic/debugging purposes (see GroundingHint's own doc comment in
+ * backend/src/lib/debug-flavor.ts — the backendSessionRef is NOT itself
+ * addressable by the agent's own grounding-mcp tools, `mcpToolHint` already
+ * carries a self-sufficient recipe). Deliberately drops `recommendedAction`
+ * (a restated sentence, not an action), `currentPhase`, `mandatorySequence`,
+ * and `activeGuardrails` (verbose, not actionable for THIS call) — the full
+ * hint remains reachable via include:["task"]. This is also where
+ * `metadata.groundingSessionState` (the large persisted session blob) is
+ * kept OUT of the default response: this function never reads `metadata` at
+ * all, only the already-compact `groundingHint` field.
+ */
+function deriveGroundingNext(hint: StartGroundingHint | undefined): string[] | undefined {
+  if (!hint) return undefined;
+  const suffix = hint.backendSessionRef ? ` (session ${hint.backendSessionRef})` : "";
+  return [`${hint.mcpToolHint}${suffix}`];
+}
+
+export function receiptForStart(
+  response: StartResponse,
+  include?: readonly string[],
+): StartSlice | StartResponse {
+  if (!hasTaskId(response)) return response;
+
+  const slice: StartSlice = {
+    ok: true,
+    task:
+      response.task.status !== undefined
+        ? { id: response.task.id, status: response.task.status }
+        : { id: response.task.id },
+  };
+  if (response.confidence?.score !== undefined) slice.confidence = response.confidence.score;
+  const inferredTaskType = deriveInferredTaskType(response.task);
+  if (inferredTaskType) slice.inferredTaskType = inferredTaskType;
+  if (response.expectedFinishState) slice.expectedFinishState = response.expectedFinishState;
+  const gateExpectations = deriveGateExpectations(response.task, response.expectedFinishState);
+  if (gateExpectations) slice.gateExpectations = gateExpectations;
+  const next = deriveGroundingNext(response.groundingHint);
+  if (next) slice.next = next;
+
+  if (include?.includes("description") && response.task.description) {
+    slice.description = response.task.description;
+  }
+  if (include?.includes("comments") && response.task.comments) {
+    slice.comments = response.task.comments;
+  }
+  if (include?.includes("instructions")) {
+    const instructions = deriveStartInstructions(response.task);
+    if (instructions) slice.instructions = instructions;
+  }
+
+  return slice;
+}
+
+// ── task_pickup: full spec, without comments (the contract's deliberate
+// exception — see docs/response-contract-v1.md's "Receipt shape for write
+// verbs" section) ────────────────────────────────────────────────────────
+//
+// Every kind task_pickup can return ("signal" | "review" | "work" | "idle")
+// passes through unchanged except that a "review"/"work" kind's `task.
+// comments` array is stripped by default. include:["comments"] or
+// include:["task"] both restore the untouched raw response — see
+// tools.ts's pickupIncludeSchema and the "both reach the same content for
+// this verb" test in tests/receipt.test.ts for why two enum values map to
+// one behavior here (uniform "task" escape hatch across every verb, plus
+// forward compatibility with the read-verb `include` vocabulary landing in
+// rc-v1-C006).
+export interface PickupResponse {
+  kind: "signal" | "review" | "work" | "idle";
+  task?: { comments?: unknown[]; [key: string]: unknown };
+  signal?: unknown;
+  groundingHint?: unknown;
+}
+
+export function projectPickup(
+  response: PickupResponse,
+  include?: readonly string[],
+): PickupResponse {
+  if (include?.includes("task") || include?.includes("comments")) return response;
+  if (!response.task || !("comments" in response.task)) return response;
+  const { comments: _comments, ...taskWithoutComments } = response.task;
+  return { ...response, task: taskWithoutComments };
 }
