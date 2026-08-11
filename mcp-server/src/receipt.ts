@@ -108,6 +108,57 @@ export interface ConfidenceObj {
 // never actually reach the clamp in practice.
 const DETAIL_CLAMP = 5;
 
+// Per-entry byte bound layered on top of DETAIL_CLAMP. DETAIL_CLAMP alone
+// only bounds array LENGTH: a caller-influenced string entering a detail
+// array (today: LABELS_DROPPED's `dropped[]`, sourced from task_create's
+// `labels` schema, each up to 100 chars per tools.ts inputShape) can still
+// blow the tier-2 budget at its own declared maximum even with only 5
+// entries kept, measured at 1731 emitted chars (already over the
+// 1600-char cap) with an unbounded entry length, before this clamp existed.
+//
+// 19 is not a round guess, it is the largest value that clears the tier-2
+// budget with real headroom at the worst case (all three array-bearing
+// task_create deviations firing at once, each at its schema/backend
+// maximum): measured via tests/receipt.test.ts's maxima test at each
+// candidate value. 20 chars already regresses to 1551 (over budget), 19
+// measures 1541 (comfortable margin below both the test's 1550 floor and
+// the 1600 cap itself). 19 also happens to be exactly long enough that the
+// backend's longest `missing[]` field name ("acceptanceCriteria", 19
+// chars) never truncates; the 36-char dependsOn UUIDs still do truncate
+// under this bound, since there is no room left for a higher,
+// ID-preserving value once labels are at their real maximum. This is an
+// accepted, visible (ends in "...") consequence of one shared per-entry
+// bound applying uniformly to every future detector, not a special case
+// per field.
+const ENTRY_CHAR_BUDGET = 19;
+
+// Visible truncation marker: a shortened entry must not look complete, so
+// the caller can tell at the string level (not just via the totalX count)
+// that this particular entry was cut.
+const ENTRY_TRUNCATION_MARKER = "...";
+
+/**
+ * Byte-bounds a detail array by construction: caps the element COUNT (as
+ * DETAIL_CLAMP alone already did) AND caps each surviving entry's own
+ * length, so a future detector cannot blow the tier-2 budget just by
+ * carrying long strings inside an already-short array. Truncation is never
+ * silent: a shortened entry visibly ends with ENTRY_TRUNCATION_MARKER, and
+ * the deviation's own totalX field already reports the untruncated
+ * cardinality.
+ */
+function clampEntries(
+  values: string[],
+  opts: { max?: number; entryChars?: number } = {},
+): string[] {
+  const max = opts.max ?? DETAIL_CLAMP;
+  const entryChars = opts.entryChars ?? ENTRY_CHAR_BUDGET;
+  return values.slice(0, max).map((v) =>
+    v.length > entryChars
+      ? v.slice(0, entryChars - ENTRY_TRUNCATION_MARKER.length) + ENTRY_TRUNCATION_MARKER
+      : v,
+  );
+}
+
 // ── task_create / task_respec: confidence deviation ─────────────────────────
 //
 // Trigger per the contract's create catalog: "confidence score is below the
@@ -129,7 +180,7 @@ function confidenceDeviation(c: ConfidenceObj | undefined): Deviation | null {
       // (title, description, goal, acceptanceCriteria, scope, outOfScope,
       // dependencies, risk, agentPrompt), already in surfacing-priority
       // order, so the clamp keeps the entries that matter most.
-      missing: missing.slice(0, DETAIL_CLAMP),
+      missing: clampEntries(missing, { max: DETAIL_CLAMP, entryChars: ENTRY_CHAR_BUDGET }),
       totalMissing: missing.length,
     },
     // Kept short on purpose: at the missing[]/dependsOn/labels maxima, all
@@ -138,8 +189,8 @@ function confidenceDeviation(c: ConfidenceObj | undefined): Deviation | null {
     // backend's declared maxima" test in tests/receipt.test.ts).
     actNow:
       c.enforcementMode === "BLOCK"
-        ? "Not editable after create except via task_respec; at BLOCK, task_pickup/task_start rejects until the score improves."
-        : "Not editable after create except via task_respec; not BLOCK, so advisory only for now.",
+        ? "Description/templateData not editable after create except via task_respec; at BLOCK, task_pickup/task_start rejects until the score improves."
+        : "Description/templateData not editable after create except via task_respec; not BLOCK, so advisory only for now.",
     next: ["task_respec to raise the score above the threshold"],
   };
 }
@@ -214,7 +265,7 @@ function dependsOnRejectedDeviation(
       // no per-id detail), so the reason is hoisted out of the array
       // instead of repeated per entry: that repetition was itself most
       // of the bloat this clamp fixes.
-      rejected: rejectedIds.slice(0, DETAIL_CLAMP),
+      rejected: clampEntries(rejectedIds, { max: DETAIL_CLAMP, entryChars: ENTRY_CHAR_BUDGET }),
       reason: "not found or cross-project",
       totalRejected: rejectedIds.length,
     },
@@ -241,7 +292,7 @@ function labelsDroppedDeviation(
   return {
     code: "LABELS_DROPPED",
     detail: {
-      dropped: dropped.slice(0, DETAIL_CLAMP),
+      dropped: clampEntries(dropped, { max: DETAIL_CLAMP, entryChars: ENTRY_CHAR_BUDGET }),
       totalDropped: dropped.length,
     },
     next: ["task_create again (agents cannot set labels post-create)"],
@@ -341,7 +392,7 @@ export function receiptForFinish(response: FinishResponse): Receipt | FinishResp
         // can never actually reach 5 entries today. The point is that the
         // clamping rule holds unconditionally, not just where it currently
         // bites.
-        skipped: response.skippedGates.slice(0, DETAIL_CLAMP),
+        skipped: clampEntries(response.skippedGates, { max: DETAIL_CLAMP, entryChars: ENTRY_CHAR_BUDGET }),
         totalSkipped: response.skippedGates.length,
       },
       actNow: `autoMerge bypassed the normally-required workflow gate(s) before this transition: ${response.skippedGates.join(", ")}.`,

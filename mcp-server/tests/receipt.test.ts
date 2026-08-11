@@ -142,6 +142,10 @@ describe("receiptForCreate", () => {
       totalMissing: 2,
     });
     expect(dev.actNow).toMatch(/immutable|not editable/i);
+    // The subject must survive: fix round 2 previously shortened this text
+    // to "Not editable after create..." and lost what "not editable" refers
+    // to. Requiring /description/i alongside catches that regression class.
+    expect(dev.actNow).toMatch(/description/i);
     expect(dev.actNow).toMatch(/BLOCK/);
     expect(dev.next).toEqual(["task_respec to raise the score above the threshold"]);
     expect(size(receipt)).toBeLessThanOrEqual(TIER2_BUDGET_CHARS);
@@ -282,13 +286,23 @@ describe("receiptForCreate", () => {
     expect(size(receipt)).toBeLessThanOrEqual(TIER2_BUDGET_CHARS);
   });
 
-  it("clamps DEPENDS_ON_REJECTED/LABELS_DROPPED/CONFIDENCE_BELOW_THRESHOLD detail at the schemas' and backend's declared maxima (dependsOn 50, labels 20 from tools.ts task_create inputShape; missing[] 9 from backend/src/lib/confidence.ts's fixed field list) and stays within the tier-2 budget", () => {
+  it("byte-bounds DEPENDS_ON_REJECTED/LABELS_DROPPED/CONFIDENCE_BELOW_THRESHOLD detail at the TRUE declared maxima (50 dependsOn UUIDs, 20 labels at their 100-char schema max, missing[] at the backend's 9-field max, a realistic 36-char UUID task id) with real headroom under the tier-2 cap", () => {
+    // Array-length maxima alone are not enough: at labels' declared 100
+    // chars-per-entry maximum, an unclamped LABELS_DROPPED entry blows the
+    // tier-2 budget even with only 5 entries kept (see receipt.ts's
+    // clampEntries / ENTRY_CHAR_BUDGET). This fixture drives every
+    // dimension at once: array length AND per-entry length.
     const dependsOnIds = Array.from(
       { length: 50 },
       (_, i) => `11111111-1111-1111-1111-${String(100000000000 + i).padStart(12, "0")}`,
     );
-    const labels = Array.from({ length: 20 }, (_, i) => `label-${String(i).padStart(2, "0")}`);
-    const maxedTask = { ...freshTask, blockedBy: [], labels: [] };
+    // Each label at the schema's own max (tools.ts task_create inputShape:
+    // z.array(z.string().trim().min(1).max(100)).max(20)).
+    const labels = Array.from({ length: 20 }, (_, i) =>
+      (`label-${String(i).padStart(2, "0")}-` + "x".repeat(100)).slice(0, 100),
+    );
+    const maxedTaskId = "22222222-2222-2222-2222-222222222222";
+    const maxedTask = { ...freshTask, id: maxedTaskId, blockedBy: [], labels: [] };
     // The backend scorer (backend/src/lib/confidence.ts ~lines 812-821) can
     // populate at most these 9 fields, in this surfacing-priority order.
     const missingAtMax = [
@@ -315,17 +329,48 @@ describe("receiptForCreate", () => {
       { task: maxedTask, confidence: lowConfidence },
       { dependsOn: dependsOnIds, labels },
     ) as Receipt;
+    expect(receipt.task.id).toBe(maxedTaskId);
     expect(receipt.deviations).toHaveLength(3);
+
     const confDev = receipt.deviations!.find((d: Deviation) => d.code === "CONFIDENCE_BELOW_THRESHOLD")!;
-    expect((confDev.detail!.missing as string[]).length).toBeLessThanOrEqual(5);
+    const missingDetail = confDev.detail!.missing as string[];
+    expect(missingDetail.length).toBeLessThanOrEqual(5);
     expect(confDev.detail!.totalMissing).toBe(9);
+    // The chosen entry-char budget is exactly long enough that the
+    // backend's longest field name ("acceptanceCriteria", 19 chars) never
+    // truncates.
+    expect(missingDetail).toContain("acceptanceCriteria");
+    // Restored subject from fix round 3 (see the actNow test above): must
+    // still hold at the maxima fixture, not just the minimal one.
+    expect(confDev.actNow).toMatch(/description/i);
+
     const dependsOnDev = receipt.deviations!.find((d: Deviation) => d.code === "DEPENDS_ON_REJECTED")!;
-    expect((dependsOnDev.detail!.rejected as string[]).length).toBeLessThanOrEqual(5);
+    const rejected = dependsOnDev.detail!.rejected as string[];
+    expect(rejected.length).toBeLessThanOrEqual(5);
     expect(dependsOnDev.detail!.totalRejected).toBe(50);
+    // At this byte budget there is no room left to also preserve full
+    // 36-char UUIDs once labels sit at their real 100-char maximum: the
+    // entries DO truncate, visibly (ends in "..."), not silently. The
+    // caller still has the full id list it originally sent, plus
+    // totalRejected for the true count.
+    for (const id of rejected) {
+      expect(id.length).toBeLessThan(36);
+      expect(id).toMatch(/\.\.\.$/);
+    }
+
     const labelsDev = receipt.deviations!.find((d: Deviation) => d.code === "LABELS_DROPPED")!;
-    expect((labelsDev.detail!.dropped as string[]).length).toBeLessThanOrEqual(5);
+    const dropped = labelsDev.detail!.dropped as string[];
+    expect(dropped.length).toBeLessThanOrEqual(5);
     expect(labelsDev.detail!.totalDropped).toBe(20);
-    expect(size(receipt)).toBeLessThanOrEqual(TIER2_BUDGET_CHARS);
+    // 100-char labels DO exceed the per-entry budget: every surviving
+    // entry must show the visible truncation marker, not silently shrink.
+    for (const label of dropped) {
+      expect(label.length).toBeLessThan(100);
+      expect(label).toMatch(/\.\.\.$/);
+    }
+
+    const emitted = size(receipt);
+    expect(emitted).toBeLessThanOrEqual(TIER2_BUDGET_CHARS - 50);
   });
 });
 

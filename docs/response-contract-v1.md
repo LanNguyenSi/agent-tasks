@@ -83,7 +83,8 @@ The receipt has three tiers, layered in a single response object:
         "score": 42,
         "threshold": 60,
         "enforcementMode": "BLOCK",
-        "missing": ["acceptanceCriteria"]
+        "missing": ["acceptanceCriteria"],
+        "totalMissing": 1
       },
       "actNow": "Description is not editable after create except via task_respec; at BLOCK, task_pickup will reject this task.",
       "next": ["task_respec to raise the score above the threshold"]
@@ -162,7 +163,11 @@ example `task_finish`'s `WORKFLOW_GATE_SKIPPED` clamps `skipped[]` the
 same way, even though the fixed set of workflow gates means that field can
 never actually reach the clamp today). Fields whose per-entry annotations
 would repeat the same value (e.g. one shared rejection reason) hoist that
-value out of the array.
+value out of the array. The clamp also bounds each surviving entry's own
+length (not just the array's element count): an entry longer than the
+per-entry budget is cut short with a trailing `...` marker, so a single
+long caller-supplied string (e.g. a 100-char label) cannot blow the budget
+even while under the 5-entry cap.
 *Why:* at the input schemas' and backend's declared maxima an unclamped
 detail array alone exceeds the tier-2 budget several times over; the
 count keeps the truncation honest.
