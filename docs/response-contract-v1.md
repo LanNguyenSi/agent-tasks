@@ -51,12 +51,14 @@ attention).
 
 ## Receipt shape for write verbs
 
-Every state-transition write verb (`task_start`, `task_create`,
-`task_respec`, `task_submit_pr`, `task_finish`, `task_merge`,
-`task_abandon`, `task_note`, and their v1 equivalents) returns a
-**receipt**, not the full backend object, unless the caller explicitly
-asks for the full object via `include` (see
-[include semantics](#include-semantics-replacing-verbose)).
+Every write verb except `task_pickup` returns a **receipt**, not the
+full backend object, unless the caller explicitly asks for the full
+object via `include` (see
+[include semantics](#include-semantics-replacing-verbose)). A write verb
+is any verb that mutates task state or metadata: `task_pickup`,
+`task_start`, `task_create`, `task_respec`, `task_submit_pr`,
+`task_finish`, `task_merge`, `task_abandon`, `task_note`, and their v1
+equivalents.
 
 `task_pickup` is the deliberate exception: delivering the task spec is
 its purpose (see [onboarding channels](#onboarding-channels-by-rate-of-change)),
@@ -84,7 +86,7 @@ The receipt has three tiers, layered in a single response object:
         "missing": ["acceptanceCriteria"]
       },
       "actNow": "Description is not editable after create except via task_respec; at BLOCK, task_pickup will reject this task.",
-      "next": ["task_respec"]
+      "next": ["task_respec to raise the score above the threshold"]
     }
   ],
 
@@ -142,8 +144,8 @@ shapes below are normative for that verb.
 |---|---|---|---|
 | `CONFIDENCE_BELOW_THRESHOLD` | confidence score is below the project's threshold | `score`, `threshold`, `enforcementMode`, `missing[]` | `task_respec` |
 | `DEDUPED_EXTERNAL_REF` | `(projectId, externalRef)` already exists | `existingTaskId`, `existingStatus` | `tasks_get` |
-| `DEPENDS_ON_REJECTED` | one or more `dependsOn` ids are invalid or cross-project | `rejected[]`, each with a reason | create again with corrected `dependsOn` |
-| `LABELS_DROPPED` | one or more labels were rejected or normalized away | `dropped[]` | create again (agents cannot set labels post-create) |
+| `DEPENDS_ON_REJECTED` | one or more `dependsOn` ids are invalid or cross-project | `rejected[]`, each with a reason | `task_create` again with corrected `dependsOn` |
+| `LABELS_DROPPED` | one or more labels were rejected or normalized away | `dropped[]` | `task_create` again (agents cannot set labels post-create) |
 
 Other write verbs define their own deviation catalog analogously, in their
 own implementation task spec, following the same code/trigger/detail/next
@@ -198,9 +200,9 @@ verbatim.
   "ok": false,
   "error": {
     "code": "not_claimed",
-    "message": "cannot start: task is not claimed by you",
-    "recipe": "call task_pickup (claims atomically) or tasks_claim first",
-    "allowedNext": ["task_pickup", "tasks_claim"]
+    "message": "cannot finish: you do not hold a claim on this task",
+    "recipe": "call task_start to claim this task first",
+    "allowedNext": ["task_start"]
   }
 }
 ```
@@ -297,8 +299,16 @@ byte budgets of the workflow test suite (`BYTES_BUDGET` in
 `backend/tests/workflow/fixtures.ts`), which the implementing task MUST
 extend to cover any new response variant it introduces.
 
+These are two different layers: the backend workflow suite bounds the
+upstream backend payload that the mcp-server projection consumes, while
+the Tier 1 / Tier 2 caps apply to the projected response the MCP caller
+sees. The tier caps MUST therefore be asserted by tests inside the
+`mcp-server` package; a backend-side byte assertion cannot observe the
+projection.
+
 A verb that exceeds its tier's budget on the happy path is a contract
 violation, not a judgment call. Implementation tasks MUST include a
 budget test (character-count proxy for token count) alongside their
-functional tests, per `backend/tests/workflow/` conventions (see
+functional tests, in the style of the `backend/tests/workflow/`
+conventions (see
 [CONTRIBUTING.md](../CONTRIBUTING.md#workflow-round-trip-test-suite)).
