@@ -48,13 +48,24 @@ Drop `--scope user` if you want it project-local instead. See
 
 ## Tools
 
-36 tools total. The 8 converted v2 write verbs (`task_create`, `task_respec`,
+37 tools total. The 8 converted v2 write verbs (`task_create`, `task_respec`,
 `task_finish`, `task_submit_pr`, `task_note`, `task_merge`, `task_abandon`,
 and the deprecated `tasks_comment` alias) return a small receipt by default
 (`{ ok, task: { id, status? }, ... }`, per `docs/response-contract-v1.md`)
 instead of the raw backend body; pass `include: ["task"]` on any of them to
 get the full, pre-contract object back for that call. Every other tool
 still returns the raw JSON response from the backend as a text block.
+
+### Onboarding
+
+| Tool              | Wraps                                        |
+| ------------------ | --------------------------------------------- |
+| `workflow_primer` | served locally, no backend call              |
+
+`workflow_primer` is the one local-only tool in this package: it returns a
+fixed onboarding string (`src/primer.ts`) and never calls the backend. See
+`docs/response-contract-v1.md`'s "Onboarding channels by rate of change"
+table.
 
 ### v2 verbs (task_*)
 
@@ -170,12 +181,13 @@ curl -X POST https://agent-tasks.opentriologue.ai/api/mcp \
 - Stateless Streamable HTTP (no session ID, one round-trip per
   request)
 - Same Bearer auth as the rest of the agent-tasks REST API
-- The HTTP endpoint is a **hand-maintained subset** of the 36 tools
+- The HTTP endpoint is a **hand-maintained subset** of the 37 tools
   this stdio package exposes. It covers the full v1 alias surface
   (projects_*, tasks_*, review_*, signals_*, pull_requests_*) but
   does **not** yet include the v2 verbs (task_pickup / task_start /
-  task_finish / task_respec / etc.), artifact tools (task_artifact_*),
-  attachment tools (task_attachment_*), or project_tasks. The code comment in
+  task_finish / task_respec / etc.), the local-only `workflow_primer`
+  tool, artifact tools (task_artifact_*), attachment tools
+  (task_attachment_*), or project_tasks. The code comment in
   `backend/src/routes/mcp.ts` documents this gap explicitly.
 - GET / DELETE on `/api/mcp` return 405 with `Allow: POST`
 

@@ -13,6 +13,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer, serializeResult } from "../src/server.js";
+import { HANDSHAKE_PRIMER, WORKFLOW_PRIMER } from "../src/primer.js";
 
 describe("createServer tool callback wiring", () => {
   afterEach(() => {
@@ -51,6 +52,53 @@ describe("createServer tool callback wiring", () => {
       const expectedText = serializeResult({ ok: true, task: { id: "t1", status: "open" } });
       expect(content[0].text).toBe(expectedText);
       expect(content[0].text).toContain("\n");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  // rc-v1-C004 (docs/response-contract-v1.md's "Onboarding channels by rate
+  // of change" table): system/lifecycle/verb-order knowledge is sent once
+  // per session via the MCP `initialize` handshake's `instructions` field,
+  // instead of being replayed on every task_start response. This drives the
+  // real handshake over the same in-memory client/server pair as the test
+  // above, rather than asserting on the string passed into `new McpServer`
+  // in isolation, so a regression in how the SDK surfaces `instructions`
+  // through `initialize` would be caught here.
+  it("carries HANDSHAKE_PRIMER as the initialize.instructions field over a real handshake", async () => {
+    const server = createServer({ baseUrl: "https://example.test", token: "tok_abc" });
+    const client = new Client({ name: "server-test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      expect(client.getInstructions()).toBe(HANDSHAKE_PRIMER);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  // rc-v1-C004 review round 1, additional test A: workflow_primer's handler
+  // returns a plain string (`async () => WORKFLOW_PRIMER`), so
+  // serializeResult's string branch (return the string as-is, no
+  // JSON.stringify) is the one on the wire for this tool specifically.
+  // Nothing else in the suite drives that branch through the real
+  // registered callback end-to-end; the other tools here all return
+  // objects, exercising the JSON.stringify branch instead.
+  it("emits WORKFLOW_PRIMER verbatim as content[0].text for the workflow_primer tool (guards serializeResult's string branch)", async () => {
+    const server = createServer({ baseUrl: "https://example.test", token: "tok_abc" });
+    const client = new Client({ name: "server-test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const result = await client.callTool({ name: "workflow_primer", arguments: {} });
+      const content = result.content as Array<{ type: string; text: string }>;
+      expect(content).toHaveLength(1);
+      expect(content[0].type).toBe("text");
+      expect(content[0].text).toBe(WORKFLOW_PRIMER);
     } finally {
       await client.close();
       await server.close();

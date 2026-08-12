@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { AgentTasksClient, type ClientConfig } from "./client.js";
 import { buildTools } from "./tools.js";
+import { HANDSHAKE_PRIMER } from "./primer.js";
 
 export const DEFAULT_BASE_URL = "https://agent-tasks.opentriologue.ai";
 export const SERVER_NAME = "agent-tasks-mcp";
@@ -21,10 +22,18 @@ export function createServer(config: ClientConfig): McpServer {
   const client = new AgentTasksClient(config);
   const tools = buildTools(client);
 
-  const server = new McpServer({
-    name: SERVER_NAME,
-    version: SERVER_VERSION,
-  });
+  // docs/response-contract-v1.md's "Onboarding channels by rate of change":
+  // system/lifecycle/verb-order knowledge is sent once per session via this
+  // `instructions` field instead of being replayed on every write-verb
+  // response. See primer.ts for the budgeted text and its `workflow_primer`
+  // on-demand companion (registered below via buildTools).
+  const server = new McpServer(
+    {
+      name: SERVER_NAME,
+      version: SERVER_VERSION,
+    },
+    { instructions: HANDSHAKE_PRIMER },
+  );
 
   for (const tool of tools) {
     server.registerTool(
