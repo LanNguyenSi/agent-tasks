@@ -239,6 +239,12 @@ describe("HANDSHAKE_PRIMER's signals_poll carve-out is grounded in tools.ts, not
   function nonIncludeReshapingVerbNames(): string[] {
     const source = toolsSource();
     const defBlocks = source.split(/\n {4}def\(\{/).slice(1);
+    // Non-vacuity: the 4-space-indent split must see EVERY def({ in the
+    // file, or this guard fails open on a re-indent (measured in review:
+    // a def block at 6-space indent slips past the split entirely). If a
+    // reformat changes the indent convention, update the split pattern
+    // here rather than letting the guard silently stop scanning.
+    expect(defBlocks.length).toBe((source.match(/def\(\{/g) ?? []).length);
     const names: string[] = [];
     for (const block of defBlocks) {
       const nameMatch = block.match(/name:\s*"([a-zA-Z_]+)"/);
@@ -255,10 +261,15 @@ describe("HANDSHAKE_PRIMER's signals_poll carve-out is grounded in tools.ts, not
   });
 
   it("every verb tools.ts names as a non-include local-reshaping verb is named in HANDSHAKE_PRIMER's carve-out clause", () => {
+    const everyOtherToolAt = HANDSHAKE_PRIMER.indexOf(
+      "every other tool returns the raw backend body",
+    );
+    expect(everyOtherToolAt).toBeGreaterThan(0);
     for (const verb of nonIncludeReshapingVerbNames()) {
+      const verbAt = HANDSHAKE_PRIMER.indexOf(verb);
       expect(
-        HANDSHAKE_PRIMER.includes(verb),
-        `"${verb}" reshapes its response locally without an include param (tools.ts), but is not named in HANDSHAKE_PRIMER's carve-out clause before the "every other tool" claim`,
+        verbAt >= 0 && verbAt < everyOtherToolAt,
+        `"${verb}" reshapes its response locally without an include param (tools.ts), but is not named in HANDSHAKE_PRIMER's carve-out clause BEFORE the "every other tool" claim (position asserted, not mere presence)`,
       ).toBe(true);
     }
   });
@@ -349,6 +360,14 @@ describe("WORKFLOW_PRIMER's trap list stays in sync with errors.ts's catalog cod
   // code below IS named in the trap list -- so a future catalog entry can
   // opt out deliberately (with a reason recorded here) instead of this
   // guard being weakened silently by deleting the assertion.
+  //
+  // BUDGET SQUEEZE, recorded 2026-08-12: WORKFLOW_PRIMER sits at ~5.9k of
+  // its 6000-char ceiling while this guard makes naming every new catalog
+  // code mandatory. The next catalog entry will red BOTH tests at once.
+  // Intended resolution: tighten existing trap-list wording or raise the
+  // ceiling DELIBERATELY (it is a sanity bound, not a contract number).
+  // This exclusion list is a semantic opt-out, NOT a budget valve -- do
+  // not park a code here just to fit the ceiling.
   const TRAP_LIST_EXCLUSIONS: Record<string, string> = {};
 
   function catalogCodes(): Set<string> {

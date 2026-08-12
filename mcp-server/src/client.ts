@@ -204,6 +204,10 @@ export class AgentTasksClient {
    *     project): fetchAndCacheProjectSlug's own ProjectSlugNotFoundError
    *     propagates unchanged, mapped by tools.ts's callers to the
    *     unknown_project_slug teaching error, never a raw error leak.
+   *   - the fresh lookup fails with anything ELSE (a 500, a network
+   *     error): the ORIGINAL downstream error propagates, not the
+   *     lookup's own failure -- the retry machinery must never replace a
+   *     real denial with one of its own artifacts.
    */
   private async withResolvedProjectSlug<T>(
     slug: string,
@@ -217,7 +221,13 @@ export class AgentTasksClient {
         err instanceof AgentTasksApiError && (err.status === 404 || err.status === 403);
       if (!isRetryTrigger || !cacheServed) throw err;
       this.projectSlugCache.delete(slug);
-      const freshId = await this.fetchAndCacheProjectSlug(slug);
+      let freshId: string;
+      try {
+        freshId = await this.fetchAndCacheProjectSlug(slug);
+      } catch (lookupErr) {
+        if (lookupErr instanceof ProjectSlugNotFoundError) throw lookupErr;
+        throw err;
+      }
       if (freshId === id) throw err;
       return await perform(freshId);
     }

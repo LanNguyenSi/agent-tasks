@@ -418,6 +418,27 @@ describe("AgentTasksClient", () => {
       expect(fetchMock).toHaveBeenCalledTimes(5);
     });
 
+    it("a fresh re-resolution failing with a non-404 (e.g. a 500) surfaces the ORIGINAL downstream error, not the lookup's own failure (rc-v1-C006 round-3, retry machinery must not replace a real denial with its own artifact)", async () => {
+      const client = new AgentTasksClient(config);
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p-old" } }))
+        .mockResolvedValueOnce(ok({ tasks: [] }));
+      await client.listProjectTasks("agent-tasks");
+
+      fetchMock
+        .mockResolvedValueOnce(err(403, { error: "forbidden", message: "Access denied to this project" })) // downstream 403 on the cache-served id
+        .mockResolvedValueOnce(err(500, { error: "internal_error", message: "lookup exploded" })); // fresh by-slug lookup itself 500s
+
+      await expect(client.listProjectTasks("agent-tasks")).rejects.toMatchObject({
+        name: "AgentTasksApiError",
+        status: 403,
+        message: expect.stringContaining("Access denied"),
+      });
+      // Exactly 2 more calls this round (downstream 403, failed fresh
+      // lookup) -- perform is never retried on a failed re-resolution.
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    });
+
     // ── cache-served id, downstream 403 OR 404 (rc-v1-C006 round-2 review,
     // HIGH): the backend rejects a stale/reassigned project id with 403
     // forbidden (hasProjectAccess), not 404, on BOTH consumer routes (POST
