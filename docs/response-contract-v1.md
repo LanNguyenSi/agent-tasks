@@ -417,8 +417,8 @@ the direct cause of the current per-verb token cost.
 - This contract ships as `mcp-server` 0.13.0, a breaking change (default
   response shapes change for existing callers).
 - Release order is server before bridge: `mcp-server` 0.13.0 ships first;
-  the `mcp-bridge` pin (currently 0.12.0) bumps only after the server
-  release is verified, per the project's release-order convention.
+  the `mcp-bridge` pin (0.12.0 until this release) bumps only after the
+  server release is verified, per the project's release-order convention.
 - `include: ["task"]` is the per-call fallback to the old, full-object
   behavior. It MUST remain available for the deprecation window so
   existing callers can opt back in without a code change while they
