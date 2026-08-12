@@ -9,6 +9,8 @@ import { AgentTasksClient } from "../src/client.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const RECEIPT_TS_PATH = resolve(__filename, "..", "..", "src", "receipt.ts");
+const ERRORS_TS_PATH = resolve(__filename, "..", "..", "src", "errors.ts");
+const TOOLS_TS_PATH = resolve(__filename, "..", "..", "src", "tools.ts");
 const REPO_README_PATH = resolve(__filename, "..", "..", "..", "README.md");
 
 // docs/response-contract-v1.md's "Onboarding channels by rate of change"
@@ -64,6 +66,8 @@ const NON_VERB_TOKENS = new Set([
   "respec_conflict", // 409 error code (rc-v1-C005: task_respec state conflict)
   "result_not_plain_string", // client-side error code (rc-v1-C005: task_finish result guard)
   "low_confidence", // 422 error code (rc-v1-C005 review round 1, finding #2: confidence-gate detail preservation)
+  "project_addressing_conflict", // client-side error code (rc-v1-C006 round-2 review: task_create's projectId/projectSlug exactly-one guard)
+  "unknown_project_slug", // client-side error code (rc-v1-C006: an unresolvable projectSlug/project value)
 ]);
 
 function snakeCaseTokens(text: string): string[] {
@@ -121,8 +125,14 @@ describe("HANDSHAKE_PRIMER (initialize.instructions)", () => {
     // task_start are named as separate cases, and every other tool is told
     // it gets the raw backend body.
     expect(HANDSHAKE_PRIMER).toMatch(/task_pickup returns the full spec/i);
+    // rc-v1-C006 round-2 review (MEDIUM): "every other tool returns the raw
+    // backend body" was false for signals_poll (it caps+cursors locally via
+    // paginateSignals, no include param involved at all) -- the carve-out
+    // clause must appear BEFORE the every-other-tool claim, not just
+    // somewhere in the text, so the claim that follows it is actually true
+    // of what remains.
     expect(HANDSHAKE_PRIMER).toMatch(
-      /every other tool returns the raw backend body and ignores include/i,
+      /signals_poll caps and cursors the backend response locally.*every other tool returns the raw backend body and ignores include/is,
     );
   });
 });
@@ -182,6 +192,75 @@ describe("HANDSHAKE_PRIMER's converted-verb list is grounded in buildTools, not 
     expect(derived.has("tasks_get")).toBe(true);
     expect(HANDSHAKE_PRIMER).toMatch(/tasks_get returns a summary by default and accepts include/i);
     expect(sentenceConvertedVerbs()).not.toContain("tasks_get");
+  });
+});
+
+// ── rc-v1-C006 round-2 review (MEDIUM): signals_poll carve-out grounded in
+// tools.ts, not hand-typed ──────────────────────────────────────────────
+//
+// The previous "every other tool returns the raw backend body and ignores
+// include" claim was false for signals_poll: its handler reshapes the
+// backend response locally (read.ts's paginateSignals: caps + cursors +
+// atBackendFetchCeiling) without accepting an `include` param at all, so
+// the include-accepting-set mechanical guard above (which the converted-
+// verb sentence is checked against) could never have caught this drift --
+// signals_poll was never going to appear in that set either way. This ties
+// the primer's signals_poll carve-out to the actual source instead: any
+// tools.ts handler that calls paginateSignals must be named in the
+// carve-out clause, so a future non-include reshaping verb added the same
+// way (calls a local projector, takes no include param) is caught here.
+//
+// Deliberately narrower than a fully general "reshapes vs passes through"
+// classifier over every tools.ts handler (which the review sketched as a
+// possible wider tie): that would require distinguishing "returns wrap()'s
+// result unchanged" from "transforms it" for every handler shape in the
+// file (bare-expression arrows, block-body arrows with an early include
+// valve, receiptFor* projections, try/catch wrappers around
+// ProjectSlugNotFoundError, ...), and a source-text heuristic robust
+// enough to classify all of those correctly would be its own substantial,
+// easy-to-get-subtly-wrong surface -- exactly the kind of unpinned claim
+// this fix exists to close, not extend. The narrower, function-name-
+// grounded tie below is cheap, exact, and closes the actual gap the
+// finding was about (signals_poll specifically); a similarly narrow,
+// grounded tie is the recommended pattern for the next such verb, rather
+// than reaching for the general classifier.
+describe("HANDSHAKE_PRIMER's signals_poll carve-out is grounded in tools.ts, not hand-typed", () => {
+  function toolsSource(): string {
+    return readFileSync(TOOLS_TS_PATH, "utf8");
+  }
+
+  // Crude but sufficient: finds each `name: "..."` tool-definition marker
+  // and the handler text up to the next one, and reports which tool names
+  // own a handler block that calls paginateSignals -- the actual reshaping
+  // function signals_poll relies on (see read.ts). Verbs whose inputShape
+  // has its own "include" key are handled by the separate converted-verb
+  // guard above and excluded here so this guard stays scoped to the "no
+  // include param, but still reshapes" class the false claim was about.
+  function nonIncludeReshapingVerbNames(): string[] {
+    const source = toolsSource();
+    const defBlocks = source.split(/\n {4}def\(\{/).slice(1);
+    const names: string[] = [];
+    for (const block of defBlocks) {
+      const nameMatch = block.match(/name:\s*"([a-zA-Z_]+)"/);
+      if (!nameMatch) continue;
+      const hasInclude = /include:\s*(?:includeSchema|\w*IncludeSchema)/.test(block);
+      const reshapesLocally = block.includes("paginateSignals(");
+      if (reshapesLocally && !hasInclude) names.push(nameMatch[1]);
+    }
+    return names;
+  }
+
+  it("tools.ts has exactly one non-include-accepting verb whose handler reshapes locally (paginateSignals), and it is signals_poll", () => {
+    expect(nonIncludeReshapingVerbNames()).toEqual(["signals_poll"]);
+  });
+
+  it("every verb tools.ts names as a non-include local-reshaping verb is named in HANDSHAKE_PRIMER's carve-out clause", () => {
+    for (const verb of nonIncludeReshapingVerbNames()) {
+      expect(
+        HANDSHAKE_PRIMER.includes(verb),
+        `"${verb}" reshapes its response locally without an include param (tools.ts), but is not named in HANDSHAKE_PRIMER's carve-out clause before the "every other tool" claim`,
+      ).toBe(true);
+    }
   });
 });
 
@@ -246,6 +325,53 @@ describe("WORKFLOW_PRIMER (workflow_primer verb)", () => {
 
   it("documents allowedNext as machine-checkable verb names, distinct from a receipt's free-form next[]", () => {
     expect(WORKFLOW_PRIMER).toMatch(/machine-checkable/i);
+  });
+});
+
+// ── rc-v1-C006 round-2 review (MEDIUM): the trap list stays in sync with
+// errors.ts's own catalog, mechanically, not by remembering to hand-update
+// prose every time a new code is added (the gap this closes: project_
+// addressing_conflict and unknown_project_slug shipped in errors.ts but
+// were missing from WORKFLOW_PRIMER's trap list until this fix) ──────────
+describe("WORKFLOW_PRIMER's trap list stays in sync with errors.ts's catalog codes (mechanical guard)", () => {
+  // Literal `code: "..."` string constants from every catalog entry builder
+  // in errors.ts (buildTeachingError call sites with a hardcoded code).
+  // Deliberately does NOT attempt to enumerate the generic degrade path's
+  // code (status-derived `http_<status>`, or a passthrough of whatever the
+  // backend's own `error` field says): that path has no fixed code to
+  // check for, and is already covered by the primer's own trailing "Any
+  // other backend error still degrades to the same shape" sentence rather
+  // than a per-code trap-list entry.
+  const CATALOG_CODE_PATTERN = /code:\s*"([a-z_]+)"/g;
+
+  // Codes deliberately excused from appearing verbatim in WORKFLOW_PRIMER's
+  // trap list, with a recorded reason. Empty today -- every literal catalog
+  // code below IS named in the trap list -- so a future catalog entry can
+  // opt out deliberately (with a reason recorded here) instead of this
+  // guard being weakened silently by deleting the assertion.
+  const TRAP_LIST_EXCLUSIONS: Record<string, string> = {};
+
+  function catalogCodes(): Set<string> {
+    const source = readFileSync(ERRORS_TS_PATH, "utf8");
+    return new Set(Array.from(source.matchAll(CATALOG_CODE_PATTERN)).map((m) => m[1]));
+  }
+
+  it("every literal catalog code in errors.ts appears in WORKFLOW_PRIMER's trap list, or is named in TRAP_LIST_EXCLUSIONS with a reason", () => {
+    for (const code of catalogCodes()) {
+      const named = WORKFLOW_PRIMER.includes(code);
+      const excused = code in TRAP_LIST_EXCLUSIONS;
+      expect(
+        named || excused,
+        `catalog code "${code}" (errors.ts) is missing from WORKFLOW_PRIMER's trap list and not in TRAP_LIST_EXCLUSIONS`,
+      ).toBe(true);
+    }
+  });
+
+  // rc-v1-C004 review round 2, finding #6-style non-vacuity pin: a pattern
+  // that matched nothing would make the loop above run zero times and pass
+  // without checking anything.
+  it("is not vacuous: errors.ts actually has literal catalog codes for the guard above to check", () => {
+    expect(catalogCodes().size).toBeGreaterThan(5);
   });
 });
 

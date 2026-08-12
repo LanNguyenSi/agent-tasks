@@ -18,9 +18,9 @@ export class AgentTasksApiError extends Error {
 // resolveProjectSlug/withResolvedProjectSlug below) specifically when a
 // FRESH (not cache-served) GET /projects/by-slug/:slug lookup 404s — i.e.
 // the slug genuinely does not resolve to any project, as opposed to a
-// stale cache entry whose downstream use 404s (that case is handled
-// internally by withResolvedProjectSlug's own invalidate-and-retry, and
-// never reaches a caller as this error). Kept distinct from the generic
+// cache-served id whose downstream use fails with 404 or 403 (that case is
+// handled internally by withResolvedProjectSlug's own invalidate-and-retry,
+// and never reaches a caller as this error). Kept distinct from the generic
 // AgentTasksApiError so callers (tools.ts's task_create / project_tasks
 // handlers) can map it to the errors.ts unknownProjectSlugError teaching
 // error (naming projects_list as the recipe) instead of the generic
@@ -37,7 +37,8 @@ export class ProjectSlugNotFoundError extends Error {
 // / task_create calls against the same project only pays the by-slug
 // round-trip once, short enough that a slug reassignment (rare) is picked
 // up again within one working session even without hitting the
-// invalidate-on-404 path.
+// invalidate-and-retry path (withResolvedProjectSlug, triggered by a
+// cache-served id's downstream 404 or 403).
 const PROJECT_SLUG_CACHE_TTL_MS = 15 * 60 * 1000;
 
 interface ProjectSlugCacheEntry {
@@ -133,12 +134,20 @@ export class AgentTasksClient {
   // behavior itself is a task-spec requirement of rc-v1-C006, not yet
   // written into that doc's own prose.
 
-  /** Cache-first resolution. Throws ProjectSlugNotFoundError on a fresh
-   *  (non-cached) 404 -- see that class's own doc comment. */
-  private async resolveProjectSlug(slug: string): Promise<string> {
+  /** Cache-first resolution. Also reports whether `id` was cache-served (vs
+   *  a fresh network lookup THIS call), so withResolvedProjectSlug can tell
+   *  a stale-cache-artifact failure apart from a genuine downstream error --
+   *  see that function's own doc comment. Throws ProjectSlugNotFoundError on
+   *  a fresh (non-cached) 404 -- see that class's own doc comment. */
+  private async resolveProjectSlug(
+    slug: string,
+  ): Promise<{ id: string; cacheServed: boolean }> {
     const cached = this.projectSlugCache.get(slug);
-    if (cached && cached.expiresAt > Date.now()) return cached.id;
-    return this.fetchAndCacheProjectSlug(slug);
+    if (cached && cached.expiresAt > Date.now()) {
+      return { id: cached.id, cacheServed: true };
+    }
+    const id = await this.fetchAndCacheProjectSlug(slug);
+    return { id, cacheServed: false };
   }
 
   /** Always hits the network (bypasses the cache), then (re)writes the
@@ -164,30 +173,53 @@ export class AgentTasksClient {
 
   /**
    * Resolves `slug` to a project id (cache-first) and calls `perform(id)`.
-   * If `perform` itself fails with a 404 AgentTasksApiError -- the
-   * resolved id no longer works downstream, e.g. because the project
-   * behind this slug was renamed/reassigned since the cache entry was
-   * written, even though the cache's own TTL had not yet lapsed -- the
-   * cache entry is invalidated and BOTH the slug resolution and `perform`
-   * are retried exactly once against a freshly resolved id. A second
-   * failure (including a second 404, which by then means the slug itself
-   * is genuinely gone) propagates unchanged: this is a single retry, not a
-   * loop.
+   *
+   * `perform` failing downstream with a 404 OR a 403 is only worth a retry
+   * when `id` was CACHE-SERVED (rc-v1-C006 round-2 review, HIGH): the
+   * resolved id no longer working downstream can mean the project behind
+   * this slug was renamed/reassigned since the cache entry was written
+   * (404 -- the id no longer exists), or that the caller's access to that
+   * now-different project was revoked (403 -- both consumer routes,
+   * POST /projects/:id/tasks and GET /projects/:id/tasks, reject an
+   * inaccessible id via hasProjectAccess with 403 forbidden, NOT 404; see
+   * backend/src/routes/tasks.ts). A freshly-resolved id (cacheServed:
+   * false) failing the same way is never a stale-cache artifact -- nothing
+   * to invalidate -- so it propagates immediately, with no wasted retry
+   * round trip.
+   *
+   * When a cache-served id does fail this way, the cache entry is
+   * invalidated and the slug is re-resolved FRESH before deciding whether
+   * to retry `perform`:
+   *   - the fresh id is IDENTICAL to the one that just failed: this was
+   *     never a stale-cache issue, it is a genuine downstream error (most
+   *     often a real permission denial) -- the ORIGINAL error propagates
+   *     unchanged, `perform` is not called again, so a real 403 is never
+   *     masked as a retry-fixed cache problem.
+   *   - the fresh id DIFFERS: the cache genuinely was stale -- `perform` is
+   *     retried exactly once against the fresh id. A second failure
+   *     (including a second 404/403) propagates unchanged: this is a
+   *     single retry, not a loop. `perform` is therefore called at most
+   *     twice in total for one withResolvedProjectSlug call.
+   *   - the fresh lookup itself 404s (the slug no longer resolves to ANY
+   *     project): fetchAndCacheProjectSlug's own ProjectSlugNotFoundError
+   *     propagates unchanged, mapped by tools.ts's callers to the
+   *     unknown_project_slug teaching error, never a raw error leak.
    */
   private async withResolvedProjectSlug<T>(
     slug: string,
     perform: (projectId: string) => Promise<T>,
   ): Promise<T> {
-    const id = await this.resolveProjectSlug(slug);
+    const { id, cacheServed } = await this.resolveProjectSlug(slug);
     try {
       return await perform(id);
     } catch (err) {
-      if (err instanceof AgentTasksApiError && err.status === 404) {
-        this.projectSlugCache.delete(slug);
-        const freshId = await this.fetchAndCacheProjectSlug(slug);
-        return await perform(freshId);
-      }
-      throw err;
+      const isRetryTrigger =
+        err instanceof AgentTasksApiError && (err.status === 404 || err.status === 403);
+      if (!isRetryTrigger || !cacheServed) throw err;
+      this.projectSlugCache.delete(slug);
+      const freshId = await this.fetchAndCacheProjectSlug(slug);
+      if (freshId === id) throw err;
+      return await perform(freshId);
     }
   }
 

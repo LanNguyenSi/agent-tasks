@@ -4,6 +4,7 @@ import {
   paginateSignals,
   TASKS_GET_INCLUDE_VALUES,
   SIGNALS_DEFAULT_LIMIT,
+  SIGNALS_BACKEND_FETCH_LIMIT,
   type GetTaskResponse,
   type RawSignal,
 } from "../src/read.js";
@@ -225,27 +226,51 @@ describe("projectTaskSummary", () => {
   // ── WORST CASE ceiling: every clamp active at once, adversarial input ───
 
   it("WORST CASE (adversarial input, every clamp active): stays within a fixed ceiling, never unbounded", () => {
+    // Claim names and prUrl are genuinely unbounded upstream (see
+    // CLAIM_CHAR_BUDGET / PRURL_CHAR_BUDGET's doc comments in read.ts), so
+    // this fixture pushes both well past their clamp to prove the clamp
+    // actually fires, not just that short realistic values stay short.
+    const longClaimName = "Someone With An Extremely Long Resolved Display Name For Testing Purposes";
+    const longPrUrl = `https://github.com/${"owner-name-".repeat(10)}/pull/999999999`;
     const response = baseTask({
+      // `title` is deliberately NOT pushed past 255: unlike labels /
+      // blockedBy / claims / prUrl, it is genuinely bounded upstream by
+      // BOTH the backend's own createTaskSchema and mcp-server's own
+      // task_create inputShape (both cap title at 255 chars), so 255 IS
+      // this field's real worst case, not an arbitrary stand-in -- see
+      // PRURL_CHAR_BUDGET's doc comment in read.ts for why title stays
+      // unclamped locally while prUrl and the claim strings do not.
       title: "x".repeat(255),
       status: "in_progress",
       priority: "CRITICAL",
       labels: Array.from({ length: 20 }, (_, i) => `label-name-number-${i}-quite-long-indeed-yes`),
-      prUrl: "https://github.com/owner-name/repo-name/pull/99999",
-      claimedByUser: { id: "u1", login: "someone", name: "Someone Long Name Here" },
-      reviewClaimedByUser: { id: "u2", login: "reviewer", name: "Reviewer Long Name Here" },
+      prUrl: longPrUrl,
+      claimedByUser: { id: "u1", login: "someone", name: longClaimName },
+      reviewClaimedByUser: { id: "u2", login: "reviewer", name: longClaimName },
       blockedBy: Array.from({ length: 50 }, (_, i) => ({
         id: `blocker-id-${i}`,
         title: `Blocker task title number ${i} that is fairly long indeed to test the clamp`,
         status: "open",
       })),
     });
-    const result = projectTaskSummary(response);
+    const result = projectTaskSummary(response) as {
+      task: { claims?: { work?: string; review?: string }; prUrl?: string };
+    };
+    // The clamps under test actually fired: both come back shorter than fed
+    // in, visibly truncated with the "..." marker, not silently unbounded.
+    expect(result.task.claims?.work?.length).toBeLessThan(longClaimName.length);
+    expect(result.task.claims?.work?.endsWith("...")).toBe(true);
+    expect(result.task.prUrl?.length).toBeLessThan(longPrUrl.length);
+    expect(result.task.prUrl?.endsWith("...")).toBe(true);
+
     const size = serializeResult(result).length;
     // Exact regression pin (fails loudly on any clamp drift) under a fixed
     // ceiling (the actual budget guarantee): the clamps above bound array
     // COUNT and per-entry chars, so this worst case is a known, fixed
-    // number, not "however big the caller's input happens to be".
-    expect(size).toBe(2705);
+    // number, not "however big the caller's input happens to be" -- title
+    // excepted, which stays at its real, externally-enforced 255-char
+    // maximum rather than a synthetic local ceiling (see above).
+    expect(size).toBe(2830);
     expect(size).toBeLessThanOrEqual(3000);
   });
 
@@ -310,5 +335,52 @@ describe("paginateSignals", () => {
 
   it("an empty backlog returns an empty page with no truncation", () => {
     expect(paginateSignals([])).toEqual({ signals: [] });
+  });
+
+  // ── atBackendFetchCeiling (rc-v1-C006 round-2 review, HIGH) ──────────────
+  //
+  // `all` is the single backend fetch's own result (client.ts's
+  // pollSignals(SIGNALS_BACKEND_FETCH_LIMIT), backend-capped at 200 -- see
+  // client.ts's own comment on pollSignals). When `all.length` reaches that
+  // ceiling, the true pending backlog may be larger than what this one fetch
+  // could return, so every page derived from it (not only the final one)
+  // must say so via atBackendFetchCeiling, independent of truncated (which
+  // only describes local pagination WITHIN `all`).
+
+  it(`sets atBackendFetchCeiling:true when the backlog is exactly at the backend fetch limit (${SIGNALS_BACKEND_FETCH_LIMIT}), even on the FINAL local page where truncated is absent`, () => {
+    const all = Array.from({ length: SIGNALS_BACKEND_FETCH_LIMIT }, (_, i) => signal(`s${i}`));
+    // Page through to the last local page (limit 50 -> 4 pages of 50 over
+    // 200 signals) and check the final one specifically: before this fix,
+    // exactly this page said truncated:false ("nothing more"), which read
+    // as "backlog fully drained" even though the backend fetch itself may
+    // have clipped a larger true backlog.
+    let cursor: string | undefined;
+    let last: ReturnType<typeof paginateSignals> | undefined;
+    for (let i = 0; i < 4; i++) {
+      last = paginateSignals(all, { cursor, limit: 50 });
+      cursor = last.cursor;
+    }
+    expect(last?.signals.length).toBe(50);
+    expect(last?.truncated).toBeUndefined(); // local pagination: genuinely nothing left in `all`
+    expect(last?.atBackendFetchCeiling).toBe(true); // but the fetch itself may be an undercount
+  });
+
+  it("sets atBackendFetchCeiling:true on every page of an at-ceiling fetch, not only the final one (it describes the fetch, not the page)", () => {
+    const all = Array.from({ length: SIGNALS_BACKEND_FETCH_LIMIT }, (_, i) => signal(`s${i}`));
+    const first = paginateSignals(all, { limit: 10 });
+    expect(first.truncated).toBe(true);
+    expect(first.atBackendFetchCeiling).toBe(true);
+  });
+
+  it("does NOT set atBackendFetchCeiling when the backlog is under the limit (the common case stays unaffected)", () => {
+    const all = Array.from({ length: SIGNALS_BACKEND_FETCH_LIMIT - 1 }, (_, i) => signal(`s${i}`));
+    const result = paginateSignals(all, { limit: SIGNALS_BACKEND_FETCH_LIMIT });
+    expect(result.atBackendFetchCeiling).toBeUndefined();
+  });
+
+  it("sets atBackendFetchCeiling when `all` exceeds the limit too (>=, not ==; defensive against a future backend max bump)", () => {
+    const all = Array.from({ length: SIGNALS_BACKEND_FETCH_LIMIT + 50 }, (_, i) => signal(`s${i}`));
+    const result = paginateSignals(all, { limit: SIGNALS_BACKEND_FETCH_LIMIT + 50 });
+    expect(result.atBackendFetchCeiling).toBe(true);
   });
 });

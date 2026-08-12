@@ -4,6 +4,7 @@ import { buildTools } from "../src/tools.js";
 import { AgentTasksClient, AgentTasksApiError } from "../src/client.js";
 import { serializeResult } from "../src/server.js";
 import { WORKFLOW_PRIMER } from "../src/primer.js";
+import { SIGNALS_DEFAULT_LIMIT, SIGNALS_BACKEND_FETCH_LIMIT } from "../src/read.js";
 
 describe("buildTools", () => {
   const config = { baseUrl: "https://example.test", token: "tok_abc" };
@@ -1585,10 +1586,25 @@ describe("buildTools", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("passing neither projectId nor projectSlug rejects client-side, no network call made", async () => {
-      await expect(
-        tool("task_create").handler({ title: "t" } as never),
-      ).rejects.toThrow(/requires exactly one of projectId or projectSlug/i);
+    it("passing neither projectId nor projectSlug is a project_addressing_conflict teaching error naming projects_list, no network call made", async () => {
+      let captured = "";
+      try {
+        await tool("task_create").handler({ title: "t" } as never);
+        throw new Error("expected a throw");
+      } catch (e) {
+        captured = e instanceof Error ? e.message : String(e);
+      }
+      const parsed = JSON.parse(captured);
+      expect(parsed).toEqual({
+        ok: false,
+        error: {
+          code: "project_addressing_conflict",
+          message: "neither projectId nor projectSlug was provided; pass exactly one",
+          recipe:
+            "call projects_list to find the project, then resubmit task_create with projectId or projectSlug set",
+          allowedNext: ["projects_list", "task_create"],
+        },
+      });
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -1634,6 +1650,54 @@ describe("buildTools", () => {
         confidence: 90,
         next: ["task_start to begin work on this task"],
       });
+    });
+
+    // ── cache-served id, downstream 403, retry's own fresh lookup 404s
+    // (rc-v1-C006 round-2 review): pins that this end-to-end path surfaces
+    // the unknown_project_slug TEACHING ERROR, not a raw, unparsed
+    // ProjectSlugNotFoundError message. Uses a single shared client (unlike
+    // most tests in this describe block, which call the `tool()` helper
+    // and get a fresh client with an empty slug cache each time) so the
+    // second task_create call can actually reuse a cache-served id.
+    it("cache-served projectSlug, downstream 403, the retry's own fresh by-slug lookup 404s: surfaces unknown_project_slug, not a raw error leak", async () => {
+      const client = new AgentTasksClient(config);
+      const create = buildTools(client).find((t) => t.name === "task_create");
+      if (!create) throw new Error("task_create not registered");
+
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p-old" } })) // warm the cache
+        .mockResolvedValueOnce(ok({ task: { id: "t-old", status: "open" } }));
+      await create.handler({ projectSlug: "agent-tasks", title: "warm the cache" } as never);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      fetchMock
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: "forbidden", message: "Access denied to this project" }), {
+            status: 403,
+            headers: { "content-type": "application/json" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: "not_found", message: "Resource not found" }), {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+
+      let captured = "";
+      try {
+        await create.handler({ projectSlug: "agent-tasks", title: "New task" } as never);
+        throw new Error("expected a throw");
+      } catch (e) {
+        captured = e instanceof Error ? e.message : String(e);
+      }
+      // Not a raw, unparsed error (e.g. `no project found for slug "..."`
+      // with no JSON structure) -- must parse as the teaching-error shape.
+      const parsed = JSON.parse(captured);
+      expect(parsed.error.code).toBe("unknown_project_slug");
+      expect(parsed.error.message).toContain("agent-tasks");
+      expect(parsed.error.recipe).toContain("projects_list");
+      expect(parsed.error.allowedNext).toEqual(["projects_list", "task_create"]);
     });
   });
 
@@ -1702,6 +1766,39 @@ describe("buildTools", () => {
     it("zod schema rejects a limit over the max and accepts one at the max", () => {
       expect(() => parseArgs("signals_poll", { limit: 101 })).toThrow();
       expect(() => parseArgs("signals_poll", { limit: 100 })).not.toThrow();
+    });
+
+    // ── atBackendFetchCeiling end-to-end (rc-v1-C006 round-2 review, HIGH) ──
+    //
+    // Simulates a true backend backlog (260 signals) larger than the
+    // backend's own hard fetch max (200, SIGNALS_BACKEND_FETCH_LIMIT): the
+    // mock backend, like the real one, hands back only its first 200
+    // regardless of how many are truly pending. Pages through with the
+    // default limit to the FINAL local page and checks both fields the
+    // review asked to be quoted: what truncated says there (absent, since
+    // local pagination over the 200-entry fetch is genuinely exhausted) and
+    // that atBackendFetchCeiling:true still appears (since the fetch itself
+    // may have clipped a larger true backlog -- ack and poll again, do not
+    // assume drained).
+    it("260-signal true backlog (backend clips to 200): the final local page carries atBackendFetchCeiling:true even though truncated is absent", async () => {
+      const backendBacklog = Array.from({ length: 260 }, (_, i) => sig(`s${i}`));
+      const backendServed = backendBacklog.slice(0, SIGNALS_BACKEND_FETCH_LIMIT); // backend's own hard max
+      // A fresh Response per call, not a single shared/reused instance: each
+      // call reads its own Response body, and a Response's body stream can
+      // only be read once (this test polls the same mocked endpoint many
+      // times in a loop below, unlike most single-call tests in this file).
+      fetchMock.mockImplementation(async () => ok({ signals: backendServed }));
+
+      let cursor: string | undefined;
+      let last: { signals: unknown[]; truncated?: boolean; cursor?: string; atBackendFetchCeiling?: boolean } | undefined;
+      const pageCount = Math.ceil(SIGNALS_BACKEND_FETCH_LIMIT / SIGNALS_DEFAULT_LIMIT);
+      for (let i = 0; i < pageCount; i++) {
+        last = (await tool("signals_poll").handler({ cursor } as never)) as typeof last;
+        cursor = last?.cursor;
+      }
+      expect(last?.signals.length).toBe(SIGNALS_DEFAULT_LIMIT);
+      expect(last?.truncated).toBeUndefined();
+      expect(last?.atBackendFetchCeiling).toBe(true);
     });
   });
 });

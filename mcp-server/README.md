@@ -53,7 +53,11 @@ Drop `--scope user` if you want it project-local instead. See
 and the deprecated `tasks_comment` alias) return a small receipt by default
 (`{ ok, task: { id, status? }, ... }`, per `docs/response-contract-v1.md`)
 instead of the raw backend body; pass `include: ["task"]` on any of them to
-get the full, pre-contract object back for that call. Every other tool
+get the full, pre-contract object back for that call. The deprecated
+`tasks_get` returns a summary projection with its own `include` vocabulary,
+and the deprecated `signals_poll` caps and cursors the backend response
+locally even though it takes no `include` parameter of its own (see
+`docs/response-contract-v1.md`'s read-verb section). Every other tool
 still returns the raw JSON response from the backend as a text block.
 
 ### Onboarding

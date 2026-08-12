@@ -592,7 +592,30 @@ function lowConfidenceError(body: BackendErrorBody, message: string): TeachingEr
 // directly by the calling tool's own handler in tools.ts, same pattern as
 // catalog entry #8 (resultMustBePlainStringError) — a client-side guard
 // checked before, or in place of, any network call.
-export function projectAddressingConflictError(verb: string): TeachingError {
+//
+// project_addressing_conflict covers BOTH directions of the same "exactly
+// one of projectId/projectSlug" requirement, not just "both provided":
+// task_create's own client-side guard (tools.ts) also rejects the mirror-
+// image mistake, neither field set. That case used to throw a bare,
+// unteaching Error (rc-v1-C006 round-2 review, LOW) instead of going
+// through this catalog. Rather than mint a second, near-duplicate code for
+// what is really the same "exactly one" constraint violated the other way,
+// `reason` selects direction-specific message/recipe/allowedNext under the
+// SAME code: `recipe` for "neither" names projects_list (the caller may not
+// even know the project's slug/id yet), which "both" does not need (the
+// caller already named both candidates, it just needs to pick one).
+export function projectAddressingConflictError(
+  verb: string,
+  reason: "both_provided" | "neither_provided" = "both_provided",
+): TeachingError {
+  if (reason === "neither_provided") {
+    return buildTeachingError({
+      code: "project_addressing_conflict",
+      message: "neither projectId nor projectSlug was provided; pass exactly one",
+      recipe: `call projects_list to find the project, then resubmit ${verb} with projectId or projectSlug set`,
+      allowedNext: ["projects_list", verb],
+    });
+  }
   return buildTeachingError({
     code: "project_addressing_conflict",
     message: "projectId and projectSlug were both provided; pass exactly one",

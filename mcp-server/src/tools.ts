@@ -339,7 +339,11 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
           throw new Error(serializeTeachingError(projectAddressingConflictError("task_create")));
         }
         if (projectId === undefined && projectSlug === undefined) {
-          throw new Error("task_create requires exactly one of projectId or projectSlug");
+          throw new Error(
+            serializeTeachingError(
+              projectAddressingConflictError("task_create", "neither_provided"),
+            ),
+          );
         }
         let response: unknown;
         try {
@@ -839,7 +843,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       name: "signals_poll",
       description:
         DEPRECATED +
-        `Signals are delivered inline by task_pickup under v2. Default limit ${SIGNALS_DEFAULT_LIMIT} (max ${SIGNALS_MAX_LIMIT}); when more are pending the response carries truncated:true and a cursor (the last delivered signal's id) — pass it back as cursor on the next call to fetch the remainder. No signal is ever silently dropped by the cap.`,
+        `Signals are delivered inline by task_pickup under v2. Default limit ${SIGNALS_DEFAULT_LIMIT} (max ${SIGNALS_MAX_LIMIT}); when more are pending within the fetched batch the response carries truncated:true and a cursor (the last delivered signal's id). Pass it back as cursor on the next call to fetch the remainder. mcp-server always fetches up to ${SIGNALS_BACKEND_FETCH_LIMIT} pending signals from the backend per call (its own hard max; the backend has no cursor of its own). When the backend backlog is at or above that ceiling, the response also carries atBackendFetchCeiling:true: more signals may exist beyond what this call could see, even once truncated stops appearing, so ack what you have and poll again rather than assuming the backlog is drained. A cursor whose signal was acked or aged out of the backend's fetch window restarts from the oldest pending signal, so an occasional duplicate delivery is possible; treat acking as idempotent.`,
       inputShape: {
         limit: z
           .number()

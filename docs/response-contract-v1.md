@@ -223,6 +223,92 @@ Deprecated v1 verbs remain in scope of this contract for as long as they
 ship in the default tool registration: deprecation shortens their
 lifetime, it does not exempt them from the shape rules.
 
+## Read verbs, slug addressing, and the signals cap as shipped (rc-v1-C006)
+
+This section documents three pieces of rc-v1-C006 as they actually ship in
+`mcp-server`, not as originally scoped: the read-verb `include` vocabulary
+per verb, the project-slug addressing exception (cache, TTL, invalidate
+and retry), and `signals_poll`'s local cap and cursor.
+
+### `include` accepted per verb
+
+The five-value vocabulary named above (`"task"`, `"description"`,
+`"comments"`, `"instructions"`, `"artifacts"`) is the TARGET surface, not
+what every verb accepts today. Per verb, as implemented:
+
+| Verb | Accepts |
+|---|---|
+| `tasks_get` (and the read-verb summary projection) | `"description"`, `"comments"`, `"artifacts"`, `"task"` |
+| `task_start` | `"description"`, `"instructions"`, `"comments"`, `"task"` |
+| `task_pickup` | `"comments"`, `"task"` (both resolve to the same full object for this verb) |
+| Every other converted write verb (`task_create`, `task_respec`, `task_finish`, `task_submit_pr`, `task_merge`, `task_abandon`, `task_note`, `tasks_comment`) | `"task"` only |
+| `signals_poll` | no `include` parameter at all; see the cap and cursor section below instead |
+
+`"instructions"` is accepted by exactly one verb, `task_start`: it is
+`task_start`'s own per-state prose (`receipt.ts`'s `deriveStartInstructions`),
+not a field a plain task object carries, so `tasks_get` deliberately
+excludes it from its own vocabulary rather than accepting and ignoring it.
+
+### Project-slug addressing: cache, TTL, and the invalidate-and-retry contract
+
+`task_create`'s `projectSlug` field and `project_tasks`'s (`tasks_list`'s
+browse-scoped successor) `project` field both accept a slug as an
+alternative to a project id, resolved through the same internal,
+instance-scoped cache (`client.ts`'s `projectSlugCache`):
+
+- A resolved slug is cached for 15 minutes (`PROJECT_SLUG_CACHE_TTL_MS`).
+  A session issuing several calls against the same project pays the
+  `GET /projects/by-slug/:slug` round trip once per TTL window, not once
+  per call.
+- A cache-served id that fails downstream with 404 OR 403 triggers an
+  invalidate-and-retry: the 403 case matters because the two consumer
+  routes (`POST /projects/:id/tasks`, `GET /projects/:id/tasks`) reject an
+  inaccessible project id via `hasProjectAccess` with 403 forbidden, not
+  404 (see `backend/src/routes/tasks.ts`). A freshly-resolved id (this
+  call's own by-slug lookup, not cache-served) failing the same way is
+  never a stale-cache artifact, so it propagates immediately with no
+  retry.
+- On invalidate, the slug is re-resolved fresh before deciding whether to
+  retry. If the fresh id is IDENTICAL to the one that just failed, the
+  original error propagates unchanged and the downstream call is not
+  retried: this was a genuine denial, not a stale cache entry, and a real
+  permission error must never be silently masked as a fixable cache
+  problem. If the fresh id DIFFERS, the downstream call is retried exactly
+  once against it. A downstream call is therefore attempted at most twice
+  in total per `task_create` or `project_tasks` call.
+- If the fresh lookup itself 404s (the slug no longer resolves to any
+  project), the caller sees the `unknown_project_slug` teaching error
+  (naming `projects_list` as the recipe), never a raw, unparsed error.
+
+### `signals_poll`'s cap, cursor, and backend fetch ceiling
+
+`signals_poll` (deprecated; signals are delivered inline by `task_pickup`
+under v2) caps and cursors its response entirely client-side. The caller's
+own `limit` defaults to 10 and maxes at 100 (`SIGNALS_DEFAULT_LIMIT` /
+`SIGNALS_MAX_LIMIT`), but `mcp-server` always fetches up to 200 pending
+signals from the backend per call (`SIGNALS_BACKEND_FETCH_LIMIT`, the
+backend's own hard max, regardless of the caller's own smaller `limit`),
+then slices and cursors that fetched array locally:
+
+- `truncated: true` plus a `cursor` (the last delivered signal's id)
+  appears whenever more signals remain WITHIN the fetched array. Pass the
+  cursor back on the next call to resume where this page left off.
+- `atBackendFetchCeiling: true` appears whenever the fetched array itself
+  reached the backend's 200-signal ceiling, independent of `truncated`.
+  The single backend fetch a call is built on can itself be an undercount
+  of the true pending backlog (the backend has no cursor of its own; a
+  260-signal true backlog still only returns 200), so a caller can see
+  `truncated` stop appearing (the fetched array is genuinely exhausted)
+  while `atBackendFetchCeiling` still says more signals may exist beyond
+  what this call could see. Treat that combination as "ack what you have
+  and poll again", not "backlog drained".
+- A `cursor` whose signal has since been acked, or aged out of the
+  backend's own fetch window, restarts pagination from the oldest pending
+  signal rather than dropping the remainder silently. An occasional
+  duplicate delivery across calls is therefore possible; ack calls are
+  idempotent, so this is safe to treat as at-least-once delivery, not
+  exactly-once.
+
 ## Error shape (block tier)
 
 A call that cannot proceed at all is the third receipt tier: a **teaching

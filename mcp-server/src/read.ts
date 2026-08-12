@@ -74,18 +74,24 @@ export interface GetTaskResponse {
 export const TASKS_GET_INCLUDE_VALUES = ["description", "comments", "artifacts", "task"] as const;
 export type TasksGetIncludeValue = (typeof TASKS_GET_INCLUDE_VALUES)[number];
 
-/** Short claim label: prefers a resolved name/login over the bare id, but
- *  always resolves to SOMETHING when a claimant is present, so the summary
- *  never silently drops a claim it has data for. Work claim wins ties
- *  against a stray review claim on the same field (a task cannot be both
- *  work- and review-claimed by the same relation slot). */
+/** Short claim label for ONE claimant pair (a single relation, e.g. just
+ *  claimedByUser/claimedByAgent, or just reviewClaimedByUser/
+ *  reviewClaimedByAgent -- never both at once, see the call site below):
+ *  prefers a resolved name, falls back to login, then to the bare id,
+ *  always resolving to SOMETHING when a claimant is present so the summary
+ *  never silently drops a claim it has data for. A present `user` wins
+ *  outright over `agent` (checked first, unconditionally); `agent` is only
+ *  consulted when `user` itself is absent. */
 function shortClaim(
   user: RawClaimUser | null | undefined,
   agent: RawClaimAgent | null | undefined,
 ): string | undefined {
-  if (user) return user.name || user.login || user.id;
-  if (agent) return agent.name || agent.id;
-  return undefined;
+  const raw = user ? user.name || user.login || user.id : agent ? agent.name || agent.id : undefined;
+  // Clamped via the same clampEntries helper every other summary-projection
+  // field uses (CLAIM_CHAR_BUDGET, defined below), not left unbounded: a
+  // resolved `name` in particular is caller/human-influenced free text with
+  // no length limit enforced anywhere upstream of this projection.
+  return raw !== undefined ? clampEntries([raw], { max: 1, entryChars: CLAIM_CHAR_BUDGET })[0] : undefined;
 }
 
 // Summary-projection clamps. Deliberately separate constants from
@@ -99,6 +105,26 @@ const LABELS_SUMMARY_CLAMP = 10;
 const LABEL_CHAR_BUDGET = 60;
 const BLOCKED_BY_SUMMARY_CLAMP = 10;
 const BLOCKED_BY_TITLE_CHAR_BUDGET = 60;
+// Per-entry char bound for a resolved claim label (shortClaim's own
+// return value) and for prUrl. Both are, in principle, unbounded caller-
+// or-backend-influenced strings: prUrl in particular has no max length on
+// task_submit_pr's own input schema (tools.ts), so a caller could in
+// principle submit an arbitrarily long one and have it echoed back
+// verbatim by a later tasks_get call. Clamped here the same way
+// labels/blockedBy already are (rc-v1-C006 round-2 review, LOW: the
+// WORST CASE ceiling test previously left both unclamped, relying only on
+// realistic-length fixture values rather than an actual bound). `title` is
+// deliberately NOT clamped this way: unlike prUrl, it IS genuinely bounded
+// today, independently, by both the backend's own createTaskSchema
+// (backend/src/routes/tasks.ts: `title: z.string().min(1).max(255)`) and
+// mcp-server's own task_create inputShape (tools.ts, same 255 max) -- and a
+// caller reading a summary needs the task's actual title to identify the
+// task, so silently shortening it would cost more in usability than the
+// (already externally-bounded) worst case saves in budget. See the WORST
+// CASE test's own comment in tests/read.test.ts for the same reasoning
+// pinned alongside the fixture it documents.
+const CLAIM_CHAR_BUDGET = 60;
+const PRURL_CHAR_BUDGET = 100;
 
 function clampBlockedBy(entries: RawBlockedByEntry[] | undefined): {
   blockedBy?: RawBlockedByEntry[];
@@ -166,6 +192,12 @@ export function projectTaskSummary(
     if (task.labels.length > LABELS_SUMMARY_CLAMP) summary.totalLabels = task.labels.length;
   }
 
+  // Work and review claims are resolved by two independent shortClaim
+  // calls, one per relation, never passed to a single call together --
+  // there is no "work wins the tie against review" logic anywhere, because
+  // shortClaim itself never sees both relations at once. Both can end up
+  // present in `summary.claims` simultaneously (a task can be work-claimed
+  // by one caller and separately review-claimed by another).
   const work = shortClaim(task.claimedByUser, task.claimedByAgent);
   const review = shortClaim(task.reviewClaimedByUser, task.reviewClaimedByAgent);
   if (work || review) {
@@ -178,7 +210,12 @@ export function projectTaskSummary(
   if (blockedBy) summary.blockedBy = blockedBy;
   if (totalBlockedBy !== undefined) summary.totalBlockedBy = totalBlockedBy;
 
-  if (task.prUrl) summary.prUrl = task.prUrl;
+  // Clamped like the claim labels above: task_submit_pr's own input schema
+  // (tools.ts) has no max length on prUrl, so this is genuinely unbounded
+  // upstream, unlike `title` (see PRURL_CHAR_BUDGET's own doc comment).
+  if (task.prUrl) {
+    summary.prUrl = clampEntries([task.prUrl], { max: 1, entryChars: PRURL_CHAR_BUDGET })[0];
+  }
 
   if (include?.includes("description") && task.description) summary.description = task.description;
   if (include?.includes("comments") && task.comments) summary.comments = task.comments;
@@ -218,13 +255,35 @@ export interface RawSignal {
 
 export interface SignalsPollResult {
   signals: RawSignal[];
-  /** Present only when more signals exist beyond this page (report by
-   *  exception, same philosophy as receipt.ts's deviations tier: never
-   *  silently truncated). */
+  /** Present only when more signals exist beyond this page WITHIN `all`
+   *  (report by exception, same philosophy as receipt.ts's deviations
+   *  tier: never silently truncated). This is local pagination only -- see
+   *  atBackendFetchCeiling for the separate "the fetch itself might be an
+   *  undercount" signal. */
   truncated?: boolean;
   /** Pass back as `cursor` on the next call to resume exactly where this
    *  page left off. Present only alongside truncated:true. */
   cursor?: string;
+  /** rc-v1-C006 round-2 review (HIGH): set (true) whenever `all.length` hit
+   *  SIGNALS_BACKEND_FETCH_LIMIT -- the single backend fetch this array came
+   *  from may itself be an undercount of the true pending backlog (the
+   *  backend has no cursor of its own; mcp-server always asks for its hard
+   *  max in one shot). Before this field existed, the LAST local page of an
+   *  at-ceiling fetch reported truncated:false (nothing left in `all`),
+   *  which read as "backlog fully drained" even when the backend backlog
+   *  was actually larger than what this one fetch could return (measured: a
+   *  260-signal backlog delivers only 200, and the final local page over
+   *  those 200 said truncated:false). truncated and atBackendFetchCeiling
+   *  answer two different questions ("more left in what I already fetched"
+   *  vs "what I fetched might not be everything") and are therefore
+   *  independent flags, not one folded into the other -- forcing
+   *  truncated:true here would make a caller loop forever re-requesting a
+   *  cursor that never advances past the fetched window's own end. A caller
+   *  that sees this on ANY page (not only the final one, since it describes
+   *  the underlying fetch, not the page) should ack what it received and
+   *  poll again rather than treating the backlog as drained once
+   *  truncated stops appearing. */
+  atBackendFetchCeiling?: boolean;
 }
 
 /**
@@ -233,8 +292,11 @@ export interface SignalsPollResult {
  * cursor whose signal has since been acked or aged out of the backend's
  * own fetch window falls back to the start rather than silently dropping
  * everything), returning at most `limit` entries. Sets truncated+cursor
- * whenever more remain, so a caller can never lose a signal by not
- * noticing the response was capped.
+ * whenever more remain WITHIN `all`, so a caller can never lose a signal
+ * by not noticing the response was capped; sets atBackendFetchCeiling
+ * independently whenever `all` itself reached the backend's own fetch
+ * ceiling, since that is a fact about the fetch, not about which page of
+ * it a caller happens to be reading.
  */
 export function paginateSignals(
   all: readonly RawSignal[],
@@ -253,6 +315,9 @@ export function paginateSignals(
     result.truncated = true;
     const last = page[page.length - 1];
     if (last) result.cursor = last.id;
+  }
+  if (all.length >= SIGNALS_BACKEND_FETCH_LIMIT) {
+    result.atBackendFetchCeiling = true;
   }
   return result;
 }
