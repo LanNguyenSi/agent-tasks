@@ -77,14 +77,25 @@ claim-to-merge flow as one tool call each, with governance state baked in:
 | `task_abandon` | Release the claim with a reason |
 | `task_create` | Create a new task in a project |
 | `task_artifact_create` / `task_artifact_list` / `task_artifact_get` | Attach and read structured artifacts on a task |
+| `project_tasks` | Browse a project's tasks |
 | `signals_poll` / `signals_ack` | Pull-based signal inbox + acknowledgement |
-| `pull_requests_create` / `pull_requests_merge` / `pull_requests_comment` | Lower-level GitHub-identifier verbs |
-| `projects_list` | Discover accessible projects |
+| `pull_requests_create` / `pull_requests_merge` | Lower-level GitHub-identifier verbs |
 
-**v1 surface (deprecated, still present).** `tasks_list`, `tasks_get`,
+**Default-pruned v1 surface (legacy-only since rc-v1-C007).**
+`mcp-server` 0.13.0 removed 14 still-deprecated v1 verbs from the default
+tool registration: `projects_list`, `projects_get`, `tasks_list`,
 `tasks_instructions`, `tasks_create`, `tasks_claim`, `tasks_release`,
-`tasks_transition`, `tasks_update`, `tasks_comment` still work for older
-clients but new code should use the v2 verbs above.
+`tasks_transition`, `tasks_update`, `review_approve`,
+`review_request_changes`, `review_claim`, `review_release`, and
+`pull_requests_comment`. Set `AGENT_TASKS_MCP_LEGACY=1` in the server
+process's environment to restore all 37 for a client still depending on
+one of these verbs by name. Use the v2 verbs above instead: `task_pickup`
+or `project_tasks` for `tasks_list`/`projects_list`, `task_start` for
+`tasks_claim`, `task_abandon` for `tasks_release`, `task_start` /
+`task_finish` for `tasks_transition`, and `task_submit_pr` for
+`tasks_update`. `tasks_get` (summary + `include`) and `tasks_comment` (a
+permanent `task_note` alias) are NOT part of this pruned set and stay
+registered by default.
 
 See [`mcp-server/README.md`](../mcp-server/README.md) for the full reference.
 

@@ -1,10 +1,16 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { z } from "zod";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildTools } from "../src/tools.js";
 import { AgentTasksClient, AgentTasksApiError } from "../src/client.js";
 import { serializeResult } from "../src/server.js";
 import { WORKFLOW_PRIMER } from "../src/primer.js";
 import { SIGNALS_DEFAULT_LIMIT, SIGNALS_BACKEND_FETCH_LIMIT } from "../src/read.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const TOOLS_TS_SOURCE_PATH = resolve(__filename, "..", "..", "src", "tools.ts");
 
 describe("buildTools", () => {
   const config = { baseUrl: "https://example.test", token: "tok_abc" };
@@ -172,6 +178,77 @@ describe("buildTools", () => {
       expect(legacyNames.has(name), `${name} should be present in the legacy set`).toBe(true);
     }
     expect(legacyNames).toEqual(new Set([...defaultNames, ...PRUNED_VERB_NAMES]));
+  });
+
+  // ── rc-v1-C007 fix round, item 6a: the [DEPRECATED marker must never
+  // drift from LEGACY_VERB_NAMES again the way tasks_comment's did (it kept
+  // carrying tools.ts's `[DEPRECATED, use v2 tools] ` prefix even though it
+  // stayed in the DEFAULT registration, permanently -- a dishonest label on
+  // a first-class alias). These two tests pin the marker/set relationship
+  // mechanically in both directions, so this specific class of drift fails
+  // here instead of only being caught by inspection. ──────────────────────
+  it("the [DEPRECATED marker set (across all 37 tools, legacy mode) is exactly LEGACY_VERB_NAMES -- no verb carries the marker without being pruned, and no pruned verb is missing it", () => {
+    const allTools = buildTools(new AgentTasksClient(config), { legacy: true });
+    const markedNames = new Set(
+      allTools.filter((t) => t.description.includes("[DEPRECATED")).map((t) => t.name),
+    );
+    expect(markedNames).toEqual(new Set(PRUNED_VERB_NAMES));
+  });
+
+  it("no DEFAULT-registered tool's description carries the [DEPRECATED marker", () => {
+    const defaultTools = buildTools(new AgentTasksClient(config));
+    const stillMarked = defaultTools
+      .filter((t) => t.description.includes("[DEPRECATED"))
+      .map((t) => t.name);
+    expect(stillMarked).toEqual([]);
+  });
+
+  // ── rc-v1-C007 fix round, item 6c: structural invariant -- an allowedNext
+  // reachable from a DEFAULT-registered verb must never name a legacy-only
+  // one. errors.ts's preconditionFailedError is the one catalog entry whose
+  // allowedNext is genuinely parameterized by the caller's own verbContext
+  // (`retryVerb = verbContext ?? "task_finish"`); every wrap() call site in
+  // tools.ts always passes its OWN tool's name as verbContext (never a
+  // different tool's), so the invariant reduces to a source-level check:
+  // no DEFAULT tool's own handler may pass a legacy-only verb name into
+  // wrap()'s verbContext parameter. This is a source-parsing test, the same
+  // idiom tests/primer.test.ts's `nonIncludeReshapingVerbNames` already
+  // uses for tools.ts, chosen over replaying every backend error shape
+  // through every default verb's real handler (which errors.test.ts's
+  // per-case `assertAllowedNextRegistered` calls already do individually,
+  // kept as-is -- this closes the gap those per-case assertions cannot:
+  // a NEW wrap() call site added later that forgets this rule). ──────────
+  it("no DEFAULT-registered tool's handler passes a legacy-only verb name as wrap()'s verbContext", () => {
+    const source = readFileSync(TOOLS_TS_SOURCE_PATH, "utf8");
+    const blocks = source.split(/\n {4}def\(\{/).slice(1);
+    // Non-vacuity: the split must see every def({ in the file (see
+    // primer.test.ts's identical guard on the same split pattern).
+    expect(blocks.length).toBe((source.match(/def\(\{/g) ?? []).length);
+
+    const defaultNames = new Set(buildTools(new AgentTasksClient(config)).map((t) => t.name));
+    let verbContextSitesChecked = 0;
+    for (const block of blocks) {
+      const nameMatch = block.match(/name:\s*"([a-zA-Z_]+)"/);
+      if (!nameMatch) continue;
+      const toolName = nameMatch[1];
+      if (!defaultNames.has(toolName)) continue; // legacy-only tool: out of scope for this invariant
+
+      // wrap(<fn>, "verbContext") -- the fn argument may itself be a
+      // multi-line arrow function, so this only anchors on the trailing
+      // `, "literal")` immediately before wrap()'s own closing paren.
+      const verbContextMatches = Array.from(block.matchAll(/wrap\([\s\S]*?,\s*"([a-zA-Z_]+)"\s*\)/g));
+      for (const m of verbContextMatches) {
+        verbContextSitesChecked++;
+        expect(
+          defaultNames.has(m[1]),
+          `DEFAULT tool "${toolName}" passes verbContext "${m[1]}" to wrap(), which is not a DEFAULT-registered verb name`,
+        ).toBe(true);
+      }
+    }
+    // Non-vacuity: at least one DEFAULT tool actually passes a verbContext
+    // (task_start and task_finish both do), or this test would pass having
+    // checked nothing.
+    expect(verbContextSitesChecked).toBeGreaterThan(0);
   });
 
   it("workflow_primer is parameterless and returns the deterministic long primer text verbatim", async () => {

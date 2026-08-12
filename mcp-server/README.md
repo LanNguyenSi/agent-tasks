@@ -88,7 +88,7 @@ migrate the caller to its replacement.
 
 | Pruned verb (legacy-only) | v2 replacement |
 | --- | --- |
-| `projects_list` | `project_tasks` to browse a project's tasks, or `task_pickup` to find the next piece of work without browsing |
+| `projects_list` | no v2 verb enumerates projects: ask the operator for the project's slug or id (the recipe `errors.ts`'s own `unknown_project_slug` teaching error gives), or set `AGENT_TASKS_MCP_LEGACY=1` to keep using this verb. Once you know the project, `project_tasks` browses its tasks and `task_pickup` finds the next piece of work without browsing |
 | `projects_get` | `projects_get_effective_gates` for the gate/task-creation fields this verb's "non-deprecated use" needed; `project_tasks` for browsing |
 | `tasks_list` | `task_pickup` for the single prioritized item, or `project_tasks` to browse a project |
 | `tasks_instructions` | `task_start` with `include: ["instructions"]`, or the on-demand `workflow_primer` verb for the general lifecycle prose |

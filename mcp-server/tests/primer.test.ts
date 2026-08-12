@@ -74,11 +74,15 @@ function snakeCaseTokens(text: string): string[] {
   return Array.from(new Set(text.match(SNAKE_CASE_TOKEN_PATTERN) ?? []));
 }
 
-function assertOnlyKnownTokens(text: string, registered: Set<string>): void {
+function assertOnlyKnownTokens(
+  text: string,
+  registered: Set<string>,
+  extraAllowlist: Set<string> = NON_VERB_TOKENS,
+): void {
   for (const token of snakeCaseTokens(text)) {
     expect(
-      registered.has(token) || NON_VERB_TOKENS.has(token),
-      `unexpected snake_case token "${token}": not a registered verb name and not in NON_VERB_TOKENS`,
+      registered.has(token) || extraAllowlist.has(token),
+      `unexpected snake_case token "${token}": not a registered verb name and not in the allowlist`,
     ).toBe(true);
   }
 }
@@ -741,5 +745,103 @@ describe("rc-v1-C005: Errors section stays in sync with the teaching-error imple
     expect(parsed.error.code).toBe("already_claimed");
     expect(Array.isArray(parsed.error.allowedNext)).toBe(true);
     expect(parsed.error.allowedNext.length).toBeGreaterThan(0);
+  });
+});
+
+// ── rc-v1-C007 fix round (HIGH finding #1): default-registered tool
+// descriptions must not go stale the way task_create's and project_tasks's
+// unknown_project_slug recipe text did (both used to name projects_list as
+// THE recipe unconditionally, which rc-v1-C007 made false the moment
+// projects_list itself became legacy-flag-only) ──────────────────────────
+//
+// Reuses the same default-deny snake_case token guard as the two primers
+// and the README section above, now run over every DEFAULT-registered
+// tool's own `description` string (tools.ts, not primer.ts). A pruned v1
+// verb's bare name (tasks_update, tasks_list, projects_get, projects_list,
+// ...) is not a registered verb in DEFAULT mode, so it fails this guard the
+// same way a fabricated verb would, UNLESS explicitly allowlisted below --
+// which happens only for the two mentions that are deliberately kept
+// (task_create's and project_tasks's unknown_project_slug recipe,
+// task_submit_pr's replacement-history clause), each inside a sentence
+// that also names AGENT_TASKS_MCP_LEGACY (checked separately below, not
+// just presence-checked).
+describe("every DEFAULT-registered tool's description mentions only known verb names (default-deny, rc-v1-C007 fix round)", () => {
+  // Legitimate non-verb snake_case tokens that appear ONLY in tool
+  // descriptions (tools.ts), not in either primer or the README section
+  // above, so they do not belong in the shared NON_VERB_TOKENS list: enum
+  // literals, GateCode examples, a signal name, and OAuth-style scope-name
+  // fragments (github:pr_create / github:pr_merge), quoted for the reader
+  // the same way NON_VERB_TOKENS's own entries are.
+  const DESCRIPTION_ONLY_NON_VERB_TOKENS = new Set([
+    "changes_requested", // task_finish: the signal emitted on outcome=request_changes
+    "build_log", // task_artifact_create's artifact-type enum literal
+    "test_report", // task_artifact_create's artifact-type enum literal
+    "generated_code", // task_artifact_create's artifact-type enum literal
+    "self_merge_blocked", // task_merge: 403 error code
+    "pr_merge", // task_merge / pull_requests_merge: the github:pr_merge scope-name fragment
+    "pr_create", // pull_requests_create: the github:pr_create scope-name fragment
+    "distinct_reviewer", // projects_get_effective_gates: GateCode example
+    "self_merge", // projects_get_effective_gates: GateCode example
+    "task_status_for_merge", // projects_get_effective_gates: GateCode example
+    "pr_repo_matches_project", // projects_get_effective_gates: GateCode example
+  ]);
+
+  // rc-v1-C007: a pruned verb's bare name may appear in a DEFAULT tool's
+  // description ONLY inside a sentence that also names the
+  // AGENT_TASKS_MCP_LEGACY escape hatch -- matching errors.ts's own
+  // unknown_project_slug recipe wording, and task_submit_pr's
+  // replacement-history clause -- never as a bare "use X instead" mention
+  // with no flag context. Each entry here is deliberate: a new pruned-verb
+  // mention must be added here explicitly (and pass the flag-context test
+  // below), never absorbed silently by widening NON_VERB_TOKENS instead.
+  const LEGACY_VERB_MENTIONS_IN_DESCRIPTIONS = new Set([
+    "projects_list", // task_create / project_tasks: unknown_project_slug recipe
+    "tasks_update", // task_submit_pr: v1-replacement clause
+  ]);
+
+  const DESCRIPTION_ALLOWLIST = new Set([
+    ...NON_VERB_TOKENS,
+    ...DESCRIPTION_ONLY_NON_VERB_TOKENS,
+    ...LEGACY_VERB_MENTIONS_IN_DESCRIPTIONS,
+  ]);
+
+  function defaultToolDescriptions(): { name: string; description: string }[] {
+    const client = new AgentTasksClient({ baseUrl: "https://example.test", token: "tok" });
+    return buildTools(client).map((t) => ({ name: t.name, description: t.description }));
+  }
+
+  it("mentions only registered default verb names, or an explicitly allowlisted non-verb / flag-gated-legacy token, in every description", () => {
+    const registered = registeredVerbNames();
+    for (const { name, description } of defaultToolDescriptions()) {
+      for (const token of snakeCaseTokens(description)) {
+        expect(
+          registered.has(token) || DESCRIPTION_ALLOWLIST.has(token),
+          `tool "${name}"'s description mentions unexpected snake_case token "${token}": not a registered default verb and not in the allowlist`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  // Non-vacuity for the test below: without this, an accidental removal of
+  // both flag-gated mentions would make the "every mention names the flag"
+  // loop run zero times and pass without checking anything.
+  it("is not vacuous: at least one default tool's description actually mentions a flag-gated legacy verb", () => {
+    const descriptions = defaultToolDescriptions().map((t) => t.description);
+    const mentionsAny = descriptions.some((d) =>
+      Array.from(LEGACY_VERB_MENTIONS_IN_DESCRIPTIONS).some((v) => d.includes(v)),
+    );
+    expect(mentionsAny).toBe(true);
+  });
+
+  it("every flag-gated legacy-verb mention sits in a description that also names AGENT_TASKS_MCP_LEGACY (never a bare 'use X' reference)", () => {
+    for (const { name, description } of defaultToolDescriptions()) {
+      for (const legacyVerb of LEGACY_VERB_MENTIONS_IN_DESCRIPTIONS) {
+        if (!description.includes(legacyVerb)) continue;
+        expect(
+          description.includes("AGENT_TASKS_MCP_LEGACY"),
+          `tool "${name}"'s description mentions legacy verb "${legacyVerb}" without naming AGENT_TASKS_MCP_LEGACY anywhere in the same description`,
+        ).toBe(true);
+      }
+    }
   });
 });

@@ -212,12 +212,15 @@ Per-verb defaults without `include`:
 | `task_pickup` | full spec, without `comments` |
 | `task_start` | receipt + per-task slice (`inferredTaskType`, `expectedFinishState`, `gateExpectations`, `gateExpectationsSource` when assumed) |
 | `tasks_get` (and equivalents) | summary |
-| `tasks_list` / `project_tasks` | existing summary projection (unchanged) |
+| `project_tasks` | existing summary projection (unchanged) |
+| `tasks_list` (legacy-only since rc-v1-C007) | existing summary projection (unchanged) |
 
-`verbose: true/false` (the current flag on `tasks_list`) is superseded by
-`include` for any verb this contract touches; existing `verbose` behavior
-MUST remain available at minimum via `include: ["task"]` during the
-deprecation window.
+`verbose: true/false` (the flag `tasks_list` carries) is superseded by
+`include` for every non-legacy verb this contract touches. `tasks_list`
+itself is legacy-only since rc-v1-C007 (see the "Legacy-flag exemption"
+paragraph below) and is therefore out of this contract's shape rules
+entirely; its `verbose` flag is untouched and needs no `include`
+equivalent.
 
 Deprecated v1 verbs remained in scope of this contract for as long as they
 shipped in the default tool registration. rc-v1-C007 pruned every verb
@@ -300,8 +303,10 @@ instance-scoped cache (`client.ts`'s `projectSlugCache`):
 
 ### `signals_poll`'s cap, cursor, and backend fetch ceiling
 
-`signals_poll` (deprecated; signals are delivered inline by `task_pickup`
-under v2) caps and cursors its response entirely client-side. The caller's
+`signals_poll` (kept in the default registration by rc-v1-C007, not pruned;
+signals are also delivered inline by `task_pickup` under v2, so this verb
+is for checking the inbox directly without also claiming a task) caps and
+cursors its response entirely client-side. The caller's
 own `limit` defaults to 10 and maxes at 100 (`SIGNALS_DEFAULT_LIMIT` /
 `SIGNALS_MAX_LIMIT`), but `mcp-server` always fetches up to 200 pending
 signals from the backend per call (`SIGNALS_BACKEND_FETCH_LIMIT`, the
@@ -374,7 +379,8 @@ each already documented as a 4xx behavior in `mcp-server/src/tools.ts` /
   the first.
 - **`cross_repo_pr_rejected`.** `task_submit_pr` rejects a `prUrl` that
   does not point at `project.githubRepo` with 400.
-- **`transition force=admin-only`.** The `tasks_transition` /
+- **`transition force=admin-only`.** The `tasks_transition` (legacy-only
+  since rc-v1-C007, reachable only with `AGENT_TASKS_MCP_LEGACY=1`) /
   `POST /tasks/:id/transition { force: true }` admin bypass returns 403
   for non-admins.
 - **Description immutability.** `task_respec` only edits an `OPEN`,

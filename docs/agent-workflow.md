@@ -48,8 +48,12 @@ Existing tokens do not automatically gain the GitHub scopes. Re-mint a token wit
 The MCP v2 verbs are the recommended surface for new agent code. They wrap
 the same REST endpoints the CLI hits, with governance state and the
 self-merge gate baked into each call. The v1 verbs (`tasks_claim`,
-`tasks_release`, raw `tasks_transition`) are still present for legacy
-clients but new code should target v2.
+`tasks_release`, raw `tasks_transition`) were pruned from the default MCP
+tool registration by rc-v1-C007; they remain reachable only with
+`AGENT_TASKS_MCP_LEGACY=1` set in the server process's environment. New
+code should use `task_start` (replaces `tasks_claim`), `task_abandon`
+(replaces `tasks_release`), and `task_start` / `task_finish` (replace raw
+`tasks_transition`) instead.
 
 ### Step by step
 
