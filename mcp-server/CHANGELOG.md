@@ -2,6 +2,116 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## 0.13.0
+
+**Response Contract v1** (rc-v1 series, PRs #434–#440; normative reference:
+`docs/response-contract-v1.md` in the repo). **Breaking release**: default
+response shapes change for every existing caller, and 14 deprecated v1 verbs
+leave the default registration. `include: ["task"]` is the per-call valve
+back to the old full-object behavior on every converted verb, and
+`AGENT_TASKS_MCP_LEGACY=1` restores the full pre-0.13.0 tool set.
+
+**Measured** (mcp-token-audit, response-shape-bucketed over the same 14-day
+dogfood corpus, chars/4 ≈ tokens, successful calls only): `task_start`
+1,966 → 75 tokens/call, `task_finish` 1,783 → 26, `task_create` 1,380 → 46,
+`task_submit_pr` 1,481 → 40. Weighted by the baseline call profile of these
+four verbs, that is ~711k → ~19k tokens per 14 days (−97%; the release-gate
+target was −50%). Receipt sizes are bounded by construction and pinned by
+budget tests; the live receipt-bucket calls corroborate the pinned sizes.
+`tasks_get`'s summary default is pinned at 431 emitted chars (≈ 108 tokens)
+against a ~1.3k-token/call full-object average before.
+
+**Cold-start eval** (release gate): a fresh, isolated agent session with no
+prior knowledge of this tracker completed the full lifecycle (`task_start` →
+PR → `task_submit_pr` → `task_finish`) against the packed 0.13.0 tarball,
+guided only by the handshake primer and tool descriptions; a negative-control
+session that was instructed to call `task_finish` out of sequence was
+corrected by the `not_claimed` teaching error alone.
+
+### Changed
+
+- **The eight write verbs return small receipts by default** (rc-v1-C002,
+  #435). `task_create`, `task_finish`, `task_submit_pr`, `task_note`,
+  `task_respec`, `tasks_comment`, `task_merge`, and `task_abandon` now answer
+  with a receipt (`{ ok, task: { id, status }, … }`) instead of echoing the
+  full backend object: no echo of the description/templateData you just sent,
+  report-by-exception `deviations` (e.g. `CONFIDENCE_BELOW_THRESHOLD`) with
+  detail clamped by construction (at most 5 entries per array plus an explicit
+  total count, 19-char per-entry budget), and a `confidence` scalar on
+  create/respec only. Tier budgets are test-asserted on the emitted wire
+  string (receipt ≤ 240, advise tier ≤ 1600 serialized chars).
+- **`task_start` returns a receipt plus a small per-task slice** (rc-v1-C003,
+  #436): `inferredTaskType`, `expectedFinishState`, `gateExpectations` (with
+  a `gateExpectationsSource: "assumed-default-workflow"` provenance marker
+  when the list comes from the static fallback rather than the project's own
+  workflow definition) — 300 emitted chars on the plain work-claim fixture,
+  against ~2k tokens per call before (the most expensive verb of the
+  surface). The persisted `groundingSessionState` blob never reaches the
+  default response; debug-flavored tasks get a compact session recipe
+  instead. `include` gains `description`/`instructions`/`comments`/`task`;
+  `task_pickup` keeps the full spec (minus `comments` by default) as the
+  single full-spec moment — a composition test proves pickup + start together
+  still carry all work data.
+- **`tasks_get` returns a summary projection by default** (rc-v1-C006, #439):
+  id, title, status, priority, clamped labels/blockedBy, claims, prUrl —
+  pinned at 431 emitted chars on the happy-path fixture; `include` adds
+  `description`, `comments`, `artifacts`, or the full object.
+- **Every error is a teaching error** (rc-v1-C005, #438): errors serialize as
+  `{ code, message, recipe, allowedNext }`, bounded ≤ 1200 chars by
+  construction, with a nine-entry catalog of the documented agent traps
+  (`not_claimed`, `already_claimed`, structured `precondition_failed` listing
+  each failing gate with its own corrective, `low_confidence` with
+  score/threshold/missing detail, `cross_repo_pr_rejected`,
+  `pr_author_mismatch`, admin-only `force`, respec conflict, and the
+  plain-string result guard). Unknown errors degrade to the same shape and
+  pass the backend's own `body.error` code through verbatim (`http_<status>`
+  only when the body carries no code), preserving recursively clamped
+  details.
+- **`signals_poll` caps its response honestly** (rc-v1-C006, #439): default
+  limit 10 with an explicit `truncated` marker and a resumable cursor, plus
+  `atBackendFetchCeiling` when the fetched backlog hits the backend's 200-row
+  window — nothing is silently dropped.
+
+### Removed
+
+- **14 deprecated v1 verbs pruned from the default registration**
+  (rc-v1-C007, #440): `projects_list`, `projects_get`, `tasks_list`,
+  `tasks_create`, `tasks_update`, `tasks_instructions`, `tasks_claim`,
+  `tasks_release`, `tasks_transition`, `review_approve`,
+  `review_request_changes`, `review_claim`, `review_release`, and
+  `pull_requests_comment`. The default surface is 23 tools; setting
+  `AGENT_TASKS_MCP_LEGACY=1` in the server process's environment registers
+  exactly the pre-0.13.0 37-tool set (handlers untouched). The README carries
+  a per-verb replacement table. `tasks_get`, `tasks_comment`, `signals_poll`,
+  and `signals_ack` stay registered by default and lose their stale
+  deprecated prefixes.
+
+### Added
+
+- **Onboarding channels** (rc-v1-C004, #437): the MCP initialize handshake
+  now carries `instructions` (a ≤ 2000-char primer: lifecycle, claim model,
+  receipt promise), and a new parameterless, local-only `workflow_primer`
+  verb serves the full lifecycle reference on demand. Static onboarding
+  knowledge is paid for once per session instead of being replayed inside
+  every `task_start` response (the deprecated `tasks_instructions` design).
+- **`projectSlug` addressing** (rc-v1-C006, #439): `task_create` accepts
+  `projectSlug` as an alternative to `projectId`, resolved through a
+  TTL-cached slug map (~15 min) with invalidate-and-retry on the backend's
+  real 403/404 signals; `project_tasks`'s existing slug support routes
+  through the same cached resolver. Contradictory or unknown project
+  addressing is a teaching error.
+- **Sort + cursor pagination on `tasks_list` / `project_tasks`** (#413): both
+  list tools default to `createdAt:desc` at the tool layer so small-`limit`
+  browsing sees the newest tasks, with `nextCursor`/`cursor` for stable
+  paging.
+
+### Docs
+
+- **`docs/response-contract-v1.md`** (rc-v1-C001, #434) is the normative
+  response-shape reference (receipt tiers, report-by-exception rules,
+  include semantics, error shape, onboarding channels, token budgets,
+  versioning), linked from the README nav table and CONTRIBUTING.
+
 ## 0.12.0
 
 ### Added

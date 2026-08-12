@@ -6,7 +6,7 @@ import { HANDSHAKE_PRIMER } from "./primer.js";
 
 export const DEFAULT_BASE_URL = "https://agent-tasks.opentriologue.ai";
 export const SERVER_NAME = "agent-tasks-mcp";
-export const SERVER_VERSION = "0.12.0";
+export const SERVER_VERSION = "0.13.0";
 
 // Wire-format serializer: the exact transform applied to every tool
 // handler's return value before it goes out as the MCP text block. Exported

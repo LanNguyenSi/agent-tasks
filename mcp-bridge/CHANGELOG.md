@@ -2,6 +2,29 @@
 
 All notable changes to `@agent-tasks/mcp-bridge` are documented here.
 
+## 0.8.0
+
+### Changed
+
+- **`@agent-tasks/mcp-server` dependency bumped to `0.13.0`** (rc-v1-C008).
+  Ships **Response Contract v1** to npx consumers — a breaking change of the
+  served tool surface: the eight write verbs return small receipts by default
+  (`include: ["task"]` opts back into the full object per call), `task_start`
+  returns a receipt plus a compact per-task slice, `tasks_get` returns a
+  summary projection, every error is a teaching error
+  (`{ code, message, recipe, allowedNext }`), the initialize handshake
+  carries an onboarding primer alongside the new `workflow_primer` verb, and
+  the default registration is pruned to 23 tools (0.12.0 served 37). See the
+  `@agent-tasks/mcp-server` 0.13.0 CHANGELOG for the full rc-v1 series.
+
+### Added
+
+- **`AGENT_TASKS_MCP_LEGACY` passthrough** (rc-v1-C007, #440): the bridge CLI
+  reads the flag from its own environment and forwards it to the spawned
+  server, so bridge users can restore the pre-0.13.0 37-verb tool set without
+  bypassing the bridge. Documented in the usage text and README, proven by a
+  test that spawns the real built binary.
+
 ## 0.7.3
 
 ### Changed
