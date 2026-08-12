@@ -570,11 +570,14 @@ describe("malformed backend success bodies (no task.id)", () => {
 const START_BUDGET_CHARS = 1200;
 
 // A much tighter bound, asserted against the actual default-slice fixtures
-// (not the 1200-char ceiling alone): at 244 measured chars for the happy
-// path today, 1200 alone has ~5x headroom and would not catch a
-// re-fattening regression until it was already large. 400 leaves real
-// headroom over the measured fixtures while still catching drift long
-// before it reaches the contract ceiling.
+// (not the 1200-char ceiling alone): at 300 measured chars for the happy
+// path today (244 pre-gateExpectationsSource), 1200 alone has ~4x headroom
+// and would not catch a re-fattening regression until it was already
+// large. 400 leaves 100 chars of headroom over the measured fixture while
+// still catching drift long before it reaches the contract ceiling. The
+// exact-size assertion in the budget test pins the documented number:
+// growing the slice forces the figure in docs/response-contract-v1.md to
+// move with it.
 const START_BUDGET_TIGHT_CHARS = 400;
 
 describe("receiptForStart", () => {
@@ -604,6 +607,10 @@ describe("receiptForStart", () => {
     });
     expect(size(slice)).toBeLessThanOrEqual(START_BUDGET_TIGHT_CHARS);
     expect(size(slice)).toBeLessThanOrEqual(START_BUDGET_CHARS);
+    // Exact pin, deliberately brittle: this is the figure quoted in
+    // docs/response-contract-v1.md's task_start budget exception. Growing
+    // the slice must move the doc number with it, not drift silently.
+    expect(size(slice)).toBe(300);
   });
 
   it("no-echo: description, templateData, and comments never appear in the default slice", () => {
@@ -773,9 +780,10 @@ describe("receiptForStart", () => {
     expect(slice).not.toHaveProperty("description");
   });
 
-  it("include:[\"instructions\"] adds the default-workflow instructions prose for the task's current state when no custom workflow is embedded", () => {
+  it("include:[\"instructions\"] adds the default-workflow instructions prose for the task's current state when no custom workflow is embedded, marked as an assumption (null workflowId does not prove the built-in default; rc-v1-C003 review round 2)", () => {
     const slice = receiptForStart(workResponse, ["instructions"]) as StartSlice;
     expect(slice.instructions).toMatch(/push the branch, create a PR/);
+    expect(slice.instructionsSource).toBe("assumed-default-workflow");
   });
 
   it("include:[\"instructions\"] prefers the dynamic per-state prose from an embedded custom workflow over the static fallback", () => {
@@ -797,6 +805,24 @@ describe("receiptForStart", () => {
       ["instructions"],
     ) as StartSlice;
     expect(slice.instructions).toBe("CUSTOM REVIEW PROSE");
+    expect(slice).not.toHaveProperty("instructionsSource");
+  });
+
+  it("include:[\"task\"] keeps backendSessionRef reachable on a debugFlavor response (identity valve carries the full groundingHint)", () => {
+    const debugResponse: StartResponse = {
+      kind: "work",
+      task: { id: "b7f3c2d1-0000-4000-8000-000000000001", status: "in_progress" },
+      expectedFinishState: "review",
+      groundingHint: {
+        debugFlavor: true,
+        recommendedAction: "Advance through the mandatory sequence before claiming a root cause.",
+        mcpToolHint: 'mcp__grounding__grounding_start(problem="x", keyword="agent-tasks")',
+        backendSessionRef: "gs-agent-tasks-abc123",
+      },
+    };
+    const raw = receiptForStart(debugResponse, ["task"]);
+    expect(raw).toBe(debugResponse);
+    expect((raw as StartResponse).groundingHint?.backendSessionRef).toBe("gs-agent-tasks-abc123");
   });
 
   it("include:[\"instructions\"] omits instructions (does not guess) when workflowId is set but no embedded workflow.definition.states is sent, mirroring deriveGateExpectations' custom-workflow guard (rc-v1-C003 fix round 1, MEDIUM finding)", () => {

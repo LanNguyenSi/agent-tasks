@@ -57,6 +57,14 @@ describe("DEFAULT_WORKFLOW_TRANSITIONS", () => {
     expect(DEFAULT_WORKFLOW_TRANSITIONS).toEqual(BACKEND_DEFAULT_TRANSITIONS);
   });
 
+  it("positive control: carries the exact, hand-verified in_progress -> review gate list (source-independent, catches a find-and-replace drifting both packages the same way)", () => {
+    expect(DEFAULT_WORKFLOW_TRANSITIONS.in_progress[0]).toEqual({
+      to: "review",
+      label: "Submit for review",
+      requires: ["branchPresent", "prPresent"],
+    });
+  });
+
   it("deliberately has no requires on the open -> in_progress edge (would self-checkmate task_start's own gate enforcement)", () => {
     expect(DEFAULT_WORKFLOW_TRANSITIONS.open[0]).not.toHaveProperty("requires");
   });

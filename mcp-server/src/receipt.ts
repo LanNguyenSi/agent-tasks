@@ -591,6 +591,11 @@ export interface StartSlice {
   description?: string;
   comments?: unknown[];
   instructions?: string;
+  /** Same provenance rule as gateExpectationsSource: present only when the
+   *  prose came from the static default-workflow.ts fallback (null
+   *  workflowId), which does not prove the built-in default governs this
+   *  task. See deriveStartInstructions. */
+  instructionsSource?: "assumed-default-workflow";
 }
 
 function deriveInferredTaskType(task: StartTask): string | undefined {
@@ -664,26 +669,31 @@ function deriveGateExpectations(
 
 /**
  * Same dynamic-then-static resolution as deriveGateExpectations, for the
- * per-state instructions prose instead of the per-edge gate list — with one
- * deliberate asymmetry. deriveGateExpectations surfaces its static fallback
- * WITH a `gateExpectationsSource` provenance marker: an array the caller can
- * sanity-check against `task.status`/`expectedFinishState` and discard if it
- * looks wrong. Prose has no equivalent cheap self-check — a caller reading
- * English text cannot verify it against their own project's customized
- * workflow, and wrong instructions read as authoritative are actively
- * harmful (they can tell an agent to do the wrong thing next), whereas no
- * instructions at all is safe: include:["task"] still recovers the full
- * response on request. So here, unlike deriveGateExpectations, the static
- * fallback is never surfaced at all once `task.workflowId` is set without an
- * embedded `workflow.definition.states` entry — `instructions` is omitted
- * outright, not labeled as an assumption.
+ * per-state instructions prose instead of the per-edge gate list — and the
+ * SAME provenance rule. An embedded `workflow.definition.states` entry is
+ * authoritative and carries no marker. A set `task.workflowId` without an
+ * embedded definition means a task-level custom workflow whose prose we do
+ * not have: omitted outright, never guessed (wrong instructions read as
+ * authoritative are actively harmful — they can tell an agent to do the
+ * wrong thing next). A `null` `workflowId` does NOT prove the built-in
+ * default (a project-default customized Workflow row can apply, see
+ * deriveGateExpectations' KNOWN GAP), so the static built-in prose is
+ * surfaced WITH `instructionsSource: "assumed-default-workflow"` — correct
+ * for the common built-in case, honestly labeled for the customized one.
+ * Recovery path when instructions are omitted: the `tasks_instructions`
+ * verb (GET /tasks/:id/instructions) — NOT include:["task"], because the
+ * work-claim raw response never embeds the workflow relation either.
  */
-function deriveStartInstructions(task: StartTask): string | undefined {
+function deriveStartInstructions(task: StartTask): {
+  text?: string;
+  source?: "assumed-default-workflow";
+} {
   const dynamicState = task.workflow?.definition?.states?.find((s) => s.name === task.status);
-  if (dynamicState?.agentInstructions) return dynamicState.agentInstructions;
-  if (task.workflowId) return undefined; // custom workflow, definition not sent: do not guess wrong prose
-  if (!task.status) return undefined;
-  return DEFAULT_WORKFLOW_AGENT_INSTRUCTIONS[task.status];
+  if (dynamicState?.agentInstructions) return { text: dynamicState.agentInstructions };
+  if (task.workflowId) return {}; // custom workflow, definition not sent: do not guess wrong prose
+  if (!task.status) return {};
+  const text = DEFAULT_WORKFLOW_AGENT_INSTRUCTIONS[task.status];
+  return text ? { text, source: "assumed-default-workflow" } : {};
 }
 
 /**
@@ -748,8 +758,11 @@ export function receiptForStart(
     slice.comments = response.task.comments;
   }
   if (include?.includes("instructions")) {
-    const instructions = deriveStartInstructions(response.task);
+    const { text: instructions, source: instructionsSource } = deriveStartInstructions(
+      response.task,
+    );
     if (instructions) slice.instructions = instructions;
+    if (instructionsSource) slice.instructionsSource = instructionsSource;
   }
 
   return slice;

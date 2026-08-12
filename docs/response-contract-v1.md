@@ -210,7 +210,7 @@ Per-verb defaults without `include`:
 | Verb | Default |
 |---|---|
 | `task_pickup` | full spec, without `comments` |
-| `task_start` | receipt + per-task slice (`inferredTaskType`, `expectedFinishState`, `gateExpectations`) |
+| `task_start` | receipt + per-task slice (`inferredTaskType`, `expectedFinishState`, `gateExpectations`, `gateExpectationsSource` when assumed) |
 | `tasks_get` (and equivalents) | summary |
 | `tasks_list` / `project_tasks` | existing summary projection (unchanged) |
 
@@ -328,13 +328,15 @@ this contract, not aspirational targets:
 
 **Named exception: `task_start`.** Its default response is not a bare
 Tier 1 receipt: it carries the rc-v1-C003 per-task slice
-(`inferredTaskType`, `expectedFinishState`, `gateExpectations`) alongside
+(`inferredTaskType`, `expectedFinishState`, `gateExpectations`, plus
+`gateExpectationsSource` when the gates are an assumption) alongside
 the receipt fields, so its default budget is **1200 emitted chars (about
 300 tokens)**, above the generic Tier 1 cap, by design, not a violation of
 it. The happy-path fixture in `mcp-server/tests/receipt.test.ts` measures
-244 chars today, comfortable headroom under the 1200 ceiling; the 1200
-figure itself is asserted in that same test, so a re-fattening past it
-fails the suite.
+300 chars today, comfortable headroom under the 1200 ceiling; both the
+1200 ceiling and the exact 300 measurement are asserted in that same
+test, so a re-fattening fails the suite and this figure cannot silently
+drift.
 
 The caps apply to the receipt envelope. Content the caller explicitly
 requested via `include`, and `task_pickup`'s default full spec, are
