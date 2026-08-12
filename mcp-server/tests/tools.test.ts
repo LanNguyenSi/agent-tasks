@@ -1,10 +1,16 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { z } from "zod";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildTools } from "../src/tools.js";
 import { AgentTasksClient, AgentTasksApiError } from "../src/client.js";
 import { serializeResult } from "../src/server.js";
 import { WORKFLOW_PRIMER } from "../src/primer.js";
 import { SIGNALS_DEFAULT_LIMIT, SIGNALS_BACKEND_FETCH_LIMIT } from "../src/read.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const TOOLS_TS_SOURCE_PATH = resolve(__filename, "..", "..", "src", "tools.ts");
 
 describe("buildTools", () => {
   const config = { baseUrl: "https://example.test", token: "tok_abc" };
@@ -26,8 +32,17 @@ describe("buildTools", () => {
     });
   }
 
+  // Every test below exercises HANDLER behavior (wire format, receipts,
+  // error mapping) via this helper, not registration. rc-v1-C007 gates a
+  // subset of verbs out of the DEFAULT buildTools() result (tools.ts's
+  // LEGACY_VERB_NAMES), but every handler stays fully defined regardless of
+  // the flag (registration-time filter only, no handler deletion), so this
+  // helper always builds in legacy mode: every verb name used anywhere in
+  // this file stays reachable. The default-vs-legacy REGISTRATION list
+  // itself is asserted separately, in its own describe block below, against
+  // plain buildTools() calls (not this helper).
   function tool(name: string) {
-    const tools = buildTools(new AgentTasksClient(config));
+    const tools = buildTools(new AgentTasksClient(config), { legacy: true });
     const t = tools.find((x) => x.name === name);
     if (!t) throw new Error(`tool ${name} not registered`);
     return t;
@@ -44,8 +59,71 @@ describe("buildTools", () => {
     return z.object(tool(name).inputShape).parse(raw);
   }
 
-  it("registers all expected tools", () => {
+  // ── rc-v1-C007: default vs legacy registration ───────────────────────────
+  //
+  // buildTools() with no options (or { legacy: false }) registers only the
+  // DEFAULT set: every verb still carrying tools.ts's DEPRECATED prefix is
+  // pruned out UNLESS it is one of the four kept for a specific, documented
+  // reason (tasks_get, upgraded into the v2 read surface; tasks_comment,
+  // the receipt-converted alias; signals_poll / signals_ack, still the only
+  // explicit signal-inbox surface). buildTools(client, { legacy: true })
+  // registers the FULL pre-rc-v1-C007 set, unions of default + pruned,
+  // unconditionally, so a caller still depending on a pruned verb's name
+  // can opt back in (AGENT_TASKS_MCP_LEGACY=1 at the process entrypoint).
+  // These three tests snapshot both lists and pin their relationship
+  // mechanically, not just by inspection.
+
+  const PRUNED_VERB_NAMES = [
+    "projects_list",
+    "projects_get",
+    "tasks_list",
+    "tasks_instructions",
+    "tasks_create",
+    "tasks_claim",
+    "tasks_release",
+    "tasks_transition",
+    "tasks_update",
+    "review_approve",
+    "review_request_changes",
+    "review_claim",
+    "review_release",
+    "pull_requests_comment",
+  ];
+
+  it("registers the default (non-legacy) verb set: rc-v1-C007's pruned v1 verbs are absent unless built with { legacy: true }", () => {
     const tools = buildTools(new AgentTasksClient(config));
+    const names = tools.map((t) => t.name).sort();
+    expect(names).toEqual(
+      [
+        "project_tasks",
+        "projects_get_effective_gates",
+        "pull_requests_create",
+        "pull_requests_merge",
+        "signals_ack",
+        "signals_poll",
+        "task_abandon",
+        "task_artifact_create",
+        "task_artifact_get",
+        "task_artifact_list",
+        "task_attachment_get",
+        "task_attachment_list",
+        "task_create",
+        "task_finish",
+        "task_merge",
+        "task_note",
+        "task_pickup",
+        "task_respec",
+        "task_start",
+        "task_submit_pr",
+        "tasks_comment",
+        "tasks_get",
+        "workflow_primer",
+      ].sort(),
+    );
+  });
+
+  it("registers the full legacy verb set, exactly the pre-rc-v1-C007 registration, when built with { legacy: true }", () => {
+    const tools = buildTools(new AgentTasksClient(config), { legacy: true });
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
       [
@@ -88,6 +166,89 @@ describe("buildTools", () => {
         "workflow_primer",
       ].sort(),
     );
+  });
+
+  it("the legacy verb set is exactly the union of the default set and the pruned v1 verbs (no verb is silently added or dropped by the flag)", () => {
+    const defaultNames = new Set(buildTools(new AgentTasksClient(config)).map((t) => t.name));
+    const legacyNames = new Set(
+      buildTools(new AgentTasksClient(config), { legacy: true }).map((t) => t.name),
+    );
+    for (const name of PRUNED_VERB_NAMES) {
+      expect(defaultNames.has(name), `${name} should be pruned from the default set`).toBe(false);
+      expect(legacyNames.has(name), `${name} should be present in the legacy set`).toBe(true);
+    }
+    expect(legacyNames).toEqual(new Set([...defaultNames, ...PRUNED_VERB_NAMES]));
+  });
+
+  // ── rc-v1-C007 fix round, item 6a: the [DEPRECATED marker must never
+  // drift from LEGACY_VERB_NAMES again the way tasks_comment's did (it kept
+  // carrying tools.ts's `[DEPRECATED, use v2 tools] ` prefix even though it
+  // stayed in the DEFAULT registration, permanently -- a dishonest label on
+  // a first-class alias). These two tests pin the marker/set relationship
+  // mechanically in both directions, so this specific class of drift fails
+  // here instead of only being caught by inspection. ──────────────────────
+  it("the [DEPRECATED marker set (across all 37 tools, legacy mode) is exactly LEGACY_VERB_NAMES -- no verb carries the marker without being pruned, and no pruned verb is missing it", () => {
+    const allTools = buildTools(new AgentTasksClient(config), { legacy: true });
+    const markedNames = new Set(
+      allTools.filter((t) => t.description.includes("[DEPRECATED")).map((t) => t.name),
+    );
+    expect(markedNames).toEqual(new Set(PRUNED_VERB_NAMES));
+  });
+
+  it("no DEFAULT-registered tool's description carries the [DEPRECATED marker", () => {
+    const defaultTools = buildTools(new AgentTasksClient(config));
+    const stillMarked = defaultTools
+      .filter((t) => t.description.includes("[DEPRECATED"))
+      .map((t) => t.name);
+    expect(stillMarked).toEqual([]);
+  });
+
+  // ── rc-v1-C007 fix round, item 6c: structural invariant -- an allowedNext
+  // reachable from a DEFAULT-registered verb must never name a legacy-only
+  // one. errors.ts's preconditionFailedError is the one catalog entry whose
+  // allowedNext is genuinely parameterized by the caller's own verbContext
+  // (`retryVerb = verbContext ?? "task_finish"`); every wrap() call site in
+  // tools.ts always passes its OWN tool's name as verbContext (never a
+  // different tool's), so the invariant reduces to a source-level check:
+  // no DEFAULT tool's own handler may pass a legacy-only verb name into
+  // wrap()'s verbContext parameter. This is a source-parsing test, the same
+  // idiom tests/primer.test.ts's `nonIncludeReshapingVerbNames` already
+  // uses for tools.ts, chosen over replaying every backend error shape
+  // through every default verb's real handler (which errors.test.ts's
+  // per-case `assertAllowedNextRegistered` calls already do individually,
+  // kept as-is -- this closes the gap those per-case assertions cannot:
+  // a NEW wrap() call site added later that forgets this rule). ──────────
+  it("no DEFAULT-registered tool's handler passes a legacy-only verb name as wrap()'s verbContext", () => {
+    const source = readFileSync(TOOLS_TS_SOURCE_PATH, "utf8");
+    const blocks = source.split(/\n {4}def\(\{/).slice(1);
+    // Non-vacuity: the split must see every def({ in the file (see
+    // primer.test.ts's identical guard on the same split pattern).
+    expect(blocks.length).toBe((source.match(/def\(\{/g) ?? []).length);
+
+    const defaultNames = new Set(buildTools(new AgentTasksClient(config)).map((t) => t.name));
+    let verbContextSitesChecked = 0;
+    for (const block of blocks) {
+      const nameMatch = block.match(/name:\s*"([a-zA-Z_]+)"/);
+      if (!nameMatch) continue;
+      const toolName = nameMatch[1];
+      if (!defaultNames.has(toolName)) continue; // legacy-only tool: out of scope for this invariant
+
+      // wrap(<fn>, "verbContext") -- the fn argument may itself be a
+      // multi-line arrow function, so this only anchors on the trailing
+      // `, "literal")` immediately before wrap()'s own closing paren.
+      const verbContextMatches = Array.from(block.matchAll(/wrap\([\s\S]*?,\s*"([a-zA-Z_]+)"\s*\)/g));
+      for (const m of verbContextMatches) {
+        verbContextSitesChecked++;
+        expect(
+          defaultNames.has(m[1]),
+          `DEFAULT tool "${toolName}" passes verbContext "${m[1]}" to wrap(), which is not a DEFAULT-registered verb name`,
+        ).toBe(true);
+      }
+    }
+    // Non-vacuity: at least one DEFAULT tool actually passes a verbContext
+    // (task_start and task_finish both do), or this test would pass having
+    // checked nothing.
+    expect(verbContextSitesChecked).toBeGreaterThan(0);
   });
 
   it("workflow_primer is parameterless and returns the deterministic long primer text verbatim", async () => {
@@ -1538,7 +1699,12 @@ describe("buildTools", () => {
 
   // ── project_tasks: unknown project slug (rc-v1-C006) ─────────────────────
 
-  it("project_tasks maps an unresolvable project slug to the unknown_project_slug teaching error naming projects_list", async () => {
+  // rc-v1-C007: projects_list is legacy-gated now (pruned from the default
+  // registration); project_tasks stays default-registered, so allowedNext
+  // no longer names projects_list unconditionally (see errors.ts's
+  // unknownProjectSlugError). The recipe still mentions it as the
+  // AGENT_TASKS_MCP_LEGACY=1 option.
+  it("project_tasks maps an unresolvable project slug to the unknown_project_slug teaching error, mentioning projects_list only as the legacy-flag option", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ error: "not_found", message: "Resource not found" }), {
         status: 404,
@@ -1555,7 +1721,8 @@ describe("buildTools", () => {
     const parsed = JSON.parse(captured);
     expect(parsed.error.code).toBe("unknown_project_slug");
     expect(parsed.error.recipe).toContain("projects_list");
-    expect(parsed.error.allowedNext).toEqual(["projects_list", "project_tasks"]);
+    expect(parsed.error.recipe).toContain("AGENT_TASKS_MCP_LEGACY=1");
+    expect(parsed.error.allowedNext).toEqual(["project_tasks"]);
   });
 
   // ── task_create: projectSlug addressing (rc-v1-C006) ─────────────────────
@@ -1586,7 +1753,7 @@ describe("buildTools", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("passing neither projectId nor projectSlug is a project_addressing_conflict teaching error naming projects_list, no network call made", async () => {
+    it("passing neither projectId nor projectSlug is a project_addressing_conflict teaching error mentioning projects_list only as the legacy-flag option, no network call made", async () => {
       let captured = "";
       try {
         await tool("task_create").handler({ title: "t" } as never);
@@ -1601,14 +1768,14 @@ describe("buildTools", () => {
           code: "project_addressing_conflict",
           message: "neither projectId nor projectSlug was provided; pass exactly one",
           recipe:
-            "call projects_list to find the project, then resubmit task_create with projectId or projectSlug set",
-          allowedNext: ["projects_list", "task_create"],
+            "ask the operator for this project's slug or id (or, with AGENT_TASKS_MCP_LEGACY=1 set, call projects_list), then resubmit task_create with projectId or projectSlug set",
+          allowedNext: ["task_create"],
         },
       });
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("an unresolvable projectSlug maps to the unknown_project_slug teaching error naming projects_list, and never reaches the create endpoint", async () => {
+    it("an unresolvable projectSlug maps to the unknown_project_slug teaching error, mentioning projects_list only as the legacy-flag option, and never reaches the create endpoint", async () => {
       fetchMock.mockResolvedValue(
         new Response(JSON.stringify({ error: "not_found", message: "Resource not found" }), {
           status: 404,
@@ -1626,7 +1793,8 @@ describe("buildTools", () => {
       expect(parsed.error.code).toBe("unknown_project_slug");
       expect(parsed.error.message).toContain("ghost-project");
       expect(parsed.error.recipe).toContain("projects_list");
-      expect(parsed.error.allowedNext).toEqual(["projects_list", "task_create"]);
+      expect(parsed.error.recipe).toContain("AGENT_TASKS_MCP_LEGACY=1");
+      expect(parsed.error.allowedNext).toEqual(["task_create"]);
       expect(fetchMock).toHaveBeenCalledTimes(1); // only the failed by-slug lookup
     });
 
@@ -1697,7 +1865,8 @@ describe("buildTools", () => {
       expect(parsed.error.code).toBe("unknown_project_slug");
       expect(parsed.error.message).toContain("agent-tasks");
       expect(parsed.error.recipe).toContain("projects_list");
-      expect(parsed.error.allowedNext).toEqual(["projects_list", "task_create"]);
+      expect(parsed.error.recipe).toContain("AGENT_TASKS_MCP_LEGACY=1");
+      expect(parsed.error.allowedNext).toEqual(["task_create"]);
     });
   });
 

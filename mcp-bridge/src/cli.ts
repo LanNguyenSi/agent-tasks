@@ -20,8 +20,10 @@ Usage:
   agent-tasks-mcp-bridge --help     Show this help
 
 Environment:
-  AGENT_TASKS_TOKEN     If set, used directly (takes precedence over stored token)
-  AGENT_TASKS_BASE_URL  Override backend base URL (default: ${DEFAULT_BASE_URL})
+  AGENT_TASKS_TOKEN      If set, used directly (takes precedence over stored token)
+  AGENT_TASKS_BASE_URL   Override backend base URL (default: ${DEFAULT_BASE_URL})
+  AGENT_TASKS_MCP_LEGACY Set to "1" to register the pruned v1 verb set alongside
+                         the default tools (see @agent-tasks/mcp-server's README)
 `;
 
 interface ParsedArgs {
@@ -91,7 +93,11 @@ async function main() {
   if (!token) {
     throw new Error(noTokenAvailableMessage());
   }
-  await runStdioServer({ token, baseUrl });
+  // rc-v1-C007 fix round: this used to call runStdioServer({ token, baseUrl })
+  // with no options, silently dropping the legacy flag on the floor even
+  // when the operator set AGENT_TASKS_MCP_LEGACY=1 -- the escape hatch
+  // existed in mcp-server but never reached it through this bridge.
+  await runStdioServer({ token, baseUrl }, { legacy: process.env.AGENT_TASKS_MCP_LEGACY === "1" });
 }
 
 function sanitize(msg: string): string {

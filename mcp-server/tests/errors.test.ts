@@ -32,6 +32,22 @@ function registeredVerbNames(): Set<string> {
   return new Set(buildTools(client).map((t) => t.name));
 }
 
+// rc-v1-C007: tasks_transition, tasks_update, and tasks_claim (the three
+// verbContext values the it.each loop below drives) are legacy-only now,
+// pruned from the DEFAULT buildTools() result (tools.ts's
+// LEGACY_VERB_NAMES). mapBackendError's precondition_failed branch still
+// legitimately names them in allowedNext/recipe when threaded through as
+// verbContext, since that only happens when the corresponding legacy verb's
+// own handler actually raised the error (only reachable with
+// AGENT_TASKS_MCP_LEGACY=1). The consistency assert for those three cases
+// therefore runs against the LEGACY-mode registered set, not the
+// module-level default-mode `registered` set every other
+// assertAllowedNextRegistered call in this file uses.
+function legacyRegisteredVerbNames(): Set<string> {
+  const client = new AgentTasksClient({ baseUrl: "https://example.test", token: "tok" });
+  return new Set(buildTools(client, { legacy: true }).map((t) => t.name));
+}
+
 // Acceptance criterion: "allowedNext contains only actually-registered verb
 // names (consistency assert against buildTools-derived list)".
 function assertAllowedNextRegistered(err: TeachingError, registered: Set<string>): void {
@@ -252,7 +268,7 @@ describe("mapBackendError catalog", () => {
       );
       expect(err.error.allowedNext).toEqual([verb]);
       expect(err.error.recipe).toContain(verb);
-      assertAllowedNextRegistered(err, registered);
+      assertAllowedNextRegistered(err, legacyRegisteredVerbNames());
     },
   );
 
@@ -647,12 +663,20 @@ describe("projectAddressingConflictError / unknownProjectSlugError", () => {
     expect(err.error.recipe).toContain("project_tasks");
   });
 
-  it('projectAddressingConflictError(verb, "neither_provided") names projects_list as the recipe (the caller may not know the project yet) and includes it in allowedNext, distinct from the default "both_provided" wording', () => {
+  // rc-v1-C007: projects_list is legacy-gated now (pruned from the default
+  // registration). This entry's real call sites (task_create, project_tasks)
+  // both stay default-registered, so `allowedNext` no longer names
+  // projects_list unconditionally (it would violate "allowedNext lists only
+  // verb names the caller can call immediately" for a default-mode caller);
+  // `recipe` still mentions it as the AGENT_TASKS_MCP_LEGACY=1 option,
+  // alongside the always-available "ask the operator" fallback.
+  it('projectAddressingConflictError(verb, "neither_provided") mentions projects_list in the recipe as the legacy-flag option, but does not put it in allowedNext, distinct from the default "both_provided" wording', () => {
     const err = projectAddressingConflictError("task_create", "neither_provided");
     expect(err.error.code).toBe("project_addressing_conflict");
     expect(err.error.message).toMatch(/neither projectId nor projectSlug/i);
     expect(err.error.recipe).toContain("projects_list");
-    expect(err.error.allowedNext).toEqual(["projects_list", "task_create"]);
+    expect(err.error.recipe).toContain("AGENT_TASKS_MCP_LEGACY=1");
+    expect(err.error.allowedNext).toEqual(["task_create"]);
     assertAllowedNextRegistered(err, registeredVerbNames());
     expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
   });
@@ -664,19 +688,20 @@ describe("projectAddressingConflictError / unknownProjectSlugError", () => {
     expect(withDefault.error.message).toMatch(/both provided/i);
   });
 
-  it("unknownProjectSlugError names projects_list as the recipe for listing available slugs, and includes the calling verb in allowedNext", () => {
+  it("unknownProjectSlugError mentions projects_list in the recipe as the legacy-flag option, and includes only the calling verb in allowedNext", () => {
     const err = unknownProjectSlugError("no-such-slug", "task_create");
     expect(err.error.code).toBe("unknown_project_slug");
     expect(err.error.message).toContain("no-such-slug");
     expect(err.error.recipe).toContain("projects_list");
-    expect(err.error.allowedNext).toEqual(["projects_list", "task_create"]);
+    expect(err.error.recipe).toContain("AGENT_TASKS_MCP_LEGACY=1");
+    expect(err.error.allowedNext).toEqual(["task_create"]);
     assertAllowedNextRegistered(err, registeredVerbNames());
     expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
   });
 
   it("unknownProjectSlugError('project_tasks') names project_tasks in allowedNext instead of task_create", () => {
     const err = unknownProjectSlugError("no-such-slug", "project_tasks");
-    expect(err.error.allowedNext).toEqual(["projects_list", "project_tasks"]);
+    expect(err.error.allowedNext).toEqual(["project_tasks"]);
   });
 
   it("unknownProjectSlugError stays within budget even for a pathologically long slug", () => {
@@ -743,7 +768,13 @@ describe("resultMustBePlainStringError / looksLikeStructuredWrapper", () => {
     expect(err.error.allowedNext).toEqual(["tasks_update"]);
     expect(err.error.recipe).toContain("tasks_update");
     expect(err.error.recipe).not.toContain("task_finish");
-    assertAllowedNextRegistered(err, registeredVerbNames());
+    // rc-v1-C007: tasks_update is legacy-only now (pruned from the default
+    // registration); this builder is only ever called with "tasks_update"
+    // from tasks_update's own handler (only reachable under
+    // AGENT_TASKS_MCP_LEGACY=1), so the consistency assert runs against the
+    // legacy-mode registered set, same reasoning as the precondition_failed
+    // it.each loop above.
+    assertAllowedNextRegistered(err, legacyRegisteredVerbNames());
     expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
   });
 

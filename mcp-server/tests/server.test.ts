@@ -104,4 +104,29 @@ describe("createServer tool callback wiring", () => {
       await server.close();
     }
   });
+
+  // rc-v1-C007: createServer's optional { legacy?: boolean } is a thin
+  // passthrough to buildTools (tools.ts), whose own registration-filtering
+  // logic has dedicated unit coverage (tests/tools.test.ts). This proves
+  // the option actually reaches the real MCP-registered tool list over a
+  // real handshake, not just at the buildTools call boundary: the DEFAULT
+  // case here (tasks_claim absent from a real client.listTools()) is the
+  // end-to-end counterpart to mcp-bridge's governance test, which drives
+  // the LEGACY case (createServer(config, { legacy: true })) the same way.
+  it("createServer's default mode omits a pruned v1 verb (tasks_claim) from the real, negotiated tools/list", async () => {
+    const server = createServer({ baseUrl: "https://example.test", token: "tok_abc" });
+    const client = new Client({ name: "server-test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const listed = await client.listTools();
+      const names = listed.tools.map((t) => t.name);
+      expect(names).not.toContain("tasks_claim");
+      expect(names).toContain("task_start");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
 });

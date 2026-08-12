@@ -601,9 +601,21 @@ function lowConfidenceError(body: BackendErrorBody, message: string): TeachingEr
 // through this catalog. Rather than mint a second, near-duplicate code for
 // what is really the same "exactly one" constraint violated the other way,
 // `reason` selects direction-specific message/recipe/allowedNext under the
-// SAME code: `recipe` for "neither" names projects_list (the caller may not
-// even know the project's slug/id yet), which "both" does not need (the
-// caller already named both candidates, it just needs to pick one).
+// SAME code: "both" needs no extra corrective (the caller already named
+// both candidates, it just needs to pick one), but "neither" used to point
+// at projects_list as the self-service way to find the project.
+//
+// rc-v1-C007 pruned projects_list out of the DEFAULT tool registration
+// (tools.ts's LEGACY_VERB_NAMES); it is opt-in only via
+// AGENT_TASKS_MCP_LEGACY=1 now. task_create and project_tasks (this
+// catalog entry's only two real call sites) both stay in the default
+// registration, so a default-mode caller can trip "neither_provided"
+// without ever having projects_list available to them. `allowedNext` MUST
+// list only verb names callable immediately (docs/response-contract-v1.md's
+// error-shape section), so "neither"'s allowedNext no longer names
+// projects_list unconditionally; `recipe` still mentions it, but only as
+// the legacy-flag option, alongside the always-available "ask the
+// operator" fallback.
 export function projectAddressingConflictError(
   verb: string,
   reason: "both_provided" | "neither_provided" = "both_provided",
@@ -612,8 +624,8 @@ export function projectAddressingConflictError(
     return buildTeachingError({
       code: "project_addressing_conflict",
       message: "neither projectId nor projectSlug was provided; pass exactly one",
-      recipe: `call projects_list to find the project, then resubmit ${verb} with projectId or projectSlug set`,
-      allowedNext: ["projects_list", verb],
+      recipe: `ask the operator for this project's slug or id (or, with AGENT_TASKS_MCP_LEGACY=1 set, call projects_list), then resubmit ${verb} with projectId or projectSlug set`,
+      allowedNext: [verb],
     });
   }
   return buildTeachingError({
@@ -626,15 +638,21 @@ export function projectAddressingConflictError(
 
 // Raised when client.ts's slug resolver gets a 404 on a FRESH (not
 // cache-served) slug lookup — see client.ts's ProjectSlugNotFoundError and
-// withResolvedProjectSlug. `recipe` names projects_list, the concrete
-// corrective call for "how do I find the actual available slugs", per this
-// catalog's own convention that recipe names a call, not just a fix.
+// withResolvedProjectSlug. `recipe` used to name projects_list
+// unconditionally as the concrete corrective call for "how do I find the
+// actual available slugs". Same rc-v1-C007 constraint as
+// projectAddressingConflictError above: projects_list is legacy-gated now,
+// task_create and project_tasks (both default-registered) are this
+// catalog entry's real call sites, so `allowedNext` no longer names it
+// (only the calling verb does); `recipe` still offers it as the
+// legacy-flag option alongside the always-available operator fallback.
 export function unknownProjectSlugError(slug: string, verb: string): TeachingError {
   return buildTeachingError({
     code: "unknown_project_slug",
     message: `no project found for slug "${slug}"`,
-    recipe: "call projects_list to see the available project slugs",
-    allowedNext: ["projects_list", verb],
+    recipe:
+      "ask the operator for the correct project slug or id (or, with AGENT_TASKS_MCP_LEGACY=1 set, call projects_list to see the available slugs)",
+    allowedNext: [verb],
   });
 }
 

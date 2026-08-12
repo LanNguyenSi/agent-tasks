@@ -36,6 +36,18 @@ That's it — the agent now sees `tasks_*`, `signals_*`, and `projects_*` tools.
 AGENT_TASKS_BASE_URL=https://staging.example.com npx -y @agent-tasks/mcp-bridge
 ```
 
+## Legacy v1 verbs
+
+`@agent-tasks/mcp-server` (the package this bridge wraps) prunes 14
+still-deprecated v1 verbs from its default tool registration (rc-v1-C007;
+see [`mcp-server/README.md`](https://github.com/LanNguyenSi/agent-tasks/tree/master/mcp-server#tools)
+for the full list and their v2 replacements). Set `AGENT_TASKS_MCP_LEGACY=1`
+in the bridge process's environment to register all 37 tools instead:
+
+```sh
+AGENT_TASKS_MCP_LEGACY=1 npx -y @agent-tasks/mcp-bridge
+```
+
 ## Uninstalling
 
 `npm uninstall` / removing the `npx` cache does **not** delete the token from the OS keychain. Run `agent-tasks-mcp-bridge logout` first, or delete the keychain entry for service `agent-tasks-mcp-bridge` manually.

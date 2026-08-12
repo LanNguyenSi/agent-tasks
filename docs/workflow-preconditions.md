@@ -497,8 +497,9 @@ these rules cannot be meaningfully evaluated there. v1 treats them as
 the alternative would either fail closed forever with no recovery path, or
 silently pretend the rule ran. The skip is recorded, not hidden: both a
 `task_finish` response and a `POST /api/tasks/:id/transition` response (the
-endpoint the MCP `tasks_transition` verb uses) on a foreign-deliverable
-task carry an additive `skippedGates: [{ rule, reason }]` array when this
+endpoint the MCP `tasks_transition` verb uses, legacy-only since
+rc-v1-C007) on a foreign-deliverable task carry an additive
+`skippedGates: [{ rule, reason }]` array when this
 applies, and the transition audit event carries the same list. Task-level
 introspection (`GET /api/tasks/:id/instructions`) surfaces the override
 itself via an additive `crossRepoDeliverable: { deliverableRepo,

@@ -212,16 +212,37 @@ Per-verb defaults without `include`:
 | `task_pickup` | full spec, without `comments` |
 | `task_start` | receipt + per-task slice (`inferredTaskType`, `expectedFinishState`, `gateExpectations`, `gateExpectationsSource` when assumed) |
 | `tasks_get` (and equivalents) | summary |
-| `tasks_list` / `project_tasks` | existing summary projection (unchanged) |
+| `project_tasks` | existing summary projection (unchanged) |
+| `tasks_list` (legacy-only since rc-v1-C007) | existing summary projection (unchanged) |
 
-`verbose: true/false` (the current flag on `tasks_list`) is superseded by
-`include` for any verb this contract touches; existing `verbose` behavior
-MUST remain available at minimum via `include: ["task"]` during the
-deprecation window.
+`verbose: true/false` (the flag `tasks_list` carries) is superseded by
+`include` for every non-legacy verb this contract touches. `tasks_list`
+itself is legacy-only since rc-v1-C007 (see the "Legacy-flag exemption"
+paragraph below) and is therefore out of this contract's shape rules
+entirely; its `verbose` flag is untouched and needs no `include`
+equivalent.
 
-Deprecated v1 verbs remain in scope of this contract for as long as they
-ship in the default tool registration: deprecation shortens their
-lifetime, it does not exempt them from the shape rules.
+Deprecated v1 verbs remained in scope of this contract for as long as they
+shipped in the default tool registration. rc-v1-C007 pruned every verb
+still carrying tools.ts's `[DEPRECATED` marker, except `tasks_get`
+(upgraded into the read-verb surface above), `tasks_comment` (the
+receipt-converted `task_note` alias), and `signals_poll` / `signals_ack`
+(still the only signal-inbox surface), out of the default registration
+entirely; see `mcp-server/README.md`'s replacement table for the full
+pruned list and their v2 equivalents. A pruned verb remains reachable only
+behind `AGENT_TASKS_MCP_LEGACY=1` (`mcp-server/src/tools.ts`'s
+`LEGACY_VERB_NAMES`).
+
+**Legacy-flag exemption.** A legacy-flag verb (one reachable only via
+`AGENT_TASKS_MCP_LEGACY=1`) is exempt from this contract's shape rules
+(receipt, no-echo, `include`, error catalog): it exists for compatibility
+only, not as part of the designed default surface, so converting it was
+judged more expensive than the compatibility it buys. `tasks_create`'s
+continued raw-body echo behind the flag is the concrete example.
+`tasks_get`, `tasks_comment`, `signals_poll`, and `signals_ack` are NOT
+legacy-flag verbs (each stayed in the default registration for its own
+documented reason above) and remain fully bound by every rule in this
+document, same as any other default-registered verb.
 
 ## Read verbs, slug addressing, and the signals cap as shipped (rc-v1-C006)
 
@@ -282,8 +303,10 @@ instance-scoped cache (`client.ts`'s `projectSlugCache`):
 
 ### `signals_poll`'s cap, cursor, and backend fetch ceiling
 
-`signals_poll` (deprecated; signals are delivered inline by `task_pickup`
-under v2) caps and cursors its response entirely client-side. The caller's
+`signals_poll` (kept in the default registration by rc-v1-C007, not pruned;
+signals are also delivered inline by `task_pickup` under v2, so this verb
+is for checking the inbox directly without also claiming a task) caps and
+cursors its response entirely client-side. The caller's
 own `limit` defaults to 10 and maxes at 100 (`SIGNALS_DEFAULT_LIMIT` /
 `SIGNALS_MAX_LIMIT`), but `mcp-server` always fetches up to 200 pending
 signals from the backend per call (`SIGNALS_BACKEND_FETCH_LIMIT`, the
@@ -356,7 +379,8 @@ each already documented as a 4xx behavior in `mcp-server/src/tools.ts` /
   the first.
 - **`cross_repo_pr_rejected`.** `task_submit_pr` rejects a `prUrl` that
   does not point at `project.githubRepo` with 400.
-- **`transition force=admin-only`.** The `tasks_transition` /
+- **`transition force=admin-only`.** The `tasks_transition` (legacy-only
+  since rc-v1-C007, reachable only with `AGENT_TASKS_MCP_LEGACY=1`) /
   `POST /tasks/:id/transition { force: true }` admin bypass returns 403
   for non-admins.
 - **Description immutability.** `task_respec` only edits an `OPEN`,

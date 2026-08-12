@@ -18,9 +18,9 @@ export function serializeResult(result: unknown): string {
   return typeof result === "string" ? result : JSON.stringify(result, null, 2);
 }
 
-export function createServer(config: ClientConfig): McpServer {
+export function createServer(config: ClientConfig, options?: { legacy?: boolean }): McpServer {
   const client = new AgentTasksClient(config);
-  const tools = buildTools(client);
+  const tools = buildTools(client, options);
 
   // docs/response-contract-v1.md's "Onboarding channels by rate of change":
   // system/lifecycle/verb-order knowledge is sent once per session via this
@@ -67,8 +67,11 @@ export function createServer(config: ClientConfig): McpServer {
   return server;
 }
 
-export async function runStdioServer(config: ClientConfig): Promise<void> {
-  const server = createServer(config);
+export async function runStdioServer(
+  config: ClientConfig,
+  options?: { legacy?: boolean },
+): Promise<void> {
+  const server = createServer(config, options);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

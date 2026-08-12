@@ -152,16 +152,69 @@ function def<Shape extends ZodRawShape>(
   return d as unknown as ToolDefinition;
 }
 
-// ── v1 deprecation notice ────────────────────────────────────────────────────
+// ── v1 deprecation notice, and the rc-v1-C007 pruning ───────────────────────
 //
-// The v1 tools below are being phased out in favor of the v2 verb-oriented
+// The v1 tools below were phased out in favor of the v2 verb-oriented
 // surface (task_pickup / task_start / task_note / task_finish / task_create /
-// task_abandon). LLM clients that see both should prefer the non-deprecated
-// variant. v1 tools will be removed 4 weeks after the v2 release. See ADR 0008.
+// task_abandon). See ADR 0008.
+//
+// rc-v1-C007: every verb still carrying this DEPRECATED prefix is
+// registered only when buildTools is called with { legacy: true } -- see
+// the filter at the bottom of buildTools. server.ts's createServer takes
+// the same optional { legacy?: boolean } and passes it straight through;
+// index.ts reads AGENT_TASKS_MCP_LEGACY from the process environment and
+// forwards it as that option. Handler code is untouched by this change: it
+// is a registration-time filter, not a deletion, so AGENT_TASKS_MCP_LEGACY=1
+// is a genuine escape hatch for a caller still depending on a pruned verb's
+// name, and buildTools stays testable in both modes without env stubbing.
+//
+// A few DEPRECATED-marked-in-spirit verbs stay in the DEFAULT registration
+// regardless, because the work that produced them is still active: tasks_get
+// (upgraded by rc-v1-C006 into the modern summary+include read verb, no
+// longer actually deprecated, its DEPRECATED prefix removed below),
+// tasks_comment (the receipt-converted v1 alias named in the primers'
+// converted-verb sentence; pruning it would break their truth guards, and
+// its own DEPRECATED prefix -- stale, since it is kept permanently, not
+// sunsetting -- is removed below too), and signals_poll / signals_ack
+// (signals_poll carries the rc-v1-C006 cap semantics, and acking is
+// required for progress at the fetch ceiling). See mcp-server/README.md's
+// replacement table for the verb-by-verb migration guidance, and
+// docs/response-contract-v1.md for the legacy-flag verbs' exemption from
+// this package's response-shape rules.
 const DEPRECATED = "[DEPRECATED, use v2 tools] ";
 
-export function buildTools(client: AgentTasksClient): ToolDefinition[] {
-  return [
+// Verb names pruned from the DEFAULT registration by rc-v1-C007. This is a
+// deliberate, hand-typed pin of that exact set, not a value mechanically
+// derived from the DEPRECATED prefix at build time: tests/tools.test.ts's
+// own "[DEPRECATED marker set equals LEGACY_VERB_NAMES, both directions"
+// test is the mechanical guard that keeps the two in sync, so a future verb
+// marked DEPRECATED above without a matching entry here (or vice versa)
+// fails that test, not just this comment's word. Every verb below still
+// carries the DEPRECATED prefix on its description; registering one at all
+// is now opt-in via { legacy: true } (or, at the process entrypoint,
+// AGENT_TASKS_MCP_LEGACY=1), kept for compatibility only.
+const LEGACY_VERB_NAMES = new Set<string>([
+  "projects_list",
+  "projects_get",
+  "tasks_list",
+  "tasks_instructions",
+  "tasks_create",
+  "tasks_claim",
+  "tasks_release",
+  "tasks_transition",
+  "tasks_update",
+  "review_approve",
+  "review_request_changes",
+  "review_claim",
+  "review_release",
+  "pull_requests_comment",
+]);
+
+export function buildTools(
+  client: AgentTasksClient,
+  options?: { legacy?: boolean },
+): ToolDefinition[] {
+  const tools: ToolDefinition[] = [
     // ── Onboarding (docs/response-contract-v1.md's "Onboarding channels by
     // rate of change" table, rc-v1-C004) ────────────────────────────────
     //
@@ -205,7 +258,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_start",
       description:
-        "Begin work on a task. Polymorphic by task status: an `open` task is author-claimed and transitioned to in_progress; a `review` task is review-claimed without state change. Fails with 409 if you already hold an active claim.\n\nOptional `branchName`: for projects that enforce the `branchPresent` workflow gate on the start edge, pass the branch you intend to work on and the server folds it into the same atomic claim write. Single round-trip, no separate tasks_update needed. Ignored when the task already has a branchName (idempotent, never overwrites). Only meaningful on the open→in_progress branch; on a review-claim start the value is accepted but ignored.\n\nOptional `reclassify`: opt-in flag that re-runs the debugFlavor classifier past the isFresh guard and overwrites debugFlavor with the new result; on a true-to-false flip it also deletes the now-stale grounding-session metadata. Forwarded as a strict JSON boolean in the request body (unlike task_pickup where only the literal query string `true` is honoured).\n\nReturns a receipt by default ({ ok, task: { id, status }, expectedFinishState, gateExpectations?, gateExpectationsSource?, inferredTaskType? }) — no description, no per-state instructions prose, no comments, and no project object; a compact grounding-session recipe replaces the debugFlavor hint's verbose fields when the task is debug-flavored, and the large metadata.groundingSessionState blob never appears. gateExpectationsSource is set to \"assumed-default-workflow\" when gateExpectations came from the static built-in-default fallback rather than this project's own workflow definition, since a null workflowId can also mean a customized project-default workflow. Pass include:[\"description\" | \"instructions\" | \"comments\"] to add one field back, or include:[\"task\"] for the full, pre-contract object (recovery path after context loss).",
+        "Begin work on a task. Polymorphic by task status: an `open` task is author-claimed and transitioned to in_progress; a `review` task is review-claimed without state change. Fails with 409 if you already hold an active claim.\n\nOptional `branchName`: for projects that enforce the `branchPresent` workflow gate on the start edge, pass the branch you intend to work on and the server folds it into the same atomic claim write, no follow-up call required. Ignored when the task already has a branchName (idempotent, never overwrites). Only meaningful on the open→in_progress branch; on a review-claim start the value is accepted but ignored.\n\nOptional `reclassify`: opt-in flag that re-runs the debugFlavor classifier past the isFresh guard and overwrites debugFlavor with the new result; on a true-to-false flip it also deletes the now-stale grounding-session metadata. Forwarded as a strict JSON boolean in the request body (unlike task_pickup where only the literal query string `true` is honoured).\n\nReturns a receipt by default ({ ok, task: { id, status }, expectedFinishState, gateExpectations?, gateExpectationsSource?, inferredTaskType? }) — no description, no per-state instructions prose, no comments, and no project object; a compact grounding-session recipe replaces the debugFlavor hint's verbose fields when the task is debug-flavored, and the large metadata.groundingSessionState blob never appears. gateExpectationsSource is set to \"assumed-default-workflow\" when gateExpectations came from the static built-in-default fallback rather than this project's own workflow definition, since a null workflowId can also mean a customized project-default workflow. Pass include:[\"description\" | \"instructions\" | \"comments\"] to add one field back, or include:[\"task\"] for the full, pre-contract object (recovery path after context loss).",
       inputShape: {
         taskId: uuid(),
         branchName: z
@@ -291,7 +344,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_create",
       description:
-        "Create a new task in a project. Only title is required (plus exactly one of projectId or projectSlug). Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. When a project uses task-template mode, call projects_get_effective_gates first and populate the templateData fields it lists under taskCreation.requiredFields.\n\nprojectSlug (rc-v1-C006) is an alternative to projectId: resolved to a project id mcp-server-side via an internal TTL-cached slug lookup (~15 min, invalidated and retried once if the cached id 404s downstream). Passing both projectId and projectSlug is a project_addressing_conflict teaching error; a projectSlug that resolves to nothing is an unknown_project_slug teaching error naming projects_list as the recipe.\n\nReturns a receipt by default ({ ok, task: { id, status }, confidence: <score>, deviations? }) — description/templateData are NOT echoed back. A CONFIDENCE_BELOW_THRESHOLD deviation appears when score < threshold, with detail ({score, threshold, enforcementMode, missing[] clamped to the first 5, totalMissing}) and a task_respec hint; low confidence never blocks creation itself, only the hard gate at task_pickup/task_start (when enforcementMode=BLOCK) does. Pass include:[\"task\"] for the full { task, confidence } object.",
+        "Create a new task in a project. Only title is required (plus exactly one of projectId or projectSlug). Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. When a project uses task-template mode, call projects_get_effective_gates first and populate the templateData fields it lists under taskCreation.requiredFields.\n\nprojectSlug (rc-v1-C006) is an alternative to projectId: resolved to a project id mcp-server-side via an internal TTL-cached slug lookup (~15 min, invalidated and retried once if the cached id 404s downstream). Passing both projectId and projectSlug is a project_addressing_conflict teaching error; a projectSlug that resolves to nothing is an unknown_project_slug teaching error whose recipe asks the operator for the correct slug or id (or, with AGENT_TASKS_MCP_LEGACY=1 set, call projects_list).\n\nReturns a receipt by default ({ ok, task: { id, status }, confidence: <score>, deviations? }) — description/templateData are NOT echoed back. A CONFIDENCE_BELOW_THRESHOLD deviation appears when score < threshold, with detail ({score, threshold, enforcementMode, missing[] clamped to the first 5, totalMissing}) and a task_respec hint; low confidence never blocks creation itself, only the hard gate at task_pickup/task_start (when enforcementMode=BLOCK) does. Pass include:[\"task\"] for the full { task, confidence } object.",
       inputShape: {
         projectId: uuid().optional(),
         projectSlug: z
@@ -418,7 +471,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_submit_pr",
       description:
-        "Record the branch + pull request metadata on a work-claimed task. Atomic metadata write, not a state transition. Use this after `gh pr create` to satisfy the `branchPresent` / `prPresent` workflow gates before calling task_finish. The canonical v2 flow for projects that enforce branch gates is: task_start → (work + gh pr create) → task_submit_pr → task_finish. For projects that only need prPresent, the shorthand `task_finish { prUrl }` still works and this verb is optional. This is the v2-native replacement for the deprecated v1 `tasks_update { branchName, prUrl, prNumber }` path, which is being sunset 4 weeks after 2026-04-15. Re-submission is allowed and overwrites the prior values (supports the request_changes rework loop). Caller must hold the work claim; task must be in a non-terminal state and not `open`. Cross-repo hardening: prUrl must point at the same repo as project.githubRepo; mismatches are rejected with 400 cross_repo_pr_rejected. Authorship verification: the PR must be authored by the delegation user; mismatches are rejected with 403 pr_author_mismatch (fails open on GitHub API errors).\n\nReturns a receipt by default ({ ok, task: { id, status }, next: [\"task_finish once CI is green\"] }). Not a state transition, so no `transition` field. Pass include:[\"task\"] for the full backend object.",
+        "Record the branch + pull request metadata on a work-claimed task. Atomic metadata write, not a state transition. Use this after `gh pr create` to satisfy the `branchPresent` / `prPresent` workflow gates before calling task_finish. The canonical v2 flow for projects that enforce branch gates is: task_start → (work + gh pr create) → task_submit_pr → task_finish. For projects that only need prPresent, the shorthand `task_finish { prUrl }` still works and this verb is optional. This is the v2-native replacement for the v1 `tasks_update { branchName, prUrl, prNumber }` path, pruned from the default tool registration by rc-v1-C007 and reachable only with AGENT_TASKS_MCP_LEGACY=1 set. Re-submission is allowed and overwrites the prior values (supports the request_changes rework loop). Caller must hold the work claim; task must be in a non-terminal state and not `open`. Cross-repo hardening: prUrl must point at the same repo as project.githubRepo; mismatches are rejected with 400 cross_repo_pr_rejected. Authorship verification: the PR must be authored by the delegation user; mismatches are rejected with 403 pr_author_mismatch (fails open on GitHub API errors).\n\nReturns a receipt by default ({ ok, task: { id, status }, next: [\"task_finish once CI is green\"] }). Not a state transition, so no `transition` field. Pass include:[\"task\"] for the full backend object.",
       inputShape: {
         taskId: uuid(),
         branchName: z.string().trim().min(1).max(255),
@@ -578,8 +631,8 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "project_tasks",
       description:
-        "Browse tasks scoped to a single project. Use this when you want to answer 'what is open in project X?' (the question task_pickup and the deprecated tasks_list cannot reliably answer — pickup returns one item, tasks_list returns only the claimable slice). " +
-        "`project` accepts a slug ('agent-tasks') or a UUID; slugs are resolved mcp-server-side (TTL-cached, ~15 min, rc-v1-C006) so you do not need to chain projects_get first. An unresolvable slug is an unknown_project_slug teaching error naming projects_list as the recipe. " +
+        "Browse tasks scoped to a single project. Use this when you want to answer 'what is open in project X?' (a question task_pickup cannot answer on its own, since it returns one prioritized item, not a browsable list). " +
+        "`project` accepts a slug ('agent-tasks') or a UUID; slugs are resolved mcp-server-side (TTL-cached, ~15 min, rc-v1-C006), no separate lookup call needed. An unresolvable slug is an unknown_project_slug teaching error whose recipe asks the operator for the correct slug or id (or, with AGENT_TASKS_MCP_LEGACY=1 set, call projects_list). " +
         "Filters (status, priority, labels, unclaimed) combine with AND semantics; status and priority accept either a single value or an array. limit defaults to unbounded on the backend, but clamps to 500 if supplied — pass an explicit limit when calling from an LLM harness so the response stays inside the tool-result token cap. " +
         "DEFAULT sort is `createdAt:desc` (newest tasks first) — pass `sort: \"createdAt:asc\"` to reverse it. Combined with a small `limit`, the default lets you fetch the N newest open tasks in a single call without blowing the tool-result token cap. " +
         "The response carries `nextCursor` (a task id, or null once the last page is reached) — pass it back as `cursor` to page forward; combined with `sort` + `id` as a tiebreaker, page order is stable even when many tasks share the same createdAt timestamp.",
@@ -684,8 +737,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "tasks_get",
       description:
-        DEPRECATED +
-        "Fetch a task by id. v2 folds this into the task_start response. Returns a summary projection by default (id, title, status, priority, labels, claims, blockedBy, prUrl) — pass include:[\"description\" | \"comments\" | \"artifacts\"] to add one field back, or include:[\"task\"] for the full, pre-contract object.",
+        "Fetch a task by id. The modern read-verb surface (rc-v1-C006): task_start folds its own task-scoped slice of this into its receipt, but this is the general-purpose read. Returns a summary projection by default (id, title, status, priority, labels, claims, blockedBy, prUrl), pass include:[\"description\" | \"comments\" | \"artifacts\"] to add one field back, or include:[\"task\"] for the full, pre-contract object.",
       inputShape: { taskId: uuid(), include: readIncludeSchema },
       handler: async ({ taskId, include }) => {
         const response = await wrap(() => client.getTask(taskId));
@@ -784,8 +836,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "tasks_comment",
       description:
-        DEPRECATED +
-        "Use task_note instead (same behavior, v2 naming, including the receipt default).",
+        "First-class alias of task_note (same behavior, v2 naming, including the receipt default). Kept in the default registration permanently for naming-convention compatibility; not part of rc-v1-C007's pruned legacy set.",
       inputShape: {
         taskId: uuid(),
         content: z.string().min(1).max(5000),
@@ -842,8 +893,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "signals_poll",
       description:
-        DEPRECATED +
-        `Signals are delivered inline by task_pickup under v2. Default limit ${SIGNALS_DEFAULT_LIMIT} (max ${SIGNALS_MAX_LIMIT}); when more are pending within the fetched batch the response carries truncated:true and a cursor (the last delivered signal's id). Pass it back as cursor on the next call to fetch the remainder. mcp-server always fetches up to ${SIGNALS_BACKEND_FETCH_LIMIT} pending signals from the backend per call (its own hard max; the backend has no cursor of its own). When the backend backlog is at or above that ceiling, the response also carries atBackendFetchCeiling:true: more signals may exist beyond what this call could see, even once truncated stops appearing, so ack what you have and poll again rather than assuming the backlog is drained. A cursor whose signal was acked or aged out of the backend's fetch window restarts from the oldest pending signal, so an occasional duplicate delivery is possible; treat acking as idempotent.`,
+        `Signals are also delivered inline by task_pickup under v2; call this verb directly when you want to check the signal inbox without also claiming a task. Default limit ${SIGNALS_DEFAULT_LIMIT} (max ${SIGNALS_MAX_LIMIT}); when more are pending within the fetched batch the response carries truncated:true and a cursor (the last delivered signal's id). Pass it back as cursor on the next call to fetch the remainder. mcp-server always fetches up to ${SIGNALS_BACKEND_FETCH_LIMIT} pending signals from the backend per call (its own hard max; the backend has no cursor of its own). When the backend backlog is at or above that ceiling, the response also carries atBackendFetchCeiling:true: more signals may exist beyond what this call could see, even once truncated stops appearing, so ack what you have and poll again rather than assuming the backlog is drained. A cursor whose signal was acked or aged out of the backend's fetch window restarts from the oldest pending signal, so an occasional duplicate delivery is possible; treat acking as idempotent.`,
       inputShape: {
         limit: z
           .number()
@@ -869,8 +919,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "signals_ack",
       description:
-        DEPRECATED +
-        "Signals are acked atomically when delivered by task_pickup under v2.",
+        "Acknowledge a signal fetched via signals_poll (signals delivered inline by task_pickup under v2 are acked atomically instead, no separate call needed).",
       inputShape: { signalId: uuid() },
       handler: async ({ signalId }) => wrap(() => client.ackSignal(signalId)),
     }),
@@ -931,4 +980,9 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         wrap(() => client.commentOnPullRequest(input)),
     }),
   ];
+
+  // rc-v1-C007: registration-time filter only. Every handler above stays
+  // fully defined regardless of `options.legacy`; { legacy: true } is the
+  // only thing that changes which of them end up in the returned array.
+  return options?.legacy ? tools : tools.filter((t) => !LEGACY_VERB_NAMES.has(t.name));
 }
