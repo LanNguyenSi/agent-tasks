@@ -12,7 +12,17 @@ function resolveConfig() {
   return { token, baseUrl };
 }
 
-runStdioServer(resolveConfig()).catch((err) => {
+// rc-v1-C007: AGENT_TASKS_MCP_LEGACY=1 re-registers the v1 verbs tools.ts's
+// buildTools prunes from the default registration (LEGACY_VERB_NAMES), for
+// a caller still depending on one of them by name. Read here, at the
+// process entrypoint, and forwarded as an explicit option so
+// buildTools/createServer/runStdioServer stay testable in both modes
+// without env stubbing.
+function resolveLegacyFlag(): boolean {
+  return process.env.AGENT_TASKS_MCP_LEGACY === "1";
+}
+
+runStdioServer(resolveConfig(), { legacy: resolveLegacyFlag() }).catch((err) => {
   // eslint-disable-next-line no-console
   console.error("[agent-tasks-mcp] fatal:", err);
   process.exit(1);

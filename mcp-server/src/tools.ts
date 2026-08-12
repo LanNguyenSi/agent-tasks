@@ -152,16 +152,64 @@ function def<Shape extends ZodRawShape>(
   return d as unknown as ToolDefinition;
 }
 
-// ── v1 deprecation notice ────────────────────────────────────────────────────
+// ── v1 deprecation notice, and the rc-v1-C007 pruning ───────────────────────
 //
-// The v1 tools below are being phased out in favor of the v2 verb-oriented
+// The v1 tools below were phased out in favor of the v2 verb-oriented
 // surface (task_pickup / task_start / task_note / task_finish / task_create /
-// task_abandon). LLM clients that see both should prefer the non-deprecated
-// variant. v1 tools will be removed 4 weeks after the v2 release. See ADR 0008.
+// task_abandon). See ADR 0008.
+//
+// rc-v1-C007: every verb still carrying this DEPRECATED prefix (the exact
+// set is LEGACY_VERB_NAMES below, derived from tools.ts itself, not a
+// separately hand-typed list) is registered only when buildTools is called
+// with { legacy: true } -- see the filter at the bottom of buildTools.
+// server.ts's createServer takes the same optional { legacy?: boolean }
+// and passes it straight through; index.ts reads AGENT_TASKS_MCP_LEGACY
+// from the process environment and forwards it as that option. Handler
+// code is untouched by this change: it is a registration-time filter, not
+// a deletion, so AGENT_TASKS_MCP_LEGACY=1 is a genuine escape hatch for a
+// caller still depending on a pruned verb's name, and buildTools stays
+// testable in both modes without env stubbing.
+//
+// A few DEPRECATED-marked-in-spirit verbs stay in the DEFAULT registration
+// regardless, because the work that produced them is still active: tasks_get
+// (upgraded by rc-v1-C006 into the modern summary+include read verb, no
+// longer actually deprecated, its DEPRECATED prefix removed below),
+// tasks_comment (the receipt-converted v1 alias named in the primers'
+// converted-verb sentence; pruning it would break their truth guards), and
+// signals_poll / signals_ack (signals_poll carries the rc-v1-C006 cap
+// semantics, and acking is required for progress at the fetch ceiling).
+// See mcp-server/README.md's replacement table for the verb-by-verb
+// migration guidance, and docs/response-contract-v1.md for the legacy-flag
+// verbs' exemption from this package's response-shape rules.
 const DEPRECATED = "[DEPRECATED, use v2 tools] ";
 
-export function buildTools(client: AgentTasksClient): ToolDefinition[] {
-  return [
+// Verb names pruned from the DEFAULT registration by rc-v1-C007. Every one
+// of these still carries the DEPRECATED prefix on its description below;
+// registering them at all is now opt-in via { legacy: true } (or, at the
+// process entrypoint, AGENT_TASKS_MCP_LEGACY=1), kept for compatibility
+// only.
+const LEGACY_VERB_NAMES = new Set<string>([
+  "projects_list",
+  "projects_get",
+  "tasks_list",
+  "tasks_instructions",
+  "tasks_create",
+  "tasks_claim",
+  "tasks_release",
+  "tasks_transition",
+  "tasks_update",
+  "review_approve",
+  "review_request_changes",
+  "review_claim",
+  "review_release",
+  "pull_requests_comment",
+]);
+
+export function buildTools(
+  client: AgentTasksClient,
+  options?: { legacy?: boolean },
+): ToolDefinition[] {
+  const tools: ToolDefinition[] = [
     // ── Onboarding (docs/response-contract-v1.md's "Onboarding channels by
     // rate of change" table, rc-v1-C004) ────────────────────────────────
     //
@@ -684,8 +732,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "tasks_get",
       description:
-        DEPRECATED +
-        "Fetch a task by id. v2 folds this into the task_start response. Returns a summary projection by default (id, title, status, priority, labels, claims, blockedBy, prUrl) — pass include:[\"description\" | \"comments\" | \"artifacts\"] to add one field back, or include:[\"task\"] for the full, pre-contract object.",
+        "Fetch a task by id. The modern read-verb surface (rc-v1-C006): task_start folds its own task-scoped slice of this into its receipt, but this is the general-purpose read. Returns a summary projection by default (id, title, status, priority, labels, claims, blockedBy, prUrl), pass include:[\"description\" | \"comments\" | \"artifacts\"] to add one field back, or include:[\"task\"] for the full, pre-contract object.",
       inputShape: { taskId: uuid(), include: readIncludeSchema },
       handler: async ({ taskId, include }) => {
         const response = await wrap(() => client.getTask(taskId));
@@ -842,8 +889,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "signals_poll",
       description:
-        DEPRECATED +
-        `Signals are delivered inline by task_pickup under v2. Default limit ${SIGNALS_DEFAULT_LIMIT} (max ${SIGNALS_MAX_LIMIT}); when more are pending within the fetched batch the response carries truncated:true and a cursor (the last delivered signal's id). Pass it back as cursor on the next call to fetch the remainder. mcp-server always fetches up to ${SIGNALS_BACKEND_FETCH_LIMIT} pending signals from the backend per call (its own hard max; the backend has no cursor of its own). When the backend backlog is at or above that ceiling, the response also carries atBackendFetchCeiling:true: more signals may exist beyond what this call could see, even once truncated stops appearing, so ack what you have and poll again rather than assuming the backlog is drained. A cursor whose signal was acked or aged out of the backend's fetch window restarts from the oldest pending signal, so an occasional duplicate delivery is possible; treat acking as idempotent.`,
+        `Signals are also delivered inline by task_pickup under v2; call this verb directly when you want to check the signal inbox without also claiming a task. Default limit ${SIGNALS_DEFAULT_LIMIT} (max ${SIGNALS_MAX_LIMIT}); when more are pending within the fetched batch the response carries truncated:true and a cursor (the last delivered signal's id). Pass it back as cursor on the next call to fetch the remainder. mcp-server always fetches up to ${SIGNALS_BACKEND_FETCH_LIMIT} pending signals from the backend per call (its own hard max; the backend has no cursor of its own). When the backend backlog is at or above that ceiling, the response also carries atBackendFetchCeiling:true: more signals may exist beyond what this call could see, even once truncated stops appearing, so ack what you have and poll again rather than assuming the backlog is drained. A cursor whose signal was acked or aged out of the backend's fetch window restarts from the oldest pending signal, so an occasional duplicate delivery is possible; treat acking as idempotent.`,
       inputShape: {
         limit: z
           .number()
@@ -869,8 +915,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "signals_ack",
       description:
-        DEPRECATED +
-        "Signals are acked atomically when delivered by task_pickup under v2.",
+        "Acknowledge a signal fetched via signals_poll (signals delivered inline by task_pickup under v2 are acked atomically instead, no separate call needed).",
       inputShape: { signalId: uuid() },
       handler: async ({ signalId }) => wrap(() => client.ackSignal(signalId)),
     }),
@@ -931,4 +976,9 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         wrap(() => client.commentOnPullRequest(input)),
     }),
   ];
+
+  // rc-v1-C007: registration-time filter only. Every handler above stays
+  // fully defined regardless of `options.legacy`; { legacy: true } is the
+  // only thing that changes which of them end up in the returned array.
+  return options?.legacy ? tools : tools.filter((t) => !LEGACY_VERB_NAMES.has(t.name));
 }

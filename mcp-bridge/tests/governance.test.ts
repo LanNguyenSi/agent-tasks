@@ -36,10 +36,20 @@ describe("governance: blocked claim surfaces as MCP tool error end-to-end", () =
   });
 
   it("propagates the backend 409 body through the MCP tool result", async () => {
-    const server = createServer({
-      baseUrl: "https://fake.local",
-      token: "fake-token",
-    });
+    // rc-v1-C007 (agent-tasks mcp-server): tasks_claim is pruned from the
+    // DEFAULT tool registration (tools.ts's LEGACY_VERB_NAMES); it remains
+    // fully defined and reachable with { legacy: true } (the equivalent of
+    // setting AGENT_TASKS_MCP_LEGACY=1 at the process entrypoint). This
+    // test exercises the governance/error-propagation mechanism, not
+    // tasks_claim specifically, so it opts into the legacy set here to keep
+    // exercising the same verb and URL it always has.
+    const server = createServer(
+      {
+        baseUrl: "https://fake.local",
+        token: "fake-token",
+      },
+      { legacy: true },
+    );
     const client = new Client(
       { name: "governance-test", version: "0.0.0" },
       { capabilities: {} },

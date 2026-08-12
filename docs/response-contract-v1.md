@@ -219,9 +219,27 @@ Per-verb defaults without `include`:
 MUST remain available at minimum via `include: ["task"]` during the
 deprecation window.
 
-Deprecated v1 verbs remain in scope of this contract for as long as they
-ship in the default tool registration: deprecation shortens their
-lifetime, it does not exempt them from the shape rules.
+Deprecated v1 verbs remained in scope of this contract for as long as they
+shipped in the default tool registration. rc-v1-C007 pruned every verb
+still carrying tools.ts's `[DEPRECATED` marker, except `tasks_get`
+(upgraded into the read-verb surface above), `tasks_comment` (the
+receipt-converted `task_note` alias), and `signals_poll` / `signals_ack`
+(still the only signal-inbox surface), out of the default registration
+entirely; see `mcp-server/README.md`'s replacement table for the full
+pruned list and their v2 equivalents. A pruned verb remains reachable only
+behind `AGENT_TASKS_MCP_LEGACY=1` (`mcp-server/src/tools.ts`'s
+`LEGACY_VERB_NAMES`).
+
+**Legacy-flag exemption.** A legacy-flag verb (one reachable only via
+`AGENT_TASKS_MCP_LEGACY=1`) is exempt from this contract's shape rules
+(receipt, no-echo, `include`, error catalog): it exists for compatibility
+only, not as part of the designed default surface, so converting it was
+judged more expensive than the compatibility it buys. `tasks_create`'s
+continued raw-body echo behind the flag is the concrete example.
+`tasks_get`, `tasks_comment`, `signals_poll`, and `signals_ack` are NOT
+legacy-flag verbs (each stayed in the default registration for its own
+documented reason above) and remain fully bound by every rule in this
+document, same as any other default-registered verb.
 
 ## Read verbs, slug addressing, and the signals cap as shipped (rc-v1-C006)
 
