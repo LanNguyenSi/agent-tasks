@@ -116,7 +116,7 @@ export interface ConfidenceObj {
 // applied unconditionally so it holds without exceptions, even for fields
 // (like `skipped[]`, bounded by the fixed set of workflow gates) that can
 // never actually reach the clamp in practice.
-const DETAIL_CLAMP = 5;
+export const DETAIL_CLAMP = 5;
 
 // Per-entry byte bound layered on top of DETAIL_CLAMP. DETAIL_CLAMP alone
 // only bounds array LENGTH: a caller-influenced string entering a detail
@@ -140,12 +140,12 @@ const DETAIL_CLAMP = 5;
 // accepted, visible (ends in "...") consequence of one shared per-entry
 // bound applying uniformly to every future detector, not a special case
 // per field.
-const ENTRY_CHAR_BUDGET = 19;
+export const ENTRY_CHAR_BUDGET = 19;
 
 // Visible truncation marker: a shortened entry must not look complete, so
 // the caller can tell at the string level (not just via the totalX count)
 // that this particular entry was cut.
-const ENTRY_TRUNCATION_MARKER = "...";
+export const ENTRY_TRUNCATION_MARKER = "...";
 
 /**
  * Byte-bounds a detail array by construction: caps the element COUNT (as
@@ -155,8 +155,14 @@ const ENTRY_TRUNCATION_MARKER = "...";
  * silent: a shortened entry visibly ends with ENTRY_TRUNCATION_MARKER, and
  * the deviation's own totalX field already reports the untruncated
  * cardinality.
+ *
+ * Exported for reuse by read.ts (rc-v1-C006): tasks_get's summary
+ * projection and the block-tier's client-side project-addressing errors
+ * clamp their own arrays the same way, at their own (different) budgets, by
+ * calling this shared helper rather than re-implementing the clamp+marker
+ * logic a second time.
  */
-function clampEntries(
+export function clampEntries(
   values: string[],
   opts: { max?: number; entryChars?: number } = {},
 ): string[] {

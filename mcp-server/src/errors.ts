@@ -33,7 +33,10 @@
 // generic shape (status-derived code, message passthrough, recipe ->
 // workflow_primer, and now also a clamped passthrough of any structured
 // body.details — see genericDegrade) rather than being forwarded as raw
-// text.
+// text. rc-v1-C006 adds two more client-side-only entries for the
+// projectSlug addressing feature: project_addressing_conflict and
+// unknown_project_slug (see both below, near the end of the catalog
+// section) — neither is a backend error mapBackendError ever sees.
 //
 // No em dashes in this file's exported/emitted prose (repo convention,
 // enforced today only for primer.ts's exported strings, applied here too
@@ -578,6 +581,37 @@ function lowConfidenceError(body: BackendErrorBody, message: string): TeachingEr
       missing,
       totalMissing: rawMissing.length,
     },
+  });
+}
+
+// 10. project_addressing_conflict / unknown_project_slug. rc-v1-C006's
+// projectSlug alternative to projectId (task_create, and project_tasks via
+// the same client-side resolver, client.ts's withResolvedProjectSlug):
+// neither trap is a backend error the real API ever raises with these
+// codes, so neither is reachable via mapBackendError below. Both are raised
+// directly by the calling tool's own handler in tools.ts, same pattern as
+// catalog entry #8 (resultMustBePlainStringError) — a client-side guard
+// checked before, or in place of, any network call.
+export function projectAddressingConflictError(verb: string): TeachingError {
+  return buildTeachingError({
+    code: "project_addressing_conflict",
+    message: "projectId and projectSlug were both provided; pass exactly one",
+    recipe: `resubmit ${verb} with only one of projectId or projectSlug`,
+    allowedNext: [verb],
+  });
+}
+
+// Raised when client.ts's slug resolver gets a 404 on a FRESH (not
+// cache-served) slug lookup — see client.ts's ProjectSlugNotFoundError and
+// withResolvedProjectSlug. `recipe` names projects_list, the concrete
+// corrective call for "how do I find the actual available slugs", per this
+// catalog's own convention that recipe names a call, not just a fix.
+export function unknownProjectSlugError(slug: string, verb: string): TeachingError {
+  return buildTeachingError({
+    code: "unknown_project_slug",
+    message: `no project found for slug "${slug}"`,
+    recipe: "call projects_list to see the available project slugs",
+    allowedNext: ["projects_list", verb],
   });
 }
 

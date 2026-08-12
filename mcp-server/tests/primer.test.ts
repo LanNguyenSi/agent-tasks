@@ -164,11 +164,24 @@ describe("HANDSHAKE_PRIMER's converted-verb list is grounded in buildTools, not 
     }
   });
 
-  it("buildTools' include-accepting set, minus task_pickup and task_start, equals exactly the primer's named converted-verb list", () => {
+  // rc-v1-C006: tasks_get is the primer's own separately-worded read-verb
+  // addition (its own clause, "tasks_get returns a summary by default and
+  // accepts include:[...]", not a member of the "converted v2 write verbs"
+  // parenthetical list) — it is excluded here the same way task_pickup and
+  // task_start already were, and asserted on its own right below instead.
+  it("buildTools' include-accepting set, minus task_pickup, task_start, and tasks_get, equals exactly the primer's named converted-verb list", () => {
     const derived = includeAcceptingVerbNames();
     derived.delete("task_pickup");
     derived.delete("task_start");
+    derived.delete("tasks_get");
     expect(derived).toEqual(new Set(sentenceConvertedVerbs()));
+  });
+
+  it("tasks_get (rc-v1-C006's read-verb include addition) actually accepts include in buildTools and is named in its own primer clause (not folded into the write-verb parenthetical list)", () => {
+    const derived = includeAcceptingVerbNames();
+    expect(derived.has("tasks_get")).toBe(true);
+    expect(HANDSHAKE_PRIMER).toMatch(/tasks_get returns a summary by default and accepts include/i);
+    expect(sentenceConvertedVerbs()).not.toContain("tasks_get");
   });
 });
 

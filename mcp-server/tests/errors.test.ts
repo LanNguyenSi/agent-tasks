@@ -4,6 +4,8 @@ import {
   serializeTeachingError,
   looksLikeStructuredWrapper,
   resultMustBePlainStringError,
+  projectAddressingConflictError,
+  unknownProjectSlugError,
   KNOWN_RULE_CORRECTIVES,
   type TeachingError,
 } from "../src/errors.js";
@@ -605,10 +607,54 @@ describe("mapBackendError catalog", () => {
       }),
       resultMustBePlainStringError(),
       resultMustBePlainStringError("tasks_update"),
+      projectAddressingConflictError("task_create"),
+      unknownProjectSlugError("does-not-exist", "task_create"),
     ];
     for (const fixture of fixtures) {
       expect(serializeResult(fixture).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
     }
+  });
+});
+
+// ── 10. rc-v1-C006: project_addressing_conflict / unknown_project_slug ──────
+//
+// Both are client-side-only (raised directly by tools.ts's task_create /
+// project_tasks handlers, never by mapBackendError), same pattern as
+// resultMustBePlainStringError above.
+describe("projectAddressingConflictError / unknownProjectSlugError", () => {
+  it("projectAddressingConflictError names the calling verb as its own corrective and carries the aggregate budget invariant", () => {
+    const err = projectAddressingConflictError("task_create");
+    expect(err.error.code).toBe("project_addressing_conflict");
+    expect(err.error.allowedNext).toEqual(["task_create"]);
+    expect(err.error.recipe).toContain("task_create");
+    assertAllowedNextRegistered(err, registeredVerbNames());
+    expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+  });
+
+  it("projectAddressingConflictError('project_tasks') names project_tasks instead", () => {
+    const err = projectAddressingConflictError("project_tasks");
+    expect(err.error.allowedNext).toEqual(["project_tasks"]);
+    expect(err.error.recipe).toContain("project_tasks");
+  });
+
+  it("unknownProjectSlugError names projects_list as the recipe for listing available slugs, and includes the calling verb in allowedNext", () => {
+    const err = unknownProjectSlugError("no-such-slug", "task_create");
+    expect(err.error.code).toBe("unknown_project_slug");
+    expect(err.error.message).toContain("no-such-slug");
+    expect(err.error.recipe).toContain("projects_list");
+    expect(err.error.allowedNext).toEqual(["projects_list", "task_create"]);
+    assertAllowedNextRegistered(err, registeredVerbNames());
+    expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+  });
+
+  it("unknownProjectSlugError('project_tasks') names project_tasks in allowedNext instead of task_create", () => {
+    const err = unknownProjectSlugError("no-such-slug", "project_tasks");
+    expect(err.error.allowedNext).toEqual(["projects_list", "project_tasks"]);
+  });
+
+  it("unknownProjectSlugError stays within budget even for a pathologically long slug", () => {
+    const err = unknownProjectSlugError("x".repeat(5000), "task_create");
+    expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
   });
 });
 

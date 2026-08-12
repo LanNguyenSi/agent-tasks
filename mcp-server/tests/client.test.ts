@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { AgentTasksClient, AgentTasksApiError } from "../src/client.js";
+import { AgentTasksClient, AgentTasksApiError, ProjectSlugNotFoundError } from "../src/client.js";
 
 describe("AgentTasksClient", () => {
   const config = { baseUrl: "https://example.test", token: "tok_abc" };
@@ -298,6 +298,225 @@ describe("AgentTasksClient", () => {
       expect(fetchMock.mock.calls[0][0]).toBe(
         "https://example.test/api/projects/by-slug/weird%2Fslug",
       );
+    });
+
+    // rc-v1-C006: the slug -> id TTL cache.
+    it("caches a resolved slug across repeated calls on the same client instance (no repeated by-slug round trip)", async () => {
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+        .mockResolvedValueOnce(ok({ tasks: [] }))
+        .mockResolvedValueOnce(ok({ tasks: [] }));
+      const client = new AgentTasksClient(config);
+      await client.listProjectTasks("agent-tasks");
+      expect(fetchMock).toHaveBeenCalledTimes(2); // by-slug + tasks
+
+      await client.listProjectTasks("agent-tasks");
+      // Second call reuses the cached id: only one more request (tasks),
+      // no second by-slug round trip.
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock.mock.calls[2][0]).toBe(
+        "https://example.test/api/projects/p1/tasks",
+      );
+    });
+  });
+
+  // ── Project-slug resolution: cache, invalidate-and-retry, unknown slug
+  // (rc-v1-C006) ────────────────────────────────────────────────────────
+  //
+  // Shared machinery behind both listProjectTasks's existing slug-or-id
+  // `project` param and createTaskByProjectSlug's new projectSlug field.
+  describe("project-slug resolution (rc-v1-C006)", () => {
+    it("throws ProjectSlugNotFoundError, not a bare AgentTasksApiError, on a fresh (non-cached) 404 slug lookup", async () => {
+      fetchMock.mockResolvedValueOnce(err(404, { error: "not_found", message: "Resource not found" }));
+      const client = new AgentTasksClient(config);
+      await expect(client.listProjectTasks("no-such-project")).rejects.toBeInstanceOf(
+        ProjectSlugNotFoundError,
+      );
+    });
+
+    it("ProjectSlugNotFoundError carries the slug that failed to resolve", async () => {
+      fetchMock.mockResolvedValueOnce(err(404, { error: "not_found", message: "Resource not found" }));
+      const client = new AgentTasksClient(config);
+      try {
+        await client.listProjectTasks("no-such-project");
+        throw new Error("expected a throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(ProjectSlugNotFoundError);
+        expect((e as ProjectSlugNotFoundError).slug).toBe("no-such-project");
+      }
+    });
+
+    it("a non-404 error from the by-slug lookup propagates as a normal AgentTasksApiError, not ProjectSlugNotFoundError", async () => {
+      fetchMock.mockResolvedValueOnce(err(500, { error: "internal", message: "boom" }));
+      const client = new AgentTasksClient(config);
+      await expect(client.listProjectTasks("agent-tasks")).rejects.toMatchObject({
+        name: "AgentTasksApiError",
+        status: 500,
+      });
+    });
+
+    // STALE-ENTRY-AFTER-RENAME: the cache holds an id from a prior
+    // resolution; the project behind that slug was reassigned/renamed so
+    // the cached id no longer resolves downstream (simulated here as a 404
+    // on the tasks fetch using the stale id). The resolver must invalidate
+    // the stale entry and retry exactly once against a freshly resolved id,
+    // succeeding without the caller ever seeing the intermediate failure.
+    it("stale cached id: a downstream 404 invalidates the slug cache and retries once against a fresh lookup, succeeding", async () => {
+      const client = new AgentTasksClient(config);
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p-old" } })) // warm the cache
+        .mockResolvedValueOnce(ok({ tasks: [] })); // first call succeeds
+      await client.listProjectTasks("agent-tasks");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      fetchMock
+        .mockResolvedValueOnce(err(404, { error: "not_found", message: "Resource not found" })) // stale id 404s
+        .mockResolvedValueOnce(ok({ project: { id: "p-new" } })) // fresh by-slug lookup
+        .mockResolvedValueOnce(ok({ tasks: [{ id: "t1" }] })); // retry succeeds
+
+      const result = await client.listProjectTasks("agent-tasks");
+      expect(result).toEqual({ tasks: [{ id: "t1" }] });
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+      expect(fetchMock.mock.calls[2][0]).toBe(
+        "https://example.test/api/projects/p-old/tasks",
+      );
+      expect(fetchMock.mock.calls[3][0]).toBe(
+        "https://example.test/api/projects/by-slug/agent-tasks",
+      );
+      expect(fetchMock.mock.calls[4][0]).toBe(
+        "https://example.test/api/projects/p-new/tasks",
+      );
+
+      // The cache now holds the fresh id: a THIRD call reuses it directly,
+      // no further by-slug round trip.
+      fetchMock.mockResolvedValueOnce(ok({ tasks: [] }));
+      await client.listProjectTasks("agent-tasks");
+      expect(fetchMock).toHaveBeenCalledTimes(6);
+      expect(fetchMock.mock.calls[5][0]).toBe(
+        "https://example.test/api/projects/p-new/tasks",
+      );
+    });
+
+    it("a second 404 after the invalidate-and-retry propagates unchanged (single retry, not a loop)", async () => {
+      const client = new AgentTasksClient(config);
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p-old" } }))
+        .mockResolvedValueOnce(ok({ tasks: [] }));
+      await client.listProjectTasks("agent-tasks");
+
+      fetchMock
+        .mockResolvedValueOnce(err(404, { error: "not_found", message: "Resource not found" })) // stale id 404s
+        .mockResolvedValueOnce(ok({ project: { id: "p-new" } })) // fresh lookup succeeds
+        .mockResolvedValueOnce(err(404, { error: "not_found", message: "Resource not found" })); // retry ALSO 404s
+
+      await expect(client.listProjectTasks("agent-tasks")).rejects.toMatchObject({
+        name: "AgentTasksApiError",
+        status: 404,
+      });
+      // Exactly 3 more calls this round (downstream 404, fresh by-slug,
+      // retry 404) -- no further attempt.
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+    });
+
+    // createTaskByProjectSlug shares the same resolver/cache.
+    it("createTaskByProjectSlug resolves the slug then POSTs to the resolved project's tasks endpoint", async () => {
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+        .mockResolvedValueOnce(ok({ task: { id: "t1" } }));
+      const client = new AgentTasksClient(config);
+      await client.createTaskByProjectSlug("agent-tasks", { title: "New task" });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://example.test/api/projects/by-slug/agent-tasks",
+      );
+      const [url, init] = fetchMock.mock.calls[1];
+      expect(url).toBe("https://example.test/api/projects/p1/tasks");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body)).toEqual({ title: "New task" });
+    });
+
+    it("createTaskByProjectSlug reuses a slug cached by a prior listProjectTasks call (shared cache)", async () => {
+      const client = new AgentTasksClient(config);
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+        .mockResolvedValueOnce(ok({ tasks: [] }));
+      await client.listProjectTasks("agent-tasks");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      fetchMock.mockResolvedValueOnce(ok({ task: { id: "t1" } }));
+      await client.createTaskByProjectSlug("agent-tasks", { title: "New task" });
+      // No second by-slug round trip: only the create POST.
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock.mock.calls[2][0]).toBe(
+        "https://example.test/api/projects/p1/tasks",
+      );
+    });
+
+    it("ProjectSlugNotFoundError on createTaskByProjectSlug carries the slug that failed to resolve", async () => {
+      fetchMock.mockResolvedValueOnce(err(404, { error: "not_found", message: "Resource not found" }));
+      const client = new AgentTasksClient(config);
+      try {
+        await client.createTaskByProjectSlug("ghost-project", { title: "x" });
+        throw new Error("expected a throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(ProjectSlugNotFoundError);
+        expect((e as ProjectSlugNotFoundError).slug).toBe("ghost-project");
+      }
+    });
+
+    // TTL (~15 min per the task spec): a cache entry still within its TTL
+    // is reused (already covered above); once the TTL lapses, the next
+    // call must re-hit the network rather than serving an unboundedly
+    // stale id forever.
+    it("TTL: a cached slug entry is re-resolved (fresh network round trip) once ~15 minutes have elapsed", async () => {
+      vi.useFakeTimers();
+      try {
+        const client = new AgentTasksClient(config);
+        fetchMock
+          .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+          .mockResolvedValueOnce(ok({ tasks: [] }));
+        await client.listProjectTasks("agent-tasks");
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+
+        // Just under the TTL: still cached, no extra by-slug call.
+        vi.advanceTimersByTime(14 * 60 * 1000);
+        fetchMock.mockResolvedValueOnce(ok({ tasks: [] }));
+        await client.listProjectTasks("agent-tasks");
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+
+        // Past the TTL: the cache entry has expired, so the next call
+        // re-resolves the slug over the network.
+        vi.advanceTimersByTime(2 * 60 * 1000);
+        fetchMock
+          .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+          .mockResolvedValueOnce(ok({ tasks: [] }));
+        await client.listProjectTasks("agent-tasks");
+        expect(fetchMock).toHaveBeenCalledTimes(5);
+        expect(fetchMock.mock.calls[3][0]).toBe(
+          "https://example.test/api/projects/by-slug/agent-tasks",
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── pollSignals limit (rc-v1-C006) ──────────────────────────────────────
+  describe("pollSignals", () => {
+    it("forwards an explicit limit as a query param", async () => {
+      fetchMock.mockResolvedValue(ok({ signals: [] }));
+      const client = new AgentTasksClient(config);
+      await client.pollSignals(200);
+      const [url] = fetchMock.mock.calls[0];
+      expect(url).toBe("https://example.test/api/agent/signals?limit=200");
+    });
+
+    it("omits the query string when limit is not passed (backward-compatible with the pre-rc-v1-C006 signature)", async () => {
+      fetchMock.mockResolvedValue(ok({ signals: [] }));
+      const client = new AgentTasksClient(config);
+      await client.pollSignals();
+      const [url] = fetchMock.mock.calls[0];
+      expect(url).toBe("https://example.test/api/agent/signals");
     });
   });
 });
