@@ -8,8 +8,13 @@ import {
   receiptForMerge,
   receiptForAbandon,
   receiptForNote,
+  receiptForStart,
+  projectPickup,
   type Receipt,
   type Deviation,
+  type StartResponse,
+  type StartSlice,
+  type PickupResponse,
 } from "../src/receipt.js";
 import { serializeResult } from "../src/server.js";
 
@@ -551,5 +556,374 @@ describe("malformed backend success bodies (no task.id)", () => {
     const malformed = { ok: true, task: { status: "open" } };
     expect(() => receiptForAbandon(malformed as never)).not.toThrow();
     expect(receiptForAbandon(malformed as never)).toBe(malformed);
+  });
+});
+
+// rc-v1-C003: task_start default is a receipt PLUS a small per-task slice
+// (inferredTaskType, expectedFinishState, gateExpectations), not the full
+// task_pickup-style spec and not a bare receipt either. START_BUDGET_CHARS
+// is the documented CONTRACT CEILING (docs/response-contract-v1.md's Token
+// budgets section, "Named exception: task_start"): 1200 emitted chars
+// (~300 tokens), wider than the generic tier-1 cap because of that slice.
+// It is asserted directly below (not just documented in this comment) so
+// the contract number stays executable.
+const START_BUDGET_CHARS = 1200;
+
+// A much tighter bound, asserted against the actual default-slice fixtures
+// (not the 1200-char ceiling alone): at 300 measured chars for the happy
+// path today (244 pre-gateExpectationsSource), 1200 alone has ~4x headroom
+// and would not catch a re-fattening regression until it was already
+// large. 400 leaves 100 chars of headroom over the measured fixture while
+// still catching drift long before it reaches the contract ceiling. The
+// exact-size assertion in the budget test pins the documented number:
+// growing the slice forces the figure in docs/response-contract-v1.md to
+// move with it.
+const START_BUDGET_TIGHT_CHARS = 400;
+
+describe("receiptForStart", () => {
+  const workResponse: StartResponse = {
+    kind: "work",
+    task: {
+      id: "9f2c1a3e-4b5d-4e6f-8a9b-0c1d2e3f4a5b",
+      status: "in_progress",
+      description: "SECRET DESCRIPTION TEXT THAT MUST NOT SHIP BY DEFAULT",
+      templateData: { taskType: "bugfix" },
+      comments: [{ id: "c1", content: "SECRET COMMENT" }],
+      workflowId: null,
+    },
+    expectedFinishState: "review",
+    project: { id: "p1", name: "Proj", slug: "proj" },
+  };
+
+  it("happy path: receipt + inferredTaskType + expectedFinishState + gateExpectations (default-workflow fallback, marked as assumed), within budget", () => {
+    const slice = receiptForStart(workResponse) as StartSlice;
+    expect(slice).toEqual({
+      ok: true,
+      task: { id: workResponse.task.id, status: "in_progress" },
+      inferredTaskType: "bugfix",
+      expectedFinishState: "review",
+      gateExpectations: ["branchPresent", "prPresent"],
+      gateExpectationsSource: "assumed-default-workflow",
+    });
+    expect(size(slice)).toBeLessThanOrEqual(START_BUDGET_TIGHT_CHARS);
+    expect(size(slice)).toBeLessThanOrEqual(START_BUDGET_CHARS);
+    // Exact pin, deliberately brittle: this is the figure quoted in
+    // docs/response-contract-v1.md's task_start budget exception. Growing
+    // the slice must move the doc number with it, not drift silently.
+    expect(size(slice)).toBe(300);
+  });
+
+  it("no-echo: description, templateData, and comments never appear in the default slice", () => {
+    const slice = receiptForStart(workResponse);
+    const serialized = JSON.stringify(slice);
+    expect(serialized).not.toContain("SECRET DESCRIPTION");
+    expect(serialized).not.toContain("SECRET COMMENT");
+    expect(slice).not.toHaveProperty("description");
+    expect(slice).not.toHaveProperty("comments");
+  });
+
+  it("omits inferredTaskType when templateData.taskType is absent", () => {
+    const slice = receiptForStart({
+      ...workResponse,
+      task: { ...workResponse.task, templateData: undefined },
+    }) as StartSlice;
+    expect(slice).not.toHaveProperty("inferredTaskType");
+  });
+
+  it("omits gateExpectations (and gateExpectationsSource) when the task runs a custom workflow whose definition was not embedded in the response (known gap: does not guess)", () => {
+    const slice = receiptForStart({
+      ...workResponse,
+      task: { ...workResponse.task, workflowId: "custom-wf-1" },
+    }) as StartSlice;
+    expect(slice).not.toHaveProperty("gateExpectations");
+    expect(slice).not.toHaveProperty("gateExpectationsSource");
+  });
+
+  it("uses the dynamic workflow definition over the static fallback when task.workflow is embedded (review-claim branch), with no gateExpectationsSource marker", () => {
+    const slice = receiptForStart({
+      kind: "review",
+      task: {
+        id: "t1",
+        status: "review",
+        workflowId: "custom-wf-1",
+        workflow: {
+          definition: {
+            transitions: [{ from: "review", to: "done", requires: ["ciGreen"] }],
+          },
+        },
+      },
+      expectedFinishState: "done",
+    }) as StartSlice;
+    expect(slice.gateExpectations).toEqual(["ciGreen"]);
+    expect(slice).not.toHaveProperty("gateExpectationsSource");
+  });
+
+  it("gateExpectationsSource: 'assumed-default-workflow' appears only on the static-fallback path, never on the embedded-workflow path (rc-v1-C003 fix round 1, HIGH finding)", () => {
+    const fallbackSlice = receiptForStart(workResponse) as StartSlice;
+    expect(fallbackSlice.gateExpectationsSource).toBe("assumed-default-workflow");
+
+    const embeddedSlice = receiptForStart({
+      kind: "review",
+      task: {
+        id: "t1",
+        status: "review",
+        workflowId: "custom-wf-1",
+        workflow: {
+          definition: {
+            transitions: [{ from: "review", to: "done", requires: ["ciGreen"] }],
+          },
+        },
+      },
+      expectedFinishState: "done",
+    }) as StartSlice;
+    expect(embeddedSlice.gateExpectationsSource).toBeUndefined();
+  });
+
+  it("carries the bare confidence scalar when the backend response provides one (defensive support; not present on the live backend today)", () => {
+    const slice = receiptForStart({ ...workResponse, confidence: { score: 77 } }) as StartSlice;
+    expect(slice.confidence).toBe(77);
+  });
+
+  it("carries no confidence field when the backend response omits it (today's actual behavior)", () => {
+    const slice = receiptForStart(workResponse) as StartSlice;
+    expect(slice).not.toHaveProperty("confidence");
+  });
+
+  it("omits `next` when there is no groundingHint", () => {
+    const slice = receiptForStart(workResponse) as StartSlice;
+    expect(slice).not.toHaveProperty("next");
+  });
+
+  it("compacts a debugFlavor groundingHint into `next`: keeps only the callable recipe, drops backendSessionRef and the other verbose fields, and stays within budget", () => {
+    const debugResponse: StartResponse = {
+      ...workResponse,
+      groundingHint: {
+        debugFlavor: true,
+        recommendedAction:
+          "This task looks like a bug, incident, or investigation. Start a grounding session before reading code so you resolve scope first instead of jumping into the implementation.",
+        mcpToolHint:
+          'mcp__grounding-mcp__grounding_start with keyword="proj", problem="Fix the bug"',
+        backendSessionRef: "sess-123",
+        currentPhase: "scope_resolution",
+        mandatorySequence: ["scope_resolution", "hypothesis", "verification"],
+        activeGuardrails: ["no-premature-fix"],
+      },
+    };
+    const slice = receiptForStart(debugResponse) as StartSlice;
+    expect(slice.next).toEqual([
+      'mcp__grounding-mcp__grounding_start with keyword="proj", problem="Fix the bug"',
+    ]);
+    const serialized = JSON.stringify(slice);
+    // backendSessionRef is forensic, not actionable (backend/src/lib/
+    // debug-flavor.ts names it precisely because it is NOT usable as a
+    // grounding-mcp sessionId) — dropped entirely from next[], not just
+    // de-prioritized. Still reachable via include:["task"].
+    expect(serialized).not.toContain("sess-123");
+    expect(serialized).not.toContain("mandatorySequence");
+    expect(serialized).not.toContain("activeGuardrails");
+    expect(serialized).not.toContain("scope_resolution");
+    // Not held to START_BUDGET_TIGHT_CHARS like the plain happy-path fixture
+    // above: this fixture's size is dominated by a realistic, caller/
+    // keyword-dependent mcpToolHint recipe string, not by receipt-envelope
+    // bloat, so the tight bound would be testing content length rather than
+    // catching an envelope regression. Still held to the documented
+    // contract ceiling.
+    expect(size(slice)).toBeLessThanOrEqual(START_BUDGET_CHARS);
+  });
+
+  it("never surfaces metadata.groundingSessionState even when present on the raw task (the large, persisted session blob)", () => {
+    const withSessionState: StartResponse = {
+      ...workResponse,
+      task: {
+        ...workResponse.task,
+        metadata: {
+          debugFlavor: true,
+          groundingSessionId: "sess-123",
+          groundingSessionState: {
+            current_phase: "verification",
+            ledger: Array.from({ length: 20 }, (_, i) => ({ id: i, claim: `claim-${i}`, evidence: "x".repeat(50) })),
+          },
+        },
+      } as StartResponse["task"] & { metadata: unknown },
+      groundingHint: {
+        debugFlavor: true,
+        recommendedAction: "…",
+        mcpToolHint: 'mcp__grounding-mcp__grounding_start with keyword="proj", problem="Fix the bug"',
+        backendSessionRef: "sess-123",
+      },
+    };
+    const slice = receiptForStart(withSessionState);
+    const serialized = JSON.stringify(slice);
+    expect(serialized).not.toContain("groundingSessionState");
+    expect(serialized).not.toContain("ledger");
+    expect(serialized).not.toContain("claim-0");
+  });
+
+  it("falls back to the raw response instead of throwing on a malformed body without task.id", () => {
+    const malformed = { ok: true, weird: "shape" };
+    expect(() => receiptForStart(malformed as never)).not.toThrow();
+    expect(receiptForStart(malformed as never)).toBe(malformed);
+  });
+
+  // ── include-gated fields ──────────────────────────────────────────────
+
+  it("include:[\"description\"] adds only the description field back", () => {
+    const slice = receiptForStart(workResponse, ["description"]) as StartSlice;
+    expect(slice.description).toBe(workResponse.task.description);
+    expect(slice).not.toHaveProperty("comments");
+    expect(slice).not.toHaveProperty("instructions");
+  });
+
+  it("include:[\"comments\"] adds only the comments field back", () => {
+    const slice = receiptForStart(workResponse, ["comments"]) as StartSlice;
+    expect(slice.comments).toEqual(workResponse.task.comments);
+    expect(slice).not.toHaveProperty("description");
+  });
+
+  it("include:[\"instructions\"] adds the default-workflow instructions prose for the task's current state when no custom workflow is embedded, marked as an assumption (null workflowId does not prove the built-in default; rc-v1-C003 review round 2)", () => {
+    const slice = receiptForStart(workResponse, ["instructions"]) as StartSlice;
+    expect(slice.instructions).toMatch(/push the branch, create a PR/);
+    expect(slice.instructionsSource).toBe("assumed-default-workflow");
+  });
+
+  it("include:[\"instructions\"] prefers the dynamic per-state prose from an embedded custom workflow over the static fallback", () => {
+    const slice = receiptForStart(
+      {
+        kind: "review",
+        task: {
+          id: "t1",
+          status: "review",
+          workflowId: "custom-wf-1",
+          workflow: {
+            definition: {
+              states: [{ name: "review", agentInstructions: "CUSTOM REVIEW PROSE" }],
+            },
+          },
+        },
+        expectedFinishState: "done",
+      },
+      ["instructions"],
+    ) as StartSlice;
+    expect(slice.instructions).toBe("CUSTOM REVIEW PROSE");
+    expect(slice).not.toHaveProperty("instructionsSource");
+  });
+
+  it("include:[\"task\"] keeps backendSessionRef reachable on a debugFlavor response (identity valve carries the full groundingHint)", () => {
+    const debugResponse: StartResponse = {
+      kind: "work",
+      task: { id: "b7f3c2d1-0000-4000-8000-000000000001", status: "in_progress" },
+      expectedFinishState: "review",
+      groundingHint: {
+        debugFlavor: true,
+        recommendedAction: "Advance through the mandatory sequence before claiming a root cause.",
+        mcpToolHint: 'mcp__grounding__grounding_start(problem="x", keyword="agent-tasks")',
+        backendSessionRef: "gs-agent-tasks-abc123",
+      },
+    };
+    const raw = receiptForStart(debugResponse, ["task"]);
+    expect(raw).toBe(debugResponse);
+    expect((raw as StartResponse).groundingHint?.backendSessionRef).toBe("gs-agent-tasks-abc123");
+  });
+
+  it("include:[\"instructions\"] omits instructions (does not guess) when workflowId is set but no embedded workflow.definition.states is sent, mirroring deriveGateExpectations' custom-workflow guard (rc-v1-C003 fix round 1, MEDIUM finding)", () => {
+    const slice = receiptForStart(
+      { ...workResponse, task: { ...workResponse.task, workflowId: "custom-wf-1" } },
+      ["instructions"],
+    ) as StartSlice;
+    expect(slice).not.toHaveProperty("instructions");
+  });
+
+  // ── include:["task"] valve ────────────────────────────────────────────
+  //
+  // Previously handled in tools.ts's task_start handler before calling
+  // receiptForStart at all; now owned by receiptForStart itself, the same
+  // layer projectPickup already handles it at for task_pickup.
+
+  it("include:[\"task\"] returns the raw response unchanged (identity)", () => {
+    const slice = receiptForStart(workResponse, ["task"]);
+    expect(slice).toBe(workResponse);
+  });
+
+  it("mixed include:[\"task\",\"description\"] still returns the raw response: \"task\" wins over any other requested field", () => {
+    const slice = receiptForStart(workResponse, ["task", "description"]);
+    expect(slice).toBe(workResponse);
+  });
+});
+
+describe("projectPickup", () => {
+  const workResponse: PickupResponse = {
+    kind: "work",
+    task: {
+      id: "t1",
+      status: "open",
+      description: "the spec",
+      comments: [{ id: "c1", content: "a comment" }],
+    },
+  };
+
+  it("strips task.comments from the default (no include) response, keeping every other field", () => {
+    const result = projectPickup(workResponse);
+    expect(result.task).not.toHaveProperty("comments");
+    expect(result.task).toMatchObject({ id: "t1", status: "open", description: "the spec" });
+  });
+
+  it("include:[\"comments\"] and include:[\"task\"] both restore the untouched raw response for this verb", () => {
+    expect(projectPickup(workResponse, ["comments"])).toEqual(workResponse);
+    expect(projectPickup(workResponse, ["task"])).toEqual(workResponse);
+  });
+
+  it("passes signal and idle kinds through unchanged (no task.comments to strip)", () => {
+    const signalResponse: PickupResponse = { kind: "signal", signal: { id: "s1" } };
+    expect(projectPickup(signalResponse)).toEqual(signalResponse);
+    const idleResponse: PickupResponse = { kind: "idle" };
+    expect(projectPickup(idleResponse)).toEqual(idleResponse);
+  });
+
+  it("is a no-op when the task carries no comments field to begin with", () => {
+    const noComments: PickupResponse = { kind: "work", task: { id: "t1", status: "open" } };
+    expect(projectPickup(noComments)).toEqual(noComments);
+  });
+});
+
+// rc-v1-C003 acceptance criterion: an agent calling ONLY task_pickup + then
+// task_start has all the data needed to do the work — pickup's default
+// (full spec minus comments) covers description/acceptanceCriteria/status,
+// start's default (receipt + slice) covers expectedFinishState/gates. Union
+// of the two default responses must cover all five.
+describe("task_pickup + task_start composition (no full-object include needed)", () => {
+  it("the union of pickup's and start's default responses covers description, acceptance criteria, status, expectedFinishState, and gates", () => {
+    const pickupResponse: PickupResponse = {
+      kind: "work",
+      task: {
+        id: "t1",
+        status: "open",
+        description: "Fix the bug in the parser",
+        templateData: { taskType: "bugfix", acceptanceCriteria: "the parser no longer throws on empty input" },
+        comments: [{ id: "c1", content: "internal note" }],
+      },
+    };
+    const pickupSlice = projectPickup(pickupResponse);
+
+    const startResponse: StartResponse = {
+      kind: "work",
+      task: {
+        id: "t1",
+        status: "in_progress",
+        templateData: { taskType: "bugfix" },
+        workflowId: null,
+      },
+      expectedFinishState: "review",
+    };
+    const startSlice = receiptForStart(startResponse) as StartSlice;
+
+    const pickupTask = pickupSlice.task as Record<string, unknown>;
+    expect(pickupTask.description).toBe("Fix the bug in the parser");
+    expect((pickupTask.templateData as Record<string, unknown>).acceptanceCriteria).toBe(
+      "the parser no longer throws on empty input",
+    );
+    expect(pickupTask.status).toBe("open");
+
+    expect(startSlice.expectedFinishState).toBe("review");
+    expect(startSlice.gateExpectations).toEqual(["branchPresent", "prPresent"]);
   });
 });

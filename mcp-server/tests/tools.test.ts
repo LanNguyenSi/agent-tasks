@@ -1042,4 +1042,161 @@ describe("buildTools", () => {
       expect(accepted.success, `${name} include:["task"] should pass schema validation`).toBe(true);
     }
   });
+
+  // ── task_start / task_pickup: receipt + slice unfold (rc-v1-C003) ───────
+  //
+  // receipt.ts's receiptForStart/projectPickup have their own dedicated unit
+  // tests (tests/receipt.test.ts, including the pickup+start composition
+  // test). These only prove the handler wiring: request-building is
+  // untouched (already covered by the reclassify tests above), the default
+  // response goes through the new projection, include:["task"] still
+  // bypasses it, and the two verbs' include enums accept exactly their own
+  // vocabulary at the zod schema level (mutation-resistant: re-widening or
+  // narrowing either enum fails this test even if every handler-level test
+  // stays green).
+
+  it("task_start returns a receipt + slice by default, not the raw full task", async () => {
+    fetchMock.mockResolvedValue(
+      ok({
+        kind: "work",
+        task: {
+          id: "t1",
+          status: "in_progress",
+          description: "SECRET DESCRIPTION",
+          templateData: { taskType: "bugfix" },
+          comments: [{ id: "c1", content: "SECRET COMMENT" }],
+          workflowId: null,
+        },
+        expectedFinishState: "review",
+        project: { id: "p1", slug: "proj" },
+      }),
+    );
+    const result = await tool("task_start").handler({ taskId: TASK_ID } as never);
+    expect(result).toEqual({
+      ok: true,
+      task: { id: "t1", status: "in_progress" },
+      inferredTaskType: "bugfix",
+      expectedFinishState: "review",
+      gateExpectations: ["branchPresent", "prPresent"],
+      gateExpectationsSource: "assumed-default-workflow",
+    });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("SECRET");
+    expect(serialized).not.toContain("project");
+    expect(serializeResult(result).length).toBeLessThanOrEqual(1200);
+  });
+
+  it("task_start include:[\"task\"] returns the full, pre-contract backend object", async () => {
+    const backendBody = {
+      kind: "work",
+      task: { id: "t1", status: "in_progress", description: "d" },
+      expectedFinishState: "review",
+      project: { id: "p1", slug: "proj" },
+    };
+    fetchMock.mockResolvedValue(ok(backendBody));
+    const result = await tool("task_start").handler({ taskId: TASK_ID, include: ["task"] } as never);
+    expect(result).toEqual(backendBody);
+  });
+
+  it("task_start include:[\"description\"] adds back only description, not comments or the full object", async () => {
+    fetchMock.mockResolvedValue(
+      ok({
+        kind: "work",
+        task: { id: "t1", status: "in_progress", description: "the spec", comments: [{ id: "c1" }] },
+        expectedFinishState: "review",
+      }),
+    );
+    const result = await tool("task_start").handler({
+      taskId: TASK_ID,
+      include: ["description"],
+    } as never) as Record<string, unknown>;
+    expect(result.description).toBe("the spec");
+    expect(result).not.toHaveProperty("comments");
+    expect(result).not.toHaveProperty("project");
+  });
+
+  it("task_start include schema accepts description/instructions/comments/task and rejects the artifacts read-vocabulary value", () => {
+    const shape = tool("task_start").inputShape;
+    for (const value of ["description", "instructions", "comments", "task"]) {
+      const accepted = z.object(shape).safeParse({ taskId: TASK_ID, include: [value] });
+      expect(accepted.success, `task_start include:["${value}"] should pass schema validation`).toBe(true);
+    }
+    const rejected = z.object(shape).safeParse({ taskId: TASK_ID, include: ["artifacts"] });
+    expect(rejected.success, 'task_start include:["artifacts"] should fail schema validation').toBe(false);
+  });
+
+  it("task_pickup returns the full spec without comments by default", async () => {
+    fetchMock.mockResolvedValue(
+      ok({
+        kind: "work",
+        task: { id: "t1", status: "open", description: "the spec", comments: [{ id: "c1", content: "note" }] },
+      }),
+    );
+    const result = await tool("task_pickup").handler({} as never) as Record<string, unknown>;
+    const task = result.task as Record<string, unknown>;
+    expect(task.description).toBe("the spec");
+    expect(task).not.toHaveProperty("comments");
+  });
+
+  it("task_pickup include:[\"comments\"] and include:[\"task\"] both restore the untouched raw response", async () => {
+    const backendBody = {
+      kind: "work",
+      task: { id: "t1", status: "open", description: "the spec", comments: [{ id: "c1", content: "note" }] },
+    };
+    fetchMock.mockResolvedValue(ok(backendBody));
+    const commentsResult = await tool("task_pickup").handler({ include: ["comments"] } as never);
+    expect(commentsResult).toEqual(backendBody);
+
+    fetchMock.mockResolvedValue(ok(backendBody));
+    const taskResult = await tool("task_pickup").handler({ include: ["task"] } as never);
+    expect(taskResult).toEqual(backendBody);
+  });
+
+  it("task_pickup passes idle/signal kinds through unchanged (no task.comments to strip)", async () => {
+    fetchMock.mockResolvedValue(ok({ kind: "idle" }));
+    expect(await tool("task_pickup").handler({} as never)).toEqual({ kind: "idle" });
+  });
+
+  it("task_pickup include schema accepts comments/task and rejects the description read-vocabulary value", () => {
+    const shape = tool("task_pickup").inputShape;
+    for (const value of ["comments", "task"]) {
+      const accepted = z.object(shape).safeParse({ include: [value] });
+      expect(accepted.success, `task_pickup include:["${value}"] should pass schema validation`).toBe(true);
+    }
+    const rejected = z.object(shape).safeParse({ include: ["description"] });
+    expect(rejected.success, 'task_pickup include:["description"] should fail schema validation').toBe(false);
+  });
+
+  it("task_pickup + task_start composition: calling only these two verbs covers description, acceptance criteria, status, expectedFinishState, and gates", async () => {
+    fetchMock.mockResolvedValueOnce(
+      ok({
+        kind: "work",
+        task: {
+          id: "t1",
+          status: "open",
+          description: "Fix the bug in the parser",
+          templateData: { taskType: "bugfix", acceptanceCriteria: "no longer throws on empty input" },
+          comments: [{ id: "c1", content: "internal note" }],
+        },
+      }),
+    );
+    const pickupResult = (await tool("task_pickup").handler({} as never)) as { task: Record<string, unknown> };
+
+    fetchMock.mockResolvedValueOnce(
+      ok({
+        kind: "work",
+        task: { id: "t1", status: "in_progress", templateData: { taskType: "bugfix" }, workflowId: null },
+        expectedFinishState: "review",
+      }),
+    );
+    const startResult = (await tool("task_start").handler({ taskId: TASK_ID } as never)) as Record<string, unknown>;
+
+    expect(pickupResult.task.description).toBe("Fix the bug in the parser");
+    expect(
+      (pickupResult.task.templateData as Record<string, unknown>).acceptanceCriteria,
+    ).toBe("no longer throws on empty input");
+    expect(pickupResult.task.status).toBe("open");
+    expect(startResult.expectedFinishState).toBe("review");
+    expect(startResult.gateExpectations).toEqual(["branchPresent", "prPresent"]);
+  });
 });
