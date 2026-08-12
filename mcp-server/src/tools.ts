@@ -2,6 +2,12 @@ import { z, ZodRawShape } from "zod";
 import { AgentTasksClient, AgentTasksApiError } from "./client.js";
 import { WORKFLOW_PRIMER } from "./primer.js";
 import {
+  mapBackendError,
+  serializeTeachingError,
+  looksLikeStructuredWrapper,
+  resultMustBePlainStringError,
+} from "./errors.js";
+import {
   receiptForCreate,
   receiptForRespec,
   receiptForFinish,
@@ -87,15 +93,27 @@ const pickupIncludeSchema = z
     'Default response is the full task spec WITHOUT comments. Pass ["comments"] or ["task"] to get comments back too (both return the same full, pre-contract object for this verb today).',
   );
 
-async function wrap<T>(fn: () => Promise<T>): Promise<T> {
+// Choke point for every backend call: maps a thrown AgentTasksApiError to
+// the teaching-error shape (docs/response-contract-v1.md's "Error shape
+// (block tier)" section; see errors.ts) and throws it as an Error whose
+// message IS the serialized shape (serializeTeachingError, which produces
+// the same JSON.stringify(x, null, 2) text server.ts's serializeResult
+// would for the same object). server.ts's tool-call catch block reads
+// `err.message` straight into the isError text block, so this is the one
+// place that decides the wire format for every verb's failure path;
+// tests/errors.test.ts pins the equality with serializeResult directly.
+//
+// `verbContext`, forwarded to mapBackendError, is this call's own tool name
+// — passed only at the handful of call sites where the resulting recipe
+// actually depends on it (see errors.ts's precondition_failed entry);
+// every other call site omits it and gets the verb-independent catalog
+// entries (or the generic degrade path) unaffected.
+async function wrap<T>(fn: () => Promise<T>, verbContext?: string): Promise<T> {
   try {
     return await fn();
   } catch (err) {
     if (err instanceof AgentTasksApiError) {
-      const detail = err.body
-        ? ` — ${typeof err.body === "string" ? err.body : JSON.stringify(err.body)}`
-        : "";
-      throw new Error(`agent-tasks API ${err.status}: ${err.message}${detail}`);
+      throw new Error(serializeTeachingError(mapBackendError(err.status, err.body, verbContext)));
     }
     throw err;
   }
@@ -184,8 +202,9 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         const body: { branchName?: string; reclassify?: boolean } = {};
         if (branchName) body.branchName = branchName;
         if (reclassify !== undefined) body.reclassify = reclassify;
-        const response = await wrap(() =>
-          client.startTask(taskId, Object.keys(body).length > 0 ? body : undefined),
+        const response = await wrap(
+          () => client.startTask(taskId, Object.keys(body).length > 0 ? body : undefined),
+          "task_start",
         );
         // include:["task"] valve is handled inside receiptForStart itself
         // (same layer as projectPickup handles it for task_pickup), not
@@ -229,7 +248,15 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         include: includeSchema,
       },
       handler: async ({ taskId, include, ...body }) => {
-        const response = await wrap(() => client.finishTask(taskId, body));
+        // Catalog entry #8 (errors.ts): `result` is stored verbatim as free
+        // text by the backend, which performs no validation of its shape —
+        // this guard exists only at this layer, checked BEFORE any request
+        // is sent, so an XML/JSON-wrapped result never round-trips into
+        // mis-stored structured input in the first place.
+        if (body.result !== undefined && looksLikeStructuredWrapper(body.result)) {
+          throw new Error(serializeTeachingError(resultMustBePlainStringError("task_finish")));
+        }
+        const response = await wrap(() => client.finishTask(taskId, body), "task_finish");
         if (include?.includes("task")) return response;
         return receiptForFinish(response as FinishResponse);
       },
@@ -620,7 +647,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         DEPRECATED +
         "Use task_start instead (atomic claim + in_progress + instructions).",
       inputShape: { taskId: uuid() },
-      handler: async ({ taskId }) => wrap(() => client.claimTask(taskId)),
+      handler: async ({ taskId }) => wrap(() => client.claimTask(taskId), "tasks_claim"),
     }),
     def({
       name: "tasks_release",
@@ -642,7 +669,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         forceReason: z.string().max(500).optional(),
       },
       handler: async ({ taskId, ...input }) =>
-        wrap(() => client.transitionTask(taskId, input)),
+        wrap(() => client.transitionTask(taskId, input), "tasks_transition"),
     }),
     def({
       name: "tasks_update",
@@ -654,10 +681,23 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         branchName: z.string().max(255).nullable().optional(),
         prUrl: z.string().url().nullable().optional(),
         prNumber: z.number().int().positive().nullable().optional(),
-        result: z.string().nullable().optional(),
+        // Symmetry with task_finish's own result field (same field, same
+        // storage): uncapped here let a caller feed an arbitrarily large
+        // string straight into looksLikeStructuredWrapper's tag-pair scan
+        // before this cap was added (measured: 18,395ms on a 400k-char
+        // adversarial input against the pre-cap guard alone).
+        result: z.string().max(5000).nullable().optional(),
       },
-      handler: async ({ taskId, ...input }) =>
-        wrap(() => client.updateTask(taskId, input)),
+      handler: async ({ taskId, ...input }) => {
+        // Same pre-network guard as task_finish's own result field
+        // (errors.ts catalog entry #8): tasks_update writes `result` the
+        // same way the backend stores it, so the same XML/JSON-wrapper
+        // mistake needs the same check here, not just on the v2 verb.
+        if (typeof input.result === "string" && looksLikeStructuredWrapper(input.result)) {
+          throw new Error(serializeTeachingError(resultMustBePlainStringError("tasks_update")));
+        }
+        return wrap(() => client.updateTask(taskId, input), "tasks_update");
+      },
     }),
     def({
       name: "tasks_comment",
@@ -747,7 +787,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         body: z.string().optional(),
         idempotencyKey: z.string().trim().min(1).max(255).optional(),
       },
-      handler: async (input) => wrap(() => client.createPullRequest(input)),
+      handler: async (input) => wrap(() => client.createPullRequest(input), "pull_requests_create"),
     }),
     def({
       name: "pull_requests_merge",

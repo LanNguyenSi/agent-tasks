@@ -316,7 +316,14 @@ describe("buildTools", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("task_respec maps 409 (claimed/non-open task) with the backend message", async () => {
+  // rc-v1-C005: wrap() now maps every AgentTasksApiError through
+  // errors.ts's mapBackendError and throws the serialized teaching-error
+  // shape (see errors.test.ts for the dedicated unit tests on that mapping)
+  // instead of the retired `agent-tasks API <status>: <message>` string.
+  // These five tests keep proving wrap() is actually wired end-to-end from
+  // a real handler call, just against the new shape.
+
+  it("task_respec maps 409 (claimed/non-open task) to the respec_conflict catalog entry", async () => {
     fetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -326,15 +333,24 @@ describe("buildTools", () => {
         { status: 409, headers: { "content-type": "application/json" } },
       ),
     );
-    await expect(
-      tool("task_respec").handler({
+    let captured = "";
+    try {
+      await tool("task_respec").handler({
         taskId: "55555555-5555-5555-5555-555555555555",
         description: "new desc",
-      } as never),
-    ).rejects.toThrow(/agent-tasks API 409.*open and unclaimed/);
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.code).toBe("respec_conflict");
+    expect(parsed.error.message).toBe("Task must be open and unclaimed to respec");
+    expect(parsed.error.allowedNext).toEqual(["task_abandon", "task_respec"]);
   });
 
-  it("task_respec maps 403 (non-creator, allowNonCreatorRespec unset) with the backend message", async () => {
+  it("task_respec maps 403 (non-creator, allowNonCreatorRespec unset) to the generic degrade shape (uncataloged code)", async () => {
     fetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -345,58 +361,87 @@ describe("buildTools", () => {
         { status: 403, headers: { "content-type": "application/json" } },
       ),
     );
-    await expect(
-      tool("task_respec").handler({
+    let captured = "";
+    try {
+      await tool("task_respec").handler({
         taskId: "66666666-6666-6666-6666-666666666666",
         description: "new desc",
-      } as never),
-    ).rejects.toThrow(/agent-tasks API 403.*creator/);
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed.error.code).toBe("forbidden");
+    expect(parsed.error.message).toMatch(/creator/);
+    expect(parsed.error.allowedNext).toEqual(["workflow_primer"]);
   });
 
-  it("task_respec maps 400 (empty description/templateData rejected by backend) with the backend message", async () => {
+  it("task_respec maps 400 (empty description/templateData rejected by backend) to the generic degrade shape", async () => {
     fetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({ error: "bad_request", message: "description must not be empty" }),
         { status: 400, headers: { "content-type": "application/json" } },
       ),
     );
-    await expect(
-      tool("task_respec").handler({
+    let captured = "";
+    try {
+      await tool("task_respec").handler({
         taskId: "77777777-7777-7777-7777-777777777777",
         description: "   ",
-      } as never),
-    ).rejects.toThrow(/agent-tasks API 400.*must not be empty/);
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed.error.code).toBe("bad_request");
+    expect(parsed.error.message).toBe("description must not be empty");
   });
 
-  it("task_respec forwards an empty templateData object (client guard is presence-only) and maps the backend 400", async () => {
+  it("task_respec forwards an empty templateData object (client guard is presence-only) and maps the backend 400 to the generic degrade shape", async () => {
     fetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({ error: "bad_request", message: "templateData must not be an empty object" }),
         { status: 400, headers: { "content-type": "application/json" } },
       ),
     );
-    await expect(
-      tool("task_respec").handler({
+    let captured = "";
+    try {
+      await tool("task_respec").handler({
         taskId: "99999999-9999-9999-9999-999999999999",
         templateData: {},
-      } as never),
-    ).rejects.toThrow(/agent-tasks API 400.*empty object/);
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed.error.code).toBe("bad_request");
+    expect(parsed.error.message).toBe("templateData must not be an empty object");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("task_respec maps 404 (unknown task) with the backend message", async () => {
+  it("task_respec maps 404 (unknown task) to the generic degrade shape", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ message: "not found" }), {
         status: 404,
         headers: { "content-type": "application/json" },
       }),
     );
-    await expect(
-      tool("task_respec").handler({
+    let captured = "";
+    try {
+      await tool("task_respec").handler({
         taskId: "88888888-8888-8888-8888-888888888888",
         description: "new desc",
-      } as never),
-    ).rejects.toThrow(/agent-tasks API 404.*not found/);
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed.error.code).toBe("http_404");
+    expect(parsed.error.message).toBe("not found");
   });
 
   it("tasks_transition passes status and force fields", async () => {
@@ -415,18 +460,135 @@ describe("buildTools", () => {
     });
   });
 
-  it("wrap translates AgentTasksApiError to Error with status prefix", async () => {
+  // rc-v1-C005 review round 1, finding #6: tasks_update accepts `result`
+  // (same free-text field task_finish has) but used to skip the
+  // pre-network structured-wrapper guard entirely. This proves the guard is
+  // actually wired into tasks_update's own handler, not just into errors.ts's
+  // pure resultMustBePlainStringError builder (see errors.test.ts for that).
+  it("tasks_update rejects an XML-wrapped result locally, before any network call, naming tasks_update as the corrective", async () => {
+    let captured = "";
+    try {
+      await tool("tasks_update").handler({
+        taskId: "33333333-3333-3333-3333-333333333333",
+        result: "<result>done</result>",
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed).toEqual({
+      ok: false,
+      error: {
+        code: "result_not_plain_string",
+        message: "result must be plain prose or markdown text, not wrapped in XML or JSON tags",
+        recipe: "resubmit tasks_update with result as plain text (no <tag>...</tag> or {...} wrapping)",
+        allowedNext: ["tasks_update"],
+      },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("tasks_update accepts ordinary prose/markdown result unchanged and still forwards it", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
+    await tool("tasks_update").handler({
+      taskId: "33333333-3333-3333-3333-333333333333",
+      result: "Implemented the feature; fixed the <Foo> component along the way.",
+    } as never);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      result: "Implemented the feature; fixed the <Foo> component along the way.",
+    });
+  });
+
+  // rc-v1-C005 round 2 review, finding #1 (MEDIUM): tasks_update's `result`
+  // used to be an UNCAPPED z.string() -- symmetry with task_finish's own
+  // result (which has always been .max(5000)) closes the gap that let an
+  // arbitrarily large string reach looksLikeStructuredWrapper's tag-pair
+  // scan in the first place. Exercised via the real zod schema (parseArgs),
+  // not the handler directly, since the real MCP SDK validates inputShape
+  // BEFORE the handler ever runs (see parseArgs's own comment above).
+  it("tasks_update's zod schema rejects a result over 5000 chars (symmetry with task_finish's own cap)", () => {
+    expect(() =>
+      parseArgs("tasks_update", {
+        taskId: "33333333-3333-3333-3333-333333333333",
+        result: "x".repeat(5001),
+      }),
+    ).toThrow();
+  });
+
+  it("tasks_update's zod schema accepts a result at exactly the 5000-char cap", () => {
+    expect(() =>
+      parseArgs("tasks_update", {
+        taskId: "33333333-3333-3333-3333-333333333333",
+        result: "x".repeat(5000),
+      }),
+    ).not.toThrow();
+  });
+
+  // rc-v1-C005 review round 1, finding #7: pull_requests_create's own
+  // cross_repo_pr_rejected emit site (backend/src/routes/github.ts's POST
+  // /pull-requests) sends owner/repo, not a prUrl, so the default
+  // task_submit_pr recipe misdirects it. Proves wrap()'s verbContext is
+  // actually threaded through from this call site (errors.test.ts covers
+  // the pure mapBackendError branch in isolation).
+  it("pull_requests_create maps 400 cross_repo_pr_rejected to its OWN recipe (not task_submit_pr's)", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "cross_repo_pr_rejected",
+          message: "PR points at other/repo, expected acme/agent-tasks.",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+    let captured = "";
+    try {
+      await tool("pull_requests_create").handler({
+        taskId: "55555555-5555-5555-5555-555555555555",
+        owner: "other",
+        repo: "repo",
+        head: "feat/x",
+        title: "PR title",
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed.error.code).toBe("cross_repo_pr_rejected");
+    expect(parsed.error.recipe).toContain("pull_requests_create");
+    expect(parsed.error.recipe).not.toContain("task_submit_pr");
+    expect(parsed.error.allowedNext).toEqual(["pull_requests_create"]);
+  });
+
+  it("wrap translates an uncataloged AgentTasksApiError into the generic teaching-error shape (status-derived code)", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ message: "forbidden" }), {
         status: 403,
         headers: { "content-type": "application/json" },
       }),
     );
-    await expect(
-      tool("tasks_claim").handler({
+    let captured = "";
+    try {
+      await tool("tasks_claim").handler({
         taskId: "44444444-4444-4444-4444-444444444444",
-      }),
-    ).rejects.toThrow(/agent-tasks API 403/);
+      });
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed).toEqual({
+      ok: false,
+      error: {
+        code: "http_403",
+        message: "forbidden",
+        recipe: "call workflow_primer for the full lifecycle reference and today's known traps",
+        allowedNext: ["workflow_primer"],
+      },
+    });
   });
 
   it("unknown-tool guard: AgentTasksApiError is caught and rethrown, not leaked", async () => {
@@ -822,7 +984,7 @@ describe("buildTools", () => {
     expect(JSON.parse(init.body)).toEqual({ reclassify: false });
   });
 
-  it("pull_requests_merge propagates a 403 delegation-missing error through wrap", async () => {
+  it("pull_requests_merge propagates a 403 delegation-missing error through wrap as the generic degrade shape", async () => {
     fetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -833,14 +995,21 @@ describe("buildTools", () => {
         { status: 403, headers: { "content-type": "application/json" } },
       ),
     );
-    await expect(
-      tool("pull_requests_merge").handler({
+    let captured = "";
+    try {
+      await tool("pull_requests_merge").handler({
         taskId: "66666666-6666-6666-6666-666666666666",
         owner: "o",
         repo: "r",
         prNumber: 7,
-      }),
-    ).rejects.toThrow(/agent-tasks API 403.*delegation/);
+      });
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed.error.code).toBe("forbidden");
+    expect(parsed.error.message).toMatch(/delegation/);
   });
 
   // ── Receipt layer wiring (rc-v1-C002) ────────────────────────────────
@@ -912,6 +1081,54 @@ describe("buildTools", () => {
     fetchMock.mockResolvedValue(ok(backendBody));
     const result = await tool("task_finish").handler({ taskId: TASK_ID, include: ["task"] } as never);
     expect(result).toEqual(backendBody);
+  });
+
+  // rc-v1-C005 catalog entry #8 (errors.ts's resultMustBePlainStringError):
+  // the backend performs no validation of `result`'s shape at all, so this
+  // guard fires entirely at this layer, BEFORE any request is sent.
+  it("task_finish rejects an XML-wrapped result locally, before any network call", async () => {
+    let captured = "";
+    try {
+      await tool("task_finish").handler({
+        taskId: TASK_ID,
+        result: "<result>done</result>",
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed).toEqual({
+      ok: false,
+      error: {
+        code: "result_not_plain_string",
+        message: "result must be plain prose or markdown text, not wrapped in XML or JSON tags",
+        recipe: "resubmit task_finish with result as plain text (no <tag>...</tag> or {...} wrapping)",
+        allowedNext: ["task_finish"],
+      },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("task_finish rejects a whole-string-JSON result locally, before any network call", async () => {
+    await expect(
+      tool("task_finish").handler({
+        taskId: TASK_ID,
+        result: '{"summary":"done"}',
+      } as never),
+    ).rejects.toThrow(/result_not_plain_string/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("task_finish accepts ordinary prose/markdown result unchanged", async () => {
+    fetchMock.mockResolvedValue(
+      ok({ kind: "work", task: { id: "t1", status: "review" }, targetStatus: "review" }),
+    );
+    await tool("task_finish").handler({
+      taskId: TASK_ID,
+      result: "Implemented the feature; fixed the <Foo> component along the way.",
+    } as never);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("task_submit_pr returns a receipt by default and never echoes branchName/prUrl", async () => {
