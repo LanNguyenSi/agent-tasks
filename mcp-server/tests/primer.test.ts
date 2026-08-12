@@ -10,6 +10,7 @@ import { AgentTasksClient } from "../src/client.js";
 const __filename = fileURLToPath(import.meta.url);
 const TOOLS_TS_PATH = resolve(__filename, "..", "..", "src", "tools.ts");
 const RECEIPT_TS_PATH = resolve(__filename, "..", "..", "src", "receipt.ts");
+const ERRORS_TS_PATH = resolve(__filename, "..", "..", "src", "errors.ts");
 const REPO_README_PATH = resolve(__filename, "..", "..", "..", "README.md");
 
 // docs/response-contract-v1.md's "Onboarding channels by rate of change" table:
@@ -49,6 +50,11 @@ const NON_VERB_TOKENS = new Set([
   "precondition_failed", // 422 error code (unmet workflow gate)
   "cross_repo_pr_rejected", // 400 error code (task_submit_pr)
   "already_claimed", // 409 error code example (rc-v1-C004 review round 2)
+  "not_claimed", // 403 error code (rc-v1-C005: acting without a claim)
+  "pr_author_mismatch", // 403 error code (rc-v1-C005: task_submit_pr)
+  "force_admin_only", // 403 error code (rc-v1-C005: tasks_transition force=true)
+  "respec_conflict", // 409 error code (rc-v1-C005: task_respec state conflict)
+  "result_not_plain_string", // client-side error code (rc-v1-C005: task_finish result guard)
 ]);
 
 function snakeCaseTokens(text: string): string[] {
@@ -189,46 +195,50 @@ describe("WORKFLOW_PRIMER (workflow_primer verb)", () => {
     expect(WORKFLOW_PRIMER).toMatch(/task_pickup:\s+the full task spec, without comments/);
   });
 
-  it("does not present the future teaching-error catalog (code/recipe/allowedNext) as already implemented", () => {
-    expect(WORKFLOW_PRIMER).toMatch(/planned for a future release/i);
-    expect(WORKFLOW_PRIMER).not.toMatch(/"recipe":|"allowedNext":/);
+  // rc-v1-C005: the teaching-error catalog (code/message/recipe/allowedNext)
+  // is now implemented (errors.ts, wired through tools.ts's wrap()). The
+  // primer must describe it as the CURRENT shape, not a future one, and
+  // must not still carry the old "planned for a future release" hedge.
+  it("presents the teaching-error shape (code/message/recipe/allowedNext) as implemented today, not planned", () => {
+    expect(WORKFLOW_PRIMER).not.toMatch(/planned for a future release/i);
+    expect(WORKFLOW_PRIMER).toMatch(/code, message, recipe, allowedNext/);
   });
 
   it("mentions only verb names that are actually registered, or an explicitly allowlisted non-verb token (default-deny)", () => {
     assertOnlyKnownTokens(WORKFLOW_PRIMER, registeredVerbNames());
   });
 
-  it("documents wrap()'s raw-backend-body suffix, not just the status/message pair", () => {
-    // rc-v1-C004 review round 1, finding #6: tools.ts's wrap() appends the
-    // parsed backend body (which carries the structured error code) after
-    // the status/message pair when the backend returned one; the old prose
-    // only documented the status/message half of that string.
-    expect(WORKFLOW_PRIMER).toMatch(/optionally followed by the raw backend body/i);
+  // rc-v1-C005 superseded the old "status/message pair, optionally followed
+  // by the raw backend body" string format entirely: wrap() now always
+  // emits the structured teaching-error object (errors.ts's TeachingError),
+  // so the primer documents THAT shape's fields instead of the retired
+  // format the two tests below (same spot, pre-rc-v1-C005) used to pin.
+  it("documents the detail field carrying structured extras (not a prose blob) for the codes that have one", () => {
+    expect(WORKFLOW_PRIMER).toMatch(/detail\.failed/);
+    expect(WORKFLOW_PRIMER).toMatch(/lists each failing rule individually/i);
   });
 
-  it("does not claim the backend body avoids repeating the message (rc-v1-C004 review round 2, MEDIUM finding: this was false)", () => {
-    expect(WORKFLOW_PRIMER).not.toMatch(/not a second copy/i);
+  it("documents allowedNext as machine-checkable verb names, distinct from a receipt's free-form next[]", () => {
+    expect(WORKFLOW_PRIMER).toMatch(/machine-checkable/i);
   });
 });
 
-// ── rc-v1-C004 review round 2, finding #1 (MEDIUM) ──────────────────────────
+// ── rc-v1-C005 (supersedes the rc-v1-C004 round 2 finding #1 ground-truth
+// test that used to live here, for the retired string format) ──────────────
 //
-// Ground truth test for the "## Errors today" sentence: drives an actual
-// write-verb handler (task_pickup) through wrap() with a stubbed fetch
-// returning a verbatim backend 409 body, captures the real thrown error
-// text, and checks the primer's format sentence against what wrap() actually
-// produces, not against a hand-typed belief about it. wrap() (tools.ts)
-// builds `agent-tasks API <status>: <err.message>` then appends
-// ` — ${JSON.stringify(err.body)}`; err.message is itself read out of the
-// same body's own `message` field (client.ts's request()), so the backend
-// message text appears TWICE in the final string: once as the extracted
-// message, once again inside the raw JSON body tail.
-describe("wrap()'s actual error text matches WORKFLOW_PRIMER's format sentence", () => {
+// Ground truth test for the "## Errors" section: drives two real write-verb
+// handlers through wrap() with stubbed fetches returning verbatim backend
+// error bodies, captures the real thrown error text, and checks it against
+// both errors.ts's own mapBackendError/serializeTeachingError (not a
+// hand-typed belief about what they do) and the primer's prose (so a future
+// change to either the mapping or the primer that silently diverges from
+// the other fails here, not just in errors.test.ts).
+describe("wrap()'s actual error text matches errors.ts and WORKFLOW_PRIMER's Errors section", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("a verbatim backend 409 body's message is repeated (not deduped) in the thrown error text", async () => {
+  it("a verbatim backend 409 already_claimed body maps to the documented teaching-error shape", async () => {
     const backendBody = {
       error: "already_claimed",
       message: "You already hold an active claim on another task.",
@@ -253,20 +263,59 @@ describe("wrap()'s actual error text matches WORKFLOW_PRIMER's format sentence",
       captured = e instanceof Error ? e.message : String(e);
     }
 
-    // (a) starts with the status/message prefix.
-    expect(captured.startsWith("agent-tasks API 409: ")).toBe(true);
-    // (b) contains the raw backend body verbatim.
-    expect(captured).toContain(JSON.stringify(backendBody));
-    // The backend's own message text appears exactly twice: once extracted,
-    // once inside the appended JSON body. This is the measured fact the
-    // primer's format sentence must describe, not deny.
+    const parsed = JSON.parse(captured);
+    expect(parsed).toEqual({
+      ok: false,
+      error: {
+        code: "already_claimed",
+        message: backendBody.message,
+        recipe: "call task_finish or task_abandon on your current task before claiming another",
+        allowedNext: ["task_finish", "task_abandon"],
+      },
+    });
+    // The backend's own message text appears exactly once (no duplication,
+    // unlike the retired string format this test used to pin).
     const occurrences = captured.split(backendBody.message).length - 1;
-    expect(occurrences).toBe(2);
+    expect(occurrences).toBe(1);
 
-    // (c) the primer's format sentence substrings match what was captured.
-    expect(WORKFLOW_PRIMER).not.toMatch(/not a second copy/i);
-    expect(WORKFLOW_PRIMER).toMatch(/the body repeats that same message/i);
+    // The primer's Errors section matches what was actually captured.
     expect(WORKFLOW_PRIMER).toMatch(/already_claimed/);
+    expect(WORKFLOW_PRIMER).toMatch(/call task_finish or task_abandon on your current task first/i);
+  });
+
+  it("a verbatim backend 403 not-claimed body on task_finish maps to the not_claimed catalog entry", async () => {
+    const backendBody = {
+      error: "forbidden",
+      message:
+        "You do not hold a claim on this task. Call task_start to claim it before task_finish, even if you just finished an unrelated task in the same session.",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(backendBody), {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new AgentTasksClient({ baseUrl: "https://example.test", token: "tok" });
+    const finish = buildTools(client).find((t) => t.name === "task_finish");
+    if (!finish) throw new Error("task_finish not registered");
+
+    let captured = "";
+    try {
+      await finish.handler({ taskId: "11111111-1111-1111-1111-111111111111" } as never);
+      throw new Error("expected task_finish's handler to throw on a 403");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+
+    const parsed = JSON.parse(captured);
+    expect(parsed.error.code).toBe("not_claimed");
+    expect(parsed.error.recipe).toBe("call task_start to claim this task first");
+    expect(parsed.error.allowedNext).toEqual(["task_start"]);
+
+    expect(WORKFLOW_PRIMER).toMatch(/not_claimed/);
+    expect(WORKFLOW_PRIMER).toMatch(/call task_start first/i);
   });
 });
 
@@ -448,21 +497,28 @@ describe('repo README.md "First five minutes as an agent" section', () => {
   });
 });
 
-// ── rc-v1-C004 review round 1, additional test C (C005-blocking marker) ─────
+// ── rc-v1-C004 review round 1, additional test C (C005-blocking marker),
+// updated by rc-v1-C005 itself ──────────────────────────────────────────────
 //
-// Converts the "primer silently goes stale" risk into a red test: this pins
-// the CURRENT, pre-catalog state, so rc-v1-C005 (the structured teaching-error
-// catalog: code/message/recipe/allowedNext, docs/response-contract-v1.md's
-// "Error shape (block tier)" section) cannot ship without this test (and the
-// primer's "Errors today" prose) being updated in the same change.
-describe("rc-v1-C005 must update the Errors today section", () => {
-  it("this test pins the pre-C005 state and MUST be updated together with the catalog", () => {
-    expect(WORKFLOW_PRIMER).toMatch(/planned for a future release/i);
-    // Read the real source, not a copy, so this fails the moment tools.ts's
-    // wrap() starts emitting a structured `allowedNext` field, forcing
-    // rc-v1-C005 to update this test (and the primer prose) together rather
-    // than leaving the primer's "planned" claim silently stale.
+// This test used to pin the PRE-catalog state (WORKFLOW_PRIMER hedging the
+// teaching-error shape as "planned", tools.ts carrying no `allowedNext`
+// field anywhere) specifically so rc-v1-C005 could not ship without turning
+// it red and updating it here. rc-v1-C005 now pins the POST-catalog state
+// instead: the primer no longer hedges, and the real implementation (not a
+// copy) actually wires the mapping, so a future regression back to raw
+// error forwarding fails THIS test, not just the primer's own prose
+// assertions above.
+describe("rc-v1-C005: Errors section stays in sync with the teaching-error implementation", () => {
+  it("pins the POST-catalog state: wrap() wires mapBackendError/serializeTeachingError, and errors.ts populates allowedNext", () => {
+    expect(WORKFLOW_PRIMER).not.toMatch(/planned for a future release/i);
+    expect(WORKFLOW_PRIMER).toMatch(/allowedNext/);
+    // Read the real sources, not a copy, so this fails the moment either
+    // wrap() stops calling into errors.ts (a regression back to forwarding
+    // raw backend text) or errors.ts stops populating allowedNext.
     const toolsSource = readFileSync(TOOLS_TS_PATH, "utf8");
-    expect(toolsSource).not.toContain("allowedNext");
+    expect(toolsSource).toContain("mapBackendError");
+    expect(toolsSource).toContain("serializeTeachingError");
+    const errorsSource = readFileSync(ERRORS_TS_PATH, "utf8");
+    expect(errorsSource).toContain("allowedNext");
   });
 });
