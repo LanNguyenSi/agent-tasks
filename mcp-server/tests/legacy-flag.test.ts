@@ -5,14 +5,19 @@
 // no effect). This pins both paths: the exact-match behavior, and the
 // one-line stderr warning on a near-miss.
 //
-// index.ts's real entrypoint call (runStdioServer(...).catch(...)) is
-// guarded behind an `invokedDirectly` check (process.argv[1] === this
-// module's own URL) specifically so importing it here, for
-// resolveLegacyFlag alone, does not also spawn a real stdio server or
-// throw on a missing AGENT_TASKS_TOKEN.
+// Round-2 fix (CRITICAL): resolveLegacyFlag moved out of index.ts into its
+// own module (src/legacy-flag.ts) so index.ts's real entrypoint call
+// (runStdioServer(...).catch(...)) needs no import-vs-invocation guard at
+// all. The old guard (process.argv[1] === this module's own URL via
+// import.meta.url) broke the npm bin path: node_modules/.bin/
+// agent-tasks-mcp is a symlink, so process.argv[1] never equaled the
+// realpath-resolved import.meta.url, and the published binary silently did
+// nothing. See mcp-server/src/legacy-flag.ts's and src/index.ts's own
+// comments, and tests/bin-spawn.test.ts for the end-to-end regression
+// guard over the real symlink shape.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { resolveLegacyFlag } from "../src/index.js";
+import { resolveLegacyFlag } from "../src/legacy-flag.js";
 
 describe("resolveLegacyFlag (rc-v1-C007 entrypoint flag)", () => {
   const ORIGINAL = process.env.AGENT_TASKS_MCP_LEGACY;

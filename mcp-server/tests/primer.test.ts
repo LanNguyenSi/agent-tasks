@@ -787,17 +787,35 @@ describe("every DEFAULT-registered tool's description mentions only known verb n
   ]);
 
   // rc-v1-C007: a pruned verb's bare name may appear in a DEFAULT tool's
-  // description ONLY inside a sentence that also names the
-  // AGENT_TASKS_MCP_LEGACY escape hatch -- matching errors.ts's own
-  // unknown_project_slug recipe wording, and task_submit_pr's
-  // replacement-history clause -- never as a bare "use X instead" mention
-  // with no flag context. Each entry here is deliberate: a new pruned-verb
-  // mention must be added here explicitly (and pass the flag-context test
-  // below), never absorbed silently by widening NON_VERB_TOKENS instead.
+  // description ONLY close to a mention of the AGENT_TASKS_MCP_LEGACY
+  // escape hatch -- matching errors.ts's own unknown_project_slug recipe
+  // wording, and task_submit_pr's replacement-history clause -- never as a
+  // bare "use X instead" mention with no flag context nearby. Each entry
+  // here is deliberate: a new pruned-verb mention must be added here
+  // explicitly (and pass the flag-proximity test below), never absorbed
+  // silently by widening NON_VERB_TOKENS instead.
   const LEGACY_VERB_MENTIONS_IN_DESCRIPTIONS = new Set([
     "projects_list", // task_create / project_tasks: unknown_project_slug recipe
     "tasks_update", // task_submit_pr: v1-replacement clause
   ]);
+
+  // rc-v1-C007 fix round 2, item 4a: the previous version of the guard
+  // below was `description.includes("AGENT_TASKS_MCP_LEGACY")` -- a
+  // description-level co-occurrence check that passes as long as the flag
+  // string appears ANYWHERE in the (potentially long) description, even
+  // paragraphs away from the legacy-verb mention it is supposed to be
+  // gating. Round-2 review probe B2 demonstrated this concretely: a bare
+  // legacy-verb mention with the flag string tacked on in an unrelated,
+  // far-away sentence of the same description still passed. This is now a
+  // PROXIMITY check instead: a fixed character window centered on each
+  // legacy-verb match must itself contain AGENT_TASKS_MCP_LEGACY, so a
+  // mention that is merely somewhere in the same (long) description no
+  // longer counts as "gated." 200 chars is comfortably wider than every
+  // real gated mention measured in tools.ts today (30 chars for the two
+  // projects_list mentions, 132 chars for tasks_update's), while still
+  // failing a mention that is merely co-located in an unrelated part of a
+  // multi-paragraph description.
+  const PROXIMITY_WINDOW_CHARS = 200;
 
   const DESCRIPTION_ALLOWLIST = new Set([
     ...NON_VERB_TOKENS,
@@ -833,14 +851,26 @@ describe("every DEFAULT-registered tool's description mentions only known verb n
     expect(mentionsAny).toBe(true);
   });
 
-  it("every flag-gated legacy-verb mention sits in a description that also names AGENT_TASKS_MCP_LEGACY (never a bare 'use X' reference)", () => {
+  it(`every flag-gated legacy-verb mention has an AGENT_TASKS_MCP_LEGACY mention within ${PROXIMITY_WINDOW_CHARS} chars of it (proximity, not mere description-level co-occurrence; never a bare 'use X' reference)`, () => {
     for (const { name, description } of defaultToolDescriptions()) {
       for (const legacyVerb of LEGACY_VERB_MENTIONS_IN_DESCRIPTIONS) {
-        if (!description.includes(legacyVerb)) continue;
-        expect(
-          description.includes("AGENT_TASKS_MCP_LEGACY"),
-          `tool "${name}"'s description mentions legacy verb "${legacyVerb}" without naming AGENT_TASKS_MCP_LEGACY anywhere in the same description`,
-        ).toBe(true);
+        let searchFrom = 0;
+        for (;;) {
+          const verbIdx = description.indexOf(legacyVerb, searchFrom);
+          if (verbIdx === -1) break;
+          const windowStart = Math.max(0, verbIdx - PROXIMITY_WINDOW_CHARS);
+          const windowEnd = Math.min(
+            description.length,
+            verbIdx + legacyVerb.length + PROXIMITY_WINDOW_CHARS,
+          );
+          const window = description.slice(windowStart, windowEnd);
+          expect(
+            window.includes("AGENT_TASKS_MCP_LEGACY"),
+            `tool "${name}"'s description mentions legacy verb "${legacyVerb}" at index ${verbIdx} with no AGENT_TASKS_MCP_LEGACY mention within ${PROXIMITY_WINDOW_CHARS} chars on either side (found ` +
+              `${description.includes("AGENT_TASKS_MCP_LEGACY") ? "elsewhere in the description, too far away" : "nowhere in the description"})`,
+          ).toBe(true);
+          searchFrom = verbIdx + legacyVerb.length;
+        }
       }
     }
   });

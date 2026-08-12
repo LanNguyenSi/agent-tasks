@@ -21,12 +21,13 @@ node mcp-server/dist/index.js
 
 ## Configuration
 
-Two environment variables:
+Three environment variables:
 
-| Variable               | Required | Default                                  |
-| ---------------------- | -------- | ---------------------------------------- |
-| `AGENT_TASKS_TOKEN`    | yes      | —                                        |
-| `AGENT_TASKS_BASE_URL` | no       | `https://agent-tasks.opentriologue.ai`   |
+| Variable                  | Required | Default                                  |
+| -------------------------- | -------- | ---------------------------------------- |
+| `AGENT_TASKS_TOKEN`       | yes      | —                                        |
+| `AGENT_TASKS_BASE_URL`    | no       | `https://agent-tasks.opentriologue.ai`   |
+| `AGENT_TASKS_MCP_LEGACY`  | no       | unset (default tool set only)            |
 
 Obtain a token from the agent-tasks UI under **Settings → API Tokens**.
 The token scope determines which tools succeed at runtime; tools that require

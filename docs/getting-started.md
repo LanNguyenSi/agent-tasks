@@ -82,7 +82,7 @@ claim-to-merge flow as one tool call each, with governance state baked in:
 | `pull_requests_create` / `pull_requests_merge` | Lower-level GitHub-identifier verbs |
 
 **Default-pruned v1 surface (legacy-only since rc-v1-C007).**
-`mcp-server` 0.13.0 removed 14 still-deprecated v1 verbs from the default
+rc-v1-C007 removed 14 still-deprecated v1 verbs from the default
 tool registration: `projects_list`, `projects_get`, `tasks_list`,
 `tasks_instructions`, `tasks_create`, `tasks_claim`, `tasks_release`,
 `tasks_transition`, `tasks_update`, `review_approve`,
@@ -90,12 +90,17 @@ tool registration: `projects_list`, `projects_get`, `tasks_list`,
 `pull_requests_comment`. Set `AGENT_TASKS_MCP_LEGACY=1` in the server
 process's environment to restore all 37 for a client still depending on
 one of these verbs by name. Use the v2 verbs above instead: `task_pickup`
-or `project_tasks` for `tasks_list`/`projects_list`, `task_start` for
-`tasks_claim`, `task_abandon` for `tasks_release`, `task_start` /
-`task_finish` for `tasks_transition`, and `task_submit_pr` for
-`tasks_update`. `tasks_get` (summary + `include`) and `tasks_comment` (a
-permanent `task_note` alias) are NOT part of this pruned set and stay
-registered by default.
+for the single prioritized item, or `project_tasks` to browse a project,
+for `tasks_list`; no v2 verb enumerates projects for `projects_list`: ask
+the operator for the project's slug or id (the recipe `errors.ts`'s own
+`unknown_project_slug` teaching error gives), or set
+`AGENT_TASKS_MCP_LEGACY=1` to keep using this verb (once you know the
+project, `project_tasks` browses its tasks and `task_pickup` finds the
+next piece of work without browsing); `task_start` for `tasks_claim`,
+`task_abandon` for `tasks_release`, `task_start` / `task_finish` for
+`tasks_transition`, and `task_submit_pr` for `tasks_update`. `tasks_get`
+(summary + `include`) and `tasks_comment` (a permanent `task_note` alias)
+are NOT part of this pruned set and stay registered by default.
 
 See [`mcp-server/README.md`](../mcp-server/README.md) for the full reference.
 

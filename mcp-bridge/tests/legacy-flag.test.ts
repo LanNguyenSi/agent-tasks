@@ -37,6 +37,21 @@ async function listToolNames(extraEnv: Record<string, string>): Promise<string[]
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
   }
+  // rc-v1-C007 fix round 2, item 4b: this copies the WHOLE parent
+  // environment before layering extraEnv on top, so if either var happens
+  // to be exported in the environment this test suite itself runs in
+  // (e.g. a developer's shell, or a CI job with AGENT_TASKS_MCP_LEGACY set
+  // for an unrelated reason), the negative case below (extraEnv carrying
+  // neither var, asserting tasks_claim is absent) silently inherits it
+  // from process.env instead of getting the unset value the test intends
+  // -- a false red with no code change involved (measured directly: the
+  // "omits a pruned v1 verb" test fails when AGENT_TASKS_MCP_LEGACY=1 is
+  // exported in the ambient shell before running this suite).
+  // Deleting both here first, then applying extraEnv, makes each test
+  // case's env exactly what its own extraEnv argument says, regardless of
+  // what the ambient environment happens to carry.
+  delete env.AGENT_TASKS_MCP_LEGACY;
+  delete env.AGENT_TASKS_BASE_URL;
   Object.assign(env, extraEnv);
 
   const transport = new StdioClientTransport({
