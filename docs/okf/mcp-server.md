@@ -3,7 +3,7 @@ type: module
 title: "mcp-server: stdio MCP wrapper over the REST API"
 description: "Publishes the v2 verb surface as MCP tools over a fixed bearer token; SERVER_VERSION is a hand-maintained constant, not derived from package.json."
 tags: [mcp, stdio, npm-package]
-timestamp: 2026-08-12T05:02:44Z
+timestamp: 2026-08-12T05:24:20Z
 sources:
   - mcp-server/src/index.ts
   - mcp-server/src/server.ts
@@ -17,7 +17,7 @@ Published as `@agent-tasks/mcp-server` (npm, public). Entry point `mcp-server/sr
 
 `mcp-server/src/server.ts` builds an `McpServer` (`@modelcontextprotocol/sdk`) named `SERVER_NAME = "agent-tasks-mcp"` at `SERVER_VERSION = "0.10.0"`, wires it to a `StdioServerTransport`, and registers every tool from `buildTools(client)` (`tools.ts`). `mcp-server/src/client.ts` (`AgentTasksClient`) is a thin fetch wrapper: every request sends `Authorization: Bearer <token>` and `Accept: application/json`; non-2xx responses throw `AgentTasksApiError(status, body, message)`.
 
-**Tool surface** (`tools.ts`, one `name:` per registered tool) mirrors the backend v2 verbs 1:1, plus one local-only tool: `task_pickup`, `task_start`, `task_finish`, `task_create`, `task_abandon`, `task_submit_pr`, `task_merge`, `task_note`, `task_artifact_create/list/get`, `task_attachment_list/get`, plus the classic-REST-shaped `projects_list`, `projects_get`, `projects_get_effective_gates`, `project_tasks`, `tasks_list/get/instructions/create/claim/release/transition/update/comment`, `review_approve/request_changes/claim/release`, `signals_poll/ack`, `pull_requests_create/merge/comment`, and `workflow_primer` (`primer.ts`; served locally from a fixed string, no backend call, so it has no backend route to mirror).
+**Tool surface** (`tools.ts`, one `name:` per registered tool) mirrors the backend v2 verbs 1:1, plus one local-only tool: `task_pickup`, `task_start`, `task_finish`, `task_create`, `task_respec`, `task_abandon`, `task_submit_pr`, `task_merge`, `task_note`, `task_artifact_create/list/get`, `task_attachment_list/get`, plus the classic-REST-shaped `projects_list`, `projects_get`, `projects_get_effective_gates`, `project_tasks`, `tasks_list/get/instructions/create/claim/release/transition/update/comment`, `review_approve/request_changes/claim/release`, `signals_poll/ack`, `pull_requests_create/merge/comment`, and `workflow_primer` (`primer.ts`; served locally from a fixed string, no backend call, so it has no backend route to mirror).
 
 **Version constant risk**: `SERVER_VERSION` in `server.ts` (`"0.10.0"`) is a separate literal from `mcp-server/package.json#version` (also currently `"0.10.0"`), there is no test in `mcp-server/tests/` asserting they match (checked: `client.test.ts`, `tools.test.ts`, neither references `SERVER_VERSION`). Contrast with `mcp-bridge.md`, which has an explicit drift-guard test for its own version constant. Bumping the package version for a release requires manually bumping `SERVER_VERSION` too; nothing enforces it.
 

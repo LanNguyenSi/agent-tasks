@@ -35,7 +35,7 @@ Once an MCP client is connected (see the table below), the cold-start path is fo
 3. **`task_pickup`.** Get the next piece of work: a pending signal, a task ready for review, or a claimable task. Returns the full task spec by default, no extra call needed.
 4. **Do the work**, then follow the receipt's `next` hint (`task_start` to claim, `task_submit_pr` after `gh pr create`, `task_finish` to advance).
 
-Every write call returns a small receipt by default (`task_pickup` is the exception: it returns the full task spec, not a receipt), so pass `include: ["task"]` on the others when you need the whole thing back. Full response shapes (receipts, `include`, errors) are in [docs/response-contract-v1.md](docs/response-contract-v1.md).
+The converted v2 write verbs (`task_create`, `task_respec`, `task_finish`, `task_submit_pr`, `task_note`, `task_merge`, `task_abandon`, `tasks_comment`) return a small receipt by default and accept `include: ["task"]` for the full object; `task_pickup` returns the full spec and `task_start` a receipt plus a small slice; every other tool returns the raw backend body and ignores `include`. Full response shapes (receipts, `include`, errors) are in [docs/response-contract-v1.md](docs/response-contract-v1.md).
 
 ## Next steps
 
