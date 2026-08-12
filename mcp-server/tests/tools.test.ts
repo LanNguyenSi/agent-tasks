@@ -4,6 +4,7 @@ import { buildTools } from "../src/tools.js";
 import { AgentTasksClient, AgentTasksApiError } from "../src/client.js";
 import { serializeResult } from "../src/server.js";
 import { WORKFLOW_PRIMER } from "../src/primer.js";
+import { SIGNALS_DEFAULT_LIMIT, SIGNALS_BACKEND_FETCH_LIMIT } from "../src/read.js";
 
 describe("buildTools", () => {
   const config = { baseUrl: "https://example.test", token: "tok_abc" };
@@ -1427,5 +1428,377 @@ describe("buildTools", () => {
     expect(pickupResult.task.status).toBe("open");
     expect(startResult.expectedFinishState).toBe("review");
     expect(startResult.gateExpectations).toEqual(["branchPresent", "prPresent"]);
+  });
+
+  // ── tasks_get: summary default + include (rc-v1-C006) ───────────────────
+
+  describe("tasks_get", () => {
+    const GET_TASK_ID = "33333333-3333-3333-3333-333333333333";
+
+    it("returns a summary projection by default, not the full task, and never echoes description/comments/artifacts", async () => {
+      fetchMock.mockResolvedValue(
+        ok({
+          task: {
+            id: "t1",
+            title: "Fix the bug",
+            status: "in_progress",
+            priority: "HIGH",
+            labels: ["bug"],
+            prUrl: "https://github.com/o/r/pull/9",
+            claimedByUser: { id: "u1", name: "Lan" },
+            blockedBy: [{ id: "b1", title: "Blocker", status: "done" }],
+            description: "SECRET description",
+            comments: [{ id: "c1", content: "SECRET comment" }],
+            artifacts: [{ id: "a1", name: "SECRET artifact" }],
+          },
+        }),
+      );
+      const result = await tool("tasks_get").handler({ taskId: GET_TASK_ID } as never);
+      expect(result).toEqual({
+        task: {
+          id: "t1",
+          title: "Fix the bug",
+          status: "in_progress",
+          priority: "HIGH",
+          labels: ["bug"],
+          claims: { work: "Lan" },
+          blockedBy: [{ id: "b1", title: "Blocker", status: "done" }],
+          prUrl: "https://github.com/o/r/pull/9",
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("SECRET");
+    });
+
+    it.each(["description", "comments", "artifacts"] as const)(
+      'include:["%s"] adds back only that field',
+      async (field) => {
+        fetchMock.mockResolvedValue(
+          ok({
+            task: {
+              id: "t1",
+              title: "Fix the bug",
+              description: "the spec",
+              comments: [{ id: "c1" }],
+              artifacts: [{ id: "a1" }],
+            },
+          }),
+        );
+        const result = (await tool("tasks_get").handler({
+          taskId: GET_TASK_ID,
+          include: [field],
+        } as never)) as { task: Record<string, unknown> };
+        expect(result.task[field]).toBeDefined();
+        for (const other of ["description", "comments", "artifacts"] as const) {
+          if (other !== field) expect(result.task).not.toHaveProperty(other);
+        }
+      },
+    );
+
+    it('include:["task"] returns the full, pre-contract { task } object unchanged', async () => {
+      const backendBody = {
+        task: { id: "t1", title: "Fix the bug", status: "open", description: "d" },
+      };
+      fetchMock.mockResolvedValue(ok(backendBody));
+      const result = await tool("tasks_get").handler({
+        taskId: GET_TASK_ID,
+        include: ["task"],
+      } as never);
+      expect(result).toEqual(backendBody);
+    });
+
+    it("include schema accepts description/comments/artifacts/task and rejects the write-verb-only 'instructions' value (not part of tasks_get's vocabulary)", () => {
+      const shape = tool("tasks_get").inputShape;
+      for (const value of ["description", "comments", "artifacts", "task"]) {
+        const accepted = z.object(shape).safeParse({ taskId: GET_TASK_ID, include: [value] });
+        expect(accepted.success, `tasks_get include:["${value}"] should pass schema validation`).toBe(true);
+      }
+      const rejected = z.object(shape).safeParse({ taskId: GET_TASK_ID, include: ["instructions"] });
+      expect(rejected.success, 'tasks_get include:["instructions"] should fail schema validation').toBe(false);
+    });
+
+    it("SUMMARY BUDGET: a realistic happy-path summary stays well within a small ceiling (measured, not aspirational)", async () => {
+      fetchMock.mockResolvedValue(
+        ok({
+          task: {
+            id: "t1",
+            title: "Fix the login redirect loop",
+            status: "in_progress",
+            priority: "HIGH",
+            labels: ["bug", "auth"],
+            prUrl: "https://github.com/o/r/pull/42",
+            claimedByUser: { id: "u1", name: "Lan" },
+            blockedBy: [{ id: "b1", title: "Add auth middleware", status: "done" }],
+          },
+        }),
+      );
+      const result = await tool("tasks_get").handler({ taskId: GET_TASK_ID } as never);
+      expect(serializeResult(result).length).toBeLessThanOrEqual(600);
+    });
+  });
+
+  // ── project_tasks: unknown project slug (rc-v1-C006) ─────────────────────
+
+  it("project_tasks maps an unresolvable project slug to the unknown_project_slug teaching error naming projects_list", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: "not_found", message: "Resource not found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    let captured = "";
+    try {
+      await tool("project_tasks").handler({ project: "ghost-project" } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed.error.code).toBe("unknown_project_slug");
+    expect(parsed.error.recipe).toContain("projects_list");
+    expect(parsed.error.allowedNext).toEqual(["projects_list", "project_tasks"]);
+  });
+
+  // ── task_create: projectSlug addressing (rc-v1-C006) ─────────────────────
+
+  describe("task_create projectSlug addressing", () => {
+    it("passing both projectId and projectSlug is a project_addressing_conflict teaching error, no network call made", async () => {
+      let captured = "";
+      try {
+        await tool("task_create").handler({
+          projectId: "22222222-2222-2222-2222-222222222222",
+          projectSlug: "agent-tasks",
+          title: "t",
+        } as never);
+        throw new Error("expected a throw");
+      } catch (e) {
+        captured = e instanceof Error ? e.message : String(e);
+      }
+      const parsed = JSON.parse(captured);
+      expect(parsed).toEqual({
+        ok: false,
+        error: {
+          code: "project_addressing_conflict",
+          message: "projectId and projectSlug were both provided; pass exactly one",
+          recipe: "resubmit task_create with only one of projectId or projectSlug",
+          allowedNext: ["task_create"],
+        },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("passing neither projectId nor projectSlug is a project_addressing_conflict teaching error naming projects_list, no network call made", async () => {
+      let captured = "";
+      try {
+        await tool("task_create").handler({ title: "t" } as never);
+        throw new Error("expected a throw");
+      } catch (e) {
+        captured = e instanceof Error ? e.message : String(e);
+      }
+      const parsed = JSON.parse(captured);
+      expect(parsed).toEqual({
+        ok: false,
+        error: {
+          code: "project_addressing_conflict",
+          message: "neither projectId nor projectSlug was provided; pass exactly one",
+          recipe:
+            "call projects_list to find the project, then resubmit task_create with projectId or projectSlug set",
+          allowedNext: ["projects_list", "task_create"],
+        },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("an unresolvable projectSlug maps to the unknown_project_slug teaching error naming projects_list, and never reaches the create endpoint", async () => {
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify({ error: "not_found", message: "Resource not found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      let captured = "";
+      try {
+        await tool("task_create").handler({ projectSlug: "ghost-project", title: "t" } as never);
+        throw new Error("expected a throw");
+      } catch (e) {
+        captured = e instanceof Error ? e.message : String(e);
+      }
+      const parsed = JSON.parse(captured);
+      expect(parsed.error.code).toBe("unknown_project_slug");
+      expect(parsed.error.message).toContain("ghost-project");
+      expect(parsed.error.recipe).toContain("projects_list");
+      expect(parsed.error.allowedNext).toEqual(["projects_list", "task_create"]);
+      expect(fetchMock).toHaveBeenCalledTimes(1); // only the failed by-slug lookup
+    });
+
+    it("a resolvable projectSlug resolves to the project id and creates the task there, returning the usual receipt", async () => {
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+        .mockResolvedValueOnce(
+          ok({ task: { id: "t1", status: "open" }, confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK" } }),
+        );
+      const result = await tool("task_create").handler({ projectSlug: "agent-tasks", title: "New task" } as never);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://example.test/api/projects/by-slug/agent-tasks",
+      );
+      const [url, init] = fetchMock.mock.calls[1];
+      expect(url).toBe("https://example.test/api/projects/p1/tasks");
+      expect(JSON.parse(init.body)).toEqual({ title: "New task" });
+      expect(result).toEqual({
+        ok: true,
+        task: { id: "t1", status: "open" },
+        confidence: 90,
+        next: ["task_start to begin work on this task"],
+      });
+    });
+
+    // ── cache-served id, downstream 403, retry's own fresh lookup 404s
+    // (rc-v1-C006 round-2 review): pins that this end-to-end path surfaces
+    // the unknown_project_slug TEACHING ERROR, not a raw, unparsed
+    // ProjectSlugNotFoundError message. Uses a single shared client (unlike
+    // most tests in this describe block, which call the `tool()` helper
+    // and get a fresh client with an empty slug cache each time) so the
+    // second task_create call can actually reuse a cache-served id.
+    it("cache-served projectSlug, downstream 403, the retry's own fresh by-slug lookup 404s: surfaces unknown_project_slug, not a raw error leak", async () => {
+      const client = new AgentTasksClient(config);
+      const create = buildTools(client).find((t) => t.name === "task_create");
+      if (!create) throw new Error("task_create not registered");
+
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p-old" } })) // warm the cache
+        .mockResolvedValueOnce(ok({ task: { id: "t-old", status: "open" } }));
+      await create.handler({ projectSlug: "agent-tasks", title: "warm the cache" } as never);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      fetchMock
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: "forbidden", message: "Access denied to this project" }), {
+            status: 403,
+            headers: { "content-type": "application/json" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: "not_found", message: "Resource not found" }), {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+
+      let captured = "";
+      try {
+        await create.handler({ projectSlug: "agent-tasks", title: "New task" } as never);
+        throw new Error("expected a throw");
+      } catch (e) {
+        captured = e instanceof Error ? e.message : String(e);
+      }
+      // Not a raw, unparsed error (e.g. `no project found for slug "..."`
+      // with no JSON structure) -- must parse as the teaching-error shape.
+      const parsed = JSON.parse(captured);
+      expect(parsed.error.code).toBe("unknown_project_slug");
+      expect(parsed.error.message).toContain("agent-tasks");
+      expect(parsed.error.recipe).toContain("projects_list");
+      expect(parsed.error.allowedNext).toEqual(["projects_list", "task_create"]);
+    });
+  });
+
+  // ── signals_poll: default limit, truncated + cursor, no silent loss
+  // (rc-v1-C006) ────────────────────────────────────────────────────────
+
+  describe("signals_poll", () => {
+    function sig(id: string) {
+      return { id, type: "review_needed" };
+    }
+
+    it("returns everything untouched when the backlog is under the default limit", async () => {
+      fetchMock.mockResolvedValue(ok({ signals: [sig("s1"), sig("s2")] }));
+      const result = await tool("signals_poll").handler({} as never);
+      expect(result).toEqual({ signals: [sig("s1"), sig("s2")] });
+      // mcp-server always asks the backend for its own max, regardless of
+      // the caller's own (unset, default) limit.
+      const [url] = fetchMock.mock.calls[0];
+      expect(url).toBe("https://example.test/api/agent/signals?limit=200");
+    });
+
+    it("caps to the default limit and sets truncated:true + a cursor when the backend backlog is larger", async () => {
+      const all = Array.from({ length: 15 }, (_, i) => sig(`s${i}`));
+      fetchMock.mockResolvedValue(ok({ signals: all }));
+      const result = (await tool("signals_poll").handler({} as never)) as {
+        signals: unknown[];
+        truncated?: boolean;
+        cursor?: string;
+      };
+      expect(result.signals.length).toBe(10);
+      expect(result.truncated).toBe(true);
+      expect(result.cursor).toBe("s9");
+    });
+
+    it("NO SIGNAL IS LOST: a follow-up call with the returned cursor yields exactly the remainder", async () => {
+      const all = Array.from({ length: 15 }, (_, i) => sig(`s${i}`));
+      fetchMock.mockResolvedValue(ok({ signals: all }));
+      const first = (await tool("signals_poll").handler({} as never)) as {
+        signals: { id: string }[];
+        truncated?: boolean;
+        cursor?: string;
+      };
+      expect(first.truncated).toBe(true);
+
+      fetchMock.mockResolvedValue(ok({ signals: all }));
+      const second = (await tool("signals_poll").handler({ cursor: first.cursor } as never)) as {
+        signals: { id: string }[];
+        truncated?: boolean;
+      };
+      expect(second.truncated).toBeUndefined();
+
+      const combined = [...first.signals, ...second.signals].map((s) => s.id);
+      expect(combined).toEqual(all.map((s) => s.id));
+    });
+
+    it("respects an explicit smaller limit", async () => {
+      fetchMock.mockResolvedValue(ok({ signals: [sig("s1"), sig("s2"), sig("s3")] }));
+      const result = (await tool("signals_poll").handler({ limit: 1 } as never)) as {
+        signals: unknown[];
+        truncated?: boolean;
+      };
+      expect(result.signals).toEqual([sig("s1")]);
+      expect(result.truncated).toBe(true);
+    });
+
+    it("zod schema rejects a limit over the max and accepts one at the max", () => {
+      expect(() => parseArgs("signals_poll", { limit: 101 })).toThrow();
+      expect(() => parseArgs("signals_poll", { limit: 100 })).not.toThrow();
+    });
+
+    // ── atBackendFetchCeiling end-to-end (rc-v1-C006 round-2 review, HIGH) ──
+    //
+    // Simulates a true backend backlog (260 signals) larger than the
+    // backend's own hard fetch max (200, SIGNALS_BACKEND_FETCH_LIMIT): the
+    // mock backend, like the real one, hands back only its first 200
+    // regardless of how many are truly pending. Pages through with the
+    // default limit to the FINAL local page and checks both fields the
+    // review asked to be quoted: what truncated says there (absent, since
+    // local pagination over the 200-entry fetch is genuinely exhausted) and
+    // that atBackendFetchCeiling:true still appears (since the fetch itself
+    // may have clipped a larger true backlog -- ack and poll again, do not
+    // assume drained).
+    it("260-signal true backlog (backend clips to 200): the final local page carries atBackendFetchCeiling:true even though truncated is absent", async () => {
+      const backendBacklog = Array.from({ length: 260 }, (_, i) => sig(`s${i}`));
+      const backendServed = backendBacklog.slice(0, SIGNALS_BACKEND_FETCH_LIMIT); // backend's own hard max
+      // A fresh Response per call, not a single shared/reused instance: each
+      // call reads its own Response body, and a Response's body stream can
+      // only be read once (this test polls the same mocked endpoint many
+      // times in a loop below, unlike most single-call tests in this file).
+      fetchMock.mockImplementation(async () => ok({ signals: backendServed }));
+
+      let cursor: string | undefined;
+      let last: { signals: unknown[]; truncated?: boolean; cursor?: string; atBackendFetchCeiling?: boolean } | undefined;
+      const pageCount = Math.ceil(SIGNALS_BACKEND_FETCH_LIMIT / SIGNALS_DEFAULT_LIMIT);
+      for (let i = 0; i < pageCount; i++) {
+        last = (await tool("signals_poll").handler({ cursor } as never)) as typeof last;
+        cursor = last?.cursor;
+      }
+      expect(last?.signals.length).toBe(SIGNALS_DEFAULT_LIMIT);
+      expect(last?.truncated).toBeUndefined();
+      expect(last?.atBackendFetchCeiling).toBe(true);
+    });
   });
 });

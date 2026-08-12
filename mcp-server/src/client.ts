@@ -14,7 +14,74 @@ export class AgentTasksApiError extends Error {
   }
 }
 
+// rc-v1-C006: raised by the internal project-slug resolver (see
+// resolveProjectSlug/withResolvedProjectSlug below) specifically when a
+// FRESH (not cache-served) GET /projects/by-slug/:slug lookup 404s — i.e.
+// the slug genuinely does not resolve to any project, as opposed to a
+// cache-served id whose downstream use fails with 404 or 403 (that case is
+// handled internally by withResolvedProjectSlug's own invalidate-and-retry,
+// and never reaches a caller as this error). Kept distinct from the generic
+// AgentTasksApiError so callers (tools.ts's task_create / project_tasks
+// handlers) can map it to the errors.ts unknownProjectSlugError teaching
+// error (naming projects_list as the recipe) instead of the generic
+// http_404 degrade a raw 404 would otherwise produce.
+export class ProjectSlugNotFoundError extends Error {
+  constructor(public readonly slug: string) {
+    super(`no project found for slug "${slug}"`);
+    this.name = "ProjectSlugNotFoundError";
+  }
+}
+
+// TTL for the internal slug -> project id cache (rc-v1-C006). ~15 minutes,
+// per the task spec: long enough that a session doing several project_tasks
+// / task_create calls against the same project only pays the by-slug
+// round-trip once, short enough that a slug reassignment (rare) is picked
+// up again within one working session even without hitting the
+// invalidate-and-retry path (withResolvedProjectSlug, triggered by a
+// cache-served id's downstream 404 or 403).
+const PROJECT_SLUG_CACHE_TTL_MS = 15 * 60 * 1000;
+
+interface ProjectSlugCacheEntry {
+  id: string;
+  expiresAt: number;
+}
+
+interface CreateTaskInput {
+  title: string;
+  description?: string;
+  priority?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  workflowId?: string;
+  dueAt?: string;
+  externalRef?: string;
+  labels?: string[];
+  dependsOn?: string[];
+  debugFlavor?: boolean;
+  templateData?: Record<string, unknown>;
+  deliverableRepo?: string;
+}
+
+interface ListProjectTasksParams {
+  status?: string | string[];
+  priority?: string | string[];
+  labels?: string[];
+  unclaimed?: boolean;
+  limit?: number;
+  // `createdAt:asc` | `createdAt:desc` — forwarded verbatim. The backend
+  // keeps `createdAt:desc` when omitted (unchanged, pre-existing default
+  // for this route; task 14c947a7).
+  sort?: string;
+  // Task id to page forward from (typically a previous response's
+  // `nextCursor`).
+  cursor?: string;
+}
+
 export class AgentTasksClient {
+  // slug -> resolved project id, TTL-bounded. Instance-scoped (not shared
+  // across AgentTasksClient instances, not persisted): the mcp-server
+  // process holds exactly one client per running session, so this is
+  // effectively a per-session cache.
+  private readonly projectSlugCache = new Map<string, ProjectSlugCacheEntry>();
+
   constructor(private readonly config: ClientConfig) {}
 
   private async request<T>(
@@ -56,6 +123,114 @@ export class AgentTasksClient {
     }
 
     return parsed as T;
+  }
+
+  // ── Project-slug resolution (rc-v1-C006) ──────────────────────────────
+  //
+  // Shared by task_create's projectSlug alternative to projectId and by
+  // listProjectTasks's existing slug-or-id `project` param, so both callers
+  // pay the by-slug round trip at most once per TTL window instead of on
+  // every call. See docs/response-contract-v1.md; the cache and retry
+  // behavior itself is a task-spec requirement of rc-v1-C006, not yet
+  // written into that doc's own prose.
+
+  /** Cache-first resolution. Also reports whether `id` was cache-served (vs
+   *  a fresh network lookup THIS call), so withResolvedProjectSlug can tell
+   *  a stale-cache-artifact failure apart from a genuine downstream error --
+   *  see that function's own doc comment. Throws ProjectSlugNotFoundError on
+   *  a fresh (non-cached) 404 -- see that class's own doc comment. */
+  private async resolveProjectSlug(
+    slug: string,
+  ): Promise<{ id: string; cacheServed: boolean }> {
+    const cached = this.projectSlugCache.get(slug);
+    if (cached && cached.expiresAt > Date.now()) {
+      return { id: cached.id, cacheServed: true };
+    }
+    const id = await this.fetchAndCacheProjectSlug(slug);
+    return { id, cacheServed: false };
+  }
+
+  /** Always hits the network (bypasses the cache), then (re)writes the
+   *  cache entry on success. Used both for a cache miss/expiry and for the
+   *  forced fresh retry in withResolvedProjectSlug below. */
+  private async fetchAndCacheProjectSlug(slug: string): Promise<string> {
+    let resolved: { project: { id: string } };
+    try {
+      resolved = await this.request<{ project: { id: string } }>(
+        "GET",
+        `/api/projects/by-slug/${encodeURIComponent(slug)}`,
+      );
+    } catch (err) {
+      if (err instanceof AgentTasksApiError && err.status === 404) {
+        throw new ProjectSlugNotFoundError(slug);
+      }
+      throw err;
+    }
+    const id = resolved.project.id;
+    this.projectSlugCache.set(slug, { id, expiresAt: Date.now() + PROJECT_SLUG_CACHE_TTL_MS });
+    return id;
+  }
+
+  /**
+   * Resolves `slug` to a project id (cache-first) and calls `perform(id)`.
+   *
+   * `perform` failing downstream with a 404 OR a 403 is only worth a retry
+   * when `id` was CACHE-SERVED (rc-v1-C006 round-2 review, HIGH): the
+   * resolved id no longer working downstream can mean the project behind
+   * this slug was renamed/reassigned since the cache entry was written
+   * (404 -- the id no longer exists), or that the caller's access to that
+   * now-different project was revoked (403 -- both consumer routes,
+   * POST /projects/:id/tasks and GET /projects/:id/tasks, reject an
+   * inaccessible id via hasProjectAccess with 403 forbidden, NOT 404; see
+   * backend/src/routes/tasks.ts). A freshly-resolved id (cacheServed:
+   * false) failing the same way is never a stale-cache artifact -- nothing
+   * to invalidate -- so it propagates immediately, with no wasted retry
+   * round trip.
+   *
+   * When a cache-served id does fail this way, the cache entry is
+   * invalidated and the slug is re-resolved FRESH before deciding whether
+   * to retry `perform`:
+   *   - the fresh id is IDENTICAL to the one that just failed: this was
+   *     never a stale-cache issue, it is a genuine downstream error (most
+   *     often a real permission denial) -- the ORIGINAL error propagates
+   *     unchanged, `perform` is not called again, so a real 403 is never
+   *     masked as a retry-fixed cache problem.
+   *   - the fresh id DIFFERS: the cache genuinely was stale -- `perform` is
+   *     retried exactly once against the fresh id. A second failure
+   *     (including a second 404/403) propagates unchanged: this is a
+   *     single retry, not a loop. `perform` is therefore called at most
+   *     twice in total for one withResolvedProjectSlug call.
+   *   - the fresh lookup itself 404s (the slug no longer resolves to ANY
+   *     project): fetchAndCacheProjectSlug's own ProjectSlugNotFoundError
+   *     propagates unchanged, mapped by tools.ts's callers to the
+   *     unknown_project_slug teaching error, never a raw error leak.
+   *   - the fresh lookup fails with anything ELSE (a 500, a network
+   *     error): the ORIGINAL downstream error propagates, not the
+   *     lookup's own failure -- the retry machinery must never replace a
+   *     real denial with one of its own artifacts.
+   */
+  private async withResolvedProjectSlug<T>(
+    slug: string,
+    perform: (projectId: string) => Promise<T>,
+  ): Promise<T> {
+    const { id, cacheServed } = await this.resolveProjectSlug(slug);
+    try {
+      return await perform(id);
+    } catch (err) {
+      const isRetryTrigger =
+        err instanceof AgentTasksApiError && (err.status === 404 || err.status === 403);
+      if (!isRetryTrigger || !cacheServed) throw err;
+      this.projectSlugCache.delete(slug);
+      let freshId: string;
+      try {
+        freshId = await this.fetchAndCacheProjectSlug(slug);
+      } catch (lookupErr) {
+        if (lookupErr instanceof ProjectSlugNotFoundError) throw lookupErr;
+        throw err;
+      }
+      if (freshId === id) throw err;
+      return await perform(freshId);
+    }
   }
 
   listProjects() {
@@ -119,42 +294,25 @@ export class AgentTasksClient {
   }
 
   // Browse tasks scoped to a single project. Accepts slug or UUID for
-  // `project`; if a slug is passed we resolve it to a UUID first via the
-  // existing by-slug lookup so callers don't have to chain projects_get
-  // themselves. Mirrors the filter surface of the CLI's `tasks list
-  // --project` flow and forwards to GET /api/projects/:id/tasks.
-  async listProjectTasks(
-    project: string,
-    params?: {
-      status?: string | string[];
-      priority?: string | string[];
-      labels?: string[];
-      unclaimed?: boolean;
-      limit?: number;
-      // `createdAt:asc` | `createdAt:desc` — forwarded verbatim. The backend
-      // keeps `createdAt:desc` when omitted (unchanged, pre-existing default
-      // for this route; task 14c947a7).
-      sort?: string;
-      // Task id to page forward from (typically a previous response's
-      // `nextCursor`).
-      cursor?: string;
-    },
-  ) {
+  // `project`; if a slug is passed it is resolved to a UUID first via
+  // withResolvedProjectSlug's TTL-cached lookup (rc-v1-C006) so repeated
+  // calls with the same slug on this client instance pay the by-slug
+  // round trip once per TTL window, not on every call, without callers
+  // having to chain projects_get themselves. Mirrors the filter surface of
+  // the CLI's `tasks list --project` flow and forwards to GET
+  // /api/projects/:id/tasks. Throws ProjectSlugNotFoundError (not a bare
+  // AgentTasksApiError) when `project` is a slug that does not resolve on
+  // a fresh lookup -- see withResolvedProjectSlug.
+  async listProjectTasks(project: string, params?: ListProjectTasksParams) {
     const isUuid =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         project,
       );
-    let projectId: string;
-    if (isUuid) {
-      projectId = project;
-    } else {
-      const resolved = (await this.request<{ project: { id: string } }>(
-        "GET",
-        `/api/projects/by-slug/${encodeURIComponent(project)}`,
-      )).project;
-      projectId = resolved.id;
-    }
+    const fetchPage = (projectId: string) => this.fetchProjectTasksPage(projectId, params);
+    return isUuid ? fetchPage(project) : this.withResolvedProjectSlug(project, fetchPage);
+  }
 
+  private fetchProjectTasksPage(projectId: string, params?: ListProjectTasksParams) {
     const sp = new URLSearchParams();
     if (params?.status !== undefined) {
       sp.set(
@@ -195,27 +353,20 @@ export class AgentTasksClient {
     return this.request<unknown>("GET", `/api/tasks/${taskId}/instructions`);
   }
 
-  createTask(
-    projectId: string,
-    input: {
-      title: string;
-      description?: string;
-      priority?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-      workflowId?: string;
-      dueAt?: string;
-      externalRef?: string;
-      labels?: string[];
-      dependsOn?: string[];
-      debugFlavor?: boolean;
-      templateData?: Record<string, unknown>;
-      deliverableRepo?: string;
-    },
-  ) {
+  createTask(projectId: string, input: CreateTaskInput) {
     return this.request<unknown>(
       "POST",
       `/api/projects/${projectId}/tasks`,
       input,
     );
+  }
+
+  // rc-v1-C006: projectSlug alternative to task_create's projectId,
+  // resolved through the same TTL-cached slug resolver listProjectTasks
+  // uses. Throws ProjectSlugNotFoundError on a fresh (non-cached) 404 --
+  // see withResolvedProjectSlug.
+  createTaskByProjectSlug(slug: string, input: CreateTaskInput) {
+    return this.withResolvedProjectSlug(slug, (projectId) => this.createTask(projectId, input));
   }
 
   claimTask(taskId: string) {
@@ -320,8 +471,14 @@ export class AgentTasksClient {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/respec`, input);
   }
 
-  pollSignals() {
-    return this.request<unknown>("GET", "/api/agent/signals");
+  // `limit` (rc-v1-C006): forwarded to the backend's own `?limit=` query
+  // param (backend/src/routes/signals.ts, hard-capped there at 200). The
+  // mcp-server-side cap+cursor (read.ts's paginateSignals) requests the
+  // backend's own max here so it can slice+cursor the full backlog
+  // client-side without a backend cursor param.
+  pollSignals(limit?: number) {
+    const qs = limit !== undefined ? `?limit=${limit}` : "";
+    return this.request<unknown>("GET", `/api/agent/signals${qs}`);
   }
 
   // ── Artifacts ────────────────────────────────────────────────────────────

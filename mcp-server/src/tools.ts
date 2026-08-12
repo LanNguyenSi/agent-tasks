@@ -1,11 +1,13 @@
 import { z, ZodRawShape } from "zod";
-import { AgentTasksClient, AgentTasksApiError } from "./client.js";
+import { AgentTasksClient, AgentTasksApiError, ProjectSlugNotFoundError } from "./client.js";
 import { WORKFLOW_PRIMER } from "./primer.js";
 import {
   mapBackendError,
   serializeTeachingError,
   looksLikeStructuredWrapper,
   resultMustBePlainStringError,
+  projectAddressingConflictError,
+  unknownProjectSlugError,
 } from "./errors.js";
 import {
   receiptForCreate,
@@ -26,6 +28,16 @@ import {
   type StartResponse,
   type PickupResponse,
 } from "./receipt.js";
+import {
+  projectTaskSummary,
+  paginateSignals,
+  TASKS_GET_INCLUDE_VALUES,
+  SIGNALS_DEFAULT_LIMIT,
+  SIGNALS_MAX_LIMIT,
+  SIGNALS_BACKEND_FETCH_LIMIT,
+  type GetTaskResponse,
+  type RawSignal,
+} from "./read.js";
 
 export interface ToolDefinition<Shape extends ZodRawShape = ZodRawShape> {
   name: string;
@@ -91,6 +103,21 @@ const pickupIncludeSchema = z
   .optional()
   .describe(
     'Default response is the full task spec WITHOUT comments. Pass ["comments"] or ["task"] to get comments back too (both return the same full, pre-contract object for this verb today).',
+  );
+
+// tasks_get's include enum (rc-v1-C006, the read-verb surface docs/
+// response-contract-v1.md's "include semantics" section reserves the full
+// five-value vocabulary for). Default response is a SUMMARY (id, title,
+// status, priority, labels, claims, blockedBy, prUrl), not the full task —
+// see read.ts's projectTaskSummary. "instructions" is deliberately not in
+// this enum: it is task_start's own per-state prose, not a field a plain
+// task object carries.
+const readIncludeSchema = z
+  .array(z.enum(TASKS_GET_INCLUDE_VALUES))
+  .max(TASKS_GET_INCLUDE_VALUES.length)
+  .optional()
+  .describe(
+    'Default response is a summary (id, title, status, priority, labels, claims, blockedBy, prUrl), not the full task. Pass one or more of "description", "comments", "artifacts" to add just that field back, or "task" for the full, pre-contract object (recovery path after context loss).',
   );
 
 // Choke point for every backend call: maps a thrown AgentTasksApiError to
@@ -264,9 +291,18 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
     def({
       name: "task_create",
       description:
-        "Create a new task in a project. Only title is required. Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. When a project uses task-template mode, call projects_get_effective_gates first and populate the templateData fields it lists under taskCreation.requiredFields.\n\nReturns a receipt by default ({ ok, task: { id, status }, confidence: <score>, deviations? }) — description/templateData are NOT echoed back. A CONFIDENCE_BELOW_THRESHOLD deviation appears when score < threshold, with detail ({score, threshold, enforcementMode, missing[] clamped to the first 5, totalMissing}) and a task_respec hint; low confidence never blocks creation itself, only the hard gate at task_pickup/task_start (when enforcementMode=BLOCK) does. Pass include:[\"task\"] for the full { task, confidence } object.",
+        "Create a new task in a project. Only title is required (plus exactly one of projectId or projectSlug). Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. When a project uses task-template mode, call projects_get_effective_gates first and populate the templateData fields it lists under taskCreation.requiredFields.\n\nprojectSlug (rc-v1-C006) is an alternative to projectId: resolved to a project id mcp-server-side via an internal TTL-cached slug lookup (~15 min, invalidated and retried once if the cached id 404s downstream). Passing both projectId and projectSlug is a project_addressing_conflict teaching error; a projectSlug that resolves to nothing is an unknown_project_slug teaching error naming projects_list as the recipe.\n\nReturns a receipt by default ({ ok, task: { id, status }, confidence: <score>, deviations? }) — description/templateData are NOT echoed back. A CONFIDENCE_BELOW_THRESHOLD deviation appears when score < threshold, with detail ({score, threshold, enforcementMode, missing[] clamped to the first 5, totalMissing}) and a task_respec hint; low confidence never blocks creation itself, only the hard gate at task_pickup/task_start (when enforcementMode=BLOCK) does. Pass include:[\"task\"] for the full { task, confidence } object.",
       inputShape: {
-        projectId: uuid(),
+        projectId: uuid().optional(),
+        projectSlug: z
+          .string()
+          .trim()
+          .min(1)
+          .max(255)
+          .optional()
+          .describe(
+            "Alternative to projectId. Resolved mcp-server-side via a TTL-cached slug lookup. Pass exactly one of projectId or projectSlug.",
+          ),
         title: z.string().min(1).max(255),
         description: z.string().optional(),
         priority: priorityEnum.optional(),
@@ -294,8 +330,39 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
           ),
         include: includeSchema,
       },
-      handler: async ({ projectId, include, ...input }) => {
-        const response = await wrap(() => client.createTask(projectId, input));
+      handler: async ({ projectId, projectSlug, include, ...input }) => {
+        // rc-v1-C006: projectId/projectSlug validation happens here, before
+        // any network call, same pattern as task_respec's own client-side
+        // "at least one of" guard below — except CONFLICT is a proper
+        // teaching error per the task spec, not a bare thrown message.
+        if (projectId !== undefined && projectSlug !== undefined) {
+          throw new Error(serializeTeachingError(projectAddressingConflictError("task_create")));
+        }
+        if (projectId === undefined && projectSlug === undefined) {
+          throw new Error(
+            serializeTeachingError(
+              projectAddressingConflictError("task_create", "neither_provided"),
+            ),
+          );
+        }
+        let response: unknown;
+        try {
+          response =
+            projectId !== undefined
+              ? await wrap(() => client.createTask(projectId, input))
+              : await wrap(() => client.createTaskByProjectSlug(projectSlug as string, input));
+        } catch (err) {
+          // ProjectSlugNotFoundError is raised by client.ts's resolver on a
+          // FRESH 404 (not a stale cache entry — that case is retried
+          // internally and never reaches here). wrap() does not translate
+          // it (it is not an AgentTasksApiError), so it is caught here and
+          // mapped to the specific unknown_project_slug teaching error
+          // instead of leaking a raw, non-JSON error message.
+          if (err instanceof ProjectSlugNotFoundError) {
+            throw new Error(serializeTeachingError(unknownProjectSlugError(err.slug, "task_create")));
+          }
+          throw err;
+        }
         if (include?.includes("task")) return response;
         return receiptForCreate(response as CreateOrRespecResponse, input);
       },
@@ -512,7 +579,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       name: "project_tasks",
       description:
         "Browse tasks scoped to a single project. Use this when you want to answer 'what is open in project X?' (the question task_pickup and the deprecated tasks_list cannot reliably answer — pickup returns one item, tasks_list returns only the claimable slice). " +
-        "`project` accepts a slug ('agent-tasks') or a UUID; slugs are resolved server-side so you do not need to chain projects_get first. " +
+        "`project` accepts a slug ('agent-tasks') or a UUID; slugs are resolved mcp-server-side (TTL-cached, ~15 min, rc-v1-C006) so you do not need to chain projects_get first. An unresolvable slug is an unknown_project_slug teaching error naming projects_list as the recipe. " +
         "Filters (status, priority, labels, unclaimed) combine with AND semantics; status and priority accept either a single value or an array. limit defaults to unbounded on the backend, but clamps to 500 if supplied — pass an explicit limit when calling from an LLM harness so the response stays inside the tool-result token cap. " +
         "DEFAULT sort is `createdAt:desc` (newest tasks first) — pass `sort: \"createdAt:asc\"` to reverse it. Combined with a small `limit`, the default lets you fetch the N newest open tasks in a single call without blowing the tool-result token cap. " +
         "The response carries `nextCursor` (a task id, or null once the last page is reached) — pass it back as `cursor` to page forward; combined with `sort` + `id` as a tiebreaker, page order is stable even when many tasks share the same createdAt timestamp.",
@@ -546,18 +613,30 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
             "Task id to page forward from — pass the previous call's `nextCursor`. Omit for the first page.",
           ),
       },
-      handler: async ({ project, status, priority, labels, unclaimed, limit, sort, cursor }) =>
-        wrap(() =>
-          client.listProjectTasks(project, {
-            status,
-            priority,
-            labels,
-            unclaimed,
-            limit,
-            sort,
-            cursor,
-          }),
-        ),
+      handler: async ({ project, status, priority, labels, unclaimed, limit, sort, cursor }) => {
+        try {
+          return await wrap(() =>
+            client.listProjectTasks(project, {
+              status,
+              priority,
+              labels,
+              unclaimed,
+              limit,
+              sort,
+              cursor,
+            }),
+          );
+        } catch (err) {
+          // Same rc-v1-C006 mapping as task_create's own projectSlug path:
+          // client.ts's resolver throws ProjectSlugNotFoundError (not an
+          // AgentTasksApiError, so wrap() does not touch it) on a fresh
+          // 404, translated here to the specific teaching error.
+          if (err instanceof ProjectSlugNotFoundError) {
+            throw new Error(serializeTeachingError(unknownProjectSlugError(err.slug, "project_tasks")));
+          }
+          throw err;
+        }
+      },
     }),
     def({
       name: "tasks_list",
@@ -606,9 +685,12 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       name: "tasks_get",
       description:
         DEPRECATED +
-        "Fetch a task by id. v2 folds this into the task_start response.",
-      inputShape: { taskId: uuid() },
-      handler: async ({ taskId }) => wrap(() => client.getTask(taskId)),
+        "Fetch a task by id. v2 folds this into the task_start response. Returns a summary projection by default (id, title, status, priority, labels, claims, blockedBy, prUrl) — pass include:[\"description\" | \"comments\" | \"artifacts\"] to add one field back, or include:[\"task\"] for the full, pre-contract object.",
+      inputShape: { taskId: uuid(), include: readIncludeSchema },
+      handler: async ({ taskId, include }) => {
+        const response = await wrap(() => client.getTask(taskId));
+        return projectTaskSummary(response as GetTaskResponse, include);
+      },
     }),
     def({
       name: "tasks_instructions",
@@ -761,9 +843,28 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
       name: "signals_poll",
       description:
         DEPRECATED +
-        "Signals are delivered inline by task_pickup under v2.",
-      inputShape: {},
-      handler: async () => wrap(() => client.pollSignals()),
+        `Signals are delivered inline by task_pickup under v2. Default limit ${SIGNALS_DEFAULT_LIMIT} (max ${SIGNALS_MAX_LIMIT}); when more are pending within the fetched batch the response carries truncated:true and a cursor (the last delivered signal's id). Pass it back as cursor on the next call to fetch the remainder. mcp-server always fetches up to ${SIGNALS_BACKEND_FETCH_LIMIT} pending signals from the backend per call (its own hard max; the backend has no cursor of its own). When the backend backlog is at or above that ceiling, the response also carries atBackendFetchCeiling:true: more signals may exist beyond what this call could see, even once truncated stops appearing, so ack what you have and poll again rather than assuming the backlog is drained. A cursor whose signal was acked or aged out of the backend's fetch window restarts from the oldest pending signal, so an occasional duplicate delivery is possible; treat acking as idempotent.`,
+      inputShape: {
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .max(SIGNALS_MAX_LIMIT)
+          .optional()
+          .describe(`Max signals to return this call. Default ${SIGNALS_DEFAULT_LIMIT}.`),
+        cursor: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Signal id to resume after — pass the previous call's cursor. Omit for the first page.",
+          ),
+      },
+      handler: async ({ limit, cursor }) => {
+        const response = await wrap(() => client.pollSignals(SIGNALS_BACKEND_FETCH_LIMIT));
+        const all = (response as { signals?: RawSignal[] } | undefined)?.signals ?? [];
+        return paginateSignals(all, { cursor, limit });
+      },
     }),
     def({
       name: "signals_ack",
