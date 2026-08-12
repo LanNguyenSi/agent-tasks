@@ -8,10 +8,18 @@ import { buildTools } from "../src/tools.js";
 import { AgentTasksClient } from "../src/client.js";
 
 const __filename = fileURLToPath(import.meta.url);
-const TOOLS_TS_PATH = resolve(__filename, "..", "..", "src", "tools.ts");
 const RECEIPT_TS_PATH = resolve(__filename, "..", "..", "src", "receipt.ts");
-const ERRORS_TS_PATH = resolve(__filename, "..", "..", "src", "errors.ts");
 const REPO_README_PATH = resolve(__filename, "..", "..", "..", "README.md");
+
+// docs/response-contract-v1.md's "Onboarding channels by rate of change"
+// table gives WORKFLOW_PRIMER no per-call budget (it is pulled once, not
+// replayed automatically), but "no cap" is not the same as "no ceiling
+// worth noticing": this is a sane upper bound, not a hard contract number,
+// so a future addition that blows way past it fails loudly instead of the
+// primer silently growing into something nobody meant to ship. Measured
+// growth so far: 3877 chars pre-rc-v1-C005 -> 4484 with the "## Errors"
+// section added -> 5390 after round 1's low_confidence catalog entry.
+const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 6000;
 
 // docs/response-contract-v1.md's "Onboarding channels by rate of change" table:
 // HANDSHAKE_PRIMER targets ~300-500 tokens with a HARD budget of 2000 chars
@@ -55,6 +63,7 @@ const NON_VERB_TOKENS = new Set([
   "force_admin_only", // 403 error code (rc-v1-C005: tasks_transition force=true)
   "respec_conflict", // 409 error code (rc-v1-C005: task_respec state conflict)
   "result_not_plain_string", // client-side error code (rc-v1-C005: task_finish result guard)
+  "low_confidence", // 422 error code (rc-v1-C005 review round 1, finding #2: confidence-gate detail preservation)
 ]);
 
 function snakeCaseTokens(text: string): string[] {
@@ -164,6 +173,10 @@ describe("HANDSHAKE_PRIMER's converted-verb list is grounded in buildTools, not 
 });
 
 describe("WORKFLOW_PRIMER (workflow_primer verb)", () => {
+  it(`stays under a sanity ceiling of ${WORKFLOW_PRIMER_SANITY_CEILING_CHARS} chars (measured ${WORKFLOW_PRIMER.length}; no per-call budget applies here, but unbounded growth should still fail loudly)`, () => {
+    expect(WORKFLOW_PRIMER.length).toBeLessThanOrEqual(WORKFLOW_PRIMER_SANITY_CEILING_CHARS);
+  });
+
   it("is deterministic across repeated reads", () => {
     expect(WORKFLOW_PRIMER).toBe(WORKFLOW_PRIMER);
     // Re-import identity: a plain module-level const, so two reads in the
@@ -509,16 +522,66 @@ describe('repo README.md "First five minutes as an agent" section', () => {
 // error forwarding fails THIS test, not just the primer's own prose
 // assertions above.
 describe("rc-v1-C005: Errors section stays in sync with the teaching-error implementation", () => {
-  it("pins the POST-catalog state: wrap() wires mapBackendError/serializeTeachingError, and errors.ts populates allowedNext", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // This test used to grep tools.ts's and errors.ts's SOURCE TEXT for the
+  // strings "mapBackendError", "serializeTeachingError", and "allowedNext"
+  // as a proxy for "the catalog is actually wired". That proxy is inert:
+  // all three names also appear in this file's own doc comments (see
+  // errors.ts's file header and tools.ts's wrap() comment, both of which
+  // discuss mapBackendError/serializeTeachingError/allowedNext at length),
+  // so a hypothetical regression that fully unwires errors.ts from tools.ts
+  // -- deletes wrap()'s mapBackendError call, reverting to the retired raw
+  // `agent-tasks API <status>: <message>` forwarding -- leaves every
+  // grepped string present in the surrounding comments regardless, and this
+  // test stayed green while the feature it exists to protect regressed to
+  // nothing (measured directly: commenting out wrap()'s mapBackendError
+  // call in tools.ts kept the old version of this test passing and tsc
+  // clean). This drives a REAL write-verb handler through a REAL 409
+  // already_claimed backend body instead, so the test can only pass if
+  // wrap() actually still calls into errors.ts at runtime, not merely
+  // mentions its exports in prose.
+  it("pins the POST-catalog state behaviorally: a real 409 already_claimed body, driven through a real handler's wrap() call, produces the teaching-error shape, not the retired raw-forward format", async () => {
+    // Primer-drift assertions, unchanged from before this fix.
     expect(WORKFLOW_PRIMER).not.toMatch(/planned for a future release/i);
     expect(WORKFLOW_PRIMER).toMatch(/allowedNext/);
-    // Read the real sources, not a copy, so this fails the moment either
-    // wrap() stops calling into errors.ts (a regression back to forwarding
-    // raw backend text) or errors.ts stops populating allowedNext.
-    const toolsSource = readFileSync(TOOLS_TS_PATH, "utf8");
-    expect(toolsSource).toContain("mapBackendError");
-    expect(toolsSource).toContain("serializeTeachingError");
-    const errorsSource = readFileSync(ERRORS_TS_PATH, "utf8");
-    expect(errorsSource).toContain("allowedNext");
+
+    const backendBody = {
+      error: "already_claimed",
+      message: "You already hold an active claim on another task.",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(backendBody), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new AgentTasksClient({ baseUrl: "https://example.test", token: "tok" });
+    const start = buildTools(client).find((t) => t.name === "task_start");
+    if (!start) throw new Error("task_start not registered");
+
+    let captured = "";
+    try {
+      await start.handler({ taskId: "22222222-2222-2222-2222-222222222222" } as never);
+      throw new Error("expected task_start's handler to throw on a 409");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+
+    // Not the retired raw-forward format (`agent-tasks API <status>:
+    // <message>`; see tests/tools.test.ts's own comment on the retirement).
+    // This is the assertion that actually goes red if wrap() is unwired:
+    // an unwired wrap() throws `new Error(err.message)` directly, which
+    // fails JSON.parse below AND would match this pattern.
+    expect(captured).not.toMatch(/^agent-tasks API /);
+
+    const parsed = JSON.parse(captured);
+    expect(parsed.error.code).toBe("already_claimed");
+    expect(Array.isArray(parsed.error.allowedNext)).toBe(true);
+    expect(parsed.error.allowedNext.length).toBeGreaterThan(0);
   });
 });

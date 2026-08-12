@@ -460,6 +460,84 @@ describe("buildTools", () => {
     });
   });
 
+  // rc-v1-C005 review round 1, finding #6: tasks_update accepts `result`
+  // (same free-text field task_finish has) but used to skip the
+  // pre-network structured-wrapper guard entirely. This proves the guard is
+  // actually wired into tasks_update's own handler, not just into errors.ts's
+  // pure resultMustBePlainStringError builder (see errors.test.ts for that).
+  it("tasks_update rejects an XML-wrapped result locally, before any network call, naming tasks_update as the corrective", async () => {
+    let captured = "";
+    try {
+      await tool("tasks_update").handler({
+        taskId: "33333333-3333-3333-3333-333333333333",
+        result: "<result>done</result>",
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed).toEqual({
+      ok: false,
+      error: {
+        code: "result_not_plain_string",
+        message: "result must be plain prose or markdown text, not wrapped in XML or JSON tags",
+        recipe: "resubmit tasks_update with result as plain text (no <tag>...</tag> or {...} wrapping)",
+        allowedNext: ["tasks_update"],
+      },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("tasks_update accepts ordinary prose/markdown result unchanged and still forwards it", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1" } }));
+    await tool("tasks_update").handler({
+      taskId: "33333333-3333-3333-3333-333333333333",
+      result: "Implemented the feature; fixed the <Foo> component along the way.",
+    } as never);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      result: "Implemented the feature; fixed the <Foo> component along the way.",
+    });
+  });
+
+  // rc-v1-C005 review round 1, finding #7: pull_requests_create's own
+  // cross_repo_pr_rejected emit site (backend/src/routes/github.ts's POST
+  // /pull-requests) sends owner/repo, not a prUrl, so the default
+  // task_submit_pr recipe misdirects it. Proves wrap()'s verbContext is
+  // actually threaded through from this call site (errors.test.ts covers
+  // the pure mapBackendError branch in isolation).
+  it("pull_requests_create maps 400 cross_repo_pr_rejected to its OWN recipe (not task_submit_pr's)", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "cross_repo_pr_rejected",
+          message: "PR points at other/repo, expected acme/agent-tasks.",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+    let captured = "";
+    try {
+      await tool("pull_requests_create").handler({
+        taskId: "55555555-5555-5555-5555-555555555555",
+        owner: "other",
+        repo: "repo",
+        head: "feat/x",
+        title: "PR title",
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed.error.code).toBe("cross_repo_pr_rejected");
+    expect(parsed.error.recipe).toContain("pull_requests_create");
+    expect(parsed.error.recipe).not.toContain("task_submit_pr");
+    expect(parsed.error.allowedNext).toEqual(["pull_requests_create"]);
+  });
+
   it("wrap translates an uncataloged AgentTasksApiError into the generic teaching-error shape (status-derived code)", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ message: "forbidden" }), {

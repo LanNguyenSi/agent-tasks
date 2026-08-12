@@ -254,7 +254,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         // is sent, so an XML/JSON-wrapped result never round-trips into
         // mis-stored structured input in the first place.
         if (body.result !== undefined && looksLikeStructuredWrapper(body.result)) {
-          throw new Error(serializeTeachingError(resultMustBePlainStringError()));
+          throw new Error(serializeTeachingError(resultMustBePlainStringError("task_finish")));
         }
         const response = await wrap(() => client.finishTask(taskId, body), "task_finish");
         if (include?.includes("task")) return response;
@@ -683,8 +683,16 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         prNumber: z.number().int().positive().nullable().optional(),
         result: z.string().nullable().optional(),
       },
-      handler: async ({ taskId, ...input }) =>
-        wrap(() => client.updateTask(taskId, input), "tasks_update"),
+      handler: async ({ taskId, ...input }) => {
+        // Same pre-network guard as task_finish's own result field
+        // (errors.ts catalog entry #8): tasks_update writes `result` the
+        // same way the backend stores it, so the same XML/JSON-wrapper
+        // mistake needs the same check here, not just on the v2 verb.
+        if (typeof input.result === "string" && looksLikeStructuredWrapper(input.result)) {
+          throw new Error(serializeTeachingError(resultMustBePlainStringError("tasks_update")));
+        }
+        return wrap(() => client.updateTask(taskId, input), "tasks_update");
+      },
     }),
     def({
       name: "tasks_comment",
@@ -774,7 +782,7 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         body: z.string().optional(),
         idempotencyKey: z.string().trim().min(1).max(255).optional(),
       },
-      handler: async (input) => wrap(() => client.createPullRequest(input)),
+      handler: async (input) => wrap(() => client.createPullRequest(input), "pull_requests_create"),
     }),
     def({
       name: "pull_requests_merge",
