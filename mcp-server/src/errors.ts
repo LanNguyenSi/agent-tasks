@@ -767,9 +767,24 @@ function enforceErrorBudget(err: TeachingError): TeachingError {
   };
 }
 
-function genericDegrade(status: number, message: string, details: unknown): TeachingError {
+// The backend's own body.error string is the most specific code available
+// and consumers key on it (the mcp-bridge governance suite asserts a 409
+// claim_blocked stays visible end to end), so the degrade passes it
+// through when present; the status-derived http_<status> form is only the
+// fallback for bodies that carry no code at all. Clamped like every other
+// caller-visible string so a pathological body cannot blow the budget.
+function genericDegrade(
+  status: number,
+  message: string,
+  details: unknown,
+  bodyCode?: unknown,
+): TeachingError {
+  const code =
+    typeof bodyCode === "string" && bodyCode.length > 0
+      ? clamp(bodyCode, DETAIL_ENTRY_CHAR_BUDGET)
+      : `http_${status}`;
   return buildTeachingError({
-    code: `http_${status}`,
+    code,
     message,
     recipe: "call workflow_primer for the full lifecycle reference and today's known traps",
     allowedNext: ["workflow_primer"],
@@ -813,5 +828,5 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
     return respecConflictError(message);
   }
 
-  return genericDegrade(status, message, body.details);
+  return genericDegrade(status, message, body.details, body.error);
 }

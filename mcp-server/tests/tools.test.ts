@@ -372,7 +372,7 @@ describe("buildTools", () => {
       captured = e instanceof Error ? e.message : String(e);
     }
     const parsed = JSON.parse(captured);
-    expect(parsed.error.code).toBe("http_403");
+    expect(parsed.error.code).toBe("forbidden");
     expect(parsed.error.message).toMatch(/creator/);
     expect(parsed.error.allowedNext).toEqual(["workflow_primer"]);
   });
@@ -395,7 +395,7 @@ describe("buildTools", () => {
       captured = e instanceof Error ? e.message : String(e);
     }
     const parsed = JSON.parse(captured);
-    expect(parsed.error.code).toBe("http_400");
+    expect(parsed.error.code).toBe("bad_request");
     expect(parsed.error.message).toBe("description must not be empty");
   });
 
@@ -417,7 +417,7 @@ describe("buildTools", () => {
       captured = e instanceof Error ? e.message : String(e);
     }
     const parsed = JSON.parse(captured);
-    expect(parsed.error.code).toBe("http_400");
+    expect(parsed.error.code).toBe("bad_request");
     expect(parsed.error.message).toBe("templateData must not be an empty object");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -1008,7 +1008,7 @@ describe("buildTools", () => {
       captured = e instanceof Error ? e.message : String(e);
     }
     const parsed = JSON.parse(captured);
-    expect(parsed.error.code).toBe("http_403");
+    expect(parsed.error.code).toBe("forbidden");
     expect(parsed.error.message).toMatch(/delegation/);
   });
 

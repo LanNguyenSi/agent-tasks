@@ -450,9 +450,9 @@ describe("mapBackendError catalog", () => {
 
   // ── Generic degrade (acceptance criterion: unknown errors degrade
   // structurally) ─────────────────────────────────────────────────────────
-  it("an uncataloged backend code/message still gets a structured shape (status-derived code, message passthrough, recipe -> workflow_primer)", () => {
+  it("an uncataloged backend code/message still gets a structured shape (body code passthrough, message passthrough, recipe -> workflow_primer)", () => {
     const err = mapBackendError(500, { error: "internal_error", message: "boom" });
-    expect(err.error.code).toBe("http_500");
+    expect(err.error.code).toBe("internal_error");
     expect(err.error.message).toBe("boom");
     expect(err.error.recipe).toContain("workflow_primer");
     expect(err.error.allowedNext).toEqual(["workflow_primer"]);
@@ -478,7 +478,7 @@ describe("mapBackendError catalog", () => {
         attempts: 2,
       },
     });
-    expect(err.error.code).toBe("http_423");
+    expect(err.error.code).toBe("some_future_code");
     const detail = err.error.detail as {
       reason: string;
       candidates: string[];
@@ -511,13 +511,19 @@ describe("mapBackendError catalog", () => {
     expect(mapBackendError(500, { error: "x", message: "m" }).error.detail).toBeUndefined();
   });
 
-  it("a known backend `error` code that is NOT in the catalog still degrades by HTTP status, not by echoing that code", () => {
-    // bad_state / self_merge_blocked / grounding_required / etc. are real
-    // backend codes (backend/src/routes/tasks.ts) that are deliberately out
-    // of this task's catalog scope; the code must come from the STATUS, not
-    // be silently promoted to the emitted `code` field.
+  it("a known backend `error` code that is NOT in the catalog passes through as the emitted code (consumers key on it), with http_<status> only as the no-code fallback", () => {
+    // bad_state / claim_blocked / self_merge_blocked etc. are real backend
+    // codes (backend/src/routes/tasks.ts) outside this catalog's scope. The
+    // backend's own code is the most specific signal available and
+    // downstream consumers assert on it (mcp-bridge's governance suite
+    // pins a 409 claim_blocked staying visible end to end), so the degrade
+    // emits it verbatim (clamped) instead of masking it behind the status.
     const err = mapBackendError(409, { error: "bad_state", message: "Task must be in review status" });
-    expect(err.error.code).toBe("http_409");
+    expect(err.error.code).toBe("bad_state");
+    const governance = mapBackendError(409, { error: "claim_blocked", message: "Claim blocked by governance mode" });
+    expect(governance.error.code).toBe("claim_blocked");
+    const noCode = mapBackendError(409, { message: "no code in this body" });
+    expect(noCode.error.code).toBe("http_409");
   });
 
   it("a body with no message field at all still produces a usable message", () => {
