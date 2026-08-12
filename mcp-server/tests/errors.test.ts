@@ -4,11 +4,18 @@ import {
   serializeTeachingError,
   looksLikeStructuredWrapper,
   resultMustBePlainStringError,
+  KNOWN_RULE_CORRECTIVES,
   type TeachingError,
 } from "../src/errors.js";
 import { serializeResult } from "../src/server.js";
 import { buildTools } from "../src/tools.js";
 import { AgentTasksClient } from "../src/client.js";
+// Same cross-workspace test-only import idiom as
+// tests/default-workflow.test.ts: the real source of truth for the
+// TransitionRule set and its diagnostic prose is the backend, not a
+// hand-typed copy in this package. Never reaches `npm run build`'s tsc
+// output (mcp-server's tsconfig.json excludes `tests/`).
+import { RULE_MESSAGES } from "../../backend/src/services/transition-rules.js";
 
 // docs/response-contract-v1.md's "Error shape (block tier)" section: sized
 // to teach, not a payload cap, but the task_start Named exception's own
@@ -30,6 +37,21 @@ function assertAllowedNextRegistered(err: TeachingError, registered: Set<string>
     expect(registered.has(verb), `allowedNext verb "${verb}" is not a registered tool`).toBe(true);
   }
 }
+
+// rc-v1-C005 round 2 review, finding #3 (drift guard): KNOWN_RULE_CORRECTIVES
+// hand-authors a short corrective for each of the four real TransitionRule
+// values. Nothing previously checked that its key set actually stayed in
+// sync with the real backend's own rule set (RULE_MESSAGES, backend/src/
+// services/transition-rules.ts) -- a future rule addition there could go
+// unnoticed here indefinitely, silently falling back to the truncating
+// clamp for the new rule instead of getting its own corrective. This
+// compares the KEY SETS directly against the imported (not hand-copied)
+// backend export.
+describe("KNOWN_RULE_CORRECTIVES stays in sync with the backend's real TransitionRule set", () => {
+  it("has exactly the same keys as RULE_MESSAGES (backend/src/services/transition-rules.ts)", () => {
+    expect(Object.keys(KNOWN_RULE_CORRECTIVES).sort()).toEqual(Object.keys(RULE_MESSAGES).sort());
+  });
+});
 
 describe("mapBackendError catalog", () => {
   const registered = registeredVerbNames();
@@ -165,28 +187,17 @@ describe("mapBackendError catalog", () => {
   });
 
   it("precondition_failed: the real backend's 4-gate worst case (all TransitionRule values failing at once, actual RULE_MESSAGES text) keeps every corrective whole and stays within the error budget", () => {
-    // Real text from backend/src/services/transition-rules.ts's
-    // RULE_MESSAGES, for the real TransitionRule set (branchPresent/
-    // prPresent/ciGreen/prMerged) -- not the synthetic fixtures the other
-    // tests in this file use. This is the actual worst case the live
-    // backend can ever send on this route.
-    const failed = [
-      { rule: "branchPresent", message: "No branch recorded on this task. PATCH /api/tasks/:id with branchName first." },
-      {
-        rule: "prPresent",
-        message: "No pull request recorded on this task. Create the PR (via /api/github/pull-requests or PATCH prUrl/prNumber) first.",
-      },
-      {
-        rule: "ciGreen",
-        message:
-          "CI is not green on the PR. Every check run must end in success (or neutral/skipped). If GitHub is unreachable or no delegation user is available, this rule fails closed -- retry or use admin force.",
-      },
-      {
-        rule: "prMerged",
-        message:
-          "PR is not merged yet. The pull request on this task must be in the closed-merged state. Open PRs, rejected PRs, and API errors all block -- merge the PR or use admin force.",
-      },
-    ];
+    // Built directly from the imported RULE_MESSAGES (backend/src/services/
+    // transition-rules.ts), not a hand-copied string -- rc-v1-C005 round 2
+    // review, finding #3: a hand-copy can silently drift from the real
+    // backend text without failing here. This is the actual worst case the
+    // live backend can ever send on this route (the real TransitionRule set:
+    // branchPresent/prPresent/ciGreen/prMerged), unlike the synthetic
+    // fixtures the other tests in this file use.
+    const failed = (Object.keys(RULE_MESSAGES) as Array<keyof typeof RULE_MESSAGES>).map((rule) => ({
+      rule,
+      message: RULE_MESSAGES[rule],
+    }));
     const err = mapBackendError(422, { error: "precondition_failed", failed }, "task_finish");
     const detailFailed = err.error.detail?.failed as Array<{ rule: string; message: string }>;
     expect(detailFailed).toEqual([
@@ -225,6 +236,24 @@ describe("mapBackendError catalog", () => {
     expect(err.error.allowedNext).toEqual(["task_finish"]);
   });
 
+  // Every wrap() call site that actually threads verbContext through for
+  // this error (tools.ts: task_start and task_finish are pinned above by
+  // name; the remaining three deprecated v1 routes are covered here as a
+  // cheap loop rather than three near-duplicate `it` blocks).
+  it.each(["tasks_transition", "tasks_update", "tasks_claim"] as const)(
+    "precondition_failed: verbContext '%s' is named in both allowedNext and the recipe",
+    (verb) => {
+      const err = mapBackendError(
+        422,
+        { error: "precondition_failed", failed: [{ rule: "ciGreen", message: "..." }] },
+        verb,
+      );
+      expect(err.error.allowedNext).toEqual([verb]);
+      expect(err.error.recipe).toContain(verb);
+      assertAllowedNextRegistered(err, registered);
+    },
+  );
+
   it("precondition_failed: many failing gates clamp to 5 detail entries plus totalFailed (worst-case fixture), and the whole response stays under budget", () => {
     // TransitionRule only has 4 real values on the live backend
     // (branchPresent/prPresent/ciGreen/prMerged); this fixture is
@@ -243,6 +272,35 @@ describe("mapBackendError catalog", () => {
       expect(entry.message.length).toBeLessThanOrEqual(60);
     }
     expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+  });
+
+  // rc-v1-C005 round 2 review, finding #2+#3 (structural): the fixture above
+  // clamps to 5 entries but never carries the optional per-rule `error`
+  // field alongside rule/message -- the round 2 review measured the
+  // combined shape (5 entries, each with rule+message+error all near their
+  // own 60-char field clamp) at 1559 SERIALIZED chars, over budget, even
+  // though every individual field stayed within DETAIL_ENTRY_CHAR_BUDGET.
+  // This is the aggregate-bound regression pin: buildTeachingError's own
+  // enforceErrorBudget step (errors.ts) must catch what the per-field clamp
+  // alone cannot, by re-clamping `detail` harder -- visibly (fewer entries
+  // than the normal DETAIL_CLAMP=5 survive, but totalFailed still reports
+  // the true, un-shrunk count, so the degrade is never silent).
+  it("precondition_failed: the worst case WITH per-rule error fields stays within budget via the aggregate bound (round 2 finding: per-field clamps alone measured 1559 chars)", () => {
+    const failed = Array.from({ length: 12 }, (_, i) => ({
+      rule: `syntheticRule${i}`,
+      message:
+        "A very long backend-authored explanation of a brand-new workflow gate that easily exceeds the sixty character budget, entry " +
+        i,
+      error: "GitHub API request timed out with a fairly long diagnostic explanation attached, entry " + i,
+    }));
+    const err = mapBackendError(422, { error: "precondition_failed", failed }, "task_finish");
+    expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+    const detailFailed = err.error.detail?.failed as Array<{ rule: string; message: string; error?: string }>;
+    // The aggregate bound degraded further than the normal per-field clamp
+    // alone (fewer than DETAIL_CLAMP=5 entries survive), visibly: totalFailed
+    // still reports the true original count (12), not the shrunk count.
+    expect(detailFailed.length).toBeLessThan(5);
+    expect(err.error.detail?.totalFailed).toBe(12);
   });
 
   // ── 4. cross_repo_pr_rejected ───────────────────────────────────────────
@@ -480,6 +538,50 @@ describe("mapBackendError catalog", () => {
     expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
   });
 
+  // rc-v1-C005 round 2 review, missing test: a realistic zod .flatten()
+  // shaped payload through the generic degrade path. Mirrors the real
+  // (non-exported) agentUpdateTaskSchema shape tasks_update's own backend
+  // route validates against (backend/src/routes/tasks.ts's PATCH
+  // /tasks/:id, agent path: branchName/prUrl/prNumber/result) -- every
+  // field invalid at once is the actual worst case that route can send.
+  // Structure only (zod's own `{formErrors, fieldErrors}` shape), not a
+  // byte-exact import: the schema itself is not exported, so this is a
+  // deliberate, documented mirror rather than a drift-guarded import (see
+  // the KNOWN_RULE_CORRECTIVES/RULE_MESSAGES drift guard above for the
+  // pattern used where the source IS exported).
+  it("generic degrade: a realistic zod-flatten payload (tasks_update's own 4-field agentUpdateTaskSchema, every field invalid) stays within budget", () => {
+    const flattened = {
+      formErrors: [],
+      fieldErrors: {
+        branchName: ["Expected string, received number"],
+        prUrl: ["Invalid url", "URL must use the http or https scheme"],
+        prNumber: ["Expected integer, received float", "Number must be greater than 0"],
+        result: ["Expected string, received object"],
+      },
+    };
+    const err = mapBackendError(400, { error: "bad_request", message: "Validation failed", details: flattened });
+    expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+    // Small, real-shaped payload: nothing needs to be dropped.
+    expect(err.error.detail).toEqual(flattened);
+  });
+
+  it("generic degrade: a wide details object (50 keys x 200 chars) clamps key COUNT and key NAMES, with a visible (accurate, un-shrunk) totalKeys marker, and stays within budget", () => {
+    const details: Record<string, string> = {};
+    for (let i = 0; i < 50; i++) {
+      details[`field_${i}_with_a_fairly_long_descriptive_key_name`] = "v".repeat(200);
+    }
+    const err = mapBackendError(500, { error: "internal_error", message: "too many fields", details });
+    expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+    // totalKeys reports the TRUE original count (50), not the count of
+    // whatever intermediate, already-shrunk object a second clamp pass
+    // might otherwise have measured (rc-v1-C005 round 2 fix-round bug,
+    // caught and fixed during this same change: an earlier version of this
+    // fix reported an inaccurate, much smaller totalKeys after a harder
+    // reclamp pass).
+    expect(err.error.detail?.totalKeys).toBe(50);
+    expect(Object.keys(err.error.detail ?? {}).length).toBeLessThan(51);
+  });
+
   // Every catalog + degrade fixture above stays within budget on its own,
   // not just the deliberately worst-case one.
   it("every catalog entry constructed in this file stays within the error budget", () => {
@@ -527,6 +629,24 @@ describe("resultMustBePlainStringError / looksLikeStructuredWrapper", () => {
   it("does not flag an empty string", () => {
     expect(looksLikeStructuredWrapper("")).toBe(false);
     expect(looksLikeStructuredWrapper("   ")).toBe(false);
+  });
+
+  // rc-v1-C005 round 2 review, finding #1 (MEDIUM): TAG_PAIR_PATTERN's lazy,
+  // backtracking-capable inner match can blow up combinatorially on a long,
+  // pathological string with many unmatched '<' characters -- measured at
+  // ~18.4s scanning a single 400k-char adversarial string through the raw
+  // regex before the TAG_SCAN_CHAR_LIMIT guard was added. tools.ts's
+  // task_finish and tasks_update both cap `result` at 5000 chars today, but
+  // this is a guard-cost test on looksLikeStructuredWrapper itself
+  // (independent of any caller's own cap), so a future uncapped caller can
+  // never reintroduce the stall unnoticed.
+  it("stays fast on a 400k-char adversarial string with no closing tags (guard-cost regression pin for the TAG_PAIR_PATTERN backtracking blowup)", () => {
+    const adversarial = "<a ".repeat(133_333).slice(0, 400_000);
+    const start = performance.now();
+    const result = looksLikeStructuredWrapper(adversarial);
+    const elapsed = performance.now() - start;
+    expect(result).toBe(false);
+    expect(elapsed).toBeLessThan(250);
   });
 
   it("resultMustBePlainStringError names task_finish as the concrete corrective call by default", () => {
@@ -624,9 +744,137 @@ describe("serializeTeachingError matches server.ts's serializeResult exactly", (
       mapBackendError(422, { error: "precondition_failed", failed: [{ rule: "ciGreen", message: "x" }] }),
       mapBackendError(500, { error: "internal_error", message: "boom" }),
       resultMustBePlainStringError(),
+      // low_confidence, carrying its own score/threshold/missing[] detail
+      // shape (distinct from precondition_failed's failed[] shape above).
+      mapBackendError(422, {
+        error: "low_confidence",
+        message: "Task does not meet confidence threshold for agent claiming",
+        details: { score: 35, threshold: 60, missing: ["acceptanceCriteria", "agentPrompt"] },
+      }),
+      // A degrade-with-detail sample big enough to trip the aggregate
+      // budget's harder reclamp (see the "response budget invariant" tests
+      // below): the two serializers must stay in lockstep on the DEGRADED
+      // shape too, not just the common case.
+      mapBackendError(400, {
+        error: "x",
+        message: "M".repeat(300),
+        details: Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [`k${i}`, "v".repeat(500)])),
+      }),
     ];
     for (const sample of samples) {
       expect(serializeTeachingError(sample)).toBe(serializeResult(sample));
     }
+  });
+});
+
+// ── Response budget invariant (rc-v1-C005 round 2 review, structural
+// finding): buildTeachingError's own per-field clamps bound a single field,
+// never their sum. enforceErrorBudget (errors.ts) is the aggregate backstop:
+// re-measure the whole serialized object, re-clamp `detail` harder if it is
+// still over budget, and, only if that is still not enough, replace `detail`
+// with a small visible summary rather than a silent or misleading drop.
+// This fuzzes a handful of adversarial body shapes through the real
+// mapBackendError entry point (not the internal helpers directly) and pins
+// the one thing that must ALWAYS hold regardless of shape: the serialized
+// size never exceeds the budget. ────────────────────────────────────────────
+describe("response budget invariant: adversarial input", () => {
+  const adversarialBodies: Array<{ label: string; status: number; body: unknown }> = [
+    {
+      label: "huge details object (2000 keys, 500-char values)",
+      status: 500,
+      body: {
+        error: "x",
+        message: "m",
+        details: Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [`k${i}`, "v".repeat(500)])),
+      },
+    },
+    {
+      label: "single huge string detail value (200k chars)",
+      status: 500,
+      body: { error: "x", message: "m", details: { blob: "z".repeat(200_000) } },
+    },
+    {
+      label: "huge array of huge strings (5000 x 500 chars)",
+      status: 500,
+      body: {
+        error: "x",
+        message: "m",
+        details: { items: Array.from({ length: 5000 }, () => "y".repeat(500)) },
+      },
+    },
+    {
+      label: "huge key NAMES (20 keys, 2000-char names)",
+      status: 500,
+      body: {
+        error: "x",
+        message: "m",
+        details: Object.fromEntries(Array.from({ length: 20 }, (_, i) => ["k".repeat(2000) + i, "short"])),
+      },
+    },
+    {
+      label: "deeply nested chain (well beyond GENERIC_DETAIL_MAX_DEPTH)",
+      status: 500,
+      body: {
+        error: "x",
+        message: "m",
+        details: Array.from({ length: 20 }, () => 0).reduce((acc: unknown) => ({ next: acc }), { leaf: "bottom" }),
+      },
+    },
+    {
+      label: "pathological message alone (1,000,000 chars, no details)",
+      status: 400,
+      body: { error: "bad", message: "x".repeat(1_000_000) },
+    },
+    {
+      label: "max-length message combined with a huge-keys details object",
+      status: 400,
+      body: {
+        error: "x",
+        message: "M".repeat(1000),
+        details: Object.fromEntries(
+          Array.from({ length: 2000 }, (_, i) => [`some_fairly_long_field_name_${i}`, "v".repeat(500)]),
+        ),
+      },
+    },
+    {
+      label: "precondition_failed, 12 max-length rule/message/error entries",
+      status: 422,
+      body: {
+        error: "precondition_failed",
+        message: "x".repeat(400),
+        failed: Array.from({ length: 12 }, (_, i) => ({
+          rule: `r${i}`.repeat(20),
+          message: "m".repeat(400),
+          error: "e".repeat(400),
+        })),
+      },
+    },
+  ];
+
+  it.each(adversarialBodies)("$label: serialized response never exceeds ERROR_BUDGET_CHARS", ({ status, body }) => {
+    const err = mapBackendError(status, body, "task_finish");
+    const serialized = serializeResult(err);
+    expect(serialized.length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+    // code/message/recipe/allowedNext are never sacrificed to hold the
+    // invariant -- only `detail` is ever degraded.
+    expect(typeof err.error.code).toBe("string");
+    expect(err.error.code.length).toBeGreaterThan(0);
+    expect(Array.isArray(err.error.allowedNext)).toBe(true);
+  });
+
+  it("a wide-and-deep nested object (10-way branching, 4 levels) forces the full omission fallback, with a visible marker, and still stays within budget", () => {
+    function buildWide(depth: number): unknown {
+      if (depth === 0) return "leafvalue".repeat(10);
+      const obj: Record<string, unknown> = {};
+      for (let i = 0; i < 10; i++) {
+        obj[`key_level${depth}_index${i}_${"pad".repeat(10)}`] = buildWide(depth - 1);
+      }
+      return obj;
+    }
+    const err = mapBackendError(400, { error: "x", message: "M".repeat(300), details: buildWide(4) as Record<string, unknown> });
+    const serialized = serializeResult(err);
+    expect(serialized.length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+    expect(err.error.detail?.omitted).toBe(true);
+    expect(err.error.detail?.reason).toBe("detail exceeded the error budget");
   });
 });

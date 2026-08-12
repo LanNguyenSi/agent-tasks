@@ -502,6 +502,31 @@ describe("buildTools", () => {
     });
   });
 
+  // rc-v1-C005 round 2 review, finding #1 (MEDIUM): tasks_update's `result`
+  // used to be an UNCAPPED z.string() -- symmetry with task_finish's own
+  // result (which has always been .max(5000)) closes the gap that let an
+  // arbitrarily large string reach looksLikeStructuredWrapper's tag-pair
+  // scan in the first place. Exercised via the real zod schema (parseArgs),
+  // not the handler directly, since the real MCP SDK validates inputShape
+  // BEFORE the handler ever runs (see parseArgs's own comment above).
+  it("tasks_update's zod schema rejects a result over 5000 chars (symmetry with task_finish's own cap)", () => {
+    expect(() =>
+      parseArgs("tasks_update", {
+        taskId: "33333333-3333-3333-3333-333333333333",
+        result: "x".repeat(5001),
+      }),
+    ).toThrow();
+  });
+
+  it("tasks_update's zod schema accepts a result at exactly the 5000-char cap", () => {
+    expect(() =>
+      parseArgs("tasks_update", {
+        taskId: "33333333-3333-3333-3333-333333333333",
+        result: "x".repeat(5000),
+      }),
+    ).not.toThrow();
+  });
+
   // rc-v1-C005 review round 1, finding #7: pull_requests_create's own
   // cross_repo_pr_rejected emit site (backend/src/routes/github.ts's POST
   // /pull-requests) sends owner/repo, not a prUrl, so the default

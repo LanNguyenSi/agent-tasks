@@ -681,7 +681,12 @@ export function buildTools(client: AgentTasksClient): ToolDefinition[] {
         branchName: z.string().max(255).nullable().optional(),
         prUrl: z.string().url().nullable().optional(),
         prNumber: z.number().int().positive().nullable().optional(),
-        result: z.string().nullable().optional(),
+        // Symmetry with task_finish's own result field (same field, same
+        // storage): uncapped here let a caller feed an arbitrarily large
+        // string straight into looksLikeStructuredWrapper's tag-pair scan
+        // before this cap was added (measured: 18,395ms on a 400k-char
+        // adversarial input against the pre-cap guard alone).
+        result: z.string().max(5000).nullable().optional(),
       },
       handler: async ({ taskId, ...input }) => {
         // Same pre-network guard as task_finish's own result field

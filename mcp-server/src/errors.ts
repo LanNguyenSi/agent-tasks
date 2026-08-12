@@ -38,6 +38,34 @@
 // No em dashes in this file's exported/emitted prose (repo convention,
 // enforced today only for primer.ts's exported strings, applied here too
 // since these messages are caller-facing prose of the same kind).
+//
+// ── Response budget invariant ───────────────────────────────────────────
+//
+// INVARIANT: the serialized form of any TeachingError this module builds
+// (serializeTeachingError's output, exactly what a caller receives) is
+// always <= ERROR_BUDGET_CHARS (1200 chars, the wire-format size measured
+// through serializeResult exactly as server.ts emits it) for arbitrary
+// adversarial backend input. `code`, `message` (itself already clamped to
+// MESSAGE_CHAR_BUDGET), `recipe` (clamped to RECIPE_CHAR_BUDGET), and
+// `allowedNext` are always preserved WHOLE regardless of size, since the
+// contract mandates all four unconditionally; `detail` is the one
+// auxiliary field, and the only field this module ever sacrifices to hold
+// the invariant.
+//
+// The per-field clamps below (DETAIL_CLAMP, DETAIL_KEY_CLAMP,
+// DETAIL_ENTRY_CHAR_BUDGET, MESSAGE_CHAR_BUDGET, RECIPE_CHAR_BUDGET) each
+// bound a single field, never their sum: several near-max fields at once
+// (precondition_failed's failed[] with several entries, each carrying an
+// optional `error` string alongside rule/message, or a wide generic
+// `details` object) can still exceed the budget in total even when every
+// individual field stayed within its own clamp. buildTeachingError's own
+// enforceErrorBudget step is the single place that actually guarantees the
+// TOTAL: it re-measures the whole serialized object after construction
+// and, only when still over budget, first re-clamps `detail` harder (same
+// recursive clamp, tighter limits), then, if that is still not enough,
+// replaces `detail` entirely with a small, visible summary object instead
+// of truncating it into something silently misleading or dropping it
+// without a trace.
 
 /** The full block-tier response shape. */
 export interface TeachingError {
@@ -68,7 +96,14 @@ export interface TeachingError {
 
 /** Max entries kept in a detail array before it is clamped + counted. */
 const DETAIL_CLAMP = 5;
-/** Per-entry char bound for a detail array's own string fields. */
+/** Max distinct keys kept in a detail OBJECT before it is clamped + counted
+ *  (the object counterpart to DETAIL_CLAMP's array-entry cap). An object
+ *  with many keys, or long key names, is exactly as capable of blowing the
+ *  response budget as an oversized array or string, and per-VALUE clamping
+ *  alone does nothing to bound key count or key-name length. */
+const DETAIL_KEY_CLAMP = 12;
+/** Per-entry char bound for a detail array's own string fields, and for a
+ *  detail object's own key names and string values. */
 const DETAIL_ENTRY_CHAR_BUDGET = 60;
 /** Char bound for the top-level `message` and `recipe` strings — these can
  *  carry a raw backend message (a zod validation error, for one, can run to
@@ -77,6 +112,21 @@ const DETAIL_ENTRY_CHAR_BUDGET = 60;
 const MESSAGE_CHAR_BUDGET = 300;
 const RECIPE_CHAR_BUDGET = 240;
 const TRUNCATION_MARKER = "...";
+
+/** Hard ceiling on the whole serialized teaching error (JSON.stringify(x,
+ *  null, 2), the exact wire format serializeTeachingError/serializeResult
+ *  emit). See the file header's "Response budget invariant" section: this
+ *  is the number enforceErrorBudget (below) actually holds the line at,
+ *  since the per-field clamps above only ever bound one field at a time. */
+const ERROR_BUDGET_CHARS = 1200;
+
+/** Tighter versions of DETAIL_CLAMP / DETAIL_KEY_CLAMP /
+ *  DETAIL_ENTRY_CHAR_BUDGET, used only by enforceErrorBudget's second
+ *  ("harder reclamp") pass, when the normal clamp still was not enough to
+ *  bring the total under ERROR_BUDGET_CHARS. */
+const HARD_DETAIL_CLAMP = 2;
+const HARD_DETAIL_KEY_CLAMP = 3;
+const HARD_DETAIL_ENTRY_CHAR_BUDGET = 20;
 
 function clamp(value: string, maxChars: number): string {
   return value.length > maxChars
@@ -91,7 +141,7 @@ function buildTeachingError(opts: {
   allowedNext: string[];
   detail?: Record<string, unknown>;
 }): TeachingError {
-  return {
+  const err: TeachingError = {
     ok: false,
     error: {
       code: opts.code,
@@ -101,6 +151,15 @@ function buildTeachingError(opts: {
       ...(opts.detail ? { detail: opts.detail } : {}),
     },
   };
+  // Single choke point for every TeachingError this module ever constructs
+  // (every catalog entry, the generic degrade path, and
+  // resultMustBePlainStringError all call buildTeachingError): the response
+  // budget invariant documented in the file header is enforced HERE, not
+  // duplicated at each call site or bolted onto mapBackendError's return
+  // path, so a future catalog entry gets it for free. enforceErrorBudget is
+  // defined further down (near clampDetailValue, which it reuses); function
+  // declarations are hoisted, so the forward reference is fine.
+  return enforceErrorBudget(err);
 }
 
 /** Serializes a TeachingError exactly as server.ts's serializeResult would
@@ -179,9 +238,9 @@ function alreadyClaimedError(message: string): TeachingError {
   });
 }
 
-// 3. Branch precondition. task_start / task_finish / (the two deprecated v1
-// routes tasks_update [PATCH /tasks/:id] and tasks_claim [POST
-// /tasks/:id/claim]) all return 422
+// 3. Branch precondition. task_start / task_finish / tasks_transition [POST
+// /tasks/:id/transition] / (the two deprecated v1 routes tasks_update
+// [PATCH /tasks/:id] and tasks_claim [POST /tasks/:id/claim]) all return 422
 // `precondition_failed` with a structured `failed: [{rule, message, error?}]`
 // array (backend/src/routes/tasks.ts, backend/src/services/transition-rules.ts:
 // TransitionRule is exactly "branchPresent" | "prPresent" | "ciGreen" |
@@ -196,7 +255,12 @@ function alreadyClaimedError(message: string): TeachingError {
 // applied unconditionally, same as receipt.ts's DETAIL_CLAMP convention,
 // even though the fixed 4-rule set means it can never actually bite against
 // the live backend — a future rule addition, or a malformed/spoofed body in
-// a test fixture, must not be able to blow the response budget.
+// a test fixture, must not be able to blow the response budget. This clamp
+// bounds each FIELD on its own, not the sum of all of them; the aggregate
+// invariant that the WHOLE response never blows the budget is what
+// buildTeachingError's enforceErrorBudget step (see the file header)
+// actually guarantees, since several near-max failed[] entries at once can
+// still add up past ERROR_BUDGET_CHARS even though each stayed clamped.
 //
 // The real backend's TransitionRule values (backend/src/services/
 // transition-rules.ts) and their RULE_MESSAGES prose. That prose is
@@ -211,7 +275,11 @@ function alreadyClaimedError(message: string): TeachingError {
 // future rule addition, or a malformed/spoofed body in a test fixture), so
 // the unconditional-clamp property above still holds for anything this
 // module does not know about.
-const KNOWN_RULE_CORRECTIVES: Record<string, string> = {
+// Exported so tests/errors.test.ts can assert this map's key set stays in
+// sync with the real backend's transition-rules.ts RULE_MESSAGES (a
+// same-workspace-idiom drift guard, not a runtime consumer outside this
+// module).
+export const KNOWN_RULE_CORRECTIVES: Record<string, string> = {
   branchPresent: "record the branch via task_submit_pr",
   prPresent: "create the PR then task_submit_pr",
   ciGreen: "wait for CI to pass on the PR",
@@ -224,14 +292,18 @@ function preconditionFailedError(body: BackendErrorBody, verbContext: string | u
   // `rule` is clamped even though the real backend's TransitionRule values
   // are short: this function's input is untrusted response data, not a
   // value this module controls, so a malformed/oversized `rule` string
-  // must not be able to blow the budget either. `message` is the known
-  // rule's own-authored corrective (whole, never truncated) when the rule
-  // is one of the four real ones, or the backend's own message clamped
-  // otherwise (see KNOWN_RULE_CORRECTIVES above). The optional per-rule
-  // `error` field (present today on ciGreen/prMerged when the underlying
-  // GitHub call itself failed — e.g. "GitHub unreachable" vs. a clean "CI
-  // red", the only thing distinguishing the two) is included, clamped,
-  // whenever the backend actually sent one.
+  // must not be able to blow the per-field budget either. Three near-max
+  // fields (rule/message/error) on several entries at once can still add
+  // up past the RESPONSE budget even with every field individually
+  // clamped here; buildTeachingError's enforceErrorBudget step is what
+  // actually holds that aggregate line (see the file header). `message`
+  // is the known rule's own-authored corrective (whole, never truncated)
+  // when the rule is one of the four real ones, or the backend's own
+  // message clamped otherwise (see KNOWN_RULE_CORRECTIVES above). The
+  // optional per-rule `error` field (present today on ciGreen/prMerged
+  // when the underlying GitHub call itself failed — e.g. "GitHub
+  // unreachable" vs. a clean "CI red", the only thing distinguishing the
+  // two) is included, clamped, whenever the backend actually sent one.
   const clampedFailed = rawFailed.slice(0, DETAIL_CLAMP).map((f) => {
     const rawRule = typeof f.rule === "string" ? f.rule : "unknown";
     const rawMessage = typeof f.message === "string" ? f.message : "";
@@ -372,6 +444,21 @@ const INLINE_FORMATTING_TAGS = new Set(["b", "i", "em", "strong", "code"]);
 // later same-named closing tag).
 const TAG_PAIR_PATTERN = /<([a-zA-Z][\w:-]*)\b[^>]*>[\s\S]*?<\/\1>/g;
 
+// A pathological string (many '<' characters with no matching closing tag)
+// can make TAG_PAIR_PATTERN's lazy, backtracking-capable inner match blow up
+// combinatorially on long input (measured: ~18.4s scanning a single 400k-char
+// adversarial string). tools.ts's task_finish and tasks_update both cap
+// `result` at 5000 chars today, but this guard must not itself become the
+// next unbounded-input path for some future caller that forgets to cap its
+// own input before handing it to looksLikeStructuredWrapper, so it is
+// bounded here too, defensively, independent of any caller-side cap. Only
+// the leading TAG_SCAN_CHAR_LIMIT chars are scanned for a suspicious tag
+// pair; a legitimate tag pair sitting entirely past that point in an
+// already-pathologically-long value is missed, an accepted trade-off since a
+// value that long is already well outside "plain prose result text"
+// territory regardless.
+const TAG_SCAN_CHAR_LIMIT = 6000;
+
 /** True when `trimmed` contains a tag pair this guard treats as suspicious.
  *  Zero matches: never suspicious (plain prose that merely mentions an
  *  unclosed tag, e.g. "fixed the <Foo> component", never matches at all).
@@ -434,7 +521,9 @@ export function looksLikeStructuredWrapper(value: string): boolean {
     }
   }
 
-  return hasSuspiciousTagPair(trimmed);
+  return hasSuspiciousTagPair(
+    trimmed.length > TAG_SCAN_CHAR_LIMIT ? trimmed.slice(0, TAG_SCAN_CHAR_LIMIT) : trimmed,
+  );
 }
 
 export function resultMustBePlainStringError(
@@ -510,23 +599,61 @@ function lowConfidenceError(body: BackendErrorBody, message: string): TeachingEr
 // earn its own catalog entry.
 const GENERIC_DETAIL_MAX_DEPTH = 3;
 
+/** Overridable limits for clampDetailValue's recursive walk. Defaults to
+ *  this module's normal DETAIL_CLAMP / DETAIL_KEY_CLAMP /
+ *  DETAIL_ENTRY_CHAR_BUDGET; enforceErrorBudget's harder second pass
+ *  supplies the HARD_* constants instead, reusing the same function rather
+ *  than a parallel implementation. */
+interface DetailClampOpts {
+  arrayClamp?: number;
+  keyClamp?: number;
+  entryChars?: number;
+}
+
+/** Writes `key: value` into `out`, disambiguating on collision instead of
+ *  silently overwriting the earlier entry. A collision here means two
+ *  DISTINCT original keys clamped down to the identical truncated name
+ *  (e.g. several keys sharing a long common prefix beyond the char
+ *  budget). Without this, the second write would clobber the first with
+ *  no trace, which is exactly the kind of silent data loss this whole
+ *  module exists to avoid. */
+function setClampedKey(out: Record<string, unknown>, key: string, value: unknown): void {
+  if (!(key in out)) {
+    out[key] = value;
+    return;
+  }
+  let suffix = 2;
+  while (`${key}~${suffix}` in out) suffix++;
+  out[`${key}~${suffix}`] = value;
+}
+
 /** Recursively clamps an arbitrary JSON-ish detail value: every string is
- *  char-clamped, every array is entry-clamped (both reuse
- *  DETAIL_ENTRY_CHAR_BUDGET / DETAIL_CLAMP, the same constants the catalog
- *  entries above use), and every object's keys are walked and KEPT (never
- *  dropped) with their own values clamped the same way. `depth` guards
+ *  char-clamped, every array is entry-clamped, and every object's key
+ *  COUNT is entry-clamped too (an object with many keys, or long key
+ *  names, is exactly as capable of blowing the response budget as an
+ *  oversized array or string, and per-VALUE clamping alone does nothing to
+ *  bound key count or key-name length). Surviving keys' NAMES are
+ *  themselves char-clamped, colliding clamped names are disambiguated
+ *  rather than overwritten (see setClampedKey), and a `totalKeys` marker
+ *  is added whenever any key was dropped, so the drop is never silent.
+ *  Kept values are clamped the same way, recursively. `depth` guards
  *  against a pathological/cyclic input from untrusted response data. */
-function clampDetailValue(value: unknown, depth: number): unknown {
+function clampDetailValue(value: unknown, depth: number, opts: DetailClampOpts = {}): unknown {
+  const arrayClamp = opts.arrayClamp ?? DETAIL_CLAMP;
+  const keyClamp = opts.keyClamp ?? DETAIL_KEY_CLAMP;
+  const entryChars = opts.entryChars ?? DETAIL_ENTRY_CHAR_BUDGET;
   if (depth > GENERIC_DETAIL_MAX_DEPTH) return "[detail nested too deep, truncated]";
-  if (typeof value === "string") return clamp(value, DETAIL_ENTRY_CHAR_BUDGET);
+  if (typeof value === "string") return clamp(value, entryChars);
   if (Array.isArray(value)) {
-    return value.slice(0, DETAIL_CLAMP).map((v) => clampDetailValue(v, depth + 1));
+    return value.slice(0, arrayClamp).map((v) => clampDetailValue(v, depth + 1, opts));
   }
   if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = clampDetailValue(v, depth + 1);
+    for (const [k, v] of entries.slice(0, keyClamp)) {
+      setClampedKey(out, clamp(k, entryChars), clampDetailValue(v, depth + 1, opts));
     }
+    if (entries.length > keyClamp) out.totalKeys = entries.length;
     return out;
   }
   // number, boolean, null, undefined: passed through unchanged.
@@ -535,14 +662,109 @@ function clampDetailValue(value: unknown, depth: number): unknown {
 
 /** Clamps a whole `details` object for the generic degrade path. Returns
  *  undefined (so buildTeachingError omits `detail` entirely) when the
- *  backend sent nothing usable — not an object, an array, or empty. */
+ *  backend sent nothing usable — not an object, an array, or empty.
+ *  Delegates straight to clampDetailValue (depth 0) rather than its own
+ *  parallel key-walk: the top-level object needs exactly the same
+ *  key-count/key-name clamping clampDetailValue's object branch already
+ *  does for every NESTED object, so a wide top-level `details` (many keys,
+ *  or long key names) and a wide NESTED object are both bounded by the one
+ *  code path. */
 function clampGenericDetail(details: unknown): Record<string, unknown> | undefined {
   if (!details || typeof details !== "object" || Array.isArray(details)) return undefined;
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(details as Record<string, unknown>)) {
-    out[k] = clampDetailValue(v, 0);
-  }
+  const out = clampDetailValue(details, 0) as Record<string, unknown>;
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// Bookkeeping fields a catalog entry or clampDetailValue itself may already
+// have set to record a TRUE original count (precondition_failed's
+// totalFailed, low_confidence's totalMissing, clampDetailValue's own
+// totalKeys). A second, harder clamp pass over an already-clamped object
+// must not re-derive these from the intermediate object's own (already
+// shrunk) entry count -- that would silently replace an accurate original
+// count with a smaller, misleading one. See reclampDetailHarder below.
+const DETAIL_TOTAL_MARKER_KEYS = ["totalFailed", "totalMissing", "totalKeys"] as const;
+
+/** Re-clamps a detail object with the HARD_* limits, WITHOUT letting the
+ *  pass corrupt any totalFailed/totalMissing/totalKeys marker already
+ *  present (see DETAIL_TOTAL_MARKER_KEYS): those numbers are pulled out
+ *  first, the remaining data-bearing keys are clamped harder on their own,
+ *  and the original markers are restored afterward, overwriting whatever
+ *  (smaller, intermediate-count) marker clampDetailValue's own object
+ *  branch may have added while re-clamping the rest. */
+function reclampDetailHarder(detail: Record<string, unknown>): Record<string, unknown> {
+  const preservedMarkers: Record<string, unknown> = {};
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(detail)) {
+    if ((DETAIL_TOTAL_MARKER_KEYS as readonly string[]).includes(k) && typeof v === "number") {
+      preservedMarkers[k] = v;
+    } else {
+      rest[k] = v;
+    }
+  }
+  const reclampedRest = clampDetailValue(rest, 0, {
+    arrayClamp: HARD_DETAIL_CLAMP,
+    keyClamp: HARD_DETAIL_KEY_CLAMP,
+    entryChars: HARD_DETAIL_ENTRY_CHAR_BUDGET,
+  }) as Record<string, unknown>;
+  return { ...reclampedRest, ...preservedMarkers };
+}
+
+/** Enforces the response budget invariant documented in the file header.
+ *  buildTeachingError's own per-field clamps (MESSAGE_CHAR_BUDGET,
+ *  RECIPE_CHAR_BUDGET) and each catalog entry's own array/key clamps
+ *  bound individual FIELDS, never their sum: several near-max fields at
+ *  once can still exceed ERROR_BUDGET_CHARS in total. This is the one
+ *  place that actually guarantees the total. `code`, `message`, `recipe`,
+ *  and `allowedNext` are never touched here (the contract mandates them
+ *  whole, regardless of size). Only `detail`, the one field the contract
+ *  marks auxiliary, is ever degraded, and NEVER silently: first a harder
+ *  recursive re-clamp (same clampDetailValue walk, tighter HARD_* limits),
+ *  and, only if that still is not enough, a small visible summary object
+ *  replaces `detail` entirely, so a caller always sees that something was
+ *  omitted rather than getting a truncated, possibly-misleading fragment. */
+function enforceErrorBudget(err: TeachingError): TeachingError {
+  if (serializeTeachingError(err).length <= ERROR_BUDGET_CHARS) return err;
+
+  if (err.error.detail) {
+    const reclamped: TeachingError = {
+      ...err,
+      error: {
+        ...err.error,
+        detail: reclampDetailHarder(err.error.detail),
+      },
+    };
+    if (serializeTeachingError(reclamped).length <= ERROR_BUDGET_CHARS) return reclamped;
+  }
+
+  // Still over budget even after the harder reclamp (or there was no
+  // `detail` to reclamp at all): replace `detail` with a small, fixed-size
+  // summary instead of silently dropping or truncating it. `totalFailed` /
+  // `totalKeys` are carried over when cheaply available (already computed
+  // by the catalog entry or by clampDetailValue's own key-count marker)
+  // since a caller who cannot see the detail at least learns how much of
+  // it there was.
+  const priorDetail = err.error.detail;
+  const totalFailed = typeof priorDetail?.totalFailed === "number" ? priorDetail.totalFailed : undefined;
+  const totalMissing = typeof priorDetail?.totalMissing === "number" ? priorDetail.totalMissing : undefined;
+  const totalKeys =
+    typeof priorDetail?.totalKeys === "number"
+      ? priorDetail.totalKeys
+      : priorDetail && typeof priorDetail === "object"
+        ? Object.keys(priorDetail).length
+        : undefined;
+  return {
+    ...err,
+    error: {
+      ...err.error,
+      detail: {
+        omitted: true,
+        reason: "detail exceeded the error budget",
+        ...(totalFailed !== undefined ? { totalFailed } : {}),
+        ...(totalMissing !== undefined ? { totalMissing } : {}),
+        ...(totalKeys !== undefined ? { totalKeys } : {}),
+      },
+    },
+  };
 }
 
 function genericDegrade(status: number, message: string, details: unknown): TeachingError {
