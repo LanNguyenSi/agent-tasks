@@ -16,7 +16,7 @@ successful calls only; corpus as of 2026-08-12). Before, from the 14-day
 dogfood corpus: `task_start` 1,966 tokens/call (n=148), `task_finish` 1,783
 (n=145), `task_create` 1,380 (n=58), `task_submit_pr` 1,481 (n=76). After,
 from the cold-start eval sessions against the packed 0.13.0 tarball: 75
-(n=3), 26 (n=1), 46 (n=2), 40 (n=1) — small live samples that corroborate
+(n=3), 26 (n=1), 46 (n=2), 40 (n=1): small live samples that corroborate
 the test-pinned response budgets, which are the actual guarantee. Weighted
 by the before-side call profile, the four verbs drop from 742,251 to 20,578
 tokens per 14 days (−97.2%; the release-gate target was −50%). `tasks_get`'s
@@ -46,16 +46,16 @@ corrected by the `not_claimed` teaching error alone.
   #436): `inferredTaskType`, `expectedFinishState`, `gateExpectations` (with
   a `gateExpectationsSource: "assumed-default-workflow"` provenance marker
   when the list comes from the static fallback rather than the project's own
-  workflow definition) — ~75 tokens (300 emitted chars) on the plain
+  workflow definition): ~75 tokens (300 emitted chars) on the plain
   work-claim fixture, against ~2k tokens per call before (the most expensive
   verb of the surface). The persisted `groundingSessionState` blob never reaches the
   default response; debug-flavored tasks get a compact session recipe
   instead. `include` gains `description`/`instructions`/`comments`/`task`;
   `task_pickup` keeps the full spec (minus `comments` by default) as the
-  single full-spec moment — a composition test proves pickup + start together
-  still carry all work data.
+  single full-spec moment (a composition test proves pickup + start together
+  still carry all work data).
 - **`tasks_get` returns a summary projection by default** (rc-v1-C006, #439):
-  id, title, status, priority, clamped labels/blockedBy, claims, prUrl —
+  id, title, status, priority, clamped labels/blockedBy, claims, prUrl,
   pinned at 431 emitted chars on the happy-path fixture; `include` adds
   `description`, `comments`, `artifacts`, or the full object.
 - **Every error is a teaching error** (rc-v1-C005, #438): errors serialize as
@@ -66,7 +66,7 @@ corrected by the `not_claimed` teaching error alone.
   score/threshold/missing detail, `cross_repo_pr_rejected`,
   `pr_author_mismatch`, admin-only `force`, respec conflict, and the
   plain-string result guard); rc-v1-C006 adds two project-addressing entries
-  (`project_addressing_conflict`, `unknown_project_slug` — see Added), for
+  (`project_addressing_conflict`, `unknown_project_slug`, see Added), for
   eleven shipped in 0.13.0. Unknown errors degrade to the same shape and
   pass the backend's own `body.error` code through verbatim (`http_<status>`
   only when the body carries no code), preserving recursively clamped
@@ -74,7 +74,7 @@ corrected by the `not_claimed` teaching error alone.
 - **`signals_poll` caps its response honestly** (rc-v1-C006, #439): default
   limit 10 with an explicit `truncated` marker and a resumable cursor, plus
   `atBackendFetchCeiling` when the fetched backlog hits the backend's 200-row
-  window — nothing is silently dropped.
+  window, so nothing is silently dropped.
 
 ### Removed
 

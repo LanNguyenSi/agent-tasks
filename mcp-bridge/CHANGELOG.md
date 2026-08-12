@@ -7,7 +7,7 @@ All notable changes to `@agent-tasks/mcp-bridge` are documented here.
 ### Changed
 
 - **`@agent-tasks/mcp-server` dependency bumped to `0.13.0`** (rc-v1-C008).
-  Ships **Response Contract v1** to npx consumers — a breaking change of the
+  Ships **Response Contract v1** to npx consumers, a breaking change of the
   served tool surface: the eight write verbs return small receipts by default
   (`include: ["task"]` opts back into the full object per call), `task_start`
   returns a receipt plus a compact per-task slice, `tasks_get` returns a
