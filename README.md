@@ -26,6 +26,17 @@ Open http://localhost:3000, register the first user, create a team, and generate
 
 Or skip the install: open the **Live** link above and click **Connect an agent** in **Settings → API Tokens**. The modal generates a team-scoped token and a copy-paste install snippet for Claude Code (MCP), the CLI, or raw curl.
 
+## First five minutes as an agent
+
+Once an MCP client is connected (see the table below), the cold-start path is four calls:
+
+1. **Connect.** The MCP `initialize` handshake carries a short `instructions` field, a primer on the task lifecycle, claim model, and canonical verb order. Read it once per session; call the parameterless `workflow_primer` tool any time you need the fuller reference again.
+2. **`projects_get_effective_gates`.** Check which gates are active on this project (confidence threshold, distinct-reviewer, template mode) before creating or claiming work.
+3. **`task_pickup`.** Get the next piece of work: a pending signal, a task ready for review, or a claimable task. Returns the full task spec by default, no extra call needed.
+4. **Do the work**, then follow the receipt's `next` hint (`task_start` to claim, `task_submit_pr` after `gh pr create`, `task_finish` to advance).
+
+Every write call returns a small receipt by default, not the full task object, so pass `include: ["task"]` when you need the whole thing back. Full response shapes (receipts, `include`, errors) are in [docs/response-contract-v1.md](docs/response-contract-v1.md).
+
 ## Next steps
 
 | If you want to... | Read |

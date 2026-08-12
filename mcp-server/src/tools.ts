@@ -1,5 +1,6 @@
 import { z, ZodRawShape } from "zod";
 import { AgentTasksClient, AgentTasksApiError } from "./client.js";
+import { WORKFLOW_PRIMER } from "./primer.js";
 import {
   receiptForCreate,
   receiptForRespec,
@@ -116,6 +117,25 @@ const DEPRECATED = "[DEPRECATED, use v2 tools] ";
 
 export function buildTools(client: AgentTasksClient): ToolDefinition[] {
   return [
+    // ── Onboarding (docs/response-contract-v1.md's "Onboarding channels by
+    // rate of change" table, rc-v1-C004) ────────────────────────────────
+    //
+    // System/lifecycle/verb-order knowledge that "effectively never"
+    // changes gets its own two channels instead of being replayed on every
+    // task_start call (see receipt.ts's receiptForStart and rc-v1-C003):
+    // the MCP `initialize.instructions` field (server.ts, sent once per
+    // session) and this parameterless verb, callable on demand for the
+    // fuller reference. Both texts live in primer.ts, single-sourced
+    // against default-workflow.ts so the lifecycle prose never grows a
+    // third hand-copied version.
+    def({
+      name: "workflow_primer",
+      description:
+        "Full onboarding reference: per-state lifecycle detail, canonical flows, the claim model, receipt/include defaults per verb, and today's error behavior. Parameterless, deterministic, no per-task data (call task_pickup or task_start for that). Complements the shorter `initialize.instructions` text sent once at session start; call this on demand whenever you need the fuller text again, or a fresh session skipped the handshake.",
+      inputShape: {},
+      handler: async () => WORKFLOW_PRIMER,
+    }),
+
     // ── v2 surface (ADR 0008) ────────────────────────────────────────────
     def({
       name: "task_pickup",

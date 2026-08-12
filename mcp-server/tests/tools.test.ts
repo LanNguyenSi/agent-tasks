@@ -3,6 +3,7 @@ import { z } from "zod";
 import { buildTools } from "../src/tools.js";
 import { AgentTasksClient, AgentTasksApiError } from "../src/client.js";
 import { serializeResult } from "../src/server.js";
+import { WORKFLOW_PRIMER } from "../src/primer.js";
 
 describe("buildTools", () => {
   const config = { baseUrl: "https://example.test", token: "tok_abc" };
@@ -83,8 +84,19 @@ describe("buildTools", () => {
         "tasks_release",
         "tasks_transition",
         "tasks_update",
+        "workflow_primer",
       ].sort(),
     );
+  });
+
+  it("workflow_primer is parameterless and returns the deterministic long primer text verbatim", async () => {
+    const t = tool("workflow_primer");
+    expect(t.inputShape).toEqual({});
+    const first = await t.handler({} as never);
+    const second = await t.handler({} as never);
+    expect(first).toBe(WORKFLOW_PRIMER);
+    expect(second).toBe(WORKFLOW_PRIMER);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("task_attachment_list GETs the task attachments endpoint", async () => {
