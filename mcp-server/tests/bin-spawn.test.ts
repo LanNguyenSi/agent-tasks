@@ -33,6 +33,7 @@ import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SERVER_VERSION } from "../src/server.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const PACKAGE_ROOT = resolve(__filename, "..", "..");
@@ -98,6 +99,11 @@ describe("agent-tasks-mcp spawned through a node_modules/.bin-shaped symlink (rc
 
       const serverInfo = client.getServerVersion();
       expect(serverInfo?.name).toBe("agent-tasks-mcp");
+      // End-to-end version pin (rc-v1-C008): the drift guard in
+      // server-version.test.ts compares two in-repo literals, but the
+      // incident that motivated it was a stale version shipping in the real
+      // handshake — assert it through the spawned binary too.
+      expect(serverInfo?.version).toBe(SERVER_VERSION);
 
       const listed = await client.listTools();
       const names = listed.tools.map((t) => t.name);

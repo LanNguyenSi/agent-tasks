@@ -9,17 +9,19 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 response shapes change for every existing caller, and 14 deprecated v1 verbs
 leave the default registration. `include: ["task"]` is the per-call valve
 back to the old full-object behavior on every converted verb, and
-`AGENT_TASKS_MCP_LEGACY=1` restores the full pre-0.13.0 tool set.
+`AGENT_TASKS_MCP_LEGACY=1` re-registers the 14 pruned verbs (37 tools total).
 
-**Measured** (mcp-token-audit, response-shape-bucketed over the same 14-day
-dogfood corpus, chars/4 ≈ tokens, successful calls only): `task_start`
-1,966 → 75 tokens/call, `task_finish` 1,783 → 26, `task_create` 1,380 → 46,
-`task_submit_pr` 1,481 → 40. Weighted by the baseline call profile of these
-four verbs, that is ~711k → ~19k tokens per 14 days (−97%; the release-gate
-target was −50%). Receipt sizes are bounded by construction and pinned by
-budget tests; the live receipt-bucket calls corroborate the pinned sizes.
-`tasks_get`'s summary default is pinned at 431 emitted chars (≈ 108 tokens)
-against a ~1.3k-token/call full-object average before.
+**Measured** (mcp-token-audit, response-shape-bucketed, chars/4 ≈ tokens,
+successful calls only; corpus as of 2026-08-12). Before, from the 14-day
+dogfood corpus: `task_start` 1,966 tokens/call (n=148), `task_finish` 1,783
+(n=145), `task_create` 1,380 (n=58), `task_submit_pr` 1,481 (n=76). After,
+from the cold-start eval sessions against the packed 0.13.0 tarball: 75
+(n=3), 26 (n=1), 46 (n=2), 40 (n=1) — small live samples that corroborate
+the test-pinned response budgets, which are the actual guarantee. Weighted
+by the before-side call profile, the four verbs drop from 742,251 to 20,578
+tokens per 14 days (−97.2%; the release-gate target was −50%). `tasks_get`'s
+summary default is pinned at 431 emitted chars (≈ 108 tokens) against a
+~1.3k-token/call full-object average before.
 
 **Cold-start eval** (release gate): a fresh, isolated agent session with no
 prior knowledge of this tracker completed the full lifecycle (`task_start` →
@@ -44,9 +46,9 @@ corrected by the `not_claimed` teaching error alone.
   #436): `inferredTaskType`, `expectedFinishState`, `gateExpectations` (with
   a `gateExpectationsSource: "assumed-default-workflow"` provenance marker
   when the list comes from the static fallback rather than the project's own
-  workflow definition) — 300 emitted chars on the plain work-claim fixture,
-  against ~2k tokens per call before (the most expensive verb of the
-  surface). The persisted `groundingSessionState` blob never reaches the
+  workflow definition) — ~75 tokens (300 emitted chars) on the plain
+  work-claim fixture, against ~2k tokens per call before (the most expensive
+  verb of the surface). The persisted `groundingSessionState` blob never reaches the
   default response; debug-flavored tasks get a compact session recipe
   instead. `include` gains `description`/`instructions`/`comments`/`task`;
   `task_pickup` keeps the full spec (minus `comments` by default) as the
@@ -63,7 +65,9 @@ corrected by the `not_claimed` teaching error alone.
   each failing gate with its own corrective, `low_confidence` with
   score/threshold/missing detail, `cross_repo_pr_rejected`,
   `pr_author_mismatch`, admin-only `force`, respec conflict, and the
-  plain-string result guard). Unknown errors degrade to the same shape and
+  plain-string result guard); rc-v1-C006 adds two project-addressing entries
+  (`project_addressing_conflict`, `unknown_project_slug` — see Added), for
+  eleven shipped in 0.13.0. Unknown errors degrade to the same shape and
   pass the backend's own `body.error` code through verbatim (`http_<status>`
   only when the body carries no code), preserving recursively clamped
   details.
@@ -81,7 +85,8 @@ corrected by the `not_claimed` teaching error alone.
   `review_request_changes`, `review_claim`, `review_release`, and
   `pull_requests_comment`. The default surface is 23 tools; setting
   `AGENT_TASKS_MCP_LEGACY=1` in the server process's environment registers
-  exactly the pre-0.13.0 37-tool set (handlers untouched). The README carries
+  all 37 tools: the 36 pre-0.13.0 verbs plus the new `workflow_primer`
+  (handlers untouched). The README carries
   a per-verb replacement table. `tasks_get`, `tasks_comment`, `signals_poll`,
   and `signals_ack` stay registered by default and lose their stale
   deprecated prefixes.
@@ -103,7 +108,8 @@ corrected by the `not_claimed` teaching error alone.
 - **Sort + cursor pagination on `tasks_list` / `project_tasks`** (#413): both
   list tools default to `createdAt:desc` at the tool layer so small-`limit`
   browsing sees the newest tasks, with `nextCursor`/`cursor` for stable
-  paging.
+  paging. (`tasks_list` itself is legacy-only from this release; see
+  Removed.)
 
 ### Docs
 
