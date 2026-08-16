@@ -101,9 +101,8 @@ export function formatStart(result: import("./api.js").StartResult, mode: Output
 
 // Minimal confidence renderer (D7): score/threshold, blocking status,
 // missing fields, next actions. Deliberately reusable across verbs that
-// surface a confidence score — today only `tasks respec` calls it. Retrofitting
-// `tasks create`'s output to use it is a separate task (e7911cdd) and is
-// intentionally NOT done here.
+// surface a confidence score -- `tasks respec` (via formatRespec) and
+// `tasks create` (via formatCreate, task e7911cdd) both call it.
 export function formatConfidence(confidence: import("./api.js").Confidence): string {
   const lines = [
     `Confidence: ${confidence.score}/${confidence.threshold}${confidence.blocking ? " (blocking)" : ""}`,
@@ -122,6 +121,21 @@ export function formatConfidence(confidence: import("./api.js").Confidence): str
 
 export function formatRespec(
   result: import("./api.js").RespecResult,
+  mode: OutputMode,
+): string {
+  if (mode === "json") return JSON.stringify(result, null, 2);
+  if (mode === "quiet") return result.task.id;
+  return [formatTask(result.task, "table"), "", formatConfidence(result.confidence)].join("\n");
+}
+
+// `tasks create`'s score back-channel (task e7911cdd): the create endpoint
+// returns { task, confidence } just like respec, but the CLI used to keep
+// only `task` and silently drop the score -- an agent creating a
+// low-confidence task never found out until a human rejected it later.
+// Exit code stays 0 regardless of `confidence.blocking`: this is purely
+// informative, never a gate (see api.ts CreateTaskResult).
+export function formatCreate(
+  result: import("./api.js").CreateTaskResult,
   mode: OutputMode,
 ): string {
   if (mode === "json") return JSON.stringify(result, null, 2);

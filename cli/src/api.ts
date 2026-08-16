@@ -214,17 +214,26 @@ export interface CreateTaskInput {
   dependsOn?: string[];
 }
 
+// POST /api/projects/:id/tasks returns { task, confidence } -- the same
+// score/threshold/blocking/missing/nextActions envelope `respecTask` below
+// already forwards in full. A low score never blocks creation (task e7911cdd
+// keeps the exit code informative, not gating); the caller just gets to see
+// it instead of it being silently discarded.
+export interface CreateTaskResult {
+  task: Task;
+  confidence: Confidence;
+}
+
 export async function createTask(
   config: Config,
   projectId: string,
   input: CreateTaskInput,
-): Promise<Task> {
-  const { task } = await request<{ task: Task }>(
+): Promise<CreateTaskResult> {
+  return request<CreateTaskResult>(
     config,
     `/api/projects/${projectId}/tasks`,
     { method: "POST", body: JSON.stringify(input) },
   );
-  return task;
 }
 
 export async function claimTask(config: Config, taskId: string, force = false): Promise<Task> {

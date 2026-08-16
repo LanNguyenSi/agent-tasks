@@ -38,12 +38,23 @@ afterEach(() => {
 });
 
 describe("createTask", () => {
-  it("POSTs the input as the body to /api/projects/:id/tasks and returns the task", async () => {
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" } }),
-    );
-    const task = await createTask(config, "p1", { title: "x" });
-    expect(task).toEqual({ id: "t1", title: "x", status: "open", priority: "MEDIUM" });
+  const confidence = {
+    score: 80,
+    threshold: 60,
+    enforcementMode: "WARN",
+    blocking: false,
+    missing: [],
+    findings: [],
+    nextActions: [],
+  };
+
+  it("POSTs the input as the body to /api/projects/:id/tasks and returns the full { task, confidence } envelope", async () => {
+    const task = { id: "t1", title: "x", status: "open", priority: "MEDIUM" };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ task, confidence }));
+    // Full envelope, not just the task -- createTask must not drop
+    // confidence the way it used to before task e7911cdd.
+    const result = await createTask(config, "p1", { title: "x" });
+    expect(result).toEqual({ task, confidence });
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("http://api.test/api/projects/p1/tasks");
     expect(init.method).toBe("POST");
@@ -52,7 +63,7 @@ describe("createTask", () => {
 
   it("forwards debugFlavor and dependsOn when set", async () => {
     fetchMock.mockResolvedValueOnce(
-      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" } }),
+      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" }, confidence }),
     );
     await createTask(config, "p1", {
       title: "x",
@@ -71,7 +82,7 @@ describe("createTask", () => {
     // flag was passed; the body must then carry no debugFlavor key, so the
     // backend heuristic stays in charge.
     fetchMock.mockResolvedValueOnce(
-      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" } }),
+      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" }, confidence }),
     );
     await createTask(config, "p1", { title: "x" });
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body);

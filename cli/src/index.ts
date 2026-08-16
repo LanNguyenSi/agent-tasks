@@ -14,6 +14,7 @@ import {
   formatStart,
   formatGates,
   formatRespec,
+  formatCreate,
   type OutputMode,
 } from "./format.js";
 
@@ -486,8 +487,8 @@ tasks
     if (opts.debugFlavor !== undefined) input.debugFlavor = opts.debugFlavor;
     if (opts.dependsOn && opts.dependsOn.length > 0) input.dependsOn = opts.dependsOn;
 
-    const task = await api.createTask(config, projectId, input);
-    console.log(formatTask(task, mode));
+    const result = await api.createTask(config, projectId, input);
+    console.log(formatCreate(result, mode));
   });
 
 tasks
