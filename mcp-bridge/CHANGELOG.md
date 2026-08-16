@@ -2,17 +2,6 @@
 
 All notable changes to `@agent-tasks/mcp-bridge` are documented here.
 
-## Unreleased
-
-### Changed
-
-- **`npm run typecheck` no longer requires a prior `mcp-server` build**
-  (002d187b). A typecheck-only `tsconfig.typecheck.json` maps
-  `@agent-tasks/mcp-server` to the sibling's source, so a fresh
-  checkout/worktree typechecks green after plain `npm ci`. Build and tests
-  are unchanged and still resolve the built package through `node_modules`;
-  the published artifact is unaffected.
-
 ## 0.8.0
 
 ### Changed

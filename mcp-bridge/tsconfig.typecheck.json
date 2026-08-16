@@ -12,5 +12,11 @@
     "paths": {
       "@agent-tasks/mcp-server": ["../mcp-server/src/server.ts"]
     }
+    // Assumption: this typechecks mcp-server's source directly (not its
+    // built .d.ts output), using mcp-bridge's own compilerOptions rather
+    // than mcp-server's tsconfig.json. That only stays accurate if the two
+    // tsconfigs' relevant compilerOptions (strictness flags, target/lib,
+    // module resolution) are kept in sync by hand; this file intentionally
+    // does not move to TypeScript project references to achieve that.
   }
 }
