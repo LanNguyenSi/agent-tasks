@@ -33,15 +33,13 @@ export async function middleware(request: NextRequest) {
   // *request* header, not the response header: it checks
   // `content-security-policy` and `content-security-policy-report-only`
   // on the incoming request and extracts a `'nonce-...'` token from
-  // script-src (falling back to default-src). So the CSP value has to be
-  // forwarded on requestHeaders here, not just set on the outgoing
-  // response -- setting it only on the response (which is what covers the
-  // browser) leaves every Next-injected inline script unnoticed and
-  // failing CSP. Verified live: without this requestHeaders.set line, a
-  // production build + browser check showed dozens of CSP violations from
-  // Next's own hydration scripts; with it, zero.
+  // script-src (falling back to default-src). This follows Next's
+  // documented CSP pattern (forward the header on both requestHeaders and
+  // the response). On Next 15.5.21, one measurement showed the nonce was
+  // picked up even without this requestHeaders.set line -- but it's kept
+  // here defensively against version drift, since it's the documented
+  // pattern and costs nothing to keep.
   const requestHeaders = new Headers(request.headers);
-  requestHeaders.set("x-nonce", nonce);
   requestHeaders.set(CSP_HEADER_NAME, csp);
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
@@ -57,9 +55,10 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Every response except Next's own static/image assets: those aren't
-    // navigable documents and don't run scripts, so a CSP on them is a
-    // no-op that would just add header overhead to every asset request.
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    // Every response except Next's own static/image assets and the app's
+    // static icon route: those aren't navigable documents and don't run
+    // scripts, so a CSP on them is a no-op that would just add header
+    // overhead to every asset request.
+    "/((?!_next/static|_next/image|favicon.ico|icon.svg).*)",
   ],
 };

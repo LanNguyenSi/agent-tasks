@@ -41,9 +41,31 @@ import { THEME_INIT_SCRIPT } from "./theme";
 
 /** Origin the frontend calls for the JSON API. Shared so next.config.ts's
  * `env.NEXT_PUBLIC_API_URL` passthrough and middleware.ts's connect-src
- * directive resolve the same fallback and can't drift apart. */
+ * directive resolve the same fallback and can't drift apart.
+ *
+ * This value gets concatenated directly into the CSP header string (see
+ * buildCsp's connect-src below), so it's validated defensively: it must
+ * parse as a URL, and it must not contain a `;` or whitespace -- those are
+ * CSP directive delimiters, and an unvalidated value containing them could
+ * inject extra directives into the header instead of just extending
+ * connect-src. NEXT_PUBLIC_API_URL is a build-time value (see
+ * docs/development.md: changing it requires rebuilding the frontend
+ * image, a Docker build-arg baked into the build, not a runtime env var),
+ * so failing fast here means a bad value breaks the build loudly instead
+ * of shipping a corrupted CSP. */
 export function resolveApiOrigin(): string {
-  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+  const value = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+  try {
+    new URL(value);
+  } catch {
+    throw new Error(`NEXT_PUBLIC_API_URL must be a valid absolute URL, got: ${JSON.stringify(value)}`);
+  }
+  if (/[;\s]/.test(value)) {
+    throw new Error(
+      `NEXT_PUBLIC_API_URL must not contain ';' or whitespace (CSP directive delimiters), got: ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
 }
 
 export async function sha256Base64(content: string): Promise<string> {
@@ -109,12 +131,23 @@ export async function buildCsp({ apiOrigin, nonce, allowDevEval }: BuildCspOptio
     // style-src 'unsafe-inline' is the standard trade-off (e.g. GitHub's
     // CSP does the same).
     ["style-src", ["'self'", "'unsafe-inline'"]],
-    ["img-src", ["'self'", "data:"]],
+    // avatarUrl (GitHub OAuth and SSO OIDC picture claims) renders as a plain
+    // <img> on every authenticated page (AppHeader.tsx and others). GitHub
+    // avatars are served from avatars.githubusercontent.com, so that origin
+    // is allowlisted here. SSO deployments must add their own IdP's avatar
+    // origin (see docs/development.md) before the enforce flip, or SSO-linked
+    // avatars will be blocked once the header stops being report-only.
+    ["img-src", ["'self'", "data:", "https://avatars.githubusercontent.com"]],
     ["font-src", ["'self'"]],
     ["connect-src", ["'self'", apiOrigin]],
     ["frame-ancestors", ["'none'"]],
     ["base-uri", ["'self'"]],
     ["object-src", ["'none'"]],
+    // Every form in the app submits via onSubmit (fetch/JS), not a plain
+    // HTML form action, so restricting form submission targets to 'self'
+    // doesn't break anything and closes off form-hijacking via injected
+    // markup.
+    ["form-action", ["'self'"]],
   ];
 
   return directives.map(([name, values]) => `${name} ${values.join(" ")}`).join("; ");

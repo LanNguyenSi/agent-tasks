@@ -98,11 +98,12 @@ describe("buildCsp", () => {
     );
 
     expect(directives["default-src"]).toEqual(["'self'"]);
-    expect(directives["img-src"]).toEqual(["'self'", "data:"]);
+    expect(directives["img-src"]).toEqual(["'self'", "data:", "https://avatars.githubusercontent.com"]);
     expect(directives["font-src"]).toEqual(["'self'"]);
     expect(directives["frame-ancestors"]).toEqual(["'none'"]);
     expect(directives["base-uri"]).toEqual(["'self'"]);
     expect(directives["object-src"]).toEqual(["'none'"]);
+    expect(directives["form-action"]).toEqual(["'self'"]);
   });
 
   it("includes the API origin in connect-src alongside 'self'", async () => {
@@ -124,6 +125,41 @@ describe("resolveApiOrigin", () => {
     delete process.env.NEXT_PUBLIC_API_URL;
     try {
       expect(resolveApiOrigin()).toBe("http://localhost:3001");
+    } finally {
+      if (original === undefined) delete process.env.NEXT_PUBLIC_API_URL;
+      else process.env.NEXT_PUBLIC_API_URL = original;
+    }
+  });
+
+  it("accepts a well-formed absolute URL", () => {
+    const original = process.env.NEXT_PUBLIC_API_URL;
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.com";
+    try {
+      expect(resolveApiOrigin()).toBe("https://api.example.com");
+    } finally {
+      if (original === undefined) delete process.env.NEXT_PUBLIC_API_URL;
+      else process.env.NEXT_PUBLIC_API_URL = original;
+    }
+  });
+
+  it("throws when NEXT_PUBLIC_API_URL doesn't parse as a URL", () => {
+    const original = process.env.NEXT_PUBLIC_API_URL;
+    process.env.NEXT_PUBLIC_API_URL = "not-a-url";
+    try {
+      expect(() => resolveApiOrigin()).toThrow(/valid absolute URL/);
+    } finally {
+      if (original === undefined) delete process.env.NEXT_PUBLIC_API_URL;
+      else process.env.NEXT_PUBLIC_API_URL = original;
+    }
+  });
+
+  it("throws when NEXT_PUBLIC_API_URL contains a CSP delimiter (semicolon)", () => {
+    const original = process.env.NEXT_PUBLIC_API_URL;
+    // No space needed for this to be a valid URL and a CSP-directive-injection
+    // vector: ";" alone is enough to start a new directive in the header string.
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.com;script-src-elem-evil.example.com";
+    try {
+      expect(() => resolveApiOrigin()).toThrow(/CSP directive delimiters/);
     } finally {
       if (original === undefined) delete process.env.NEXT_PUBLIC_API_URL;
       else process.env.NEXT_PUBLIC_API_URL = original;

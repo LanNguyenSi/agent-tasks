@@ -27,13 +27,23 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // DO NOT DELETE this line without reading scripts/assert-dynamic-rendering.mjs first.
+  //
   // Reading headers() here is required, not just informational: it's what makes
   // Next's App Router apply the per-request CSP nonce (middleware.ts) to the
   // RSC-streaming inline scripts it injects for hydration. Without a headers()
   // read somewhere in the render tree, Next renders those scripts unnonced and
   // they fail the CSP (verified live). This also opts the whole app out of
   // static prerendering into per-request dynamic rendering -- an accepted
-  // trade-off of a nonce-based CSP, documented in the CSP task's report.
+  // trade-off of a nonce-based CSP, documented in docs/development.md.
+  //
+  // Removing this line is silent everywhere except the CSP itself: tsc, the
+  // frontend build, and every existing test stay green while routes revert to
+  // static and start serving unnonced inline scripts (verified live). The
+  // `postbuild` script (scripts/assert-dynamic-rendering.mjs) is the guard
+  // that catches this: it fails the build if any app route beyond /icon.svg
+  // shows up in .next/prerender-manifest.json, i.e. if it got prerendered
+  // statically instead of rendered dynamically.
   await headers();
   return (
     <html
