@@ -210,7 +210,7 @@ Per-verb defaults without `include`:
 | Verb | Default |
 |---|---|
 | `task_pickup` | full spec, without `comments` |
-| `task_start` | receipt + per-task slice (`inferredTaskType`, `expectedFinishState`, `gateExpectations`, `gateExpectationsSource` when assumed) |
+| `task_start` | receipt + per-task slice (`inferredTaskType`, `expectedFinishState`, `gateExpectations`, `requestChangesGateExpectations` on a review claim, `gateExpectationsSource` when assumed, `transition` on an actual state change) |
 | `tasks_get` (and equivalents) | summary |
 | `project_tasks` | existing summary projection (unchanged) |
 | `tasks_list` (legacy-only since rc-v1-C007) | existing summary projection (unchanged) |
@@ -447,11 +447,14 @@ Tier 1 receipt: it carries the rc-v1-C003 per-task slice
 `gateExpectationsSource` when the gates are an assumption) alongside
 the receipt fields, so its default budget is **1200 emitted chars (about
 300 tokens)**, above the generic Tier 1 cap, by design, not a violation of
-it. The happy-path fixture in `mcp-server/tests/receipt.test.ts` measures
-300 chars today, comfortable headroom under the 1200 ceiling; both the
-1200 ceiling and the exact 300 measurement are asserted in that same
-test, so a re-fattening fails the suite and this figure cannot silently
-drift.
+it. Since rc-v1-B001, the slice also carries `transition` (only on an
+actual state change) and, on a review claim, `requestChangesGateExpectations`
+— both sourced from the backend's own `effectiveGates`/`previousStatus`
+fields (see the `include` table above), not derived client-side. The
+happy-path fixture in `mcp-server/tests/receipt.test.ts` measures 311
+chars today, comfortable headroom under the 1200 ceiling; both the 1200
+ceiling and the exact 311 measurement are asserted in that same test, so
+a re-fattening fails the suite and this figure cannot silently drift.
 
 The caps apply to the receipt envelope. Content the caller explicitly
 requested via `include`, and `task_pickup`'s default full spec, are

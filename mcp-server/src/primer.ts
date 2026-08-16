@@ -80,7 +80,7 @@ task_start fails with 409 if you already hold an active claim on another task. t
 
 ## Receipt defaults (no include passed)
 - task_pickup: the full task spec, without comments (the one write-verb exception; delivering the spec is its purpose).
-- task_start: a receipt plus a small per-task slice (inferredTaskType, expectedFinishState, gateExpectations, gateExpectationsSource when assumed). Not the full task.
+- task_start: a receipt plus a small per-task slice (inferredTaskType, expectedFinishState, gateExpectations, requestChangesGateExpectations on a review claim, gateExpectationsSource when assumed, transition on an actual state change). Not the full task. gateExpectations/requestChangesGateExpectations can be null (the edge does not exist, finish will 400), distinct from omitted (nothing required).
 - task_create, task_respec, task_finish, task_submit_pr, task_merge, task_abandon, task_note, tasks_comment: a small receipt only, shaped { ok, task: { id, status? }, confidence?, deviations?, next? }. confidence is set only by task_create and task_respec (the score just computed for that call); every other verb in this list omits it. Fields you sent are never echoed back; deviations appear only when something needs your attention.
 
 Pass include:["task"] on any of the verbs above to get the full, pre-contract object back instead (recovery path after context loss, or when you need the whole object in one call). task_start additionally accepts include:["description" | "instructions" | "comments"] to add back one field at a time, without paying for the rest.

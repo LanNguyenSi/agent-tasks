@@ -20,8 +20,10 @@ const REPO_README_PATH = resolve(__filename, "..", "..", "..", "README.md");
 // so a future addition that blows way past it fails loudly instead of the
 // primer silently growing into something nobody meant to ship. Measured
 // growth so far: 3877 chars pre-rc-v1-C005 -> 4484 with the "## Errors"
-// section added -> 5390 after round 1's low_confidence catalog entry.
-const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 6000;
+// section added -> 5390 after round 1's low_confidence catalog entry ->
+// 6166 after rc-v1-B001's task_start receipt-defaults line grew to cover
+// transition/requestChangesGateExpectations/the null-vs-omitted gate rule.
+const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 6300;
 
 // docs/response-contract-v1.md's "Onboarding channels by rate of change" table:
 // HANDSHAKE_PRIMER targets ~300-500 tokens with a HARD budget of 2000 chars

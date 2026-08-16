@@ -570,17 +570,23 @@ describe("malformed backend success bodies (no task.id)", () => {
 const START_BUDGET_CHARS = 1200;
 
 // A much tighter bound, asserted against the actual default-slice fixtures
-// (not the 1200-char ceiling alone): at 300 measured chars for the happy
-// path today (244 pre-gateExpectationsSource), 1200 alone has ~4x headroom
-// and would not catch a re-fattening regression until it was already
-// large. 400 leaves 100 chars of headroom over the measured fixture while
-// still catching drift long before it reaches the contract ceiling. The
-// exact-size assertion in the budget test pins the documented number:
-// growing the slice forces the figure in docs/response-contract-v1.md to
-// move with it.
+// (not the 1200-char ceiling alone): at 311 measured chars for the happy
+// path today (300 pre-rc-v1-B001 `transition`, 244 pre-gateExpectationsSource
+// before that), 1200 alone has ~4x headroom and would not catch a
+// re-fattening regression until it was already large. 400 leaves headroom
+// over the measured fixture while still catching drift long before it
+// reaches the contract ceiling. The exact-size assertion in the budget test
+// pins the documented number: growing the slice forces the figure in
+// docs/response-contract-v1.md to move with it.
 const START_BUDGET_TIGHT_CHARS = 400;
 
 describe("receiptForStart", () => {
+  // Reflects a current (rc-v1-B001+) backend: effectiveGates and
+  // previousStatus are both present, so receiptForStart consumes them
+  // as the authoritative source rather than deriving via
+  // deriveGateExpectations (see the dedicated "pre-B001 fallback" describe
+  // block below for the version-tolerance path, exercised with these two
+  // fields absent).
   const workResponse: StartResponse = {
     kind: "work",
     task: {
@@ -592,25 +598,50 @@ describe("receiptForStart", () => {
       workflowId: null,
     },
     expectedFinishState: "review",
+    effectiveGates: { finish: ["branchPresent", "prPresent"] },
+    previousStatus: "open",
     project: { id: "p1", name: "Proj", slug: "proj" },
   };
 
-  it("happy path: receipt + inferredTaskType + expectedFinishState + gateExpectations (default-workflow fallback, marked as assumed), within budget", () => {
+  it("happy path: receipt + transition + inferredTaskType + expectedFinishState + gateExpectations (backend-authoritative effectiveGates, no source marker), within budget", () => {
     const slice = receiptForStart(workResponse) as StartSlice;
     expect(slice).toEqual({
       ok: true,
       task: { id: workResponse.task.id, status: "in_progress" },
+      transition: { from: "open", to: "in_progress" },
       inferredTaskType: "bugfix",
       expectedFinishState: "review",
       gateExpectations: ["branchPresent", "prPresent"],
-      gateExpectationsSource: "assumed-default-workflow",
     });
+    expect(slice).not.toHaveProperty("gateExpectationsSource");
     expect(size(slice)).toBeLessThanOrEqual(START_BUDGET_TIGHT_CHARS);
     expect(size(slice)).toBeLessThanOrEqual(START_BUDGET_CHARS);
     // Exact pin, deliberately brittle: this is the figure quoted in
     // docs/response-contract-v1.md's task_start budget exception. Growing
     // the slice must move the doc number with it, not drift silently.
-    expect(size(slice)).toBe(300);
+    expect(size(slice)).toBe(311);
+  });
+
+  // rc-v1-B002 mutation probe: if receiptForStart ever went back to ignoring
+  // the backend's effectiveGates/previousStatus fields (deriving both
+  // client-side instead), this is the test that goes red. Committed BEFORE
+  // the fix, verified red against the pre-fix code, per repo convention.
+  it("consumes effectiveGates and previousStatus from the backend rather than re-deriving them", () => {
+    const slice = receiptForStart(workResponse) as StartSlice;
+    // Re-deriving client-side would land on the SAME gate list here (the
+    // default-workflow fallback for open -> review is also
+    // ["branchPresent", "prPresent"]), so a distinguishing fixture is used:
+    // a backend that reports a DIFFERENT (shorter) authoritative gate list
+    // and a DIFFERENT previousStatus than the client-side derivation would
+    // ever produce for this task shape.
+    const distinguishing: StartResponse = {
+      ...workResponse,
+      effectiveGates: { finish: ["ciGreen"] },
+      previousStatus: "blocked",
+    };
+    const distinguishingSlice = receiptForStart(distinguishing) as StartSlice;
+    expect(distinguishingSlice.gateExpectations).toEqual(["ciGreen"]);
+    expect(distinguishingSlice.transition).toEqual({ from: "blocked", to: "in_progress" });
   });
 
   it("no-echo: description, templateData, and comments never appear in the default slice", () => {
@@ -630,53 +661,158 @@ describe("receiptForStart", () => {
     expect(slice).not.toHaveProperty("inferredTaskType");
   });
 
-  it("omits gateExpectations (and gateExpectationsSource) when the task runs a custom workflow whose definition was not embedded in the response (known gap: does not guess)", () => {
+  it("prefers the backend's authoritative effectiveGates over the custom-workflow do-not-guess guard (effectiveGates wins outright, deriveGateExpectations is never consulted when it is present)", () => {
     const slice = receiptForStart({
       ...workResponse,
       task: { ...workResponse.task, workflowId: "custom-wf-1" },
     }) as StartSlice;
-    expect(slice).not.toHaveProperty("gateExpectations");
+    // Pre-B001, this exact fixture (custom workflowId, no embedded
+    // definition) would have omitted gateExpectations entirely (the
+    // "known gap: does not guess" guard in deriveGateExpectations, still
+    // covered by the pre-B001 describe block below). With effectiveGates
+    // present, that guard is bypassed altogether: the backend already
+    // resolved the custom workflow's effective definition server-side.
+    expect(slice.gateExpectations).toEqual(["branchPresent", "prPresent"]);
     expect(slice).not.toHaveProperty("gateExpectationsSource");
   });
 
-  it("uses the dynamic workflow definition over the static fallback when task.workflow is embedded (review-claim branch), with no gateExpectationsSource marker", () => {
-    const slice = receiptForStart({
-      kind: "review",
-      task: {
-        id: "t1",
-        status: "review",
-        workflowId: "custom-wf-1",
-        workflow: {
-          definition: {
-            transitions: [{ from: "review", to: "done", requires: ["ciGreen"] }],
+  // ── pre-B001 fallback (no effectiveGates / no previousStatus on the
+  // response) — version tolerance for a backend older than rc-v1-B001 ──────
+  describe("pre-B001 fallback (effectiveGates absent)", () => {
+    // Same shape as workResponse but without the two rc-v1-B001 fields, so
+    // resolveGateExpectations falls through to deriveGateExpectations.
+    const preB001Response: StartResponse = {
+      ...workResponse,
+      effectiveGates: undefined,
+      previousStatus: undefined,
+    };
+
+    it("derives gateExpectations from the static default-workflow.ts table, marked as assumed", () => {
+      const slice = receiptForStart(preB001Response) as StartSlice;
+      expect(slice.gateExpectations).toEqual(["branchPresent", "prPresent"]);
+      expect(slice.gateExpectationsSource).toBe("assumed-default-workflow");
+      expect(slice).not.toHaveProperty("transition");
+    });
+
+    it("omits gateExpectations (and gateExpectationsSource) when the task runs a custom workflow whose definition was not embedded in the response (known gap: does not guess)", () => {
+      const slice = receiptForStart({
+        ...preB001Response,
+        task: { ...preB001Response.task, workflowId: "custom-wf-1" },
+      }) as StartSlice;
+      expect(slice).not.toHaveProperty("gateExpectations");
+      expect(slice).not.toHaveProperty("gateExpectationsSource");
+    });
+
+    it("uses the dynamic workflow definition over the static fallback when task.workflow is embedded (review-claim branch), with no gateExpectationsSource marker", () => {
+      const slice = receiptForStart({
+        kind: "review",
+        task: {
+          id: "t1",
+          status: "review",
+          workflowId: "custom-wf-1",
+          workflow: {
+            definition: {
+              transitions: [{ from: "review", to: "done", requires: ["ciGreen"] }],
+            },
           },
         },
-      },
-      expectedFinishState: "done",
-    }) as StartSlice;
-    expect(slice.gateExpectations).toEqual(["ciGreen"]);
-    expect(slice).not.toHaveProperty("gateExpectationsSource");
+        expectedFinishState: "done",
+      }) as StartSlice;
+      expect(slice.gateExpectations).toEqual(["ciGreen"]);
+      expect(slice).not.toHaveProperty("gateExpectationsSource");
+    });
+
+    it("gateExpectationsSource: 'assumed-default-workflow' appears only on the static-fallback path, never on the embedded-workflow path (rc-v1-C003 fix round 1, HIGH finding)", () => {
+      const fallbackSlice = receiptForStart(preB001Response) as StartSlice;
+      expect(fallbackSlice.gateExpectationsSource).toBe("assumed-default-workflow");
+
+      const embeddedSlice = receiptForStart({
+        kind: "review",
+        task: {
+          id: "t1",
+          status: "review",
+          workflowId: "custom-wf-1",
+          workflow: {
+            definition: {
+              transitions: [{ from: "review", to: "done", requires: ["ciGreen"] }],
+            },
+          },
+        },
+        expectedFinishState: "done",
+      }) as StartSlice;
+      expect(embeddedSlice.gateExpectationsSource).toBeUndefined();
+    });
   });
 
-  it("gateExpectationsSource: 'assumed-default-workflow' appears only on the static-fallback path, never on the embedded-workflow path (rc-v1-C003 fix round 1, HIGH finding)", () => {
-    const fallbackSlice = receiptForStart(workResponse) as StartSlice;
-    expect(fallbackSlice.gateExpectationsSource).toBe("assumed-default-workflow");
+  // ── rc-v1-B001: effectiveGates null-vs-omitted-vs-array, and the review
+  // claim's requestChangesGateExpectations ─────────────────────────────────
+  describe("effectiveGates consumption (rc-v1-B001)", () => {
+    it("finish: null (edge absent) is surfaced as an explicit null, not omitted and not collapsed to an empty array", () => {
+      const slice = receiptForStart({
+        ...workResponse,
+        effectiveGates: { finish: null },
+      }) as StartSlice;
+      expect(slice.gateExpectations).toBeNull();
+      expect("gateExpectations" in slice).toBe(true);
+    });
 
-    const embeddedSlice = receiptForStart({
-      kind: "review",
-      task: {
-        id: "t1",
-        status: "review",
-        workflowId: "custom-wf-1",
-        workflow: {
-          definition: {
-            transitions: [{ from: "review", to: "done", requires: ["ciGreen"] }],
-          },
-        },
-      },
-      expectedFinishState: "done",
-    }) as StartSlice;
-    expect(embeddedSlice.gateExpectationsSource).toBeUndefined();
+    it("finish: [] (edge exists, nothing required) collapses to omitted, distinguishable from the null case above", () => {
+      const slice = receiptForStart({
+        ...workResponse,
+        effectiveGates: { finish: [] },
+      }) as StartSlice;
+      expect(slice).not.toHaveProperty("gateExpectations");
+    });
+
+    it("review claim: requestChangesGateExpectations mirrors effectiveGates.requestChanges, independent of finish", () => {
+      const reviewResponse: StartResponse = {
+        kind: "review",
+        task: { id: "t1", status: "review" },
+        expectedFinishState: "review",
+        effectiveGates: { finish: ["ciGreen"], requestChanges: [] },
+        previousStatus: "review",
+      };
+      const slice = receiptForStart(reviewResponse) as StartSlice;
+      expect(slice.gateExpectations).toEqual(["ciGreen"]);
+      expect(slice).not.toHaveProperty("requestChangesGateExpectations");
+
+      const nullEdgeSlice = receiptForStart({
+        ...reviewResponse,
+        effectiveGates: { finish: ["ciGreen"], requestChanges: null },
+      }) as StartSlice;
+      expect(nullEdgeSlice.requestChangesGateExpectations).toBeNull();
+
+      const gatedSlice = receiptForStart({
+        ...reviewResponse,
+        effectiveGates: { finish: ["ciGreen"], requestChanges: ["branchPresent"] },
+      }) as StartSlice;
+      expect(gatedSlice.requestChangesGateExpectations).toEqual(["branchPresent"]);
+    });
+
+    it("work claim: requestChangesGateExpectations is never present (effectiveGates.requestChanges is not a work-claim field)", () => {
+      const slice = receiptForStart(workResponse) as StartSlice;
+      expect(slice).not.toHaveProperty("requestChangesGateExpectations");
+    });
+  });
+
+  // ── rc-v1-B001: transition (from previousStatus) ─────────────────────────
+  describe("transition (previousStatus consumption, rc-v1-B001)", () => {
+    it("review claim: no transition is reported (previousStatus equals the unchanged task.status)", () => {
+      const reviewResponse: StartResponse = {
+        kind: "review",
+        task: { id: "t1", status: "review" },
+        expectedFinishState: "review",
+        effectiveGates: { finish: ["ciGreen"], requestChanges: [] },
+        previousStatus: "review",
+      };
+      const slice = receiptForStart(reviewResponse) as StartSlice;
+      expect(slice).not.toHaveProperty("transition");
+    });
+
+    it("omitted entirely when the backend does not send previousStatus at all (pre-B001 version tolerance, no guess)", () => {
+      const slice = receiptForStart({ ...workResponse, previousStatus: undefined }) as StartSlice;
+      expect(slice).not.toHaveProperty("transition");
+    });
   });
 
   it("carries the bare confidence scalar when the backend response provides one (defensive support; not present on the live backend today)", () => {
