@@ -23,6 +23,18 @@ describe("formatTasks", () => {
     expect(out).toContain("PRIORITY");
   });
 
+  it("shows an ID column truncated to the first 8 characters", () => {
+    const longId = [
+      { id: "abcdef12-3456-7890-abcd-ef1234567890", title: "Long id", status: "open", priority: "LOW" },
+    ];
+    const out = formatTasks(longId, "table");
+    const header = out.split("\n")[0]!;
+    expect(header.startsWith("ID")).toBe(true);
+    expect(out).toContain("abcdef12");
+    // The full id (beyond the 8-char prefix) must not leak into the table.
+    expect(out).not.toContain("abcdef12-3456");
+  });
+
   it("formats as JSON", () => {
     const out = formatTasks(tasks, "json");
     const parsed = JSON.parse(out);

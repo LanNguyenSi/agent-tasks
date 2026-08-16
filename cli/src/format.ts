@@ -11,13 +11,21 @@ export function formatTasks(tasks: Task[], mode: OutputMode): string {
 
   if (tasks.length === 0) return "No tasks found.";
 
+  // Shortened id: the first 8 hex characters of the UUID -- the same
+  // granularity `resolveTaskId` (resolve.ts, task e7911cdd) accepts as a
+  // prefix, so a value copied straight out of this column works as-is for
+  // `tasks get`/`start`/`finish`/`comment`. If two tasks in the same result
+  // set happen to share an 8-char prefix, resolveTaskId reports the
+  // collision as an ambiguous-prefix error rather than guessing -- it never
+  // silently picks one.
   const lines = tasks.map((t) => {
+    const shortId = t.id.slice(0, 8);
     const project = t.project?.slug ?? "";
     const prio = t.priority.padEnd(8);
     const status = t.status.padEnd(12);
-    return `${prio} ${status} ${project.padEnd(20)} ${t.title}`;
+    return `${shortId.padEnd(8)} ${prio} ${status} ${project.padEnd(20)} ${t.title}`;
   });
-  return `${"PRIORITY".padEnd(8)} ${"STATUS".padEnd(12)} ${"PROJECT".padEnd(20)} TITLE\n${lines.join("\n")}`;
+  return `${"ID".padEnd(8)} ${"PRIORITY".padEnd(8)} ${"STATUS".padEnd(12)} ${"PROJECT".padEnd(20)} TITLE\n${lines.join("\n")}`;
 }
 
 export function formatTask(task: Task, mode: OutputMode): string {
