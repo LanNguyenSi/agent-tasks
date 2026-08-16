@@ -235,12 +235,107 @@ function notClaimedError(message: string): TeachingError {
 // (backend/src/routes/tasks.ts: POST /tasks/pickup, POST
 // /tasks/:id/start). The backend's own code is already specific, so it is
 // kept verbatim as this entry's code.
+//
+// Review-retention case (rc-v1-C008 Cold-Start-Eval, 2026-08-12 live
+// finding; generalized on the rc-v1-already-claimed-review-recipe review
+// round, H1): task_finish's own documented semantics clear the work claim
+// only when the task lands on a TERMINAL state, and keep it on EVERY finish
+// that instead lands the task back on `review` -- there is no separate
+// request_changes-only code path (backend/src/routes/tasks.ts ~3150-3156:
+// `if (isTerminalState(...)) { clear claim fields }`, no `else`).
+// request_changes (the rework loop keeping the original author's claim so
+// they resume automatically) is the one caller-visible EXAMPLE of this, not
+// the definition: an ordinary multi-step workflow whose own
+// expectedFinishState is `review` keeps the claim the exact same way, with
+// no request_changes outcome involved at all. A recipe that names only
+// request_changes reads as a scope test to a caller whose task landed in
+// review some other way, who could then wrongly conclude task_abandon is
+// safe. Named below as "work claim on an in-review task" instead, with no
+// reference to how the task got there.
+//
+// Reviewer branch (H2): this same 409 fires identically for a REVIEW claim
+// wall, not just a work claim -- task_pickup's and task_start's own
+// claim-wall queries both match `reviewClaimedByAgentId === actor.tokenId
+// && status === "review"` too (backend/src/routes/tasks.ts ~1462-1465 for
+// /tasks/pickup, ~1681-1684 for /tasks/:id/start), and by construction ANY
+// review claim sits on a task currently in review. For that caller,
+// task_abandon on the held claim IS the correct, immediate, clean exit: the
+// abandon route's "cannot abandon while in review" guard
+// (backend/src/routes/tasks.ts ~3540-3541: `if (holdsWorkClaim &&
+// !holdsReviewClaim && isReviewState(...))`) is scoped to a WORK claim only
+// and never fires for a review claim. A recipe that tells a role=reviewer
+// caller to wait, merge, or avoid task_abandon would be actively wrong for
+// them.
+//
+// Whether the held claim is an ordinary in_progress work claim, a work
+// claim retained on a task now in review, or a review claim is only
+// PARTIALLY determinable from this catalog entry's only input. The 409 body
+// both real call sites send is `{ error: "already_claimed", message,
+// activeClaim: { taskId, title, role } }` (verified at
+// backend/src/routes/tasks.ts:1469-1480 for /tasks/pickup and :1688-1699
+// for /tasks/:id/start, and documented at docs/okf/claim-model.md:19).
+// `role` ("author" vs "reviewer", derived from which claim column matched)
+// DOES cleanly separate the reviewer case from both author cases (a
+// role="reviewer" claim is always a review claim, per the query above) --
+// it is only WITHIN role="author" that an ordinary in_progress claim and a
+// work claim retained on a review-state task stay indistinguishable from
+// this input alone (there is no `status` field on activeClaim). This
+// input is not status-BLIND, though: the caller already has taskId in hand
+// and is one tasks_get call away from the actual status if it needs to
+// decide programmatically rather than read the recipe's cases -- a direct
+// status/activeClaim passthrough into this entry's own detail/recipe (M3)
+// is out of scope for this change and tracked as a follow-up task instead.
+// This entry therefore names all three cases explicitly, keyed by claim
+// kind / state rather than by role, so the caller self-selects the right
+// one instead of defaulting to task_abandon, which is safe for two of the
+// three cases and rejected outright for the third.
+//
+// task_finish is deliberately NOT offered as a blanket corrective for the
+// workClaimInReview case below: on that task it is either rejected outright
+// (403 when a distinct reviewer already holds the review claim on a
+// REQUIRES_DISTINCT_REVIEWER project, backend/src/routes/tasks.ts
+// ~2825-2831; 409 `reviewer_conflict` when a distinct reviewer already
+// holds the claim on a non-DR project, ~2805-2818) or is the deliberate
+// self-approve branch on a non-DR project with no reviewer claim yet held
+// (~2539-2557, `outcome` required). It is therefore SAFE when it works,
+// just often unavailable to a caller who cannot know in advance which of
+// those applies -- "wait for the reviewer" is offered as the option that is
+// always safe regardless.
+//
+// ALREADY_CLAIMED_CASES (M6) names the three case-sentences as individually
+// testable, exported constants instead of one hand-assembled string tests
+// would otherwise have to slice out of by searching for a substring like
+// "review": a slice-by-indexOf assertion breaks on any semantically-safe
+// reword that keeps the meaning but moves the words (see
+// tests/errors.test.ts for the constant-based assertions this enables).
+export const ALREADY_CLAIMED_CASES = {
+  inProgress: "In-progress claim: task_finish or task_abandon on it.",
+  workClaimInReview:
+    "Work claim on an in-review task: abandon is rejected (409); wait for the reviewer, or task_merge + task_finish outcome=approve.",
+  reviewClaim: "Review claim: task_abandon frees the review lock.",
+} as const;
+
+const ALREADY_CLAIMED_RECIPE = [
+  ALREADY_CLAIMED_CASES.inProgress,
+  ALREADY_CLAIMED_CASES.workClaimInReview,
+  ALREADY_CLAIMED_CASES.reviewClaim,
+].join(" ");
+
 function alreadyClaimedError(message: string): TeachingError {
   return buildTeachingError({
     code: "already_claimed",
     message,
-    recipe: "call task_finish or task_abandon on your current task before claiming another",
-    allowedNext: ["task_finish", "task_abandon"],
+    recipe: ALREADY_CLAIMED_RECIPE,
+    // M4: deliberately the UNION over all three ALREADY_CLAIMED_CASES above,
+    // not just the in-progress pair task_finish/task_abandon -- task_merge
+    // is the corrective action the workClaimInReview case's own sentence
+    // names (merge, then task_finish outcome=approve), so it must be
+    // immediately callable per the allowedNext contract
+    // (docs/response-contract-v1.md's "verb names the caller can call
+    // immediately"). The recipe text is what actually SELECTS the right
+    // case for the caller's own claim; allowedNext only has to list every
+    // verb any one of the three cases could legitimately call next.
+    allowedNext: ["task_finish", "task_abandon", "task_merge"],
   });
 }
 
