@@ -660,7 +660,25 @@ describe("mapBackendError catalog", () => {
     expect(err.error.detail).toBeUndefined();
   });
 
-  it("generic degrade: many/long zod issues clamp to DETAIL_CLAMP entries with path+code+message each truncated, a visible (accurate, un-shrunk) totalIssues marker, and the whole response stays within budget", () => {
+  // rc-v1-zod-degrade-details fix round (M1): this test's own name used to
+  // claim "clamp to DETAIL_CLAMP entries" but the fixture (20 long issues)
+  // actually pushed the pre-fix code into enforceErrorBudget's EMERGENCY
+  // hard-reclamp path (2 entries, 20 usable chars each), not the soft
+  // DETAIL_CLAMP path its name described -- `message.length <= 60` was
+  // trivially true either way, nothing asserted the entry COUNT, and the
+  // `if (issue.message)` guard meant the loop body was skippable entirely.
+  // The M2 fix-round finding gives the zod-issues summary its own tighter
+  // derive-time budget (GENERIC_ISSUES_CLAMP=3 entries,
+  // GENERIC_ISSUE_ENTRY_CHAR_BUDGET=40 chars each -- see errors.ts's
+  // deriveGenericDetailSource), applied BEFORE the general DETAIL_CLAMP /
+  // emergency-reclamp passes ever run, so this exact 20-issue fixture no
+  // longer reaches either of those general passes at all (measured: 810
+  // chars, well under ERROR_BUDGET_CHARS, not the 603-char 2-entry
+  // emergency shape the pre-fix code produced). Renamed and rewritten to
+  // assert what actually happens now: an exact entry count, and
+  // path/code/message all present unconditionally (no `if` guard hiding a
+  // skippable assertion).
+  it("generic degrade: many/long zod issues clamp at derive time to 3 entries (GENERIC_ISSUES_CLAMP) with path+code+message all present and each truncated to the tighter per-issue budget, a visible (accurate, un-shrunk) totalIssues marker, and the response comfortably within budget (no emergency reclamp needed)", () => {
     const issues = Array.from({ length: 20 }, (_, i) => ({
       code: "too_small",
       minimum: 1,
@@ -672,12 +690,133 @@ describe("mapBackendError catalog", () => {
     }));
     const err = mapBackendError(400, { error: { issues, name: "ZodError" } });
     expect(err.error.code).toBe("http_400");
-    const detail = err.error.detail as { issues: Array<{ message?: string }>; totalIssues: number } | undefined;
+    const detail = err.error.detail as
+      | { issues: Array<{ path?: string; code?: string; message?: string }>; totalIssues: number }
+      | undefined;
     expect(detail?.totalIssues).toBe(20);
+    // Exact entry count: mirrors errors.ts's own GENERIC_ISSUES_CLAMP (not
+    // imported -- same hand-mirrored-constant convention this file already
+    // uses for ERROR_BUDGET_CHARS above).
+    const GENERIC_ISSUES_CLAMP = 3;
+    const GENERIC_ISSUE_ENTRY_CHAR_BUDGET = 40;
+    expect(detail?.issues.length).toBe(GENERIC_ISSUES_CLAMP);
     for (const issue of detail?.issues ?? []) {
-      if (issue.message) expect(issue.message.length).toBeLessThanOrEqual(60);
+      expect(issue.path).toBeDefined();
+      expect(issue.code).toBeDefined();
+      expect(issue.message).toBeDefined();
+      expect(issue.path!.length).toBeLessThanOrEqual(GENERIC_ISSUE_ENTRY_CHAR_BUDGET);
+      expect(issue.code!.length).toBeLessThanOrEqual(GENERIC_ISSUE_ENTRY_CHAR_BUDGET);
+      expect(issue.message!.length).toBeLessThanOrEqual(GENERIC_ISSUE_ENTRY_CHAR_BUDGET);
     }
+    // Well under budget, not just under it -- a meaningfully tighter bound
+    // than ERROR_BUDGET_CHARS so this test cannot pass by accident the way
+    // the pre-fix version did.
+    expect(serializeResult(err).length).toBeLessThan(1000);
+  });
+
+  // rc-v1-zod-degrade-details fix round (M1): the second, "stays on the
+  // normal path" fixture the review asked for -- a handful of SHORT issues
+  // that need no truncation at all, proving the derive-time summary is not
+  // just a clamp mechanism but preserves short, realistic issues verbatim.
+  // One message is deliberately longer than GENERIC_ISSUE_ENTRY_CHAR_BUDGET
+  // so the per-entry clamp is still visibly exercised on the field that
+  // needs it, while path/code (both short) pass through unclamped.
+  it("generic degrade: a handful of short zod issues (fewer than GENERIC_ISSUES_CLAMP) stay on the normal path -- short fields pass through verbatim, one over-budget field is truncated at the tighter per-issue clamp, nothing is dropped", () => {
+    const issues = [
+      { code: "invalid_type", path: ["branchName"], message: "Expected string, received number (validation failed)" },
+      { code: "too_small", path: ["prNumber"], message: "short" },
+      { code: "invalid_type", path: ["result"], message: "Expected string, received object" },
+    ];
+    const err = mapBackendError(400, { error: { issues, name: "ZodError" } });
+    expect(err.error.detail).toEqual({
+      issues: [
+        // 52-char message, over the 40-char per-issue budget: truncated
+        // with the module's own "..." marker.
+        { path: "branchName", code: "invalid_type", message: "Expected string, received number (val..." },
+        // Short path/code/message: pass through verbatim, untouched.
+        { path: "prNumber", code: "too_small", message: "short" },
+        // 33-char message, under the 40-char budget: passes through
+        // verbatim too.
+        { path: "result", code: "invalid_type", message: "Expected string, received object" },
+      ],
+      totalIssues: 3,
+    });
     expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+  });
+
+  // rc-v1-zod-degrade-details fix round (L3, hostile-entries): a mix of
+  // non-object issues (null, a number, a string, an array), issue objects
+  // with unusable field values (path: null, message: {}), and ONE genuinely
+  // informative issue whose own path mixes valid and invalid segments
+  // (pins L4: invalid segments render as a visible '?' rather than being
+  // silently filtered out, so a real 5-segment path cannot be misread as a
+  // shorter one). Must not throw, must not emit any empty {} entries, and
+  // the one valid issue must survive.
+  it("generic degrade: hostile/malformed issue entries (null, number, string, array, unusable-field objects) never throw, never produce empty entries, and the one valid issue survives with visible '?' placeholders for its unusable path segments", () => {
+    const issues = [
+      null,
+      5,
+      "a string",
+      ["array", "entry"],
+      { path: null, message: {} },
+      { path: [null, { a: 1 }, ["x"], "ok", 3], code: "invalid_type", message: "Expected string, received array" },
+    ];
+    expect(() => mapBackendError(400, { error: { issues, name: "ZodError" } })).not.toThrow();
+    const err = mapBackendError(400, { error: { issues, name: "ZodError" } });
+    const detail = err.error.detail as { issues: Array<Record<string, unknown>>; totalIssues: number } | undefined;
+    expect(detail?.totalIssues).toBe(6);
+    expect(detail?.issues).toEqual([
+      { path: "?.?.?.ok.3", code: "invalid_type", message: "Expected string, received array" },
+    ]);
+    // No empty {} entries anywhere in the surfaced issues[].
+    for (const issue of detail?.issues ?? []) {
+      expect(Object.keys(issue).length).toBeGreaterThan(0);
+    }
+  });
+
+  // rc-v1-zod-degrade-details fix round (L3): plain empty issues: [] must
+  // not fabricate a misleading {issues: [], totalIssues: 0} summary (an
+  // artificial 0 marker for a shape that never actually applied) -- it
+  // falls through to the same object-passthrough branch as an
+  // unrecognized `error` shape instead.
+  it("generic degrade: issues: [] does not fabricate {issues: [], totalIssues: 0} (falls through to object passthrough instead)", () => {
+    const err = mapBackendError(400, { error: { issues: [], name: "ZodError" } });
+    expect(err.error.detail).not.toEqual({ issues: [], totalIssues: 0 });
+    expect(err.error.detail).toEqual({ issues: [], name: "ZodError" });
+  });
+
+  // rc-v1-zod-degrade-details fix round (eviction-negative test): exactly
+  // GENERIC_ISSUES_CLAMP (3) unusable entries precede the one valid issue.
+  // A naive "slice to N by raw position, then filter" implementation would
+  // evict the valid issue here (it sits at raw index 3, past the first 3
+  // slots); this pins that it survives instead.
+  it("generic degrade: a valid issue behind exactly GENERIC_ISSUES_CLAMP leading unusable entries is not evicted", () => {
+    const issues = [null, "not an object", 42, { path: ["survivor"], code: "invalid_type", message: "ok" }];
+    const err = mapBackendError(400, { error: { issues, name: "ZodError" } });
+    expect(err.error.detail).toEqual({
+      issues: [{ path: "survivor", code: "invalid_type", message: "ok" }],
+      totalIssues: 4,
+    });
+  });
+
+  // rc-v1-zod-degrade-details fix round (L6): the object-passthrough
+  // branch (no recognizable issues[] array) must not leak a backend stack
+  // trace. Fixture mirrors what was actually observed: internal file paths
+  // and Prisma query metadata inside `stack`.
+  it("generic degrade: the object-passthrough branch drops a `stack` key rather than leaking a backend stack trace", () => {
+    const err = mapBackendError(500, {
+      error: {
+        code: "SOME_UPSTREAM_CODE",
+        detail: "an upstream service rejected the request",
+        stack:
+          "Error: boom\n    at /app/backend/src/routes/tasks.ts:123:45\n    at PrismaClient.query (/app/node_modules/@prisma/client/index.js:99:1)",
+      },
+    });
+    expect(err.error.detail).toEqual({
+      code: "SOME_UPSTREAM_CODE",
+      detail: "an upstream service rejected the request",
+    });
+    expect(err.error.detail).not.toHaveProperty("stack");
   });
 
   it("generic degrade: an OBJECT body.error with no recognizable issues[] array still surfaces something (the object itself, clamped) rather than staying completely silent", () => {
