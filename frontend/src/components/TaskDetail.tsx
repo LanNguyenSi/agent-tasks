@@ -1006,6 +1006,7 @@ export default function TaskDetail({
           taskId={task.id}
           initial={task.attachments}
           user={user}
+          canManageAll={isProjectAdmin}
           onError={onError}
         />
       </section>
@@ -1016,6 +1017,7 @@ export default function TaskDetail({
           taskId={task.id}
           initial={task.artifacts}
           user={user}
+          canManageAll={isProjectAdmin}
           onError={onError}
         />
       </section>
