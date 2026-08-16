@@ -369,6 +369,13 @@ prose) when such a verb is a genuinely useful next call for at least one
 of the entry's documented cases. The reverse is not required: `recipe`
 need not name every verb `allowedNext` lists.
 
+One named exception to the forward direction: a legacy-gated verb
+`recipe` mentions only as a conditional aside (today `projects_list`,
+offered only behind `AGENT_TASKS_MCP_LEGACY=1`) is not required to
+appear in `allowedNext`, since `allowedNext` may only ever list verbs
+the caller can call immediately, and a legacy-gated verb is not
+immediately callable in the default configuration.
+
 ### Catalog seed
 
 The block-tier catalog MUST cover at least the following known traps,

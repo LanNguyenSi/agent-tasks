@@ -13,10 +13,18 @@
 // entry by entry), but `allowedNext` may ALSO carry discovery/read verbs
 // the recipe text never mentions by name (e.g. already_claimed's
 // `tasks_get`, added so a caller can check the held claim's status
-// programmatically — see the ALREADY_CLAIMED_CASES comment below) when
+// programmatically -- see the ALREADY_CLAIMED_CASES comment below) when
 // they are a genuinely useful next call for at least one of the entry's
 // documented cases. The reverse constraint (recipe MUST name every verb
-// allowedNext lists) does not hold and is not enforced.
+// allowedNext lists) does not hold and is not enforced. One named
+// exception to the forward direction: a legacy-gated verb `recipe`
+// mentions only as a conditional aside (today `projects_list`, offered
+// only behind `AGENT_TASKS_MCP_LEGACY=1` -- see
+// projectAddressingConflictError's and unknownProjectSlugError's own
+// comments below) is NOT required in `allowedNext`, since `allowedNext`
+// may only ever list verbs the caller can call IMMEDIATELY, and a
+// legacy-gated verb is not immediately callable in the default
+// configuration.
 //
 // mapBackendError(status, body, verbContext?) is the single entry point:
 // tools.ts's wrap() is its only call site (mirrors receipt.ts's relationship
@@ -69,13 +77,23 @@
 // terms can still be long on the wire. `code`, `recipe`, and `allowedNext` are
 // preserved WHOLE regardless of size (the contract mandates all four
 // unconditionally, and none of the three is ever backend-controlled raw
-// text at any of today's catalog call sites — recipe is always a
-// hand-authored fixed string, code is either a fixed string or a clamped
-// short backend code, and allowedNext is always a small fixed verb-name
-// list); `detail` and, as of this hardening pass, `message` (which DOES
-// carry raw, potentially escape-heavy backend text — see
-// `backendMessage`) are the two fields this module will actually shrink,
-// in that order, to hold the invariant for arbitrary adversarial input.
+// text at any of today's catalog call sites -- recipe is always a
+// hand-authored fixed string, code is either a fixed string or a
+// backend code clamped to its own CODE_CHAR_BUDGET (see genericDegrade;
+// kept a separate constant from DETAIL_ENTRY_CHAR_BUDGET precisely so
+// raising the detail budget can never silently raise how much of `code`
+// this module is willing to carry through), and allowedNext is always a
+// small fixed verb-name list); `detail` and, as of this hardening pass,
+// `message` (which DOES carry raw, potentially escape-heavy backend
+// text -- see `backendMessage`) are the two fields this module will
+// actually shrink, in that order, to hold the invariant for arbitrary
+// adversarial input. This "code/recipe/allowedNext never touched"
+// assumption is itself only as good as CODE_CHAR_BUDGET/RECIPE_CHAR_BUDGET
+// staying small enough that the rest of the envelope (those three plus a
+// fully-minimized-or-absent `detail`) always leaves room for at least an
+// empty `message` -- see the envelope-floor test in
+// tests/errors.test.ts and enforceErrorBudget's own handling of the case
+// where that floor assumption fails.
 //
 // The per-field clamps below (DETAIL_CLAMP, DETAIL_KEY_CLAMP,
 // DETAIL_ENTRY_CHAR_BUDGET, MESSAGE_CHAR_BUDGET, RECIPE_CHAR_BUDGET) each
@@ -88,15 +106,19 @@
 // codepoint clamp (measured: a 1000-codepoint message of pure U+0001
 // characters clamps to MESSAGE_CHAR_BUDGET=300 codepoints by field-count,
 // but serializes to 1877 wire chars on its own, already over
-// ERROR_BUDGET_CHARS with an empty `detail` — see
-// tests/errors.test.ts's "escape-heavy worst case" test for the pinned
-// number). buildTeachingError's own enforceErrorBudget step is the single
+// ERROR_BUDGET_CHARS with an empty `detail` -- see
+// tests/errors.test.ts's "not_claimed, no detail: an escape-heavy message
+// alone still respects ERROR_BUDGET_CHARS" test (describe block
+// "escape-aware message trim: true wire-format ceiling (task 18e54531)")
+// for the measured number; it is not separately re-asserted as an exact
+// pin anywhere, only via the <= ERROR_BUDGET_CHARS check that test makes.
+// buildTeachingError's own enforceErrorBudget step is the single
 // place that actually guarantees the TOTAL: it re-measures the whole
 // serialized object after construction and, only when still over budget,
 // first re-clamps `detail` harder (same recursive clamp, tighter limits),
 // then, if that is still not enough, replaces `detail` entirely with a
 // small, visible summary object (added only when this entry actually HAD
-// a `detail` to begin with — never fabricated out of nothing) instead of
+// a `detail` to begin with -- never fabricated out of nothing) instead of
 // truncating it into something silently misleading or dropping it
 // without a trace, and, only if the total STILL exceeds budget even with
 // `detail` minimized as far as it goes, shortens `message` itself as the
@@ -152,6 +174,24 @@ const DETAIL_ENTRY_CHAR_BUDGET = 60;
  *  that must itself never grow into a prose blob. */
 const MESSAGE_CHAR_BUDGET = 300;
 const RECIPE_CHAR_BUDGET = 240;
+/** Char bound for `code` on the generic degrade path (genericDegrade), the
+ *  one call site where `code` carries raw backend text (the backend's own
+ *  `error` string, passed through verbatim -- see genericDegrade's own
+ *  comment) rather than a short hand-authored literal. Deliberately its
+ *  OWN constant, not DETAIL_ENTRY_CHAR_BUDGET reused: `code` sits in the
+ *  part of the envelope enforceErrorBudget never re-visits (see the file
+ *  header), so its clamp is one of the inputs the "envelope always leaves
+ *  room for at least an empty `message`" assumption depends on. Sharing
+ *  DETAIL_ENTRY_CHAR_BUDGET would silently couple that assumption to
+ *  whatever value `detail` clamping happens to want, with nothing
+ *  documenting the link -- raising DETAIL_ENTRY_CHAR_BUDGET to, say, 250
+ *  for an unrelated detail-sizing reason would silently let `code` grow to
+ *  250 codepoints too, which alone can cost up to ~6x that on the wire for
+ *  escape-heavy input (see the file header), enough to blow
+ *  ERROR_BUDGET_CHARS on `code` alone even with an empty `message` and no
+ *  `detail`. See the envelope-floor test in tests/errors.test.ts, which
+ *  pins this budget's effect on the worst-case envelope size directly. */
+const CODE_CHAR_BUDGET = 60;
 const TRUNCATION_MARKER = "...";
 
 /** Hard ceiling on the whole serialized teaching error (JSON.stringify(x,
@@ -160,6 +200,24 @@ const TRUNCATION_MARKER = "...";
  *  is the number enforceErrorBudget (below) actually holds the line at,
  *  since the per-field clamps above only ever bound one field at a time. */
 const ERROR_BUDGET_CHARS = 1200;
+
+/** `code` marker for the (not achievable by any catalog entry today, see
+ *  the envelope-floor test in tests/errors.test.ts) case where
+ *  enforceErrorBudget's own envelope-floor assumption fails: `detail` is
+ *  fully minimized or was never present, `message` has been trimmed all
+ *  the way down to `""`, and the response STILL exceeds ERROR_BUDGET_CHARS
+ *  -- meaning the fixed part of the envelope (code/recipe/allowedNext)
+ *  alone is over budget. enforceErrorBudget overwrites `code` with this
+ *  marker in that case, the one place it is ever touched there, so the
+ *  condition is visible (greppable in logs, assertable in a test) instead
+ *  of silently returning an over-budget response while claiming success.
+ *  Deliberately never thrown as an exception: this module IS the
+ *  production error-serialization path server.ts's wrap() depends on for
+ *  every failed tool call, and an exception thrown from inside it would
+ *  surface as an unhandled crash of that call instead of a graceful (if,
+ *  in this unreachable-today case, still oversized) response -- strictly
+ *  worse for a caller than a marked, still-served response. */
+const ERROR_BUDGET_OVERFLOW_CODE = "error_budget_overflow";
 
 /** Tighter versions of DETAIL_CLAMP / DETAIL_KEY_CLAMP /
  *  DETAIL_ENTRY_CHAR_BUDGET, used only by enforceErrorBudget's second
@@ -172,21 +230,25 @@ const HARD_DETAIL_ENTRY_CHAR_BUDGET = 20;
 // Codepoint-safe, not grapheme-safe: truncates on Unicode codepoint
 // boundaries (via Array.from, which groups a UTF-16 surrogate pair into one
 // iteration step) so a clamp can never split a surrogate pair and leave a
-// lone high/low surrogate in the output — the failure mode a 100-emoji
+// lone high/low surrogate in the output -- the failure mode a 100-emoji
 // title hits under plain `value.slice(0, n)` (each emoji here is one
 // astral codepoint = one surrogate pair; slicing at an odd code-unit
 // offset keeps the high surrogate and drops its low half). This does NOT
 // guarantee every clamp lands on a grapheme-CLUSTER boundary (e.g. a
 // base+combining-mark or ZWJ sequence spanning several codepoints could
-// still be split mid-cluster, same as before) — Intl.Segmenter would be
+// still be split mid-cluster, same as before) -- Intl.Segmenter would be
 // needed for that, and today's reported failure is specifically a split
 // surrogate PAIR (one codepoint), not a split grapheme cluster, so
 // codepoint-safety is the precise, minimal fix; see
-// tests/errors.test.ts's emoji-clamp test for the boundary this closes.
+// tests/errors.test.ts's "a 100-emoji activeClaim.title clamps to
+// DETAIL_ENTRY_CHAR_BUDGET without leaving a lone surrogate, and
+// round-trips through a strict UTF-8 re-encode" test (describe block
+// "clamp is surrogate-safe: codepoint-based truncation (task 18e54531)")
+// for the boundary this closes.
 function clamp(value: string, maxChars: number): string {
   // value.length (UTF-16 code units) is always >= the codepoint count (an
   // astral codepoint is 2 units, a BMP codepoint is 1), so if the code-unit
-  // length already fits the budget the codepoint count fits too — skips
+  // length already fits the budget the codepoint count fits too -- skips
   // the Array.from allocation on the overwhelmingly common
   // ASCII/no-truncation-needed path.
   if (value.length <= maxChars) return value;
@@ -1017,7 +1079,7 @@ function fitsWithMessage(err: TeachingError, candidateMessage: string): boolean 
  *  codepoint clamp (MESSAGE_CHAR_BUDGET, applied earlier in
  *  buildTeachingError) bounds its JS string length but not its escaped
  *  WIRE size, since JSON.stringify can expand a single character (a
- *  control character outside \n\t\r\b\f) into a 6-char \uXXXX escape — see
+ *  control character outside \n\t\r\b\f) into a 6-char \uXXXX escape -- see
  *  the file header's "Response budget invariant" section. This is the one
  *  place `message` is ever shortened past MESSAGE_CHAR_BUDGET; `code`,
  *  `recipe`, and `allowedNext` are still never touched here.
@@ -1028,9 +1090,11 @@ function fitsWithMessage(err: TeachingError, candidateMessage: string): boolean 
  *  codepoint-safety fix exists to close. `best` starts at `""` and is only
  *  ever raised by a candidate that actually fits, so if even an empty
  *  message does not fit (the surrounding code/recipe/allowedNext/detail
- *  envelope alone already exceeds the budget — not achievable by any
- *  catalog entry today, see the file header) the result is an empty
- *  `message` rather than a false claim of fitting. */
+ *  envelope alone already exceeds the budget -- not achievable by any
+ *  catalog entry today, see the file header and the envelope-floor test in
+ *  tests/errors.test.ts) `best` stays `""`: this function alone does NOT
+ *  guarantee the result fits (see enforceErrorBudget's own handling of
+ *  that case, immediately after its call to this function). */
 function trimMessageForBudget(err: TeachingError): TeachingError {
   const codepointCount = Array.from(err.error.message).length;
   let lo = 0;
@@ -1056,22 +1120,33 @@ function trimMessageForBudget(err: TeachingError): TeachingError {
  *  cost nor their sum: several near-max fields at once, or a single
  *  escape-heavy `message`, can still exceed ERROR_BUDGET_CHARS in total.
  *  This is the one place that actually guarantees the total. `code`,
- *  `recipe`, and `allowedNext` are never touched here (the contract
- *  mandates them whole, regardless of size, and none of the three carries
- *  raw untrusted text at any of today's catalog call sites — see the file
- *  header). `detail` is degraded first, and NEVER silently: first a
- *  harder recursive re-clamp (same clampDetailValue walk, tighter HARD_*
- *  limits), and, only if that still is not enough AND this entry actually
- *  had a `detail` to begin with, a small visible summary object replaces
- *  it entirely, so a caller always sees that something was omitted rather
- *  than getting a truncated, possibly-misleading fragment (an entry with
- *  no `detail` at all never has one fabricated here). Only if the total
- *  STILL exceeds budget after `detail` is fully minimized (or was never
- *  present) does `message` itself get shortened, via trimMessageForBudget
- *  above — the one scenario the per-field clamps alone cannot catch,
- *  since an escape-heavy `message` can blow the wire budget even with an
- *  empty `detail`. */
-function enforceErrorBudget(err: TeachingError): TeachingError {
+ *  `recipe`, and `allowedNext` are never touched here EXCEPT in the
+ *  unreachable-today overflow case described on ERROR_BUDGET_OVERFLOW_CODE
+ *  (the contract otherwise mandates them whole, regardless of size, and
+ *  none of the three carries raw untrusted text at any of today's catalog
+ *  call sites -- see the file header). `detail` is degraded first, and
+ *  NEVER silently: first a harder recursive re-clamp (same
+ *  clampDetailValue walk, tighter HARD_* limits), and, only if that still
+ *  is not enough AND this entry actually had a `detail` to begin with, a
+ *  small visible summary object replaces it entirely, so a caller always
+ *  sees that something was omitted rather than getting a truncated,
+ *  possibly-misleading fragment (an entry with no `detail` at all never
+ *  has one fabricated here -- see the `if (priorDetail)` guard below).
+ *  Only if the total STILL exceeds budget after `detail` is fully
+ *  minimized (or was never present) does `message` itself get shortened,
+ *  via trimMessageForBudget above -- the one scenario the per-field clamps
+ *  alone cannot catch, since an escape-heavy `message` can blow the wire
+ *  budget even with an empty `detail`.
+ *
+ *  Exported so tests/errors.test.ts can exercise the
+ *  ERROR_BUDGET_OVERFLOW_CODE fallback directly with a synthetic,
+ *  hand-built TeachingError whose code/recipe alone already exceed
+ *  ERROR_BUDGET_CHARS -- not a runtime consumer outside this module (same
+ *  idiom as KNOWN_RULE_CORRECTIVES/ALREADY_CLAIMED_CASES above), and the
+ *  only way to reach that fallback deterministically in a test, since no
+ *  real catalog entry's own code/recipe/allowedNext gets anywhere close
+ *  to ERROR_BUDGET_CHARS today (see the envelope-floor tests). */
+export function enforceErrorBudget(err: TeachingError): TeachingError {
   if (serializeTeachingError(err).length <= ERROR_BUDGET_CHARS) return err;
 
   if (err.error.detail) {
@@ -1123,7 +1198,24 @@ function enforceErrorBudget(err: TeachingError): TeachingError {
   // never present) and the total STILL exceeds budget: the escape-expanded
   // wire cost of `message` itself is what is blowing the ceiling. Shorten
   // it, escape-aware, as the true last resort.
-  return trimMessageForBudget(withMinimizedDetail);
+  const trimmed = trimMessageForBudget(withMinimizedDetail);
+  if (serializeTeachingError(trimmed).length <= ERROR_BUDGET_CHARS) return trimmed;
+
+  // Still over budget with `message` trimmed all the way down to `""`: the
+  // envelope-floor assumption documented in the file header and on
+  // CODE_CHAR_BUDGET has failed -- code/recipe/allowedNext (plus the now
+  // fully-minimized-or-absent `detail`) exceed ERROR_BUDGET_CHARS on their
+  // own, with no `message` left to shrink. Not achievable by any catalog
+  // entry today (see the envelope-floor test in tests/errors.test.ts). See
+  // ERROR_BUDGET_OVERFLOW_CODE's own comment for why this is surfaced as a
+  // `code` marker rather than thrown.
+  return {
+    ...trimmed,
+    error: {
+      ...trimmed.error,
+      code: ERROR_BUDGET_OVERFLOW_CODE,
+    },
+  };
 }
 
 // Observed live during rc-v1-C008 (2026-08-12): POST /tasks with an invalid
@@ -1285,7 +1377,7 @@ function genericDegrade(
 ): TeachingError {
   const code =
     typeof bodyError === "string" && bodyError.length > 0
-      ? clamp(bodyError, DETAIL_ENTRY_CHAR_BUDGET)
+      ? clamp(bodyError, CODE_CHAR_BUDGET)
       : `http_${status}`;
   return buildTeachingError({
     code,

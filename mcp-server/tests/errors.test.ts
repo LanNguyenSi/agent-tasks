@@ -8,6 +8,7 @@ import {
   unknownProjectSlugError,
   KNOWN_RULE_CORRECTIVES,
   ALREADY_CLAIMED_CASES,
+  enforceErrorBudget,
   type TeachingError,
 } from "../src/errors.js";
 import { serializeResult } from "../src/server.js";
@@ -1446,6 +1447,13 @@ describe("response budget invariant: adversarial input", () => {
       expect(err.error.code).toBe("not_claimed");
       expect(err.error.recipe).toBe("call task_start to claim this task first");
       expect(err.error.allowedNext).toEqual(["task_start"]);
+      // Fix-round regression pin (task 18e54531 review): enforceErrorBudget
+      // used to fabricate a `detail: { omitted: true, ... }` object even on
+      // entries -- like this one -- that never had a `detail` to begin
+      // with, once the total needed shortening for any reason (here, the
+      // escape-heavy `message`). not_claimed never sets `detail`, so it
+      // must stay absent even after the message-trim path runs.
+      expect(err.error.detail).toBeUndefined();
     });
 
     it("already_claimed + activeClaim detail: an escape-heavy message combined with a real detail payload still respects ERROR_BUDGET_CHARS", () => {
@@ -1480,6 +1488,97 @@ describe("response budget invariant: adversarial input", () => {
       // is what bounds it here -- exactly the pre-existing behavior.
       expect(Array.from(err.error.message).length).toBe(300);
       expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+    });
+  });
+
+  // Fix-round finding (task 18e54531 review, MEDIUM "silent envelope-floor
+  // assumption"): trimMessageForBudget's own binary search starts `best`
+  // at `""` and only ever raises it -- it never actually CHECKS that an
+  // empty message fits. The real safety net is enforceErrorBudget's own
+  // "code/recipe/allowedNext never touched" assumption, which in turn
+  // rests on CODE_CHAR_BUDGET and RECIPE_CHAR_BUDGET staying small enough
+  // that code+recipe+allowedNext+(minimized-or-absent detail) always
+  // leaves room for at least an empty message. Nothing enforced that
+  // assumption before this fix-round: reviewer-demonstrated repro (on the
+  // pre-fix code, where `code`'s own clamp was DETAIL_ENTRY_CHAR_BUDGET,
+  // shared with unrelated detail-sizing concerns) raising that shared
+  // constant to 250 produced a silent 1701-char response, over
+  // ERROR_BUDGET_CHARS with no visible sign anything was wrong. This
+  // block covers the two-part fix: (a) `code` now has its own
+  // CODE_CHAR_BUDGET constant (see errors.ts), decoupled from
+  // DETAIL_ENTRY_CHAR_BUDGET, so a future detail-sizing change can no
+  // longer silently widen it; (b) an explicit "does the floor actually
+  // hold" test for the worst real catalog entry; (c) a direct test of
+  // enforceErrorBudget's own fallback for the case where the floor does
+  // NOT hold (ERROR_BUDGET_OVERFLOW_CODE).
+  describe("envelope floor: code/recipe/allowedNext leave room for an empty message (task 18e54531 fix-round)", () => {
+    it("already_claimed with an escape-heavy activeClaim (the worst real catalog entry): serialized with message forced to '' still respects ERROR_BUDGET_CHARS", () => {
+      const err = mapBackendError(409, {
+        error: "already_claimed",
+        message: "will be forced to empty below; its own content does not matter here",
+        activeClaim: {
+          taskId: String.fromCharCode(1).repeat(100),
+          title: String.fromCharCode(1).repeat(100),
+          role: String.fromCharCode(1).repeat(100),
+        },
+      });
+      // Every activeClaim field is escape-heavy (pure U+0001) so each
+      // clamps to DETAIL_ENTRY_CHAR_BUDGET (60) codepoints but costs up to
+      // 6x that on the wire -- the worst-case `detail` this catalog entry
+      // can actually produce, combined with ALREADY_CLAIMED_RECIPE (the
+      // longest recipe in the catalog) and a 4-verb allowedNext.
+      const floor = serializeTeachingError({ ...err, error: { ...err.error, message: "" } });
+      expect(floor.length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+    });
+
+    it("generic degrade with an escape-heavy backend code: code stays within its own CODE_CHAR_BUDGET clamp (not the ERROR_BUDGET_OVERFLOW_CODE fallback), and the envelope with message forced to '' respects ERROR_BUDGET_CHARS", () => {
+      // 200 codepoints of pure U+0001, clamped down to CODE_CHAR_BUDGET (60
+      // codepoints) by genericDegrade -- the escape-heaviest `code` this
+      // module can actually produce today.
+      const escapeHeavyCode = String.fromCharCode(1).repeat(200);
+      const err = mapBackendError(418, { error: escapeHeavyCode, message: "short, ordinary message" });
+      // If CODE_CHAR_BUDGET is ever raised without re-checking this floor,
+      // `code` here silently stops being the real (escape-clamped) backend
+      // code and instead becomes the ERROR_BUDGET_OVERFLOW_CODE fallback
+      // marker (enforceErrorBudget's own emergency path, triggered because
+      // the escape-expanded `code` alone blew the budget before message
+      // trimming could help) -- this is the assertion that catches that
+      // regression, distinct from (and stricter than) the wire-size check
+      // below, which the fallback marker would keep passing on its own.
+      expect(err.error.code).not.toBe("error_budget_overflow");
+      expect(Array.from(err.error.code).length).toBeLessThanOrEqual(60);
+      const floor = serializeTeachingError({ ...err, error: { ...err.error, message: "" } });
+      expect(floor.length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+    });
+
+    it("enforceErrorBudget's ERROR_BUDGET_OVERFLOW_CODE fallback: when a synthetic envelope's own code+recipe already exceed ERROR_BUDGET_CHARS with an empty message and no detail, code is replaced with the visible marker instead of silently returning an over-budget response", () => {
+      // Directly exercises the exported enforceErrorBudget with a
+      // hand-built TeachingError, since no real catalog entry's own
+      // code/recipe/allowedNext get anywhere close to ERROR_BUDGET_CHARS
+      // today (see the two tests above) -- this is the "not achievable by
+      // any catalog entry today" case the file header and
+      // ERROR_BUDGET_OVERFLOW_CODE's own comment both describe.
+      const synthetic: TeachingError = {
+        ok: false,
+        error: {
+          code: "x".repeat(50),
+          message: "y".repeat(2000),
+          recipe: "z".repeat(2000),
+          allowedNext: ["task_start"],
+        },
+      };
+      const result = enforceErrorBudget(synthetic);
+      expect(result.error.code).toBe("error_budget_overflow");
+      // `message` was still trimmed all the way down first (the normal
+      // last-resort step ran before the fallback marker kicked in) --
+      // the fallback is reached only because code+recipe alone (100
+      // chars total) plus JSON overhead still would not have been the
+      // problem here; recipe (2000 chars, unclamped by this direct call
+      // since RECIPE_CHAR_BUDGET is only applied in buildTeachingError,
+      // not enforceErrorBudget) is what is actually blowing the budget,
+      // demonstrating the fallback fires regardless of WHICH field is
+      // responsible.
+      expect(result.error.message).toBe("");
     });
   });
 
@@ -1568,26 +1667,43 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
   // of the default-registered set and the legacy-only set (tasks_transition
   // / tasks_update / tasks_claim -- named via a dynamic verbContext/
   // retryVerb interpolation, always also present in that same entry's own
-  // allowedNext by construction), MINUS "projects_list" specifically.
-  // rc-v1-C007 deliberately excludes projects_list from allowedNext even
-  // where recipe prose still mentions it as a conditional, legacy-flag-
-  // gated aside ("... or, with AGENT_TASKS_MCP_LEGACY=1 set, call
-  // projects_list ...") rather than that entry's own primary corrective
-  // call -- see projectAddressingConflictError's and
-  // unknownProjectSlugError's own comments in errors.ts. This is the one
-  // pre-existing, already-documented exception to the "recipe names ⊆
-  // allowedNext" invariant; scanning for any OTHER verb name still catches
-  // a future catalog entry that violates the invariant without a matching,
-  // documented exception.
-  const VERB_VOCAB = Array.from(new Set([...registeredVerbNames(), ...legacyRegisteredVerbNames()])).filter(
-    (v) => v !== "projects_list",
-  );
+  // allowedNext by construction -- and projects_list itself, legacy-only
+  // since rc-v1-C007). Fix-round finding (task 18e54531 review, LOW): this
+  // used to filter "projects_list" out of the vocabulary entirely (a
+  // blanket exclusion covering every fixture at once), rather than scoping
+  // the one legitimate exception (a legacy-gated verb named only as a
+  // conditional aside -- see the file header's/doc's own "allowedNext"
+  // exception this fix-round added) to just the two fixtures it actually
+  // applies to. projects_list is back in the full vocabulary here; each
+  // fixture below instead opts into its own narrow exception via
+  // `allowedRecipeOnlyVerbs` (see project_addressing_conflict
+  // (neither_provided) and unknown_project_slug below), so scanning for
+  // "projects_list" on any OTHER, unrelated fixture still catches a
+  // mistake (see the drift/scoping probe this fix-round added covering
+  // that case).
+  const VERB_VOCAB = Array.from(new Set([...registeredVerbNames(), ...legacyRegisteredVerbNames()]));
 
+  // Anchors on identifier boundaries, not `\b`: verb names are snake_case
+  // (letters/digits/underscore only), and `\b` does NOT treat `_` as a
+  // boundary character, so a plain `\b` pattern (or the previous
+  // plain-substring `recipe.includes(verb)`) would let a SHORTER verb name
+  // match as a false "named" hit inside a LONGER verb name that happens to
+  // share its prefix -- e.g. "projects_get" matching inside
+  // "projects_get_effective_gates" (both are registered verb names; no
+  // catalog entry mentions either today, but the collision is latent and
+  // would silently mis-scan the day one does). The lookaround here treats
+  // any letter/digit/underscore immediately before or after a candidate
+  // match as disqualifying, closing that gap. This guard checks MENTION
+  // (does the recipe's prose contain this exact verb token as a whole
+  // identifier), not INTENT (whether the prose is actually recommending it
+  // as a corrective call, versus, say, naming it only in a parenthetical
+  // aside) -- see the `allowedRecipeOnlyVerbs` per-fixture escape hatch
+  // below for how the intent gap is handled instead.
   function verbsNamedInRecipe(recipe: string): string[] {
-    return VERB_VOCAB.filter((verb) => recipe.includes(verb));
+    return VERB_VOCAB.filter((verb) => new RegExp(`(?<![A-Za-z0-9_])${verb}(?![A-Za-z0-9_])`).test(recipe));
   }
 
-  const catalogFixtures: Array<{ label: string; err: TeachingError }> = [
+  const catalogFixtures: Array<{ label: string; err: TeachingError; allowedRecipeOnlyVerbs?: string[] }> = [
     {
       label: "not_claimed",
       err: mapBackendError(403, {
@@ -1656,21 +1772,71 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
     {
       label: "project_addressing_conflict (neither_provided)",
       err: projectAddressingConflictError("task_create", "neither_provided"),
+      // rc-v1-C007: this entry's own recipe legitimately mentions
+      // projects_list as a legacy-flag-gated conditional aside (see
+      // projectAddressingConflictError's own comment in errors.ts and the
+      // file header's/doc's "allowedNext" exception this fix-round
+      // added), not as its primary corrective call -- it is scoped to
+      // exactly this fixture, not a blanket vocabulary exclusion.
+      allowedRecipeOnlyVerbs: ["projects_list"],
     },
-    { label: "unknown_project_slug", err: unknownProjectSlugError("myslug", "task_create") },
+    {
+      label: "unknown_project_slug",
+      err: unknownProjectSlugError("myslug", "task_create"),
+      // Same rc-v1-C007 exception as above, scoped to this one fixture --
+      // see unknownProjectSlugError's own comment in errors.ts.
+      allowedRecipeOnlyVerbs: ["projects_list"],
+    },
     {
       label: "generic degrade",
       err: mapBackendError(418, { error: "some_backend_code", message: "unrecognized shape" }),
     },
   ];
 
-  it.each(catalogFixtures)("$label: every verb recipe names is present in allowedNext", ({ label, err }) => {
-    const named = verbsNamedInRecipe(err.error.recipe);
-    for (const verb of named) {
-      expect(
-        err.error.allowedNext.includes(verb),
-        `${label}: recipe names "${verb}" but allowedNext is [${err.error.allowedNext.join(", ")}]`,
-      ).toBe(true);
-    }
+  it.each(catalogFixtures)(
+    "$label: every verb recipe names is present in allowedNext",
+    ({ label, err, allowedRecipeOnlyVerbs }) => {
+      const named = verbsNamedInRecipe(err.error.recipe);
+      for (const verb of named) {
+        if (allowedRecipeOnlyVerbs?.includes(verb)) continue;
+        expect(
+          err.error.allowedNext.includes(verb),
+          `${label}: recipe names "${verb}" but allowedNext is [${err.error.allowedNext.join(", ")}]`,
+        ).toBe(true);
+      }
+    },
+  );
+
+  // Drift guard (fix-round finding, task 18e54531 review, LOW), same
+  // spirit as KNOWN_RULE_CORRECTIVES's own drift guard above (this file):
+  // it.each above only ever checks the fixtures it is GIVEN -- nothing
+  // forces a newly added catalog entry (a new mapBackendError branch, or a
+  // new client-side export like projectAddressingConflictError) to
+  // actually get a fixture here. Pins the exact, sorted set of distinct
+  // `code`s catalogFixtures produces (excluding "generic degrade", which
+  // is the no-catalog-match fallback, not a catalog entry) against a
+  // hand-maintained list mirroring errors.ts's own file-header "Catalog
+  // seed" enumeration. This is a cheap, mechanical tripwire -- it catches
+  // a fixture silently going missing or a code silently changing, not a
+  // proof every REAL catalog entry in errors.ts has a fixture (that would
+  // need parsing errors.ts's own source, out of scope for a test file).
+  it("catalogFixtures' distinct codes match errors.ts's own file-header catalog-seed enumeration (drift guard)", () => {
+    const EXPECTED_CATALOG_CODES = [
+      "already_claimed",
+      "cross_repo_pr_rejected",
+      "force_admin_only",
+      "low_confidence",
+      "not_claimed",
+      "pr_author_mismatch",
+      "precondition_failed",
+      "project_addressing_conflict",
+      "respec_conflict",
+      "result_not_plain_string",
+      "unknown_project_slug",
+    ];
+    const actualCodes = Array.from(
+      new Set(catalogFixtures.filter((f) => f.label !== "generic degrade").map((f) => f.err.error.code)),
+    ).sort();
+    expect(actualCodes).toEqual(EXPECTED_CATALOG_CODES);
   });
 });
