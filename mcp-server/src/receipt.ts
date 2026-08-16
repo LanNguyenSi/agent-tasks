@@ -554,6 +554,30 @@ export interface StartGroundingHint {
   activeGuardrails?: string[];
 }
 
+/**
+ * Backend field since rc-v1-B001 (PR #445): the gates configured on the
+ * edge(s) this call's caller will hit next on a subsequent task_finish,
+ * resolved server-side from the SAME effectiveDefinition already used to
+ * gate the claim itself (backend/src/routes/tasks.ts's
+ * gatesForTransitionOrNull), authoritative over this module's own
+ * client-side approximation (deriveGateExpectations below), which is now a
+ * fallback for backends that predate this field (see
+ * resolveGateExpectations). `null` means the edge itself is absent (the
+ * corresponding finish call will 400 with no_transition); `[]` means the
+ * edge exists with nothing required. This distinction MUST NOT be
+ * collapsed: see gatesForTransitionOrNull's own doc comment for why a
+ * workflow that drops one edge while keeping another makes `[]` and `null`
+ * mean genuinely different things for the caller.
+ */
+export interface StartEffectiveGates {
+  finish: string[] | null;
+  /** Review-claim only: previews the "request_changes" outcome's edge, a
+   *  DIFFERENT edge than `finish` (which previews "approve" on a review
+   *  claim, see backend/src/routes/tasks.ts's review-claim branch). Absent
+   *  on a work-claim response, which has only one relevant edge. */
+  requestChanges?: string[] | null;
+}
+
 export interface StartResponse {
   kind: "work" | "review";
   task: StartTask;
@@ -567,11 +591,31 @@ export interface StartResponse {
   // matching the "actionable counter-rule": task_start cannot change the
   // spec, so only the bare scalar belongs here, never `missing[]`/detail.
   confidence?: { score: number };
+  /** Since rc-v1-B001. See StartEffectiveGates. Declared optional (`?:`),
+   *  not required, so a pre-B001 backend response is still a valid
+   *  StartResponse: resolveGateExpectations reads this defensively and
+   *  falls back to deriveGateExpectations when it is absent. */
+  effectiveGates?: StartEffectiveGates;
+  /** Since rc-v1-B001: task status immediately before this call, the real
+   *  transition.from, not a guess. On a work claim this is the state the
+   *  task was in before the claim (e.g. "open"); on a review claim it
+   *  equals the current task.status ("review"), since review-claiming does
+   *  not itself transition status (backend/src/routes/tasks.ts's
+   *  review-claim branch comment). Absent on a pre-B001 backend, in which
+   *  case StartSlice.transition is simply omitted, no guess is made. */
+  previousStatus?: string;
 }
 
 export interface StartSlice {
   ok: true;
   task: { id: string; status?: string };
+  /** Only present on an actual state change (response.previousStatus !==
+   *  response.task.status), the same "only on a state change" rule the
+   *  general Receipt.transition field follows (docs/response-contract-v1.md).
+   *  Absent on a review-claim start (task.status stays "review", so
+   *  previousStatus equals it), and absent entirely against a pre-rc-v1-B001
+   *  backend that does not send `previousStatus`, no guess is made. */
+  transition?: { from: string; to: string };
   /** Bare scalar only — see the KNOWN GAP note on StartResponse.confidence. */
   confidence?: number;
   /** Derived from task.templateData.taskType (the same source
@@ -579,19 +623,50 @@ export interface StartSlice {
    *  from the caller's own request (taskType is set once, at task_create
    *  time, by whoever created the task — not by this call's caller). */
   inferredTaskType?: string;
+  /** On a work claim, this names the SAME edge `gateExpectations` previews
+   *  (startTarget -> expectedFinishState). On a review claim, it does NOT:
+   *  it names the definition-wide work-finish target (what an author's
+   *  task_finish would target on this task), while `gateExpectations`
+   *  previews the review -> approveTarget edge (the "approve" outcome), a
+   *  different edge, resolved from the backend's own
+   *  `expectedFinishStateFromDefinition` vs `approveTarget` (see
+   *  backend/src/routes/tasks.ts's review-claim branch). A review-claim
+   *  receipt like `{ expectedFinishState: "review", gateExpectations: null
+   *  }` therefore means the approve edge is absent, NOT that this field's
+   *  own named state is unreachable; do not pair the two fields as if they
+   *  describe the same transition on a review claim. */
   expectedFinishState?: string;
-  /** The `requires` gate list for the transition out of the task's current
-   *  state to `expectedFinishState`. See deriveGateExpectations for the
-   *  dynamic-vs-static-fallback resolution and its documented gap. */
-  gateExpectations?: string[];
-  /** Present only alongside `gateExpectations`, only when it was derived
-   *  from the static default-workflow.ts fallback table rather than an
-   *  embedded `task.workflow.definition`. A `null` `task.workflowId` does
-   *  NOT prove the built-in default workflow governs this task — it can
-   *  also mean a project-default customized Workflow row applies (see the
-   *  KNOWN GAP note on deriveGateExpectations) — so this marks the gate
-   *  list as an assumption the caller should not treat as authoritative. */
+  /** The `requires` gate list for the edge task_finish will hit next: on a
+   *  work claim, the single startTarget -> expectedFinishState edge; on a
+   *  review claim, the "approve" edge (see requestChangesGateExpectations
+   *  for the review claim's other outcome). Sourced from the backend's
+   *  authoritative `effectiveGates.finish` (rc-v1-B001) when present, via
+   *  resolveGateExpectations; falls back to deriveGateExpectations'
+   *  dynamic-vs-static-fallback resolution only against a pre-B001 backend.
+   *  `null` = the edge does not exist (finish will 400 with no_transition);
+   *  omitted = either the edge exists with nothing required, or (fallback
+   *  path only) no data was derivable at all: see resolveGateExpectations
+   *  and projectGateList for the exact collapse rule. */
+  gateExpectations?: string[] | null;
+  /** Present only alongside `gateExpectations`, only when it came from the
+   *  pre-B001 fallback (deriveGateExpectations' static default-workflow.ts
+   *  table) rather than the backend's own authoritative `effectiveGates`.
+   *  A `null` `task.workflowId` does NOT prove the built-in default
+   *  workflow governs this task — it can also mean a project-default
+   *  customized Workflow row applies (see the KNOWN GAP note on
+   *  deriveGateExpectations) — so this marks the gate list as an assumption
+   *  the caller should not treat as authoritative. Never set when
+   *  `effectiveGates` was present on the response: the backend's own value
+   *  needs no such caveat. */
   gateExpectationsSource?: "assumed-default-workflow";
+  /** Review-claim only: the `requires` gate list for the "request_changes"
+   *  outcome's edge, sourced exclusively from the backend's
+   *  `effectiveGates.requestChanges` (rc-v1-B001); there is no client-side
+   *  fallback derivation for this edge (the pre-B001 code never computed it
+   *  at all), so on a pre-B001 backend this field is simply absent, never
+   *  guessed, and carries no separate "source" marker. Same null-vs-omitted
+   *  rule as `gateExpectations`. */
+  requestChangesGateExpectations?: string[] | null;
   next?: string[];
   // ── include-gated fields (tools.ts's task_start includeSchema) ──────────
   description?: string;
@@ -618,7 +693,15 @@ interface GateExpectationsResult {
 }
 
 /**
- * Resolves the `requires` gate list for task.status -> expectedFinishState.
+ * Resolves the `requires` gate list for task.status -> expectedFinishState
+ * WITHOUT the backend's rc-v1-B001 `effectiveGates` field. Called only by
+ * resolveGateExpectations below, and only when `response.effectiveGates` is
+ * absent (a pre-B001 backend); on any backend that sends it,
+ * `effectiveGates` is authoritative (it is resolved server-side from the
+ * exact same effectiveDefinition this function can only approximate
+ * client-side) and this function is never consulted. Kept for that
+ * version-tolerance case only; its own KNOWN GAPs below are pre-existing
+ * and unrelated to that gating.
  *
  * Dynamic path: when the raw response embeds `task.workflow.definition`
  * (today: both sub-paths of the review-claim branch of POST
@@ -671,6 +754,59 @@ function deriveGateExpectations(
   );
   const gates = fallback?.requires && fallback.requires.length > 0 ? fallback.requires : undefined;
   return gates ? { gates, source: "assumed-default-workflow" } : {};
+}
+
+/**
+ * Maps a raw backend gate list (`string[] | null`) to StartSlice's
+ * convention: `null` (the edge is absent) passes through unchanged, exactly
+ * the value that must stay distinguishable from "no requires" per
+ * rc-v1-B001's contract (see StartEffectiveGates); a non-empty array
+ * passes through unchanged, and an empty array (edge exists, nothing
+ * required) collapses to `undefined` so the happy, nothing-to-report case
+ * costs no bytes in the receipt (report-by-exception, same rationale the
+ * pre-existing fallback logic already applied to its own gate lists).
+ */
+function projectGateList(gates: string[] | null | undefined): string[] | null | undefined {
+  if (gates === undefined || gates === null) return gates;
+  return gates.length > 0 ? gates : undefined;
+}
+
+/**
+ * Resolves task_start's three gate-expectation slice fields
+ * (gateExpectations, gateExpectationsSource, requestChangesGateExpectations)
+ * from the raw response. Two paths:
+ *
+ *   Authoritative (rc-v1-B001+): `response.effectiveGates.finish` is
+ *   present (checked as `!== undefined`, not truthiness of the parent
+ *   `effectiveGates` object, since `finish` is the field this layer
+ *   actually consumes and can legitimately BE `null`, `[]`, or a non-empty
+ *   array while still being "present"; a malformed/partial backend body
+ *   that sends `effectiveGates: {}` with no `finish` key at all must fall
+ *   through to the client-side fallback below instead of silently
+ *   resolving to "nothing required" with no provenance marker). `finish`
+ *   (and, on a review claim, `requestChanges`) are passed through
+ *   projectGateList as-is, with no gateExpectationsSource, since the
+ *   backend's own value needs no "assumed" caveat.
+ *
+ *   Fallback (pre-B001 backends, or a present-but-partial `effectiveGates`
+ *   missing its own `finish` key): deriveGateExpectations' existing
+ *   dynamic-then-static resolution runs unchanged for `finish`. There is no
+ *   fallback for `requestChanges` at all (the pre-B001 code never computed
+ *   it), so it is always omitted on this path.
+ */
+function resolveGateExpectations(response: StartResponse): {
+  finish?: string[] | null;
+  finishSource?: "assumed-default-workflow";
+  requestChanges?: string[] | null;
+} {
+  if (response.effectiveGates?.finish !== undefined) {
+    return {
+      finish: projectGateList(response.effectiveGates.finish),
+      requestChanges: projectGateList(response.effectiveGates.requestChanges),
+    };
+  }
+  const { gates, source } = deriveGateExpectations(response.task, response.expectedFinishState);
+  return { finish: gates, finishSource: source };
 }
 
 /**
@@ -744,16 +880,32 @@ export function receiptForStart(
         ? { id: response.task.id, status: response.task.status }
         : { id: response.task.id },
   };
+  // Same "only on a state change" rule as the general Receipt.transition
+  // field (docs/response-contract-v1.md): a review-claim's previousStatus
+  // equals its (unchanged) task.status, so no transition is reported there.
+  // Absent entirely against a pre-rc-v1-B001 backend (previousStatus
+  // undefined), no guess is made.
+  if (
+    response.previousStatus !== undefined &&
+    response.task.status !== undefined &&
+    response.previousStatus !== response.task.status
+  ) {
+    slice.transition = { from: response.previousStatus, to: response.task.status };
+  }
   if (response.confidence?.score !== undefined) slice.confidence = response.confidence.score;
   const inferredTaskType = deriveInferredTaskType(response.task);
   if (inferredTaskType) slice.inferredTaskType = inferredTaskType;
   if (response.expectedFinishState) slice.expectedFinishState = response.expectedFinishState;
-  const { gates: gateExpectations, source: gateExpectationsSource } = deriveGateExpectations(
-    response.task,
-    response.expectedFinishState,
-  );
-  if (gateExpectations) slice.gateExpectations = gateExpectations;
+  const {
+    finish: gateExpectations,
+    finishSource: gateExpectationsSource,
+    requestChanges: requestChangesGateExpectations,
+  } = resolveGateExpectations(response);
+  if (gateExpectations !== undefined) slice.gateExpectations = gateExpectations;
   if (gateExpectationsSource) slice.gateExpectationsSource = gateExpectationsSource;
+  if (requestChangesGateExpectations !== undefined) {
+    slice.requestChangesGateExpectations = requestChangesGateExpectations;
+  }
   const next = deriveGroundingNext(response.groundingHint);
   if (next) slice.next = next;
 
