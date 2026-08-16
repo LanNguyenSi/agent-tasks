@@ -64,6 +64,25 @@ make dev-frontend
 
 See [docs/architecture.md](architecture.md) for the repository layout and module boundaries.
 
+## Content-Security-Policy
+
+The frontend sends a `Content-Security-Policy-Report-Only` header (set in
+`frontend/src/middleware.ts`) on every response except its own static/image
+assets. It's report-only: violations show up in the browser console, but
+nothing is blocked yet. `script-src` is `'self'` plus a per-request nonce
+(covers the RSC-hydration scripts Next.js itself injects) plus a sha256
+hash of the one inline script the app renders (`THEME_INIT_SCRIPT` in
+`frontend/src/lib/theme.ts`, injected in `layout.tsx`); `style-src` allows
+`'unsafe-inline'` because React's `style={{...}}` prop compiles to an
+inline style attribute, which CSP hash/nonce sources don't cover. See the
+module doc in `frontend/src/lib/csp.ts` for the full directive-by-directive
+rationale.
+
+Enforcing the policy (switching the header to `Content-Security-Policy`,
+which will actually block violating requests) is a follow-up task, done
+once report-only has run clean in production for a burn-in period. It is
+not done yet.
+
 ## Contributing
 
 1. Fork the repo.
