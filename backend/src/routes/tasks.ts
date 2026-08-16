@@ -254,7 +254,7 @@ export const createTaskSchema = z.object({
 // (http(s)-scheme allowlist) rather than a bare string-url to prevent
 // stored XSS when the prUrl is rendered as an <a href> in the UI.
 // task_finish / submit-pr use the stricter github PR regex below.
-const updateTaskSchema = z.object({
+export const updateTaskSchema = z.object({
   title: z.string().min(1).max(255).optional(),
   description: z.string().nullable().optional(),
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(),
@@ -274,7 +274,7 @@ const updateTaskSchema = z.object({
   deliverableRepo: deliverableRepoSchema.nullable().optional(),
 });
 
-const agentUpdateTaskSchema = z.object({
+export const agentUpdateTaskSchema = z.object({
   branchName: z.string().max(255).nullable().optional(),
   prUrl: httpUrl().nullable().optional(),
   prNumber: z.number().int().positive().nullable().optional(),
@@ -826,6 +826,20 @@ taskRouter.post(
         select: { id: true },
       });
       if (!workflow) {
+        // Mirror the deliverableRepo audit below: a rejected cross-project
+        // workflowId is a security-control denial and would otherwise be
+        // invisible (no task row exists yet, so nothing else records the
+        // attempt). See task 28bdcdfd.
+        void logAuditEvent({
+          action: "task.workflow_id_rejected_cross_project",
+          actorId: actor.type === "human" ? actor.userId : undefined,
+          projectId,
+          payload: {
+            workflowId: body.workflowId,
+            actorType: actor.type,
+            agentTokenId: actor.type === "agent" ? actor.tokenId : null,
+          },
+        });
         return c.json(
           {
             error: "bad_request",
@@ -948,7 +962,7 @@ taskRouter.post(
 // semantics of import (per-row try/catch) don't compose cleanly with the
 // "validate all blockers before any insert" rule of the single-create path.
 // Set dependencies in a follow-up pass via /tasks/:id/dependencies.
-const importTaskSchema = createTaskSchema.omit({ workflowId: true, dependsOn: true }).extend({
+export const importTaskSchema = createTaskSchema.omit({ workflowId: true, dependsOn: true }).extend({
   description: z.string().max(50_000).optional(),
 });
 
