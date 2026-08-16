@@ -444,14 +444,16 @@ describe("wrap()'s actual error text matches errors.ts and WORKFLOW_PRIMER's Err
       error: {
         code: "already_claimed",
         message: backendBody.message,
-        // rc-v1-C008 Cold-Start-Eval (2026-08-12): the recipe now
-        // distinguishes an ordinary in-progress claim from one retained
-        // after the held task moved to review (see errors.ts's comment on
-        // alreadyClaimedError for why the review case is not recommended
-        // task_abandon).
+        // rc-v1-C008 Cold-Start-Eval (2026-08-12), generalized on the
+        // rc-v1-already-claimed-review-recipe review round (H1/H2/M4): the
+        // recipe now names all three claim cases (in-progress,
+        // work-claim-in-review, review-claim) instead of scoping the
+        // review-retained warning to the request_changes rework loop
+        // specifically (see errors.ts's ALREADY_CLAIMED_CASES and its
+        // comment on alreadyClaimedError).
         recipe:
-          "In-progress claim: call task_finish or task_abandon on it. Claim kept because that task moved to review (request_changes rework loop): do not abandon it, merge + get it approved, or wait, before claiming another.",
-        allowedNext: ["task_finish", "task_abandon"],
+          "In-progress claim: task_finish or task_abandon on it. Work claim on an in-review task: abandon is rejected (409); wait for the reviewer, or task_merge + task_finish outcome=approve. Review claim: task_abandon frees the review lock.",
+        allowedNext: ["task_finish", "task_abandon", "task_merge"],
       },
     });
     // The backend's own message text appears exactly once (no duplication,
@@ -461,7 +463,9 @@ describe("wrap()'s actual error text matches errors.ts and WORKFLOW_PRIMER's Err
 
     // The primer's Errors section matches what was actually captured.
     expect(WORKFLOW_PRIMER).toMatch(/already_claimed/);
-    expect(WORKFLOW_PRIMER).toMatch(/call task_finish or task_abandon on your current task first/i);
+    expect(WORKFLOW_PRIMER).toMatch(
+      /finish or abandon your in-progress claim; a work claim held on an in-review task needs the review cycle completed, or wait, not abandon; a review claim can be abandoned/i,
+    );
   });
 
   it("a verbatim backend 403 not-claimed body on task_finish maps to the not_claimed catalog entry", async () => {

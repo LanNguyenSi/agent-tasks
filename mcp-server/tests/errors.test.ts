@@ -7,6 +7,7 @@ import {
   projectAddressingConflictError,
   unknownProjectSlugError,
   KNOWN_RULE_CORRECTIVES,
+  ALREADY_CLAIMED_CASES,
   type TeachingError,
 } from "../src/errors.js";
 import { serializeResult } from "../src/server.js";
@@ -105,43 +106,113 @@ describe("mapBackendError catalog", () => {
   });
 
   // ── 2. already_claimed ──────────────────────────────────────────────────
-  it("already_claimed: the 409 claim wall maps to a finish/abandon recipe", () => {
+  it("already_claimed: the 409 claim wall maps to a finish/abandon/merge recipe", () => {
     const err = mapBackendError(409, {
       error: "already_claimed",
       message: "You already hold an active claim. Call task_finish or task_abandon on it before picking up new work.",
+      // Mirrors the real backend 409 body shape (backend/src/routes/
+      // tasks.ts:1469-1480 / :1688-1699); not itself consumed by
+      // alreadyClaimedError's mapping (see errors.ts's comment on why role
+      // alone cannot disambiguate the author-side cases).
       activeClaim: { taskId: "t1", title: "x", role: "author" },
     });
     expect(err.error.code).toBe("already_claimed");
-    expect(err.error.allowedNext).toEqual(["task_finish", "task_abandon"]);
+    // M4: allowedNext is the union over all three ALREADY_CLAIMED_CASES,
+    // including task_merge (the workClaimInReview case's own corrective).
+    expect(err.error.allowedNext).toEqual(["task_finish", "task_abandon", "task_merge"]);
     assertAllowedNextRegistered(err, registered);
   });
 
-  // rc-v1-C008 Cold-Start-Eval (2026-08-12): the recipe used to name
-  // task_finish and task_abandon as two equally valid options unconditionally.
-  // That is dangerous for a work claim retained after the held task moved to
-  // `review` (the request_changes rework loop) -- task_abandon there is
-  // rejected by the backend as an orphaning risk, and task_finish there means
-  // finishing a review the caller may not be the intended reviewer of. The
-  // 409 body (activeClaim: {taskId, title, role}) carries no `status` field
-  // and `role: "author"` does not disambiguate in_progress from
-  // review-retained (see errors.ts's comment on alreadyClaimedError), so the
-  // recipe must name both cases explicitly and must not recommend abandon
-  // for the review-retained one.
-  it("already_claimed: the recipe distinguishes an ordinary in-progress claim from one retained after the held task moved to review, and does not recommend task_abandon for the review-retained case", () => {
+  // rc-v1-C008 Cold-Start-Eval (2026-08-12), generalized + fixed on the
+  // rc-v1-already-claimed-review-recipe review round (H1/H2/M6): the recipe
+  // used to name task_finish and task_abandon as two equally valid options
+  // unconditionally, then (H1's since-fixed intermediate state) scoped the
+  // review-retained warning to "request_changes rework loop" specifically,
+  // which wrongly read as a scope test for a task that landed in review some
+  // other way. M6: assertions now compare against errors.ts's own exported
+  // ALREADY_CLAIMED_CASES constants directly, not a fragile
+  // indexOf("review")-based slice of the assembled string, which breaks on
+  // any semantically-safe reword that moves the words around.
+  it("already_claimed: the recipe is assembled from all three ALREADY_CLAIMED_CASES (in-progress, work-claim-in-review, review-claim), in order", () => {
     const err = mapBackendError(409, {
       error: "already_claimed",
       message: "You already hold an active claim. Call task_finish or task_abandon on it before starting another.",
+      // Mirrors the real backend 409 body shape (backend/src/routes/
+      // tasks.ts:1469-1480 / :1688-1699); not itself consumed by
+      // alreadyClaimedError's mapping (role alone cannot disambiguate the
+      // author-side cases -- see errors.ts's comment).
       activeClaim: { taskId: "t1", title: "x", role: "author" },
     });
-    expect(err.error.recipe).toMatch(/in-progress claim/i);
-    expect(err.error.recipe).toMatch(/review/i);
-    // The review-retained branch of the recipe must not pair "review" with
-    // "abandon" as a recommended action -- split on the review-case sentence
-    // and check task_abandon is not recommended in it specifically (the
-    // in-progress branch legitimately names task_abandon earlier).
-    const reviewClause = err.error.recipe.slice(err.error.recipe.toLowerCase().indexOf("review"));
-    expect(reviewClause).toMatch(/do not abandon/i);
-    expect(reviewClause.toLowerCase()).not.toContain("task_abandon");
+    expect(err.error.recipe).toBe(
+      [ALREADY_CLAIMED_CASES.inProgress, ALREADY_CLAIMED_CASES.workClaimInReview, ALREADY_CLAIMED_CASES.reviewClaim].join(
+        " ",
+      ),
+    );
+  });
+
+  // H1/M6: the workClaimInReview case must not bare-recommend task_abandon
+  // (it says abandon is rejected, and offers a concrete alternative action
+  // instead -- see the AUSSERDEM (b) test further below for the
+  // action-clause mutation probe), and must say nothing scoped to
+  // request_changes specifically -- the retention applies to EVERY finish
+  // that lands the task on review, not just the rework loop.
+  it("already_claimed: the workClaimInReview case never recommends a bare task_abandon and is not scoped to request_changes specifically", () => {
+    expect(ALREADY_CLAIMED_CASES.workClaimInReview).not.toContain("task_abandon");
+    expect(ALREADY_CLAIMED_CASES.workClaimInReview.toLowerCase()).not.toContain("request_changes");
+  });
+
+  // H2 + AUSSERDEM (a): a role=reviewer caller hitting this same 409 (a
+  // review-claim wall, backend/src/routes/tasks.ts ~1462-1465 /
+  // ~1681-1684) must not be told to avoid task_abandon -- for a review
+  // claim it is the correct, immediate, clean exit (the abandon route's
+  // in-review guard, ~3540-3541, is scoped to a work claim only and never
+  // fires for a review claim). The reviewClaim case explicitly permits it.
+  it("already_claimed: for a role=reviewer claim wall, the reviewClaim case does not forbid task_abandon (it is the correct exit for a review claim)", () => {
+    const err = mapBackendError(409, {
+      error: "already_claimed",
+      message: "You already hold an active claim. Call task_finish or task_abandon on it before picking up new work.",
+      // Mirrors the real backend 409 body shape for a review-claim wall
+      // (role: "reviewer" is derived from reviewClaimedByAgentId matching);
+      // not itself consumed by alreadyClaimedError's mapping -- the same
+      // recipe (all three cases) is returned regardless of role, so the
+      // caller self-selects the reviewClaim case.
+      activeClaim: { taskId: "t2", title: "y", role: "reviewer" },
+    });
+    expect(err.error.recipe).toContain(ALREADY_CLAIMED_CASES.reviewClaim);
+    expect(ALREADY_CLAIMED_CASES.reviewClaim).toMatch(/task_abandon/);
+    expect(ALREADY_CLAIMED_CASES.reviewClaim.toLowerCase()).not.toMatch(/do not abandon|abandon is rejected/);
+    expect(err.error.allowedNext).toContain("task_abandon");
+  });
+
+  // AUSSERDEM (b): the workClaimInReview case must name a concrete
+  // corrective action (wait / merge / approve), not just describe the
+  // problem -- deleting the action clause must turn this test red (mutation
+  // probe target for the fix-round evidence).
+  it("already_claimed: the workClaimInReview case names a concrete corrective action (wait, or merge + approve)", () => {
+    expect(ALREADY_CLAIMED_CASES.workClaimInReview).toMatch(/wait for the reviewer/i);
+    expect(ALREADY_CLAIMED_CASES.workClaimInReview).toMatch(/task_merge/);
+    expect(ALREADY_CLAIMED_CASES.workClaimInReview).toMatch(/outcome=approve/);
+  });
+
+  // M5: the recipe's own clamp guard. RECIPE_CHAR_BUDGET is 240 (mirrored
+  // here, same hand-mirrored-constant convention as GENERIC_ISSUES_CLAMP
+  // below), and the assembled recipe measures 231 chars -- only 9 chars of
+  // headroom. This protects against a silent future truncation: if a later
+  // edit widens any ALREADY_CLAIMED_CASES sentence past the budget,
+  // buildTeachingError's clamp() would truncate mid-sentence and append
+  // "...", silently dropping the tail of whichever case sits last (today,
+  // the reviewClaim case) instead of failing loudly.
+  it("already_claimed: the recipe is not clamped (does not end with the truncation marker) and stays under RECIPE_CHAR_BUDGET (240) with headroom to spare", () => {
+    const RECIPE_CHAR_BUDGET = 240;
+    const err = mapBackendError(409, {
+      error: "already_claimed",
+      message: "You already hold an active claim.",
+    });
+    expect(err.error.recipe.endsWith("...")).toBe(false);
+    expect(err.error.recipe.length).toBeLessThan(RECIPE_CHAR_BUDGET);
+    // Pins the intended final clause (the reviewClaim case) is present
+    // whole, not truncated away.
+    expect(err.error.recipe.endsWith(ALREADY_CLAIMED_CASES.reviewClaim)).toBe(true);
   });
 
   // The widened recipe text is longer than the pre-fix one-liner; pin that
@@ -152,6 +223,9 @@ describe("mapBackendError catalog", () => {
     const err = mapBackendError(409, {
       error: "already_claimed",
       message: "M".repeat(1000),
+      // Mirrors the real backend 409 body shape; not itself consumed by
+      // alreadyClaimedError's mapping (see the comment on the fixture
+      // above).
       activeClaim: { taskId: "t1", title: "x", role: "author" },
     });
     expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
