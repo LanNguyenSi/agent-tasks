@@ -106,21 +106,96 @@ describe("mapBackendError catalog", () => {
   });
 
   // ── 2. already_claimed ──────────────────────────────────────────────────
-  it("already_claimed: the 409 claim wall maps to a finish/abandon/merge recipe", () => {
+  it("already_claimed: the 409 claim wall maps to a finish/abandon/merge/tasks_get recipe", () => {
     const err = mapBackendError(409, {
       error: "already_claimed",
       message: "You already hold an active claim. Call task_finish or task_abandon on it before picking up new work.",
       // Mirrors the real backend 409 body shape (backend/src/routes/
-      // tasks.ts:1469-1480 / :1688-1699); not itself consumed by
-      // alreadyClaimedError's mapping (see errors.ts's comment on why role
-      // alone cannot disambiguate the author-side cases).
+      // tasks.ts:1469-1480 / :1688-1699); consumed by alreadyClaimedError's
+      // extractActiveClaim now (M3 follow-up, task 008ac513), though role
+      // alone still cannot disambiguate the two author-side cases -- see
+      // errors.ts's comment.
       activeClaim: { taskId: "t1", title: "x", role: "author" },
     });
     expect(err.error.code).toBe("already_claimed");
     // M4: allowedNext is the union over all three ALREADY_CLAIMED_CASES,
-    // including task_merge (the workClaimInReview case's own corrective).
-    expect(err.error.allowedNext).toEqual(["task_finish", "task_abandon", "task_merge"]);
+    // including task_merge (the workClaimInReview case's own corrective),
+    // plus tasks_get (M3 follow-up: the check-its-status corrective).
+    expect(err.error.allowedNext).toEqual(["task_finish", "task_abandon", "task_merge", "tasks_get"]);
     assertAllowedNextRegistered(err, registered);
+  });
+
+  // M3 follow-up (task 008ac513): mapBackendError's already_claimed branch
+  // used to drop the backend's own `activeClaim` entirely -- the caller had
+  // no data to self-select the right case programmatically, only the
+  // recipe's prose. Ground-truth toEqual (not just a subset match) so a
+  // future edit that silently drops a field, or reintroduces echoing an
+  // unclamped/malformed value, fails loudly.
+  it("already_claimed: passes the backend's activeClaim through as detail.activeClaim (taskId/title/role), clamped", () => {
+    const err = mapBackendError(409, {
+      error: "already_claimed",
+      message: "You already hold an active claim.",
+      activeClaim: { taskId: "11111111-1111-1111-1111-111111111111", title: "Fix the thing", role: "author" },
+    });
+    expect(err.error.detail).toEqual({
+      activeClaim: { taskId: "11111111-1111-1111-1111-111111111111", title: "Fix the thing", role: "author" },
+    });
+  });
+
+  // Fix-round (task 008ac513, review finding M1): the pre-fix version of
+  // this test only put a long value on `title`, so `taskId` and `role`
+  // stayed short throughout -- deleting their clamp calls in
+  // extractActiveClaim left this test (and the full 393-test suite) green.
+  // A 100-char-per-field fixture with an exact toEqual pins all three
+  // fields' clamp behavior at once: each field is DETAIL_ENTRY_CHAR_BUDGET
+  // (60) chars, ending in the truncation marker.
+  it("already_claimed: every activeClaim field over DETAIL_ENTRY_CHAR_BUDGET (60 chars) is clamped with a trailing truncation marker, not dropped or forwarded unclamped", () => {
+    const err = mapBackendError(409, {
+      error: "already_claimed",
+      message: "You already hold an active claim.",
+      activeClaim: { taskId: "t".repeat(100), title: "T".repeat(100), role: "r".repeat(100) },
+    });
+    expect(err.error.detail).toEqual({
+      activeClaim: {
+        taskId: "t".repeat(57) + "...",
+        title: "T".repeat(57) + "...",
+        role: "r".repeat(57) + "...",
+      },
+    });
+  });
+
+  it("already_claimed: a missing or malformed activeClaim (no usable field) omits detail entirely, same behavior as before the M3 follow-up", () => {
+    const missing = mapBackendError(409, {
+      error: "already_claimed",
+      message: "You already hold an active claim.",
+    });
+    expect(missing.error.detail).toBeUndefined();
+
+    const malformed = mapBackendError(409, {
+      error: "already_claimed",
+      message: "You already hold an active claim.",
+      activeClaim: "not an object",
+    });
+    expect(malformed.error.detail).toBeUndefined();
+
+    const empty = mapBackendError(409, {
+      error: "already_claimed",
+      message: "You already hold an active claim.",
+      activeClaim: { taskId: 42, title: null, role: undefined },
+    });
+    expect(empty.error.detail).toBeUndefined();
+
+    // Fix-round (task 008ac513, review finding L1): extractActiveClaim used
+    // to accept empty strings as usable, producing
+    // {taskId:"",title:"",role:""} even though the comment promised
+    // degradation to undefined for "no usable field at all". All three
+    // fields present but empty must degrade the same as absent/malformed.
+    const allEmptyStrings = mapBackendError(409, {
+      error: "already_claimed",
+      message: "You already hold an active claim.",
+      activeClaim: { taskId: "", title: "", role: "" },
+    });
+    expect(allEmptyStrings.error.detail).toBeUndefined();
   });
 
   // rc-v1-C008 Cold-Start-Eval (2026-08-12), generalized + fixed on the
@@ -217,18 +292,21 @@ describe("mapBackendError catalog", () => {
 
   // The widened recipe text is longer than the pre-fix one-liner; pin that
   // the whole response still stays within ERROR_BUDGET_CHARS even paired
-  // with a worst-case (max-clamped) backend message, not just the short
-  // fixture above.
-  it("already_claimed: stays within the error budget even with a max-length backend message", () => {
+  // with a worst-case (max-clamped) backend message AND a worst-case
+  // (max-clamped) activeClaim, not just the short fixture above. M3
+  // follow-up (task 008ac513): activeClaim now feeds detail.activeClaim (see
+  // errors.ts's extractActiveClaim), so its own worst case (every field at
+  // or past DETAIL_ENTRY_CHAR_BUDGET) has to be part of this worst-case
+  // fixture too, not just the message.
+  it("already_claimed: stays within the error budget even with a max-length backend message and a max-length activeClaim", () => {
     const err = mapBackendError(409, {
       error: "already_claimed",
       message: "M".repeat(1000),
-      // Mirrors the real backend 409 body shape; not itself consumed by
-      // alreadyClaimedError's mapping (see the comment on the fixture
-      // above).
-      activeClaim: { taskId: "t1", title: "x", role: "author" },
+      activeClaim: { taskId: "t".repeat(100), title: "T".repeat(100), role: "r".repeat(100) },
     });
-    expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+    const serialized = serializeResult(err);
+    expect(serialized.length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+    expect(err.error.detail).toHaveProperty("activeClaim");
   });
 
   // ── 3. precondition_failed ──────────────────────────────────────────────

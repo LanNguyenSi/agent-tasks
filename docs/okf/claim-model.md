@@ -3,10 +3,11 @@ type: invariant
 title: "Claim model: task_pickup resolution order and single-active-claim"
 description: "Signals, then review, then open work, then idle; priority desc/createdAt asc; blockedBy filtering; one active claim per agent enforced in both pickup and start; status is an unconstrained free String."
 tags: [claim, pickup, status, dependencies]
-timestamp: 2026-07-03T10:59:39Z
+timestamp: 2026-08-16T14:00:00Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/prisma/schema.prisma
+  - mcp-server/src/errors.ts
 ---
 
 **`POST /tasks/pickup`** (agent-only; humans get `400 bad_request`, told to use `/tasks/claimable` instead) resolves "what should I do next?" in this fixed order, first hit wins:
@@ -16,7 +17,7 @@ sources:
 3. **Open work**, same ordering/blocking rule, `status: "open"`, unclaimed. On the first hit, `deriveDebugFlavor` runs (see below) and, if fresh or `?reclassify=true`, persists `metadata.debugFlavor` before responding.
 4. **Idle**, `{ kind: "idle" }` if nothing above matched.
 
-**Hard-limit, single active claim per agent**: before any of the above, both `POST /tasks/pickup` and `POST /tasks/:id/start` reject with `409 { error: "already_claimed", activeClaim: {taskId, title, role} }` if the calling agent already holds *any* active claim, an author claim (`claimedByAgentId`, `status !== "done"`) or a review claim (`reviewClaimedByAgentId`, `status === "review"`). The two call sites duplicate this check independently (same query shape); there is no shared helper. Parallelism is achieved by using multiple agent identities, not by one identity holding concurrent claims.
+**Hard-limit, single active claim per agent**: before any of the above, both `POST /tasks/pickup` and `POST /tasks/:id/start` reject with `409 { error: "already_claimed", activeClaim: {taskId, title, role} }` if the calling agent already holds *any* active claim, an author claim (`claimedByAgentId`, `status !== "done"`) or a review claim (`reviewClaimedByAgentId`, `status === "review"`). The two call sites duplicate this check independently (same query shape); there is no shared helper. Parallelism is achieved by using multiple agent identities, not by one identity holding concurrent claims. `mcp-server`'s teaching-error layer (`mcp-server/src/errors.ts`'s `alreadyClaimedError`/`extractActiveClaim`) passes this same `activeClaim` through, clamped, as `detail.activeClaim` on the MCP-facing `already_claimed` error, and lists `tasks_get` in `allowedNext` so a caller can check `activeClaim.taskId`'s actual status.
 
 **Ordering**: every claim-pool query orders `[{ priority: "desc" }, { createdAt: "asc" }]`, highest `TaskPriority` (`LOW`/`MEDIUM`/`HIGH`/`CRITICAL`) first, oldest-within-priority first.
 

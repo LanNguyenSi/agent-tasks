@@ -141,6 +141,32 @@ describe("HANDSHAKE_PRIMER (initialize.instructions)", () => {
   });
 });
 
+// ── Fix-round (task 008ac513, review finding M2) ────────────────────────────
+//
+// already_claimed's M3 follow-up widened its recipe to a three-case,
+// tasks_get-aware one (see errors.ts's alreadyClaimedError and
+// ALREADY_CLAIMED_CASES), and the commit that shipped it updated four prose
+// mirrors of the old two-option (task_finish/task_abandon) wording to match:
+// HANDSHAKE_PRIMER's claim-model sentence, task_pickup's tool description,
+// response-contract-v1.md's catalog seed, and claim-model.md's 409-body-shape
+// note. None of the four had a positive drift guard: reverting any one of
+// them left the full suite green, since nothing actually asserted the NEW
+// wording was present. These two guards cover the two machine-consumed
+// mirrors (primer.ts, tools.ts), same style as the wrap()-ground-truth
+// test's own primer assertions above (lines ~470-473).
+describe("already_claimed's tasks_get-aware wording is grounded in the shipped prose (fix-round, task 008ac513)", () => {
+  it("HANDSHAKE_PRIMER's claim-model sentence names the tasks_get corrective", () => {
+    expect(HANDSHAKE_PRIMER).toMatch(/call tasks_get on it/i);
+  });
+
+  it("task_pickup's registered description (buildTools, not hand-typed) names the tasks_get corrective", () => {
+    const client = new AgentTasksClient({ baseUrl: "https://example.test", token: "tok" });
+    const pickup = buildTools(client).find((t) => t.name === "task_pickup");
+    if (!pickup) throw new Error("task_pickup not registered");
+    expect(pickup.description).toMatch(/tasks_get/);
+  });
+});
+
 // ── rc-v1-C004 review round 2, finding #2 (MEDIUM) ──────────────────────────
 //
 // HANDSHAKE_PRIMER's converted-verb list must never be hand-typed truth: it
@@ -417,6 +443,13 @@ describe("wrap()'s actual error text matches errors.ts and WORKFLOW_PRIMER's Err
     const backendBody = {
       error: "already_claimed",
       message: "You already hold an active claim on another task.",
+      // Fix-round (task 008ac513, review finding L2): the fixture used to
+      // carry no activeClaim at all, so the M3 follow-up's detail.activeClaim
+      // pass-through was never asserted end-to-end through wrap() (only unit-
+      // tested directly against mapBackendError in errors.test.ts). Mirrors
+      // the real backend 409 body shape (backend/src/routes/tasks.ts:
+      // 1469-1480 / :1688-1699).
+      activeClaim: { taskId: "22222222-2222-2222-2222-222222222222", title: "Some other task", role: "author" },
     };
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(backendBody), {
@@ -453,7 +486,16 @@ describe("wrap()'s actual error text matches errors.ts and WORKFLOW_PRIMER's Err
         // comment on alreadyClaimedError).
         recipe:
           "In-progress claim: task_finish or task_abandon on it. Work claim on an in-review task: abandon is rejected (409); wait for the reviewer, or task_merge + task_finish outcome=approve. Review claim: task_abandon frees the review lock.",
-        allowedNext: ["task_finish", "task_abandon", "task_merge"],
+        // M3 follow-up (task 008ac513): tasks_get added as the check-its-
+        // status corrective.
+        allowedNext: ["task_finish", "task_abandon", "task_merge", "tasks_get"],
+        // Fix-round (task 008ac513, review finding L2): the fixture's
+        // backendBody now carries an activeClaim, so extractActiveClaim's
+        // pass-through is asserted end-to-end through the real wrap() call
+        // path, not just directly against mapBackendError.
+        detail: {
+          activeClaim: { taskId: "22222222-2222-2222-2222-222222222222", title: "Some other task", role: "author" },
+        },
       },
     });
     // The backend's own message text appears exactly once (no duplication,

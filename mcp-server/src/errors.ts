@@ -196,6 +196,12 @@ interface BackendErrorBody {
   // since this module treats it as untrusted response data, same stance as
   // `failed` above.
   details?: unknown;
+  // already_claimed's own structured payload: `{ taskId, title, role }` for
+  // the claim the caller already holds (backend/src/routes/tasks.ts:
+  // 1469-1480 / 1688-1699). Typed loosely for the same untrusted-response-data
+  // reason as `failed`/`details` above; see extractActiveClaim below for the
+  // per-field validation.
+  activeClaim?: unknown;
   [key: string]: unknown;
 }
 
@@ -282,13 +288,19 @@ function notClaimedError(message: string): TeachingError {
 // this input alone (there is no `status` field on activeClaim). This
 // input is not status-BLIND, though: the caller already has taskId in hand
 // and is one tasks_get call away from the actual status if it needs to
-// decide programmatically rather than read the recipe's cases -- a direct
-// status/activeClaim passthrough into this entry's own detail/recipe (M3)
-// is out of scope for this change and tracked as a follow-up task instead.
-// This entry therefore names all three cases explicitly, keyed by claim
-// kind / state rather than by role, so the caller self-selects the right
-// one instead of defaulting to task_abandon, which is safe for two of the
-// three cases and rejected outright for the third.
+// decide programmatically rather than read the recipe's cases -- M3
+// (rc-v1-already-claimed-review-recipe review round, task 008ac513, the
+// follow-up this comment used to point at) closes that gap: extractActiveClaim
+// below passes the backend's own `activeClaim: { taskId, title, role }`
+// through, clamped, as this entry's `detail.activeClaim`, and `tasks_get`
+// is added to `allowedNext` so the check-its-status call is itself
+// immediately callable per the allowedNext contract, not just implied by
+// the prose. This entry still names all three cases explicitly in the
+// recipe text, keyed by claim kind / state rather than by role, so the
+// caller self-selects the right one instead of defaulting to task_abandon,
+// which is safe for two of the three cases and rejected outright for the
+// third; `detail.activeClaim` is the machine-readable input a caller can
+// use to do that same selection programmatically instead of reading prose.
 //
 // task_finish is deliberately NOT offered as a blanket corrective for the
 // workClaimInReview case below: on that task it is either rejected outright
@@ -321,7 +333,46 @@ const ALREADY_CLAIMED_RECIPE = [
   ALREADY_CLAIMED_CASES.reviewClaim,
 ].join(" ");
 
-function alreadyClaimedError(message: string): TeachingError {
+// M3 follow-up (task 008ac513): pulls the backend's own `activeClaim: {
+// taskId, title, role }` (see the file comment above this catalog entry)
+// out of the 409 body and clamps it for `detail.activeClaim`, the same
+// DETAIL_ENTRY_CHAR_BUDGET convention every other structured detail field
+// in this module uses. Untrusted response data, same stance as the other
+// extract-from-body helpers in this file (asBackendBody, preconditionFailedError's
+// rawFailed mapping): every field is validated by type AND non-emptiness
+// before use (`isUsableString` below), and a missing/malformed activeClaim
+// (or one with no usable field at all -- absent, wrong type, or present as
+// an empty string) degrades to `undefined` -- the caller then just sees the
+// recipe prose with no detail, the exact behavior before this change,
+// rather than a detail object with fabricated, empty, or non-string fields.
+// The field SET this function looks at is fixed at exactly these three
+// (taskId, title, role): a present-but-non-string field (e.g. a numeric
+// taskId) is dropped the same way a missing field is, not surfaced under a
+// different name or flagged separately -- this is a deliberate, narrower
+// exception to the "the drop is never silent" stance the rest of this
+// module's clampDetailValue path takes for arbitrary detail objects, scoped
+// to this one small, fixed, backend-controlled shape.
+function isUsableString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function extractActiveClaim(body: BackendErrorBody): Record<string, unknown> | undefined {
+  const raw = body.activeClaim;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const claim = raw as Record<string, unknown>;
+  const taskId = isUsableString(claim.taskId) ? clamp(claim.taskId, DETAIL_ENTRY_CHAR_BUDGET) : undefined;
+  const title = isUsableString(claim.title) ? clamp(claim.title, DETAIL_ENTRY_CHAR_BUDGET) : undefined;
+  const role = isUsableString(claim.role) ? clamp(claim.role, DETAIL_ENTRY_CHAR_BUDGET) : undefined;
+  if (taskId === undefined && title === undefined && role === undefined) return undefined;
+  return {
+    ...(taskId !== undefined ? { taskId } : {}),
+    ...(title !== undefined ? { title } : {}),
+    ...(role !== undefined ? { role } : {}),
+  };
+}
+
+function alreadyClaimedError(body: BackendErrorBody, message: string): TeachingError {
+  const activeClaim = extractActiveClaim(body);
   return buildTeachingError({
     code: "already_claimed",
     message,
@@ -335,7 +386,12 @@ function alreadyClaimedError(message: string): TeachingError {
     // immediately"). The recipe text is what actually SELECTS the right
     // case for the caller's own claim; allowedNext only has to list every
     // verb any one of the three cases could legitimately call next.
-    allowedNext: ["task_finish", "task_abandon", "task_merge"],
+    // M3 follow-up: tasks_get is added too -- it is the concrete corrective
+    // for "check its status" (see the M3 comment above extractActiveClaim),
+    // and, same as task_merge, must be immediately callable per the
+    // allowedNext contract rather than only implied by prose.
+    allowedNext: ["task_finish", "task_abandon", "task_merge", "tasks_get"],
+    ...(activeClaim ? { detail: { activeClaim } } : {}),
   });
 }
 
@@ -1132,7 +1188,7 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
     return forceAdminOnlyError(message);
   }
   if (status === 409 && code === "already_claimed") {
-    return alreadyClaimedError(message);
+    return alreadyClaimedError(body, message);
   }
   if (status === 422 && code === "precondition_failed") {
     return preconditionFailedError(body, verbContext);
