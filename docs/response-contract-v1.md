@@ -373,10 +373,15 @@ each already documented as a 4xx behavior in `mcp-server/src/tools.ts` /
   workflow gate not yet satisfied blocks `task_finish` with 422
   `precondition_failed` and a list of the failing rules.
 - **Claim wall / solo multi-task.** `task_pickup` / `task_start` return
-  409 when the caller already holds an active claim; the message tells
-  the caller to `task_finish` or `task_abandon` the current task first.
-  The common trap is trying to pick up a second task before finishing
-  the first.
+  409 when the caller already holds an active claim. The held claim can
+  be an ordinary in-progress work claim, a work claim retained on a task
+  now in review, or a review claim; the recipe names all three cases so
+  the caller self-selects the right one, `detail.activeClaim` (`taskId`,
+  `title`, `role`, clamped) passes through the backend's own claim
+  identity so the caller can also check it with `tasks_get`, and
+  `tasks_get` is included in `allowedNext` alongside `task_finish`,
+  `task_abandon`, and `task_merge`. The common trap is trying to pick up
+  a second task before finishing the first.
 - **`cross_repo_pr_rejected`.** `task_submit_pr` rejects a `prUrl` that
   does not point at `project.githubRepo` with 400.
 - **`transition force=admin-only`.** The `tasks_transition` (legacy-only

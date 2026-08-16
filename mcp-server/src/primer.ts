@@ -51,7 +51,7 @@ export const HANDSHAKE_PRIMER = `agent-tasks is a task tracker for human-agent c
 
 Task lifecycle: ${STATE_ORDER}. Canonical verb order: task_pickup (find work) -> task_start (claim it) -> implement the change, run \`gh pr create\` -> task_submit_pr (record branch/PR metadata) -> task_finish (advance the task).
 
-Claim model: only one active claim is held per caller at a time. task_pickup and task_start fail with 409 if you already hold one; call task_finish or task_abandon on the current task first.
+Claim model: only one active claim is held per caller at a time. task_pickup and task_start fail with 409 if you already hold one; call tasks_get on it, then task_finish, task_abandon, or task_merge, depending on its state (see workflow_primer for the already_claimed cases).
 
 Governance: every transition and admin override is enforced and audited server-side by this project's workflow, not by convention.
 

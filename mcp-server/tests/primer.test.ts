@@ -453,7 +453,12 @@ describe("wrap()'s actual error text matches errors.ts and WORKFLOW_PRIMER's Err
         // comment on alreadyClaimedError).
         recipe:
           "In-progress claim: task_finish or task_abandon on it. Work claim on an in-review task: abandon is rejected (409); wait for the reviewer, or task_merge + task_finish outcome=approve. Review claim: task_abandon frees the review lock.",
-        allowedNext: ["task_finish", "task_abandon", "task_merge"],
+        // M3 follow-up (task 008ac513): tasks_get added as the check-its-
+        // status corrective. No `detail` here: this fixture's backendBody
+        // carries no `activeClaim` field, so extractActiveClaim omits
+        // detail entirely (see errors.test.ts's own coverage of the
+        // activeClaim-present case).
+        allowedNext: ["task_finish", "task_abandon", "task_merge", "tasks_get"],
       },
     });
     // The backend's own message text appears exactly once (no duplication,
