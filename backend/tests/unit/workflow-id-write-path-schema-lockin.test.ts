@@ -39,7 +39,14 @@ const PROBE_WORKFLOW_ID = "12345678-1234-1234-1234-123456789012";
 
 const cases: Array<{
   name: string;
-  schema: { shape: Record<string, unknown>; safeParse: (input: unknown) => { success: boolean; data?: unknown } };
+  schema: {
+    shape: Record<string, unknown>;
+    safeParse: (input: unknown) => {
+      success: boolean;
+      data?: unknown;
+      error?: { issues: Array<{ path: Array<string | number>; message: string }> };
+    };
+  };
   basePayload: Record<string, unknown>;
 }> = [
   { name: "updateTaskSchema", schema: updateTaskSchema, basePayload: {} },
@@ -56,6 +63,18 @@ describe("write-path schema lock-in: workflowId stays single-create-only", () =>
   it.each(cases)(
     "$name rejects or strips a workflowId field passed on the request body",
     ({ name, schema, basePayload }) => {
+      // Pin that basePayload itself still parses BEFORE probing with
+      // workflowId. Without this, a future edit that adds a new required
+      // field to the schema makes the combined payload fail for a reason
+      // that has nothing to do with workflowId — and the old tautological
+      // `else` branch below (`expect(result.success).toBe(false)`, already
+      // known false because we're inside the `else`) would rubber-stamp
+      // that as "rejected outright", going green while proving nothing.
+      expect(
+        schema.safeParse(basePayload).success,
+        `${name} basePayload no longer parses, update it or this lock-in is inert`,
+      ).toBe(true);
+
       const result = schema.safeParse({ ...basePayload, workflowId: PROBE_WORKFLOW_ID });
 
       if (result.success) {
@@ -66,8 +85,16 @@ describe("write-path schema lock-in: workflowId stays single-create-only", () =>
           `${name} let workflowId reach parsed output — re-adding the field to this schema must fail this test`,
         ).toBe(false);
       } else {
-        // Rejected outright — also an acceptable lock-in outcome.
-        expect(result.success, `${name} unexpectedly rejected its own base payload`).toBe(false);
+        // Rejected outright — also an acceptable lock-in outcome, but only
+        // if the rejection is actually attributable to workflowId (e.g. a
+        // future `.strict()` schema flagging it as an unrecognized key).
+        // The basePayload assertion above already rules out "rejected for
+        // an unrelated reason", but pin the failure's own issue paths too.
+        const paths = (result.error?.issues ?? []).map((issue) => issue.path.join("."));
+        expect(
+          paths.some((path) => path.includes("workflowId")),
+          `${name} rejected the payload but no issue path names 'workflowId' (paths: ${paths.join(", ") || "<none>"})`,
+        ).toBe(true);
       }
     },
   );

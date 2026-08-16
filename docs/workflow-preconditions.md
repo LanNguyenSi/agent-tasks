@@ -511,7 +511,10 @@ the project repo only by case counts as home).
 **Audit trail**: `task.deliverable_repo_set` (create, non-null only),
 `task.deliverable_repo_changed` (PATCH, set/changed/cleared), and
 `task.foreign_pr_linked` (any write path that links a `prUrl` under an
-active override) are all logged via the standard audit-event pipeline.
+active override) are all logged via the standard audit-event pipeline. A
+sibling mechanism, `task.workflow_id_rejected_cross_project`, covers the
+analogous create-time `workflowId` project-ownership check (task 28bdcdfd);
+see [events.md](events.md).
 
 ### Branch protection
 

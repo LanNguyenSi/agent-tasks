@@ -830,6 +830,13 @@ taskRouter.post(
         // workflowId is a security-control denial and would otherwise be
         // invisible (no task row exists yet, so nothing else records the
         // attempt). See task 28bdcdfd.
+        //
+        // Ordering caveat: this check runs after zod validation and the
+        // dependsOn blockers check above, both of which can 400 first and
+        // return before this code is reached. This event therefore does
+        // NOT fire on every request carrying a foreign workflowId — an
+        // absence of this event is not evidence of an absence of attempts,
+        // only that none got far enough to reach this check.
         void logAuditEvent({
           action: "task.workflow_id_rejected_cross_project",
           actorId: actor.type === "human" ? actor.userId : undefined,

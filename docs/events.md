@@ -47,6 +47,7 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 | `task.reviewed` | Review submitted (`approve` or `request_changes`) |
 | `task.review_rejected_self_reviewer` | Self-review rejected by `REQUIRES_DISTINCT_REVIEWER` gate |
 | `task.merge_rejected_bad_status` | Merge attempt against a task in `open` or `in_progress` |
+| `task.workflow_id_rejected_cross_project` | Create-time `workflowId` that does not resolve under the target project (foreign or non-existent); no `taskId`, since no task row is created |
 | `task.pr_submitted` | PR opened via `task_submit_pr` (or REST equivalent) |
 | `task.merged` / `task.auto_merged` | PR merged through the API; `auto_merged` fires when the merge was triggered as a side effect of `task_finish { autoMerge: true }` |
 | `task.auto_merge_post_assert_failed` | Post-merge invariant check failed; flagged for human attention |
