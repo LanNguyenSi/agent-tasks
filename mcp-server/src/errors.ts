@@ -84,7 +84,10 @@ export interface TeachingError {
      *  precondition_failed's `failed[]`, low_confidence's
      *  score/threshold/missing[]/totalMissing, and, for the generic
      *  degrade path, a clamped passthrough of whatever `details` object
-     *  the backend itself sent. */
+     *  the backend itself sent, OR, when the backend instead sent an
+     *  OBJECT `error` (a raw zod SafeParseError spread into the body, see
+     *  genericDegrade/deriveGenericDetailSource), a clamped
+     *  issues[]/totalIssues summary derived from it. */
     detail?: Record<string, unknown>;
   };
 }
@@ -753,11 +756,13 @@ function clampGenericDetail(details: unknown): Record<string, unknown> | undefin
 // Bookkeeping fields a catalog entry or clampDetailValue itself may already
 // have set to record a TRUE original count (precondition_failed's
 // totalFailed, low_confidence's totalMissing, clampDetailValue's own
-// totalKeys). A second, harder clamp pass over an already-clamped object
-// must not re-derive these from the intermediate object's own (already
-// shrunk) entry count -- that would silently replace an accurate original
-// count with a smaller, misleading one. See reclampDetailHarder below.
-const DETAIL_TOTAL_MARKER_KEYS = ["totalFailed", "totalMissing", "totalKeys"] as const;
+// totalKeys, and the generic degrade path's own totalIssues -- see
+// deriveGenericDetailSource). A second, harder clamp pass over an
+// already-clamped object must not re-derive these from the intermediate
+// object's own (already shrunk) entry count -- that would silently replace
+// an accurate original count with a smaller, misleading one. See
+// reclampDetailHarder below.
+const DETAIL_TOTAL_MARKER_KEYS = ["totalFailed", "totalMissing", "totalKeys", "totalIssues"] as const;
 
 /** Re-clamps a detail object with the HARD_* limits, WITHOUT letting the
  *  pass corrupt any totalFailed/totalMissing/totalKeys marker already
@@ -821,6 +826,7 @@ function enforceErrorBudget(err: TeachingError): TeachingError {
   const priorDetail = err.error.detail;
   const totalFailed = typeof priorDetail?.totalFailed === "number" ? priorDetail.totalFailed : undefined;
   const totalMissing = typeof priorDetail?.totalMissing === "number" ? priorDetail.totalMissing : undefined;
+  const totalIssues = typeof priorDetail?.totalIssues === "number" ? priorDetail.totalIssues : undefined;
   const totalKeys =
     typeof priorDetail?.totalKeys === "number"
       ? priorDetail.totalKeys
@@ -836,34 +842,102 @@ function enforceErrorBudget(err: TeachingError): TeachingError {
         reason: "detail exceeded the error budget",
         ...(totalFailed !== undefined ? { totalFailed } : {}),
         ...(totalMissing !== undefined ? { totalMissing } : {}),
+        ...(totalIssues !== undefined ? { totalIssues } : {}),
         ...(totalKeys !== undefined ? { totalKeys } : {}),
       },
     },
   };
 }
 
+// Observed live during rc-v1-C008 (2026-08-12): POST /tasks with an invalid
+// templateData shape (acceptanceCriteria sent as an array, the schema wants
+// a string) 400s with a raw zod SafeParseError spread verbatim into the
+// body -- `@hono/zod-validator`'s default (no custom hook) failure path is
+// `c.json(result, 400)` for `result = { success: false, error: ZodError }` --
+// so the wire body is `{ success: false, error: { issues: [...], name:
+// "ZodError" } }`, no top-level `details` field at all. Before this, the
+// generic degrade path only ever looked at `body.details` for `detail` and
+// only ever looked at `body.error` for a STRING code passthrough (see
+// genericDegrade below); an OBJECT `body.error` matched neither, so this
+// case degraded to `http_400` with NO detail whatsoever -- the caller had
+// to go read backend source to find the actual schema mismatch.
+// deriveGenericDetailSource picks what feeds clampGenericDetail: the
+// backend's own top-level `details` (existing behavior, e.g. any future
+// code's hand-rolled `details`, or the formErrors/fieldErrors zod-flatten
+// shape covered by the tests above) is preferred when present and usable;
+// otherwise, when `body.error` is itself an object (not a string code) and
+// carries an `issues` array, a compact summary is built from it -- the
+// first N (DETAIL_CLAMP, via the existing recursive clamp) issues' own
+// path/code/message, the three fields that actually explain WHAT was wrong
+// and WHERE, same convention as the catalog entries' own structured detail
+// shapes above (precondition_failed's failed[], low_confidence's missing[]).
+// `path` (zod's own array-of-string|number) is joined into a single
+// dot-separated string rather than kept as a nested array: clampDetailValue
+// caps recursion at GENERIC_DETAIL_MAX_DEPTH (3), and this summary's own
+// container nesting (the top-level object -> issues[] -> issue object)
+// already spends 2 of those 3 levels before `path` is even reached, so a
+// nested array here would push every path SEGMENT one level past the
+// depth guard and silently replace each with the truncation marker
+// instead of clamping it -- verified against clampDetailValue directly
+// before landing this. A joined string is exactly one more clamped level,
+// well within budget, and reads just as well ("acceptanceCriteria" or
+// "tags.2.name" for a nested/array path).
+// `code` itself still stays `http_<status>` in this case (an object is not
+// a code -- see genericDegrade's own check below, unchanged). When
+// `body.error` is an object but carries no recognizable `issues` array, the
+// object itself is passed through instead of staying completely silent --
+// a judgment call: any structured object the backend sends as `error` is
+// more useful surfaced (clamped, by the same machinery) than dropped
+// outright, even when this module cannot name its shape specifically.
+function deriveGenericDetailSource(details: unknown, bodyError: unknown): unknown {
+  if (details && typeof details === "object" && !Array.isArray(details)) return details;
+  if (bodyError && typeof bodyError === "object" && !Array.isArray(bodyError)) {
+    const issues = (bodyError as Record<string, unknown>).issues;
+    if (Array.isArray(issues)) {
+      return {
+        issues: issues.map((issue) => {
+          const i = issue && typeof issue === "object" ? (issue as Record<string, unknown>) : {};
+          const path = Array.isArray(i.path)
+            ? i.path.filter((seg): seg is string | number => typeof seg === "string" || typeof seg === "number")
+            : undefined;
+          return {
+            ...(path && path.length > 0 ? { path: path.join(".") } : {}),
+            ...(typeof i.code === "string" ? { code: i.code } : {}),
+            ...(typeof i.message === "string" ? { message: i.message } : {}),
+          };
+        }),
+        totalIssues: issues.length,
+      };
+    }
+    return bodyError;
+  }
+  return details;
+}
+
 // The backend's own body.error string is the most specific code available
 // and consumers key on it (the mcp-bridge governance suite asserts a 409
 // claim_blocked stays visible end to end), so the degrade passes it
 // through when present; the status-derived http_<status> form is only the
-// fallback for bodies that carry no code at all. Clamped like every other
+// fallback for bodies that carry no code at all (including an OBJECT
+// body.error -- an object is not a code, see deriveGenericDetailSource
+// above for how it is used instead). Clamped like every other
 // caller-visible string so a pathological body cannot blow the budget.
 function genericDegrade(
   status: number,
   message: string,
   details: unknown,
-  bodyCode?: unknown,
+  bodyError?: unknown,
 ): TeachingError {
   const code =
-    typeof bodyCode === "string" && bodyCode.length > 0
-      ? clamp(bodyCode, DETAIL_ENTRY_CHAR_BUDGET)
+    typeof bodyError === "string" && bodyError.length > 0
+      ? clamp(bodyError, DETAIL_ENTRY_CHAR_BUDGET)
       : `http_${status}`;
   return buildTeachingError({
     code,
     message,
     recipe: "call workflow_primer for the full lifecycle reference and today's known traps",
     allowedNext: ["workflow_primer"],
-    detail: clampGenericDetail(details),
+    detail: clampGenericDetail(deriveGenericDetailSource(details, bodyError)),
   });
 }
 

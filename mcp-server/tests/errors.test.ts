@@ -606,6 +606,100 @@ describe("mapBackendError catalog", () => {
     expect(Object.keys(err.error.detail ?? {}).length).toBeLessThan(51);
   });
 
+  // ── Generic degrade: OBJECT body.error (rc-v1 d9c0c45f) ─────────────────
+  //
+  // Observed live during rc-v1-C008 (2026-08-12): POST /tasks with an
+  // invalid templateData shape (acceptanceCriteria sent as an array, the
+  // schema wants a string) 400s with @hono/zod-validator's default (no
+  // custom hook) failure body -- a raw zod SafeParseError spread verbatim:
+  // `{ success: false, error: { issues: [...], name: "ZodError" } }`, no
+  // top-level `details` field at all. Before this fix, an OBJECT body.error
+  // matched neither the string-code passthrough nor the body.details clamp
+  // path, so the caller got a bare `http_400` with no detail whatsoever.
+  // Fixture shape reproduced from a real `createTaskSchema.safeParse` call
+  // (zod 3.23), not hand-guessed.
+  it("generic degrade: an OBJECT body.error with a zod issues[] array (the real rc-v1-C008 shape) keeps code http_<status> and surfaces path/code/message per issue in detail.issues", () => {
+    const err = mapBackendError(400, {
+      success: false,
+      error: {
+        issues: [
+          {
+            code: "invalid_type",
+            expected: "string",
+            received: "array",
+            path: ["acceptanceCriteria"],
+            message: "Expected string, received array",
+          },
+        ],
+        name: "ZodError",
+      },
+    });
+    // An object is not a code: code still falls back to http_<status>, same
+    // as the existing "no code at all" fallback.
+    expect(err.error.code).toBe("http_400");
+    expect(err.error.detail).toEqual({
+      issues: [{ path: "acceptanceCriteria", code: "invalid_type", message: "Expected string, received array" }],
+      totalIssues: 1,
+    });
+    expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+  });
+
+  it("generic degrade: a multi-segment (nested/array-index) zod path is joined into a single dot-separated string rather than a nested array (clampDetailValue's own depth budget would otherwise silently truncate a nested path array)", () => {
+    const err = mapBackendError(400, {
+      error: {
+        issues: [{ code: "invalid_type", path: ["templateData", "tags", 2, "name"], message: "Expected string" }],
+      },
+    });
+    const detail = err.error.detail as { issues: Array<{ path?: string }> } | undefined;
+    expect(detail?.issues[0].path).toBe("templateData.tags.2.name");
+  });
+
+  it("generic degrade: a STRING body.error still passes through as the code unchanged (regression: the object-body.error handling above must not disturb the existing string-code path)", () => {
+    const err = mapBackendError(409, { error: "claim_blocked", message: "Claim blocked by governance mode" });
+    expect(err.error.code).toBe("claim_blocked");
+    expect(err.error.detail).toBeUndefined();
+  });
+
+  it("generic degrade: many/long zod issues clamp to DETAIL_CLAMP entries with path+code+message each truncated, a visible (accurate, un-shrunk) totalIssues marker, and the whole response stays within budget", () => {
+    const issues = Array.from({ length: 20 }, (_, i) => ({
+      code: "too_small",
+      minimum: 1,
+      type: "string",
+      inclusive: true,
+      exact: false,
+      path: [`field_${i}`, "nested", "deeply", i],
+      message: "A very long backend-authored zod issue message that easily exceeds the sixty character budget, entry " + i,
+    }));
+    const err = mapBackendError(400, { error: { issues, name: "ZodError" } });
+    expect(err.error.code).toBe("http_400");
+    const detail = err.error.detail as { issues: Array<{ message?: string }>; totalIssues: number } | undefined;
+    expect(detail?.totalIssues).toBe(20);
+    for (const issue of detail?.issues ?? []) {
+      if (issue.message) expect(issue.message.length).toBeLessThanOrEqual(60);
+    }
+    expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+  });
+
+  it("generic degrade: an OBJECT body.error with no recognizable issues[] array still surfaces something (the object itself, clamped) rather than staying completely silent", () => {
+    const err = mapBackendError(400, {
+      error: { code: "SOME_UPSTREAM_CODE", detail: "an upstream service rejected the request" },
+    });
+    expect(err.error.code).toBe("http_400");
+    expect(err.error.detail).toEqual({
+      code: "SOME_UPSTREAM_CODE",
+      detail: "an upstream service rejected the request",
+    });
+  });
+
+  it("generic degrade: a top-level body.details still takes precedence over an object body.error (existing details-passthrough behavior is unaffected)", () => {
+    const err = mapBackendError(400, {
+      error: { issues: [{ code: "invalid_type", path: ["x"], message: "should not be used" }] },
+      message: "Validation failed",
+      details: { reason: "top-level details wins" },
+    });
+    expect(err.error.detail).toEqual({ reason: "top-level details wins" });
+  });
+
   // Every catalog + degrade fixture above stays within budget on its own,
   // not just the deliberately worst-case one.
   it("every catalog entry constructed in this file stays within the error budget", () => {
