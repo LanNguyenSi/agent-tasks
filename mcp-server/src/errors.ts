@@ -235,11 +235,42 @@ function notClaimedError(message: string): TeachingError {
 // (backend/src/routes/tasks.ts: POST /tasks/pickup, POST
 // /tasks/:id/start). The backend's own code is already specific, so it is
 // kept verbatim as this entry's code.
+//
+// Review-retention case (rc-v1-C008 Cold-Start-Eval, 2026-08-12 live
+// finding): task_finish's own documented semantics clear the work claim on
+// `done` but KEEP it when the task lands back in `review` (the
+// request_changes rework loop keeps the original author's claim so they
+// resume automatically). A caller who still holds that kind of claim and
+// then hits this 409 on a NEW task must not be told "task_finish or
+// task_abandon" as two equally valid options: task_abandon on a work claim
+// while the task is in review is explicitly rejected by the backend (409
+// `bad_state`, "Cannot abandon a work claim while the task is in review" --
+// see backend/src/routes/tasks.ts, POST /tasks/:id/abandon) precisely
+// because clearing it would orphan the review's auto-resume path, and
+// task_finish there would mean the caller finishing (self-approving or
+// self-rejecting) a review they may not be the intended reviewer of.
+//
+// Whether the held task is actually in this state is NOT determinable from
+// this catalog entry's only input. The 409 body both real call sites send
+// is `{ error: "already_claimed", message, activeClaim: { taskId, title,
+// role } }` (verified at backend/src/routes/tasks.ts:1469-1480 for
+// /tasks/pickup and :1688-1699 for /tasks/:id/start, and documented at
+// docs/okf/claim-model.md:19) -- there is no `status` field, and `role`
+// ("author" vs "reviewer", derived from which claim column matched) does
+// not disambiguate the dangerous case either: an "author" role covers BOTH
+// an ordinary in_progress claim AND a work claim retained on a task now in
+// review (task_finish's work-finish and request_changes branches both keep
+// claimedByAgentId when landing on `review`; backend/src/routes/tasks.ts
+// ~2443-2460 and ~3151-3155). A true status-conditional recipe is therefore
+// not buildable from this call site's input; this entry instead names both
+// cases explicitly so the caller self-selects the right one instead of
+// defaulting to `task_abandon`, which is safe only in the first case.
 function alreadyClaimedError(message: string): TeachingError {
   return buildTeachingError({
     code: "already_claimed",
     message,
-    recipe: "call task_finish or task_abandon on your current task before claiming another",
+    recipe:
+      "In-progress claim: call task_finish or task_abandon on it. Claim kept because that task moved to review (request_changes rework loop): do not abandon it, merge + get it approved, or wait, before claiming another.",
     allowedNext: ["task_finish", "task_abandon"],
   });
 }

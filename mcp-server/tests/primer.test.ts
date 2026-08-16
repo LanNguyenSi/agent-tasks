@@ -444,7 +444,13 @@ describe("wrap()'s actual error text matches errors.ts and WORKFLOW_PRIMER's Err
       error: {
         code: "already_claimed",
         message: backendBody.message,
-        recipe: "call task_finish or task_abandon on your current task before claiming another",
+        // rc-v1-C008 Cold-Start-Eval (2026-08-12): the recipe now
+        // distinguishes an ordinary in-progress claim from one retained
+        // after the held task moved to review (see errors.ts's comment on
+        // alreadyClaimedError for why the review case is not recommended
+        // task_abandon).
+        recipe:
+          "In-progress claim: call task_finish or task_abandon on it. Claim kept because that task moved to review (request_changes rework loop): do not abandon it, merge + get it approved, or wait, before claiming another.",
         allowedNext: ["task_finish", "task_abandon"],
       },
     });

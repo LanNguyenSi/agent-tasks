@@ -116,6 +116,47 @@ describe("mapBackendError catalog", () => {
     assertAllowedNextRegistered(err, registered);
   });
 
+  // rc-v1-C008 Cold-Start-Eval (2026-08-12): the recipe used to name
+  // task_finish and task_abandon as two equally valid options unconditionally.
+  // That is dangerous for a work claim retained after the held task moved to
+  // `review` (the request_changes rework loop) -- task_abandon there is
+  // rejected by the backend as an orphaning risk, and task_finish there means
+  // finishing a review the caller may not be the intended reviewer of. The
+  // 409 body (activeClaim: {taskId, title, role}) carries no `status` field
+  // and `role: "author"` does not disambiguate in_progress from
+  // review-retained (see errors.ts's comment on alreadyClaimedError), so the
+  // recipe must name both cases explicitly and must not recommend abandon
+  // for the review-retained one.
+  it("already_claimed: the recipe distinguishes an ordinary in-progress claim from one retained after the held task moved to review, and does not recommend task_abandon for the review-retained case", () => {
+    const err = mapBackendError(409, {
+      error: "already_claimed",
+      message: "You already hold an active claim. Call task_finish or task_abandon on it before starting another.",
+      activeClaim: { taskId: "t1", title: "x", role: "author" },
+    });
+    expect(err.error.recipe).toMatch(/in-progress claim/i);
+    expect(err.error.recipe).toMatch(/review/i);
+    // The review-retained branch of the recipe must not pair "review" with
+    // "abandon" as a recommended action -- split on the review-case sentence
+    // and check task_abandon is not recommended in it specifically (the
+    // in-progress branch legitimately names task_abandon earlier).
+    const reviewClause = err.error.recipe.slice(err.error.recipe.toLowerCase().indexOf("review"));
+    expect(reviewClause).toMatch(/do not abandon/i);
+    expect(reviewClause.toLowerCase()).not.toContain("task_abandon");
+  });
+
+  // The widened recipe text is longer than the pre-fix one-liner; pin that
+  // the whole response still stays within ERROR_BUDGET_CHARS even paired
+  // with a worst-case (max-clamped) backend message, not just the short
+  // fixture above.
+  it("already_claimed: stays within the error budget even with a max-length backend message", () => {
+    const err = mapBackendError(409, {
+      error: "already_claimed",
+      message: "M".repeat(1000),
+      activeClaim: { taskId: "t1", title: "x", role: "author" },
+    });
+    expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+  });
+
   // ── 3. precondition_failed ──────────────────────────────────────────────
   it("precondition_failed: a branch/PR gate failing names task_submit_pr and lists rules structured, with the known rule's own-authored corrective as detail.failed[].message (not the backend's raw text)", () => {
     // rc-v1-C005 review round 1, finding #4: DETAIL_ENTRY_CHAR_BUDGET (60
