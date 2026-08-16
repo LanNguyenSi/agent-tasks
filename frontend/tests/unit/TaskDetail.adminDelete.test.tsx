@@ -130,16 +130,15 @@ async function renderAndExpandSections(isProjectAdmin: boolean) {
 describe("TaskDetail — admin delete affordance wiring", () => {
   it("project admin sees Delete on a foreign attachment and a foreign artifact", async () => {
     await renderAndExpandSections(true);
-    // Attachment delete carries a per-item aria-label; the two-step confirm
-    // itself is covered by the section's own tests.
+    // Both attachment and artifact delete carry a per-item aria-label; the
+    // two-step confirm itself is covered by the sections' own tests.
     expect(screen.getByRole("button", { name: "Delete foreign.txt" })).toBeInTheDocument();
-    // Artifact delete is the bare InlineConfirmDelete with visible text.
-    expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete build.log" })).toBeInTheDocument();
   });
 
   it("non-admin sees no Delete on either foreign item", async () => {
     await renderAndExpandSections(false);
     expect(screen.queryByRole("button", { name: "Delete foreign.txt" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete build.log" })).not.toBeInTheDocument();
   });
 });
