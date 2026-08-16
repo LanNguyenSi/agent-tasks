@@ -6,6 +6,11 @@ import {
   EVALS_KEYSTONE_CAP,
   FIELD_WEIGHTS,
 } from "./confidence";
+import {
+  RICH_TEMPLATE_DATA_NO_DESC,
+  SECTIONED_DESC,
+  CONFIDENCE_PARITY_FIXTURES,
+} from "./__fixtures__/confidence-fixtures";
 
 type Input = Parameters<typeof calculateConfidence>[0];
 type Result = ReturnType<typeof calculateConfidence>;
@@ -17,20 +22,23 @@ type Expected = Omit<Result, "findings">;
 
 // ── templateData.goal + context as a description equivalent (ported from the
 // backend suite) ─────────────────────────────────────────────────────────────
-// Modeled on the real task c71de504's create: substantial goal + context with
-// concrete measurements and file:line anchors, plus scope/acceptanceCriteria/
-// agentPrompt, but NO literal `description` — the shape that used to score
-// 40/100 and block on missing_or_thin_description until an agent duplicated
-// goal+context verbatim into description via task_respec. Declared here
-// (above FIXTURES) so both the parity fixture below and the dedicated
-// describe block further down share the exact same object.
-const RICH_TEMPLATE_DATA_NO_DESC = {
-  goal: "Apply the same description-quality heuristic to templateData.goal + templateData.context so rich structured tasks are not forced to duplicate that text into description.",
-  context: "Measured on real tasks: c71de504 scored 40/100 and went to 83 after copying goal+context into description; d58b3409 went 40->75 the same way. The structure check only reads backend/src/lib/confidence.ts:526 (missing_or_thin_description) and the cap at backend/src/lib/confidence.ts:643.",
-  scope: "backend/src/lib/confidence.ts and frontend/src/lib/confidence.ts, the missing_or_thin_description path only",
-  acceptanceCriteria: "- A repro shaped like c71de504's create no longer triggers missing_or_thin_description\n- A negative control with all-empty templateData still triggers it",
-  agentPrompt: "1. Read both confidence.ts copies. 2. Feed description + templateData.goal + templateData.context through the existing quality check. 3. Update both test files.",
-};
+// RICH_TEMPLATE_DATA_NO_DESC now lives in
+// frontend/src/lib/__fixtures__/confidence-fixtures.ts (task 79621590) — it
+// was byte-identical to backend's own copy of the same fixture, exactly the
+// kind of duplicated literal that can silently drift.
+// Both the parity fixture below and the dedicated describe block further
+// down still share the exact same imported object.
+
+// `input` for each fixture below is looked up BY NAME from the shared
+// corpus (CONFIDENCE_PARITY_FIXTURES) instead of being retyped here:
+// retyping created a second copy of each input literal that could silently
+// drift from the corpus the parity suite (confidence.parity.test.ts)
+// actually exercises. A mutated shared input left every suite green
+// because this file's own copy never changed. `expected` stays a local,
+// hand-verified ground-truth value; only `input` is shared.
+const parityInputByName = Object.fromEntries(
+  CONFIDENCE_PARITY_FIXTURES.map((f) => [f.name, f.input] as const),
+);
 
 /**
  * Parity fixtures. The `expected` values are GROUND TRUTH: produced by running
@@ -43,7 +51,7 @@ const RICH_TEMPLATE_DATA_NO_DESC = {
 const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
   {
     name: "empty",
-    input: { title: "", description: null, templateData: null, templateFields: null },
+    input: parityInputByName["empty"],
     expected: {
       score: 0,
       blocking: true,
@@ -54,7 +62,7 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
   },
   {
     name: "title-only-no-desc",
-    input: { title: "Add exponential backoff to the GitHub webhook retry", description: null, templateData: null, templateFields: null },
+    input: parityInputByName["title-only-no-desc"],
     expected: {
       score: 10,
       blocking: true,
@@ -65,13 +73,7 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
   },
   {
     name: "rich-prose-no-verification",
-    input: {
-      title: "Sync the frontend confidence scorer",
-      description:
-        "## Context\nThe dashboard board badge shows a stale number because the client scorer in `frontend/src/lib/confidence.ts` diverged from the backend prose-first scorer.\n\n## Goal\nMirror the 9 prose-first weights so the badge a human sees matches what the gate computes for the 75-task corpus.",
-      templateData: null,
-      templateFields: null,
-    },
+    input: parityInputByName["rich-prose-no-verification"],
     expected: {
       score: 55,
       blocking: true,
@@ -82,13 +84,7 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
   },
   {
     name: "rich-prose-with-verification",
-    input: {
-      title: "Sync the frontend confidence scorer",
-      description:
-        "## Context\nThe dashboard board badge shows a stale number because the client scorer in `frontend/src/lib/confidence.ts` diverged from the backend prose-first scorer.\n\n## Goal\nMirror the 9 prose-first weights so the badge matches the gate.\n\n## Verify\nVerify by running `npm test` and confirm the parity suite is green.",
-      templateData: null,
-      templateFields: null,
-    },
+    input: parityInputByName["rich-prose-with-verification"],
     expected: {
       score: 75,
       blocking: false,
@@ -99,20 +95,7 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
   },
   {
     name: "full-strong-with-ac",
-    input: {
-      title: "Sync the frontend confidence scorer to scorer-v2",
-      description:
-        "## Context\nThe client scorer in `frontend/src/lib/confidence.ts` diverged from the backend after the prose-first calibration.\n\n## Goal\nPort the fixed-denominator weights and the keystone cap so badges match the gate for all 75 tasks.",
-      templateData: {
-        goal: "Badges show the same score the gate computes.",
-        acceptanceCriteria: "- A parity test asserts 8 fixtures match the backend\n- next build passes",
-        scope: "frontend/src/lib/confidence.ts and its 3 call-sites",
-        constraints: "Do not change the backend weights; mirror them only.",
-        risk: "Medium: visible badge numbers change.",
-        dependencies: "none",
-      },
-      templateFields: null,
-    },
+    input: parityInputByName["full-strong-with-ac"],
     expected: {
       score: 84,
       blocking: false,
@@ -123,12 +106,7 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
   },
   {
     name: "vague-no-anchors",
-    input: {
-      title: "Make it better",
-      description: "We should fix and improve and optimize the thing somehow, quickly.",
-      templateData: null,
-      templateFields: null,
-    },
+    input: parityInputByName["vague-no-anchors"],
     expected: {
       score: 28,
       blocking: true,
@@ -139,13 +117,7 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
   },
   {
     name: "template-fields-completeness",
-    input: {
-      title: "Wire the dependency graph into the scorer",
-      description:
-        "## Context\nThe scorer treats `dependencies` as satisfied by any prose. Tie it to the real dependsOn[] edges in `backend/src/routes/tasks.ts`.\n\n## Goal\nThe scorer reads the edge set so 'none' is distinct from an actual prerequisite.",
-      templateData: null,
-      templateFields: { goal: true, acceptanceCriteria: true, context: true, constraints: true },
-    },
+    input: parityInputByName["template-fields-completeness"],
     expected: {
       score: 55,
       blocking: true,
@@ -156,17 +128,7 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
   },
   {
     name: "typed-feature-with-ac",
-    input: {
-      title: "Render create-time confidence on the dashboard",
-      description:
-        "## Goal\nSurface the server `confidence` object after a create in `frontend/src/app/dashboard/page.tsx`.\n\n## Verify\nRun the e2e and check the panel shows score, missing, and nextActions.",
-      templateData: {
-        acceptanceCriteria: "- createTask exposes { task, confidence }\n- the panel renders nextActions",
-        taskType: "feature",
-        agentPrompt: "1. Widen createTask. 2. Render the panel. 3. Run next build.",
-      },
-      templateFields: null,
-    },
+    input: parityInputByName["typed-feature-with-ac"],
     expected: {
       score: 74,
       blocking: false,
@@ -182,12 +144,7 @@ const FIXTURES: { name: string; input: Input; expected: Expected }[] = [
     // describe block further down — a future mirror drift on the MAX-semantics
     // equivalence path fails HERE, in the same loop as every other fixture.
     name: "rich-templatedata-no-desc-c71de504",
-    input: {
-      title: "Fix confidence scorer templateData description-equivalence",
-      description: "",
-      templateData: RICH_TEMPLATE_DATA_NO_DESC,
-      templateFields: null,
-    },
+    input: parityInputByName["rich-templatedata-no-desc-c71de504"],
     expected: {
       score: 75,
       blocking: false,
@@ -456,44 +413,9 @@ describe("calculateConfidence — templateData.goal + context as description equ
 // style — exactly like the server. The backend's console.info spy is dropped
 // (the frontend scorer has no ops log side effect).
 
-// Fully specced v2 create: all seven scored sections as `##` headings with real
-// bodies, templateData null. Identical to the backend fixture of the same name.
-const SECTIONED_DESC = [
-  "## Goal",
-  "",
-  "The `signup` handler in src/routes/auth.ts returns 400 on an empty body.",
-  "",
-  "## Context",
-  "",
-  "Posting an empty body 500s today; see incident 4711.",
-  "",
-  "## Acceptance Criteria",
-  "",
-  "- [ ] POST /api/signup with `{}` returns 400",
-  "- [ ] A unit test covers the empty-body branch and CI is green",
-  "",
-  "## Scope",
-  "",
-  "- src/routes/auth.ts signup handler only",
-  "",
-  "## Out of scope",
-  "",
-  "- Session middleware stays untouched",
-  "",
-  "## Dependencies",
-  "",
-  "none",
-  "",
-  "## Risk",
-  "",
-  "low: single handler, no migration",
-  "",
-  "## Agent Prompt",
-  "",
-  "1. Add a zod body schema.",
-  "2. Return 400 on parse failure.",
-  "3. Add a unit test.",
-].join("\n");
+// SECTIONED_DESC now lives in
+// frontend/src/lib/__fixtures__/confidence-fixtures.ts (task 79621590) — it
+// was byte-identical to backend's own copy of the same fixture.
 
 describe("extractSpecSections", () => {
   it("parses every aliased section from ## headings", () => {
