@@ -11,13 +11,21 @@ export function formatTasks(tasks: Task[], mode: OutputMode): string {
 
   if (tasks.length === 0) return "No tasks found.";
 
+  // Shortened id: the first 8 hex characters of the UUID -- the same
+  // granularity `resolveTaskId` (resolve.ts, task e7911cdd) accepts as a
+  // prefix, so a value copied straight out of this column works as-is for
+  // `tasks get`/`start`/`finish`/`comment`. If two tasks in the same result
+  // set happen to share an 8-char prefix, resolveTaskId reports the
+  // collision as an ambiguous-prefix error rather than guessing -- it never
+  // silently picks one.
   const lines = tasks.map((t) => {
+    const shortId = t.id.slice(0, 8);
     const project = t.project?.slug ?? "";
     const prio = t.priority.padEnd(8);
     const status = t.status.padEnd(12);
-    return `${prio} ${status} ${project.padEnd(20)} ${t.title}`;
+    return `${shortId.padEnd(8)} ${prio} ${status} ${project.padEnd(20)} ${t.title}`;
   });
-  return `${"PRIORITY".padEnd(8)} ${"STATUS".padEnd(12)} ${"PROJECT".padEnd(20)} TITLE\n${lines.join("\n")}`;
+  return `${"ID".padEnd(8)} ${"PRIORITY".padEnd(8)} ${"STATUS".padEnd(12)} ${"PROJECT".padEnd(20)} TITLE\n${lines.join("\n")}`;
 }
 
 export function formatTask(task: Task, mode: OutputMode): string {
@@ -93,9 +101,8 @@ export function formatStart(result: import("./api.js").StartResult, mode: Output
 
 // Minimal confidence renderer (D7): score/threshold, blocking status,
 // missing fields, next actions. Deliberately reusable across verbs that
-// surface a confidence score — today only `tasks respec` calls it. Retrofitting
-// `tasks create`'s output to use it is a separate task (e7911cdd) and is
-// intentionally NOT done here.
+// surface a confidence score -- `tasks respec` (via formatRespec) and
+// `tasks create` (via formatCreate, task e7911cdd) both call it.
 export function formatConfidence(confidence: import("./api.js").Confidence): string {
   const lines = [
     `Confidence: ${confidence.score}/${confidence.threshold}${confidence.blocking ? " (blocking)" : ""}`,
@@ -114,6 +121,21 @@ export function formatConfidence(confidence: import("./api.js").Confidence): str
 
 export function formatRespec(
   result: import("./api.js").RespecResult,
+  mode: OutputMode,
+): string {
+  if (mode === "json") return JSON.stringify(result, null, 2);
+  if (mode === "quiet") return result.task.id;
+  return [formatTask(result.task, "table"), "", formatConfidence(result.confidence)].join("\n");
+}
+
+// `tasks create`'s score back-channel (task e7911cdd): the create endpoint
+// returns { task, confidence } just like respec, but the CLI used to keep
+// only `task` and silently drop the score -- an agent creating a
+// low-confidence task never found out until a human rejected it later.
+// Exit code stays 0 regardless of `confidence.blocking`: this is purely
+// informative, never a gate (see api.ts CreateTaskResult).
+export function formatCreate(
+  result: import("./api.js").CreateTaskResult,
   mode: OutputMode,
 ): string {
   if (mode === "json") return JSON.stringify(result, null, 2);

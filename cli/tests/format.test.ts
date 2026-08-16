@@ -8,6 +8,7 @@ import {
   formatPickup,
   formatStart,
   formatGates,
+  formatCreate,
 } from "../src/format.js";
 
 describe("formatTasks", () => {
@@ -21,6 +22,18 @@ describe("formatTasks", () => {
     expect(out).toContain("Fix bug");
     expect(out).toContain("HIGH");
     expect(out).toContain("PRIORITY");
+  });
+
+  it("shows an ID column truncated to the first 8 characters", () => {
+    const longId = [
+      { id: "abcdef12-3456-7890-abcd-ef1234567890", title: "Long id", status: "open", priority: "LOW" },
+    ];
+    const out = formatTasks(longId, "table");
+    const header = out.split("\n")[0]!;
+    expect(header.startsWith("ID")).toBe(true);
+    expect(out).toContain("abcdef12");
+    // The full id (beyond the 8-char prefix) must not leak into the table.
+    expect(out).not.toContain("abcdef12-3456");
   });
 
   it("formats as JSON", () => {
@@ -207,6 +220,67 @@ describe("formatStart", () => {
 
   it("json includes the full payload", () => {
     expect(JSON.parse(formatStart(result, "json"))).toEqual(result);
+  });
+});
+
+describe("formatCreate", () => {
+  const task = { id: "t1", title: "New task", status: "open", priority: "MEDIUM" };
+
+  it("shows the task plus score/threshold, blocking status, missing fields, and next actions as bullets", () => {
+    const result = {
+      task,
+      confidence: {
+        score: 40,
+        threshold: 60,
+        enforcementMode: "WARN",
+        blocking: true,
+        missing: ["acceptanceCriteria"],
+        findings: [],
+        nextActions: ["Add acceptance criteria", "Link the source issue"],
+      },
+    };
+    const out = formatCreate(result, "table");
+    expect(out).toContain("New task");
+    expect(out).toContain("Confidence: 40/60");
+    expect(out).toContain("(blocking)");
+    expect(out).toContain("Missing:    acceptanceCriteria");
+    expect(out).toContain("Next actions:");
+    expect(out).toContain("  - Add acceptance criteria");
+    expect(out).toContain("  - Link the source issue");
+  });
+
+  it("omits the blocking marker when the score clears the threshold", () => {
+    const result = {
+      task,
+      confidence: {
+        score: 90,
+        threshold: 60,
+        enforcementMode: "WARN",
+        blocking: false,
+        missing: [],
+        findings: [],
+        nextActions: [],
+      },
+    };
+    const out = formatCreate(result, "table");
+    expect(out).toContain("Confidence: 90/60");
+    expect(out).not.toContain("(blocking)");
+  });
+
+  it("quiet mode returns just the task id", () => {
+    const result = {
+      task,
+      confidence: { score: 90, threshold: 60, enforcementMode: "WARN", blocking: false, missing: [], findings: [], nextActions: [] },
+    };
+    expect(formatCreate(result, "quiet")).toBe("t1");
+  });
+
+  it("json mode round-trips the full { task, confidence } envelope", () => {
+    const result = {
+      task,
+      confidence: { score: 90, threshold: 60, enforcementMode: "WARN", blocking: false, missing: [], findings: [], nextActions: [] },
+    };
+    expect(JSON.parse(formatCreate(result, "json"))).toEqual(result);
   });
 });
 

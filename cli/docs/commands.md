@@ -1,11 +1,21 @@
 # Command reference
 
-All commands accept `--json` (machine-readable JSON) and most accept `--quiet` (IDs only, for scripting).
+Most commands accept `--json` (machine-readable JSON); many of those also accept `--quiet` (IDs only, for scripting). A handful of side-effect-only commands (`tasks comment`, `tasks instructions`, `github pr comment`, `review release`) have neither flag -- run a command with `--help` to see its exact flag set. `--json` and `--quiet` are mutually exclusive: passing both is a hard error before any network call.
 
 The CLI has two surfaces:
 
 - **v2 verb API (preferred):** `pickup`, `tasks start`, `tasks finish`, `tasks abandon`, `tasks submit-pr`. These mirror the agent-tasks MCP tools and are the canonical shape for agent automation.
 - **v1 aliases (deprecated):** `tasks claim`, `tasks release`, `tasks status`, `review *`. They still work but emit a one-line stderr deprecation warning. They will be removed in a future release.
+
+## Task-id prefixes
+
+`tasks list` prints an `ID` column: the first 8 hex characters of each task's UUID. Every command below that takes `<task-id>` accepts either the full UUID or that shortened prefix, except where noted:
+
+`tasks get`, `tasks start`, `tasks finish`, `tasks comment`, `tasks abandon`, `tasks submit-pr`, `tasks update`, `tasks respec`, `tasks instructions`, `tasks claim`, `tasks status`, `tasks release`, `review approve`, `review request-changes`.
+
+Not covered: `review claim` and `review release` still require the full UUID; `ack <signal-id>` takes a signal id, not a task id; `github pr *`'s `--task <id>` is passed straight through for audit purposes and is not resolved either.
+
+A full UUID always resolves with zero network calls, so scripted callers that already pass full UUIDs are unaffected. A prefix is matched against the caller's team, newest tasks first, and the search pages up to 2000 tasks (10 pages of 200) before giving up; a prefix matched by more than one task is a hard error listing every candidate rather than a guess, and a prefix that matches nothing after hitting that page cap says so explicitly instead of claiming the task doesn't exist.
 
 ## Signals (inbox)
 

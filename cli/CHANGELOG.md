@@ -16,6 +16,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `--no-debug-flavor` suppresses it; with neither flag the backend runs
   its title/label heuristic as before. `--depends-on` declares blocking
   task ids in the same project. Both are create-time only.
+- `tasks list` gains an `ID` column (the first 8 hex characters of the
+  task UUID) in table output. `tasks get`, `tasks start`, `tasks finish`,
+  `tasks comment`, `tasks abandon`, `tasks submit-pr`, `tasks update`,
+  `tasks respec`, `tasks instructions`, `tasks claim`, `tasks status`,
+  `tasks release`, `review approve`, and `review request-changes` now all
+  accept that short id as a prefix in place of the full UUID. A full UUID
+  still short-circuits with zero network calls, so scripted callers are
+  unaffected. Prefix search is scoped to the caller's team, sorted
+  newest-first to match `tasks list`, and pages up to 2000 tasks (10 pages
+  of 200) before giving up; hitting that cap without a match is disclosed
+  in the error instead of being reported as a plain "no such task".
+- `tasks create` now prints the confidence score/threshold, missing
+  fields, and next actions returned by the backend alongside the created
+  task, instead of silently discarding them. The exit code is unaffected
+  by a low or blocking score -- this is purely informational, never a gate.
+- `tasks list --project` now fills the `PROJECT` column even when the
+  backend's project-scoped endpoint doesn't attach `project` to each row
+  itself.
+
+### Changed
+
+- `--json` and `--quiet` are now mutually exclusive: passing both is a
+  hard error (exit 1) before any network call, instead of one flag
+  silently winning. This fixes scripts that accidentally passed both from
+  getting confusing, half-explained output.
+- **BREAKING:** `tasks create --json` now emits the full `{ task,
+  confidence }` envelope instead of just the task. Scripts that read the
+  created id via `.id` must switch to reading it via `.task.id`.
 
 ### Security
 

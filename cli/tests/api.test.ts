@@ -10,6 +10,10 @@ import {
   getEffectiveGates,
   listProjectTasks,
   respecTask,
+  searchTaskPool,
+  matchTaskIdPrefix,
+  withProject,
+  type Task,
 } from "../src/api.js";
 import type { Config } from "../src/config.js";
 
@@ -35,12 +39,23 @@ afterEach(() => {
 });
 
 describe("createTask", () => {
-  it("POSTs the input as the body to /api/projects/:id/tasks and returns the task", async () => {
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" } }),
-    );
-    const task = await createTask(config, "p1", { title: "x" });
-    expect(task).toEqual({ id: "t1", title: "x", status: "open", priority: "MEDIUM" });
+  const confidence = {
+    score: 80,
+    threshold: 60,
+    enforcementMode: "WARN",
+    blocking: false,
+    missing: [],
+    findings: [],
+    nextActions: [],
+  };
+
+  it("POSTs the input as the body to /api/projects/:id/tasks and returns the full { task, confidence } envelope", async () => {
+    const task = { id: "t1", title: "x", status: "open", priority: "MEDIUM" };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ task, confidence }));
+    // Full envelope, not just the task -- createTask must not drop
+    // confidence the way it used to before task e7911cdd.
+    const result = await createTask(config, "p1", { title: "x" });
+    expect(result).toEqual({ task, confidence });
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("http://api.test/api/projects/p1/tasks");
     expect(init.method).toBe("POST");
@@ -49,7 +64,7 @@ describe("createTask", () => {
 
   it("forwards debugFlavor and dependsOn when set", async () => {
     fetchMock.mockResolvedValueOnce(
-      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" } }),
+      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" }, confidence }),
     );
     await createTask(config, "p1", {
       title: "x",
@@ -68,7 +83,7 @@ describe("createTask", () => {
     // flag was passed; the body must then carry no debugFlavor key, so the
     // backend heuristic stays in charge.
     fetchMock.mockResolvedValueOnce(
-      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" } }),
+      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "MEDIUM" }, confidence }),
     );
     await createTask(config, "p1", { title: "x" });
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
@@ -257,6 +272,113 @@ describe("respecTask", () => {
   });
 });
 
+describe("searchTaskPool", () => {
+  it("GETs /api/tasks/claimable with an explicit all-status, newest-first search", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks: [], nextCursor: null }));
+    await searchTaskPool(config, "abc");
+    const url = fetchMock.mock.calls[0]![0] as string;
+    // sort=createdAt:desc (task e7911cdd fix round): the pool's own default
+    // is createdAt:asc, which would search the OLDEST tasks first -- exactly
+    // backwards from `tasks list`'s newest-first table the ID column comes
+    // from.
+    expect(url).toBe(
+      "http://api.test/api/tasks/claimable?status=open%2Cin_progress%2Creview%2Cdone%2Cabandoned&limit=200&sort=createdAt%3Adesc",
+    );
+  });
+
+  it("forwards a custom limit", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks: [], nextCursor: null }));
+    await searchTaskPool(config, "abc", 25);
+    expect(fetchMock.mock.calls[0]![0] as string).toContain("limit=25");
+  });
+
+  it("returns a unique match found on the first page without paging further", async () => {
+    const tasks = [{ id: "abcdef12-0000-0000-0000-000000000000", title: "x", status: "open", priority: "LOW" }];
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks, nextCursor: "abcdef12-0000-0000-0000-000000000000" }));
+    const result = await searchTaskPool(config, "abcdef12");
+    expect(result).toEqual({
+      match: { kind: "unique", id: "abcdef12-0000-0000-0000-000000000000" },
+      searched: 1,
+      capped: false,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("follows nextCursor to a second page to find a match not present on the first page", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        tasks: [{ id: "11111111-0000-0000-0000-000000000000", title: "page 1", status: "open", priority: "LOW" }],
+        nextCursor: "11111111-0000-0000-0000-000000000000",
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        tasks: [{ id: "abcdef12-0000-0000-0000-000000000000", title: "page 2 match", status: "open", priority: "LOW" }],
+        nextCursor: null,
+      }),
+    );
+    const result = await searchTaskPool(config, "abcdef12");
+    expect(result).toEqual({
+      match: { kind: "unique", id: "abcdef12-0000-0000-0000-000000000000" },
+      searched: 2,
+      capped: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondUrl = fetchMock.mock.calls[1]![0] as string;
+    expect(secondUrl).toContain("cursor=11111111-0000-0000-0000-000000000000");
+  });
+
+  it("stops at the hard page cap and reports capped when no match was found", async () => {
+    // 10 pages of a full 200-row page each, always with a nextCursor, never
+    // a match -- proves the loop is bounded rather than paging forever.
+    for (let i = 0; i < 10; i++) {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({
+          tasks: [{ id: `${i}0000000-0000-0000-0000-000000000000`, title: "x", status: "open", priority: "LOW" }],
+          nextCursor: `${i}0000000-0000-0000-0000-000000000000`,
+        }),
+      );
+    }
+    const result = await searchTaskPool(config, "zzzzzzzz");
+    expect(result).toEqual({ match: { kind: "none" }, searched: 10, capped: true });
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+  });
+});
+
+describe("matchTaskIdPrefix", () => {
+  const pool: Task[] = [
+    { id: "abcdef12-0000-0000-0000-000000000000", title: "First", status: "open", priority: "LOW" },
+    { id: "abcdef99-0000-0000-0000-000000000000", title: "Second", status: "open", priority: "LOW" },
+    { id: "12345678-0000-0000-0000-000000000000", title: "Third", status: "open", priority: "LOW" },
+  ];
+
+  it("returns a unique match for a prefix matched by exactly one task", () => {
+    const result = matchTaskIdPrefix(pool, "12345678");
+    expect(result).toEqual({ kind: "unique", id: "12345678-0000-0000-0000-000000000000" });
+  });
+
+  it("matches case-insensitively", () => {
+    const result = matchTaskIdPrefix(pool, "ABCDEF99");
+    expect(result).toEqual({ kind: "unique", id: "abcdef99-0000-0000-0000-000000000000" });
+  });
+
+  it("reports 'none' for a prefix matched by zero tasks", () => {
+    expect(matchTaskIdPrefix(pool, "ffffffff")).toEqual({ kind: "none" });
+  });
+
+  it("reports 'ambiguous' with every matching task -- never silently picks the first match", () => {
+    const result = matchTaskIdPrefix(pool, "abcdef");
+    expect(result.kind).toBe("ambiguous");
+    if (result.kind === "ambiguous") {
+      expect(result.matches).toHaveLength(2);
+      expect(result.matches.map((t) => t.id)).toEqual([
+        "abcdef12-0000-0000-0000-000000000000",
+        "abcdef99-0000-0000-0000-000000000000",
+      ]);
+    }
+  });
+});
+
 describe("getEffectiveGates", () => {
   it("GETs the gates and flattens the keyed Record into an array", async () => {
     // Backend returns Record<gateCode, EffectiveGate> — the client flattens
@@ -326,5 +448,35 @@ describe("listProjectTasks", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ tasks }));
     const result = await listProjectTasks(config, "p1");
     expect(result).toEqual(tasks);
+  });
+});
+
+describe("withProject", () => {
+  const project = { id: "p1", name: "Project One", slug: "project-one" };
+
+  it("backfills project on tasks that don't already have one", () => {
+    const tasks: Task[] = [
+      { id: "t1", title: "one", status: "open", priority: "LOW" },
+      { id: "t2", title: "two", status: "open", priority: "HIGH" },
+    ];
+    const result = withProject(tasks, project);
+    expect(result).toEqual([
+      { id: "t1", title: "one", status: "open", priority: "LOW", project: { id: "p1", name: "Project One", slug: "project-one" } },
+      { id: "t2", title: "two", status: "open", priority: "HIGH", project: { id: "p1", name: "Project One", slug: "project-one" } },
+    ]);
+  });
+
+  it("preserves a task's existing project instead of overwriting it", () => {
+    const tasks: Task[] = [
+      { id: "t1", title: "one", status: "open", priority: "LOW", project: { name: "Other", slug: "other" } },
+    ];
+    const result = withProject(tasks, project);
+    expect(result[0]!.project).toEqual({ name: "Other", slug: "other" });
+  });
+
+  it("does not mutate the input array", () => {
+    const tasks: Task[] = [{ id: "t1", title: "one", status: "open", priority: "LOW" }];
+    withProject(tasks, project);
+    expect(tasks[0]).not.toHaveProperty("project");
   });
 });
