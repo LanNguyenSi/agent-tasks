@@ -26,7 +26,7 @@
     "start": "node dist/cli.js",
     "pretest": "npm run build",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
   },
   "dependencies": {
     "@agent-tasks/mcp-server": "0.13.0"

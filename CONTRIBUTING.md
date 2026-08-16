@@ -21,6 +21,8 @@ Thanks for your interest. agent-tasks is a collaborative task platform for human
 
    The root-level `npm run build` fans out across all workspaces; `npm test` only covers `frontend`, `cli`, and `backend` (not `mcp-server` or `mcp-bridge`). Only use them when a change actually crosses surfaces.
 
+   The root-level `npm run typecheck` works in a fresh checkout without any prior build: `mcp-bridge` typechecks against the `mcp-server` source via a `paths` override in `mcp-bridge/tsconfig.typecheck.json`. Building or testing `mcp-bridge` still requires `npm run build --workspace=mcp-server` first, because build and tests resolve the real package through `node_modules`.
+
 4. For backend changes, run the dev stack with `docker compose up` and exercise affected endpoints.
 5. Open the PR with a clear summary, motivation, and test plan.
 
