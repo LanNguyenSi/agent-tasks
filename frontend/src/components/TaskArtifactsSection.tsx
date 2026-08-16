@@ -174,8 +174,10 @@ export default function TaskArtifactsSection({
                   // Backend is the source of truth on delete authorization; this
                   // flag only decides whether to render the button. Show it when
                   // the viewer is the human creator or when they can manage all
-                  // artifacts in the project (admin). Agent-created artifacts
-                  // are never deletable from the web UI — agents use the API.
+                  // artifacts in the project (admin). A non-admin viewer cannot
+                  // delete someone else's (or an agent's) artifact from the web
+                  // UI; a project admin can delete any artifact, and the backend
+                  // enforces that same rule and audits the deletion.
                   const isHumanCreator = !!a.createdByUserId && a.createdByUserId === user?.id;
                   const canDelete = isHumanCreator || canManageAll;
                   return (
@@ -209,6 +211,7 @@ export default function TaskArtifactsSection({
                             <InlineConfirmDelete
                               onConfirm={() => void remove(a)}
                               busy={deletingId === a.id}
+                              ariaLabel={`Delete ${a.name}`}
                             />
                           ) : null}
                         </div>

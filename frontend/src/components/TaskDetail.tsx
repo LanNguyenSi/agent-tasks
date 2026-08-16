@@ -137,10 +137,11 @@ export interface TaskDetailProps {
   /** True for a human who is a team ADMIN or a per-project PROJECT_ADMIN
    * (derived from `project.accessRole`, which — unlike `team?.role` —
    * also covers per-project-only admins). Gates the status-override and
-   * admin claim-release controls in TaskHeader / TaskMetaSidebar. Defaults
-   * to false so callers that don't thread it (e.g. the dashboard board
-   * modal, which currently only has the project *list* projection without
-   * `accessRole`) simply don't expose the admin controls, rather than
+   * admin claim-release controls in TaskHeader / TaskMetaSidebar, and is
+   * threaded through as `canManageAll` to TaskAttachmentsSection /
+   * TaskArtifactsSection to gate the delete affordance on attachments and
+   * artifacts the viewer did not create. Defaults to false so callers that
+   * don't thread it simply don't expose the admin controls, rather than
    * erroring. */
   isProjectAdmin?: boolean;
   /** Effective-workflow edges, used to constrain the admin status-override
@@ -1006,6 +1007,7 @@ export default function TaskDetail({
           taskId={task.id}
           initial={task.attachments}
           user={user}
+          canManageAll={isProjectAdmin}
           onError={onError}
         />
       </section>
@@ -1016,6 +1018,7 @@ export default function TaskDetail({
           taskId={task.id}
           initial={task.artifacts}
           user={user}
+          canManageAll={isProjectAdmin}
           onError={onError}
         />
       </section>
