@@ -257,6 +257,24 @@ export function requestChangesTarget(def: WorkflowDefinitionShape, fromState: st
 }
 
 /**
+ * Gates ("requires") configured on the edge between two states in the given
+ * effective definition. Mirrors the lookup `evaluateV2TransitionGates`
+ * performs at finish-time (`routes/tasks.ts`), so a caller can preview the
+ * gates a later finish call will enforce without duplicating that logic.
+ *
+ * Returns an empty array both when the transition exists with no `requires`
+ * and when no such transition is defined — callers that only want "what
+ * must I satisfy" don't need to distinguish the two.
+ */
+export function gatesForTransition(
+  def: WorkflowDefinitionShape,
+  from: string,
+  to: string,
+): string[] {
+  return def.transitions.find((t) => t.from === from && t.to === to)?.requires ?? [];
+}
+
+/**
  * Resolve which state `task_finish` should target for a work-claim finish.
  *
  * Inspects transitions from the given state (or the definition overall)
