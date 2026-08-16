@@ -10,6 +10,9 @@ import {
   getEffectiveGates,
   listProjectTasks,
   respecTask,
+  searchTaskPool,
+  matchTaskIdPrefix,
+  type Task,
 } from "../src/api.js";
 import type { Config } from "../src/config.js";
 
@@ -254,6 +257,64 @@ describe("respecTask", () => {
       status: 409,
       body: { error: "conflict", message: "Task must be open and unclaimed to respec" },
     });
+  });
+});
+
+describe("searchTaskPool", () => {
+  it("GETs /api/tasks/claimable with an explicit all-status search, unwraps tasks", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks: [] }));
+    await searchTaskPool(config);
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toBe(
+      "http://api.test/api/tasks/claimable?status=open,in_progress,review,done,abandoned&limit=200",
+    );
+  });
+
+  it("forwards a custom limit", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks: [] }));
+    await searchTaskPool(config, 25);
+    expect(fetchMock.mock.calls[0]![0] as string).toContain("limit=25");
+  });
+
+  it("returns the tasks array unwrapped from the envelope", async () => {
+    const tasks = [{ id: "t1", title: "x", status: "open", priority: "LOW" }];
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks }));
+    const result = await searchTaskPool(config);
+    expect(result).toEqual(tasks);
+  });
+});
+
+describe("matchTaskIdPrefix", () => {
+  const pool: Task[] = [
+    { id: "abcdef12-0000-0000-0000-000000000000", title: "First", status: "open", priority: "LOW" },
+    { id: "abcdef99-0000-0000-0000-000000000000", title: "Second", status: "open", priority: "LOW" },
+    { id: "12345678-0000-0000-0000-000000000000", title: "Third", status: "open", priority: "LOW" },
+  ];
+
+  it("returns a unique match for a prefix matched by exactly one task", () => {
+    const result = matchTaskIdPrefix(pool, "12345678");
+    expect(result).toEqual({ kind: "unique", id: "12345678-0000-0000-0000-000000000000" });
+  });
+
+  it("matches case-insensitively", () => {
+    const result = matchTaskIdPrefix(pool, "ABCDEF99");
+    expect(result).toEqual({ kind: "unique", id: "abcdef99-0000-0000-0000-000000000000" });
+  });
+
+  it("reports 'none' for a prefix matched by zero tasks", () => {
+    expect(matchTaskIdPrefix(pool, "ffffffff")).toEqual({ kind: "none" });
+  });
+
+  it("reports 'ambiguous' with every matching task -- never silently picks the first match", () => {
+    const result = matchTaskIdPrefix(pool, "abcdef");
+    expect(result.kind).toBe("ambiguous");
+    if (result.kind === "ambiguous") {
+      expect(result.matches).toHaveLength(2);
+      expect(result.matches.map((t) => t.id)).toEqual([
+        "abcdef12-0000-0000-0000-000000000000",
+        "abcdef99-0000-0000-0000-000000000000",
+      ]);
+    }
   });
 });
 

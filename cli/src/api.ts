@@ -153,6 +153,51 @@ export async function getTask(config: Config, taskId: string): Promise<Task> {
   return task;
 }
 
+// ── Task-id prefix resolution ─────────────────────────────────────────────
+//
+// `get`/`start`/`finish`/`comment` accept either a full UUID or a short
+// prefix (task e7911cdd). There is no dedicated task-search endpoint, and
+// adding one is out of scope (backend changes not allowed for this task), so
+// resolution reuses the widest existing read affordance: GET
+// /api/tasks/claimable normally answers "what can I claim right now?"
+// (status=open, unclaimed), but passing an explicit `status` list flips it
+// into a search across every status and claim state -- still scoped to the
+// caller's team (backend/src/routes/tasks.ts, `isExplicitSearch`). That is
+// the pool `resolveTaskId` (resolve.ts) matches a prefix against.
+//
+// Capped at the endpoint's own max page size (200): a team with more than
+// 200 open+closed tasks may miss a prefix match on an older task. That is a
+// known limitation of resolving client-side without new backend surface,
+// not something this task attempts to fully solve.
+export const ALL_TASK_STATUSES = ["open", "in_progress", "review", "done", "abandoned"];
+
+export async function searchTaskPool(config: Config, limit = 200): Promise<Task[]> {
+  const { tasks } = await request<{ tasks: Task[] }>(
+    config,
+    `/api/tasks/claimable?status=${ALL_TASK_STATUSES.join(",")}&limit=${limit}`,
+  );
+  return tasks;
+}
+
+export type PrefixMatch =
+  | { kind: "unique"; id: string }
+  | { kind: "none" }
+  | { kind: "ambiguous"; matches: Task[] };
+
+/**
+ * Pure matcher: case-insensitive prefix match of `prefix` against each
+ * task's id in `pool`. Zero matches and multiple matches are both reported
+ * distinctly (never silently resolved to a guess) so the caller can render
+ * a clear error with the full candidate list.
+ */
+export function matchTaskIdPrefix(pool: Task[], prefix: string): PrefixMatch {
+  const lower = prefix.toLowerCase();
+  const matches = pool.filter((t) => t.id.toLowerCase().startsWith(lower));
+  if (matches.length === 1) return { kind: "unique", id: matches[0]!.id };
+  if (matches.length === 0) return { kind: "none" };
+  return { kind: "ambiguous", matches };
+}
+
 export interface CreateTaskInput {
   title: string;
   description?: string;

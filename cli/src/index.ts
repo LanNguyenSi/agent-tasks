@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { loadConfig } from "./config.js";
 import * as api from "./api.js";
+import { resolveTaskId } from "./resolve.js";
 import {
   formatTasks,
   formatTask,
@@ -153,7 +154,8 @@ tasks
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
     const config = loadConfig();
-    const result = await api.taskStart(config, taskId);
+    const resolvedId = await resolveTaskId(config, taskId);
+    const result = await api.taskStart(config, resolvedId);
     console.log(formatStart(result, getMode(opts)));
   });
 
@@ -202,6 +204,7 @@ tasks
     }
 
     const config = loadConfig();
+    const resolvedId = await resolveTaskId(config, taskId);
     const body: api.FinishInput = opts.outcome
       ? { outcome: opts.outcome as "approve" | "request_changes" }
       : {};
@@ -210,7 +213,7 @@ tasks
     if (opts.autoMerge) body.autoMerge = true;
     if (opts.mergeMethod) body.mergeMethod = opts.mergeMethod as api.MergeMethod;
 
-    const result = await api.taskFinish(config, taskId, body);
+    const result = await api.taskFinish(config, resolvedId, body);
     console.log(formatTask(result.task, getMode(opts)));
   });
 
@@ -380,7 +383,8 @@ tasks
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
     const config = loadConfig();
-    const task = await api.getTask(config, taskId);
+    const resolvedId = await resolveTaskId(config, taskId);
+    const task = await api.getTask(config, resolvedId);
     console.log(formatTask(task, getMode(opts)));
   });
 
@@ -595,7 +599,8 @@ tasks
   .description("Add a comment to a task")
   .action(async (taskId, message) => {
     const config = loadConfig();
-    await api.addComment(config, taskId, message);
+    const resolvedId = await resolveTaskId(config, taskId);
+    await api.addComment(config, resolvedId, message);
     console.log("Comment added.");
   });
 
