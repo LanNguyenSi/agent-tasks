@@ -1618,6 +1618,30 @@ taskRouter.post("/tasks/pickup", async (c) => {
 //
 // See ADR 0008.
 
+/**
+ * Preview the gates configured on a transition edge, distinguishing "edge
+ * exists with no `requires`" ([]) from "edge does not exist" (null).
+ *
+ * `gatesForTransition` alone collapses both cases to [] — fine for its
+ * original finish-time lookup (a missing edge already 400s with
+ * `no_transition` before the gate list matters there), but wrong for a
+ * preview: a workflow that keeps `review → done` while dropping
+ * `in_progress → review` is persistable (workflowDefinitionSchema doesn't
+ * require graph connectivity), and `finish: []` would misread as "nothing
+ * required" when finish will actually 400. `to` is optional so callers can
+ * feed an `approveTarget`/`requestChangesTarget` result straight through
+ * without a separate undefined-check.
+ */
+function gatesForTransitionOrNull(
+  def: WorkflowDefinitionShape,
+  from: string,
+  to: string | undefined,
+): string[] | null {
+  if (to === undefined) return null;
+  const exists = def.transitions.some((t) => t.from === from && t.to === to);
+  return exists ? gatesForTransition(def, from, to) : null;
+}
+
 taskRouter.post("/tasks/:id/start", async (c) => {
   const actor = c.get("actor") as Actor;
 
@@ -1862,13 +1886,22 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       kind: "work",
       task: { ...updated, metadata: flavor.mergedMetadata },
       expectedFinishState,
-      // Authoritative gate list for the finish edge the caller will hit next
-      // (startTarget → expectedFinishState), resolved from the SAME
-      // effectiveDefinition already computed above — covers all three
+      // Gate list for the STANDARD (non-autoMerge) finish edge the caller
+      // will hit next (startTarget → expectedFinishState), resolved from the
+      // SAME effectiveDefinition already computed above — covers all three
       // ADR-0008 chain stages (task-level workflow, project-customized
       // default, built-in default) instead of the caller having to guess
-      // from workflowId alone (rc-v1-C003 review finding).
-      effectiveGates: { finish: gatesForTransition(effectiveDefinition, startTarget, expectedFinishState) },
+      // from workflowId alone (rc-v1-C003 review finding). An `autoMerge:
+      // true` work finish hard-sets targetStatus to "done" and strips
+      // prMerged via skipRules (see the work-finish branch below) — a
+      // DIFFERENT edge under customized workflows this list does not cover.
+      // Also: these are the gates CONFIGURED on the edge, not necessarily
+      // all ENFORCED at finish-time — the ADR-0010 §5c foreign-deliverable
+      // skip treats GITHUB_BACKED_RULES as trivially satisfied when the
+      // task's effective deliverable repo diverges from project.githubRepo.
+      // `null` means the edge itself is absent (finish will 400 with
+      // no_transition) — distinct from [] (edge exists, nothing required).
+      effectiveGates: { finish: gatesForTransitionOrNull(effectiveDefinition, startTarget, expectedFinishState) },
       // Task status immediately before this claim/transition (here: the
       // initial state, e.g. "open") — gives the caller a real transition.from
       // instead of assuming it.
@@ -1959,18 +1992,28 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       });
     }
 
-    // Relevant edge for a review claim is the approve path (review →
-    // terminal) — mirrors how task_finish resolves targetStatus for
-    // outcome=approve (see the review-finish branch below).
+    // Relevant edges for a review claim are the approve path (review →
+    // terminal) and the request_changes path (review → non-terminal,
+    // non-review) — mirror how task_finish resolves targetStatus for each
+    // outcome (see the review-finish branch below). Review-claim finish is
+    // polymorphic on `outcome`, unlike the work-claim's single edge, so the
+    // preview needs one key per outcome.
     const approveTo = approveTarget(effectiveDefinition, task.status) ?? "done";
+    const requestChangesTo = requestChangesTarget(effectiveDefinition, task.status) ?? task.status;
 
     return c.json({
       kind: "review",
       task: updated,
       expectedFinishState: expectedFinishStateFromDefinition(effectiveDefinition),
-      // Same rationale as the work-claim branch above: the approve edge's
-      // gates, resolved from the effective definition rather than assumed.
-      effectiveGates: { finish: gatesForTransition(effectiveDefinition, task.status, approveTo) },
+      // Same rationale as the work-claim branch above (see the comment
+      // there for the null-vs-[] contract): `finish` previews outcome
+      // "approve", `requestChanges` previews outcome "request_changes" —
+      // each key's gates are configured on a DIFFERENT edge and can differ
+      // under a customized workflow.
+      effectiveGates: {
+        finish: gatesForTransitionOrNull(effectiveDefinition, task.status, approveTo),
+        requestChanges: gatesForTransitionOrNull(effectiveDefinition, task.status, requestChangesTo),
+      },
       // Review-claiming does not itself transition status (task.status stays
       // "review"), but the field is included on both claim kinds for a
       // uniform start-receipt contract.
