@@ -29,7 +29,10 @@ import {
   TEMPLATE_DATA_FIELD_MAX_CHARS,
   type TaskQualitySubscores,
 } from "../../src/lib/confidence.js";
-import { RICH_TEMPLATE_DATA_NO_DESC, SECTIONED_DESC } from "../../../shared/confidence-fixtures.js";
+import {
+  RICH_TEMPLATE_DATA_NO_DESC,
+  SECTIONED_DESC,
+} from "../../../frontend/src/lib/__fixtures__/confidence-fixtures.js";
 
 const FULL_FIELDS = {
   goal: true,
@@ -61,8 +64,9 @@ const ALL_V2 = {
   constraints: "No DB migration",
 };
 
-// RICH_TEMPLATE_DATA_NO_DESC now lives in shared/confidence-fixtures.ts (task
-// 79621590) — it was byte-identical to frontend's own copy of the same
+// RICH_TEMPLATE_DATA_NO_DESC now lives in
+// frontend/src/lib/__fixtures__/confidence-fixtures.ts (task 79621590) — it
+// was byte-identical to frontend's own copy of the same
 // fixture, exactly the kind of duplicated literal that can silently drift.
 
 // Concrete description with NO verification word (test/run/curl/check/verify/
@@ -898,8 +902,9 @@ describe("calculateConfidence — findings", () => {
 // scorer must honour `## Goal` / `## Acceptance Criteria` / ... headings the
 // same way it honours structured templateData fields.
 
-// SECTIONED_DESC now lives in shared/confidence-fixtures.ts (task 79621590)
-// — it was byte-identical to frontend's own copy of the same fixture.
+// SECTIONED_DESC now lives in
+// frontend/src/lib/__fixtures__/confidence-fixtures.ts (task 79621590) — it
+// was byte-identical to frontend's own copy of the same fixture.
 
 describe("extractSpecSections", () => {
   it("parses every aliased section from ## headings", () => {

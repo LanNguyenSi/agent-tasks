@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { calculateConfidence as backendCalculateConfidence } from "../../../backend/src/lib/confidence";
 import { calculateConfidence as frontendCalculateConfidence } from "./confidence";
-import { CONFIDENCE_PARITY_FIXTURES } from "../../../shared/confidence-fixtures";
+import { CONFIDENCE_PARITY_FIXTURES } from "./__fixtures__/confidence-fixtures";
 
 /**
  * Real cross-package parity guard (task 79621590).
@@ -17,11 +17,20 @@ import { CONFIDENCE_PARITY_FIXTURES } from "../../../shared/confidence-fixtures"
  * This test closes that gap: it imports the REAL backend scorer as
  * TypeScript source (not backend/dist) and runs it side by side with the
  * real frontend scorer over the shared corpus in
- * shared/confidence-fixtures.ts, asserting the full result — score,
- * missing[], blocking, subscores, findings, inferredTaskType — is
- * byte-for-byte identical for every fixture. A one-sided edit (e.g. a
- * FIELD_WEIGHTS tune applied to only one copy) fails HERE instead of
+ * frontend/src/lib/__fixtures__/confidence-fixtures.ts, asserting the full
+ * result (score, missing[], blocking, subscores, findings,
+ * inferredTaskType) matches via toStrictEqual for every fixture.
+ * toStrictEqual (unlike toEqual) also fails when one side has a
+ * present-but-undefined key the other side lacks entirely, so a one-sided
+ * edit (e.g. a FIELD_WEIGHTS tune applied to only one copy, or a stray
+ * optional field one scorer starts/stops setting) fails HERE instead of
  * drifting silently.
+ *
+ * backend/src/lib/confidence.ts must stay dependency-light (zod only): this
+ * test imports it directly into the frontend workspace's vitest run, so a
+ * new backend-only dependency (a DB client, a Node-only API) breaks the
+ * FRONTEND CI job with a backend-pointing error the frontend job otherwise
+ * never surfaces.
  *
  * Mechanism choice: vitest transforms arbitrary TypeScript via esbuild, so
  * this test can import backend/src/lib/confidence.ts directly — no
@@ -47,19 +56,46 @@ describe("calculateConfidence — cross-package parity (backend vs frontend, tas
   });
   afterEach(() => infoSpy.mockRestore());
 
-  it("the corpus covers at least the 8 existing parity fixtures plus the fully sectioned SECTIONED_DESC case", () => {
-    expect(CONFIDENCE_PARITY_FIXTURES.length).toBeGreaterThanOrEqual(9);
-    expect(CONFIDENCE_PARITY_FIXTURES.some((f) => f.name === "sectioned-desc")).toBe(true);
+  it("the corpus covers exactly the 10 known parity fixtures, by name (not just by count)", () => {
+    // toEqual on the exact sorted name set (not >= N) so renaming, dropping,
+    // or silently swapping a fixture for an easier one fails HERE naming the
+    // miss, instead of a loose count-only guard staying green.
+    const names = CONFIDENCE_PARITY_FIXTURES.map((f) => f.name).sort();
+    expect(names).toEqual([
+      "empty",
+      "full-strong-with-ac",
+      "rich-prose-no-verification",
+      "rich-prose-with-verification",
+      "rich-templatedata-no-desc-c71de504",
+      "sectioned-desc",
+      "template-fields-completeness",
+      "title-only-no-desc",
+      "typed-feature-with-ac",
+      "vague-no-anchors",
+    ]);
+  });
+
+  it("the comparison itself is falsifiable: a perturbed copy of a real result is NOT strict-equal to it (negative control)", () => {
+    // Guards against the loop below going permanently, vacuously green: if
+    // the two scorers were ever collapsed into a single shared import,
+    // every fixture would trivially match forever. This proves the
+    // toStrictEqual comparison the loop relies on actually rejects a
+    // divergent result instead of always passing.
+    const [{ input }] = CONFIDENCE_PARITY_FIXTURES;
+    const backendResult = backendCalculateConfidence(input);
+    const perturbed = { ...backendResult, score: backendResult.score + 1 };
+    expect(perturbed).not.toStrictEqual(backendResult);
   });
 
   for (const { name, input } of CONFIDENCE_PARITY_FIXTURES) {
     it(`backend and frontend produce an identical result: ${name}`, () => {
       const backendResult = backendCalculateConfidence(input);
       const frontendResult = frontendCalculateConfidence(input);
-      // Whole-object deep equality: covers score, missing[], blocking,
+      // Whole-object strict equality: covers score, missing[], blocking,
       // subscores, findings, and inferredTaskType in a single assertion, so
-      // a divergence in ANY of them fails this test.
-      expect(frontendResult).toEqual(backendResult);
+      // a divergence in ANY of them (including a present-with-undefined
+      // key one side lacks entirely) fails this test.
+      expect(frontendResult).toStrictEqual(backendResult);
     });
   }
 });

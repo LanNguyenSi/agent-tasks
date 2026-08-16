@@ -3,19 +3,31 @@
 // backend/src/lib/confidence.ts is the authoritative confidence scorer;
 // frontend/src/lib/confidence.ts is a hand-maintained mirror kept in sync
 // only by convention. This module is the ONE place fixture inputs used to
-// exercise both copies are declared, so a backend-only or frontend-only
-// edit to a duplicated literal cannot silently desync the two suites — the
-// exact drift this file exists to prevent. It has no dependency on either
-// package (or on zod): plain data plus a small structural type, so
-// importing it never pulls backend/frontend runtime code anywhere.
+// exercise both copies are declared: every hand-asserted suite below looks
+// its inputs up BY NAME from CONFIDENCE_PARITY_FIXTURES instead of
+// retyping them, so a backend-only or frontend-only edit to a duplicated
+// literal cannot silently desync the suites; that is the exact drift this
+// file exists to prevent. It has no dependency on either package (or on zod):
+// plain data plus a small structural type, so importing it never pulls
+// backend/frontend runtime code anywhere.
+//
+// Lives under frontend/src/lib/ (not a top-level shared/) so it sits inside
+// an already-linted, already-typechecked tree: `eslint .` and
+// `tsc --noEmit` in the frontend workspace both cover this file the same as
+// any other frontend source file. backend/tests/unit/confidence.test.ts
+// reaches it via a relative import; vitest's esbuild transform resolves
+// that cross-workspace TypeScript import at test time without a build step.
 //
 // Consumed by:
 //  - frontend/src/lib/confidence.parity.test.ts (the real cross-package
 //    guard: runs BOTH scorers over this corpus and diffs the results)
+//  - frontend/src/lib/confidence.test.ts (looks up the 9 non-sectioned
+//    fixtures' `input` BY NAME from CONFIDENCE_PARITY_FIXTURES; `expected`
+//    stays a local, hand-verified ground-truth value)
 //  - backend/tests/unit/confidence.test.ts and
-//    frontend/src/lib/confidence.test.ts (the two existing hand-asserted
-//    suites reuse RICH_TEMPLATE_DATA_NO_DESC / SECTIONED_DESC from here
-//    instead of each keeping its own byte-identical copy)
+//    frontend/src/lib/confidence.test.ts also reuse
+//    RICH_TEMPLATE_DATA_NO_DESC / SECTIONED_DESC from here instead of each
+//    keeping its own byte-identical copy
 
 export type ConfidenceFixtureTaskType =
   | "bugfix"
@@ -116,9 +128,12 @@ export const SECTIONED_DESC = [
 ].join("\n");
 
 /**
- * Parity corpus: at least the 8 fixture shapes ported from the frontend
- * suite's original FIXTURES array (9, after the rich-templatedata-no-desc
- * MEDIUM fix folded a 9th in) plus the fully sectioned SECTIONED_DESC case.
+ * Parity corpus: exactly the 10 fixtures named below, made up of the 9
+ * shapes ported from the frontend suite's original FIXTURES array (9, after the
+ * rich-templatedata-no-desc MEDIUM fix folded a 9th in) plus the fully
+ * sectioned SECTIONED_DESC case. The exact set is enforced by name (not just
+ * by count) in frontend/src/lib/confidence.parity.test.ts, so adding,
+ * dropping, or silently swapping a fixture is caught by name.
  * Inputs only — no "expected" values live here. The parity test computes
  * the expected result by actually running the backend scorer, not by a
  * hand-maintained snapshot, so this corpus cannot go stale the way a
