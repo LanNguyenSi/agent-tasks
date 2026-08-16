@@ -1,0 +1,22 @@
+{
+  // Typecheck-only config: resolves the workspace sibling via its source
+  // instead of dist, so `npm run typecheck` works in a fresh checkout without
+  // building mcp-server first. Build (tsc via tsconfig.json) still resolves
+  // the real package through node_modules, so emitted output is unaffected.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Widened so the sibling's source is inside rootDir; irrelevant for
+    // output because this config never emits.
+    "rootDir": "..",
+    "paths": {
+      "@agent-tasks/mcp-server": ["../mcp-server/src/server.ts"]
+    }
+    // Assumption: this typechecks mcp-server's source directly (not its
+    // built .d.ts output), using mcp-bridge's own compilerOptions rather
+    // than mcp-server's tsconfig.json. That only stays accurate if the two
+    // tsconfigs' relevant compilerOptions (strictness flags, target/lib,
+    // module resolution) are kept in sync by hand; this file intentionally
+    // does not move to TypeScript project references to achieve that.
+  }
+}

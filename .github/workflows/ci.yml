@@ -125,6 +125,14 @@ jobs:
       - run: npm ci
       - run: npm run typecheck --workspace=mcp-server
       - run: npm run test --workspace=mcp-server
+      # Additive guard (~1s), no extra build: this job has not built
+      # mcp-server yet at this point, so this actually exercises the
+      # fresh-checkout/no-prior-build path that mcp-bridge/tsconfig.typecheck.json
+      # exists for. The mcp-bridge job below always builds mcp-server first
+      # (needs: mcp-server), so without this step that path would go
+      # untested by CI and a revert of the typecheck-only config could ship
+      # unnoticed.
+      - run: npm run typecheck --workspace=mcp-bridge
       - run: npm run build --workspace=mcp-server
 
   mcp-bridge:
