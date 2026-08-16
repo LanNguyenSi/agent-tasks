@@ -84,7 +84,10 @@ export interface TeachingError {
      *  precondition_failed's `failed[]`, low_confidence's
      *  score/threshold/missing[]/totalMissing, and, for the generic
      *  degrade path, a clamped passthrough of whatever `details` object
-     *  the backend itself sent. */
+     *  the backend itself sent, OR, when the backend instead sent an
+     *  OBJECT `error` (a raw zod SafeParseError spread into the body, see
+     *  genericDegrade/deriveGenericDetailSource), a clamped
+     *  issues[]/totalIssues summary derived from it. */
     detail?: Record<string, unknown>;
   };
 }
@@ -753,11 +756,13 @@ function clampGenericDetail(details: unknown): Record<string, unknown> | undefin
 // Bookkeeping fields a catalog entry or clampDetailValue itself may already
 // have set to record a TRUE original count (precondition_failed's
 // totalFailed, low_confidence's totalMissing, clampDetailValue's own
-// totalKeys). A second, harder clamp pass over an already-clamped object
-// must not re-derive these from the intermediate object's own (already
-// shrunk) entry count -- that would silently replace an accurate original
-// count with a smaller, misleading one. See reclampDetailHarder below.
-const DETAIL_TOTAL_MARKER_KEYS = ["totalFailed", "totalMissing", "totalKeys"] as const;
+// totalKeys, and the generic degrade path's own totalIssues -- see
+// deriveGenericDetailSource). A second, harder clamp pass over an
+// already-clamped object must not re-derive these from the intermediate
+// object's own (already shrunk) entry count -- that would silently replace
+// an accurate original count with a smaller, misleading one. See
+// reclampDetailHarder below.
+const DETAIL_TOTAL_MARKER_KEYS = ["totalFailed", "totalMissing", "totalKeys", "totalIssues"] as const;
 
 /** Re-clamps a detail object with the HARD_* limits, WITHOUT letting the
  *  pass corrupt any totalFailed/totalMissing/totalKeys marker already
@@ -821,6 +826,7 @@ function enforceErrorBudget(err: TeachingError): TeachingError {
   const priorDetail = err.error.detail;
   const totalFailed = typeof priorDetail?.totalFailed === "number" ? priorDetail.totalFailed : undefined;
   const totalMissing = typeof priorDetail?.totalMissing === "number" ? priorDetail.totalMissing : undefined;
+  const totalIssues = typeof priorDetail?.totalIssues === "number" ? priorDetail.totalIssues : undefined;
   const totalKeys =
     typeof priorDetail?.totalKeys === "number"
       ? priorDetail.totalKeys
@@ -836,34 +842,180 @@ function enforceErrorBudget(err: TeachingError): TeachingError {
         reason: "detail exceeded the error budget",
         ...(totalFailed !== undefined ? { totalFailed } : {}),
         ...(totalMissing !== undefined ? { totalMissing } : {}),
+        ...(totalIssues !== undefined ? { totalIssues } : {}),
         ...(totalKeys !== undefined ? { totalKeys } : {}),
       },
     },
   };
 }
 
+// Observed live during rc-v1-C008 (2026-08-12): POST /tasks with an invalid
+// templateData shape (acceptanceCriteria sent as an array, the schema wants
+// a string) 400s with a raw zod SafeParseError spread verbatim into the
+// body -- `@hono/zod-validator`'s default (no custom hook) failure path is
+// `c.json(result, 400)` for `result = { success: false, error: ZodError }` --
+// so the wire body is `{ success: false, error: { issues: [...], name:
+// "ZodError" } }`, no top-level `details` field at all. Before this, the
+// generic degrade path only ever looked at `body.details` for `detail` and
+// only ever looked at `body.error` for a STRING code passthrough (see
+// genericDegrade below); an OBJECT `body.error` matched neither, so this
+// case degraded to `http_400` with NO detail whatsoever -- the caller had
+// to go read backend source to find the actual schema mismatch.
+// deriveGenericDetailSource picks what feeds clampGenericDetail: the
+// backend's own top-level `details` (existing behavior, e.g. any future
+// code's hand-rolled `details`, or the formErrors/fieldErrors zod-flatten
+// shape covered by the tests above) is preferred when present and usable;
+// otherwise, when `body.error` is itself an object (not a string code) and
+// carries an `issues` array, a compact summary is built from it -- each
+// surviving issue's own path/code/message, the three fields that actually
+// explain WHAT was wrong and WHERE, same convention as the catalog
+// entries' own structured detail shapes above (precondition_failed's
+// failed[], low_confidence's missing[]).
+//
+// M2 fix-round finding (rc-v1-zod-degrade-details review): this summary
+// used to feed ALL issues through the module's general DETAIL_CLAMP (5
+// entries) / DETAIL_ENTRY_CHAR_BUDGET (60 chars), applied only later by
+// clampGenericDetail. Measured: a realistic 5-issue zod-400 payload
+// (templateData.acceptanceCriteria sent as an array, one issue per array
+// index, "Expected string, received array") already sat at 1151/1200
+// chars (96% of ERROR_BUDGET_CHARS) under that path; a longer but still
+// perfectly ordinary message pushed the SAME 5-issue payload over budget
+// and into enforceErrorBudget's emergency hard reclamp (2 entries, 20
+// usable chars each) -- MORE issues produced STRICTLY LESS information.
+// GENERIC_ISSUES_CLAMP / GENERIC_ISSUE_ENTRY_CHAR_BUDGET below give this
+// summary its own tighter budget applied HERE, at derive time, before the
+// general pass ever runs, so the common case never needs the general
+// clamp or the emergency reclamp at all (measured post-fix: comfortably
+// under half of ERROR_BUDGET_CHARS for the same 5-issue fixture -- see
+// tests/errors.test.ts).
+//
+// L3 fix-round finding: a mapped issue with no recognizable path/code/
+// message (a null/number/string/array entry, or an object missing all
+// three) is dropped BEFORE the GENERIC_ISSUES_CLAMP cut, not after --
+// slicing by raw position first (this module's usual idiom, e.g.
+// preconditionFailedError's rawFailed.slice(0, DETAIL_CLAMP).map(...)
+// above) would let leading junk push a real issue out of the window
+// entirely (measured: 5 null entries then 1 real one used to clamp down
+// to 5 EMPTY {} objects, silently losing the only informative issue).
+// `failed[]`/`missing[]` are backend-contract-bounded arrays where every
+// entry is already usable by construction, so slicing first is safe
+// there; `issues` is explicitly untrusted (this whole branch exists
+// because it can be a raw SafeParseError), so usability has to be checked
+// first. The one-time O(issues.length) map+filter this costs is the same
+// order of work the pre-fix version of this function already did
+// unconditionally (it mapped the WHOLE array with no clamp at all), so
+// this is not a new cost, just a reordering of an existing one. If
+// nothing in `issues` survives the filter (including the plain `issues:
+// []` case), this falls through to the same object-passthrough branch
+// used when `issues` is not a recognizable array at all, rather than
+// emitting a misleading {issues: [], totalIssues: N}.
+//
+// `path` (zod's own array-of-string|number) is joined into a single
+// dot-separated string rather than kept as a nested array: clampDetailValue
+// caps recursion at GENERIC_DETAIL_MAX_DEPTH (3), and this summary's own
+// container nesting (the top-level object -> issues[] -> issue object)
+// already spends 2 of those 3 levels before `path` is even reached, so a
+// nested array here would push every path SEGMENT one level past the
+// depth guard and silently replace each with the truncation marker
+// instead of clamping it -- verified against clampDetailValue directly
+// before landing this. A joined string is exactly one more clamped level,
+// well within budget, and reads just as well ("acceptanceCriteria" or
+// "tags.2.name" for a nested/array path). L4 fix-round finding: a path
+// segment that is itself not a string or number (malformed/hostile input)
+// used to be silently filtered OUT of the joined path -- a real 6-segment
+// path could read as a plausible 2-segment one ("ok.3"), directly
+// contradicting this module's never-silent doctrine. Each unusable
+// segment is now rendered as a visible '?' placeholder instead, so the
+// segment COUNT stays honest even when a segment's own value cannot be
+// shown.
+//
+// `code` itself still stays `http_<status>` in this case (an object is not
+// a code -- see genericDegrade's own check below, unchanged). When
+// `body.error` is an object but carries no recognizable `issues` array (or
+// `issues` carried nothing usable, per L3 above), the object itself is
+// passed through instead of staying completely silent -- a judgment call:
+// any structured object the backend sends as `error` is more useful
+// surfaced (clamped, by the same machinery) than dropped outright, even
+// when this module cannot name its shape specifically. L6 fix-round
+// finding: that passthrough used to forward the object VERBATIM, including
+// a `stack` key when present -- measured live, a raw backend/framework
+// error object can carry a full server-side stack trace (internal file
+// paths, and, for a Prisma error, query metadata), which this module must
+// never leak to a caller. `stack` is dropped before passthrough,
+// unconditionally, whether or not this particular object actually has one.
+const GENERIC_ISSUES_CLAMP = 3;
+const GENERIC_ISSUE_ENTRY_CHAR_BUDGET = 40;
+
+/** Summarizes a single zod issue (untrusted -- may not even be an object)
+ *  into {path?, code?, message?}, each clamped to
+ *  GENERIC_ISSUE_ENTRY_CHAR_BUDGET. Never throws regardless of input shape:
+ *  a non-object issue, or one missing every recognizable field, degrades to
+ *  an EMPTY object, which deriveGenericDetailSource's caller filters out
+ *  (see the L3 fix-round finding in the comment above). See the same
+ *  comment's L4 entry for why an unusable `path` segment becomes a visible
+ *  '?' rather than being filtered out of the path. */
+function summarizeZodIssue(issue: unknown): Record<string, unknown> {
+  const i = issue && typeof issue === "object" ? (issue as Record<string, unknown>) : {};
+  const entry: Record<string, unknown> = {};
+  if (Array.isArray(i.path) && i.path.length > 0) {
+    const rendered = i.path
+      .map((seg) => (typeof seg === "string" || typeof seg === "number" ? seg : "?"))
+      .join(".");
+    entry.path = clamp(rendered, GENERIC_ISSUE_ENTRY_CHAR_BUDGET);
+  }
+  if (typeof i.code === "string") entry.code = clamp(i.code, GENERIC_ISSUE_ENTRY_CHAR_BUDGET);
+  if (typeof i.message === "string") entry.message = clamp(i.message, GENERIC_ISSUE_ENTRY_CHAR_BUDGET);
+  return entry;
+}
+
+function deriveGenericDetailSource(details: unknown, bodyError: unknown): unknown {
+  if (details && typeof details === "object" && !Array.isArray(details)) return details;
+  if (bodyError && typeof bodyError === "object" && !Array.isArray(bodyError)) {
+    const body = bodyError as Record<string, unknown>;
+    const issues = body.issues;
+    if (Array.isArray(issues)) {
+      const usable = issues
+        .map(summarizeZodIssue)
+        .filter((entry) => Object.keys(entry).length > 0)
+        .slice(0, GENERIC_ISSUES_CLAMP);
+      if (usable.length > 0) {
+        // totalIssues is always the TRUE original count, never the
+        // filtered/sliced length.
+        return { issues: usable, totalIssues: issues.length };
+      }
+      // Nothing usable survived (see L3 above) -- fall through to the
+      // object-passthrough branch below.
+    }
+    const { stack: _stack, ...rest } = body; // L6: never leak a backend stack trace.
+    return rest;
+  }
+  return details;
+}
+
 // The backend's own body.error string is the most specific code available
 // and consumers key on it (the mcp-bridge governance suite asserts a 409
 // claim_blocked stays visible end to end), so the degrade passes it
 // through when present; the status-derived http_<status> form is only the
-// fallback for bodies that carry no code at all. Clamped like every other
+// fallback for bodies that carry no code at all (including an OBJECT
+// body.error -- an object is not a code, see deriveGenericDetailSource
+// above for how it is used instead). Clamped like every other
 // caller-visible string so a pathological body cannot blow the budget.
 function genericDegrade(
   status: number,
   message: string,
   details: unknown,
-  bodyCode?: unknown,
+  bodyError?: unknown,
 ): TeachingError {
   const code =
-    typeof bodyCode === "string" && bodyCode.length > 0
-      ? clamp(bodyCode, DETAIL_ENTRY_CHAR_BUDGET)
+    typeof bodyError === "string" && bodyError.length > 0
+      ? clamp(bodyError, DETAIL_ENTRY_CHAR_BUDGET)
       : `http_${status}`;
   return buildTeachingError({
     code,
     message,
     recipe: "call workflow_primer for the full lifecycle reference and today's known traps",
     allowedNext: ["workflow_primer"],
-    detail: clampGenericDetail(details),
+    detail: clampGenericDetail(deriveGenericDetailSource(details, bodyError)),
   });
 }
 
