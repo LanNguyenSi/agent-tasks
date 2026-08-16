@@ -243,7 +243,8 @@ tasks
   .action(async (taskId, opts) => {
     const mode = getMode(opts);
     const config = loadConfig();
-    const { task } = await api.taskAbandon(config, taskId);
+    const resolvedId = await resolveTaskId(config, taskId);
+    const { task } = await api.taskAbandon(config, resolvedId);
     console.log(formatTask(task, mode));
   });
 
@@ -263,7 +264,8 @@ tasks
       process.exit(1);
     }
     const config = loadConfig();
-    const { task } = await api.submitPr(config, taskId, {
+    const resolvedId = await resolveTaskId(config, taskId);
+    const { task } = await api.submitPr(config, resolvedId, {
       branchName: opts.branch,
       prUrl: opts.prUrl,
       prNumber,
@@ -367,35 +369,47 @@ tasks
       limit = parsed;
     }
 
-    // Accept slug or UUID. Always resolve the *full* project record (not
-    // just the id): the project-scoped tasks endpoint doesn't attach
+    // Accept slug or UUID. In table mode we always resolve the *full*
+    // project record: the project-scoped tasks endpoint doesn't attach
     // `project` to each row the way the global claimable slice does (see
-    // api.withProject), so the full record is needed below to backfill the
-    // PROJECT column instead of leaving it blank. Resolving via getProject
-    // (rather than trusting a raw --project UUID as-is) also gives a bad
-    // UUID the same clean "project not found" error a bad slug gets,
-    // instead of a confusing 403/404 surfacing from the tasks call itself.
-    let project: api.Project;
-    try {
-      project = await api.getProject(config, opts.project);
-    } catch (err) {
-      if (err instanceof api.ApiError && err.status === 404) {
-        console.error(
-          `Error: project '${opts.project}' not found (no match for slug or id).`,
-        );
-        process.exit(1);
+    // api.withProject), so the full record is needed to backfill the
+    // PROJECT column instead of leaving it blank. json/quiet output doesn't
+    // render that column, so when --project is already a UUID we skip the
+    // extra round-trip there and use it directly as the project id; a slug
+    // still needs resolving regardless of mode, since the tasks endpoint
+    // requires the UUID. Resolving via getProject (rather than trusting a
+    // raw --project UUID as-is) also gives a bad UUID the same clean
+    // "project not found" error a bad slug gets, instead of a confusing
+    // 403/404 surfacing from the tasks call itself -- a project the token
+    // has no access to 403s rather than 404s, so both are treated the same
+    // here.
+    let project: api.Project | undefined;
+    let projectId: string;
+    if (mode !== "table" && api.isUuid(opts.project)) {
+      projectId = opts.project;
+    } else {
+      try {
+        project = await api.getProject(config, opts.project);
+      } catch (err) {
+        if (err instanceof api.ApiError && (err.status === 404 || err.status === 403)) {
+          console.error(
+            `Error: project '${opts.project}' not found (no match for slug or id).`,
+          );
+          process.exit(1);
+        }
+        throw err;
       }
-      throw err;
+      projectId = project.id;
     }
 
-    const taskList = await api.listProjectTasks(config, project.id, {
+    const taskList = await api.listProjectTasks(config, projectId, {
       status: statuses,
       priority: priorities,
       labels,
       unclaimed: opts.unclaimed,
       limit,
     });
-    console.log(formatTasks(api.withProject(taskList, project), mode));
+    console.log(formatTasks(project ? api.withProject(taskList, project) : taskList, mode));
   });
 
 tasks
@@ -502,7 +516,8 @@ tasks
     const mode = getMode(opts);
     warnDeprecated("tasks claim", "tasks start");
     const config = loadConfig();
-    const task = await api.claimTask(config, taskId, opts.force);
+    const resolvedId = await resolveTaskId(config, taskId);
+    const task = await api.claimTask(config, resolvedId, opts.force);
     console.log(formatTask(task, mode));
   });
 
@@ -515,7 +530,8 @@ tasks
     const mode = getMode(opts);
     warnDeprecated("tasks status", "tasks start / tasks finish");
     const config = loadConfig();
-    const task = await api.transitionTask(config, taskId, status);
+    const resolvedId = await resolveTaskId(config, taskId);
+    const task = await api.transitionTask(config, resolvedId, status);
     console.log(formatTask(task, mode));
   });
 
@@ -528,7 +544,8 @@ tasks
     const mode = getMode(opts);
     warnDeprecated("tasks release", "tasks abandon");
     const config = loadConfig();
-    const task = await api.releaseTask(config, taskId);
+    const resolvedId = await resolveTaskId(config, taskId);
+    const task = await api.releaseTask(config, resolvedId);
     console.log(formatTask(task, mode));
   });
 
@@ -553,7 +570,8 @@ tasks
       console.error("Error: No fields to update. Use --branch, --pr-url, --pr-number, or --result.");
       process.exit(1);
     }
-    const task = await api.updateTask(config, taskId, data);
+    const resolvedId = await resolveTaskId(config, taskId);
+    const task = await api.updateTask(config, resolvedId, data);
     console.log(formatTask(task, mode));
   });
 
@@ -619,7 +637,8 @@ tasks
     }
 
     const config = loadConfig();
-    const result = await api.respecTask(config, taskId, input);
+    const resolvedId = await resolveTaskId(config, taskId);
+    const result = await api.respecTask(config, resolvedId, input);
     console.log(formatRespec(result, mode));
   });
 
@@ -638,7 +657,8 @@ tasks
   .description("Get task instructions (agent context)")
   .action(async (taskId) => {
     const config = loadConfig();
-    const instructions = await api.getTaskInstructions(config, taskId);
+    const resolvedId = await resolveTaskId(config, taskId);
+    const instructions = await api.getTaskInstructions(config, resolvedId);
     console.log(JSON.stringify(instructions, null, 2));
   });
 
@@ -799,7 +819,8 @@ review
     const mode = getMode(opts);
     warnDeprecated("review approve", "tasks finish --outcome approve");
     const config = loadConfig();
-    const task = await api.reviewTask(config, taskId, "approve", opts.comment);
+    const resolvedId = await resolveTaskId(config, taskId);
+    const task = await api.reviewTask(config, resolvedId, "approve", opts.comment);
     console.log(formatTask(task, mode));
   });
 
@@ -813,7 +834,8 @@ review
     const mode = getMode(opts);
     warnDeprecated("review request-changes", "tasks finish --outcome request_changes");
     const config = loadConfig();
-    const task = await api.reviewTask(config, taskId, "request_changes", opts.comment);
+    const resolvedId = await resolveTaskId(config, taskId);
+    const task = await api.reviewTask(config, resolvedId, "request_changes", opts.comment);
     console.log(formatTask(task, mode));
   });
 

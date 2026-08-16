@@ -102,7 +102,7 @@ export interface Task {
   prUrl?: string | null;
   prNumber?: number | null;
   claimedByAgentId?: string | null;
-  project?: { name: string; slug: string };
+  project?: { id?: string; name: string; slug: string };
 }
 
 export async function getClaimableTasks(config: Config): Promise<Task[]> {
@@ -155,8 +155,11 @@ export async function listProjectTasks(
  * PROJECT column blank (task e7911cdd). `t.project ?? ...` is a no-op if the
  * backend ever starts returning it itself.
  */
-export function withProject(tasks: Task[], project: Pick<Project, "name" | "slug">): Task[] {
-  return tasks.map((t) => ({ ...t, project: t.project ?? { name: project.name, slug: project.slug } }));
+export function withProject(tasks: Task[], project: Pick<Project, "id" | "name" | "slug">): Task[] {
+  return tasks.map((t) => ({
+    ...t,
+    project: t.project ?? { id: project.id, name: project.name, slug: project.slug },
+  }));
 }
 
 export async function getTask(config: Config, taskId: string): Promise<Task> {
@@ -169,29 +172,29 @@ export async function getTask(config: Config, taskId: string): Promise<Task> {
 
 // ── Task-id prefix resolution ─────────────────────────────────────────────
 //
-// `get`/`start`/`finish`/`comment` accept either a full UUID or a short
-// prefix (task e7911cdd). There is no dedicated task-search endpoint, and
-// adding one is out of scope (backend changes not allowed for this task), so
-// resolution reuses the widest existing read affordance: GET
+// `get`/`start`/`finish`/`comment` and friends accept either a full UUID or
+// a short prefix (task e7911cdd). There is no dedicated task-search
+// endpoint, and adding one is out of scope (backend changes not allowed for
+// this task), so resolution reuses the widest existing read affordance: GET
 // /api/tasks/claimable normally answers "what can I claim right now?"
 // (status=open, unclaimed), but passing an explicit `status` list flips it
 // into a search across every status and claim state -- still scoped to the
 // caller's team (backend/src/routes/tasks.ts, `isExplicitSearch`). That is
 // the pool `resolveTaskId` (resolve.ts) matches a prefix against.
 //
-// Capped at the endpoint's own max page size (200): a team with more than
-// 200 open+closed tasks may miss a prefix match on an older task. That is a
-// known limitation of resolving client-side without new backend surface,
-// not something this task attempts to fully solve.
+// `tasks list` shows the newest tasks first, so the search sorts
+// `createdAt:desc` too -- with the endpoint's own default (`asc`), the
+// search would scan the OLDEST tasks first and could miss the very ids a
+// user just copied out of `tasks list` (the newest ones) once a team has
+// more than one page of tasks. Pages are followed via `nextCursor` until a
+// match resolves or the pool is exhausted, capped at
+// SEARCH_TASK_POOL_MAX_PAGES pages of `limit` each (default: 10 * 200 =
+// 2000 tasks) so a prefix with zero matches on a very large team can't page
+// forever. Hitting the cap without a match is disclosed to the caller (see
+// resolve.ts) rather than silently reported as "no such task" -- it may
+// just be further back than this search went.
 export const ALL_TASK_STATUSES = ["open", "in_progress", "review", "done", "abandoned"];
-
-export async function searchTaskPool(config: Config, limit = 200): Promise<Task[]> {
-  const { tasks } = await request<{ tasks: Task[] }>(
-    config,
-    `/api/tasks/claimable?status=${ALL_TASK_STATUSES.join(",")}&limit=${limit}`,
-  );
-  return tasks;
-}
+export const SEARCH_TASK_POOL_MAX_PAGES = 10;
 
 export type PrefixMatch =
   | { kind: "unique"; id: string }
@@ -210,6 +213,62 @@ export function matchTaskIdPrefix(pool: Task[], prefix: string): PrefixMatch {
   if (matches.length === 1) return { kind: "unique", id: matches[0]!.id };
   if (matches.length === 0) return { kind: "none" };
   return { kind: "ambiguous", matches };
+}
+
+interface TaskPoolPage {
+  tasks: Task[];
+  nextCursor: string | null;
+}
+
+async function fetchTaskPoolPage(
+  config: Config,
+  limit: number,
+  cursor: string | undefined,
+): Promise<TaskPoolPage> {
+  const params = new URLSearchParams();
+  params.set("status", ALL_TASK_STATUSES.join(","));
+  params.set("limit", String(limit));
+  params.set("sort", "createdAt:desc");
+  if (cursor) params.set("cursor", cursor);
+  return request<TaskPoolPage>(config, `/api/tasks/claimable?${params.toString()}`);
+}
+
+export interface SearchTaskPoolResult {
+  match: PrefixMatch;
+  /** How many tasks were scanned across every page fetched. */
+  searched: number;
+  /** True when SEARCH_TASK_POOL_MAX_PAGES was hit with pages still remaining. */
+  capped: boolean;
+}
+
+/**
+ * Searches the team's task pool for `prefix`, newest tasks first, following
+ * `nextCursor` until a unique match is found, an ambiguous match is
+ * confirmed, or the pool is exhausted -- whichever comes first. Bounded by
+ * SEARCH_TASK_POOL_MAX_PAGES so a prefix with zero matches on a very large
+ * team can't page forever; `capped` tells the caller whether that bound
+ * (rather than a genuinely exhausted pool) is why nothing was found.
+ */
+export async function searchTaskPool(
+  config: Config,
+  prefix: string,
+  limit = 200,
+): Promise<SearchTaskPoolResult> {
+  const seen: Task[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < SEARCH_TASK_POOL_MAX_PAGES; page++) {
+    const { tasks, nextCursor } = await fetchTaskPoolPage(config, limit, cursor);
+    seen.push(...tasks);
+    const match = matchTaskIdPrefix(seen, prefix);
+    if (match.kind !== "none") {
+      return { match, searched: seen.length, capped: false };
+    }
+    if (!nextCursor) {
+      return { match, searched: seen.length, capped: false };
+    }
+    cursor = nextCursor;
+  }
+  return { match: { kind: "none" }, searched: seen.length, capped: true };
 }
 
 export interface CreateTaskInput {

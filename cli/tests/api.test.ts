@@ -273,26 +273,75 @@ describe("respecTask", () => {
 });
 
 describe("searchTaskPool", () => {
-  it("GETs /api/tasks/claimable with an explicit all-status search, unwraps tasks", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks: [] }));
-    await searchTaskPool(config);
+  it("GETs /api/tasks/claimable with an explicit all-status, newest-first search", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks: [], nextCursor: null }));
+    await searchTaskPool(config, "abc");
     const url = fetchMock.mock.calls[0]![0] as string;
+    // sort=createdAt:desc (task e7911cdd fix round): the pool's own default
+    // is createdAt:asc, which would search the OLDEST tasks first -- exactly
+    // backwards from `tasks list`'s newest-first table the ID column comes
+    // from.
     expect(url).toBe(
-      "http://api.test/api/tasks/claimable?status=open,in_progress,review,done,abandoned&limit=200",
+      "http://api.test/api/tasks/claimable?status=open%2Cin_progress%2Creview%2Cdone%2Cabandoned&limit=200&sort=createdAt%3Adesc",
     );
   });
 
   it("forwards a custom limit", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks: [] }));
-    await searchTaskPool(config, 25);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks: [], nextCursor: null }));
+    await searchTaskPool(config, "abc", 25);
     expect(fetchMock.mock.calls[0]![0] as string).toContain("limit=25");
   });
 
-  it("returns the tasks array unwrapped from the envelope", async () => {
-    const tasks = [{ id: "t1", title: "x", status: "open", priority: "LOW" }];
-    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks }));
-    const result = await searchTaskPool(config);
-    expect(result).toEqual(tasks);
+  it("returns a unique match found on the first page without paging further", async () => {
+    const tasks = [{ id: "abcdef12-0000-0000-0000-000000000000", title: "x", status: "open", priority: "LOW" }];
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks, nextCursor: "abcdef12-0000-0000-0000-000000000000" }));
+    const result = await searchTaskPool(config, "abcdef12");
+    expect(result).toEqual({
+      match: { kind: "unique", id: "abcdef12-0000-0000-0000-000000000000" },
+      searched: 1,
+      capped: false,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("follows nextCursor to a second page to find a match not present on the first page", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        tasks: [{ id: "11111111-0000-0000-0000-000000000000", title: "page 1", status: "open", priority: "LOW" }],
+        nextCursor: "11111111-0000-0000-0000-000000000000",
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        tasks: [{ id: "abcdef12-0000-0000-0000-000000000000", title: "page 2 match", status: "open", priority: "LOW" }],
+        nextCursor: null,
+      }),
+    );
+    const result = await searchTaskPool(config, "abcdef12");
+    expect(result).toEqual({
+      match: { kind: "unique", id: "abcdef12-0000-0000-0000-000000000000" },
+      searched: 2,
+      capped: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondUrl = fetchMock.mock.calls[1]![0] as string;
+    expect(secondUrl).toContain("cursor=11111111-0000-0000-0000-000000000000");
+  });
+
+  it("stops at the hard page cap and reports capped when no match was found", async () => {
+    // 10 pages of a full 200-row page each, always with a nextCursor, never
+    // a match -- proves the loop is bounded rather than paging forever.
+    for (let i = 0; i < 10; i++) {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({
+          tasks: [{ id: `${i}0000000-0000-0000-0000-000000000000`, title: "x", status: "open", priority: "LOW" }],
+          nextCursor: `${i}0000000-0000-0000-0000-000000000000`,
+        }),
+      );
+    }
+    const result = await searchTaskPool(config, "zzzzzzzz");
+    expect(result).toEqual({ match: { kind: "none" }, searched: 10, capped: true });
+    expect(fetchMock).toHaveBeenCalledTimes(10);
   });
 });
 
@@ -412,8 +461,8 @@ describe("withProject", () => {
     ];
     const result = withProject(tasks, project);
     expect(result).toEqual([
-      { id: "t1", title: "one", status: "open", priority: "LOW", project: { name: "Project One", slug: "project-one" } },
-      { id: "t2", title: "two", status: "open", priority: "HIGH", project: { name: "Project One", slug: "project-one" } },
+      { id: "t1", title: "one", status: "open", priority: "LOW", project: { id: "p1", name: "Project One", slug: "project-one" } },
+      { id: "t2", title: "two", status: "open", priority: "HIGH", project: { id: "p1", name: "Project One", slug: "project-one" } },
     ]);
   });
 
