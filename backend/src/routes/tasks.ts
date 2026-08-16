@@ -63,6 +63,7 @@ import {
   reviewStates,
   approveTarget,
   requestChangesTarget,
+  gatesForTransition,
   type WorkflowDefinitionShape,
 } from "../services/default-workflow.js";
 import { findDelegationUser } from "../services/github-delegation.js";
@@ -1861,6 +1862,17 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       kind: "work",
       task: { ...updated, metadata: flavor.mergedMetadata },
       expectedFinishState,
+      // Authoritative gate list for the finish edge the caller will hit next
+      // (startTarget → expectedFinishState), resolved from the SAME
+      // effectiveDefinition already computed above — covers all three
+      // ADR-0008 chain stages (task-level workflow, project-customized
+      // default, built-in default) instead of the caller having to guess
+      // from workflowId alone (rc-v1-C003 review finding).
+      effectiveGates: { finish: gatesForTransition(effectiveDefinition, startTarget, expectedFinishState) },
+      // Task status immediately before this claim/transition (here: the
+      // initial state, e.g. "open") — gives the caller a real transition.from
+      // instead of assuming it.
+      previousStatus: task.status,
       project: task.project,
       ...(flavor.groundingHint ? { groundingHint: flavor.groundingHint } : {}),
     });
@@ -1947,10 +1959,22 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       });
     }
 
+    // Relevant edge for a review claim is the approve path (review →
+    // terminal) — mirrors how task_finish resolves targetStatus for
+    // outcome=approve (see the review-finish branch below).
+    const approveTo = approveTarget(effectiveDefinition, task.status) ?? "done";
+
     return c.json({
       kind: "review",
       task: updated,
       expectedFinishState: expectedFinishStateFromDefinition(effectiveDefinition),
+      // Same rationale as the work-claim branch above: the approve edge's
+      // gates, resolved from the effective definition rather than assumed.
+      effectiveGates: { finish: gatesForTransition(effectiveDefinition, task.status, approveTo) },
+      // Review-claiming does not itself transition status (task.status stays
+      // "review"), but the field is included on both claim kinds for a
+      // uniform start-receipt contract.
+      previousStatus: task.status,
       project: task.project,
     });
   }
