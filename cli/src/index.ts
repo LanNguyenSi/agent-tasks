@@ -19,7 +19,20 @@ import {
 
 const program = new Command();
 
+// --json and --quiet are mutually exclusive: a hard error rather than a
+// silent precedence rule. This matches the CLI's existing flag-conflict
+// convention elsewhere (--outcome/--pr-url and --auto-merge/request_changes
+// in `tasks finish`, the browse-mode-flag guard in `tasks list`) and avoids
+// a script that passes both by mistake silently losing its --json output
+// with no indication why. Called at the top of every action that registers
+// both flags, before any network call, so a conflicting *mutating* command
+// (e.g. `tasks finish --json --quiet`) never performs a state change it
+// then can't render.
 function getMode(opts: { json?: boolean; quiet?: boolean }): OutputMode {
+  if (opts.json && opts.quiet) {
+    console.error("Error: --json and --quiet are mutually exclusive. Pick one.");
+    process.exit(1);
+  }
   if (opts.json) return "json";
   if (opts.quiet) return "quiet";
   return "table";
@@ -103,10 +116,11 @@ program
   .option("--json", "JSON output")
   .option("--quiet", "Only signal IDs")
   .action(async (opts) => {
+    const mode = getMode(opts);
     const config = loadConfig();
     const status = opts.acknowledged ? "acknowledged" : opts.all ? "all" : "unread";
     const signals = await api.getSignals(config, status, Number(opts.limit));
-    console.log(formatSignals(signals, getMode(opts)));
+    console.log(formatSignals(signals, mode));
   });
 
 program
@@ -136,9 +150,10 @@ program
   .option("--json", "JSON output")
   .option("--quiet", "Only the id (signal id or task id)")
   .action(async (opts) => {
+    const mode = getMode(opts);
     const config = loadConfig();
     const result = await api.taskPickup(config);
-    console.log(formatPickup(result, getMode(opts)));
+    console.log(formatPickup(result, mode));
   });
 
 // ── Tasks ───────────────────────────────────────────────────────────────────
@@ -153,10 +168,11 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    const mode = getMode(opts);
     const config = loadConfig();
     const resolvedId = await resolveTaskId(config, taskId);
     const result = await api.taskStart(config, resolvedId);
-    console.log(formatStart(result, getMode(opts)));
+    console.log(formatStart(result, mode));
   });
 
 tasks
@@ -176,6 +192,7 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    const mode = getMode(opts);
     if (opts.outcome && !["approve", "request_changes"].includes(opts.outcome)) {
       console.error(
         `Error: --outcome must be 'approve' or 'request_changes' (got: ${opts.outcome})`,
@@ -214,7 +231,7 @@ tasks
     if (opts.mergeMethod) body.mergeMethod = opts.mergeMethod as api.MergeMethod;
 
     const result = await api.taskFinish(config, resolvedId, body);
-    console.log(formatTask(result.task, getMode(opts)));
+    console.log(formatTask(result.task, mode));
   });
 
 tasks
@@ -223,9 +240,10 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    const mode = getMode(opts);
     const config = loadConfig();
     const { task } = await api.taskAbandon(config, taskId);
-    console.log(formatTask(task, getMode(opts)));
+    console.log(formatTask(task, mode));
   });
 
 tasks
@@ -237,6 +255,7 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    const mode = getMode(opts);
     const prNumber = Number(opts.prNumber);
     if (!Number.isInteger(prNumber) || prNumber <= 0) {
       console.error(`Error: --pr-number must be a positive integer (got: ${opts.prNumber})`);
@@ -248,7 +267,7 @@ tasks
       prUrl: opts.prUrl,
       prNumber,
     });
-    console.log(formatTask(task, getMode(opts)));
+    console.log(formatTask(task, mode));
   });
 
 tasks
@@ -277,6 +296,7 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task IDs")
   .action(async (opts) => {
+    const mode = getMode(opts);
     const config = loadConfig();
 
     if (!opts.project) {
@@ -297,7 +317,7 @@ tasks
         process.exit(1);
       }
       const taskList = await api.getClaimableTasks(config);
-      console.log(formatTasks(taskList, getMode(opts)));
+      console.log(formatTasks(taskList, mode));
       return;
     }
 
@@ -373,7 +393,7 @@ tasks
       unclaimed: opts.unclaimed,
       limit,
     });
-    console.log(formatTasks(taskList, getMode(opts)));
+    console.log(formatTasks(taskList, mode));
   });
 
 tasks
@@ -382,10 +402,11 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    const mode = getMode(opts);
     const config = loadConfig();
     const resolvedId = await resolveTaskId(config, taskId);
     const task = await api.getTask(config, resolvedId);
-    console.log(formatTask(task, getMode(opts)));
+    console.log(formatTask(task, mode));
   });
 
 tasks
@@ -417,6 +438,7 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (projectRef, opts) => {
+    const mode = getMode(opts);
     // Validate priority BEFORE hitting the network so a typo fails fast
     // without a wasted round-trip to resolve the project slug.
     if (
@@ -465,7 +487,7 @@ tasks
     if (opts.dependsOn && opts.dependsOn.length > 0) input.dependsOn = opts.dependsOn;
 
     const task = await api.createTask(config, projectId, input);
-    console.log(formatTask(task, getMode(opts)));
+    console.log(formatTask(task, mode));
   });
 
 tasks
@@ -475,10 +497,11 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    const mode = getMode(opts);
     warnDeprecated("tasks claim", "tasks start");
     const config = loadConfig();
     const task = await api.claimTask(config, taskId, opts.force);
-    console.log(formatTask(task, getMode(opts)));
+    console.log(formatTask(task, mode));
   });
 
 tasks
@@ -487,10 +510,11 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, status, opts) => {
+    const mode = getMode(opts);
     warnDeprecated("tasks status", "tasks start / tasks finish");
     const config = loadConfig();
     const task = await api.transitionTask(config, taskId, status);
-    console.log(formatTask(task, getMode(opts)));
+    console.log(formatTask(task, mode));
   });
 
 tasks
@@ -499,10 +523,11 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    const mode = getMode(opts);
     warnDeprecated("tasks release", "tasks abandon");
     const config = loadConfig();
     const task = await api.releaseTask(config, taskId);
-    console.log(formatTask(task, getMode(opts)));
+    console.log(formatTask(task, mode));
   });
 
 tasks
@@ -515,6 +540,7 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    const mode = getMode(opts);
     const config = loadConfig();
     const data: Record<string, unknown> = {};
     if (opts.branch) data.branchName = opts.branch;
@@ -526,7 +552,7 @@ tasks
       process.exit(1);
     }
     const task = await api.updateTask(config, taskId, data);
-    console.log(formatTask(task, getMode(opts)));
+    console.log(formatTask(task, mode));
   });
 
 tasks
@@ -549,6 +575,7 @@ tasks
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    const mode = getMode(opts);
     const hasDescription = opts.description !== undefined;
     const hasTemplateData = opts.templateData !== undefined;
     const hasFile = opts.file !== undefined;
@@ -591,7 +618,7 @@ tasks
 
     const config = loadConfig();
     const result = await api.respecTask(config, taskId, input);
-    console.log(formatRespec(result, getMode(opts)));
+    console.log(formatRespec(result, mode));
   });
 
 tasks
@@ -625,9 +652,10 @@ projects
   .option("--json", "JSON output")
   .option("--quiet", "Only project slugs")
   .action(async (opts) => {
+    const mode = getMode(opts);
     const config = loadConfig();
     const projectList = await api.listProjects(config);
-    console.log(formatProjects(projectList, getMode(opts)));
+    console.log(formatProjects(projectList, mode));
   });
 
 projects
@@ -636,9 +664,10 @@ projects
   .option("--json", "JSON output")
   .option("--quiet", "Only project ID")
   .action(async (slugOrId, opts) => {
+    const mode = getMode(opts);
     const config = loadConfig();
     const project = await api.getProject(config, slugOrId);
-    console.log(formatProject(project, getMode(opts)));
+    console.log(formatProject(project, mode));
   });
 
 projects
@@ -647,13 +676,14 @@ projects
   .option("--json", "JSON output")
   .option("--quiet", "Only the names of gates that apply")
   .action(async (slugOrId, opts) => {
+    const mode = getMode(opts);
     const config = loadConfig();
     // Gate endpoint takes the UUID — resolve slug first if needed.
     const projectId = api.isUuid(slugOrId)
       ? slugOrId
       : (await api.getProject(config, slugOrId)).id;
     const gates = await api.getEffectiveGates(config, projectId);
-    console.log(formatGates(gates, getMode(opts)));
+    console.log(formatGates(gates, mode));
   });
 
 // ── GitHub delegation ───────────────────────────────────────────────────────
@@ -764,10 +794,11 @@ review
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    const mode = getMode(opts);
     warnDeprecated("review approve", "tasks finish --outcome approve");
     const config = loadConfig();
     const task = await api.reviewTask(config, taskId, "approve", opts.comment);
-    console.log(formatTask(task, getMode(opts)));
+    console.log(formatTask(task, mode));
   });
 
 review
@@ -777,10 +808,11 @@ review
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    const mode = getMode(opts);
     warnDeprecated("review request-changes", "tasks finish --outcome request_changes");
     const config = loadConfig();
     const task = await api.reviewTask(config, taskId, "request_changes", opts.comment);
-    console.log(formatTask(task, getMode(opts)));
+    console.log(formatTask(task, mode));
   });
 
 review

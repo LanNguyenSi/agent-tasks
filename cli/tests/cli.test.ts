@@ -269,3 +269,45 @@ describe("tasks respec argument validation", () => {
     expect(res.stdout).toContain("--file");
   });
 });
+
+describe("--json/--quiet mutual exclusion (e7911cdd)", () => {
+  // Decided as a hard error rather than "quiet wins": see the comment on
+  // `getMode` in index.ts. The check fires before any network call, so a
+  // *mutating* command can't run its side effect and then fail to render.
+  // `tasks list` needs no endpoint reachability either way, since the
+  // conflict is caught before `getClaimableTasks` — the `.invalid` host is
+  // never contacted.
+
+  it("rejects --json combined with --quiet on a read command (tasks list)", () => {
+    const res = run(["tasks", "list", "--json", "--quiet"]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("--json and --quiet are mutually exclusive");
+    expect(res.stdout).toBe("");
+  });
+
+  it("rejects --json combined with --quiet on a mutating command (tasks finish) before any network call", () => {
+    const res = run([
+      "tasks",
+      "finish",
+      "00000000-0000-0000-0000-000000000000",
+      "--json",
+      "--quiet",
+    ]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("--json and --quiet are mutually exclusive");
+    expect(res.stdout).toBe("");
+  });
+
+  it("accepts --json alone", () => {
+    // Genuinely reaches the network (the `.invalid` host never resolves),
+    // so this only proves the flag pair passes validation and does not
+    // throw the mutual-exclusion error before that point.
+    const res = run(["tasks", "list", "--json"]);
+    expect(res.stderr).not.toContain("mutually exclusive");
+  });
+
+  it("accepts --quiet alone", () => {
+    const res = run(["tasks", "list", "--quiet"]);
+    expect(res.stderr).not.toContain("mutually exclusive");
+  });
+});
