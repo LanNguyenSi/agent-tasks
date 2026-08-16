@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import "./globals.css";
 import { THEME_INIT_SCRIPT } from "../lib/theme";
 import { ToastProvider } from "../components/ui/Toast";
@@ -25,7 +26,15 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Reading headers() here is required, not just informational: it's what makes
+  // Next's App Router apply the per-request CSP nonce (middleware.ts) to the
+  // RSC-streaming inline scripts it injects for hydration. Without a headers()
+  // read somewhere in the render tree, Next renders those scripts unnonced and
+  // they fail the CSP (verified live). This also opts the whole app out of
+  // static prerendering into per-request dynamic rendering -- an accepted
+  // trade-off of a nonce-based CSP, documented in the CSP task's report.
+  await headers();
   return (
     <html
       lang="en"
