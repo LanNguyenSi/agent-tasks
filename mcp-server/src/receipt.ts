@@ -559,7 +559,7 @@ export interface StartGroundingHint {
  * edge(s) this call's caller will hit next on a subsequent task_finish,
  * resolved server-side from the SAME effectiveDefinition already used to
  * gate the claim itself (backend/src/routes/tasks.ts's
- * gatesForTransitionOrNull) — authoritative over this module's own
+ * gatesForTransitionOrNull), authoritative over this module's own
  * client-side approximation (deriveGateExpectations below), which is now a
  * fallback for backends that predate this field (see
  * resolveGateExpectations). `null` means the edge itself is absent (the
@@ -573,7 +573,7 @@ export interface StartEffectiveGates {
   finish: string[] | null;
   /** Review-claim only: previews the "request_changes" outcome's edge, a
    *  DIFFERENT edge than `finish` (which previews "approve" on a review
-   *  claim — see backend/src/routes/tasks.ts's review-claim branch). Absent
+   *  claim, see backend/src/routes/tasks.ts's review-claim branch). Absent
    *  on a work-claim response, which has only one relevant edge. */
   requestChanges?: string[] | null;
 }
@@ -597,13 +597,13 @@ export interface StartResponse {
    *  this defensively and falls back to deriveGateExpectations when it is
    *  absent. */
   effectiveGates?: StartEffectiveGates;
-  /** Since rc-v1-B001: task status immediately before this call — the real
+  /** Since rc-v1-B001: task status immediately before this call, the real
    *  transition.from, not a guess. On a work claim this is the state the
    *  task was in before the claim (e.g. "open"); on a review claim it
    *  equals the current task.status ("review"), since review-claiming does
    *  not itself transition status (backend/src/routes/tasks.ts's
    *  review-claim branch comment). Absent on a pre-B001 backend, in which
-   *  case StartSlice.transition is simply omitted — no guess is made. */
+   *  case StartSlice.transition is simply omitted, no guess is made. */
   previousStatus?: string;
 }
 
@@ -611,11 +611,11 @@ export interface StartSlice {
   ok: true;
   task: { id: string; status?: string };
   /** Only present on an actual state change (response.previousStatus !==
-   *  response.task.status) — the same "only on a state change" rule the
+   *  response.task.status), the same "only on a state change" rule the
    *  general Receipt.transition field follows (docs/response-contract-v1.md).
    *  Absent on a review-claim start (task.status stays "review", so
    *  previousStatus equals it), and absent entirely against a pre-rc-v1-B001
-   *  backend that does not send `previousStatus` — no guess is made. */
+   *  backend that does not send `previousStatus`, no guess is made. */
   transition?: { from: string; to: string };
   /** Bare scalar only — see the KNOWN GAP note on StartResponse.confidence. */
   confidence?: number;
@@ -634,7 +634,7 @@ export interface StartSlice {
    *  dynamic-vs-static-fallback resolution only against a pre-B001 backend.
    *  `null` = the edge does not exist (finish will 400 with no_transition);
    *  omitted = either the edge exists with nothing required, or (fallback
-   *  path only) no data was derivable at all — see resolveGateExpectations
+   *  path only) no data was derivable at all: see resolveGateExpectations
    *  and projectGateList for the exact collapse rule. */
   gateExpectations?: string[] | null;
   /** Present only alongside `gateExpectations`, only when it came from the
@@ -650,7 +650,7 @@ export interface StartSlice {
   gateExpectationsSource?: "assumed-default-workflow";
   /** Review-claim only: the `requires` gate list for the "request_changes"
    *  outcome's edge, sourced exclusively from the backend's
-   *  `effectiveGates.requestChanges` (rc-v1-B001) — there is no client-side
+   *  `effectiveGates.requestChanges` (rc-v1-B001); there is no client-side
    *  fallback derivation for this edge (the pre-B001 code never computed it
    *  at all), so on a pre-B001 backend this field is simply absent, never
    *  guessed, and carries no separate "source" marker. Same null-vs-omitted
@@ -685,7 +685,7 @@ interface GateExpectationsResult {
  * Resolves the `requires` gate list for task.status -> expectedFinishState
  * WITHOUT the backend's rc-v1-B001 `effectiveGates` field. Called only by
  * resolveGateExpectations below, and only when `response.effectiveGates` is
- * absent (a pre-B001 backend) — on any backend that sends it,
+ * absent (a pre-B001 backend); on any backend that sends it,
  * `effectiveGates` is authoritative (it is resolved server-side from the
  * exact same effectiveDefinition this function can only approximate
  * client-side) and this function is never consulted. Kept for that
@@ -747,9 +747,9 @@ function deriveGateExpectations(
 
 /**
  * Maps a raw backend gate list (`string[] | null`) to StartSlice's
- * convention: `null` (the edge is absent) passes through unchanged — this
- * is exactly the value that must stay distinguishable from "no requires"
- * per rc-v1-B001's contract (see StartEffectiveGates) — a non-empty array
+ * convention: `null` (the edge is absent) passes through unchanged, exactly
+ * the value that must stay distinguishable from "no requires" per
+ * rc-v1-B001's contract (see StartEffectiveGates); a non-empty array
  * passes through unchanged, and an empty array (edge exists, nothing
  * required) collapses to `undefined` so the happy, nothing-to-report case
  * costs no bytes in the receipt (report-by-exception, same rationale the
@@ -767,8 +767,8 @@ function projectGateList(gates: string[] | null | undefined): string[] | null | 
  *
  *   Authoritative (rc-v1-B001+): `response.effectiveGates` is present.
  *   `finish` (and, on a review claim, `requestChanges`) are passed through
- *   projectGateList as-is — no gateExpectationsSource, since the backend's
- *   own value needs no "assumed" caveat.
+ *   projectGateList as-is, with no gateExpectationsSource, since the
+ *   backend's own value needs no "assumed" caveat.
  *
  *   Fallback (pre-B001 backends only, `response.effectiveGates` absent):
  *   deriveGateExpectations' existing dynamic-then-static resolution runs
@@ -866,7 +866,7 @@ export function receiptForStart(
   // field (docs/response-contract-v1.md): a review-claim's previousStatus
   // equals its (unchanged) task.status, so no transition is reported there.
   // Absent entirely against a pre-rc-v1-B001 backend (previousStatus
-  // undefined) — no guess is made.
+  // undefined), no guess is made.
   if (
     response.previousStatus !== undefined &&
     response.task.status !== undefined &&

@@ -677,7 +677,7 @@ describe("receiptForStart", () => {
   });
 
   // ── pre-B001 fallback (no effectiveGates / no previousStatus on the
-  // response) — version tolerance for a backend older than rc-v1-B001 ──────
+  // response): version tolerance for a backend older than rc-v1-B001 ──────
   describe("pre-B001 fallback (effectiveGates absent)", () => {
     // Same shape as workResponse but without the two rc-v1-B001 fields, so
     // resolveGateExpectations falls through to deriveGateExpectations.
