@@ -1413,4 +1413,264 @@ describe("response budget invariant: adversarial input", () => {
     expect(err.error.detail?.omitted).toBe(true);
     expect(err.error.detail?.reason).toBe("detail exceeded the error budget");
   });
+
+  // Task 18e54531 (PR #444 review residual #1): ERROR_BUDGET_CHARS used to
+  // be a "hard ceiling" in name only -- enforceErrorBudget only ever
+  // degraded `detail`, so an escape-heavy `message` could still blow the
+  // wire budget even with an EMPTY `detail`. JSON.stringify expands a
+  // JSON-unescaped control character (U+0001, no short \n/\t/\r/\b/\f
+  // escape exists for it) into the 6-char backslash-u-0001 form, so a message
+  // clamped to MESSAGE_CHAR_BUDGET=300 CODEPOINTS by buildTeachingError
+  // can still cost up to ~6x that on the wire. Measured on this checkout
+  // BEFORE this fix (trimMessageForBudget, errors.ts): a 1000-codepoint
+  // message of pure U+0001 characters serialized to 1877 wire chars for a
+  // not_claimed entry with NO detail at all, and 2261 wire chars for an
+  // already_claimed entry additionally carrying an activeClaim detail --
+  // both far over ERROR_BUDGET_CHARS (1200). AFTER this fix, both cases
+  // are pinned below to actually respect the budget.
+  describe("escape-aware message trim: true wire-format ceiling (task 18e54531)", () => {
+    // String.fromCharCode(1) (not a literal control character in source) for
+    // U+0001 (SOH): the character JSON.stringify has no short escape for
+    // (unlike \n/\t/\r/\b/\f), so it always costs the full 6-char \uXXXX
+    // form -- the worst-case escape expansion this test pins.
+    const controlHeavyMessage = (prefix: string) => `${prefix}${String.fromCharCode(1).repeat(1000)}`;
+
+    it("not_claimed, no detail: an escape-heavy message alone still respects ERROR_BUDGET_CHARS", () => {
+      const err = mapBackendError(403, {
+        error: "forbidden",
+        message: controlHeavyMessage("You do not hold a claim on this task: "),
+      });
+      const serialized = serializeResult(err);
+      expect(serialized.length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+      // code/recipe/allowedNext stay whole; only `message` was shortened.
+      expect(err.error.code).toBe("not_claimed");
+      expect(err.error.recipe).toBe("call task_start to claim this task first");
+      expect(err.error.allowedNext).toEqual(["task_start"]);
+    });
+
+    it("already_claimed + activeClaim detail: an escape-heavy message combined with a real detail payload still respects ERROR_BUDGET_CHARS", () => {
+      const err = mapBackendError(409, {
+        error: "already_claimed",
+        message: controlHeavyMessage("already claimed: "),
+        activeClaim: { taskId: "t-1", title: "x".repeat(50), role: "author" },
+      });
+      const serialized = serializeResult(err);
+      expect(serialized.length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+      expect(err.error.code).toBe("already_claimed");
+    });
+
+    it("the trim leaves a visible truncation marker and actually shrinks the message field below its own MESSAGE_CHAR_BUDGET clamp", () => {
+      const err = mapBackendError(403, {
+        error: "forbidden",
+        message: controlHeavyMessage("You do not hold a claim on this task: "),
+      });
+      expect(err.error.message.endsWith("...")).toBe(true);
+      // Trimmed well below the pre-trim 300-codepoint MESSAGE_CHAR_BUDGET
+      // clamp, since almost every surviving codepoint costs 6 wire chars.
+      expect(Array.from(err.error.message).length).toBeLessThan(300);
+    });
+
+    it("an ordinary (non-escape-heavy) long message is unaffected: still fits under the field clamp and the trim never fires", () => {
+      const err = mapBackendError(403, {
+        error: "forbidden",
+        message: `You do not hold a claim on this task. ${"ordinary prose. ".repeat(30)}`,
+      });
+      // Plain ASCII prose costs 1 wire char per JS char, so
+      // MESSAGE_CHAR_BUDGET's own field clamp (not the escape-aware trim)
+      // is what bounds it here -- exactly the pre-existing behavior.
+      expect(Array.from(err.error.message).length).toBe(300);
+      expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+    });
+  });
+
+  // Task 18e54531 (PR #444 review residual #2): clamp() used to slice on
+  // UTF-16 code units (String.prototype.slice), which can split a
+  // surrogate pair in half. Every astral character (e.g. an emoji) is one
+  // Unicode codepoint encoded as a high+low surrogate PAIR in UTF-16; a
+  // code-unit slice landing between the two halves leaves a lone,
+  // unpaired high surrogate at the tail. The resulting JS string is still
+  // "well-formed" from JSON.stringify's point of view (JSON.stringify
+  // happily escapes a lone surrogate as \udXXX), but a strict UTF-8
+  // re-encoder downstream (Buffer.from(str, "utf-8"), or any real UTF-8
+  // encoder) cannot represent an unpaired surrogate and replaces it with
+  // U+FFFD, silently corrupting the value. clamp() is now codepoint-safe
+  // (Array.from groups a surrogate pair into one iteration step), which
+  // fixes exactly this: a SURROGATE-PAIR split. It does NOT guarantee
+  // every clamp lands on a grapheme-CLUSTER boundary (a base+combining-mark
+  // or ZWJ sequence spanning multiple codepoints could still be split
+  // mid-cluster) -- that would need Intl.Segmenter, out of scope here
+  // since the reported failure is specifically a split surrogate pair
+  // (one codepoint), not a split grapheme cluster.
+  describe("clamp is surrogate-safe: codepoint-based truncation (task 18e54531)", () => {
+    it("a 100-emoji activeClaim.title clamps to DETAIL_ENTRY_CHAR_BUDGET without leaving a lone surrogate, and round-trips through a strict UTF-8 re-encode", () => {
+      const emojiTitle = "\u{1F600}".repeat(100); // 100 codepoints, 200 UTF-16 code units
+      const err = mapBackendError(409, {
+        error: "already_claimed",
+        message: "You already hold an active claim. Call task_finish or task_abandon on it.",
+        activeClaim: { taskId: "t-1", title: emojiTitle, role: "author" },
+      });
+      const activeClaim = err.error.detail?.activeClaim as { title?: string } | undefined;
+      expect(activeClaim?.title).toBeDefined();
+      const title = activeClaim!.title!;
+      // Truncated: 100 emoji (100 codepoints) exceeds
+      // DETAIL_ENTRY_CHAR_BUDGET (60 codepoints).
+      expect(title.endsWith("...")).toBe(true);
+      const beforeMarker = title.slice(0, title.length - 3);
+      const lastCharCode = beforeMarker.charCodeAt(beforeMarker.length - 1);
+      const isLoneHighSurrogate = lastCharCode >= 0xd800 && lastCharCode <= 0xdbff;
+      expect(isLoneHighSurrogate).toBe(false);
+      // A lone surrogate would still round-trip through JSON.stringify/
+      // JSON.parse (JS strings are UTF-16 with lone surrogates allowed),
+      // so that alone would NOT catch the bug -- a strict UTF-8 re-encode
+      // is the actual failure mode this guards against.
+      expect(Buffer.from(title, "utf-8").toString("utf-8")).toBe(title);
+      expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+    });
+
+    it("an all-emoji message clamps to MESSAGE_CHAR_BUDGET without leaving a lone surrogate", () => {
+      const emojiMessage = "\u{1F600}".repeat(500); // 500 codepoints, 1000 UTF-16 code units
+      const err = mapBackendError(418, { error: "teapot_code", message: emojiMessage });
+      const msg = err.error.message;
+      expect(msg.endsWith("...")).toBe(true);
+      const beforeMarker = msg.slice(0, msg.length - 3);
+      const lastCharCode = beforeMarker.charCodeAt(beforeMarker.length - 1);
+      expect(lastCharCode >= 0xd800 && lastCharCode <= 0xdbff).toBe(false);
+      expect(Buffer.from(msg, "utf-8").toString("utf-8")).toBe(msg);
+    });
+
+    it("a message shorter than the codepoint budget in codepoints but longer in code units (all-astral) is left untouched, not truncated", () => {
+      // 250 emoji = 250 codepoints (under MESSAGE_CHAR_BUDGET=300) but 500
+      // UTF-16 code units (over 300) -- a naive `value.length > maxChars`
+      // check on code units would wrongly truncate this.
+      const emojiMessage = "\u{1F600}".repeat(250);
+      const err = mapBackendError(418, { error: "teapot_code", message: emojiMessage });
+      expect(err.error.message).toBe(emojiMessage);
+      expect(err.error.message.endsWith("...")).toBe(false);
+    });
+  });
+});
+
+// Task 18e54531 (PR #444 review residual #3): allowedNext gained a verb
+// (already_claimed's `tasks_get`, M3 follow-up) the recipe prose never
+// names, in tension with docs/response-contract-v1.md's "recipe MUST name
+// the concrete corrective call". The doc now precises the actual
+// invariant: allowedNext is a SUPERSET of the verb(s) recipe names, never
+// a mismatched or narrower set -- every verb recipe names must appear in
+// that entry's own allowedNext, but allowedNext may carry additional
+// discovery verbs recipe never names (see docs/response-contract-v1.md's
+// "Error shape (block tier)" section and errors.ts's file-header comment
+// on `allowedNext`). This walks every catalog entry (docs/
+// response-contract-v1.md's "Catalog seed" list) and enforces exactly
+// that direction of the invariant.
+describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", () => {
+  // Verb vocabulary the scanner checks recipe text against: every verb
+  // name any catalog entry could ever put in allowedNext, i.e. the union
+  // of the default-registered set and the legacy-only set (tasks_transition
+  // / tasks_update / tasks_claim -- named via a dynamic verbContext/
+  // retryVerb interpolation, always also present in that same entry's own
+  // allowedNext by construction), MINUS "projects_list" specifically.
+  // rc-v1-C007 deliberately excludes projects_list from allowedNext even
+  // where recipe prose still mentions it as a conditional, legacy-flag-
+  // gated aside ("... or, with AGENT_TASKS_MCP_LEGACY=1 set, call
+  // projects_list ...") rather than that entry's own primary corrective
+  // call -- see projectAddressingConflictError's and
+  // unknownProjectSlugError's own comments in errors.ts. This is the one
+  // pre-existing, already-documented exception to the "recipe names ⊆
+  // allowedNext" invariant; scanning for any OTHER verb name still catches
+  // a future catalog entry that violates the invariant without a matching,
+  // documented exception.
+  const VERB_VOCAB = Array.from(new Set([...registeredVerbNames(), ...legacyRegisteredVerbNames()])).filter(
+    (v) => v !== "projects_list",
+  );
+
+  function verbsNamedInRecipe(recipe: string): string[] {
+    return VERB_VOCAB.filter((verb) => recipe.includes(verb));
+  }
+
+  const catalogFixtures: Array<{ label: string; err: TeachingError }> = [
+    {
+      label: "not_claimed",
+      err: mapBackendError(403, {
+        error: "forbidden",
+        message: "You do not hold a claim on this task. Call task_start to claim it first.",
+      }),
+    },
+    {
+      label: "already_claimed",
+      err: mapBackendError(409, {
+        error: "already_claimed",
+        message: "You already hold an active claim.",
+        activeClaim: { taskId: "t1", title: "x", role: "author" },
+      }),
+    },
+    {
+      label: "precondition_failed (needsSubmitPr branch)",
+      err: mapBackendError(
+        422,
+        { error: "precondition_failed", message: "gate not satisfied", failed: [{ rule: "branchPresent" }] },
+        "task_finish",
+      ),
+    },
+    {
+      label: "precondition_failed (wait-for-gate branch)",
+      err: mapBackendError(
+        422,
+        { error: "precondition_failed", message: "gate not satisfied", failed: [{ rule: "ciGreen" }] },
+        "task_finish",
+      ),
+    },
+    {
+      label: "cross_repo_pr_rejected (pull_requests_create verbContext)",
+      err: mapBackendError(400, { error: "cross_repo_pr_rejected", message: "wrong repo" }, "pull_requests_create"),
+    },
+    {
+      label: "cross_repo_pr_rejected (task_submit_pr default)",
+      err: mapBackendError(400, { error: "cross_repo_pr_rejected", message: "wrong repo" }, "task_submit_pr"),
+    },
+    {
+      label: "pr_author_mismatch",
+      err: mapBackendError(403, { error: "pr_author_mismatch", message: "not your PR" }),
+    },
+    {
+      label: "force_admin_only",
+      err: mapBackendError(403, { error: "forbidden", message: "Only team admins can force a transition" }),
+    },
+    {
+      label: "respec_conflict",
+      err: mapBackendError(409, { error: "conflict", message: "Task must be open and unclaimed to respec" }),
+    },
+    { label: "result_not_plain_string (task_finish)", err: resultMustBePlainStringError("task_finish") },
+    { label: "result_not_plain_string (tasks_update)", err: resultMustBePlainStringError("tasks_update") },
+    {
+      label: "low_confidence",
+      err: mapBackendError(422, {
+        error: "low_confidence",
+        message: "confidence too low",
+        details: { score: 1, threshold: 2, missing: ["acceptanceCriteria"] },
+      }),
+    },
+    {
+      label: "project_addressing_conflict (both_provided)",
+      err: projectAddressingConflictError("task_create", "both_provided"),
+    },
+    {
+      label: "project_addressing_conflict (neither_provided)",
+      err: projectAddressingConflictError("task_create", "neither_provided"),
+    },
+    { label: "unknown_project_slug", err: unknownProjectSlugError("myslug", "task_create") },
+    {
+      label: "generic degrade",
+      err: mapBackendError(418, { error: "some_backend_code", message: "unrecognized shape" }),
+    },
+  ];
+
+  it.each(catalogFixtures)("$label: every verb recipe names is present in allowedNext", ({ label, err }) => {
+    const named = verbsNamedInRecipe(err.error.recipe);
+    for (const verb of named) {
+      expect(
+        err.error.allowedNext.includes(verb),
+        `${label}: recipe names "${verb}" but allowedNext is [${err.error.allowedNext.join(", ")}]`,
+      ).toBe(true);
+    }
+  });
 });
