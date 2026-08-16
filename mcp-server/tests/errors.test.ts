@@ -142,16 +142,26 @@ describe("mapBackendError catalog", () => {
     });
   });
 
-  it("already_claimed: an activeClaim field over DETAIL_ENTRY_CHAR_BUDGET (60 chars) is clamped with a trailing truncation marker, not dropped or forwarded unclamped", () => {
-    const longTitle = "T".repeat(100);
+  // Fix-round (task 008ac513, review finding M1): the pre-fix version of
+  // this test only put a long value on `title`, so `taskId` and `role`
+  // stayed short throughout -- deleting their clamp calls in
+  // extractActiveClaim left this test (and the full 393-test suite) green.
+  // A 100-char-per-field fixture with an exact toEqual pins all three
+  // fields' clamp behavior at once: each field is DETAIL_ENTRY_CHAR_BUDGET
+  // (60) chars, ending in the truncation marker.
+  it("already_claimed: every activeClaim field over DETAIL_ENTRY_CHAR_BUDGET (60 chars) is clamped with a trailing truncation marker, not dropped or forwarded unclamped", () => {
     const err = mapBackendError(409, {
       error: "already_claimed",
       message: "You already hold an active claim.",
-      activeClaim: { taskId: "t1", title: longTitle, role: "author" },
+      activeClaim: { taskId: "t".repeat(100), title: "T".repeat(100), role: "r".repeat(100) },
     });
-    const detail = err.error.detail as { activeClaim: { title: string } };
-    expect(detail.activeClaim.title.length).toBeLessThan(longTitle.length);
-    expect(detail.activeClaim.title.endsWith("...")).toBe(true);
+    expect(err.error.detail).toEqual({
+      activeClaim: {
+        taskId: "t".repeat(57) + "...",
+        title: "T".repeat(57) + "...",
+        role: "r".repeat(57) + "...",
+      },
+    });
   });
 
   it("already_claimed: a missing or malformed activeClaim (no usable field) omits detail entirely, same behavior as before the M3 follow-up", () => {
@@ -174,6 +184,18 @@ describe("mapBackendError catalog", () => {
       activeClaim: { taskId: 42, title: null, role: undefined },
     });
     expect(empty.error.detail).toBeUndefined();
+
+    // Fix-round (task 008ac513, review finding L1): extractActiveClaim used
+    // to accept empty strings as usable, producing
+    // {taskId:"",title:"",role:""} even though the comment promised
+    // degradation to undefined for "no usable field at all". All three
+    // fields present but empty must degrade the same as absent/malformed.
+    const allEmptyStrings = mapBackendError(409, {
+      error: "already_claimed",
+      message: "You already hold an active claim.",
+      activeClaim: { taskId: "", title: "", role: "" },
+    });
+    expect(allEmptyStrings.error.detail).toBeUndefined();
   });
 
   // rc-v1-C008 Cold-Start-Eval (2026-08-12), generalized + fixed on the

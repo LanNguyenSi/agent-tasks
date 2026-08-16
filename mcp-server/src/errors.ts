@@ -339,18 +339,30 @@ const ALREADY_CLAIMED_RECIPE = [
 // DETAIL_ENTRY_CHAR_BUDGET convention every other structured detail field
 // in this module uses. Untrusted response data, same stance as the other
 // extract-from-body helpers in this file (asBackendBody, preconditionFailedError's
-// rawFailed mapping): every field is validated by type before use, and a
-// missing/malformed activeClaim (or one with no usable field at all)
-// degrades to `undefined` -- the caller then just sees the recipe prose
-// with no detail, the exact behavior before this change, rather than a
-// detail object with fabricated or empty fields.
+// rawFailed mapping): every field is validated by type AND non-emptiness
+// before use (`isUsableString` below), and a missing/malformed activeClaim
+// (or one with no usable field at all -- absent, wrong type, or present as
+// an empty string) degrades to `undefined` -- the caller then just sees the
+// recipe prose with no detail, the exact behavior before this change,
+// rather than a detail object with fabricated, empty, or non-string fields.
+// The field SET this function looks at is fixed at exactly these three
+// (taskId, title, role): a present-but-non-string field (e.g. a numeric
+// taskId) is dropped the same way a missing field is, not surfaced under a
+// different name or flagged separately -- this is a deliberate, narrower
+// exception to the "the drop is never silent" stance the rest of this
+// module's clampDetailValue path takes for arbitrary detail objects, scoped
+// to this one small, fixed, backend-controlled shape.
+function isUsableString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
 function extractActiveClaim(body: BackendErrorBody): Record<string, unknown> | undefined {
   const raw = body.activeClaim;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const claim = raw as Record<string, unknown>;
-  const taskId = typeof claim.taskId === "string" ? clamp(claim.taskId, DETAIL_ENTRY_CHAR_BUDGET) : undefined;
-  const title = typeof claim.title === "string" ? clamp(claim.title, DETAIL_ENTRY_CHAR_BUDGET) : undefined;
-  const role = typeof claim.role === "string" ? clamp(claim.role, DETAIL_ENTRY_CHAR_BUDGET) : undefined;
+  const taskId = isUsableString(claim.taskId) ? clamp(claim.taskId, DETAIL_ENTRY_CHAR_BUDGET) : undefined;
+  const title = isUsableString(claim.title) ? clamp(claim.title, DETAIL_ENTRY_CHAR_BUDGET) : undefined;
+  const role = isUsableString(claim.role) ? clamp(claim.role, DETAIL_ENTRY_CHAR_BUDGET) : undefined;
   if (taskId === undefined && title === undefined && role === undefined) return undefined;
   return {
     ...(taskId !== undefined ? { taskId } : {}),
