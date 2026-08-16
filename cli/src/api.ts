@@ -145,6 +145,20 @@ export async function listProjectTasks(
   return tasks;
 }
 
+/**
+ * Backfills `project` on each task from the browse-mode list endpoint
+ * (`/api/projects/:id/tasks`, listProjectTasks above). Unlike the global
+ * claimable slice (getClaimableTasks), that endpoint doesn't attach
+ * `project` per row -- backend/src/routes/tasks.ts's taskListInclude has no
+ * project relation, since every row already shares the project the caller
+ * filtered by. Without this, `tasks list --project`'s table left the
+ * PROJECT column blank (task e7911cdd). `t.project ?? ...` is a no-op if the
+ * backend ever starts returning it itself.
+ */
+export function withProject(tasks: Task[], project: Pick<Project, "name" | "slug">): Task[] {
+  return tasks.map((t) => ({ ...t, project: t.project ?? { name: project.name, slug: project.slug } }));
+}
+
 export async function getTask(config: Config, taskId: string): Promise<Task> {
   const { task } = await request<{ task: Task }>(
     config,

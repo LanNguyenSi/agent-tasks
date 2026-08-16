@@ -12,6 +12,7 @@ import {
   respecTask,
   searchTaskPool,
   matchTaskIdPrefix,
+  withProject,
   type Task,
 } from "../src/api.js";
 import type { Config } from "../src/config.js";
@@ -398,5 +399,35 @@ describe("listProjectTasks", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ tasks }));
     const result = await listProjectTasks(config, "p1");
     expect(result).toEqual(tasks);
+  });
+});
+
+describe("withProject", () => {
+  const project = { id: "p1", name: "Project One", slug: "project-one" };
+
+  it("backfills project on tasks that don't already have one", () => {
+    const tasks: Task[] = [
+      { id: "t1", title: "one", status: "open", priority: "LOW" },
+      { id: "t2", title: "two", status: "open", priority: "HIGH" },
+    ];
+    const result = withProject(tasks, project);
+    expect(result).toEqual([
+      { id: "t1", title: "one", status: "open", priority: "LOW", project: { name: "Project One", slug: "project-one" } },
+      { id: "t2", title: "two", status: "open", priority: "HIGH", project: { name: "Project One", slug: "project-one" } },
+    ]);
+  });
+
+  it("preserves a task's existing project instead of overwriting it", () => {
+    const tasks: Task[] = [
+      { id: "t1", title: "one", status: "open", priority: "LOW", project: { name: "Other", slug: "other" } },
+    ];
+    const result = withProject(tasks, project);
+    expect(result[0]!.project).toEqual({ name: "Other", slug: "other" });
+  });
+
+  it("does not mutate the input array", () => {
+    const tasks: Task[] = [{ id: "t1", title: "one", status: "open", priority: "LOW" }];
+    withProject(tasks, project);
+    expect(tasks[0]).not.toHaveProperty("project");
   });
 });

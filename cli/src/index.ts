@@ -367,34 +367,35 @@ tasks
       limit = parsed;
     }
 
-    // Accept slug or UUID. Slug resolution mirrors `tasks create` so the
-    // failure mode for an unknown slug is a clean "project not found" rather
-    // than a confusing 403/404 from the tasks endpoint.
-    let projectId: string;
-    if (api.isUuid(opts.project)) {
-      projectId = opts.project;
-    } else {
-      try {
-        projectId = (await api.getProject(config, opts.project)).id;
-      } catch (err) {
-        if (err instanceof api.ApiError && err.status === 404) {
-          console.error(
-            `Error: project '${opts.project}' not found (no match for slug or id).`,
-          );
-          process.exit(1);
-        }
-        throw err;
+    // Accept slug or UUID. Always resolve the *full* project record (not
+    // just the id): the project-scoped tasks endpoint doesn't attach
+    // `project` to each row the way the global claimable slice does (see
+    // api.withProject), so the full record is needed below to backfill the
+    // PROJECT column instead of leaving it blank. Resolving via getProject
+    // (rather than trusting a raw --project UUID as-is) also gives a bad
+    // UUID the same clean "project not found" error a bad slug gets,
+    // instead of a confusing 403/404 surfacing from the tasks call itself.
+    let project: api.Project;
+    try {
+      project = await api.getProject(config, opts.project);
+    } catch (err) {
+      if (err instanceof api.ApiError && err.status === 404) {
+        console.error(
+          `Error: project '${opts.project}' not found (no match for slug or id).`,
+        );
+        process.exit(1);
       }
+      throw err;
     }
 
-    const taskList = await api.listProjectTasks(config, projectId, {
+    const taskList = await api.listProjectTasks(config, project.id, {
       status: statuses,
       priority: priorities,
       labels,
       unclaimed: opts.unclaimed,
       limit,
     });
-    console.log(formatTasks(taskList, mode));
+    console.log(formatTasks(api.withProject(taskList, project), mode));
   });
 
 tasks
