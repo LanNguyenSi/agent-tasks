@@ -5182,9 +5182,18 @@ describe("POST /projects/:projectId/tasks — workflowId project validation", ()
   const CREATE_PROJECT_ID = "proj-create-1";
   const OWN_WORKFLOW_ID = "11111111-1111-1111-1111-111111111111";
   const FOREIGN_WORKFLOW_ID = "22222222-2222-2222-2222-222222222222";
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
 
   function postCreate(body: Record<string, unknown>) {
     return makeApp(AGENT).request(`/projects/${CREATE_PROJECT_ID}/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  function postCreateAsHuman(body: Record<string, unknown>) {
+    return makeApp(HUMAN).request(`/projects/${CREATE_PROJECT_ID}/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -5230,6 +5239,60 @@ describe("POST /projects/:projectId/tasks — workflowId project validation", ()
     expect(prismaMocks.taskCreate).not.toHaveBeenCalled();
   });
 
+  // Follow-up from task 28bdcdfd (review of 70d3a2b4): the rejection above is
+  // a security-control denial and was previously invisible — no audit event,
+  // no log line — while the sibling deliverableRepo override IS audited at
+  // create time (task.deliverable_repo_set). Mirror that mechanism.
+  it("audits the rejection as task.workflow_id_rejected_cross_project (no taskId — the task was never created)", async () => {
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await postCreate({ title: "Steal a workflow", workflowId: FOREIGN_WORKFLOW_ID });
+
+    expect(res.status).toBe(400);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.workflow_id_rejected_cross_project",
+        projectId: CREATE_PROJECT_ID,
+        payload: expect.objectContaining({
+          workflowId: FOREIGN_WORKFLOW_ID,
+          actorType: "agent",
+          agentTokenId: AGENT.tokenId,
+        }),
+      }),
+    );
+    // The event must not accidentally carry a taskId — no task row exists.
+    const call = (logAuditEvent as unknown as { mock: { calls: Array<[Record<string, unknown>]> } }).mock.calls.find(
+      (c) => c[0].action === "task.workflow_id_rejected_cross_project",
+    );
+    expect(call?.[0].taskId).toBeUndefined();
+  });
+
+  // The audit call site derives actorId/agentTokenId from actor.type
+  // (routes/tasks.ts: `actorId: actor.type === "human" ? actor.userId :
+  // undefined`, `agentTokenId: actor.type === "agent" ? actor.tokenId :
+  // null`). The agent-actor test above only pins the agent branch; this
+  // pins the human branch so a future edit that swaps or drops the ternary
+  // cannot regress unnoticed.
+  it("audits a human-actor rejection with actorId = the human's userId and no agentTokenId", async () => {
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await postCreateAsHuman({ title: "Steal a workflow", workflowId: FOREIGN_WORKFLOW_ID });
+
+    expect(res.status).toBe(400);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.workflow_id_rejected_cross_project",
+        actorId: HUMAN.userId,
+        projectId: CREATE_PROJECT_ID,
+        payload: expect.objectContaining({
+          workflowId: FOREIGN_WORKFLOW_ID,
+          actorType: "human",
+          agentTokenId: null,
+        }),
+      }),
+    );
+  });
+
   it("accepts a workflowId that belongs to the task's own project", async () => {
     prismaMocks.workflowFindFirst.mockResolvedValueOnce({ id: OWN_WORKFLOW_ID });
 
@@ -5243,6 +5306,9 @@ describe("POST /projects/:projectId/tasks — workflowId project validation", ()
     );
     const createArg = prismaMocks.taskCreate.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(createArg.data.workflowId).toBe(OWN_WORKFLOW_ID);
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.workflow_id_rejected_cross_project" }),
+    );
   });
 
   it("skips the workflow lookup and creates the task when workflowId is omitted", async () => {

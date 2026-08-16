@@ -116,7 +116,20 @@ export type AuditAction =
   // serialized — see respecAuditValue in routes/tasks.ts) plus the
   // before/after confidence score. Fired only when at least one field
   // actually changed.
-  | "task.respec";
+  | "task.respec"
+  // Create-time workflowId project-ownership check (task 28bdcdfd, follow-up
+  // to task 5107416c / task.deliverable_repo_set's sibling). Fires when the
+  // `findFirst({ id, projectId })` lookup in routes/tasks.ts comes back
+  // empty for a caller-supplied workflowId — which covers BOTH a workflow
+  // that belongs to a DIFFERENT project and a workflowId that does not
+  // exist at all; the compound filter cannot tell the two apart, so this
+  // event does not claim the id was necessarily foreign, only that it was
+  // rejected. The request is rejected with 400 before any task row exists,
+  // so this carries no taskId. Without this event the denial was invisible:
+  // no audit trail of who tried to route a create through a workflow id
+  // this project does not own (potentially a gate-relaxing template from
+  // another project).
+  | "task.workflow_id_rejected_cross_project";
 
 export interface AuditPayload {
   [key: string]: unknown;
