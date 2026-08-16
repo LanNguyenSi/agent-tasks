@@ -29,6 +29,7 @@ import {
   TEMPLATE_DATA_FIELD_MAX_CHARS,
   type TaskQualitySubscores,
 } from "../../src/lib/confidence.js";
+import { RICH_TEMPLATE_DATA_NO_DESC, SECTIONED_DESC } from "../../../shared/confidence-fixtures.js";
 
 const FULL_FIELDS = {
   goal: true,
@@ -60,18 +61,9 @@ const ALL_V2 = {
   constraints: "No DB migration",
 };
 
-// Modeled on the real task c71de504's create: substantial goal + context with
-// concrete measurements and file:line anchors, plus scope/acceptanceCriteria/
-// agentPrompt, but NO literal `description` — this is the exact shape that
-// used to score 40/100 and block on missing_or_thin_description until an
-// agent duplicated goal+context verbatim into description via task_respec.
-const RICH_TEMPLATE_DATA_NO_DESC = {
-  goal: "Apply the same description-quality heuristic to templateData.goal + templateData.context so rich structured tasks are not forced to duplicate that text into description.",
-  context: "Measured on real tasks: c71de504 scored 40/100 and went to 83 after copying goal+context into description; d58b3409 went 40->75 the same way. The structure check only reads backend/src/lib/confidence.ts:526 (missing_or_thin_description) and the cap at backend/src/lib/confidence.ts:643.",
-  scope: "backend/src/lib/confidence.ts and frontend/src/lib/confidence.ts, the missing_or_thin_description path only",
-  acceptanceCriteria: "- A repro shaped like c71de504's create no longer triggers missing_or_thin_description\n- A negative control with all-empty templateData still triggers it",
-  agentPrompt: "1. Read both confidence.ts copies. 2. Feed description + templateData.goal + templateData.context through the existing quality check. 3. Update both test files.",
-};
+// RICH_TEMPLATE_DATA_NO_DESC now lives in shared/confidence-fixtures.ts (task
+// 79621590) — it was byte-identical to frontend's own copy of the same
+// fixture, exactly the kind of duplicated literal that can silently drift.
 
 // Concrete description with NO verification word (test/run/curl/check/verify/
 // green/CI), so fixtures control the verification signal purely via the
@@ -906,44 +898,8 @@ describe("calculateConfidence — findings", () => {
 // scorer must honour `## Goal` / `## Acceptance Criteria` / ... headings the
 // same way it honours structured templateData fields.
 
-// Exactly what a fully specced v2 create looks like: all seven scored sections
-// as `##` headings with real bodies, templateData null.
-const SECTIONED_DESC = [
-  "## Goal",
-  "",
-  "The `signup` handler in src/routes/auth.ts returns 400 on an empty body.",
-  "",
-  "## Context",
-  "",
-  "Posting an empty body 500s today; see incident 4711.",
-  "",
-  "## Acceptance Criteria",
-  "",
-  "- [ ] POST /api/signup with `{}` returns 400",
-  "- [ ] A unit test covers the empty-body branch and CI is green",
-  "",
-  "## Scope",
-  "",
-  "- src/routes/auth.ts signup handler only",
-  "",
-  "## Out of scope",
-  "",
-  "- Session middleware stays untouched",
-  "",
-  "## Dependencies",
-  "",
-  "none",
-  "",
-  "## Risk",
-  "",
-  "low: single handler, no migration",
-  "",
-  "## Agent Prompt",
-  "",
-  "1. Add a zod body schema.",
-  "2. Return 400 on parse failure.",
-  "3. Add a unit test.",
-].join("\n");
+// SECTIONED_DESC now lives in shared/confidence-fixtures.ts (task 79621590)
+// — it was byte-identical to frontend's own copy of the same fixture.
 
 describe("extractSpecSections", () => {
   it("parses every aliased section from ## headings", () => {
