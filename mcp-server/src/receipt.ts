@@ -591,11 +591,10 @@ export interface StartResponse {
   // matching the "actionable counter-rule": task_start cannot change the
   // spec, so only the bare scalar belongs here, never `missing[]`/detail.
   confidence?: { score: number };
-  /** Since rc-v1-B001. See StartEffectiveGates. Optional (not `?:
-   *  StartEffectiveGates | undefined` vs required) so a pre-B001 backend
-   *  response is still a valid StartResponse: resolveGateExpectations reads
-   *  this defensively and falls back to deriveGateExpectations when it is
-   *  absent. */
+  /** Since rc-v1-B001. See StartEffectiveGates. Declared optional (`?:`),
+   *  not required, so a pre-B001 backend response is still a valid
+   *  StartResponse: resolveGateExpectations reads this defensively and
+   *  falls back to deriveGateExpectations when it is absent. */
   effectiveGates?: StartEffectiveGates;
   /** Since rc-v1-B001: task status immediately before this call, the real
    *  transition.from, not a guess. On a work claim this is the state the
@@ -624,6 +623,18 @@ export interface StartSlice {
    *  from the caller's own request (taskType is set once, at task_create
    *  time, by whoever created the task — not by this call's caller). */
   inferredTaskType?: string;
+  /** On a work claim, this names the SAME edge `gateExpectations` previews
+   *  (startTarget -> expectedFinishState). On a review claim, it does NOT:
+   *  it names the definition-wide work-finish target (what an author's
+   *  task_finish would target on this task), while `gateExpectations`
+   *  previews the review -> approveTarget edge (the "approve" outcome), a
+   *  different edge, resolved from the backend's own
+   *  `expectedFinishStateFromDefinition` vs `approveTarget` (see
+   *  backend/src/routes/tasks.ts's review-claim branch). A review-claim
+   *  receipt like `{ expectedFinishState: "review", gateExpectations: null
+   *  }` therefore means the approve edge is absent, NOT that this field's
+   *  own named state is unreachable; do not pair the two fields as if they
+   *  describe the same transition on a review claim. */
   expectedFinishState?: string;
   /** The `requires` gate list for the edge task_finish will hit next: on a
    *  work claim, the single startTarget -> expectedFinishState edge; on a
@@ -765,23 +776,30 @@ function projectGateList(gates: string[] | null | undefined): string[] | null | 
  * (gateExpectations, gateExpectationsSource, requestChangesGateExpectations)
  * from the raw response. Two paths:
  *
- *   Authoritative (rc-v1-B001+): `response.effectiveGates` is present.
- *   `finish` (and, on a review claim, `requestChanges`) are passed through
+ *   Authoritative (rc-v1-B001+): `response.effectiveGates.finish` is
+ *   present (checked as `!== undefined`, not truthiness of the parent
+ *   `effectiveGates` object, since `finish` is the field this layer
+ *   actually consumes and can legitimately BE `null`, `[]`, or a non-empty
+ *   array while still being "present"; a malformed/partial backend body
+ *   that sends `effectiveGates: {}` with no `finish` key at all must fall
+ *   through to the client-side fallback below instead of silently
+ *   resolving to "nothing required" with no provenance marker). `finish`
+ *   (and, on a review claim, `requestChanges`) are passed through
  *   projectGateList as-is, with no gateExpectationsSource, since the
  *   backend's own value needs no "assumed" caveat.
  *
- *   Fallback (pre-B001 backends only, `response.effectiveGates` absent):
- *   deriveGateExpectations' existing dynamic-then-static resolution runs
- *   unchanged for `finish`. There is no fallback for `requestChanges` at
- *   all (the pre-B001 code never computed it), so it is always omitted on
- *   this path.
+ *   Fallback (pre-B001 backends, or a present-but-partial `effectiveGates`
+ *   missing its own `finish` key): deriveGateExpectations' existing
+ *   dynamic-then-static resolution runs unchanged for `finish`. There is no
+ *   fallback for `requestChanges` at all (the pre-B001 code never computed
+ *   it), so it is always omitted on this path.
  */
 function resolveGateExpectations(response: StartResponse): {
   finish?: string[] | null;
   finishSource?: "assumed-default-workflow";
   requestChanges?: string[] | null;
 } {
-  if (response.effectiveGates) {
+  if (response.effectiveGates?.finish !== undefined) {
     return {
       finish: projectGateList(response.effectiveGates.finish),
       requestChanges: projectGateList(response.effectiveGates.requestChanges),

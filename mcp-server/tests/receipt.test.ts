@@ -14,6 +14,7 @@ import {
   type Deviation,
   type StartResponse,
   type StartSlice,
+  type StartEffectiveGates,
   type PickupResponse,
 } from "../src/receipt.js";
 import { serializeResult } from "../src/server.js";
@@ -742,6 +743,23 @@ describe("receiptForStart", () => {
       }) as StartSlice;
       expect(embeddedSlice.gateExpectationsSource).toBeUndefined();
     });
+
+    // rc-v1-B001 fix round 1 (also-add): the pre-B001 code path never
+    // computed requestChanges at all (deriveGateExpectations has no
+    // fallback for it, only for `finish`), so a review claim against a
+    // pre-B001 backend must never emit requestChangesGateExpectations,
+    // guessed or otherwise.
+    it("review claim on a pre-B001 backend: requestChangesGateExpectations is never emitted (no fallback derivation exists for it)", () => {
+      const preB001ReviewResponse: StartResponse = {
+        kind: "review",
+        task: { id: "t1", status: "review", workflowId: null },
+        expectedFinishState: "review",
+        effectiveGates: undefined,
+        previousStatus: undefined,
+      };
+      const slice = receiptForStart(preB001ReviewResponse) as StartSlice;
+      expect(slice).not.toHaveProperty("requestChangesGateExpectations");
+    });
   });
 
   // ── rc-v1-B001: effectiveGates null-vs-omitted-vs-array, and the review
@@ -793,6 +811,43 @@ describe("receiptForStart", () => {
       const slice = receiptForStart(workResponse) as StartSlice;
       expect(slice).not.toHaveProperty("requestChangesGateExpectations");
     });
+
+    // rc-v1-B001 fix round 1 (MEDIUM finding): resolveGateExpectations used
+    // to key its authoritative-vs-fallback branch on the truthiness of the
+    // whole `effectiveGates` object, so a present-but-partial object
+    // (missing its own `finish` key entirely, e.g. a malformed body or a
+    // future backend variant) fell into the authoritative branch anyway and
+    // resolved to "nothing required" with no gateExpectationsSource
+    // provenance marker, silently. Keying on `effectiveGates.finish !==
+    // undefined` instead sends this exact shape through the client-side
+    // fallback, so gateExpectations is derived (and marked assumed) instead
+    // of being silently swallowed.
+    it("effectiveGates present but missing its own finish key: falls through to the client-side fallback (derived + marked assumed), not silently \"nothing required\"", () => {
+      const partialEffectiveGates: StartResponse = {
+        ...workResponse,
+        effectiveGates: {} as StartEffectiveGates,
+      };
+      const slice = receiptForStart(partialEffectiveGates) as StartSlice;
+      expect(slice.gateExpectations).toEqual(["branchPresent", "prPresent"]);
+      expect(slice.gateExpectationsSource).toBe("assumed-default-workflow");
+    });
+
+    // Wire-level pin (rc-v1-B001 fix round 1): gateExpectations: null must
+    // actually reach the caller through the real MCP serialization path
+    // (server.ts's serializeResult, JSON.stringify(x, null, 2)), not just
+    // through the in-memory object comparisons the other tests here use.
+    // Guards against a future strip-nulls optimization anywhere on that
+    // path silently turning an authoritative "edge absent" signal into an
+    // indistinguishable omission.
+    it("gateExpectations: null survives serializeResult verbatim (wire-level pin, guards against a future strip-nulls optimization)", () => {
+      const slice = receiptForStart({
+        ...workResponse,
+        effectiveGates: { finish: null },
+      }) as StartSlice;
+      const wire = serializeResult(slice);
+      expect(wire).toContain("\"gateExpectations\": null");
+      expect(JSON.parse(wire).gateExpectations).toBeNull();
+    });
   });
 
   // ── rc-v1-B001: transition (from previousStatus) ─────────────────────────
@@ -811,6 +866,19 @@ describe("receiptForStart", () => {
 
     it("omitted entirely when the backend does not send previousStatus at all (pre-B001 version tolerance, no guess)", () => {
       const slice = receiptForStart({ ...workResponse, previousStatus: undefined }) as StartSlice;
+      expect(slice).not.toHaveProperty("transition");
+    });
+
+    // rc-v1-B001 fix round 1 (also-add): the "only on an actual state
+    // change" rule applies regardless of claim kind, not just the
+    // review-claim case above. A work-claim response whose previousStatus
+    // happens to equal task.status (e.g. a no-op reclassify-only start)
+    // must not report a fabricated no-op transition either.
+    it("work claim: no transition is reported when previousStatus already equals task.status", () => {
+      const slice = receiptForStart({
+        ...workResponse,
+        previousStatus: workResponse.task.status,
+      }) as StartSlice;
       expect(slice).not.toHaveProperty("transition");
     });
   });

@@ -21,9 +21,19 @@ const REPO_README_PATH = resolve(__filename, "..", "..", "..", "README.md");
 // primer silently growing into something nobody meant to ship. Measured
 // growth so far: 3877 chars pre-rc-v1-C005 -> 4484 with the "## Errors"
 // section added -> 5390 after round 1's low_confidence catalog entry ->
-// 6166 after rc-v1-B001's task_start receipt-defaults line grew to cover
-// transition/requestChangesGateExpectations/the null-vs-omitted gate rule.
-const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 6300;
+// 5932 from intervening prose growth this ledger never captured per commit
+// (rc-v1-C006/C007 plus the three-case already_claimed and activeClaim
+// prose-mirror rounds) -> 6166 after rc-v1-B001's task_start receipt-
+// defaults line grew to cover transition/requestChangesGateExpectations/
+// the null-vs-omitted gate rule (+234 chars attributable to rc-v1-B001
+// itself, not the full 5390->6166 delta the ledger previously implied).
+// Ceiling raised from 6300 to 6400 in the rc-v1-B001 fix round:
+// 6300 left only 134 chars of headroom over the current 6166 measurement,
+// thinner than several single-round deltas already seen above (e.g. the
+// +572 chars into 5932), so it would misfire as an "unbounded growth"
+// alarm on perfectly ordinary future prose additions instead of reserving
+// the alarm for genuinely runaway growth.
+const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 6400;
 
 // docs/response-contract-v1.md's "Onboarding channels by rate of change" table:
 // HANDSHAKE_PRIMER targets ~300-500 tokens with a HARD budget of 2000 chars

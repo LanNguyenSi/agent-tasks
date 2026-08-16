@@ -1446,7 +1446,13 @@ describe("buildTools", () => {
   // narrowing either enum fails this test even if every handler-level test
   // stays green).
 
-  it("task_start returns a receipt + slice by default, not the raw full task", async () => {
+  // rc-v1-B001 fix round 1 (MEDIUM finding): this fixture has no
+  // effectiveGates/previousStatus, so it only exercises the pre-B001
+  // fallback wiring (deriveGateExpectations' static default-workflow.ts
+  // table). See the sibling test right below for the current
+  // (rc-v1-B001+) backend-authoritative wiring; naming mirrors
+  // receipt.test.ts's "pre-B001 fallback (effectiveGates absent)" describe.
+  it("task_start returns a receipt + slice by default, not the raw full task (pre-B001 fallback wiring: fixture has no effectiveGates/previousStatus)", async () => {
     fetchMock.mockResolvedValue(
       ok({
         kind: "work",
@@ -1474,6 +1480,43 @@ describe("buildTools", () => {
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain("SECRET");
     expect(serialized).not.toContain("project");
+    expect(serializeResult(result).length).toBeLessThanOrEqual(1200);
+  });
+
+  // rc-v1-B001 fix round 1 (MEDIUM finding): the test above only ever
+  // exercised the pre-B001 fallback fixture; nothing at the handler level
+  // (tool("task_start").handler(...) through the real tools.ts wiring, not
+  // receipt.ts's unit tests directly) proved the CURRENT backend's
+  // effectiveGates/previousStatus fields actually reach the caller through
+  // this call path. A distinguishing gate list (["ciGreen"], different from
+  // the default-workflow fallback's ["branchPresent", "prPresent"] for the
+  // same open -> review edge) proves the backend value is consumed, not
+  // re-derived client-side.
+  it("task_start consumes the backend's effectiveGates/previousStatus (rc-v1-B001 wiring): transition + the backend's own gate list, no gateExpectationsSource, within budget", async () => {
+    fetchMock.mockResolvedValue(
+      ok({
+        kind: "work",
+        task: {
+          id: "t1",
+          status: "in_progress",
+          templateData: { taskType: "bugfix" },
+          workflowId: null,
+        },
+        expectedFinishState: "review",
+        effectiveGates: { finish: ["ciGreen"] },
+        previousStatus: "open",
+      }),
+    );
+    const result = await tool("task_start").handler({ taskId: TASK_ID } as never);
+    expect(result).toEqual({
+      ok: true,
+      task: { id: "t1", status: "in_progress" },
+      transition: { from: "open", to: "in_progress" },
+      inferredTaskType: "bugfix",
+      expectedFinishState: "review",
+      gateExpectations: ["ciGreen"],
+    });
+    expect(result).not.toHaveProperty("gateExpectationsSource");
     expect(serializeResult(result).length).toBeLessThanOrEqual(1200);
   });
 
@@ -1558,6 +1601,10 @@ describe("buildTools", () => {
     expect(rejected.success, 'task_pickup include:["description"] should fail schema validation').toBe(false);
   });
 
+  // This composition fixture is also pre-B001 (no effectiveGates/
+  // previousStatus): its purpose is proving the pickup+start pairing covers
+  // the listed fields, not exercising rc-v1-B001 wiring, which the two
+  // dedicated task_start tests above already cover.
   it("task_pickup + task_start composition: calling only these two verbs covers description, acceptance criteria, status, expectedFinishState, and gates", async () => {
     fetchMock.mockResolvedValueOnce(
       ok({
