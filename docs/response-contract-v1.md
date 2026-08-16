@@ -359,6 +359,23 @@ first-time integrator facing narrow defaults must be corrected by the
 error itself, or the contract's minimalism becomes a discoverability
 regression.
 
+`allowedNext` MUST be a superset of the verb(s) `recipe` names as the
+corrective call, never a mismatched or narrower set: every verb `recipe`
+names MUST also appear in `allowedNext`. `allowedNext` MAY additionally
+carry discovery/read verbs `recipe` never names by name (for example,
+`already_claimed`'s `tasks_get`, offered so a caller can check the held
+claim's own status programmatically instead of only reading the recipe's
+prose) when such a verb is a genuinely useful next call for at least one
+of the entry's documented cases. The reverse is not required: `recipe`
+need not name every verb `allowedNext` lists.
+
+One named exception to the forward direction: a legacy-gated verb
+`recipe` mentions only as a conditional aside (today `projects_list`,
+offered only behind `AGENT_TASKS_MCP_LEGACY=1`) is not required to
+appear in `allowedNext`, since `allowedNext` may only ever list verbs
+the caller can call immediately, and a legacy-gated verb is not
+immediately callable in the default configuration.
+
 ### Catalog seed
 
 The block-tier catalog MUST cover at least the following known traps,
