@@ -103,4 +103,40 @@ describe("calculateConfidence — cross-package parity (backend vs frontend, tas
       expect(frontendResult).toStrictEqual(backendResult);
     });
   }
+
+  // ── Finding 5 (review round 2): measured required-signal coverage ─────────
+  // The 5 "typed-X-missing-Y" fixtures each claim (by name) to miss exactly
+  // one M2 required signal for their taskType. Nothing previously asserted
+  // that claim — two of the five were provably defused (see the corpus doc
+  // comment in confidence-fixtures.ts): wording that accidentally satisfied
+  // the very signal it claimed to miss, or accidentally satisfied a
+  // DIFFERENT signal than the one named. These values are MEASURED against
+  // the built backend scorer (npm run build --workspace=backend, then this
+  // exact fixture input through calculateConfidence), not hand-derived from
+  // reading the regexes — the repo convention this test enforces on every
+  // future edit to these fixtures.
+  describe("typed-X-missing-Y fixtures: measured required-signal coverage (finding 5)", () => {
+    const EXPECTED_MISSING_CODE: Record<string, string> = {
+      "typed-bugfix-missing-repro": "missing_reproduction_steps",
+      "typed-refactoring-missing-non-goals": "missing_out_of_scope",
+      "typed-security-missing-affected-asset": "missing_affected_asset",
+      "typed-migration-missing-deployment-impact": "missing_deployment_impact",
+      "typed-docs-missing-review-owner": "missing_review_owner",
+    };
+
+    for (const [name, expectedCode] of Object.entries(EXPECTED_MISSING_CODE)) {
+      it(`${name} fires exactly ${expectedCode} at blocking severity, nothing keystone, report not blocking`, () => {
+        const { input } = CONFIDENCE_PARITY_FIXTURES.find((f) => f.name === name)!;
+        const result = backendCalculateConfidence(input);
+        const finding = result.findings.find((f) => f.code === expectedCode);
+        expect(finding?.severity).toBe("blocking");
+        // Escalated-alias or genuinely-new required-signal findings never
+        // carry `keystone` (task 6b88ec87 review round 2, finding 3) — a
+        // typed task's missing signal alone must never threshold-independently
+        // block a claim.
+        expect(finding?.keystone).toBeUndefined();
+        expect(result.blocking).toBe(false);
+      });
+    }
+  });
 });

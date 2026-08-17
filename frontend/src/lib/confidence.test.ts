@@ -875,6 +875,38 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
         expect(result.findings.find((f) => f.code === code)).toBeUndefined();
       }
     });
+
+    // ── Finding 4 (review round 2): word-boundary fix pin ────────────────────
+    // `\bcompat...\b` never matched "incompatible" (no word boundary between
+    // "in" and "compat"); the `(in)?` group at confidence.ts's
+    // missing_compatibility entry fixes that. Positive-only: this fixture
+    // does not need every other migration signal stated, it only pins that
+    // "incompatible" alone satisfies compatibility. A revert of `(in)?compat`
+    // back to bare `compat` turns this red.
+    it("'incompatible' alone satisfies missing_compatibility (word-boundary fix pin, finding 4)", () => {
+      const result = calculateConfidence({
+        title: "ok",
+        description: "The new API response format is incompatible with clients built against the old one.",
+        templateData: { taskType: "migration" },
+        templateFields: null,
+      });
+      expect(result.findings.find((f) => f.code === "missing_compatibility")).toBeUndefined();
+    });
+
+    // ── Finding 6 (review round 2): residual vacuity fix pin ─────────────────
+    // Bare `\bcurrently\b` used to match ANY sentence containing the word,
+    // regardless of whether it described a state. "Nothing is currently
+    // broken." trivially satisfied missing_current_state before the
+    // stateful-verb tightening. A revert of that tightening turns this red.
+    it("'Nothing is currently broken.' does not satisfy missing_current_state (residual-vacuity fix pin, finding 6)", () => {
+      const result = calculateConfidence({
+        title: "ok",
+        description: "Nothing is currently broken.",
+        templateData: { taskType: "migration" },
+        templateFields: null,
+      });
+      expect(result.findings.find((f) => f.code === "missing_current_state")).toBeDefined();
+    });
   });
 
   describe("docs", () => {
@@ -905,6 +937,53 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
       for (const code of ["missing_source_of_truth", "missing_scope", "missing_format", "missing_acceptance_criteria", "missing_review_owner"]) {
         expect(result.findings.find((f) => f.code === code)).toBeUndefined();
       }
+    });
+
+    // ── Finding 6 (review round 2): residual vacuity fix pins ────────────────
+    // Bare `\breaders?\b` used to match ANY sentence mentioning "readers" at
+    // all, regardless of whether it named an audience. "The new schema is
+    // incompatible with the old readers." trivially satisfied
+    // missing_target_audience before the qualifying-clause tightening (it
+    // also incidentally contains "incompatible", separate from the fix this
+    // pins — this sentence tests target_audience only). A revert of that
+    // tightening turns this red.
+    it("'The new schema is incompatible with the old readers.' does not satisfy missing_target_audience (residual-vacuity fix pin, finding 6)", () => {
+      const result = calculateConfidence({
+        title: "ok",
+        description: "The new schema is incompatible with the old readers.",
+        templateData: { taskType: "docs" },
+        templateFields: null,
+      });
+      expect(result.findings.find((f) => f.code === "missing_target_audience")).toBeDefined();
+    });
+
+    // Bare `\bowner:\b` used to match a non-answer line like "Owner: nobody
+    // in particular." — the label was present but named no one. The negative
+    // lookahead in missing_review_owner's `owner:` alternative rejects a
+    // small set of known negations right after the colon. A revert of that
+    // tightening turns this red.
+    it("'Owner: nobody in particular.' does not satisfy missing_review_owner (residual-vacuity fix pin, finding 6)", () => {
+      const result = calculateConfidence({
+        title: "ok",
+        description: "Owner: nobody in particular.",
+        templateData: { taskType: "docs" },
+        templateFields: null,
+      });
+      expect(result.findings.find((f) => f.code === "missing_review_owner")).toBeDefined();
+    });
+
+    // Positive control for the same tightening: a genuine "Owner: <name>"
+    // line (the common real-world shorthand, no "review owner"/"reviewed by"
+    // phrasing) must still satisfy the signal — the negative lookahead only
+    // rejects the specific negation words, not every word.
+    it("'Owner: Jane from the platform team.' satisfies missing_review_owner (negative-lookahead does not overcorrect)", () => {
+      const result = calculateConfidence({
+        title: "ok",
+        description: "Owner: Jane from the platform team.",
+        templateData: { taskType: "docs" },
+        templateFields: null,
+      });
+      expect(result.findings.find((f) => f.code === "missing_review_owner")).toBeUndefined();
     });
   });
 
@@ -953,12 +1032,23 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
       expect(result.findings).toEqual(untyped.findings);
     });
 
+    // Finding 1 (review round 2): the own-property lookup fix must also be
+    // pinned against every inherited key REQUIRED_SIGNALS_BY_TYPE's plain
+    // object literal exposes via the prototype chain — these five strings
+    // are exactly what made `.filter` throw before the fix (a `typeof ===
+    // "string"` guard alone does not catch them; only own-property
+    // confirmation does). FAITHFUL MIRROR of the backend test.
     it.each([
       ["number", 1],
       ["boolean", false],
       ["object", {}],
       ["array", ["bugfix"]],
-    ])("a non-string taskType (%s) yields exactly the untyped findings set, no throw", (_label, badTaskType) => {
+      ["prototype-chain key: constructor", "constructor"],
+      ["prototype-chain key: __proto__", "__proto__"],
+      ["prototype-chain key: toString", "toString"],
+      ["prototype-chain key: hasOwnProperty", "hasOwnProperty"],
+      ["prototype-chain key: valueOf", "valueOf"],
+    ])("a non-conforming taskType (%s) yields exactly the untyped findings set, no throw", (_label, badTaskType) => {
       const untyped = calculateConfidence({
         title: "ok",
         description: UNGUARDED_DESC,
@@ -1009,6 +1099,18 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
 // natural paragraph stating every required signal, which must produce ZERO
 // required-signal findings, and (b) content-free junk filler, which MUST
 // still trip every required signal for that type.
+//
+// R2 finding 4 (softened claim, mirrored): of the 8 words/phrases R1 actually
+// dropped from these regexes, only ONE was pinned by a junk sentence going
+// in — security's bare "risk". The other 7 reverted cleanly (no test went
+// red): bugfix affected_environment's dropped "version", feature
+// ux_api_expectations' dropped "request", refactoring purpose's dropped
+// "reason for", security missing_security_goal's dropped bare "secure" and
+// missing_affected_asset's dropped "resources", and migration's dropped
+// "today" (current_state) and "release" (deployment_impact). Each junk
+// fixture below now also carries its type's specific dropped word(s) as an
+// EXTRA regression guard (mirrored from the backend test, which records
+// which reverts were mutation-verified).
 describe("calculateConfidence: required-signal regex quality (finding 3)", () => {
   const CASES: Record<
     "bugfix" | "feature" | "refactoring" | "security" | "migration" | "docs",
@@ -1029,7 +1131,12 @@ describe("calculateConfidence: required-signal regex quality (finding 3)", () =>
         templateData: { acceptanceCriteria: "- POST /signup with an empty email returns 400", taskType: "bugfix" },
       },
       junk: {
-        description: "There is a problem with the signup flow. It should be fixed soon. This is important for users.",
+        // Deliberately contains the bare word "version" — the regression
+        // guard for the dropped bare-"version" alternative on
+        // missing_affected_environment (only `\bnode\s+v?\d\b`, a version
+        // NUMBER, is accepted; a bare word "version" naming no number or
+        // platform must not satisfy it).
+        description: "There is a problem with the signup flow. It should be fixed soon, whichever version this is. This is important for users.",
         templateData: { taskType: "bugfix" },
       },
     },
@@ -1047,7 +1154,11 @@ describe("calculateConfidence: required-signal regex quality (finding 3)", () =>
         },
       },
       junk: {
-        description: "This feature would be nice to have. It should work well for everyone. There is some risk here.",
+        // Deliberately contains the bare word "request" — the regression
+        // guard for the dropped bare-"request" alternative on
+        // missing_ux_api_expectations (a bare "request" names no API/UX
+        // concept and must not satisfy it).
+        description: "This feature would be nice to have on request. It should work well for everyone. There is some risk here.",
         templateData: { taskType: "feature" },
       },
     },
@@ -1064,7 +1175,11 @@ describe("calculateConfidence: required-signal regex quality (finding 3)", () =>
         },
       },
       junk: {
-        description: "This code could be cleaner. It would be good practice to improve it. There is some risk here.",
+        // Deliberately contains the phrase "reason for" — the regression
+        // guard for the dropped bare-"reason" alternative on missing_purpose
+        // (a "reason for X" clause that never says WHY the refactor is worth
+        // doing must not satisfy it).
+        description: "This code could be cleaner. There is a reason for touching it, but it would be good practice to improve it. There is some risk here.",
         templateData: { taskType: "refactoring" },
       },
     },
@@ -1083,9 +1198,15 @@ describe("calculateConfidence: required-signal regex quality (finding 3)", () =>
         },
       },
       junk: {
-        // Deliberately contains the bare word "risk" — the regression guard
-        // for the dropped `\brisks?\b` alternative on missing_threat_or_risk.
-        description: "This change makes things safer. It is a good idea to fix this soon. There is some risk here.",
+        // Deliberately contains the bare words "risk" (regression guard for
+        // the dropped `\brisks?\b` alternative on missing_threat_or_risk),
+        // "secure" with no goal-ish object noun (regression guard for the
+        // dropped bare `\bsecur(e|ity)\b` alternative on
+        // missing_security_goal), and "resources" (regression guard for the
+        // dropped bare-"resources" alternative on missing_affected_asset —
+        // none of assets/endpoints/credentials/tokens/secrets is a
+        // substring of it).
+        description: "This change makes things secure using various resources. It is a good idea to fix this soon. There is some risk here.",
         templateData: { taskType: "security" },
       },
     },
@@ -1103,7 +1224,13 @@ describe("calculateConfidence: required-signal regex quality (finding 3)", () =>
         },
       },
       junk: {
-        description: "This migration should go smoothly. It is a good idea to do this soon. There is some risk here.",
+        // Deliberately contains the bare words "today" (regression guard for
+        // the dropped bare-"today" alternative on missing_current_state —
+        // "today" names no state, current or otherwise) and "release"
+        // (regression guard for the dropped bare-"release" alternative on
+        // missing_deployment_impact — only deploy(ment)/downtime/cutover are
+        // accepted).
+        description: "This migration should go smoothly today after the release. It is a good idea to do this soon. There is some risk here.",
         templateData: { taskType: "migration" },
       },
     },

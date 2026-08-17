@@ -312,5 +312,88 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
       expect(report.score).toBeGreaterThanOrEqual(40);
       expect(decision.kind).toBe("allow");
     });
+
+    // ── Finding 3 (review round 2): the R1 pin above never actually hit the
+    // escalation branch ────────────────────────────────────────────────────
+    // The required-signal merge in calculateConfidence (confidence.ts) has
+    // TWO branches: a NEW finding is pushed as-is (no `keystone` set), or an
+    // EXISTING universal finding is escalated in place via `existing.severity
+    // = "blocking"`. missing_current_state (used by the two tests above) has
+    // no universal MISS_FINDINGS counterpart — it is a genuinely NEW code —
+    // so those two tests only ever exercised the PUSH branch. A mutant adding
+    // `existing.keystone = true` right after `existing.severity = "blocking"`
+    // in the ESCALATION branch passed the full backend suite (1683/1683)
+    // while flipping `report.blocking` from false to true on any typed task
+    // missing an ALIASED signal (missing_goal/missing_scope/
+    // missing_out_of_scope/missing_risk) — undetected, because nothing
+    // exercised that branch with a keystone-purity assertion. This fixture
+    // closes the gap: refactoring-typed, every required signal stated EXCEPT
+    // outOfScope, so `missing_out_of_scope` (refactoring's own MISS_FINDINGS
+    // entry is severity "info") is the one that escalates in place.
+    describe("escalation-branch keystone purity (finding 3)", () => {
+      const ESCALATION_DESCRIPTION = [
+        "Purpose: simplify the internal request parser in src/services/parser.ts for readability.",
+        "The refactor is functionally equivalent; there is no behavior change for callers.",
+        "The existing test suite covers every branch, and CI must stay green.",
+      ].join(" ");
+      const ESCALATION_TEMPLATE_DATA = {
+        scope: "src/services/parser.ts",
+        risk: "Low: internal-only refactor, no public API change",
+        acceptanceCriteria: "- existing parser test suite passes unchanged",
+        taskType: "refactoring" as const,
+        // outOfScope deliberately absent — the one signal this fixture misses.
+      };
+
+      it("calculateConfidence: missing_out_of_scope escalates to blocking with keystone left undefined", () => {
+        const report = calculateConfidence({
+          title: "Simplify the internal request parser",
+          description: ESCALATION_DESCRIPTION,
+          templateData: ESCALATION_TEMPLATE_DATA,
+          templateFields: null,
+        });
+        const outOfScopeFindings = report.findings.filter((f) => f.code === "missing_out_of_scope");
+        // Precondition: exactly one escalated entry, not a duplicate push.
+        expect(outOfScopeFindings).toHaveLength(1);
+        expect(outOfScopeFindings[0]?.severity).toBe("blocking");
+        // The actual pin: escalation must never propagate `keystone`. A
+        // mutant adding `existing.keystone = true` to the merge's escalation
+        // branch turns this assertion (and the evaluator test below) red.
+        expect(outOfScopeFindings[0]?.keystone).toBeUndefined();
+        // No other refactoring required-signal code fires (isolation check).
+        for (const code of ["missing_purpose", "missing_scope", "missing_behavior_preservation", "missing_regression_strategy", "missing_risk"]) {
+          expect(report.findings.find((f) => f.code === code)).toBeUndefined();
+        }
+        expect(report.blocking).toBe(false);
+        expect(report.score).toBeGreaterThanOrEqual(40);
+      });
+
+      it("ClaimPolicyEvaluator: that SAME real report, at EnforcementMode.BLOCK with threshold <= score, is ALLOWED despite the blocking-severity escalated finding", () => {
+        const report = calculateConfidence({
+          title: "Simplify the internal request parser",
+          description: ESCALATION_DESCRIPTION,
+          templateData: ESCALATION_TEMPLATE_DATA,
+          templateFields: null,
+        });
+        // Precondition, restated so this test is self-contained.
+        expect(report.findings.some((f) => f.code === "missing_out_of_scope" && f.severity === "blocking")).toBe(true);
+        expect(report.blocking).toBe(false);
+
+        const decision = claimPolicyEvaluator.evaluate(
+          makeInput({
+            report,
+            projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 40 },
+            force: false,
+          }),
+        );
+
+        // wouldBlock = belowThreshold || report.blocking. score >= 40 and
+        // blocking is false, so this must allow. If the merge ever starts
+        // setting `keystone: true` on an escalated finding, `report.blocking`
+        // flips true and this decision flips to `block_low_readiness` — the
+        // gate-level half of the same pin.
+        expect(report.score).toBeGreaterThanOrEqual(40);
+        expect(decision.kind).toBe("allow");
+      });
+    });
   });
 });

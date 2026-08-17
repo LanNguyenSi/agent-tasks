@@ -135,12 +135,23 @@ export const SECTIONED_DESC = [
  * 6b88ec87's review round 1 (finding 4): "typed-feature-with-ac" above was
  * the only typed fixture in the original 10, covering 1 of 6 taskTypes; the
  * 5 below cover the remaining bugfix/refactoring/security/migration/docs
- * types, each deliberately missing at least one of that type's M2 required
+ * types, each deliberately missing EXACTLY ONE of that type's M2 required
  * signals (backend/src/lib/confidence.ts's REQUIRED_SIGNALS_BY_TYPE) so the
  * parity run actually exercises a required-signal finding, not just the
  * universal ones. The exact set is enforced by name (not just by count) in
- * frontend/src/lib/confidence.parity.test.ts, so adding, dropping, or
- * silently swapping a fixture is caught by name.
+ * frontend/src/lib/confidence.parity.test.ts, which also asserts the exact
+ * missing code each fixture fires (task 6b88ec87 review round 2, finding 5),
+ * so adding, dropping, silently swapping, or DEFUSING a fixture (a wording
+ * change that accidentally satisfies the very signal it claims to miss, or
+ * accidentally satisfies a DIFFERENT signal than the one named) is caught by
+ * name and by code. Two of the five originally shipped defused:
+ * "typed-security-missing-affected-asset" had "credential-stuffing" wording,
+ * which satisfied `\bcredentials?\b` and never actually exercised a missing
+ * asset; "typed-migration-missing-deployment-impact" mentioned "cutover",
+ * which satisfied the deployment regex, so it actually fired
+ * missing_rollback (never mentioned either) instead. Both are reworded above
+ * and both are measured, not guessed: the assertions in
+ * confidence.parity.test.ts run the real built backend scorer.
  * Inputs only — no "expected" values live here. The parity test computes
  * the expected result by actually running the backend scorer, not by a
  * hand-maintained snapshot, so this corpus cannot go stale the way a
@@ -288,12 +299,18 @@ export const CONFIDENCE_PARITY_FIXTURES: ConfidenceFixture[] = [
     },
   },
   {
+    // R2 finding 5: was "typed-security-missing-affected-asset" with a
+    // "credential-stuffing" phrase — "credential" satisfies `\bcredentials?\b`
+    // (the asset regex) as a substring, so this fixture was INERT: it never
+    // actually exercised a missing missing_affected_asset finding. Reworded
+    // to avoid every asset word (assets/endpoints/credentials/tokens/secrets)
+    // so the asset genuinely goes unnamed.
     name: "typed-security-missing-affected-asset",
     input: {
       title: "Harden the login rate limiter",
       description: [
-        "Security goal: harden the authentication flow against credential-stuffing.",
-        "Threat: an attacker could brute-force passwords via repeated login attempts.",
+        "Security goal: harden the authentication flow against repeated failed login abuse.",
+        "Threat: an attacker could brute-force a user's password via many rapid attempts.",
         "Review requirement: get sign-off from the security lead before merging.",
         "Rollback: revert the feature flag if false positives spike.",
       ].join(" "),
@@ -307,13 +324,21 @@ export const CONFIDENCE_PARITY_FIXTURES: ConfidenceFixture[] = [
     },
   },
   {
+    // R2 finding 5: was "typed-migration-missing-deployment-impact" with a
+    // "cutover" mention — "cutover" satisfies `\bcutover\b` (the deployment
+    // regex), so this fixture actually fired missing_rollback (rollback was
+    // never mentioned either), not missing_deployment_impact as its name
+    // claimed. Dropped "cutover" and added an explicit rollback statement so
+    // ONLY deployment impact goes unstated, matching the other four
+    // "typed-X-missing-Y" fixtures' single-signal-missing shape.
     name: "typed-migration-missing-deployment-impact",
     input: {
       title: "Migrate the users table to the new Postgres cluster",
       description: [
         "Current state: the users table lives on the legacy MySQL instance.",
         "Target state: the users table lives on the new Postgres cluster.",
-        "Compatibility: the read API stays backward compatible during the cutover.",
+        "Compatibility: the read API stays backward compatible throughout the migration.",
+        "Rollback: revert to the legacy instance if replication fails.",
         "Operational risk: on-call must monitor replication lag; blast radius is the users service only.",
       ].join(" "),
       // Deployment impact (downtime/rollout order/cutover) is deliberately NOT stated.

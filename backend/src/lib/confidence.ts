@@ -754,19 +754,25 @@ function applyScoreCaps(
 //    missing_out_of_scope         (refactoring; was missing_non_goals)
 //    missing_risk                 (refactoring; was missing_risk_areas)
 //    missing_acceptance_criteria  (feature, docs — each type's own AC-named
-//                                  entry; ALSO the "verification path in the
-//                                  description" entry on bugfix/feature/
-//                                  security/migration, since that predicate
-//                                  is `ctx.verificationSignal` =
-//                                  `!evalsKeystoneViolated`, the EXACT
-//                                  condition the universal evals-keystone
-//                                  finding fires on — the two can never
-//                                  diverge, so aliasing them, not just
-//                                  giving them a shared NEW code, is what
-//                                  actually prevents the duplicate; was
-//                                  missing_verification_step on bugfix and
-//                                  missing_verification on feature/security/
-//                                  migration)
+//                                  entry, present: ctx.acPresent)
+//
+// D-014 (orchestrator decision, task 6b88ec87 review round 2 finding 2): the
+// matrix used to ALSO carry a fifth "verification path in the description"
+// entry on bugfix/feature/security/migration, `present: (ctx) =>
+// ctx.verificationSignal`. That predicate is `!evalsKeystoneViolated`, the
+// EXACT condition the universal evals-keystone finding (missing_acceptance_
+// criteria, blocking) already fires on — the two conditions can never
+// diverge, so whenever this entry's signal was missing, the universal
+// keystone finding was ALREADY present in `findings[]` and ALREADY blocking.
+// The entry was therefore provably inert: it could only ever "escalate" a
+// finding that was already at the ceiling severity, never change any
+// observable output (score/missing/blocking/findings all identical with or
+// without it, on every input — confirmed by the full suite staying green
+// after deletion). It has been deleted from all four type tables rather than
+// kept as a harmless no-op: the type-aware matrix's "verification path"
+// requirement for bugfix/feature/security/migration is fully enforced by the
+// universal evals keystone alone (missing_acceptance_criteria at blocking),
+// so no per-type entry exists for it.
 //
 //  NEW: no universal MISS_FINDINGS counterpart exists, unified to ONE code
 //  per concept across every type table that carries it (rather than each
@@ -843,19 +849,6 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       suggestion: "Name the environment the bug occurs in (OS, browser, runtime version, platform).",
       present: kw(/\benvironments?\b|\bbrowsers?\b|\boperating\s+system\b|\bplatforms?\b|\bnode\s+v?\d/i),
     },
-    {
-      // Aliased to the universal `missing_acceptance_criteria` code (see the
-      // header comment above REQUIRED_SIGNALS_BY_TYPE): `ctx.verificationSignal`
-      // is `!evalsKeystoneViolated`, the EXACT condition the universal evals
-      // keystone finding already fires on, so a bugfix task missing this
-      // signal always already has that universal finding in `findings[]`
-      // (see calculateConfidence) — this entry only ever escalates it, never
-      // adds a byte-identical second finding.
-      code: "missing_acceptance_criteria", dimension: "testability",
-      message: "No verification step for the fix.",
-      suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
-      present: (ctx) => ctx.verificationSignal,
-    },
   ],
   feature: [
     {
@@ -887,18 +880,6 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       message: "UX/API expectations are unstated.",
       suggestion: "Describe the expected UI behavior or API/interface shape.",
       present: kw(/\bapis?\b|\bux\b|\buser\s+experience\b|\bendpoints?\b|\bresponses?\b|\binterfaces?\b/i),
-    },
-    {
-      // Aliased to `missing_acceptance_criteria` — same reasoning as the
-      // bugfix entry above; feature already carries its own dedicated AC
-      // entry a few lines up (present: ctx.acPresent), which fires under the
-      // exact same condition as this one whenever it does, so this is a
-      // harmless (idempotent) second reference to the same code, not a new
-      // finding.
-      code: "missing_acceptance_criteria", dimension: "testability",
-      message: "No verification path in the description.",
-      suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
-      present: (ctx) => ctx.verificationSignal,
     },
   ],
   refactoring: [
@@ -979,14 +960,6 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       present: kw(/\breview\s+requir|\bsecurity\s+review\b|\bsign[- ]?off\b|\bapprovals?\b|\breviewed\s+by\b/i),
     },
     {
-      // Aliased to `missing_acceptance_criteria` — same reasoning as the
-      // bugfix/feature entries above.
-      code: "missing_acceptance_criteria", dimension: "testability",
-      message: "No verification path in the description.",
-      suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
-      present: (ctx) => ctx.verificationSignal,
-    },
-    {
       // Unified with migration's `missing_rollback` (same concept, one code
       // per concept across type tables).
       code: "missing_rollback", dimension: "completeness",
@@ -997,10 +970,17 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
   ],
   migration: [
     {
+      // R2 finding 6 (residual vacuity): bare `\bcurrently\b` matched any
+      // sentence containing the word regardless of what it said — "Nothing
+      // is currently broken." trivially satisfied "current state is
+      // described" without describing any state at all. Require "currently"
+      // to be immediately followed by a stateful verb, so only a genuine
+      // state description ("currently lives on MySQL", "currently uses a
+      // manual process") counts.
       code: "missing_current_state", dimension: "contextQuality",
       message: "Current state is not described.",
       suggestion: "Describe the current state before the migration.",
-      present: kw(/\bcurrent\s+state\b|\bcurrently\b|\bexisting\s+(state|schema|setup|behavior)\b/i),
+      present: kw(/\bcurrent\s+state\b|\bcurrently\s+(lives|runs|uses|stores|is|are|sits|resides)\b|\bexisting\s+(state|schema|setup|behavior)\b/i),
     },
     {
       code: "missing_target_state", dimension: "contextQuality",
@@ -1031,14 +1011,6 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       present: kw(/\bdeploy(ment)?\b|\bdowntime\b|\bcutover\b/i),
     },
     {
-      // Aliased to `missing_acceptance_criteria` — same reasoning as the
-      // bugfix/feature/security entries above.
-      code: "missing_acceptance_criteria", dimension: "testability",
-      message: "No verification path in the description.",
-      suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
-      present: (ctx) => ctx.verificationSignal,
-    },
-    {
       code: "missing_operational_risk", dimension: "ambiguityRisk",
       message: "Operational risk is unstated.",
       suggestion: "Note the operational risk or blast radius (low / medium / high, and why).",
@@ -1047,10 +1019,18 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
   ],
   docs: [
     {
+      // R2 finding 6 (residual vacuity): bare `\breaders?\b` matched any
+      // sentence mentioning the word "readers" at all — "The new schema is
+      // incompatible with the old readers." trivially satisfied "target
+      // audience is named" without naming any audience. Require "readers"
+      // to be qualified by a clause that actually characterizes them (who
+      // they are / what they need), which is how genuine audience
+      // descriptions read in prose ("readers should...", "readers who are
+      // new to..."); a bare noun mention no longer counts.
       code: "missing_target_audience", dimension: "contextQuality",
       message: "Target audience is not named.",
       suggestion: "Name who this doc is for.",
-      present: kw(/\btarget\s+audience\b|\baudiences?\b|\breaders?\b/i),
+      present: kw(/\btarget\s+audience\b|\baudiences?\b|\breaders?\s+(who|that|will|should|need|are|come|get|can)\b/i),
     },
     {
       code: "missing_source_of_truth", dimension: "contextQuality",
@@ -1077,10 +1057,16 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       present: (ctx) => ctx.acPresent,
     },
     {
+      // R2 finding 6 (residual vacuity): bare `\bowner:\b` matched a
+      // non-answer line like "Owner: nobody in particular." — the label was
+      // present but named no one. Keep the bare-label shortcut (real docs
+      // often just write "Owner: <name>") but reject it when the word right
+      // after the colon is a known negation/non-answer; any other word
+      // still counts as naming someone.
       code: "missing_review_owner", dimension: "completeness",
       message: "Review owner is unstated.",
       suggestion: "Name who reviews and approves this doc.",
-      present: kw(/\breview\s+owner\b|\breviewed\s+by\b|\bapprovers?\b|\bowner:/i),
+      present: kw(/\breview\s+owner\b|\breviewed\s+by\b|\bapprovers?\b|\bowner:\s*(?!nobody\b|none\b|n\/a\b|tbd\b|unknown\b|nothing\b)\S/i),
     },
   ],
 };
@@ -1115,20 +1101,38 @@ export const REQUIRED_SIGNAL_ONLY_CODES: ReadonlySet<string> = new Set(
 // `as TemplateData | null` cast at every read path (confidence-gate.ts,
 // routes/tasks.ts x5, scripts/shadow-report.ts) — it is validated by
 // `templateDataSchema` only on WRITE. A stored value of any shape (an
-// out-of-enum string, a number, an object, ...) reaches here unchanged, so
-// this function must not trust the type and must not index
-// `REQUIRED_SIGNALS_BY_TYPE` before confirming `taskType` is actually one of
-// its own string keys. `typeof` is checked BEFORE the lookup (never index
-// first and catch after) and the lookup itself still falls back with `?? []`
-// for a syntactically-string-but-unknown value (e.g. "chore"), so any
-// non-conforming value degrades to the same `[]` a genuinely unset taskType
-// produces — no throw, no behavior change for the untyped case.
+// out-of-enum string, a number, an object, a prototype-chain property name
+// like "constructor" or "__proto__", ...) reaches here unchanged, so this
+// function must not trust the type and must not index
+// `REQUIRED_SIGNALS_BY_TYPE` before confirming `taskType` is actually an OWN
+// property of it.
+//
+// A plain `typeof taskType === "string"` guard followed by `?? []` is NOT
+// sufficient on its own (task 6b88ec87 review round 2, finding 1):
+// REQUIRED_SIGNALS_BY_TYPE is a plain object literal, so an INHERITED key —
+// "constructor", "__proto__", "toString", "hasOwnProperty", "valueOf", ... —
+// is also a string, passes `typeof`, and resolves through bracket access to
+// a truthy, non-array value (a function inherited from Object.prototype).
+// `?? []` only guards nullish, not "wrong type", so `.filter` on that value
+// threw for any of those five taskType strings. `Object.prototype.
+// hasOwnProperty.call` confirms `taskType` is actually one of the six
+// declared keys before indexing — but hasOwnProperty.call alone is ALSO not
+// enough: its property-key argument is coerced via ToPropertyKey/ToString,
+// so a non-string like the array `["bugfix"]` stringifies to `"bugfix"` and
+// would incorrectly resolve to a real own key. `typeof taskType === "string"`
+// runs FIRST specifically to block that coercion path, so only a genuine
+// string ever reaches hasOwnProperty. With both guards: every other string
+// (in-enum or not), every prototype-chain name, and every non-string value
+// at all degrade to the same `[]` an unset taskType produces — no throw, no
+// behavior change for the untyped case.
 function buildRequiredSignalFindings(
   taskType: TaskType | undefined,
   ctx: RequiredSignalContext,
 ): QualityFinding[] {
-  if (typeof taskType !== "string") return [];
-  const signals = REQUIRED_SIGNALS_BY_TYPE[taskType as TaskType] ?? [];
+  const signals =
+    typeof taskType === "string" && Object.prototype.hasOwnProperty.call(REQUIRED_SIGNALS_BY_TYPE, taskType)
+      ? REQUIRED_SIGNALS_BY_TYPE[taskType as TaskType]
+      : [];
   return signals
     .filter((signal) => !signal.present(ctx))
     .map((signal) => ({
