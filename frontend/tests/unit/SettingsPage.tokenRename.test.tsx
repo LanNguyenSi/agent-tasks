@@ -12,10 +12,15 @@
  * page's scroll-spy effect) are stubbed so the page can mount at all.
  *
  * Covers:
- *   - Rename is disabled (with an admin-only title) for a non-admin
- *     `selectedTeam.role`, and enabled for ADMIN.
+ *   - Rename AND Revoke are disabled (with admin-only titles) for a
+ *     non-admin `selectedTeam.role`; Rename is enabled for ADMIN.
  *   - A successful save replaces the row's displayed name and closes the
- *     modal.
+ *     modal (title names the token being renamed).
+ *   - A failed save keeps the modal open with exactly ONE error display
+ *     (the in-modal banner; the page-level banner excludes this case), and
+ *     the stale error is cleared when the modal is reopened.
+ *   - Switching teams dismisses an open rename modal (a stale target id
+ *     must not be actioned against the newly selected team's tokens).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, within } from "@testing-library/react";
@@ -59,6 +64,11 @@ const mockGetTeams = vi.mocked(getTeams);
 const mockGetAgentTokens = vi.mocked(getAgentTokens);
 const mockRenameAgentToken = vi.mocked(renameAgentToken);
 const mockGetAvailableScopes = vi.mocked(getAvailableScopes);
+
+// jsdom does not implement scrollIntoView; the custom Select's
+// scroll-active-option-into-view effect calls it when its listbox opens
+// (the team-switch test below opens that popover).
+Element.prototype.scrollIntoView = vi.fn();
 
 // jsdom does not implement IntersectionObserver; the page's scroll-spy
 // effect (side-nav active-section tracking) instantiates one on mount.
@@ -148,6 +158,12 @@ describe("SettingsPage — agent token rename", () => {
     const renameBtn = screen.getByRole("button", { name: "Rename" });
     expect(renameBtn).toBeDisabled();
     expect(renameBtn).toHaveAttribute("title", "Only team admins can rename agent tokens");
+
+    // The sibling Revoke button carries the same admin gating (added in the
+    // same change; mutation probe: removing its `disabled` turns this red).
+    const revokeBtn = screen.getByRole("button", { name: "Revoke" });
+    expect(revokeBtn).toBeDisabled();
+    expect(revokeBtn).toHaveAttribute("title", "Only team admins can revoke agent tokens");
   });
 
   it("enables Rename with no title when selectedTeam.role is ADMIN", async () => {
@@ -207,5 +223,35 @@ describe("SettingsPage — agent token rename", () => {
     // Exactly one error banner rendered (the in-modal one) — the page-level
     // banner excludes the renameTarget case to avoid a double display.
     expect(screen.getAllByText("Only team admins can rename agent tokens")).toHaveLength(1);
+
+    // Stale-error clearing: cancel, reopen — the old failure must not
+    // greet the fresh modal (mutation probe: removing the setError(null)
+    // on the Rename button's onClick turns this red).
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByText("Only team admins can rename agent tokens")).not.toBeInTheDocument();
+  });
+
+  it("switching teams dismisses an open rename modal", async () => {
+    const user = userEvent.setup();
+    const teamA = makeTeam("ADMIN");
+    const teamB = makeTeam("ADMIN", { id: "team-2", name: "Second", slug: "second" });
+    mockGetTeams.mockResolvedValue([teamA, teamB]);
+    mockGetAgentTokens.mockResolvedValue([makeToken({ name: "ci-bot" })]);
+    render(<SettingsPage />);
+    await screen.findByRole("heading", { name: "API Tokens" });
+
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    // A stale rename target must not survive into the newly selected
+    // team's token list (mutation probe: removing the setRenameTarget(null)
+    // in the team-select onChange turns this red). The team Select is the
+    // custom combobox component: open it, then click the option.
+    await user.click(screen.getByRole("combobox", { name: "Team" }));
+    await user.click(await screen.findByRole("option", { name: "Second" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 });
