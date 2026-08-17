@@ -1,7 +1,9 @@
 // @ts-check
 // (tsconfig's include only covers *.ts/*.tsx and checkJs is off, so without
 // this pragma the @type annotation below would be inert and a type error
-// here would only surface at next build.)
+// here would only surface at next build. This file only enters the tsc
+// program at all via tests/unit/csp.test.ts importing it -- deleting those
+// tests would silently disable this checking too.)
 import { resolveApiOrigin } from "./api-origin.mjs";
 
 // The Content-Security-Policy header is set in src/middleware.ts, not here.

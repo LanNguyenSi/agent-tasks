@@ -1,4 +1,4 @@
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { buildCsp, getThemeInitScriptHash, resolveApiOrigin, sha256Base64 } from "@/lib/csp";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
@@ -172,8 +172,23 @@ describe("resolveApiOrigin re-export and config sharing (anti-drift)", () => {
   // any mutant that stops following NEXT_PUBLIC_API_URL fails to produce it.
   const DRIFT_PROBE_ORIGIN = "https://api.drift-probe.example";
 
-  afterEach(() => {
+  // Every test in this block starts from a self-established clean slate: the
+  // fallback test's precondition (env unset) must not depend on test order or
+  // on the ambient shell env -- an ambient NEXT_PUBLIC_API_URL would degrade
+  // the fallback assertion to a tautology and let a drifted inline
+  // re-implementation in middleware.ts survive. The ambient value is saved
+  // and restored (same idiom as the resolveApiOrigin describe above) so the
+  // rest of the worker process keeps seeing it.
+  let ambientApiUrl: string | undefined;
+  beforeEach(() => {
+    ambientApiUrl = process.env.NEXT_PUBLIC_API_URL;
     delete process.env.NEXT_PUBLIC_API_URL;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (ambientApiUrl === undefined) delete process.env.NEXT_PUBLIC_API_URL;
+    else process.env.NEXT_PUBLIC_API_URL = ambientApiUrl;
     vi.resetModules();
   });
 

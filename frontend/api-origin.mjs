@@ -15,9 +15,12 @@
  * `src/lib/csp.ts` re-exports this function so every existing importer
  * (middleware.ts, tests/unit/csp.test.ts) keeps working unchanged. Config
  * and middleware resolve their origin through this one module today; the
- * anti-drift assertions in tests/unit/csp.test.ts are what KEEP that true
- * (a one-line inline re-implementation in either file would otherwise
- * compile and pass unnoticed).
+ * anti-drift assertions in tests/unit/csp.test.ts are what KEEP that true.
+ * Precisely: for next.config.mjs any inline re-implementation is caught
+ * (the validation-rejection test), while the middleware half is guarded by
+ * VALUE agreement -- a drifted inline copy turns a test red, but a
+ * behavior-identical inline copy in middleware.ts would pass until it
+ * drifts.
  *
  * This value gets concatenated directly into the CSP header string (see
  * `buildCsp`'s connect-src in src/lib/csp.ts), so it's validated
