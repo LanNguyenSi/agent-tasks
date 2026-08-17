@@ -55,7 +55,8 @@
 # Falsifiability (mutation probe, phase 2): breaking the healthcheck in
 # docker-compose.prod.yml (e.g. changing the probed port from 3000 to
 # 3001) MUST turn this script red. Verified 2026-08-17 (local Docker
-# 29.7.1/Compose 5.5.0, macOS): with the probed port changed 3000 -> 3001,
+# client 29.7.1 / engine 29.5.2 / Compose 5.5.0, macOS): with the probed
+# port changed 3000 -> 3001,
 # the compose-managed container reported State.Health.Status=unhealthy
 # after FailingStreak reached 3 at ~21s (matches the healthcheck's own
 # "connection-refused unhealthy ~21s" comment below), and this script
@@ -114,8 +115,15 @@ COMPOSE_IMAGE="${COMPOSE_PROJECT}-frontend:latest"
 # file + override still fails with "network traefik declared as external,
 # but could not be found" when the network is absent, and still succeeds
 # without it needing to be created when NO service in the file references
-# it at all. So this script still owns creating/removing it -- guarded
-# below against a concurrent smoke run racing the same create/remove.
+# it at all. So this script still owns creating/removing it. The create
+# side is race-tolerant (create || re-inspect below); the REMOVE side is
+# deliberately only guarded against foreign attachments (a real stack), NOT
+# against a concurrent smoke run: a second local run attaches nothing to
+# this network (the override detaches its frontend), so the creator's
+# cleanup can rm the network between that run's existence check and its
+# `compose up`, which then fails LOUDLY with "network traefik declared as
+# external, but could not be found". Accepted: local-concurrency only (CI
+# is one job per ephemeral runner), and a loud red, never a silent pass.
 TRAEFIK_NETWORK="traefik"
 CREATED_TRAEFIK_NETWORK=0
 COMPOSE_CID=""
@@ -154,13 +162,12 @@ cleanup() {
   compose_cmd down -v --remove-orphans >/dev/null 2>&1 || true
   docker rmi -f "${COMPOSE_IMAGE}" >/dev/null 2>&1 || true
   if [ "${CREATED_TRAEFIK_NETWORK}" = "1" ]; then
-    # Guard against a concurrent smoke run racing the same create: with the
-    # compose override in place, this script's own frontend container is
-    # never a member of this network (the override detaches it), so any
-    # attached endpoint here belongs to something else -- a concurrent
-    # smoke run's create/inspect race, or (should this ever run on a host
-    # that starts running the real stack mid-test) the real deployment.
-    # Only remove the network when it is provably unused right now.
+    # This endpoint guard detects FOREIGN attachments only (a real stack
+    # that started using the network mid-test): with the compose override
+    # in place, neither this run's frontend nor a concurrent smoke run's
+    # ever attaches to this network, so a concurrent run is invisible here
+    # (see the comment at TRAEFIK_NETWORK above for the accepted remove-side
+    # race). Only remove the network when it is provably unused right now.
     net_endpoints=$(docker network inspect -f '{{len .Containers}}' "${TRAEFIK_NETWORK}" 2>/dev/null) || net_endpoints=""
     if [ "${net_endpoints}" = "0" ]; then
       docker network rm "${TRAEFIK_NETWORK}" >/dev/null 2>&1 || true
@@ -297,17 +304,39 @@ echo "compose up wall time: $((compose_up_end - compose_up_start))s (--no-build:
 
 COMPOSE_CID=$(compose_cmd ps -q frontend) || COMPOSE_CID=""
 if [ -z "${COMPOSE_CID}" ]; then
+  # `compose up -d` exits 0 even when the container starts and immediately
+  # dies, and `ps -q` only lists running containers -- so an empty id here
+  # usually MEANS the crash-loop class this script exists for. Name it.
+  exited_cid=$(compose_cmd ps -a -q frontend 2>/dev/null) || exited_cid=""
+  if [ -n "${exited_cid}" ]; then
+    exit_code=$(docker inspect -f '{{.State.ExitCode}}' "${exited_cid}" 2>/dev/null) || exit_code="?"
+    health_fail "compose-managed frontend container started and exited (State.ExitCode=${exit_code})"
+  fi
   health_fail "could not resolve the compose-managed frontend container id (compose ps -q frontend returned empty)"
 fi
 
-# Assert a healthcheck is actually configured before polling for it. Without
-# this, a docker-compose.prod.yml edit that drops services.frontend.healthcheck
-# leaves State.Health permanently absent, and the poll below would just run
-# out the full ${HEALTH_TIMEOUT_SECS}s clock with an opaque "unknown" status
-# instead of failing immediately with a precise reason.
-has_healthcheck=$(docker inspect -f '{{if .Config.Healthcheck}}yes{{end}}' "${COMPOSE_CID}" 2>/dev/null) || has_healthcheck=""
+# Assert the smoke override actually detached us from the shared proxy. The
+# primary lock is `networks: !override` in tools/compose.smoke-override.yml,
+# but an unrecognized YAML tag on an old Compose (< 2.24.4) is ACCEPTED
+# SILENTLY and merges instead of replacing (measured on 5.5.0 with an
+# unknown tag: rc=0, no warning) -- so verify the safety property on the
+# live container instead of trusting the override by construction.
+on_traefik=$(docker inspect -f '{{range $name, $v := .NetworkSettings.Networks}}{{$name}} {{end}}' "${COMPOSE_CID}" 2>/dev/null | grep -c "\b${TRAEFIK_NETWORK}\b") || on_traefik=0
+traefik_enable=$(docker inspect -f '{{index .Config.Labels "traefik.enable"}}' "${COMPOSE_CID}" 2>/dev/null) || traefik_enable=""
+if [ "${on_traefik}" != "0" ] || [ "${traefik_enable}" != "false" ]; then
+  health_fail "smoke override did not apply: container on '${TRAEFIK_NETWORK}' network=${on_traefik}, traefik.enable='${traefik_enable}' (expected detached + 'false'; is this Compose older than 2.24.4, silently ignoring the !override tag in tools/compose.smoke-override.yml?)"
+fi
+
+# Assert a healthcheck is actually configured AND enabled before polling for
+# it. Without this, a docker-compose.prod.yml edit that drops
+# services.frontend.healthcheck (Config.Healthcheck empty) or disables it
+# (`disable: true` renders Test=["NONE"]) leaves State.Health permanently
+# absent, and the poll below would just run out the full
+# ${HEALTH_TIMEOUT_SECS}s clock with an opaque "unknown" status instead of
+# failing immediately with a precise reason.
+has_healthcheck=$(docker inspect -f '{{if .Config.Healthcheck}}{{if ne (index .Config.Healthcheck.Test 0) "NONE"}}yes{{end}}{{end}}' "${COMPOSE_CID}" 2>/dev/null) || has_healthcheck=""
 if [ -z "${has_healthcheck}" ]; then
-  health_fail "compose-managed frontend container has no healthcheck configured (docker inspect .Config.Healthcheck is empty) -- docker-compose.prod.yml's services.frontend.healthcheck block is missing or was not applied"
+  health_fail "compose-managed frontend container has no enabled healthcheck (docker inspect .Config.Healthcheck is empty or Test is NONE) -- docker-compose.prod.yml's services.frontend.healthcheck block is missing, disabled, or was not applied"
 fi
 
 echo "--- health-assert: poll docker inspect State.Health.Status (timeout ${HEALTH_TIMEOUT_SECS}s) ---"
