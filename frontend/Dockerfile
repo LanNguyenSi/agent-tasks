@@ -33,6 +33,9 @@ RUN npm ci --omit=dev --workspace=frontend --ignore-scripts
 COPY --from=build /app/frontend/.next frontend/.next
 COPY --from=build /app/frontend/package.json frontend/package.json
 COPY --from=build /app/frontend/next.config.ts frontend/next.config.ts
+# next start re-evaluates next.config.ts, which imports src/lib/csp (which in
+# turn imports src/lib/theme), so the source tree must ship in the runtime image.
+COPY --from=build /app/frontend/src frontend/src
 
 EXPOSE 3000
 CMD ["npm", "run", "start", "--workspace=frontend"]
