@@ -1,5 +1,10 @@
 import type { Context } from "hono";
-import { calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
+import {
+  calculateConfidence,
+  resolveEffectiveThreshold,
+  type TemplateData,
+  type TemplateFields,
+} from "../lib/confidence.js";
 import { resolveEnforcementMode, EnforcementMode } from "../lib/enforcement-mode.js";
 import { lowConfidence } from "../middleware/error.js";
 import { logAuditEvent } from "./audit.js";
@@ -21,6 +26,10 @@ type GateTask = {
     confidenceThreshold: number;
     taskTemplate: unknown;
     enforcementMode?: EnforcementMode | string | null;
+    // M2 (task b8629b99): per-task-type threshold override, unvalidated Json
+    // read (see resolveEffectiveThreshold's own-property-safe guard).
+    // Optional so existing callers that select a narrower slice keep compiling.
+    taskTypeThresholds?: unknown;
   };
 };
 
@@ -73,7 +82,6 @@ export async function evaluateConfidenceGate(
   // OFF: fully advisory — skip the gate entirely (no compute, no audit).
   if (mode === EnforcementMode.OFF) return { ok: true };
 
-  const threshold = task.project.confidenceThreshold;
   const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
   const report = calculateConfidence({
     title: task.title,
@@ -82,6 +90,17 @@ export async function evaluateConfidenceGate(
     templateFields: tpl?.fields ?? null,
   });
 
+  // M2 (task b8629b99): layered threshold hierarchy — a per-task-type
+  // override (keyed on the EXPLICIT taskType the scorer already echoes as
+  // `report.inferredTaskType`) beats the flat project threshold, which beats
+  // the global default. The evaluator below is unaware of the layering; it
+  // only ever sees the single already-resolved number.
+  const { effectiveThreshold, thresholdSource } = resolveEffectiveThreshold(
+    report.inferredTaskType,
+    task.project.taskTypeThresholds,
+    task.project.confidenceThreshold,
+  );
+
   // force is meaningful only in BLOCK; the evaluator ignores it under WARN.
   const force = c.req.query("force") === "true";
   const forceReason = c.req.query("forceReason")?.trim() ?? "";
@@ -89,7 +108,7 @@ export async function evaluateConfidenceGate(
   const decision = claimPolicyEvaluator.evaluate({
     task: { id: task.id, projectId: task.projectId },
     report,
-    projectPolicy: { mode, threshold },
+    projectPolicy: { mode, threshold: effectiveThreshold },
     actor,
     force,
     forceReason,
@@ -104,7 +123,16 @@ export async function evaluateConfidenceGate(
       void logAuditEvent(decision.audit);
       return {
         ok: false,
-        response: lowConfidence(c, { ...report, threshold, nextActions: decision.nextActions }),
+        response: lowConfidence(c, {
+          ...report,
+          threshold: effectiveThreshold,
+          // M2 (task b8629b99): `threshold` is kept (== effectiveThreshold) for
+          // BC with existing consumers; these two additive fields let a caller
+          // tell which layer of the hierarchy actually produced the number.
+          effectiveThreshold,
+          thresholdSource,
+          nextActions: decision.nextActions,
+        }),
       };
     case "force_forbidden":
       return {

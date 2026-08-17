@@ -43,9 +43,15 @@ import {
 // `task_force_transitioned`) are intentionally NOT listed — they are
 // emitted against terminal tasks by design and must still reach recipients.
 const STALE_WHEN_DONE: SignalType[] = ["review_needed", "task_available", "task_assigned"];
-import { templateDataSchema, calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
+import {
+  templateDataSchema,
+  calculateConfidence,
+  resolveEffectiveThreshold,
+  type TemplateData,
+  type TemplateFields,
+  type TaskType,
+} from "../lib/confidence.js";
 import { resolveEnforcementMode } from "../lib/enforcement-mode.js";
-import { DEFAULT_CONFIDENCE_THRESHOLD } from "../lib/task-creation-readiness.js";
 import { evaluateConfidenceGate, deriveNextActions } from "../services/confidence-gate.js";
 import {
   DEFAULT_TRANSITIONS,
@@ -970,12 +976,17 @@ taskRouter.post(
     // defaults (threshold 60, no template; calculateConfidence is template-
     // independent) rather than 500 a successful creation.
     let projectConf:
-      | { confidenceThreshold: number; taskTemplate: unknown; enforcementMode: string | null }
+      | {
+          confidenceThreshold: number;
+          taskTemplate: unknown;
+          enforcementMode: string | null;
+          taskTypeThresholds: unknown;
+        }
       | null = null;
     try {
       projectConf = await prisma.project.findUnique({
         where: { id: projectId },
-        select: { confidenceThreshold: true, taskTemplate: true, enforcementMode: true },
+        select: { confidenceThreshold: true, taskTemplate: true, enforcementMode: true, taskTypeThresholds: true },
       });
     } catch {
       projectConf = null;
@@ -987,9 +998,21 @@ taskRouter.post(
       templateData: task.templateData as TemplateData | null,
       templateFields: tpl?.fields ?? null,
     });
+    // M2 (task b8629b99): layered threshold hierarchy, keyed on the EXPLICIT
+    // taskType the scorer echoes as `conf.inferredTaskType`. A failed project
+    // lookup above degrades `projectConf` to null, so both taskTypeThresholds
+    // and confidenceThreshold read as undefined here — resolveEffectiveThreshold
+    // falls all the way through to the global default (60), same as before.
+    const { effectiveThreshold, thresholdSource } = resolveEffectiveThreshold(
+      conf.inferredTaskType,
+      projectConf?.taskTypeThresholds,
+      projectConf?.confidenceThreshold,
+    );
     const confidence = {
       score: conf.score,
-      threshold: projectConf?.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
+      threshold: effectiveThreshold,
+      effectiveThreshold,
+      thresholdSource,
       // The effective mode tells the caller whether a `blocking` score will
       // actually be rejected at task_pickup/task_start (BLOCK) or is advisory
       // (OFF/WARN). Create stays informational regardless.
@@ -1743,6 +1766,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
           enforcementMode: true,
           soloMode: true,
           requireDistinctReviewer: true,
+          taskTypeThresholds: true,
         },
       },
       ...taskInclude,
@@ -2033,6 +2057,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
               enforcementMode: true,
               soloMode: true,
               requireDistinctReviewer: true,
+              taskTypeThresholds: true,
             },
           },
           ...taskInclude,
@@ -3981,7 +4006,9 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     where: { id: c.req.param("id") },
     include: {
       workflow: true,
-      project: { select: { confidenceThreshold: true, taskTemplate: true, githubRepo: true } },
+      project: {
+        select: { confidenceThreshold: true, taskTemplate: true, githubRepo: true, taskTypeThresholds: true },
+      },
       ...taskInclude,
     },
   });
@@ -4011,6 +4038,13 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     templateData: task.templateData as TemplateData | null,
     templateFields: tpl?.fields ?? null,
   });
+  // M2 (task b8629b99): layered threshold hierarchy, keyed on the EXPLICIT
+  // taskType (== inferredTaskType above).
+  const { effectiveThreshold, thresholdSource } = resolveEffectiveThreshold(
+    inferredTaskType,
+    task.project.taskTypeThresholds,
+    task.project.confidenceThreshold,
+  );
 
   // Determine actor permissions
   const scopes = actor.type === "agent" ? actor.scopes : null;
@@ -4072,7 +4106,9 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     confidence: {
       score,
       missing,
-      threshold: task.project.confidenceThreshold,
+      threshold: effectiveThreshold,
+      effectiveThreshold,
+      thresholdSource,
       blocking,
       subscores,
       findings,
@@ -4633,6 +4669,7 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
           taskTemplate: true,
           enforcementMode: true,
           allowNonCreatorRespec: true,
+          taskTypeThresholds: true,
         },
       },
     },
@@ -4680,9 +4717,21 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
   const fromDescription = task.description;
   const fromTemplateData = task.templateData;
   const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
-  const projectConfidenceContext = {
-    threshold: task.project.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
-    enforcementMode: resolveEnforcementMode(task.project),
+  // M2 (task b8629b99): a respec can change templateData.taskType itself, so
+  // the effective threshold is resolved PER confidence snapshot (before/after)
+  // rather than once — a function, not a flat object like the pre-M2 version.
+  const confidenceContext = (taskType: TaskType | undefined) => {
+    const { effectiveThreshold, thresholdSource } = resolveEffectiveThreshold(
+      taskType,
+      task.project.taskTypeThresholds,
+      task.project.confidenceThreshold,
+    );
+    return {
+      threshold: effectiveThreshold,
+      effectiveThreshold,
+      thresholdSource,
+      enforcementMode: resolveEnforcementMode(task.project),
+    };
   };
 
   // D9: decide against the pre-write read whether this call would ACTUALLY
@@ -4714,7 +4763,7 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
       task: unchanged,
       confidence: {
         score: conf.score,
-        ...projectConfidenceContext,
+        ...confidenceContext(conf.inferredTaskType),
         blocking: conf.blocking,
         missing: conf.missing,
         findings: conf.findings,
@@ -4773,7 +4822,7 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
   });
   const confidence = {
     score: afterConf.score,
-    ...projectConfidenceContext,
+    ...confidenceContext(afterConf.inferredTaskType),
     blocking: afterConf.blocking,
     missing: afterConf.missing,
     findings: afterConf.findings,
@@ -5622,6 +5671,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
           confidenceThreshold: true,
           taskTemplate: true,
           enforcementMode: true,
+          taskTypeThresholds: true,
         },
       },
     },

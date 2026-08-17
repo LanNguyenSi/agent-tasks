@@ -119,7 +119,9 @@ export const openApiSpec = {
             example: ["scope", "agentPrompt"],
             description: "Core fields that are empty or missing (title, description, goal, acceptanceCriteria, scope, outOfScope, dependencies, risk, agentPrompt)",
           },
-          threshold: { type: "integer", minimum: 0, maximum: 100, example: 60, description: "Project-configured minimum score for agent claims" },
+          threshold: { type: "integer", minimum: 0, maximum: 100, example: 60, description: "The EFFECTIVE minimum score for agent claims (M2): taskTypeThresholds[taskType] -> project.confidenceThreshold -> global default (60). Identical to effectiveThreshold below; kept for backward compatibility." },
+          effectiveThreshold: { type: "integer", minimum: 0, maximum: 100, example: 60, description: "M2: same value as `threshold`, named explicitly for callers that want to pair it with thresholdSource." },
+          thresholdSource: { type: "string", enum: ["global", "project", "taskType"], example: "project", description: "M2: which layer of the threshold hierarchy produced `threshold`/`effectiveThreshold`." },
           blocking: { type: "boolean", example: false, description: "True when a hard, threshold-INDEPENDENT keystone is violated (today: no acceptance criteria and no verification signal in the description). The score is already capped below the default threshold in this case." },
           nextActions: {
             type: "array",
@@ -143,7 +145,7 @@ export const openApiSpec = {
             },
           },
         },
-        required: ["score", "missing", "threshold", "blocking"],
+        required: ["score", "missing", "threshold", "blocking", "effectiveThreshold", "thresholdSource"],
       },
       LowConfidenceError: {
         type: "object",
@@ -196,6 +198,21 @@ export const openApiSpec = {
             description: "Template configuration with field toggles and reusable presets",
           },
           confidenceThreshold: { type: "integer", minimum: 0, maximum: 100, default: 60, description: "Minimum confidence score for agent claims" },
+          taskTypeThresholds: {
+            type: "object",
+            nullable: true,
+            description:
+              "Optional per-task-type override of confidenceThreshold (M2). Resolution order: taskTypeThresholds[EXPLICIT templateData.taskType] -> confidenceThreshold -> global default (60). Any subset of the six taskType keys; PATCH rejects unknown keys.",
+            properties: {
+              bugfix: { type: "integer", minimum: 0, maximum: 100 },
+              feature: { type: "integer", minimum: 0, maximum: 100 },
+              refactoring: { type: "integer", minimum: 0, maximum: 100 },
+              security: { type: "integer", minimum: 0, maximum: 100 },
+              migration: { type: "integer", minimum: 0, maximum: 100 },
+              docs: { type: "integer", minimum: 0, maximum: 100 },
+            },
+            additionalProperties: false,
+          },
           enforcementMode: {
             type: "string",
             enum: ["OFF", "WARN", "BLOCK"],

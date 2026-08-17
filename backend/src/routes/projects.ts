@@ -7,7 +7,7 @@ import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import { ensureDefaultBoardForProject } from "../services/board-default.js";
-import { taskTemplateSchema } from "../lib/confidence.js";
+import { taskTemplateSchema, taskTypeThresholdsSchema } from "../lib/confidence.js";
 import {
   hasProjectAccess,
   isProjectAdmin,
@@ -48,6 +48,10 @@ const createProjectSchema = z.object({
 const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, slug: true }).extend({
   taskTemplate: taskTemplateSchema.nullable().optional(),
   confidenceThreshold: z.number().int().min(0).max(100).optional(),
+  // M2 (task b8629b99): optional per-task-type override of confidenceThreshold.
+  // Unknown taskType keys are rejected (see taskTypeThresholdsSchema); null
+  // clears any existing overrides, mirroring taskTemplate's nullable().optional().
+  taskTypeThresholds: taskTypeThresholdsSchema,
   // scorer-v2 (T5): per-project confidence-gate enforcement level.
   enforcementMode: z.enum(["OFF", "WARN", "BLOCK"]).optional(),
   // Required to flip a project TO `BLOCK` (the gate enforces it; this is not a
@@ -388,10 +392,20 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
   }
 
   // `acknowledgeShadowReport` is a control flag, not a column — keep it out of the write.
-  const { taskTemplate, notificationWebhookUrl, notificationWebhookSecret, acknowledgeShadowReport: _ack, ...rest } = body;
+  const {
+    taskTemplate,
+    taskTypeThresholds,
+    notificationWebhookUrl,
+    notificationWebhookSecret,
+    acknowledgeShadowReport: _ack,
+    ...rest
+  } = body;
   const data: Prisma.ProjectUpdateInput = { ...rest };
   if (taskTemplate !== undefined) {
     data.taskTemplate = taskTemplate === null ? Prisma.JsonNull : taskTemplate;
+  }
+  if (taskTypeThresholds !== undefined) {
+    data.taskTypeThresholds = taskTypeThresholds === null ? Prisma.JsonNull : taskTypeThresholds;
   }
   // Empty string is the UI's way to clear an optional field — normalize to
   // null so Prisma writes `NULL` and reads stop returning the old value.
@@ -447,6 +461,19 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
     governanceChange.confidenceThreshold = {
       from: project.confidenceThreshold,
       to: body.confidenceThreshold,
+    };
+  }
+  // M2 (task b8629b99): taskTypeThresholds gates the same claim decision as
+  // confidenceThreshold above, so it is audited the same way. JSON.stringify
+  // comparison mirrors the respec templateData diff check elsewhere in this
+  // codebase (no deep-equal utility exists here).
+  if (
+    taskTypeThresholds !== undefined &&
+    JSON.stringify(taskTypeThresholds) !== JSON.stringify(project.taskTypeThresholds)
+  ) {
+    governanceChange.taskTypeThresholds = {
+      from: project.taskTypeThresholds,
+      to: taskTypeThresholds,
     };
   }
   if (body.enforcementMode !== undefined && body.enforcementMode !== project.enforcementMode) {

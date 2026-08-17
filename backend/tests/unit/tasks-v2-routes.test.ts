@@ -4335,6 +4335,40 @@ const THRESHOLD_ONLY_BLOCK_TASK = {
   project: { ...baseTask.project, confidenceThreshold: 60, enforcementMode: "BLOCK" },
 };
 
+// M2 (task b8629b99): per-task-type confidence thresholds. Scores 88 (measured
+// against the built scorer, `node` invocation against dist/lib/confidence.js) —
+// well above the project's flat confidenceThreshold (60, would PASS) but below
+// the project's security taskTypeThresholds override (90, BLOCKS). No keystone
+// violation (AC + verification signal both present), so a block here is
+// provably threshold-only, isolating the M2 layering from the keystone.
+const SECURITY_TYPED_TASK = {
+  ...baseTask,
+  status: "open",
+  title: "Rate-limit the login endpoint",
+  description: [
+    "Add rate limiting to the login endpoint in src/routes/auth.ts to mitigate credential-stuffing attempts.",
+    "- Limit to 10 attempts per IP per 60 seconds.",
+    "- Verify with a curl loop against /api/login that the 11th request in a minute returns 429.",
+  ].join("\n"),
+  templateData: {
+    goal: "Reduce credential-stuffing risk on the login endpoint",
+    acceptanceCriteria: "- The 11th login attempt within 60s from one IP returns 429\n- A unit test asserts the 429 response",
+    scope: "src/routes/auth.ts login handler and its rate-limit middleware only",
+    outOfScope: "session middleware and password hashing are unchanged",
+    dependencies: "none",
+    risk: "low: additive middleware only, no schema change",
+    constraints: "No new dependency; keep the existing session cookie format",
+    agentPrompt: "1. Add a rate-limit middleware keyed on IP. 2. Wire it into the login route. 3. Add a test.",
+    taskType: "security",
+  },
+  project: {
+    ...baseTask.project,
+    confidenceThreshold: 60,
+    enforcementMode: "BLOCK",
+    taskTypeThresholds: { security: 90 },
+  },
+};
+
 describe("confidence gate: POST /tasks/:id/start", () => {
   beforeEach(() => {
     vi.spyOn(console, "info").mockImplementation(() => {});
@@ -4620,6 +4654,80 @@ describe("confidence gate: POST /tasks/:id/start", () => {
       expect.objectContaining({ action: "task.claim_override_used" }),
     );
   });
+
+  // ── M2: per-task-type confidence thresholds (task b8629b99) ──────────────
+  describe("M2 per-task-type thresholds", () => {
+    it("a project taskTypeThresholds.security=90 blocks an 88-score security-typed task that would PASS the project default (60)", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce(SECURITY_TYPED_TASK);
+      prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+      prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+      const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as {
+        error: string;
+        details: {
+          score: number;
+          threshold: number;
+          effectiveThreshold: number;
+          thresholdSource: string;
+          blocking: boolean;
+        };
+      };
+      expect(body.error).toBe("low_confidence");
+      // Score clears the project default (60) but not the taskType override (90).
+      expect(body.details.score).toBeGreaterThanOrEqual(60);
+      expect(body.details.score).toBeLessThan(90);
+      expect(body.details.blocking).toBe(false); // threshold-only block, no keystone
+      expect(body.details.threshold).toBe(90);
+      expect(body.details.effectiveThreshold).toBe(90);
+      expect(body.details.thresholdSource).toBe("taskType");
+      expect(logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "task.claim_blocked_low_readiness",
+          payload: expect.objectContaining({ threshold: 90 }),
+        }),
+      );
+    });
+
+    // Mutation guard: proves the block above is caused by the taskType layer,
+    // not by the task's own content — the SAME task passes once the project's
+    // per-type override is removed (falls back to the 60 default it clears).
+    it("the SAME security-typed task PASSES once the project has no taskTypeThresholds override", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce({
+        ...SECURITY_TYPED_TASK,
+        project: { ...SECURITY_TYPED_TASK.project, taskTypeThresholds: undefined },
+      });
+      prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+      prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+      prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+      const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+      expect(res.status).toBe(200);
+      expect(logAuditEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "task.claim_blocked_low_readiness" }),
+      );
+    });
+
+    // BC (task b8629b99 acceptance): a project that has never set
+    // taskTypeThresholds resolves and reports EXACTLY as it did before this
+    // feature existed — `threshold`/`effectiveThreshold` both equal the flat
+    // confidenceThreshold and `thresholdSource` is "project".
+    it("BC: a project without taskTypeThresholds reports thresholdSource 'project' and effectiveThreshold == confidenceThreshold", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce(LOW_SCORE_TASK); // no taskTypeThresholds key at all
+      prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+      prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+      const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as {
+        details: { threshold: number; effectiveThreshold: number; thresholdSource: string };
+      };
+      expect(body.details.threshold).toBe(60);
+      expect(body.details.effectiveThreshold).toBe(60);
+      expect(body.details.thresholdSource).toBe("project");
+    });
+  });
 });
 
 describe("confidence gate: POST /tasks/:id/claim", () => {
@@ -4704,6 +4812,23 @@ describe("confidence gate: POST /tasks/:id/claim", () => {
       expect.objectContaining({ action: "task.claim_override_used" }),
     );
   });
+
+  // M2 (task b8629b99): same layered-threshold case as /start, exercised on
+  // the legacy /claim path too (the two routes must stay in lockstep).
+  it("a project taskTypeThresholds.security=90 blocks the same security-typed task on /claim too", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(SECURITY_TYPED_TASK);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+    const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as {
+      details: { threshold: number; effectiveThreshold: number; thresholdSource: string; blocking: boolean };
+    };
+    expect(body.details.threshold).toBe(90);
+    expect(body.details.effectiveThreshold).toBe(90);
+    expect(body.details.thresholdSource).toBe("taskType");
+    expect(body.details.blocking).toBe(false);
+  });
 });
 
 describe("GET /tasks/:id/instructions: confidence shape", () => {
@@ -4771,6 +4896,39 @@ describe("GET /tasks/:id/instructions: confidence shape", () => {
     for (const f of body.confidence.findings) {
       expect(["info", "warning", "blocking"]).toContain(f.severity);
     }
+  });
+
+  // M2 (task b8629b99): the instructions confidence shape surfaces which
+  // layer produced `threshold`.
+  it("response.confidence carries effectiveThreshold + thresholdSource, resolved by the EXPLICIT taskType", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(SECURITY_TYPED_TASK);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/instructions");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      confidence: { threshold: number; effectiveThreshold: number; thresholdSource: string };
+    };
+    expect(body.confidence.threshold).toBe(90);
+    expect(body.confidence.effectiveThreshold).toBe(90);
+    expect(body.confidence.thresholdSource).toBe("taskType");
+  });
+
+  // BC pin: a project without taskTypeThresholds reports the SAME shape it
+  // did before this feature — thresholdSource "project", both threshold
+  // fields equal to the flat confidenceThreshold.
+  it("BC: response.confidence reports thresholdSource 'project' when the project has no taskTypeThresholds", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(LOW_SCORE_TASK);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/instructions");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      confidence: { threshold: number; effectiveThreshold: number; thresholdSource: string };
+    };
+    expect(body.confidence.threshold).toBe(60);
+    expect(body.confidence.effectiveThreshold).toBe(60);
+    expect(body.confidence.thresholdSource).toBe("project");
   });
 });
 
@@ -4894,6 +5052,31 @@ describe("POST /tasks/:id/respec", () => {
         }),
       }),
     );
+  });
+
+  // M2 (task b8629b99): a respec that sets templateData.taskType changes
+  // which threshold layer applies to the RE-SCORED (after) confidence, not
+  // the pre-respec (before) one — the resolution is per-snapshot, not a
+  // single value shared across both.
+  it("respec that sets templateData.taskType re-resolves the threshold via the new type on the AFTER confidence", async () => {
+    const task = {
+      ...RESPEC_TASK,
+      project: { ...RESPEC_TASK.project, confidenceThreshold: 60, taskTypeThresholds: { security: 90 } },
+    };
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(task)
+      .mockResolvedValueOnce({ ...task, templateData: { goal: "ship the thing", taskType: "security" } });
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, {
+      templateData: { goal: "ship the thing", taskType: "security" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      confidence: { threshold: number; effectiveThreshold: number; thresholdSource: string };
+    };
+    expect(body.confidence.threshold).toBe(90);
+    expect(body.confidence.effectiveThreshold).toBe(90);
+    expect(body.confidence.thresholdSource).toBe("taskType");
   });
 
   it("rejects a body with neither description nor templateData (400) and never reads the task", async () => {
@@ -5318,6 +5501,46 @@ describe("POST /projects/:projectId/tasks — workflowId project validation", ()
     expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
     const createArg = prismaMocks.taskCreate.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(createArg.data.workflowId).toBeUndefined();
+  });
+
+  // M2 (task b8629b99): create-time confidence surfacing (informational only,
+  // never blocks creation) resolves the SAME layered hierarchy as the claim
+  // gate, keyed on the just-created task's EXPLICIT templateData.taskType.
+  describe("M2 create-time threshold surfacing", () => {
+    it("confidence.threshold reflects the project's taskTypeThresholds override for the created task's taskType", async () => {
+      prismaMocks.projectFindUnique.mockResolvedValueOnce({
+        confidenceThreshold: 60,
+        taskTemplate: null,
+        enforcementMode: null,
+        taskTypeThresholds: { security: 90 },
+      });
+
+      const res = await postCreate({
+        title: "Harden the login endpoint",
+        templateData: { taskType: "security" },
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        confidence: { threshold: number; effectiveThreshold: number; thresholdSource: string };
+      };
+      expect(body.confidence.threshold).toBe(90);
+      expect(body.confidence.effectiveThreshold).toBe(90);
+      expect(body.confidence.thresholdSource).toBe("taskType");
+    });
+
+    // BC pin: the describe-level default project mock has no
+    // taskTypeThresholds key — every other test in this suite already
+    // exercises that path implicitly; this test asserts the shape directly.
+    it("BC: confidence.threshold falls to the project layer for an untyped task on a project without taskTypeThresholds", async () => {
+      const res = await postCreate({ title: "Untyped task, default project mock" });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        confidence: { threshold: number; effectiveThreshold: number; thresholdSource: string };
+      };
+      expect(body.confidence.threshold).toBe(60);
+      expect(body.confidence.effectiveThreshold).toBe(60);
+      expect(body.confidence.thresholdSource).toBe("project");
+    });
   });
 });
 

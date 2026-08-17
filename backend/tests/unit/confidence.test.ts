@@ -28,7 +28,12 @@ import {
   EVALS_KEYSTONE_CAP,
   TEMPLATE_DATA_FIELD_MAX_CHARS,
   REQUIRED_SIGNAL_ONLY_CODES,
+  resolveEffectiveThreshold,
+  taskTypeThresholdsSchema,
+  GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD,
+  SUGGESTED_TASK_TYPE_THRESHOLDS,
   type TaskQualitySubscores,
+  type TaskType,
 } from "../../src/lib/confidence.js";
 import {
   RICH_TEMPLATE_DATA_NO_DESC,
@@ -699,6 +704,155 @@ describe("calculateConfidence — inferredTaskType (M2 bridge)", () => {
       "missing_rollback",
     ]);
     expect(withType.findings.every((f) => f.severity === "blocking")).toBe(true);
+  });
+});
+
+// ── Milestone 2: per-task-type confidence thresholds (task b8629b99) ───────
+describe("resolveEffectiveThreshold — layered threshold hierarchy (M2)", () => {
+  it("SUGGESTED_TASK_TYPE_THRESHOLDS matches the spec's documented defaults exactly (doc-only; never auto-applied)", () => {
+    expect(SUGGESTED_TASK_TYPE_THRESHOLDS).toEqual({
+      bugfix: 75,
+      feature: 80,
+      refactoring: 80,
+      security: 90,
+      migration: 85,
+      docs: 60,
+    });
+  });
+
+  it("taskType layer wins when present: security=90 overrides a lower project threshold", () => {
+    const result = resolveEffectiveThreshold("security", { security: 90 }, 60);
+    expect(result).toEqual({ effectiveThreshold: 90, thresholdSource: "taskType" });
+  });
+
+  // Mutation guard: flipping the precedence (project beats taskType) would
+  // make this assert 60/"project" instead — pins the ORDER, not just that a
+  // number comes out.
+  it("taskType layer wins even when its value is LOWER than the project threshold (precedence is order, not magnitude)", () => {
+    const result = resolveEffectiveThreshold("docs", { docs: 40 }, 80);
+    expect(result).toEqual({ effectiveThreshold: 40, thresholdSource: "taskType" });
+  });
+
+  it("falls to the project layer when taskType is undefined (no explicit type to look up)", () => {
+    const result = resolveEffectiveThreshold(undefined, { security: 90 }, 60);
+    expect(result).toEqual({ effectiveThreshold: 60, thresholdSource: "project" });
+  });
+
+  it("falls to the project layer when taskType is set but has no matching entry in taskTypeThresholds", () => {
+    const result = resolveEffectiveThreshold("bugfix", { security: 90 }, 60);
+    expect(result).toEqual({ effectiveThreshold: 60, thresholdSource: "project" });
+  });
+
+  it("falls to the project layer when taskTypeThresholds is null/undefined/empty", () => {
+    expect(resolveEffectiveThreshold("security", null, 60)).toEqual({ effectiveThreshold: 60, thresholdSource: "project" });
+    expect(resolveEffectiveThreshold("security", undefined, 60)).toEqual({ effectiveThreshold: 60, thresholdSource: "project" });
+    expect(resolveEffectiveThreshold("security", {}, 60)).toEqual({ effectiveThreshold: 60, thresholdSource: "project" });
+  });
+
+  // BC pin (task b8629b99 acceptance): a project that has never touched
+  // taskTypeThresholds behaves EXACTLY as it did before this feature existed —
+  // confidenceThreshold alone decides the outcome, regardless of taskType.
+  it("BC: a project without taskTypeThresholds resolves to its flat confidenceThreshold, taskType set or not", () => {
+    expect(resolveEffectiveThreshold("security", undefined, 60)).toEqual({ effectiveThreshold: 60, thresholdSource: "project" });
+    expect(resolveEffectiveThreshold(undefined, undefined, 60)).toEqual({ effectiveThreshold: 60, thresholdSource: "project" });
+  });
+
+  it("falls all the way to GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD (60) when the project threshold is also absent", () => {
+    expect(resolveEffectiveThreshold(undefined, undefined, undefined)).toEqual({
+      effectiveThreshold: GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD,
+      thresholdSource: "global",
+    });
+    expect(resolveEffectiveThreshold(undefined, undefined, null)).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "global",
+    });
+  });
+
+  it("a taskType match with an invalid stored value (non-number/NaN/out-of-range) degrades to the project layer, not a throw", () => {
+    expect(resolveEffectiveThreshold("security", { security: "90" as unknown as number }, 60)).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
+    expect(resolveEffectiveThreshold("security", { security: Number.NaN }, 60)).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
+    expect(resolveEffectiveThreshold("security", { security: 150 }, 60)).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
+    expect(resolveEffectiveThreshold("security", { security: -1 }, 60)).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
+    expect(resolveEffectiveThreshold("security", { security: Infinity }, 60)).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
+  });
+
+  // Own-property-safety (same guard family as buildRequiredSignalFindings /
+  // REQUIRED_SIGNALS_BY_TYPE, task 6b88ec87 review round 2 finding 1):
+  // taskTypeThresholds is an unvalidated Json read, so a prototype-chain key
+  // must never resolve through bracket access.
+  it.each([
+    ["constructor", "constructor"],
+    ["__proto__", "__proto__"],
+    ["toString", "toString"],
+    ["hasOwnProperty", "hasOwnProperty"],
+    ["valueOf", "valueOf"],
+  ])("a prototype-chain taskType (%s) never resolves, no throw, falls to project layer", (_label, badTaskType) => {
+    expect(() =>
+      resolveEffectiveThreshold(badTaskType as unknown as TaskType, { security: 90 }, 60),
+    ).not.toThrow();
+    expect(resolveEffectiveThreshold(badTaskType as unknown as TaskType, { security: 90 }, 60)).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
+  });
+
+  it("a non-string taskType (array/number/object) never resolves, no throw, falls to project layer", () => {
+    for (const bad of [["security"], 1, {}, false]) {
+      expect(() => resolveEffectiveThreshold(bad as unknown as TaskType, { security: 90 }, 60)).not.toThrow();
+      expect(resolveEffectiveThreshold(bad as unknown as TaskType, { security: 90 }, 60)).toEqual({
+        effectiveThreshold: 60,
+        thresholdSource: "project",
+      });
+    }
+  });
+
+  it("a non-object taskTypeThresholds (string/number/array) never resolves, no throw, falls to project layer", () => {
+    for (const bad of ["not-an-object", 42, ["security", 90]]) {
+      expect(() => resolveEffectiveThreshold("security", bad, 60)).not.toThrow();
+      expect(resolveEffectiveThreshold("security", bad, 60)).toEqual({ effectiveThreshold: 60, thresholdSource: "project" });
+    }
+  });
+});
+
+describe("taskTypeThresholdsSchema — PATCH /projects/:id validation (M2)", () => {
+  it("accepts a partial map of valid taskType keys with in-range integers", () => {
+    const result = taskTypeThresholdsSchema.safeParse({ security: 90, docs: 60 });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({ security: 90, docs: 60 });
+  });
+
+  it("accepts an empty object (no overrides yet)", () => {
+    expect(taskTypeThresholdsSchema.safeParse({}).success).toBe(true);
+  });
+
+  it("accepts undefined (field omitted) and null (explicit clear)", () => {
+    expect(taskTypeThresholdsSchema.safeParse(undefined).success).toBe(true);
+    expect(taskTypeThresholdsSchema.safeParse(null).success).toBe(true);
+  });
+
+  it("rejects an unknown taskType key rather than silently dropping it", () => {
+    const result = taskTypeThresholdsSchema.safeParse({ security: 90, chore: 50 });
+    expect(result.success).toBe(false);
+  });
+
+  it.each([-1, 101, 1.5])("rejects an out-of-range or non-integer value (%s)", (bad) => {
+    const result = taskTypeThresholdsSchema.safeParse({ security: bad });
+    expect(result.success).toBe(false);
   });
 });
 

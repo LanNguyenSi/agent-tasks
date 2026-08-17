@@ -14,15 +14,18 @@
  * the confidence gate at task_pickup/task_start (see services/confidence-gate.ts),
  * governed by `enforcementMode`. Create itself stays informational by design.
  */
-import type { TemplateFields } from "./confidence.js";
+import { GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD, type TemplateFields } from "./confidence.js";
 import {
   resolveEnforcementMode,
   type EnforcementMode,
   type EnforcementModeLike,
 } from "./enforcement-mode.js";
 
-/** Rollout default when a project has never set `confidenceThreshold`. */
-export const DEFAULT_CONFIDENCE_THRESHOLD = 60;
+/** Rollout default when a project has never set `confidenceThreshold`. Same
+ *  value as `GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD` (lib/confidence.ts, M2 task
+ *  b8629b99's threshold hierarchy) — re-exported under this name so existing
+ *  importers are unaffected, rather than a second hard-coded `60`. */
+export const DEFAULT_CONFIDENCE_THRESHOLD = GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD;
 
 export interface TaskCreationReadiness {
   /** Effective enforcement mode (OFF | WARN | BLOCK); WARN when unset. */

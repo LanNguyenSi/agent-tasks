@@ -1125,14 +1125,23 @@ export const REQUIRED_SIGNAL_ONLY_CODES: ReadonlySet<string> = new Set(
 // (in-enum or not), every prototype-chain name, and every non-string value
 // at all degrade to the same `[]` an unset taskType produces — no throw, no
 // behavior change for the untyped case.
+//
+// Shared as `isOwnStringKey` (M2 task b8629b99) so the identical two-guard
+// pattern is not re-derived at the second call site this milestone adds —
+// `resolveEffectiveThreshold`'s `taskTypeThresholds[taskType]` lookup below,
+// which reads the same unvalidated, EXPLICIT `templateData.taskType` off the
+// same untyped Json column and needs the exact same protection.
+function isOwnStringKey(obj: object, key: unknown): key is string {
+  return typeof key === "string" && Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 function buildRequiredSignalFindings(
   taskType: TaskType | undefined,
   ctx: RequiredSignalContext,
 ): QualityFinding[] {
-  const signals =
-    typeof taskType === "string" && Object.prototype.hasOwnProperty.call(REQUIRED_SIGNALS_BY_TYPE, taskType)
-      ? REQUIRED_SIGNALS_BY_TYPE[taskType as TaskType]
-      : [];
+  const signals = isOwnStringKey(REQUIRED_SIGNALS_BY_TYPE, taskType)
+    ? REQUIRED_SIGNALS_BY_TYPE[taskType as TaskType]
+    : [];
   return signals
     .filter((signal) => !signal.present(ctx))
     .map((signal) => ({
@@ -1142,6 +1151,99 @@ function buildRequiredSignalFindings(
       message: signal.message,
       suggestion: signal.suggestion,
     }));
+}
+
+// ── Milestone 2: per-task-type confidence thresholds (task b8629b99) ───────
+// Replaces the single project-level `confidenceThreshold` with a layered
+// hierarchy: Global default -> Project threshold -> Task-type threshold. Risk
+// modifiers and actor rules (the spec's remaining layers) are M3, out of
+// scope here. Required-signal findings (REQUIRED_SIGNALS_BY_TYPE above,
+// task 6b88ec87) stay observability-only and do NOT feed this resolution —
+// they never set `blocking` and are not consulted below; only the deliberate
+// evals keystone (`ConfidenceResult.blocking`) is threshold-independent.
+
+/** Global fallback when a project has never set `confidenceThreshold` either.
+ *  Same rollout default as `DEFAULT_CONFIDENCE_THRESHOLD`
+ *  (lib/task-creation-readiness.ts), which re-exports this constant rather
+ *  than hard-coding a second copy of the number. */
+export const GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD = 60;
+
+// SUGGESTED per-type thresholds (spec, task b8629b99) — documentation only.
+// NEVER applied automatically to any project, new or existing: a project only
+// gets per-type thresholds by explicitly setting `taskTypeThresholds` via
+// PATCH /projects/:id. Surfaced here so an operator populating that field by
+// hand (or a future settings-UI affordance) has a single source for the
+// suggested starting values instead of re-deriving them from the spec.
+export const SUGGESTED_TASK_TYPE_THRESHOLDS: Readonly<Record<TaskType, number>> = {
+  bugfix: 75,
+  feature: 80,
+  refactoring: 80,
+  security: 90,
+  migration: 85,
+  docs: 60,
+};
+
+// Validates a PATCH /projects/:id `taskTypeThresholds` write. Unknown taskType
+// keys are REJECTED (not silently dropped): `z.record(taskTypeSchema, ...)`
+// fails the whole parse on any key outside the six-value enum, so a typo in a
+// PATCH body surfaces as a 400 immediately rather than becoming a permanent,
+// silent no-op. Any subset of the six keys is valid (including `{}`); every
+// value must be an integer 0-100, same bounds as `confidenceThreshold`.
+export const taskTypeThresholdsSchema = z
+  .record(taskTypeSchema, z.number().int().min(0).max(100))
+  .nullable()
+  .optional();
+
+export type TaskTypeThresholds = Partial<Record<TaskType, number>>;
+
+export type ThresholdSource = "global" | "project" | "taskType";
+
+export interface EffectiveThreshold {
+  effectiveThreshold: number;
+  thresholdSource: ThresholdSource;
+}
+
+/**
+ * Resolves the layered confidence-threshold hierarchy:
+ *   Project.taskTypeThresholds[taskType] -> Project.confidenceThreshold ->
+ *   GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD (60).
+ *
+ * `taskType` must be the EXPLICIT `templateData.taskType` — the same
+ * `ConfidenceResult.inferredTaskType` value the M2 required-signals matrix
+ * keys on (never a heuristically-guessed type). Passing `undefined` (task has
+ * no explicit taskType) always skips straight to the project layer, by
+ * design — there is no type to look up.
+ *
+ * `taskTypeThresholds` reaches every caller the same way `templateData` does:
+ * an unvalidated `unknown` read off a Prisma `Json?` column (write-time
+ * validated by `taskTypeThresholdsSchema`, never re-validated on read). This
+ * function therefore applies the exact own-property-safe guard
+ * `buildRequiredSignalFindings` established above (`isOwnStringKey`) before
+ * indexing: a prototype-chain key ("constructor", "__proto__", "toString",
+ * ...) or a non-string `taskType` can never resolve to a real entry. The
+ * matched value is ALSO re-validated as a finite number in [0, 100] — a
+ * corrupted or hand-edited stored value degrades to the next layer instead of
+ * gating on `NaN`, `Infinity`, or an out-of-range number.
+ */
+export function resolveEffectiveThreshold(
+  taskType: TaskType | undefined,
+  taskTypeThresholds: unknown,
+  projectThreshold: number | null | undefined,
+): EffectiveThreshold {
+  if (
+    taskTypeThresholds !== null &&
+    typeof taskTypeThresholds === "object" &&
+    isOwnStringKey(taskTypeThresholds, taskType)
+  ) {
+    const raw = (taskTypeThresholds as Record<string, unknown>)[taskType];
+    if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0 && raw <= 100) {
+      return { effectiveThreshold: raw, thresholdSource: "taskType" };
+    }
+  }
+  if (typeof projectThreshold === "number" && Number.isFinite(projectThreshold)) {
+    return { effectiveThreshold: projectThreshold, thresholdSource: "project" };
+  }
+  return { effectiveThreshold: GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD, thresholdSource: "global" };
 }
 
 export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
