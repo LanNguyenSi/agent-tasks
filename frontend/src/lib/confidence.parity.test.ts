@@ -56,7 +56,7 @@ describe("calculateConfidence — cross-package parity (backend vs frontend, tas
   });
   afterEach(() => infoSpy.mockRestore());
 
-  it("the corpus covers exactly the 10 known parity fixtures, by name (not just by count)", () => {
+  it("the corpus covers exactly the 15 known parity fixtures, by name (not just by count)", () => {
     // toEqual on the exact sorted name set (not >= N) so renaming, dropping,
     // or silently swapping a fixture for an easier one fails HERE naming the
     // miss, instead of a loose count-only guard staying green.
@@ -70,7 +70,12 @@ describe("calculateConfidence — cross-package parity (backend vs frontend, tas
       "sectioned-desc",
       "template-fields-completeness",
       "title-only-no-desc",
+      "typed-bugfix-missing-repro",
+      "typed-docs-missing-review-owner",
       "typed-feature-with-ac",
+      "typed-migration-missing-deployment-impact",
+      "typed-refactoring-missing-non-goals",
+      "typed-security-missing-affected-asset",
       "vague-no-anchors",
     ]);
   });

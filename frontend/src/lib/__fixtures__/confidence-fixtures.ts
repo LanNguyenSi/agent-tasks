@@ -128,12 +128,19 @@ export const SECTIONED_DESC = [
 ].join("\n");
 
 /**
- * Parity corpus: exactly the 10 fixtures named below, made up of the 9
- * shapes ported from the frontend suite's original FIXTURES array (9, after the
- * rich-templatedata-no-desc MEDIUM fix folded a 9th in) plus the fully
- * sectioned SECTIONED_DESC case. The exact set is enforced by name (not just
- * by count) in frontend/src/lib/confidence.parity.test.ts, so adding,
- * dropping, or silently swapping a fixture is caught by name.
+ * Parity corpus: exactly the 15 fixtures named below —  the original 10 (9
+ * shapes ported from the frontend suite's original FIXTURES array, after the
+ * rich-templatedata-no-desc MEDIUM fix folded a 9th in, plus the fully
+ * sectioned SECTIONED_DESC case) plus 5 typed fixtures added for task
+ * 6b88ec87's review round 1 (finding 4): "typed-feature-with-ac" above was
+ * the only typed fixture in the original 10, covering 1 of 6 taskTypes; the
+ * 5 below cover the remaining bugfix/refactoring/security/migration/docs
+ * types, each deliberately missing at least one of that type's M2 required
+ * signals (backend/src/lib/confidence.ts's REQUIRED_SIGNALS_BY_TYPE) so the
+ * parity run actually exercises a required-signal finding, not just the
+ * universal ones. The exact set is enforced by name (not just by count) in
+ * frontend/src/lib/confidence.parity.test.ts, so adding, dropping, or
+ * silently swapping a fixture is caught by name.
  * Inputs only — no "expected" values live here. The parity test computes
  * the expected result by actually running the backend scorer, not by a
  * hand-maintained snapshot, so this corpus cannot go stale the way a
@@ -238,6 +245,100 @@ export const CONFIDENCE_PARITY_FIXTURES: ConfidenceFixture[] = [
       title: "Return 400 on empty signup body",
       description: SECTIONED_DESC,
       templateData: null,
+      templateFields: null,
+    },
+  },
+  // ── Typed fixtures added for task 6b88ec87 review round 1 (finding 4) ────
+  // One per remaining taskType, each missing at least one of that type's M2
+  // required signals (see the corpus doc comment above).
+  {
+    name: "typed-bugfix-missing-repro",
+    input: {
+      title: "Fix crash on empty signup body",
+      description: [
+        "Actual behavior: POST /api/signup with an empty body throws a 500.",
+        "Expected behavior: it should return 400 instead.",
+        "Error message: TypeError: Cannot read property 'email' of undefined.",
+        "Affected environment: Node 20 on macOS Sonoma.",
+      ].join(" "),
+      // Reproduction steps are deliberately NOT stated anywhere.
+      templateData: {
+        acceptanceCriteria: "- POST /api/signup with {} returns 400",
+        taskType: "bugfix",
+      },
+      templateFields: null,
+    },
+  },
+  {
+    name: "typed-refactoring-missing-non-goals",
+    input: {
+      title: "Simplify the internal request parser",
+      description: [
+        "Purpose: the parser has grown three near-duplicate branches; simplify for readability.",
+        "Behavior preservation: this is functionally equivalent, no behavior change for callers.",
+        "Regression strategy: the existing parser test suite covers every branch and must stay green.",
+      ].join(" "),
+      // Non-goals (out-of-scope) are deliberately NOT stated anywhere.
+      templateData: {
+        scope: "src/services/parser.ts only",
+        risk: "Low: internal-only refactor, no public API change",
+        taskType: "refactoring",
+      },
+      templateFields: null,
+    },
+  },
+  {
+    name: "typed-security-missing-affected-asset",
+    input: {
+      title: "Harden the login rate limiter",
+      description: [
+        "Security goal: harden the authentication flow against credential-stuffing.",
+        "Threat: an attacker could brute-force passwords via repeated login attempts.",
+        "Review requirement: get sign-off from the security lead before merging.",
+        "Rollback: revert the feature flag if false positives spike.",
+      ].join(" "),
+      // The affected asset (endpoint/credential/token/secret) is deliberately NOT named.
+      templateData: {
+        constraints: "No new endpoints; only modify the existing login middleware",
+        acceptanceCriteria: "- Login blocks after 5 failed attempts within 60 seconds",
+        taskType: "security",
+      },
+      templateFields: null,
+    },
+  },
+  {
+    name: "typed-migration-missing-deployment-impact",
+    input: {
+      title: "Migrate the users table to the new Postgres cluster",
+      description: [
+        "Current state: the users table lives on the legacy MySQL instance.",
+        "Target state: the users table lives on the new Postgres cluster.",
+        "Compatibility: the read API stays backward compatible during the cutover.",
+        "Operational risk: on-call must monitor replication lag; blast radius is the users service only.",
+      ].join(" "),
+      // Deployment impact (downtime/rollout order/cutover) is deliberately NOT stated.
+      templateData: {
+        acceptanceCriteria: "- users table reads/writes succeed against the new backend with no data loss",
+        taskType: "migration",
+      },
+      templateFields: null,
+    },
+  },
+  {
+    name: "typed-docs-missing-review-owner",
+    input: {
+      title: "Document the confidence-scorer required-signal matrix",
+      description: [
+        "Target audience: backend engineers extending the M2 required-signal matrix.",
+        "Source of truth: this doc reflects the canonical matrix in backend/src/lib/confidence.ts.",
+        "Format: written in Markdown as a new docs/ section.",
+      ].join(" "),
+      // The review owner is deliberately NOT named.
+      templateData: {
+        scope: "docs/confidence-scorer.md only",
+        acceptanceCriteria: "- doc reviewed and merged with no broken links",
+        taskType: "docs",
+      },
       templateFields: null,
     },
   },

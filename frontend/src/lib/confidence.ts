@@ -583,14 +583,61 @@ function applyScoreCaps(
 // `templateData.taskType` (never the echoed `inferredTaskType`) must
 // evidence every signal the matrix lists for that type somewhere in its
 // spec. A missing signal is ALWAYS a `blocking` finding. Where the signal is
-// the same concept as an existing universal field (scope, acceptanceCriteria,
-// constraints, outOfScope, risk), the check reuses that field's own presence
-// flag and finding code, so a missing field ESCALATES its existing (often
-// lower-severity) finding to `blocking` instead of adding a second entry for
-// the same gap (see the merge in calculateConfidence). Signals with no
-// existing TemplateData field (e.g. "reproduction steps") are detected by a
-// dedicated keyword regex over the raw description: pure heuristic, no LLM,
-// per Scope. FAITHFUL MIRROR of the backend; keep in sync.
+// the same concept as an existing universal field, the check reuses that
+// field's own presence flag AND CODE, so a missing field ESCALATES its
+// existing (often lower-severity) finding to `blocking` in place instead of
+// adding a second, byte-identical-suggestion entry for the same gap (see the
+// merge in calculateConfidence). Signals with no existing TemplateData field
+// (e.g. "reproduction steps") are detected by a dedicated keyword regex over
+// the raw description: pure heuristic, no LLM, per Scope. FAITHFUL MIRROR of
+// the backend; keep in sync.
+//
+// Codes below fall into exactly two buckets — every entry's `code` is one or
+// the other, never something in between:
+//
+//  ALIASED to an existing universal `MISS_FINDINGS` code (the finding this
+//  code produces is indistinguishable from the universal one; the matrix
+//  entry only ever escalates severity, it is never the first thing to push a
+//  finding for that code — see the merge loop in calculateConfidence):
+//    missing_goal                (feature; was missing_user_goal)
+//    missing_scope                (feature, docs, refactoring; refactoring's
+//                                  was missing_scope_boundary)
+//    missing_out_of_scope         (refactoring; was missing_non_goals)
+//    missing_risk                 (refactoring; was missing_risk_areas)
+//    missing_acceptance_criteria  (feature, docs — each type's own AC-named
+//                                  entry; ALSO the "verification path in the
+//                                  description" entry on bugfix/feature/
+//                                  security/migration, since that predicate
+//                                  is `ctx.verificationSignal` =
+//                                  `!evalsKeystoneViolated`, the EXACT
+//                                  condition the universal evals-keystone
+//                                  finding fires on — the two can never
+//                                  diverge, so aliasing them, not just
+//                                  giving them a shared NEW code, is what
+//                                  actually prevents the duplicate; was
+//                                  missing_verification_step on bugfix and
+//                                  missing_verification on feature/security/
+//                                  migration)
+//
+//  NEW: no universal MISS_FINDINGS counterpart exists, unified to ONE code
+//  per concept across every type table that carries it (rather than each
+//  type inventing its own spelling):
+//    missing_constraints    (feature, security — constraints is a required
+//                            signal for these types but is not scored/
+//                            tracked universally, see the MISS_FINDINGS
+//                            comment above)
+//    missing_rollback        (security, migration; security's was
+//                            missing_rollback_if_relevant)
+//    everything else in the matrix below is type-specific prose (e.g.
+//    missing_reproduction_steps, missing_threat_or_risk,
+//    missing_deployment_impact, ...) and has exactly one type table each.
+//
+// REQUIRED_SIGNAL_ONLY_CODES (below the matrix) is exactly the NEW bucket —
+// deriveNextActions (backend claim-policy-evaluator.ts; frontend has no
+// nextActions consumer today) uses it to rank a pure universal finding ahead
+// of a type-specific one within the same severity; an ALIASED code is
+// deliberately excluded from that set because it always escalates a
+// pre-existing universal finding and should sort as one.
 //
 // Per-type score weights/caps are a separate follow-up (M2-thresholds): these
 // findings never change `score` and never set `keystone`, so on their own
@@ -646,10 +693,17 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       code: "missing_affected_environment", dimension: "contextQuality",
       message: "Affected environment (OS, browser, version, platform) is unstated.",
       suggestion: "Name the environment the bug occurs in (OS, browser, runtime version, platform).",
-      present: kw(/\benvironments?\b|\bbrowsers?\b|\boperating\s+system\b|\bplatforms?\b|\bversions?\b|\bnode\s+v?\d/i),
+      present: kw(/\benvironments?\b|\bbrowsers?\b|\boperating\s+system\b|\bplatforms?\b|\bnode\s+v?\d/i),
     },
     {
-      code: "missing_verification_step", dimension: "testability",
+      // Aliased to the universal `missing_acceptance_criteria` code (see the
+      // header comment above REQUIRED_SIGNALS_BY_TYPE): `ctx.verificationSignal`
+      // is `!evalsKeystoneViolated`, the EXACT condition the universal evals
+      // keystone finding already fires on, so a bugfix task missing this
+      // signal always already has that universal finding in `findings[]`
+      // (see calculateConfidence) — this entry only ever escalates it, never
+      // adds a byte-identical second finding.
+      code: "missing_acceptance_criteria", dimension: "testability",
       message: "No verification step for the fix.",
       suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
       present: (ctx) => ctx.verificationSignal,
@@ -657,7 +711,7 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
   ],
   feature: [
     {
-      code: "missing_user_goal", dimension: "completeness",
+      code: "missing_goal", dimension: "completeness",
       message: "User goal is missing.",
       suggestion: "Add a one-line Goal stating the intended outcome.",
       present: (ctx) => ctx.goalPresent,
@@ -684,10 +738,16 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       code: "missing_ux_api_expectations", dimension: "completeness",
       message: "UX/API expectations are unstated.",
       suggestion: "Describe the expected UI behavior or API/interface shape.",
-      present: kw(/\bapis?\b|\bux\b|\buser\s+experience\b|\bendpoints?\b|\brequests?\b|\bresponses?\b|\binterfaces?\b/i),
+      present: kw(/\bapis?\b|\bux\b|\buser\s+experience\b|\bendpoints?\b|\bresponses?\b|\binterfaces?\b/i),
     },
     {
-      code: "missing_verification", dimension: "testability",
+      // Aliased to `missing_acceptance_criteria` — same reasoning as the
+      // bugfix entry above; feature already carries its own dedicated AC
+      // entry a few lines up (present: ctx.acPresent), which fires under the
+      // exact same condition as this one whenever it does, so this is a
+      // harmless (idempotent) second reference to the same code, not a new
+      // finding.
+      code: "missing_acceptance_criteria", dimension: "testability",
       message: "No verification path in the description.",
       suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
       present: (ctx) => ctx.verificationSignal,
@@ -698,16 +758,19 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       code: "missing_purpose", dimension: "completeness",
       message: "Purpose (why this refactor) is not stated.",
       suggestion: "Add a one-line Purpose stating why this refactor is worth doing.",
-      present: kw(/\bpurpose\b|\bmotivation\b|\breason\s+for\b|\bwhy\s+this\b/i),
+      present: kw(/\bpurpose\b|\bmotivation\b|\bwhy\s+this\b/i),
     },
     {
-      code: "missing_scope_boundary", dimension: "scopeClarity",
+      // Aliased to the universal `missing_scope` code (see the header
+      // comment above REQUIRED_SIGNALS_BY_TYPE).
+      code: "missing_scope", dimension: "scopeClarity",
       message: "Scope boundary (what may change) is missing.",
       suggestion: "List the files, modules, or surfaces the refactor may touch.",
       present: (ctx) => ctx.scopePresent,
     },
     {
-      code: "missing_non_goals", dimension: "scopeClarity",
+      // Aliased to the universal `missing_out_of_scope` code.
+      code: "missing_out_of_scope", dimension: "scopeClarity",
       message: "Non-goals are unstated.",
       suggestion: "Name what must NOT change so a weak agent does not wander.",
       present: (ctx) => ctx.outOfScopePresent,
@@ -725,7 +788,8 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       present: kw(/\bregressions?\b|\bexisting\s+tests?\b|\btest\s+suite\b|\btest\s+coverage\b/i),
     },
     {
-      code: "missing_risk_areas", dimension: "ambiguityRisk",
+      // Aliased to the universal `missing_risk` code.
+      code: "missing_risk", dimension: "ambiguityRisk",
       message: "Risk areas are unstated.",
       suggestion: "Note the risk level or blast radius (low / medium / high, and why).",
       present: (ctx) => ctx.riskPresent,
@@ -733,22 +797,26 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
   ],
   security: [
     {
+      // Bare `secur(e|ity)` matched trivially ("This is a secure change.")
+      // without naming any actual goal/property; require the word to be
+      // followed by a goal-ish object noun instead (still matched by the
+      // dedicated `security goal` phrase below, now generalized).
       code: "missing_security_goal", dimension: "completeness",
       message: "Security goal is not stated.",
       suggestion: "State the security property this change establishes or restores.",
-      present: kw(/\bsecurity\s+goal\b|\bharden(ing)?\b|\bmitigat(e|es|ion)\b|\bsecur(e|ity)\b/i),
+      present: kw(/\bsecur(e|ity)\s+(goal|property|guarantee|boundary|control|posture)\b|\bharden(ing)?\b|\bmitigat(e|es|ion)\b/i),
     },
     {
       code: "missing_affected_asset", dimension: "concreteness",
       message: "Affected asset is not named.",
       suggestion: "Name the asset at risk (endpoint, credential, token, data, resource).",
-      present: kw(/\bassets?\b|\bendpoints?\b|\bcredentials?\b|\btokens?\b|\bsecrets?\b|\bresources?\b/i),
+      present: kw(/\bassets?\b|\bendpoints?\b|\bcredentials?\b|\btokens?\b|\bsecrets?\b/i),
     },
     {
       code: "missing_threat_or_risk", dimension: "ambiguityRisk",
       message: "Threat or risk is not described.",
       suggestion: "Describe the threat, vulnerability, or attack this change addresses.",
-      present: kw(/\bthreats?\b|\bvulnerab(le|ility|ilities)\b|\battacks?\b|\bexploits?\b|\brisks?\b/i),
+      present: kw(/\bthreats?\b|\bvulnerab(le|ility|ilities)\b|\battacks?\b|\bexploits?\b/i),
     },
     {
       code: "missing_constraints", dimension: "scopeClarity",
@@ -763,13 +831,17 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       present: kw(/\breview\s+requir|\bsecurity\s+review\b|\bsign[- ]?off\b|\bapprovals?\b|\breviewed\s+by\b/i),
     },
     {
-      code: "missing_verification", dimension: "testability",
+      // Aliased to `missing_acceptance_criteria` — same reasoning as the
+      // bugfix/feature entries above.
+      code: "missing_acceptance_criteria", dimension: "testability",
       message: "No verification path in the description.",
       suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
       present: (ctx) => ctx.verificationSignal,
     },
     {
-      code: "missing_rollback_if_relevant", dimension: "completeness",
+      // Unified with migration's `missing_rollback` (same concept, one code
+      // per concept across type tables).
+      code: "missing_rollback", dimension: "completeness",
       message: "Rollback plan is unstated.",
       suggestion: "State the rollback plan, or 'not applicable' if there is none.",
       present: kw(/\brollback\b|\broll\s+back\b|\breverts?\b|\bnot\s+applicable\b|\bno\s+rollback\s+needed\b/i),
@@ -780,7 +852,7 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       code: "missing_current_state", dimension: "contextQuality",
       message: "Current state is not described.",
       suggestion: "Describe the current state before the migration.",
-      present: kw(/\bcurrent\s+state\b|\bcurrently\b|\btoday\b|\bexisting\s+(state|schema|setup|behavior)\b/i),
+      present: kw(/\bcurrent\s+state\b|\bcurrently\b|\bexisting\s+(state|schema|setup|behavior)\b/i),
     },
     {
       code: "missing_target_state", dimension: "contextQuality",
@@ -789,12 +861,16 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       present: kw(/\btarget\s+state\b|\bdesired\s+state\b|\bend\s+state\b|\bafter\s+(the\s+)?migration\b|\bfuture\s+state\b/i),
     },
     {
+      // `\bcompat...\b` never matched "incompatible" (no word boundary
+      // between "in" and "compat"); `(in)?` makes the negated form match too.
       code: "missing_compatibility", dimension: "ambiguityRisk",
       message: "Compatibility (backward/forward) is unstated.",
       suggestion: "State the compatibility guarantee during and after the migration.",
-      present: kw(/\bcompat(ible|ibility)?\b|\bbackward(s)?[- ]compat/i),
+      present: kw(/\b(in)?compat(ible|ibility)?\b|\bbackward(s)?[- ]compat/i),
     },
     {
+      // Unified with security's `missing_rollback` (renamed from
+      // `missing_rollback_if_relevant`; same concept, one code per concept).
       code: "missing_rollback", dimension: "completeness",
       message: "Rollback plan is unstated.",
       suggestion: "State the rollback plan, or 'not applicable' if there is none.",
@@ -804,10 +880,12 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
       code: "missing_deployment_impact", dimension: "ambiguityRisk",
       message: "Deployment impact is unstated.",
       suggestion: "State the deployment impact (downtime, order of rollout, cutover steps).",
-      present: kw(/\bdeploy(ment)?\b|\bdowntime\b|\breleases?\b|\bcutover\b/i),
+      present: kw(/\bdeploy(ment)?\b|\bdowntime\b|\bcutover\b/i),
     },
     {
-      code: "missing_verification", dimension: "testability",
+      // Aliased to `missing_acceptance_criteria` — same reasoning as the
+      // bugfix/feature/security entries above.
+      code: "missing_acceptance_criteria", dimension: "testability",
       message: "No verification path in the description.",
       suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
       present: (ctx) => ctx.verificationSignal,
@@ -859,16 +937,42 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
   ],
 };
 
+// The subset of REQUIRED_SIGNALS_BY_TYPE codes that are genuinely NEW — i.e.
+// do NOT alias an existing universal MISS_FINDINGS code (see the "ALIASED"
+// vs "NEW" buckets in the header comment above). FAITHFUL MIRROR of the
+// backend export of the same name — kept here even though the frontend has
+// no deriveNextActions consumer today, so the two copies stay structurally
+// identical and this does not silently drift if a frontend consumer is
+// added later.
+const UNIVERSAL_FINDING_CODES: ReadonlySet<string> = new Set(
+  Object.values(MISS_FINDINGS).map((f) => f.code),
+);
+export const REQUIRED_SIGNAL_ONLY_CODES: ReadonlySet<string> = new Set(
+  Object.values(REQUIRED_SIGNALS_BY_TYPE)
+    .flat()
+    .map((signal) => signal.code)
+    .filter((code) => !UNIVERSAL_FINDING_CODES.has(code)),
+);
+
 // Missing required signal -> a `blocking` finding, code `missing_<signal-name>`.
 // `taskType` is the EXPLICIT `templateData.taskType` only (never
 // `inferredTaskType`). Unset taskType -> no findings (existing universal
 // rules apply unchanged; see the `[]` return and the merge below).
+//
+// `taskType` is typed as `TaskType | undefined`, but on the backend that
+// type is NOT a runtime guarantee (templateData reaches the scorer via an
+// unvalidated cast on several read paths — see the backend copy of this
+// comment). The frontend always constructs `templateData` from its own
+// typed API responses, but this guard is mirrored anyway so the two copies
+// stay behaviorally identical for any input, not just the inputs the
+// frontend happens to produce today.
 function buildRequiredSignalFindings(
   taskType: TaskType | undefined,
   ctx: RequiredSignalContext,
 ): QualityFinding[] {
-  if (!taskType) return [];
-  return REQUIRED_SIGNALS_BY_TYPE[taskType]
+  if (typeof taskType !== "string") return [];
+  const signals = REQUIRED_SIGNALS_BY_TYPE[taskType as TaskType] ?? [];
+  return signals
     .filter((signal) => !signal.present(ctx))
     .map((signal) => ({
       code: signal.code,

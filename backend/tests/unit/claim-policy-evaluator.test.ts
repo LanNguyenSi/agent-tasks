@@ -15,7 +15,7 @@
  *   6. force_reason_too_short — force with a too-short reason
  *   7. scope-before-reason precedence — no scope AND short reason -> force_forbidden
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   claimPolicyEvaluator,
   MIN_FORCE_REASON_LENGTH,
@@ -25,7 +25,7 @@ import {
 import { EnforcementMode } from "../../src/lib/enforcement-mode.js";
 import { SCOPES } from "../../src/services/scopes.js";
 import type { AgentActor } from "../../src/types/auth.js";
-import type { QualityFinding } from "../../src/lib/confidence.js";
+import { calculateConfidence, type QualityFinding } from "../../src/lib/confidence.js";
 
 function finding(overrides: Partial<QualityFinding> = {}): QualityFinding {
   return {
@@ -230,5 +230,87 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     );
 
     expect(decision.kind).toBe("force_forbidden");
+  });
+
+  // ── Safety pin (task 6b88ec87 review round 1, "missing_tests" finding) ────
+  // The M2 required-signal checker's escalation (confidence.ts,
+  // calculateConfidence's `requiredSignalFindings` merge) sets a matched
+  // finding's `severity` to "blocking" but MUST NEVER set `keystone: true` —
+  // `ConfidenceResult.blocking` (the threshold-INDEPENDENT keystone flag
+  // this evaluator's `wouldBlock` OR's in) is defined ONLY off
+  // `keystone === true && severity === "blocking"`. If a future edit ever
+  // makes the required-signal merge (or a new required-signal predicate)
+  // start propagating `keystone: true`, EVERY project — including ones on a
+  // low or disabled confidenceThreshold — would start hard-blocking claims
+  // on required-signal gaps it never opted into, bypassing the threshold
+  // entirely. This test pins the coupling from both ends: the real scorer's
+  // output shape, and the evaluator's allow/block decision built on it.
+  describe("safety pin: required-signal (M2) findings never trip the threshold-independent keystone", () => {
+    beforeEach(() => vi.spyOn(console, "info").mockImplementation(() => {}));
+    afterEach(() => vi.restoreAllMocks());
+
+    it("calculateConfidence: a typed task with required-signal BLOCKING findings and no universal keystone violation reports blocking=false", () => {
+      // Migration-typed, AC present (no evals keystone), most migration
+      // signals stated in prose but current_state is not — measured via
+      // backend/dist (npm run build --workspace=backend) against a scratch
+      // script, task 6b88ec87 review round 1.
+      const description = [
+        "Target state: the users table lives on the new Postgres cluster.",
+        "Compatibility: the read API stays backward compatible during the cutover.",
+        "Rollback: revert to the legacy cluster if replication lag spikes.",
+        "Deployment impact: requires a brief maintenance window.",
+        "Operational risk: on-call must watch replication lag; blast radius is the users service only.",
+      ].join(" ");
+      const report = calculateConfidence({
+        title: "Migrate users table storage backend",
+        description,
+        templateData: {
+          acceptanceCriteria: "- users table reads/writes succeed against the new backend",
+          taskType: "migration",
+        },
+        templateFields: null,
+      });
+
+      const requiredSignalFinding = report.findings.find((f) => f.code === "missing_current_state");
+      expect(requiredSignalFinding?.severity).toBe("blocking");
+      expect(requiredSignalFinding?.keystone).toBeUndefined();
+      expect(report.blocking).toBe(false);
+      expect(report.score).toBeGreaterThanOrEqual(40);
+    });
+
+    it("ClaimPolicyEvaluator: that SAME real report, at enforcementMode=BLOCK with threshold <= score, is ALLOWED despite the blocking-severity required-signal finding", () => {
+      const description = [
+        "Target state: the users table lives on the new Postgres cluster.",
+        "Compatibility: the read API stays backward compatible during the cutover.",
+        "Rollback: revert to the legacy cluster if replication lag spikes.",
+        "Deployment impact: requires a brief maintenance window.",
+        "Operational risk: on-call must watch replication lag; blast radius is the users service only.",
+      ].join(" ");
+      const report = calculateConfidence({
+        title: "Migrate users table storage backend",
+        description,
+        templateData: {
+          acceptanceCriteria: "- users table reads/writes succeed against the new backend",
+          taskType: "migration",
+        },
+        templateFields: null,
+      });
+      // Precondition: the fixture actually carries a blocking-severity
+      // required-signal finding and a score at/above the threshold below —
+      // otherwise this test would pass for the wrong reason.
+      expect(report.findings.some((f) => f.code === "missing_current_state" && f.severity === "blocking")).toBe(true);
+      expect(report.blocking).toBe(false);
+
+      const decision = claimPolicyEvaluator.evaluate(
+        makeInput({
+          report,
+          projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 40 },
+          force: false,
+        }),
+      );
+
+      expect(report.score).toBeGreaterThanOrEqual(40);
+      expect(decision.kind).toBe("allow");
+    });
   });
 });

@@ -5,6 +5,8 @@ import {
   extractSpecSections,
   EVALS_KEYSTONE_CAP,
   FIELD_WEIGHTS,
+  REQUIRED_SIGNAL_ONLY_CODES,
+  type TemplateData,
 } from "./confidence";
 import {
   RICH_TEMPLATE_DATA_NO_DESC,
@@ -671,18 +673,12 @@ describe("calculateConfidence — backend parity on the fully sectioned fixture"
 // backend/tests/unit/confidence.test.ts's identically-named describe block;
 // keep the fixtures in sync.
 describe("calculateConfidence: required signals per taskType (M2)", () => {
-  const ALL_REQUIRED_SIGNAL_CODES = [
-    "missing_actual_behavior", "missing_expected_behavior", "missing_reproduction_steps",
-    "missing_error_message_or_symptom", "missing_affected_environment", "missing_verification_step",
-    "missing_user_goal", "missing_ux_api_expectations",
-    "missing_purpose", "missing_scope_boundary", "missing_non_goals",
-    "missing_behavior_preservation", "missing_regression_strategy", "missing_risk_areas",
-    "missing_security_goal", "missing_affected_asset", "missing_threat_or_risk",
-    "missing_review_requirement", "missing_rollback_if_relevant",
-    "missing_current_state", "missing_target_state", "missing_compatibility",
-    "missing_rollback", "missing_deployment_impact", "missing_operational_risk",
-    "missing_target_audience", "missing_source_of_truth", "missing_format", "missing_review_owner",
-  ];
+  // The genuinely type-specific codes (no universal MISS_FINDINGS alias —
+  // see confidence.ts's REQUIRED_SIGNALS_BY_TYPE header comment), for the
+  // backward-compat forbidden-list test below. Sourced directly from the
+  // implementation's own export (FAITHFUL MIRROR of the backend test) rather
+  // than a hand-maintained duplicate list.
+  const ALL_REQUIRED_SIGNAL_CODES = [...REQUIRED_SIGNAL_ONLY_CODES];
 
   describe("bugfix", () => {
     const ALL_SIX_DESC = [
@@ -696,7 +692,7 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
 
     it("all six signals present -> no bugfix required-signal findings", () => {
       const result = calculateConfidence({ title: "ok", description: ALL_SIX_DESC, templateData, templateFields: null });
-      for (const code of ["missing_actual_behavior", "missing_expected_behavior", "missing_reproduction_steps", "missing_error_message_or_symptom", "missing_affected_environment", "missing_verification_step"]) {
+      for (const code of ["missing_actual_behavior", "missing_expected_behavior", "missing_reproduction_steps", "missing_error_message_or_symptom", "missing_affected_environment", "missing_acceptance_criteria"]) {
         expect(result.findings.find((f) => f.code === code)).toBeUndefined();
       }
     });
@@ -711,7 +707,7 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
       const result = calculateConfidence({ title: "ok", description, templateData, templateFields: null });
       const finding = result.findings.find((f) => f.code === "missing_reproduction_steps");
       expect(finding?.severity).toBe("blocking");
-      for (const code of ["missing_actual_behavior", "missing_expected_behavior", "missing_error_message_or_symptom", "missing_affected_environment", "missing_verification_step"]) {
+      for (const code of ["missing_actual_behavior", "missing_expected_behavior", "missing_error_message_or_symptom", "missing_affected_environment", "missing_acceptance_criteria"]) {
         expect(result.findings.find((f) => f.code === code)).toBeUndefined();
       }
     });
@@ -733,7 +729,7 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
         },
         templateFields: null,
       });
-      for (const code of ["missing_user_goal", "missing_scope", "missing_acceptance_criteria", "missing_constraints", "missing_ux_api_expectations", "missing_verification"]) {
+      for (const code of ["missing_goal", "missing_scope", "missing_acceptance_criteria", "missing_constraints", "missing_ux_api_expectations"]) {
         expect(result.findings.find((f) => f.code === code)).toBeUndefined();
       }
     });
@@ -752,7 +748,7 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
       });
       const finding = result.findings.find((f) => f.code === "missing_constraints");
       expect(finding?.severity).toBe("blocking");
-      for (const code of ["missing_user_goal", "missing_scope", "missing_acceptance_criteria", "missing_ux_api_expectations", "missing_verification"]) {
+      for (const code of ["missing_goal", "missing_scope", "missing_acceptance_criteria", "missing_ux_api_expectations"]) {
         expect(result.findings.find((f) => f.code === code)).toBeUndefined();
       }
     });
@@ -790,7 +786,7 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
 
     it("all six signals present -> no refactoring required-signal findings", () => {
       const result = calculateConfidence({ title: "ok", description: ALL_SIX_DESC, templateData, templateFields: null });
-      for (const code of ["missing_purpose", "missing_scope_boundary", "missing_non_goals", "missing_behavior_preservation", "missing_regression_strategy", "missing_risk_areas"]) {
+      for (const code of ["missing_purpose", "missing_scope", "missing_out_of_scope", "missing_behavior_preservation", "missing_regression_strategy", "missing_risk"]) {
         expect(result.findings.find((f) => f.code === code)).toBeUndefined();
       }
     });
@@ -803,7 +799,7 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
       const result = calculateConfidence({ title: "ok", description, templateData, templateFields: null });
       const finding = result.findings.find((f) => f.code === "missing_purpose");
       expect(finding?.severity).toBe("blocking");
-      for (const code of ["missing_scope_boundary", "missing_non_goals", "missing_behavior_preservation", "missing_regression_strategy", "missing_risk_areas"]) {
+      for (const code of ["missing_scope", "missing_out_of_scope", "missing_behavior_preservation", "missing_regression_strategy", "missing_risk"]) {
         expect(result.findings.find((f) => f.code === code)).toBeUndefined();
       }
     });
@@ -825,7 +821,7 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
 
     it("all seven signals present -> no security required-signal findings", () => {
       const result = calculateConfidence({ title: "ok", description: ALL_SIX_DESC, templateData, templateFields: null });
-      for (const code of ["missing_security_goal", "missing_affected_asset", "missing_threat_or_risk", "missing_constraints", "missing_review_requirement", "missing_verification", "missing_rollback_if_relevant"]) {
+      for (const code of ["missing_security_goal", "missing_affected_asset", "missing_threat_or_risk", "missing_constraints", "missing_review_requirement", "missing_acceptance_criteria", "missing_rollback"]) {
         expect(result.findings.find((f) => f.code === code)).toBeUndefined();
       }
     });
@@ -840,7 +836,7 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
       const result = calculateConfidence({ title: "ok", description, templateData, templateFields: null });
       const finding = result.findings.find((f) => f.code === "missing_affected_asset");
       expect(finding?.severity).toBe("blocking");
-      for (const code of ["missing_security_goal", "missing_threat_or_risk", "missing_constraints", "missing_review_requirement", "missing_verification", "missing_rollback_if_relevant"]) {
+      for (const code of ["missing_security_goal", "missing_threat_or_risk", "missing_constraints", "missing_review_requirement", "missing_acceptance_criteria", "missing_rollback"]) {
         expect(result.findings.find((f) => f.code === code)).toBeUndefined();
       }
     });
@@ -859,7 +855,7 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
 
     it("all seven signals present -> no migration required-signal findings", () => {
       const result = calculateConfidence({ title: "ok", description: ALL_SIX_DESC, templateData, templateFields: null });
-      for (const code of ["missing_current_state", "missing_target_state", "missing_compatibility", "missing_rollback", "missing_deployment_impact", "missing_verification", "missing_operational_risk"]) {
+      for (const code of ["missing_current_state", "missing_target_state", "missing_compatibility", "missing_rollback", "missing_deployment_impact", "missing_acceptance_criteria", "missing_operational_risk"]) {
         expect(result.findings.find((f) => f.code === code)).toBeUndefined();
       }
     });
@@ -875,7 +871,7 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
       const result = calculateConfidence({ title: "ok", description, templateData, templateFields: null });
       const finding = result.findings.find((f) => f.code === "missing_current_state");
       expect(finding?.severity).toBe("blocking");
-      for (const code of ["missing_target_state", "missing_compatibility", "missing_rollback", "missing_deployment_impact", "missing_verification", "missing_operational_risk"]) {
+      for (const code of ["missing_target_state", "missing_compatibility", "missing_rollback", "missing_deployment_impact", "missing_acceptance_criteria", "missing_operational_risk"]) {
         expect(result.findings.find((f) => f.code === code)).toBeUndefined();
       }
     });
@@ -925,4 +921,235 @@ describe("calculateConfidence: required signals per taskType (M2)", () => {
       expect(result.findings.find((f) => f.code === code)).toBeUndefined();
     }
   });
+
+  // ── Finding 1 (review round 1): runtime guard on the taskType lookup ──────
+  // FAITHFUL MIRROR of the backend test of the same name. The frontend always
+  // builds `templateData` from its own typed API responses, but the guard is
+  // mirrored anyway so both copies stay behaviorally identical for any input.
+  describe("runtime guard: taskType is not a compile-time guarantee (finding 1)", () => {
+    const UNGUARDED_DESC = "some description with enough words to be non-trivial and concrete src/foo.ts";
+
+    it("an out-of-enum taskType STRING yields exactly the untyped findings set, no throw", () => {
+      const untyped = calculateConfidence({
+        title: "ok",
+        description: UNGUARDED_DESC,
+        templateData: { acceptanceCriteria: "- x" },
+        templateFields: null,
+      });
+      expect(() =>
+        calculateConfidence({
+          title: "ok",
+          description: UNGUARDED_DESC,
+          templateData: { acceptanceCriteria: "- x", taskType: "chore" } as unknown as TemplateData,
+          templateFields: null,
+        }),
+      ).not.toThrow();
+      const result = calculateConfidence({
+        title: "ok",
+        description: UNGUARDED_DESC,
+        templateData: { acceptanceCriteria: "- x", taskType: "chore" } as unknown as TemplateData,
+        templateFields: null,
+      });
+      expect(result.findings).toEqual(untyped.findings);
+    });
+
+    it.each([
+      ["number", 1],
+      ["boolean", false],
+      ["object", {}],
+      ["array", ["bugfix"]],
+    ])("a non-string taskType (%s) yields exactly the untyped findings set, no throw", (_label, badTaskType) => {
+      const untyped = calculateConfidence({
+        title: "ok",
+        description: UNGUARDED_DESC,
+        templateData: { acceptanceCriteria: "- x" },
+        templateFields: null,
+      });
+      expect(() =>
+        calculateConfidence({
+          title: "ok",
+          description: UNGUARDED_DESC,
+          templateData: { acceptanceCriteria: "- x", taskType: badTaskType } as unknown as TemplateData,
+          templateFields: null,
+        }),
+      ).not.toThrow();
+      const result = calculateConfidence({
+        title: "ok",
+        description: UNGUARDED_DESC,
+        templateData: { acceptanceCriteria: "- x", taskType: badTaskType } as unknown as TemplateData,
+        templateFields: null,
+      });
+      expect(result.findings).toEqual(untyped.findings);
+    });
+  });
+
+  // ── Finding 2 (review round 1): dedup regression ───────────────────────────
+  // FAITHFUL MIRROR of the backend test of the same name.
+  describe("dedup regression: no two findings in one result share the same suggestion string (finding 2)", () => {
+    it.each(["bugfix", "feature", "refactoring", "security", "migration", "docs"] as const)(
+      "%s: a bare title-only task has no two findings with the same suggestion",
+      (taskType) => {
+        const result = calculateConfidence({
+          title: "ok",
+          description: "",
+          templateData: { taskType },
+          templateFields: null,
+        });
+        const suggestions = result.findings.map((f) => f.suggestion).filter((s): s is string => !!s);
+        expect(new Set(suggestions).size).toBe(suggestions.length);
+      },
+    );
+  });
+});
+
+// ── Finding 3 (review round 1): required-signal regex quality ───────────────
+// FAITHFUL MIRROR of the backend describe block of the same name — see that
+// file for the full rationale. Each type gets two honest, flowing-prose
+// fixtures (no "Label:" colon-headers, no bullet keyword-stuffing): (a) a
+// natural paragraph stating every required signal, which must produce ZERO
+// required-signal findings, and (b) content-free junk filler, which MUST
+// still trip every required signal for that type.
+describe("calculateConfidence: required-signal regex quality (finding 3)", () => {
+  const CASES: Record<
+    "bugfix" | "feature" | "refactoring" | "security" | "migration" | "docs",
+    {
+      codes: string[];
+      present: { description: string; templateData: TemplateData };
+      junk: { description: string; templateData: TemplateData };
+    }
+  > = {
+    bugfix: {
+      codes: [
+        "missing_actual_behavior", "missing_expected_behavior", "missing_reproduction_steps",
+        "missing_error_message_or_symptom", "missing_affected_environment", "missing_acceptance_criteria",
+      ],
+      present: {
+        description:
+          "The actual behavior when the signup form submits an empty email is that the server throws an unhandled exception and the request hangs forever, while the expected behavior is a clean 400 response telling the user the email is required. Reproducing it is straightforward on the Chrome browser and Node 20 macOS Sonoma: open the signup page, leave the email box blank, and hit submit.",
+        templateData: { acceptanceCriteria: "- POST /signup with an empty email returns 400", taskType: "bugfix" },
+      },
+      junk: {
+        description: "There is a problem with the signup flow. It should be fixed soon. This is important for users.",
+        templateData: { taskType: "bugfix" },
+      },
+    },
+    feature: {
+      codes: ["missing_goal", "missing_scope", "missing_acceptance_criteria", "missing_constraints", "missing_ux_api_expectations"],
+      present: {
+        description:
+          "Users will see a new Export button in the UI that calls the reporting API endpoint and returns a CSV file; the response includes a Content-Disposition header naming the file.",
+        templateData: {
+          goal: "Let users export their data as CSV",
+          scope: "src/routes/export.ts",
+          acceptanceCriteria: "- GET /export returns a CSV file",
+          constraints: "Must not change the existing JSON export endpoint",
+          taskType: "feature",
+        },
+      },
+      junk: {
+        description: "This feature would be nice to have. It should work well for everyone. There is some risk here.",
+        templateData: { taskType: "feature" },
+      },
+    },
+    refactoring: {
+      codes: ["missing_purpose", "missing_scope", "missing_out_of_scope", "missing_behavior_preservation", "missing_regression_strategy", "missing_risk"],
+      present: {
+        description:
+          "The purpose of this change is to make the parser easier to maintain; it is functionally equivalent to the current implementation, so callers will see no behavior change. The existing test suite already covers every parsing branch, so regressions will be caught automatically.",
+        templateData: {
+          scope: "src/services/parser.ts",
+          outOfScope: "Do not change the public parse() signature",
+          risk: "Low: internal-only refactor",
+          taskType: "refactoring",
+        },
+      },
+      junk: {
+        description: "This code could be cleaner. It would be good practice to improve it. There is some risk here.",
+        templateData: { taskType: "refactoring" },
+      },
+    },
+    security: {
+      codes: [
+        "missing_security_goal", "missing_affected_asset", "missing_threat_or_risk",
+        "missing_constraints", "missing_review_requirement", "missing_acceptance_criteria", "missing_rollback",
+      ],
+      present: {
+        description:
+          "This change aims to harden the login flow against a credential-stuffing threat, addressing a vulnerability where an attacker could exploit repeated failed logins to guess passwords -- real threat mitigation for account takeover. The session token is the credential at risk. Get sign-off from the security lead before merging, and if anything goes wrong, roll back the feature flag.",
+        templateData: {
+          constraints: "No new endpoints; only modify the existing login middleware",
+          acceptanceCriteria: "- Login blocks after 5 failed attempts within 60 seconds",
+          taskType: "security",
+        },
+      },
+      junk: {
+        // Deliberately contains the bare word "risk" — the regression guard
+        // for the dropped `\brisks?\b` alternative on missing_threat_or_risk.
+        description: "This change makes things safer. It is a good idea to fix this soon. There is some risk here.",
+        templateData: { taskType: "security" },
+      },
+    },
+    migration: {
+      codes: [
+        "missing_current_state", "missing_target_state", "missing_compatibility",
+        "missing_rollback", "missing_deployment_impact", "missing_acceptance_criteria", "missing_operational_risk",
+      ],
+      present: {
+        description:
+          "The users table currently lives on the legacy MySQL instance; after the migration it will live on the new Postgres cluster instead. The read API stays backward compatible throughout the cutover, and if anything breaks we can roll back to the legacy table. The cutover requires a short maintenance window, so on-call should watch replication lag and be ready to page if the blast radius grows beyond the users service.",
+        templateData: {
+          acceptanceCriteria: "- users table reads/writes succeed against the new backend",
+          taskType: "migration",
+        },
+      },
+      junk: {
+        description: "This migration should go smoothly. It is a good idea to do this soon. There is some risk here.",
+        templateData: { taskType: "migration" },
+      },
+    },
+    docs: {
+      codes: ["missing_target_audience", "missing_source_of_truth", "missing_scope", "missing_format", "missing_acceptance_criteria", "missing_review_owner"],
+      present: {
+        description:
+          "This doc is aimed at backend engineers who are new to the confidence scorer; readers should come away knowing how the required-signal matrix works. It reflects the canonical matrix defined in confidence.ts, so it stays the authoritative reference. It will be written in Markdown as a new docs section, and it needs to be reviewed by the platform tech lead before merging.",
+        templateData: {
+          scope: "docs/confidence-scorer.md only",
+          acceptanceCriteria: "- doc reviewed and merged with no broken links",
+          taskType: "docs",
+        },
+      },
+      junk: {
+        description: "This doc would be helpful. It should be written soon. There is some risk here.",
+        templateData: { taskType: "docs" },
+      },
+    },
+  };
+
+  for (const [taskType, spec] of Object.entries(CASES)) {
+    describe(taskType, () => {
+      it("natural prose stating every signal produces zero required-signal findings for this type", () => {
+        const result = calculateConfidence({
+          title: "ok",
+          description: spec.present.description,
+          templateData: spec.present.templateData,
+          templateFields: null,
+        });
+        for (const code of spec.codes) {
+          expect(result.findings.find((f) => f.code === code)).toBeUndefined();
+        }
+      });
+
+      it("content-free junk prose still trips every required signal for this type", () => {
+        const result = calculateConfidence({
+          title: "ok",
+          description: spec.junk.description,
+          templateData: spec.junk.templateData,
+          templateFields: null,
+        });
+        for (const code of spec.codes) {
+          expect(result.findings.find((f) => f.code === code)).toBeDefined();
+        }
+      });
+    });
+  }
 });
