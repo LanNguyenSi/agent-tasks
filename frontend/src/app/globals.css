@@ -3875,6 +3875,17 @@ html[data-theme="light"] {
   color: var(--muted);
 }
 
+/* Trailing ellipsis is presentational only: appended via ::after rather
+   than in the element's text content, so selecting/copying the chip's text
+   (e.g. to paste into search) never carries a literal "…" that would fail
+   the id-prefix search gate (see ID_FRAGMENT_GATE in
+   frontend/src/lib/taskDisplay.ts and backend/src/routes/tasks.ts). Both
+   sides also normalize a pasted trailing ellipsis as a fallback (e.g.
+   Firefox, which can still include ::after content in a selection). */
+.table-row-id::after {
+  content: "\2026";
+}
+
 /* Done status chip: muted (grey) variant for list views.
    Only the tasks-list surface applies this; the dashboard keeps the
    standard green --status-done styling so done columns stay distinct. */

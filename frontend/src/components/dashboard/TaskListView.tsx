@@ -72,19 +72,31 @@ function sortTasks(tasks: Task[], key: SortKey, dir: SortDir): Task[] {
 // globals.css) so the title cell clamps with an ellipsis instead of
 // growing and crowding the metadata columns. Without per-column widths,
 // the table stays on auto layout.
-const TASK_LIST_COLS: ColumnDef<Task>[] = [
+//
+// Exported so tests can render individual column cells (e.g. the id-chip
+// title cell, see tests/unit/TaskListViewTitleCell.test.tsx) without
+// mounting the whole list-view component.
+export const TASK_LIST_COLS: ColumnDef<Task>[] = [
   {
     key: "title",
     header: "Task",
     sortable: true,
     width: "34%",
     // Short id (first 8 chars of the task's UUID) next to the title so the
-    // UI -> agent round-trip works when searching by id/prefix; the `title`
-    // attribute carries the full id for a hover tooltip.
+    // UI -> agent round-trip works when searching by id/prefix. The
+    // trailing "…" is presentational only (CSS ::after on .table-row-id,
+    // globals.css) so it never lands in a copy-paste selection; each span
+    // carries its own `title` so both the clamped title and the full id
+    // stay hoverable, and the chip's aria-label gives screen readers the
+    // same short-id text sighted users see (without the decorative "…").
     render: (t) => (
-      <span className="table-title-row" title={t.id}>
-        <span className="db-list-cell-title">{t.title}</span>
-        <span className="table-row-id">{t.id.slice(0, 8)}…</span>
+      <span className="table-title-row">
+        <span className="db-list-cell-title" title={t.title}>
+          {t.title}
+        </span>
+        <span className="table-row-id" title={t.id} aria-label={`Task id ${t.id.slice(0, 8)}`}>
+          {t.id.slice(0, 8)}
+        </span>
       </span>
     ),
   },

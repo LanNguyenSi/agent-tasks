@@ -8,7 +8,12 @@
 import { describe, it, expect } from "vitest";
 
 import type { Task } from "./api";
-import { looksLikeIdFragment, matchesTaskSearch } from "./taskDisplay";
+import {
+  looksLikeIdFragment,
+  matchesTaskSearch,
+  normalizeIdQuery,
+  ID_FRAGMENT_GATE,
+} from "./taskDisplay";
 
 // Minimal Task factory: only the fields the predicate reads are
 // meaningful; the rest are filled so the object satisfies the type.
@@ -107,5 +112,63 @@ describe("matchesTaskSearch", () => {
 
   it("does not match unrelated text", () => {
     expect(matchesTaskSearch(t, "billing export")).toBe(false);
+  });
+
+  // Copy-paste round-trip: the short-id chip (tasks/page.tsx,
+  // dashboard/TaskListView.tsx) renders a trailing ellipsis. Depending on
+  // the browser, selecting/copying the chip can carry that ellipsis into
+  // the clipboard even though it's meant to be presentational-only (CSS
+  // ::after, globals.css); matchesTaskSearch normalizes it away via
+  // normalizeIdQuery so a pasted "8f30a6f3…" (or "8f30a6f3...") still
+  // finds the task.
+  it("matches an id prefix pasted with a trailing unicode ellipsis", () => {
+    expect(matchesTaskSearch(t, "8f30a6f3…")).toBe(true);
+  });
+
+  it("matches an id prefix pasted with a trailing ASCII ellipsis ('...')", () => {
+    expect(matchesTaskSearch(t, "8f30a6f3...")).toBe(true);
+  });
+});
+
+describe("normalizeIdQuery", () => {
+  it("strips a trailing unicode ellipsis", () => {
+    expect(normalizeIdQuery("8f30a6f3…")).toBe("8f30a6f3");
+  });
+
+  it("strips a trailing ASCII ellipsis ('...')", () => {
+    expect(normalizeIdQuery("8f30a6f3...")).toBe("8f30a6f3");
+  });
+
+  it("strips other trailing non-hex/dash characters", () => {
+    expect(normalizeIdQuery("8f30a6f3!!")).toBe("8f30a6f3");
+  });
+
+  it("leaves an already-clean hex/dash query untouched", () => {
+    expect(normalizeIdQuery("8f30a6f3-1234-4abc-9def-000000000000")).toBe(
+      "8f30a6f3-1234-4abc-9def-000000000000",
+    );
+  });
+
+  it("does not touch interior characters, only a trailing run", () => {
+    expect(normalizeIdQuery("onboarding flow")).toBe("onboarding f");
+  });
+});
+
+describe("ID_FRAGMENT_GATE regex source (guard test)", () => {
+  // Pins the exact regex source so an accidental edit here is caught by a
+  // failing assertion rather than a silent drift. Cross-reference: this
+  // regex is mirrored in backend/src/routes/tasks.ts's ID_FRAGMENT_GATE —
+  // if you change one, change the other and update both pinned strings.
+  it("matches the mirrored backend/src/routes/tasks.ts ID_FRAGMENT_GATE source", () => {
+    expect(String(ID_FRAGMENT_GATE)).toBe("/^[0-9a-f][0-9a-f-]{3,35}$/i");
+  });
+
+  it("requires a leading hex digit — a leading dash is rejected", () => {
+    expect(looksLikeIdFragment("-8f30a6f3")).toBe(false);
+  });
+
+  it("caps the length at 36 (a full UUID fits; longer does not)", () => {
+    expect(looksLikeIdFragment("8f30a6f3-1234-4abc-9def-000000000000")).toBe(true); // 36 chars
+    expect(looksLikeIdFragment("8f30a6f3-1234-4abc-9def-0000000000000")).toBe(false); // 37 chars
   });
 });

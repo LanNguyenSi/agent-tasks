@@ -6,107 +6,33 @@ import {
   getCurrentUser,
   getTeamTasks,
   getTeams,
-  type Task,
   type Team,
   type TeamTasksCounts,
   type TeamTasksProject,
   type User,
 } from "../../lib/api";
-import { formatAbsoluteDate, formatRelativeTime } from "../../lib/time";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Button } from "../../components/ui/Button";
 import { KeyHint } from "../../components/ui/KeyHint";
 import { Tabs } from "../../components/ui/Tabs";
-import { StatusChip } from "../../components/ui/StatusChip";
-import { PriorityLabel } from "../../components/ui/PriorityLabel";
 import { Icon } from "../../components/ui/Icon";
 import AlertBanner from "../../components/ui/AlertBanner";
 import EmptyState from "../../components/ui/EmptyState";
 import { Skeleton, SkeletonList } from "../../components/ui/Skeleton";
 import Pagination from "../../components/ui/Pagination";
 import Select from "../../components/ui/Select";
-import { Table, type ColumnDef } from "../../components/ui/Table";
+import { Table } from "../../components/ui/Table";
 import NewTaskFlow from "../../components/tasks/NewTaskFlow";
-import { normalizeStatus, toDateLabel } from "../../lib/taskDisplay";
-import { STATUS_MUTED_IN_LIST } from "../../lib/status";
+// Column definitions live outside this route file — see _components/columns.tsx
+// for why (Next's typed-routes codegen rejects extra named exports from a
+// page.tsx).
+import { TASK_PAGE_COLUMNS, type EnrichedTask } from "./_components/columns";
 
 type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 type Status = "open" | "in_progress" | "review" | "done";
 type SortColumn = "title" | "status" | "project" | "due" | "updated" | "priority";
 type SortDirection = "asc" | "desc";
 type Scope = "all" | "open" | "mine" | "priority" | "review" | "done";
-
-type EnrichedTask = Task & { projectName: string };
-
-// Column definitions for the task list table.
-// Sort keys match the server-side SortColumn parameter names.
-// Render functions close over module-level imports only (no component state).
-const TASK_PAGE_COLUMNS: ColumnDef<EnrichedTask>[] = [
-  {
-    key: "title",
-    header: "Task",
-    sortable: true,
-    width: "34%",
-    // Short id (first 8 chars of the task's UUID) next to the title so the
-    // UI -> agent round-trip works when searching by id/prefix; the `title`
-    // attribute carries the full id for a hover tooltip.
-    render: (t) => (
-      <span className="table-title-row" title={t.id}>
-        <span className="tasks-row-title">{t.title}</span>
-        <span className="table-row-id">{t.id.slice(0, 8)}…</span>
-      </span>
-    ),
-  },
-  {
-    key: "status",
-    header: "Status",
-    sortable: true,
-    width: "12%",
-    render: (t) => {
-      const nStatus = normalizeStatus(t.status);
-      const isMuted = STATUS_MUTED_IN_LIST.has(nStatus);
-      return <StatusChip status={nStatus} className={isMuted ? "status-chip--muted" : undefined} />;
-    },
-  },
-  {
-    key: "project",
-    header: "Project",
-    sortable: true,
-    width: "16%",
-    render: (t) => (
-      <span className="table-cell-secondary" title={t.projectName}>
-        {t.projectName}
-      </span>
-    ),
-  },
-  {
-    key: "due",
-    header: "Due",
-    sortable: true,
-    width: "13%",
-    render: (t) => (
-      <span className="table-cell-secondary num">{t.dueAt ? toDateLabel(t.dueAt) : "—"}</span>
-    ),
-  },
-  {
-    key: "updated",
-    header: "Updated",
-    sortable: true,
-    width: "13%",
-    render: (t) => (
-      <span className="table-cell-secondary num" title={formatAbsoluteDate(t.updatedAt)}>
-        {formatRelativeTime(t.updatedAt)}
-      </span>
-    ),
-  },
-  {
-    key: "priority",
-    header: "Priority",
-    sortable: true,
-    width: "12%",
-    render: (t) => <PriorityLabel priority={t.priority} />,
-  },
-];
 
 const STATUSES: Status[] = ["open", "in_progress", "review", "done"];
 const PRIORITIES: Priority[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
