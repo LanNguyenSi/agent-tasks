@@ -104,6 +104,27 @@ function redactProject<T extends { notificationWebhookSecret?: string | null }>(
 }
 
 /**
+ * JSON.stringify with object keys sorted at every level, so two values that
+ * differ only in key order compare equal. Arrays keep their order: that
+ * ordering is semantic, not cosmetic. Used by the `taskTypeThresholds` audit-change
+ * check below: a plain `JSON.stringify` comparison would write a spurious
+ * audit entry whenever a caller re-sends the same map with its keys in a
+ * different order (review round-2 finding 4).
+ */
+function canonicalJsonString(value: unknown): string {
+  return JSON.stringify(value, (_key, v) => {
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const sorted: Record<string, unknown> = {};
+      for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+        sorted[k] = (v as Record<string, unknown>)[k];
+      }
+      return sorted;
+    }
+    return v;
+  });
+}
+
+/**
  * Team-only membership check. Used for routes that genuinely need team
  * scope (project creation, since per-project shares can't bootstrap a
  * project in a team the user is not in). All other reads/writes use
@@ -464,12 +485,13 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
     };
   }
   // M2 (task b8629b99): taskTypeThresholds gates the same claim decision as
-  // confidenceThreshold above, so it is audited the same way. JSON.stringify
-  // comparison mirrors the respec templateData diff check elsewhere in this
-  // codebase (no deep-equal utility exists here).
+  // confidenceThreshold above, so it is audited the same way. Comparison
+  // uses canonicalJsonString (sorted keys), not a plain JSON.stringify, so
+  // re-sending the same map with its keys in a different order does not
+  // write a spurious audit entry (review round-2 finding 4).
   if (
     taskTypeThresholds !== undefined &&
-    JSON.stringify(taskTypeThresholds) !== JSON.stringify(project.taskTypeThresholds)
+    canonicalJsonString(taskTypeThresholds) !== canonicalJsonString(project.taskTypeThresholds)
   ) {
     governanceChange.taskTypeThresholds = {
       from: project.taskTypeThresholds,

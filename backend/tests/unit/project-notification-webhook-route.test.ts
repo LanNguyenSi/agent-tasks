@@ -78,6 +78,9 @@ const baseProject = {
   githubSyncAt: null,
   taskTemplate: null,
   confidenceThreshold: 60,
+  // Prisma returns null (not undefined) for an unset Json? column; the
+  // fixture must match that shape (review round-2 finding 5).
+  taskTypeThresholds: null,
   enforcementMode: null,
   requireDistinctReviewer: false,
   soloMode: true,
@@ -470,7 +473,7 @@ describe("PATCH /projects/:id — taskTypeThresholds (M2, task b8629b99)", () =>
         action: "project.updated",
         payload: {
           changes: expect.objectContaining({
-            taskTypeThresholds: { from: undefined, to: { security: 90 } },
+            taskTypeThresholds: { from: null, to: { security: 90 } },
           }),
         },
       }),
@@ -488,6 +491,29 @@ describe("PATCH /projects/:id — taskTypeThresholds (M2, task b8629b99)", () =>
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ taskTypeThresholds: { security: 90 } }),
+    });
+
+    expect(mockLogAuditEvent).not.toHaveBeenCalled();
+  });
+
+  // Review round-2 finding 4: a plain JSON.stringify comparison is
+  // key-order-sensitive, so re-sending the same map with its keys reordered
+  // would wrongly look like a change and write a spurious audit entry.
+  it("does NOT audit when the same map is re-sent with its keys in a different order", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      ...baseProject,
+      taskTypeThresholds: { security: 90, docs: 60 },
+    });
+    prismaMocks.projectUpdate.mockResolvedValue({
+      ...baseProject,
+      taskTypeThresholds: { docs: 60, security: 90 },
+    });
+
+    await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      // Same entries, reordered keys.
+      body: JSON.stringify({ taskTypeThresholds: { docs: 60, security: 90 } }),
     });
 
     expect(mockLogAuditEvent).not.toHaveBeenCalled();

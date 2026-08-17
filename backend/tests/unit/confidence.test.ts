@@ -827,6 +827,24 @@ describe("resolveEffectiveThreshold — layered threshold hierarchy (M2)", () =>
       expect(resolveEffectiveThreshold("security", bad, 60)).toEqual({ effectiveThreshold: 60, thresholdSource: "project" });
     }
   });
+
+  // Mutation guard (review round-2 finding 3): the five prototype-chain
+  // cases above ("constructor", "__proto__", ...) are inert against a
+  // `hasOwnProperty` -> `key in obj` regression, because every one of those
+  // names resolves through Object.prototype to a FUNCTION, which the
+  // `typeof raw === "number"` re-validation rejects anyway, so the guard could
+  // be gone entirely and these cases would still pass, for the wrong reason.
+  // This case uses a genuine taskType key ("security") whose INHERITED value
+  // is itself a valid number (5, in [0, 100]), so only the own-property
+  // guard, not the number re-validation, can make it fall to the project
+  // layer instead of resolving through the prototype chain.
+  it("an inherited (non-own) taskType value is never used, even when it is itself a valid number", () => {
+    const taskTypeThresholds = Object.create({ security: 5 }) as unknown;
+    expect(resolveEffectiveThreshold("security", taskTypeThresholds, 60)).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
+  });
 });
 
 describe("taskTypeThresholdsSchema — PATCH /projects/:id validation (M2)", () => {

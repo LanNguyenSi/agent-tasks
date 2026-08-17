@@ -28,8 +28,11 @@ type GateTask = {
     enforcementMode?: EnforcementMode | string | null;
     // M2 (task b8629b99): per-task-type threshold override, unvalidated Json
     // read (see resolveEffectiveThreshold's own-property-safe guard).
-    // Optional so existing callers that select a narrower slice keep compiling.
-    taskTypeThresholds?: unknown;
+    // Required (not optional): every current caller already selects it, and
+    // making it required turns a dropped `taskTypeThresholds: true` in a
+    // future /start or /claim select into a compile-time TS2345, not a
+    // silent runtime fallback to the project layer.
+    taskTypeThresholds: unknown;
   };
 };
 

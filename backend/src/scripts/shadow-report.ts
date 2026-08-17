@@ -16,12 +16,22 @@
  */
 import { pathToFileURL } from "node:url";
 import { prisma } from "../lib/prisma.js";
-import { calculateConfidence, type TemplateData, type TemplateFields } from "../lib/confidence.js";
+import {
+  calculateConfidence,
+  resolveEffectiveThreshold,
+  type TemplateData,
+  type TemplateFields,
+} from "../lib/confidence.js";
 import { resolveEnforcementMode } from "../lib/enforcement-mode.js";
 
 interface ProjectReport {
   project: string;
   enforcementMode: string;
+  /** Project-layer threshold ONLY (`Project.confidenceThreshold`). Per-task
+   *  `wouldBlock` below is computed against the fully layered
+   *  `resolveEffectiveThreshold` result (M2, task b8629b99), which can differ
+   *  per task when the project also has `taskTypeThresholds` set; this
+   *  field does not reflect that per-type override. */
   threshold: number;
   openTasks: number;
   wouldBlock: number;
@@ -41,6 +51,7 @@ export async function computeShadowReport(projectFilter?: string): Promise<Proje
       confidenceThreshold: true,
       taskTemplate: true,
       enforcementMode: true,
+      taskTypeThresholds: true,
     },
     orderBy: { slug: "asc" },
   });
@@ -69,7 +80,16 @@ export async function computeShadowReport(projectFilter?: string): Promise<Proje
         templateFields: tpl?.fields ?? null,
       });
       scores.push(conf.score);
-      const below = conf.score < threshold;
+      // M2 (task b8629b99): the calibration signal must reflect the SAME
+      // layered threshold the live claim gate applies: a per-task-type
+      // override on this project changes wouldBlock for exactly the tasks
+      // whose inferredTaskType matches it, not the whole population.
+      const { effectiveThreshold } = resolveEffectiveThreshold(
+        conf.inferredTaskType,
+        project.taskTypeThresholds,
+        project.confidenceThreshold,
+      );
+      const below = conf.score < effectiveThreshold;
       const blocked = below || conf.blocking;
       if (blocked) wouldBlock++;
       if (conf.blocking) keystoneBlock++;

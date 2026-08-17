@@ -177,6 +177,17 @@ function makeApp(actor: Actor = AGENT) {
   return app;
 }
 
+// M2 (task b8629b99, review round-2 finding 8c): `threshold` is kept
+// alongside the new `effectiveThreshold` purely for BC; every path that
+// emits both MUST keep them equal. Individual tests already assert each
+// field against the same literal, which pins equality only by transitivity;
+// this helper asserts the invariant directly so a regression that computes
+// `threshold` and `effectiveThreshold` from different sources is caught even
+// if both still happen to produce a plausible-looking number.
+function expectThresholdMirrorsEffective(details: { threshold: number; effectiveThreshold: number }): void {
+  expect(details.threshold).toBe(details.effectiveThreshold);
+}
+
 const baseTask = {
   id: "task-1",
   projectId: "proj-1",
@@ -4681,6 +4692,7 @@ describe("confidence gate: POST /tasks/:id/start", () => {
       expect(body.details.blocking).toBe(false); // threshold-only block, no keystone
       expect(body.details.threshold).toBe(90);
       expect(body.details.effectiveThreshold).toBe(90);
+      expectThresholdMirrorsEffective(body.details);
       expect(body.details.thresholdSource).toBe("taskType");
       expect(logAuditEvent).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -4725,6 +4737,32 @@ describe("confidence gate: POST /tasks/:id/start", () => {
       };
       expect(body.details.threshold).toBe(60);
       expect(body.details.effectiveThreshold).toBe(60);
+      expectThresholdMirrorsEffective(body.details);
+      expect(body.details.thresholdSource).toBe("project");
+    });
+
+    // Review round-2 finding 8(a): distinct from the BC case above (which
+    // has NO taskTypeThresholds at all); here the project DOES have an
+    // override, but the task itself is untyped, so the resolver must still
+    // fall to the project layer. Pins that the EXPLICIT inferredTaskType
+    // (undefined for an untyped task), not a guessed/default type, is what
+    // reaches resolveEffectiveThreshold.
+    it("a project WITH taskTypeThresholds set still falls to the project layer for an UNTYPED task", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce({
+        ...LOW_SCORE_TASK,
+        project: { ...LOW_SCORE_TASK.project, taskTypeThresholds: { security: 90 } },
+      });
+      prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+      prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+      const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as {
+        details: { threshold: number; effectiveThreshold: number; thresholdSource: string };
+      };
+      expect(body.details.threshold).toBe(60);
+      expect(body.details.effectiveThreshold).toBe(60);
+      expectThresholdMirrorsEffective(body.details);
       expect(body.details.thresholdSource).toBe("project");
     });
   });
@@ -4826,6 +4864,7 @@ describe("confidence gate: POST /tasks/:id/claim", () => {
     };
     expect(body.details.threshold).toBe(90);
     expect(body.details.effectiveThreshold).toBe(90);
+    expectThresholdMirrorsEffective(body.details);
     expect(body.details.thresholdSource).toBe("taskType");
     expect(body.details.blocking).toBe(false);
   });
@@ -4911,6 +4950,7 @@ describe("GET /tasks/:id/instructions: confidence shape", () => {
     };
     expect(body.confidence.threshold).toBe(90);
     expect(body.confidence.effectiveThreshold).toBe(90);
+    expectThresholdMirrorsEffective(body.confidence);
     expect(body.confidence.thresholdSource).toBe("taskType");
   });
 
@@ -4928,6 +4968,7 @@ describe("GET /tasks/:id/instructions: confidence shape", () => {
     };
     expect(body.confidence.threshold).toBe(60);
     expect(body.confidence.effectiveThreshold).toBe(60);
+    expectThresholdMirrorsEffective(body.confidence);
     expect(body.confidence.thresholdSource).toBe("project");
   });
 });
@@ -5076,6 +5117,7 @@ describe("POST /tasks/:id/respec", () => {
     };
     expect(body.confidence.threshold).toBe(90);
     expect(body.confidence.effectiveThreshold).toBe(90);
+    expectThresholdMirrorsEffective(body.confidence);
     expect(body.confidence.thresholdSource).toBe("taskType");
   });
 
@@ -5234,6 +5276,38 @@ describe("POST /tasks/:id/respec", () => {
     expect(res.status).toBe(200);
     expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
     expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.respec" }));
+  });
+
+  // Review round-2 finding 8(b): D9's no-op branch scores the BEFORE
+  // snapshot (fromDescription/fromTemplateData), not the freshly-written
+  // row, and resolves `confidenceContext` from that same before snapshot's
+  // taskType. Pins that a project WITH a taskTypeThresholds override still
+  // resolves the taskType layer correctly on the no-op path, not just on the
+  // write path exercised by the other M2 respec test above.
+  it("D9 no-op: confidence.effectiveThreshold resolves via the BEFORE snapshot's taskType when the project has a taskTypeThresholds override", async () => {
+    const task = {
+      ...RESPEC_TASK,
+      templateData: { goal: "ship the thing", taskType: "security" },
+      project: { ...RESPEC_TASK.project, confidenceThreshold: 60, taskTypeThresholds: { security: 90 } },
+    };
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(task).mockResolvedValueOnce(task);
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, {
+      templateData: { goal: "ship the thing", taskType: "security" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      confidence: { threshold: number; effectiveThreshold: number; thresholdSource: string };
+    };
+
+    // Still a no-op: identical templateData, no write, no audit.
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.respec" }));
+
+    expect(body.confidence.threshold).toBe(90);
+    expect(body.confidence.effectiveThreshold).toBe(90);
+    expectThresholdMirrorsEffective(body.confidence);
+    expect(body.confidence.thresholdSource).toBe("taskType");
   });
 
   // ── D8: empty values are rejected, not silently persisted ────────────────
@@ -5525,6 +5599,7 @@ describe("POST /projects/:projectId/tasks — workflowId project validation", ()
       };
       expect(body.confidence.threshold).toBe(90);
       expect(body.confidence.effectiveThreshold).toBe(90);
+      expectThresholdMirrorsEffective(body.confidence);
       expect(body.confidence.thresholdSource).toBe("taskType");
     });
 
@@ -5539,6 +5614,7 @@ describe("POST /projects/:projectId/tasks — workflowId project validation", ()
       };
       expect(body.confidence.threshold).toBe(60);
       expect(body.confidence.effectiveThreshold).toBe(60);
+      expectThresholdMirrorsEffective(body.confidence);
       expect(body.confidence.thresholdSource).toBe("project");
     });
   });

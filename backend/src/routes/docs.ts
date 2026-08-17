@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { SUGGESTED_TASK_TYPE_THRESHOLDS } from "../lib/confidence.js";
 
 export const docsRouter = new Hono();
 
@@ -204,12 +205,42 @@ export const openApiSpec = {
             description:
               "Optional per-task-type override of confidenceThreshold (M2). Resolution order: taskTypeThresholds[EXPLICIT templateData.taskType] -> confidenceThreshold -> global default (60). Any subset of the six taskType keys; PATCH rejects unknown keys.",
             properties: {
-              bugfix: { type: "integer", minimum: 0, maximum: 100 },
-              feature: { type: "integer", minimum: 0, maximum: 100 },
-              refactoring: { type: "integer", minimum: 0, maximum: 100 },
-              security: { type: "integer", minimum: 0, maximum: 100 },
-              migration: { type: "integer", minimum: 0, maximum: 100 },
-              docs: { type: "integer", minimum: 0, maximum: 100 },
+              bugfix: {
+                type: "integer",
+                minimum: 0,
+                maximum: 100,
+                description: `Suggested starting value: ${SUGGESTED_TASK_TYPE_THRESHOLDS.bugfix}. Never applied automatically.`,
+              },
+              feature: {
+                type: "integer",
+                minimum: 0,
+                maximum: 100,
+                description: `Suggested starting value: ${SUGGESTED_TASK_TYPE_THRESHOLDS.feature}. Never applied automatically.`,
+              },
+              refactoring: {
+                type: "integer",
+                minimum: 0,
+                maximum: 100,
+                description: `Suggested starting value: ${SUGGESTED_TASK_TYPE_THRESHOLDS.refactoring}. Never applied automatically.`,
+              },
+              security: {
+                type: "integer",
+                minimum: 0,
+                maximum: 100,
+                description: `Suggested starting value: ${SUGGESTED_TASK_TYPE_THRESHOLDS.security}. Never applied automatically.`,
+              },
+              migration: {
+                type: "integer",
+                minimum: 0,
+                maximum: 100,
+                description: `Suggested starting value: ${SUGGESTED_TASK_TYPE_THRESHOLDS.migration}. Never applied automatically.`,
+              },
+              docs: {
+                type: "integer",
+                minimum: 0,
+                maximum: 100,
+                description: `Suggested starting value: ${SUGGESTED_TASK_TYPE_THRESHOLDS.docs}. Never applied automatically.`,
+              },
             },
             additionalProperties: false,
           },
