@@ -1,0 +1,13 @@
+{
+  // Extends tsconfig.typecheck.json (not the plain tsconfig.json) so
+  // tests/governance.test.ts's `import { createServer } from
+  // "@agent-tasks/mcp-server"` resolves to the workspace sibling's source
+  // (via the inherited `paths` mapping) instead of requiring mcp-server to
+  // be built first, matching how `npm run typecheck` already works here.
+  "extends": "./tsconfig.typecheck.json",
+  "compilerOptions": {
+    "declaration": false
+  },
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

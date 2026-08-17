@@ -23,6 +23,7 @@ const agentActor = (tokenId: string): Actor => ({
   tokenId,
   teamId: "team-1",
   scopes: [],
+  userId: tokenId,
 });
 
 const task = (

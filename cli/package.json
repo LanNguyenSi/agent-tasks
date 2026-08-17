@@ -19,6 +19,7 @@
     "pretest": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "prepublishOnly": "npm run build"
   },
   "publishConfig": {

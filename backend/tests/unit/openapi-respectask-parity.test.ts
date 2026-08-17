@@ -39,7 +39,14 @@ describe("OpenAPI RespecTaskRequest <-> Zod respecTaskSchema parity", () => {
       .filter(([, schema]) => !schema.isOptional())
       .map(([key]) => key)
       .sort();
-    const openApiRequired = [...(respecTaskRequest.required ?? [])].sort();
+    // RespecTaskRequest's own literal in docs.ts never declares a
+    // `required` key (unlike sibling schemas such as CreateTaskRequest) —
+    // its "at least one of description/templateData" rule lives in `anyOf`
+    // instead, per the file-header comment. Cast to read it optionally
+    // without widening docs.ts's own schema types.
+    const openApiRequired = [
+      ...((respecTaskRequest as { required?: readonly string[] }).required ?? []),
+    ].sort();
     expect(openApiRequired).toEqual(zodRequired);
   });
 });

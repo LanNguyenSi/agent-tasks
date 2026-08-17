@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
-import type { Actor } from "../../src/types/auth.js";
+import type { Actor, AgentActor } from "../../src/types/auth.js";
 
 const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
@@ -83,18 +83,20 @@ vi.mock("../../src/services/github-merge.js", () => ({
 import { taskRouter } from "../../src/routes/tasks.js";
 import { logAuditEvent } from "../../src/services/audit.js";
 
-const AGENT_WITH_SCOPE: Actor = {
+const AGENT_WITH_SCOPE: AgentActor = {
   type: "agent",
   tokenId: "agent-reviewer",
   teamId: "team-1",
   scopes: ["tasks:read", "github:pr_merge"],
+  userId: "agent-reviewer",
 };
 
-const AGENT_CLAIMANT: Actor = {
+const AGENT_CLAIMANT: AgentActor = {
   type: "agent",
   tokenId: "agent-claimant",
   teamId: "team-1",
   scopes: ["tasks:read", "github:pr_merge"],
+  userId: "agent-claimant",
 };
 
 function makeApp(actor: Actor) {

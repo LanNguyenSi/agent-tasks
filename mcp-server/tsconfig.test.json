@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Widened past "." (the exemplar default): some tests import backend
+    // source directly (e.g. tests/default-workflow.test.ts pulls in
+    // ../backend/src/services/default-workflow.ts and its transitive
+    // deps), so rootDir must reach the monorepo root to contain them.
+    "rootDir": "..",
+    "noEmit": true,
+    "declaration": false
+  },
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

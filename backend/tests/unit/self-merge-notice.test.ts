@@ -31,6 +31,7 @@ const agentActor: Actor = {
   tokenId: "agent-1",
   teamId: "team-1",
   scopes: [],
+  userId: "agent-1",
 };
 const humanActor: Actor = { type: "human", userId: "user-1" };
 

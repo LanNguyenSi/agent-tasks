@@ -73,6 +73,7 @@ const AGENT: AgentActor = {
   tokenId: "agent-token-1",
   teamId: "team-1",
   scopes: ["tasks:read"],
+  userId: "agent-token-1",
 };
 
 const HUMAN: HumanActor = {

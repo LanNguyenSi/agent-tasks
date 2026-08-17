@@ -68,6 +68,9 @@ jobs:
       - name: Type check
         run: npm run typecheck --workspace=backend
 
+      - name: Type check test files
+        run: npm run typecheck:test --workspace=backend
+
       - name: Lint
         run: npm run lint --workspace=backend
 
@@ -124,6 +127,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck --workspace=mcp-server
+      - run: npm run typecheck:test --workspace=mcp-server
       - run: npm run test --workspace=mcp-server
       # Additive guard (~1s), no extra build: this job has not built
       # mcp-server yet at this point, so this actually exercises the
@@ -133,6 +137,7 @@ jobs:
       # untested by CI and a revert of the typecheck-only config could ship
       # unnoticed.
       - run: npm run typecheck --workspace=mcp-bridge
+      - run: npm run typecheck:test --workspace=mcp-bridge
       - run: npm run build --workspace=mcp-server
 
   mcp-bridge:
@@ -148,6 +153,7 @@ jobs:
       - run: npm ci
       - run: npm run build --workspace=mcp-server
       - run: npm run typecheck --workspace=mcp-bridge
+      - run: npm run typecheck:test --workspace=mcp-bridge
       - run: npm run test --workspace=mcp-bridge
       - run: npm run build --workspace=mcp-bridge
 
@@ -162,5 +168,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck --workspace=@agent-tasks/cli
+      - run: npm run typecheck:test --workspace=@agent-tasks/cli
       - run: npm run test --workspace=@agent-tasks/cli
       - run: npm run build --workspace=@agent-tasks/cli
