@@ -3852,6 +3852,40 @@ html[data-theme="light"] {
   display: block;
 }
 
+/* Title cell wrapper for the tasks browser and dashboard list view: the
+   title text truncates in its own flex item while the short-id chip
+   (first 8 chars of the task's UUID) stays fixed-width and never clips.
+   It's the round-trip anchor an operator/agent uses to find the task
+   again by id (paste it into search). */
+.table-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.table-title-row > * {
+  min-width: 0;
+}
+
+.table-row-id {
+  flex: 0 0 auto;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+/* Trailing ellipsis is presentational only: appended via ::after rather
+   than in the element's text content, so selecting/copying the chip's text
+   (e.g. to paste into search) never carries a literal "…" that would fail
+   the id-prefix search gate (see ID_FRAGMENT_GATE in
+   frontend/src/lib/taskDisplay.ts and backend/src/routes/tasks.ts). Both
+   sides also normalize a pasted trailing ellipsis as a fallback (e.g.
+   Firefox, which can still include ::after content in a selection). */
+.table-row-id::after {
+  content: "\2026";
+}
+
 /* Done status chip: muted (grey) variant for list views.
    Only the tasks-list surface applies this; the dashboard keeps the
    standard green --status-done styling so done columns stay distinct. */

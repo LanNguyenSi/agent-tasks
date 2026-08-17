@@ -66,7 +66,7 @@ vi.mock("../../src/services/grounding-client.js", () => ({
   __resetGroundingClientCacheForTests: () => {},
 }));
 
-import { taskRouter } from "../../src/routes/tasks.js";
+import { taskRouter, ID_FRAGMENT_GATE, normalizeIdQuery } from "../../src/routes/tasks.js";
 
 const AGENT: AgentActor = {
   type: "agent",
@@ -313,6 +313,124 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
         mine: 0,
         total: 0,
       });
+    });
+  });
+
+  describe("search (?q=)", () => {
+    it("translates ?q=foo into an OR across title/description/externalRef/labels (no id branch)", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?q=foo");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toEqual([
+        { title: { contains: "foo", mode: "insensitive" } },
+        { description: { contains: "foo", mode: "insensitive" } },
+        { externalRef: { contains: "foo", mode: "insensitive" } },
+        { labels: { has: "foo" } },
+      ]);
+    });
+
+    it("a full UUID query adds an id-startsWith clause, additive to the text OR", async () => {
+      const uuid = "8f30a6f3-1234-4abc-9def-000000000000";
+      await makeApp(HUMAN).request(`/teams/team-A/tasks?q=${uuid}`);
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toEqual([
+        { title: { contains: uuid, mode: "insensitive" } },
+        { description: { contains: uuid, mode: "insensitive" } },
+        { externalRef: { contains: uuid, mode: "insensitive" } },
+        { labels: { has: uuid } },
+        { id: { startsWith: uuid, mode: "insensitive" } },
+      ]);
+    });
+
+    it("an 8-char hex prefix (the short id shown in the UI) adds the id-startsWith clause", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?q=8f30a6f3");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toContainEqual({ id: { startsWith: "8f30a6f3", mode: "insensitive" } });
+    });
+
+    it("id matching is case-insensitive (uppercase hex fragment still adds the id clause)", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?q=DEADBEEF");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toContainEqual({ id: { startsWith: "DEADBEEF", mode: "insensitive" } });
+    });
+
+    it("a hex-shaped query under the 4-char minimum does NOT add the id clause", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?q=dea");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toEqual([
+        { title: { contains: "dea", mode: "insensitive" } },
+        { description: { contains: "dea", mode: "insensitive" } },
+        { externalRef: { contains: "dea", mode: "insensitive" } },
+        { labels: { has: "dea" } },
+      ]);
+    });
+
+    it("a non-hex text query (e.g. a title search) does NOT add the id clause; title search is unaffected", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?q=onboarding%20flow");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toEqual([
+        { title: { contains: "onboarding flow", mode: "insensitive" } },
+        { description: { contains: "onboarding flow", mode: "insensitive" } },
+        { externalRef: { contains: "onboarding flow", mode: "insensitive" } },
+        { labels: { has: "onboarding flow" } },
+      ]);
+    });
+
+    // Copy-paste round-trip: the short-id chip (frontend tasks/page.tsx,
+    // dashboard/TaskListView.tsx) renders a trailing ellipsis. Depending on
+    // the browser, selecting/copying the chip can carry that ellipsis into
+    // the clipboard even though it's meant to be presentational-only (CSS
+    // ::after, globals.css); the id-prefix branch normalizes it away via
+    // normalizeIdQuery so a pasted "8f30a6f3…" still finds the task. The
+    // text-search clauses keep the raw query — normalization only applies
+    // to the id branch.
+    it("a trailing copy-paste unicode ellipsis is stripped before the id-prefix gate check", async () => {
+      const raw = "8f30a6f3…";
+      await makeApp(HUMAN).request(`/teams/team-A/tasks?q=${encodeURIComponent(raw)}`);
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toEqual([
+        { title: { contains: raw, mode: "insensitive" } },
+        { description: { contains: raw, mode: "insensitive" } },
+        { externalRef: { contains: raw, mode: "insensitive" } },
+        { labels: { has: raw } },
+        { id: { startsWith: "8f30a6f3", mode: "insensitive" } },
+      ]);
+    });
+
+    it("a trailing ASCII ellipsis ('...') is stripped before the id-prefix gate check", async () => {
+      await makeApp(HUMAN).request(`/teams/team-A/tasks?q=${encodeURIComponent("8f30a6f3...")}`);
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toContainEqual({ id: { startsWith: "8f30a6f3", mode: "insensitive" } });
+    });
+  });
+
+  describe("ID_FRAGMENT_GATE / normalizeIdQuery (id-prefix search helpers)", () => {
+    // Pins the exact regex source so an accidental edit here is caught by a
+    // failing assertion rather than a silent drift. Cross-reference: this
+    // regex is mirrored in frontend/src/lib/taskDisplay.ts's
+    // ID_FRAGMENT_GATE — if you change one, change the other and update
+    // both pinned strings.
+    it("pins the regex source — keep in sync with frontend/src/lib/taskDisplay.ts's ID_FRAGMENT_GATE", () => {
+      expect(String(ID_FRAGMENT_GATE)).toBe("/^[0-9a-f][0-9a-f-]{3,35}$/i");
+    });
+
+    it("requires a leading hex digit — a leading dash is rejected", () => {
+      expect(ID_FRAGMENT_GATE.test("-8f30a6f3")).toBe(false);
+    });
+
+    it("caps the length at 36 (a full UUID fits; longer does not)", () => {
+      expect(ID_FRAGMENT_GATE.test("8f30a6f3-1234-4abc-9def-000000000000")).toBe(true); // 36 chars
+      expect(ID_FRAGMENT_GATE.test("8f30a6f3-1234-4abc-9def-0000000000000")).toBe(false); // 37 chars
+    });
+
+    it("normalizeIdQuery strips a trailing unicode or ASCII ellipsis", () => {
+      expect(normalizeIdQuery("8f30a6f3…")).toBe("8f30a6f3");
+      expect(normalizeIdQuery("8f30a6f3...")).toBe("8f30a6f3");
+    });
+
+    it("normalizeIdQuery leaves an already-clean hex/dash query untouched", () => {
+      expect(normalizeIdQuery("8f30a6f3-1234-4abc-9def-000000000000")).toBe(
+        "8f30a6f3-1234-4abc-9def-000000000000",
+      );
     });
   });
 

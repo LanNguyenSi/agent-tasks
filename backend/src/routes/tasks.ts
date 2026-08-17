@@ -102,6 +102,33 @@ import { httpUrl } from "../lib/url-guard.js";
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
+/**
+ * Case-insensitive hex/UUID-fragment gate for the id-prefix search branch
+ * of GET /teams/:teamId/tasks (below): the first char must be a hex digit
+ * (not a bare dash) and the total length is 4-36, which fits both the
+ * 8-char short id shown in the UI and a full task UUID (e.g.
+ * 8f30a6f3-1234-4abc-9def-000000000000). Mirrored in
+ * frontend/src/lib/taskDisplay.ts's ID_FRAGMENT_GATE — a guard test in
+ * each file pins this regex's source string; keep both definitions in
+ * sync by hand if you change either.
+ */
+export const ID_FRAGMENT_GATE = /^[0-9a-f][0-9a-f-]{3,35}$/i;
+
+/**
+ * Strip a trailing copy/paste ellipsis (unicode "…" or ASCII "...") and any
+ * other trailing non-hex/dash characters from a search query before it's
+ * tested against ID_FRAGMENT_GATE. The short-id chip in the list views
+ * (frontend tasks/page.tsx, dashboard/TaskListView.tsx) renders as
+ * `{id.slice(0, 8)}…`; depending on the browser's text-selection behavior,
+ * selecting and copying that chip can carry the trailing ellipsis into the
+ * clipboard, which would otherwise make a pasted short id silently fail
+ * the gate (and thus the id-prefix search match) on both round-trip ends.
+ * Mirrored in frontend/src/lib/taskDisplay.ts's normalizeIdQuery.
+ */
+export function normalizeIdQuery(q: string): string {
+  return q.replace(/[^0-9a-f-]+$/i, "");
+}
+
 // Surface taskId / projectId from the path on every log line emitted within
 // these routes — meets the acceptance criterion that
 // `docker logs … | jq 'select(.taskId == "<id>")'` returns the full request
@@ -480,14 +507,29 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
 
   // Search across the human-meaningful string fields. Labels match exactly
   // (clicking a label chip); the rest are case-insensitive substrings.
+  //
+  // Task ids are plain-text lowercase UUIDs (no @db.Uuid cast, see
+  // schema.prisma), so a query that looks like a hex/UUID fragment (see
+  // ID_FRAGMENT_GATE, e.g. the 8-char short id shown in the UI) ALSO
+  // matches as an id-prefix, OR'd onto the existing text clauses. This lets
+  // an operator/agent paste a short id like "8f30a6f3" and find the task
+  // even though that string never appears in the title. The id branch only
+  // activates for hex/uuid-shaped queries and is always additive: it never
+  // suppresses or replaces the title/description/externalRef/labels match,
+  // so plain text search is unaffected.
   const q = c.req.query("q")?.trim();
   if (q) {
-    where.OR = [
+    const or: Prisma.TaskWhereInput[] = [
       { title: { contains: q, mode: "insensitive" } },
       { description: { contains: q, mode: "insensitive" } },
       { externalRef: { contains: q, mode: "insensitive" } },
       { labels: { has: q } },
     ];
+    const idQuery = normalizeIdQuery(q);
+    if (ID_FRAGMENT_GATE.test(idQuery)) {
+      or.push({ id: { startsWith: idQuery, mode: "insensitive" } });
+    }
+    where.OR = or;
   }
 
   // Hard cap to keep the response bounded even if a caller forgets a sane
