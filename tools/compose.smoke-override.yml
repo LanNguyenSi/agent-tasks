@@ -1,0 +1,36 @@
+# docker-compose.prod.yml override for tools/frontend-docker-smoke.sh's
+# health-assert phase ONLY. Never referenced by the real deploy.
+#
+# Why this exists: docker-compose.prod.yml's frontend service joins the
+# shared external `traefik` network with live Traefik router labels
+# (traefik.enable=true, Host(`agent-tasks.opentriologue.ai`), port 3000).
+# Unmodified, starting that service on any host that also runs the real
+# Traefik proxy (the VPS, or a laptop pointed at it) would attach the
+# smoke-test container to the live public route. This override detaches
+# the frontend service from that network and turns off Traefik
+# registration for the smoke run; it changes nothing else about the
+# service under test.
+#
+# `networks: !override` (not a plain list) is required: Compose merges
+# list-typed keys like `networks` across -f files by default, so a plain
+# `networks: [internal]` here would NOT remove `traefik` -- verified
+# empirically 2026-08-17 against Docker Compose 5.5.0 (`docker compose
+# config frontend` still showed both networks without the tag). `!override`
+# replaces the list instead of merging it; supported since Compose 2.24.4.
+#
+# `labels` is a mapping, so `traefik.enable: "false"` merges by key over
+# the base file's "true" without needing `!override` there. Kept as a
+# version-robust belt-and-suspenders measure even though detaching the
+# network already makes the router unreachable from this container.
+#
+# MUST NEVER contain a `healthcheck:` key. The whole point of the
+# health-assert phase is to assert the healthcheck docker-compose.prod.yml
+# actually ships, read from that single source. A healthcheck key here
+# would silently make the smoke test check something other than prod
+# reality.
+services:
+  frontend:
+    networks: !override
+      - internal
+    labels:
+      traefik.enable: "false"

@@ -32,20 +32,35 @@
 # NOT a reliable probe, since next start can boot on defaults without one.)
 #
 # Phase 2 (health-assert): boots the frontend service via Docker Compose
-# (docker-compose.prod.yml, the same file that deploys prod) using the
-# already-built image from phase 1 -- no second build -- and polls
-# `docker inspect` State.Health.Status until it reports "healthy". The
-# healthcheck itself (probe command, interval, timeout, retries,
-# start_period) is intentionally NOT re-encoded here: it is read solely
-# from docker-compose.prod.yml's services.frontend.healthcheck block, so
-# this script can never silently drift from what actually ships. Requires
+# (docker-compose.prod.yml, the same file that deploys prod, plus
+# tools/compose.smoke-override.yml -- see that file's header for why it's
+# needed) using the already-built image from phase 1 -- no second build --
+# and polls `docker inspect` State.Health.Status until it reports
+# "healthy". The healthcheck itself (probe command, interval, timeout,
+# retries, start_period) is intentionally NOT re-encoded here: it is read
+# solely from docker-compose.prod.yml's services.frontend.healthcheck
+# block (the override file must never add one -- see its header), so this
+# script can never silently drift from what actually ships. Requires
 # either the `docker compose` plugin or standalone `docker-compose`; fails
 # loudly (never skips) if neither is on PATH.
 #
+# Environment assumption: the frontend runs ALONE here, with phase 1's
+# build args (NEXT_PUBLIC_API_URL=https://api.smoke.invalid) and no
+# backend container reachable at http://backend:3001. The probed route
+# (GET /, same as phase 1) must stay backend-independent for this phase to
+# mean anything -- if the probed route or the healthcheck's own probe ever
+# starts requiring a live backend, this phase needs a real backend in the
+# compose project, not just the frontend service.
+#
 # Falsifiability (mutation probe, phase 2): breaking the healthcheck in
-# docker-compose.prod.yml (e.g. changing the probed port from 3000 to 3001)
-# MUST turn this script red. Not run as part of authoring this phase --
-# verify separately by editing docker-compose.prod.yml and re-running.
+# docker-compose.prod.yml (e.g. changing the probed port from 3000 to
+# 3001) MUST turn this script red. Verified 2026-08-17 (local Docker
+# 29.7.1/Compose 5.5.0, macOS): with the probed port changed 3000 -> 3001,
+# the compose-managed container reported State.Health.Status=unhealthy
+# after FailingStreak reached 3 at ~21s (matches the healthcheck's own
+# "connection-refused unhealthy ~21s" comment below), and this script
+# exited rc=1 via the `unhealthy` branch of the health-poll below. Restored
+# immediately after; not left in the tree.
 #
 # Usage: tools/frontend-docker-smoke.sh
 # Env overrides (all optional): NEXT_PUBLIC_API_URL, READY_TIMEOUT_SECS,
@@ -59,20 +74,51 @@ REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
 NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://api.smoke.invalid}
 READY_TIMEOUT_SECS=${READY_TIMEOUT_SECS:-60}
 POLL_INTERVAL_SECS=${POLL_INTERVAL_SECS:-1}
+# 45s bound: docker-compose.prod.yml's frontend healthcheck (interval 5s,
+# timeout 5s, retries 3, start_period 10s) has a measured worst-case of
+# ~41s to reach a terminal Health.Status, in its slowest failure mode (a
+# hung server that accepts TCP but never responds -- see that file's own
+# "Detection bounds measured locally" comment on services.frontend for the
+# full breakdown: healthy ~5-6s, connection-refused unhealthy ~21s, hung
+# ~41s). 45s leaves a small margin over that measured worst case rather
+# than re-deriving a theoretical bound from interval*retries+start_period,
+# which does not account for the observed per-probe timeout stacking.
 HEALTH_TIMEOUT_SECS=${HEALTH_TIMEOUT_SECS:-45}
 
 IMAGE_TAG="agent-tasks-frontend-smoke:$$"
 CONTAINER_NAME="agent-tasks-frontend-smoke-$$"
 
-# --- phase 2 (health-assert) setup: isolated compose project so container,
-# network and volume names can never collide with a real deployment. ---
+# --- phase 2 (health-assert) setup: isolated compose project so the
+# container, network and volume NAMES can never collide with a real
+# deployment (project/container/volume names, plus the compose-managed
+# `internal` network, are all namespaced by the $$-suffixed project name
+# below). That alone is not enough: docker-compose.prod.yml's frontend
+# service also joins the shared *external* `traefik` network with live
+# Traefik router labels, which project-namespacing does not isolate --
+# tools/compose.smoke-override.yml (layered in via compose_cmd below)
+# detaches the smoke-started frontend from that network and disables its
+# Traefik registration, so the smoke container can never appear on a real
+# host's public route. See that file's header for the mechanics/rationale.
+# ---
 COMPOSE_FILE="${REPO_ROOT}/docker-compose.prod.yml"
+COMPOSE_OVERRIDE_FILE="${REPO_ROOT}/tools/compose.smoke-override.yml"
 COMPOSE_PROJECT="agent-tasks-smoke-$$"
 # Docker Compose's implicit build-image naming convention (verified locally
 # via `docker compose config --images`): "<project>-<service>:latest".
 COMPOSE_IMAGE="${COMPOSE_PROJECT}-frontend:latest"
+# Even though the override above detaches the *frontend* service from the
+# `traefik` network, docker-compose.prod.yml still declares it at the
+# top-level `networks:` key and the `backend` service (not started here --
+# `up --no-deps frontend` skips it) still references it there. Verified
+# empirically 2026-08-17: `compose up --no-deps frontend` against the real
+# file + override still fails with "network traefik declared as external,
+# but could not be found" when the network is absent, and still succeeds
+# without it needing to be created when NO service in the file references
+# it at all. So this script still owns creating/removing it -- guarded
+# below against a concurrent smoke run racing the same create/remove.
 TRAEFIK_NETWORK="traefik"
 CREATED_TRAEFIK_NETWORK=0
+COMPOSE_CID=""
 
 # Prefer the `docker compose` plugin (what GitHub-hosted runners ship);
 # fall back to standalone `docker-compose`. Fail loudly if neither exists --
@@ -89,9 +135,9 @@ fi
 
 compose_cmd() {
   if [ "${COMPOSE_USE_PLUGIN}" = "1" ]; then
-    docker compose -f "${COMPOSE_FILE}" -p "${COMPOSE_PROJECT}" "$@"
+    docker compose -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE_FILE}" -p "${COMPOSE_PROJECT}" "$@"
   else
-    docker-compose -f "${COMPOSE_FILE}" -p "${COMPOSE_PROJECT}" "$@"
+    docker-compose -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE_FILE}" -p "${COMPOSE_PROJECT}" "$@"
   fi
 }
 
@@ -108,7 +154,17 @@ cleanup() {
   compose_cmd down -v --remove-orphans >/dev/null 2>&1 || true
   docker rmi -f "${COMPOSE_IMAGE}" >/dev/null 2>&1 || true
   if [ "${CREATED_TRAEFIK_NETWORK}" = "1" ]; then
-    docker network rm "${TRAEFIK_NETWORK}" >/dev/null 2>&1 || true
+    # Guard against a concurrent smoke run racing the same create: with the
+    # compose override in place, this script's own frontend container is
+    # never a member of this network (the override detaches it), so any
+    # attached endpoint here belongs to something else -- a concurrent
+    # smoke run's create/inspect race, or (should this ever run on a host
+    # that starts running the real stack mid-test) the real deployment.
+    # Only remove the network when it is provably unused right now.
+    net_endpoints=$(docker network inspect -f '{{len .Containers}}' "${TRAEFIK_NETWORK}" 2>/dev/null) || net_endpoints=""
+    if [ "${net_endpoints}" = "0" ]; then
+      docker network rm "${TRAEFIK_NETWORK}" >/dev/null 2>&1 || true
+    fi
   fi
 }
 trap cleanup EXIT
@@ -126,7 +182,16 @@ health_fail() {
   echo "FAIL: $1" >&2
   echo "--- compose frontend logs (project ${COMPOSE_PROJECT}) ---" >&2
   compose_cmd logs frontend >&2 || true
-  health_fail_cid=$(compose_cmd ps -q frontend 2>/dev/null) || health_fail_cid=""
+  # Reuse COMPOSE_CID when already resolved; otherwise (a failure before
+  # that point, e.g. `compose up` itself failing) fall back to `ps -a -q`
+  # rather than the default `ps -q`, so the Health JSON dump below still
+  # fires for a container that already exited instead of silently finding
+  # nothing.
+  if [ -n "${COMPOSE_CID}" ]; then
+    health_fail_cid="${COMPOSE_CID}"
+  else
+    health_fail_cid=$(compose_cmd ps -a -q frontend 2>/dev/null) || health_fail_cid=""
+  fi
   if [ -n "${health_fail_cid}" ]; then
     echo "--- docker inspect State.Health (project ${COMPOSE_PROJECT}) ---" >&2
     docker inspect -f '{{json .State.Health}}' "${health_fail_cid}" >&2 || true
@@ -198,8 +263,17 @@ echo "--- health-assert: tag image for compose (project ${COMPOSE_PROJECT}) ---"
 docker tag "${IMAGE_TAG}" "${COMPOSE_IMAGE}"
 
 if ! docker network inspect "${TRAEFIK_NETWORK}" >/dev/null 2>&1; then
-  echo "--- health-assert: creating external network '${TRAEFIK_NETWORK}' (docker-compose.prod.yml expects it to pre-exist, as in prod) ---"
-  docker network create "${TRAEFIK_NETWORK}" >/dev/null
+  echo "--- health-assert: creating external network '${TRAEFIK_NETWORK}' (docker-compose.prod.yml's 'backend' service still declares it, so Compose requires it to exist even though only 'frontend' is started) ---"
+  # `docker network create` is not idempotent: a concurrent smoke run can
+  # win the same create race, in which case ours fails with "already
+  # exists". Tolerate that failure and re-verify existence next -- only a
+  # genuine failure (permissions, daemon issue) that leaves the network
+  # still absent afterward is fatal.
+  docker network create "${TRAEFIK_NETWORK}" >/dev/null 2>&1 || true
+  if ! docker network inspect "${TRAEFIK_NETWORK}" >/dev/null 2>&1; then
+    echo "FAIL: could not create or verify the external network '${TRAEFIK_NETWORK}' required by docker-compose.prod.yml's top-level networks declaration" >&2
+    exit 1
+  fi
   CREATED_TRAEFIK_NETWORK=1
 fi
 
@@ -224,6 +298,16 @@ echo "compose up wall time: $((compose_up_end - compose_up_start))s (--no-build:
 COMPOSE_CID=$(compose_cmd ps -q frontend) || COMPOSE_CID=""
 if [ -z "${COMPOSE_CID}" ]; then
   health_fail "could not resolve the compose-managed frontend container id (compose ps -q frontend returned empty)"
+fi
+
+# Assert a healthcheck is actually configured before polling for it. Without
+# this, a docker-compose.prod.yml edit that drops services.frontend.healthcheck
+# leaves State.Health permanently absent, and the poll below would just run
+# out the full ${HEALTH_TIMEOUT_SECS}s clock with an opaque "unknown" status
+# instead of failing immediately with a precise reason.
+has_healthcheck=$(docker inspect -f '{{if .Config.Healthcheck}}yes{{end}}' "${COMPOSE_CID}" 2>/dev/null) || has_healthcheck=""
+if [ -z "${has_healthcheck}" ]; then
+  health_fail "compose-managed frontend container has no healthcheck configured (docker inspect .Config.Healthcheck is empty) -- docker-compose.prod.yml's services.frontend.healthcheck block is missing or was not applied"
 fi
 
 echo "--- health-assert: poll docker inspect State.Health.Status (timeout ${HEALTH_TIMEOUT_SECS}s) ---"

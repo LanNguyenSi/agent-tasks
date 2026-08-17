@@ -25,6 +25,7 @@ on:
       - "docker-compose.prod.yml"
       - ".github/workflows/docker-smoke.yml"
       - "tools/frontend-docker-smoke.sh"
+      - "tools/compose.smoke-override.yml"
   pull_request:
     branches: [master, main, develop]
     paths:
@@ -36,6 +37,7 @@ on:
       - "docker-compose.prod.yml"
       - ".github/workflows/docker-smoke.yml"
       - "tools/frontend-docker-smoke.sh"
+      - "tools/compose.smoke-override.yml"
   workflow_dispatch:
 
 permissions:
