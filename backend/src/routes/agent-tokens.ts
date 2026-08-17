@@ -4,7 +4,7 @@ import { zValidator } from "@hono/zod-validator";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
-import { createAgentToken, listAgentTokens, revokeAgentToken } from "../services/agent-token-service.js";
+import { createAgentToken, listAgentTokens, renameAgentToken, revokeAgentToken } from "../services/agent-token-service.js";
 import { ALL_SCOPES, SCOPE_LABELS } from "../services/scopes.js";
 import { resolveTeamId, resolveTeamIdErrorBody } from "../services/team-access.js";
 
@@ -61,6 +61,31 @@ agentTokenRouter.post(
     }
 
     return c.json(result.data, 201);
+  },
+);
+
+// Same 1-100 char rule as createTokenSchema's `name` — a renamed token
+// must satisfy the same display-metadata constraint as a freshly minted one.
+const renameTokenSchema = z.object({
+  name: z.string().min(1).max(100),
+});
+
+agentTokenRouter.patch(
+  "/:id",
+  zValidator("json", renameTokenSchema),
+  async (c) => {
+    const actor = c.get("actor") as Actor;
+    const body = c.req.valid("json");
+    const result = await renameAgentToken(actor, c.req.param("id"), body.name);
+
+    if (!result.ok && result.error === "not_found") {
+      return notFound(c);
+    }
+    if (!result.ok) {
+      return forbidden(c, "Only team admins can rename agent tokens");
+    }
+
+    return c.json(result.data);
   },
 );
 

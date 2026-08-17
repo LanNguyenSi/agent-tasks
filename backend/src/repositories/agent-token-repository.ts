@@ -49,3 +49,19 @@ export function revokeToken(id: string) {
   });
 }
 
+export function updateTokenName(id: string, name: string) {
+  return prisma.agentToken.update({
+    where: { id },
+    data: { name },
+    select: {
+      id: true,
+      name: true,
+      scopes: true,
+      expiresAt: true,
+      revokedAt: true,
+      lastUsedAt: true,
+      createdAt: true,
+    },
+  });
+}
+

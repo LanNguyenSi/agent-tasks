@@ -8,6 +8,7 @@ import {
   getAgentTokens,
   createAgentToken,
   revokeAgentToken,
+  renameAgentToken,
   updateDelegationSettings,
   getGithubTokenHealth,
   getAvailableScopes,
@@ -103,6 +104,9 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
   const [revoking, setRevoking] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renaming, setRenaming] = useState(false);
 
   const [delegation, setDelegation] = useState({
     allowAgentPrCreate: false,
@@ -229,6 +233,22 @@ export default function SettingsPage() {
       setError((err as Error).message);
     } finally {
       setRevoking(false);
+    }
+  }
+
+  async function handleConfirmRename(e: React.FormEvent) {
+    e.preventDefault();
+    if (!renameTarget || !renameValue.trim()) return;
+    setRenaming(true);
+    setError(null);
+    try {
+      const updated = await renameAgentToken(renameTarget.id, renameValue.trim());
+      setTokens((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      setRenameTarget(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRenaming(false);
     }
   }
 
@@ -690,41 +710,61 @@ export default function SettingsPage() {
                   />
                 ) : (
                   <div className="settings-token-list">
-                    {tokens.map((token, i) => (
-                      <div
-                        key={token.id}
-                        className={`settings-token-row${i < tokens.length - 1 ? " settings-token-row--bordered" : ""}`}
-                      >
-                        <div>
-                          <p className="settings-token-name">{token.name}</p>
-                          <div className="settings-token-scopes">
-                            {token.scopes.map((s) => (
-                              <code key={s} className="settings-token-scope">
-                                {s}
-                              </code>
-                            ))}
-                          </div>
-                          <p className="settings-token-meta">
-                            Created {formatRelativeTime(token.createdAt)}
-                            {token.lastUsedAt
-                              ? ` · last used ${formatRelativeTime(token.lastUsedAt)}`
-                              : " · never used"}
-                            {token.expiresAt
-                              ? ` · expires ${new Date(token.expiresAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}`
-                              : ""}
-                          </p>
-                        </div>
-                        <Button
-                          variant="outline-danger"
-                          size="sm"
-                          onClick={() =>
-                            setRevokeTarget({ id: token.id, name: token.name })
-                          }
+                    {tokens.map((token, i) => {
+                      const canManageThisToken = selectedTeam?.role === "ADMIN";
+                      const renameTitle = canManageThisToken
+                        ? undefined
+                        : "Only team admins can rename agent tokens";
+                      return (
+                        <div
+                          key={token.id}
+                          className={`settings-token-row${i < tokens.length - 1 ? " settings-token-row--bordered" : ""}`}
                         >
-                          Revoke
-                        </Button>
-                      </div>
-                    ))}
+                          <div>
+                            <p className="settings-token-name">{token.name}</p>
+                            <div className="settings-token-scopes">
+                              {token.scopes.map((s) => (
+                                <code key={s} className="settings-token-scope">
+                                  {s}
+                                </code>
+                              ))}
+                            </div>
+                            <p className="settings-token-meta">
+                              Created {formatRelativeTime(token.createdAt)}
+                              {token.lastUsedAt
+                                ? ` · last used ${formatRelativeTime(token.lastUsedAt)}`
+                                : " · never used"}
+                              {token.expiresAt
+                                ? ` · expires ${new Date(token.expiresAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}`
+                                : ""}
+                            </p>
+                          </div>
+                          <div className="settings-tokens-actions">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={!canManageThisToken}
+                              title={renameTitle}
+                              onClick={() => {
+                                setRenameTarget({ id: token.id, name: token.name });
+                                setRenameValue(token.name);
+                              }}
+                            >
+                              Rename
+                            </Button>
+                            <Button
+                              variant="outline-danger"
+                              size="sm"
+                              onClick={() =>
+                                setRevokeTarget({ id: token.id, name: token.name })
+                              }
+                            >
+                              Revoke
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </section>
@@ -802,6 +842,56 @@ export default function SettingsPage() {
               size="sm"
               type="button"
               onClick={() => setShowCreate(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Rename token modal */}
+      <Modal
+        open={Boolean(renameTarget)}
+        onClose={() => {
+          if (renaming) return;
+          setRenameTarget(null);
+        }}
+        title="Rename Agent Token"
+      >
+        <form onSubmit={(e) => void handleConfirmRename(e)}>
+          <div className="settings-create-token-form">
+            <FormField label="Token name">
+              <input
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                placeholder="e.g. ci-bot"
+                required
+                maxLength={100}
+                className="settings-input"
+                autoFocus
+              />
+            </FormField>
+          </div>
+          {error && (
+            <AlertBanner tone="danger" title="Failed to rename token">
+              {error}
+            </AlertBanner>
+          )}
+          <div className="settings-modal-actions">
+            <Button
+              type="submit"
+              disabled={renaming || !renameValue.trim()}
+              loading={renaming}
+              size="sm"
+            >
+              Save
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              disabled={renaming}
+              onClick={() => setRenameTarget(null)}
             >
               Cancel
             </Button>
