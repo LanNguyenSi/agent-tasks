@@ -3,12 +3,13 @@ type: invariant
 title: "Governance modes and the two merge paths"
 description: "governanceMode (AUTONOMOUS / AWAITS_CONFIRMATION / REQUIRES_DISTINCT_REVIEWER) drives self-merge and review gates; the GitHub webhook and the REST merge verb pick different post-merge statuses."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-08-17T18:01:17Z
+timestamp: 2026-08-17T18:32:38Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
   - backend/src/services/github-webhook.ts
   - backend/src/routes/tasks.ts
+  - backend/src/routes/github.ts
 ---
 
 The current model is a single three-valued `governanceMode` enum (`backend/src/lib/governance-mode.ts`); the two booleans `soloMode`/`requireDistinctReviewer` are legacy. They still exist as columns and are kept in sync for back-compat readers, but `resolveGovernanceMode(project)` prefers the explicit `governanceMode` column and only falls back to deriving it from the legacy flags when that column is null:
@@ -19,7 +20,7 @@ The current model is a single three-valued `governanceMode` enum (`backend/src/l
 
 `governanceFlags(mode)` derives convenience booleans: `allowsSelfMerge` (true for `AUTONOMOUS` and `AWAITS_CONFIRMATION`), `requiresDistinctReviewer` (true only for `REQUIRES_DISTINCT_REVIEWER`), `emitsSelfMergeNotice` (true only for `AWAITS_CONFIRMATION`).
 
-**Gates keyed off the mode** (`backend/src/services/review-gate.ts`): `checkDistinctReviewerGate`/`checkReviewApprovalGate` (claimant cannot review/approve their own task) and `checkSelfMergeGate` (claimant cannot merge their own PR) both no-op unless `mode === REQUIRES_DISTINCT_REVIEWER`. Called from `POST /api/tasks/:id/merge`, `task_finish { autoMerge: true }` (both Mode A and Mode B, see `task-lifecycle.md`), `POST /api/tasks/:id/transition`, `POST /api/tasks/:id/start`'s review-claim branch, `POST /api/tasks/:id/review`/`/review/claim`, and — since `#402`, 2026-07-14 — the human `PATCH /api/tasks/:id` status-write lane too, which was hardened to run through the same `resolveEffectiveDefinition`/`checkReviewApprovalGate` pipeline `/transition` uses instead of writing `status` straight to the row (this list is every current call site, not just the original three; the point holds regardless: the two gates are enforced everywhere a claim boundary is crossed, not only through one blessed endpoint).
+**Gates keyed off the mode** (`backend/src/services/review-gate.ts`): `checkDistinctReviewerGate`/`checkReviewApprovalGate` (claimant cannot review/approve their own task) and `checkSelfMergeGate` (claimant cannot merge their own PR) both no-op unless `mode === REQUIRES_DISTINCT_REVIEWER`. Called from `POST /api/tasks/:id/merge`, `task_finish { autoMerge: true }` (both Mode A and Mode B, see `task-lifecycle.md`), `POST /api/tasks/:id/transition`, `POST /api/tasks/:id/start`'s review-claim branch, `POST /api/tasks/:id/review`/`/review/claim`, and — since `#402`, 2026-07-14 — the human `PATCH /api/tasks/:id` status-write lane too, which was hardened to run through the same `resolveEffectiveDefinition`/`checkReviewApprovalGate` pipeline `/transition` uses instead of writing `status` straight to the row. A separate merge lane also calls both gates: `POST /api/github/pull-requests/:prNumber/merge` (`backend/src/routes/github.ts`, the MCP `pull_requests_merge` verb; its own `checkTaskStatusForMerge` precondition, a distinct merge path from `/api/tasks/:id/merge` above) runs `checkReviewApprovalGate` only while `task.status === "review"` (`github.ts:352`, skipped on purpose on the `done` idempotent retry) and `checkSelfMergeGate` unconditionally on every call regardless of status (`github.ts:381`), which is what catches the retry case the review-approval check deliberately skips. The two gates are enforced everywhere a claim boundary is crossed; this enumeration is not asserted to be exhaustive — `sources:` below is what `sources-fresh` uses to flag future drift here.
 
 **Webhook vs REST-verb merge target divergence**:
 - `pickMergeTargetStatus` (`backend/src/services/github-webhook.ts`, driven by `handlePullRequestEvent` on a GitHub `pull_request` `closed`+`merged` webhook): `currentStatus === "done"` → no-op (null); `AUTONOMOUS` → always `"done"`; otherwise (`AWAITS_CONFIRMATION` or `REQUIRES_DISTINCT_REVIEWER`, **any workflow**) → `"review"` if not already there, else no-op. Custom workflows get no `done` carve-out here by design (comment: "confirmation-required project must keep its review gate ... regardless of workflow").
