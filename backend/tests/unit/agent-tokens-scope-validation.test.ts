@@ -14,6 +14,7 @@ vi.mock("../../src/services/agent-token-service.js", () => ({
   createAgentToken: vi.fn().mockResolvedValue({ ok: true, data: {} }),
   listAgentTokens: vi.fn().mockResolvedValue({ ok: true, data: {} }),
   revokeAgentToken: vi.fn().mockResolvedValue({ ok: true }),
+  renameAgentToken: vi.fn().mockResolvedValue({ ok: true, data: {} }),
 }));
 vi.mock("../../src/config/index.js", () => ({
   config: {
@@ -127,5 +128,44 @@ describe("POST /agent-tokens scope validation", () => {
       }),
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /agent-tokens name normalization (shared tokenNameSchema)", () => {
+  // The create side of the schema shared with PATCH /:id (rename). The
+  // rename suite covers the same rule, but the shared object could be split
+  // back into per-verb schemas someday -- these pin the CREATE endpoint's
+  // behavior independently.
+  it("rejects a whitespace-only name with 400", async () => {
+    const res = await makeApp().request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        teamId: "00000000-0000-0000-0000-000000000001",
+        name: "   ",
+        scopes: ["tasks:read"],
+      }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("trims a padded name before it reaches the service", async () => {
+    const { createAgentToken } = await import("../../src/services/agent-token-service.js");
+    const mockCreate = vi.mocked(createAgentToken);
+    mockCreate.mockClear();
+    const res = await makeApp().request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        teamId: "00000000-0000-0000-0000-000000000001",
+        name: "  ci-bot  ",
+        scopes: ["tasks:read"],
+      }),
+    });
+    expect(res.status).toBe(201);
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ name: "ci-bot" }),
+    );
   });
 });

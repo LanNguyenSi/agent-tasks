@@ -24,6 +24,11 @@ export type AuditAction =
   | "project.synced"
   | "token.created"
   | "token.revoked"
+  // Emitted by renameAgentToken (services/agent-token-service.ts) with
+  // payload { tokenId, from, to } capturing the old and new display name.
+  // NOTE: `token.created` and `token.revoked` above are declared but
+  // nothing emits them yet — a pre-existing gap, out of scope here.
+  | "token.renamed"
   | "user.login"
   | "user.logout"
   | "user.registered"

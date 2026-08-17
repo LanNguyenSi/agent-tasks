@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Actor } from "../types/auth.js";
 import { canManageTeamTokens, canViewTeamTokens } from "./team-access.js";
-import { createToken, findActiveTokensByTeamId, findTokenById, revokeToken } from "../repositories/agent-token-repository.js";
+import { createToken, findActiveTokensByTeamId, findTokenById, revokeToken, updateTokenName } from "../repositories/agent-token-repository.js";
+import { logAuditEvent } from "./audit.js";
 
 export interface CreateAgentTokenInput {
   teamId: string;
@@ -66,4 +67,67 @@ export async function revokeAgentToken(actor: Actor, id: string): Promise<Servic
 
   await revokeToken(token.id);
   return { ok: true, data: null };
+}
+
+/**
+ * Rename an existing agent token in place, so the caller identity shown in
+ * claims/signals/audit views stays meaningful without forcing a
+ * revoke-and-reissue (which would also rotate the secret and break whatever
+ * currently holds it).
+ *
+ * Authz mirrors `createAgentToken`: team admin AND a human actor. Agent
+ * actors are already excluded by `canManageTeamTokens` (human-only), but the
+ * explicit `actor.type !== "human"` check is kept for parity with create so
+ * the two admin-gated token mutations read the same way.
+ *
+ * `findTokenById` runs first (mirrors `revokeAgentToken`'s ordering) so an
+ * unknown id 404s even for a caller who would otherwise be forbidden.
+ *
+ * Renaming a revoked token is intentionally allowed: `name` is display
+ * metadata, not an access control — revocation already blocks the token
+ * from authenticating, and letting an admin relabel it (e.g. fixing a typo
+ * before archiving) does not reopen any access.
+ *
+ * Denormalization note: claim/comment rows never store the token's NAME —
+ * Comment/Signal rows key off `authorAgentId`/`recipientAgentId` (a FK to
+ * AgentToken.id), so those views re-resolve the live name on every
+ * read/render and reflect a rename immediately, including for historical
+ * rows. The one exception on the Signal side is the one-time `actorName`
+ * snapshot baked into `Signal.context` JSON at signal *creation* time (see
+ * task-signal.ts `emitTaskAvailableSignal`, review-signal.ts
+ * `buildSignalContext`, self-merge-notice.ts `emitSelfMergeNotice`): those
+ * already-emitted signals keep the old name forever — this rename does not,
+ * and should not, backfill them.
+ *
+ * Audit rows are a different case entirely, not just another example of the
+ * same pattern: `actorId` is a User FK and has no relationship to
+ * AgentToken at all, so ordinary audit rows have nothing to "re-resolve" —
+ * they simply never reference a token name. The `token.renamed` event this
+ * function emits below is the one deliberate exception: its payload takes a
+ * one-time `from`/`to` snapshot of the name at rename time (comparable in
+ * spirit to the Signal.context snapshot above), not a live reference, and
+ * that snapshot is never updated by a later rename.
+ */
+export async function renameAgentToken(actor: Actor, id: string, name: string): Promise<ServiceResult<{ token: unknown }>> {
+  const token = await findTokenById(id);
+  if (!token) {
+    return { ok: false, error: "not_found" };
+  }
+
+  const canManage = await canManageTeamTokens(actor, token.teamId);
+  if (!canManage || actor.type !== "human") {
+    return { ok: false, error: "forbidden" };
+  }
+
+  const previousName = token.name;
+  const updated = await updateTokenName(token.id, name);
+  // Fire-and-forget, matching the `void logAuditEvent(...)` convention used
+  // by every other mutation call site (e.g. github-merge.ts, review-signal.ts,
+  // task-signal.ts) — audit is supplementary and must not block the response.
+  void logAuditEvent({
+    action: "token.renamed",
+    actorId: actor.userId,
+    payload: { tokenId: token.id, from: previousName, to: name },
+  });
+  return { ok: true, data: { token: updated } };
 }

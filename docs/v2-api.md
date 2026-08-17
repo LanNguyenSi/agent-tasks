@@ -28,9 +28,10 @@ POST /api/teams/:id/members
 POST /api/teams/:id/sync          # GitHub repo sync
 
 # Agent Tokens (team admins)
-GET  /api/agent-tokens?teamId=
-POST /api/agent-tokens
-POST /api/agent-tokens/:id/revoke
+GET   /api/agent-tokens?teamId=
+POST  /api/agent-tokens
+PATCH /api/agent-tokens/:id        # Rename (display name only; names trimmed, 1-100 chars -- same shared rule as create)
+POST  /api/agent-tokens/:id/revoke
 
 # Projects
 GET  /api/projects/available       # Agent discovery (recommended)

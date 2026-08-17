@@ -360,6 +360,14 @@ export async function revokeAgentToken(tokenId: string): Promise<void> {
   await request(`/api/agent-tokens/${tokenId}/revoke`, { method: "POST" });
 }
 
+export async function renameAgentToken(tokenId: string, name: string): Promise<AgentToken> {
+  const data = await request<{ token: AgentToken }>(`/api/agent-tokens/${tokenId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+  return data.token;
+}
+
 export async function getAgentTokens(teamId: string): Promise<AgentToken[]> {
   const data = await request<{ tokens: AgentToken[] }>(`/api/agent-tokens?teamId=${teamId}`);
   return data.tokens;

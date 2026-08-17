@@ -4,7 +4,7 @@ import { zValidator } from "@hono/zod-validator";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
-import { createAgentToken, listAgentTokens, revokeAgentToken } from "../services/agent-token-service.js";
+import { createAgentToken, listAgentTokens, renameAgentToken, revokeAgentToken } from "../services/agent-token-service.js";
 import { ALL_SCOPES, SCOPE_LABELS } from "../services/scopes.js";
 import { resolveTeamId, resolveTeamIdErrorBody } from "../services/team-access.js";
 
@@ -21,9 +21,18 @@ agentTokenRouter.get("/scopes", (c) => {
   });
 });
 
+// Shared display-metadata rule for a token's `name`, used by BOTH
+// createTokenSchema and renameTokenSchema below so the two token-mutating
+// verbs can't drift apart on what counts as a valid name. `.trim()` runs
+// before `.min(1)` in the check chain, which is a deliberate tightening
+// over the old plain `.min(1)`: a whitespace-only name (e.g. "   ") now
+// 400s instead of being stored verbatim, and the value actually persisted
+// is always the trimmed string for both create and rename.
+const tokenNameSchema = z.string().trim().min(1).max(100);
+
 const createTokenSchema = z.object({
   teamId: z.string().uuid(),
-  name: z.string().min(1).max(100),
+  name: tokenNameSchema,
   // Reject unknown scopes at the edge so a typo ("task:update" instead of
   // "tasks:update") fails loudly at token-creation time instead of silently
   // producing a permanently-403'd token.
@@ -61,6 +70,31 @@ agentTokenRouter.post(
     }
 
     return c.json(result.data, 201);
+  },
+);
+
+// Reuses tokenNameSchema — a renamed token must satisfy the exact same
+// display-metadata constraint as a freshly minted one.
+const renameTokenSchema = z.object({
+  name: tokenNameSchema,
+});
+
+agentTokenRouter.patch(
+  "/:id",
+  zValidator("json", renameTokenSchema),
+  async (c) => {
+    const actor = c.get("actor") as Actor;
+    const body = c.req.valid("json");
+    const result = await renameAgentToken(actor, c.req.param("id"), body.name);
+
+    if (!result.ok && result.error === "not_found") {
+      return notFound(c);
+    }
+    if (!result.ok) {
+      return forbidden(c, "Only team admins can rename agent tokens");
+    }
+
+    return c.json(result.data);
   },
 );
 
