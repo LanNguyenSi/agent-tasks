@@ -18,11 +18,14 @@ on:
       - "package-lock.json"
       # backend/package.json is COPYed into the prod stage and feeds npm ci;
       # .dockerignore shapes the build context -- either can break the image
-      # without touching frontend/**.
+      # without touching frontend/**. docker-compose.prod.yml declares the
+      # frontend healthcheck that the health-assert phase now runs.
       - "backend/package.json"
       - ".dockerignore"
+      - "docker-compose.prod.yml"
       - ".github/workflows/docker-smoke.yml"
       - "tools/frontend-docker-smoke.sh"
+      - "tools/compose.smoke-override.yml"
   pull_request:
     branches: [master, main, develop]
     paths:
@@ -31,8 +34,10 @@ on:
       - "package-lock.json"
       - "backend/package.json"
       - ".dockerignore"
+      - "docker-compose.prod.yml"
       - ".github/workflows/docker-smoke.yml"
       - "tools/frontend-docker-smoke.sh"
+      - "tools/compose.smoke-override.yml"
   workflow_dispatch:
 
 permissions:
