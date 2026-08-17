@@ -36,6 +36,10 @@ COPY --from=build /app/frontend/next.config.ts frontend/next.config.ts
 # next start re-evaluates next.config.ts, which imports src/lib/csp (which in
 # turn imports src/lib/theme), so the source tree must ship in the runtime image.
 COPY --from=build /app/frontend/src frontend/src
+# tsconfig.json rides along so the start-time transpile sees the @/* path
+# alias; without it an aliased import in the config's chain would build and
+# typecheck fine but crash only in this image.
+COPY --from=build /app/frontend/tsconfig.json frontend/tsconfig.json
 # next start also needs the typescript package to transpile next.config.ts.
 # It is a devDependency (omitted above), and without it Next falls back to a
 # runtime `yarn add typescript` that fails in this image (backend's postinstall
