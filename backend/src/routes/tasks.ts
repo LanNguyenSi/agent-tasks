@@ -480,14 +480,28 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
 
   // Search across the human-meaningful string fields. Labels match exactly
   // (clicking a label chip); the rest are case-insensitive substrings.
+  //
+  // Task ids are plain-text lowercase UUIDs (no @db.Uuid cast, see
+  // schema.prisma), so a query that looks like a hex/UUID fragment (4+
+  // chars of hex digits and/or dashes, e.g. the 8-char short id shown in
+  // the UI) ALSO matches as an id-prefix, OR'd onto the existing text
+  // clauses. This lets an operator/agent paste a short id like "8f30a6f3"
+  // and find the task even though that string never appears in the title.
+  // The id branch only activates for hex/uuid-shaped queries and is always
+  // additive: it never suppresses or replaces the title/description/
+  // externalRef/labels match, so plain text search is unaffected.
   const q = c.req.query("q")?.trim();
   if (q) {
-    where.OR = [
+    const or: Record<string, unknown>[] = [
       { title: { contains: q, mode: "insensitive" } },
       { description: { contains: q, mode: "insensitive" } },
       { externalRef: { contains: q, mode: "insensitive" } },
       { labels: { has: q } },
     ];
+    if (/^[0-9a-f-]{4,}$/i.test(q)) {
+      or.push({ id: { startsWith: q, mode: "insensitive" } });
+    }
+    where.OR = or;
   }
 
   // Hard cap to keep the response bounded even if a caller forgets a sane

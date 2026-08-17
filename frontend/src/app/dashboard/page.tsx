@@ -46,7 +46,7 @@ import FilterToolbar from "../../components/dashboard/FilterToolbar";
 import BoardView from "../../components/dashboard/BoardView";
 import TaskListView from "../../components/dashboard/TaskListView";
 import NewTaskModal from "../../components/dashboard/NewTaskModal";
-import { isOverdue } from "../../lib/taskDisplay";
+import { isOverdue, matchesTaskSearch } from "../../lib/taskDisplay";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -227,7 +227,6 @@ export default function DashboardPage() {
   // ── Filtered task lists ──────────────────────────────────────
 
   const filteredTasks = useMemo(() => {
-    const normalizedQuery = taskQuery.trim().toLowerCase();
     const now = Date.now();
     return tasks.filter((task) => {
       if (task.status === "done" && isDoneTaskHidden(doneVisibility, task.updatedAt, now)) return false;
@@ -235,10 +234,7 @@ export default function DashboardPage() {
       if (taskScope === "unassigned" && (task.claimedByUserId || task.claimedByAgentId)) return false;
       if (taskScope === "overdue" && !isOverdue(task)) return false;
       if (labelFilter && !(task.labels ?? []).includes(labelFilter)) return false;
-      if (!normalizedQuery) return true;
-      return `${task.title} ${task.description ?? ""} ${task.externalRef ?? ""} ${(task.labels ?? []).join(" ")}`
-        .toLowerCase()
-        .includes(normalizedQuery);
+      return matchesTaskSearch(task, taskQuery);
     });
   }, [tasks, taskQuery, taskScope, doneVisibility, labelFilter, user?.id]);
 

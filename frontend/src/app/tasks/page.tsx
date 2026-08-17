@@ -47,7 +47,15 @@ const TASK_PAGE_COLUMNS: ColumnDef<EnrichedTask>[] = [
     header: "Task",
     sortable: true,
     width: "34%",
-    render: (t) => <span className="tasks-row-title">{t.title}</span>,
+    // Short id (first 8 chars of the task's UUID) next to the title so the
+    // UI -> agent round-trip works when searching by id/prefix; the `title`
+    // attribute carries the full id for a hover tooltip.
+    render: (t) => (
+      <span className="table-title-row" title={t.id}>
+        <span className="tasks-row-title">{t.title}</span>
+        <span className="table-row-id">{t.id.slice(0, 8)}…</span>
+      </span>
+    ),
   },
   {
     key: "status",

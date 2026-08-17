@@ -78,7 +78,15 @@ const TASK_LIST_COLS: ColumnDef<Task>[] = [
     header: "Task",
     sortable: true,
     width: "34%",
-    render: (t) => <span className="db-list-cell-title">{t.title}</span>,
+    // Short id (first 8 chars of the task's UUID) next to the title so the
+    // UI -> agent round-trip works when searching by id/prefix; the `title`
+    // attribute carries the full id for a hover tooltip.
+    render: (t) => (
+      <span className="table-title-row" title={t.id}>
+        <span className="db-list-cell-title">{t.title}</span>
+        <span className="table-row-id">{t.id.slice(0, 8)}…</span>
+      </span>
+    ),
   },
   {
     key: "status",

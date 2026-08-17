@@ -316,6 +316,66 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
     });
   });
 
+  describe("search (?q=)", () => {
+    it("translates ?q=foo into an OR across title/description/externalRef/labels (no id branch)", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?q=foo");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toEqual([
+        { title: { contains: "foo", mode: "insensitive" } },
+        { description: { contains: "foo", mode: "insensitive" } },
+        { externalRef: { contains: "foo", mode: "insensitive" } },
+        { labels: { has: "foo" } },
+      ]);
+    });
+
+    it("a full UUID query adds an id-startsWith clause, additive to the text OR", async () => {
+      const uuid = "8f30a6f3-1234-4abc-9def-000000000000";
+      await makeApp(HUMAN).request(`/teams/team-A/tasks?q=${uuid}`);
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toEqual([
+        { title: { contains: uuid, mode: "insensitive" } },
+        { description: { contains: uuid, mode: "insensitive" } },
+        { externalRef: { contains: uuid, mode: "insensitive" } },
+        { labels: { has: uuid } },
+        { id: { startsWith: uuid, mode: "insensitive" } },
+      ]);
+    });
+
+    it("an 8-char hex prefix (the short id shown in the UI) adds the id-startsWith clause", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?q=8f30a6f3");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toContainEqual({ id: { startsWith: "8f30a6f3", mode: "insensitive" } });
+    });
+
+    it("id matching is case-insensitive (uppercase hex fragment still adds the id clause)", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?q=DEADBEEF");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toContainEqual({ id: { startsWith: "DEADBEEF", mode: "insensitive" } });
+    });
+
+    it("a hex-shaped query under the 4-char minimum does NOT add the id clause", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?q=dea");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toEqual([
+        { title: { contains: "dea", mode: "insensitive" } },
+        { description: { contains: "dea", mode: "insensitive" } },
+        { externalRef: { contains: "dea", mode: "insensitive" } },
+        { labels: { has: "dea" } },
+      ]);
+    });
+
+    it("a non-hex text query (e.g. a title search) does NOT add the id clause; title search is unaffected", async () => {
+      await makeApp(HUMAN).request("/teams/team-A/tasks?q=onboarding%20flow");
+      const where = prismaMocks.taskFindMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toEqual([
+        { title: { contains: "onboarding flow", mode: "insensitive" } },
+        { description: { contains: "onboarding flow", mode: "insensitive" } },
+        { externalRef: { contains: "onboarding flow", mode: "insensitive" } },
+        { labels: { has: "onboarding flow" } },
+      ]);
+    });
+  });
+
   describe("done recency filter + pagination", () => {
     it("recency=recent adds an updatedAt lower bound to the row query", async () => {
       await makeApp(HUMAN).request("/teams/team-A/tasks?recency=recent");
