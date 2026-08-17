@@ -1,0 +1,43 @@
+name: Docker Smoke
+
+# Guards the failure class behind the 2026-08-17 prod outage: the frontend
+# prod image built fine, but the container crash-looped at start because
+# runtime-only files were missing from frontend/Dockerfile's prod stage.
+# `npm run build` and `docker build` succeeding never caught that -- only
+# actually starting the container and observing it serve a request does.
+on:
+  push:
+    branches: [master]
+    paths:
+      - "frontend/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/docker-smoke.yml"
+      - "tools/frontend-docker-smoke.sh"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/docker-smoke.yml"
+      - "tools/frontend-docker-smoke.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-prod-image:
+    name: Frontend prod image
+    runs-on: ubuntu-latest
+    # Measured locally (macOS, Docker 29.7.1, cold build cache: base image
+    # pull + fresh npm ci + next build + container start + ready-poll):
+    # ~56s wall time. GitHub-hosted runners are slower and always build
+    # cold (no layer cache carries between jobs here), so this gives
+    # generous headroom without leaving the job able to hang indefinitely.
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker prod-image smoke test
+        run: bash tools/frontend-docker-smoke.sh
