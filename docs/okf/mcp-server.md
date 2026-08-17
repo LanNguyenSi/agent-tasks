@@ -3,7 +3,7 @@ type: module
 title: "mcp-server: stdio MCP wrapper over the REST API"
 description: "Publishes the v2 verb surface as MCP tools over a fixed bearer token; SERVER_VERSION is a hand-maintained constant, not derived from package.json."
 tags: [mcp, stdio, npm-package]
-timestamp: 2026-08-12T12:40:00Z
+timestamp: 2026-08-17T18:01:17Z
 sources:
   - mcp-server/src/index.ts
   - mcp-server/src/server.ts

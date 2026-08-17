@@ -3,7 +3,7 @@ type: invariant
 title: "Auth: MCP bridge token resolution and backend validation"
 description: "How mcp-bridge resolves and sends a bearer token and how backend/src/middleware/auth.ts hashes and validates it against a stored AgentToken."
 tags: [auth, token, mcp-bridge, backend, invariant]
-timestamp: 2026-07-05T06:57:53Z
+timestamp: 2026-08-17T18:32:38Z
 sources:
   - mcp-bridge/src/token-store.ts
   - mcp-bridge/src/cli.ts
@@ -13,7 +13,7 @@ sources:
   - backend/prisma/schema.prisma
 ---
 
-**Client side, token resolution** (`mcp-bridge/src/token-store.ts`, `resolveTokenStore`): `AGENT_TASKS_TOKEN` env var first (`EnvStore`, read-only), then the OS keychain via a dynamically-imported, runtime-probed `keytar` (`KeytarStore`, any import or probe failure falls through), then a `FileStore` at `$XDG_CONFIG_HOME/agent-tasks/bridge-token` (or `~/.config/agent-tasks/bridge-token`), written atomically with `0o600`/`0o700` perms. `mcp-bridge/src/cli.ts`'s `serve` path calls `store.get()`, throws if no token is available (`"Run 'agent-tasks-mcp-bridge login'..."`), then hands the raw token straight to `runStdioServer({ token, baseUrl })` from `@agent-tasks/mcp-server`, no bridge-side wrapping or re-encoding.
+**Client side, token resolution** (`mcp-bridge/src/token-store.ts`, `resolveTokenStore`): `AGENT_TASKS_TOKEN` env var first (`EnvStore`, read-only), then the OS keychain via a dynamically-imported `keytar` wrapped in a `MultiSourceStore` (`#403`, 2026-07-14, replacing an earlier one-time-startup-probe design): a failed/absent import falls back to file-only; a successful import does not commit permanently either, but the three operations differ (`token-store.ts:112-168`): `get()` tries keytar first and falls back to the file store on any failure or an empty result; `set()` write-throughs to keytar and then best-effort-deletes the file-store copy on success, falling back to a plain file-store write only if the keytar write itself throws; `clear()` always clears the file store regardless of whether the keytar clear succeeded, so a stale file token from an earlier keytar-unusable period can never resurface later — then a `FileStore` at `$XDG_CONFIG_HOME/agent-tasks/bridge-token` (or `~/.config/agent-tasks/bridge-token`), written atomically with `0o600`/`0o700` perms. `mcp-bridge/src/cli.ts`'s `serve` path calls `store.get()`, throws if no token is available (`"Run 'agent-tasks-mcp-bridge login'..."`), then hands the raw token straight to `runStdioServer({ token, baseUrl }, { legacy: process.env.AGENT_TASKS_MCP_LEGACY === "1" })` from `@agent-tasks/mcp-server` (the `legacy` option was added in rc-v1-C007, #440, to forward the deprecated-verb opt-in the bridge previously dropped), no bridge-side token wrapping or re-encoding.
 
 **Client side, request signing** (`mcp-server/src/client.ts`, `AgentTasksClient.request`): every backend call sends `Authorization: Bearer <token>` and `Accept: application/json` headers; the token is the exact string handed in at construction, one static header per request, no per-request nonce or signature.
 
