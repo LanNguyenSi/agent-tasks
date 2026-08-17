@@ -167,6 +167,26 @@ describe("resolveApiOrigin", () => {
   });
 });
 
+describe("resolveApiOrigin re-export and config sharing (anti-drift)", () => {
+  it("re-exports the exact same function from ../../api-origin.mjs, not a local redefinition", async () => {
+    // Mutation probe: re-defining resolveApiOrigin locally in src/lib/csp.ts
+    // (instead of `export { resolveApiOrigin } from "../../api-origin.mjs"`)
+    // turns this red, because the two references would then be distinct
+    // function objects even if behaviorally identical.
+    const { resolveApiOrigin: fromApiOrigin } = await import("../../api-origin.mjs");
+    expect(resolveApiOrigin).toBe(fromApiOrigin);
+  });
+
+  it("next.config.mjs's env.NEXT_PUBLIC_API_URL is produced by calling resolveApiOrigin(), not a hardcoded value", async () => {
+    // Mutation probe: hardcoding the env value in next.config.mjs (instead of
+    // calling resolveApiOrigin()) turns this red whenever NEXT_PUBLIC_API_URL
+    // differs from the hardcoded string -- e.g. under the default fallback
+    // used here.
+    const { default: nextConfig } = await import("../../next.config.mjs");
+    expect(nextConfig.env?.NEXT_PUBLIC_API_URL).toBe(resolveApiOrigin());
+  });
+});
+
 describe("middleware", () => {
   it("sets Content-Security-Policy-Report-Only on the response, not the enforcing header", async () => {
     // Mutation probe: removing the header-setting line in src/middleware.ts

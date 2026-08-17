@@ -20,7 +20,7 @@ import { THEME_INIT_SCRIPT } from "./theme";
  * Next automatically tags its own injected inline scripts with it, no
  * hash needed for those. That's why the CSP header is emitted from
  * middleware.ts (which runs per request, so a nonce is available) rather
- * than next.config.ts's headers() (evaluated once at build time, so it
+ * than next.config.mjs's headers() (evaluated once at build time, so it
  * cannot carry a per-request value).
  *
  * The theme-init hash is derived from THEME_INIT_SCRIPT itself rather
@@ -39,34 +39,21 @@ import { THEME_INIT_SCRIPT } from "./theme";
  * implementation covers every place this module is imported from.
  */
 
-/** Origin the frontend calls for the JSON API. Shared so next.config.ts's
- * `env.NEXT_PUBLIC_API_URL` passthrough and middleware.ts's connect-src
- * directive resolve the same fallback and can't drift apart.
+/**
+ * `resolveApiOrigin` lives in ../../api-origin.mjs (frontend/api-origin.mjs,
+ * deliberately outside src/, as plain ESM) so the prod Docker image can
+ * ship next.config.mjs without needing any file from frontend/src, a
+ * tsconfig.json, or the typescript package -- see that module's doc
+ * comment for the full validation rules and the build- vs start-time
+ * evaluation story (including why NEXT_PUBLIC_API_URL being unset at
+ * container start is fine).
  *
- * This value gets concatenated directly into the CSP header string (see
- * buildCsp's connect-src below), so it's validated defensively: it must
- * parse as a URL, and it must not contain a `;` or whitespace -- those are
- * CSP directive delimiters, and an unvalidated value containing them could
- * inject extra directives into the header instead of just extending
- * connect-src. NEXT_PUBLIC_API_URL is a build-time value (see
- * docs/development.md: changing it requires rebuilding the frontend
- * image, a Docker build-arg baked into the build, not a runtime env var),
- * so failing fast here means a bad value breaks the build loudly instead
- * of shipping a corrupted CSP. */
-export function resolveApiOrigin(): string {
-  const value = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
-  try {
-    new URL(value);
-  } catch {
-    throw new Error(`NEXT_PUBLIC_API_URL must be a valid absolute URL, got: ${JSON.stringify(value)}`);
-  }
-  if (/[;\s]/.test(value)) {
-    throw new Error(
-      `NEXT_PUBLIC_API_URL must not contain ';' or whitespace (CSP directive delimiters), got: ${JSON.stringify(value)}`,
-    );
-  }
-  return value;
-}
+ * Re-exported here, rather than only from api-origin.mjs directly, so
+ * every existing importer (middleware.ts, tests/unit/csp.test.ts) keeps
+ * working unchanged, and so this module's own buildCsp still has a local
+ * name to reason about when reading its connect-src usage.
+ */
+export { resolveApiOrigin } from "../../api-origin.mjs";
 
 export async function sha256Base64(content: string): Promise<string> {
   const bytes = new TextEncoder().encode(content);

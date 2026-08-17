@@ -21,11 +21,15 @@
 # chain (e.g. an auth gate added later), this script still passes as long
 # as the chain terminates in a 200, per the acceptance criteria.
 #
-# Falsifiability (mutation probe): removing either of these two lines from
-# frontend/Dockerfile's prod stage MUST turn this script red (verified
-# 2026-08-17, both fail rc=1 via the container-exit gate in the ready-poll):
-#   COPY --from=build /app/frontend/src frontend/src
-#   COPY --from=build /app/node_modules/typescript node_modules/typescript
+# Falsifiability (mutation probe): removing this line from frontend/
+# Dockerfile's prod stage MUST turn this script red (verified 2026-08-17,
+# fails rc=1 via the container-exit gate in the ready-poll, because
+# next.config.mjs imports it at every `next start`):
+#   COPY --from=build /app/frontend/api-origin.mjs frontend/api-origin.mjs
+# (The original probe lines from the incident -- the frontend/src and
+# node_modules/typescript COPYs -- were removed for good by the
+# next.config.mjs conversion; removing the next.config.mjs COPY itself is
+# NOT a reliable probe, since next start can boot on defaults without one.)
 #
 # Usage: tools/frontend-docker-smoke.sh
 # Env overrides (all optional): NEXT_PUBLIC_API_URL, READY_TIMEOUT_SECS,

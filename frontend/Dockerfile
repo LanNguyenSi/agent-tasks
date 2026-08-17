@@ -32,19 +32,15 @@ RUN npm ci --omit=dev --workspace=frontend --ignore-scripts
 
 COPY --from=build /app/frontend/.next frontend/.next
 COPY --from=build /app/frontend/package.json frontend/package.json
-COPY --from=build /app/frontend/next.config.ts frontend/next.config.ts
-# next start re-evaluates next.config.ts, which imports src/lib/csp (which in
-# turn imports src/lib/theme), so the source tree must ship in the runtime image.
-COPY --from=build /app/frontend/src frontend/src
-# tsconfig.json rides along so the start-time transpile sees the @/* path
-# alias; without it an aliased import in the config's chain would build and
-# typecheck fine but crash only in this image.
-COPY --from=build /app/frontend/tsconfig.json frontend/tsconfig.json
-# next start also needs the typescript package to transpile next.config.ts.
-# It is a devDependency (omitted above), and without it Next falls back to a
-# runtime `yarn add typescript` that fails in this image (backend's postinstall
-# fires without backend/prisma present), crash-looping the container.
-COPY --from=build /app/node_modules/typescript node_modules/typescript
+# next.config.mjs is plain ESM (no TypeScript), so next start re-evaluates it
+# directly with no transpile step: the runtime image needs no TS toolchain,
+# no frontend/src, and no tsconfig.json. This replaces the three hotfix COPY
+# lines added in #455 for the 2026-08-17 incident (next.config.ts needed an
+# on-the-fly TS transpile to re-evaluate at container start, which needed the
+# typescript package, src/lib/csp.ts+theme.ts, and tsconfig.json's @/* path
+# alias -- none of which shipped in this stage).
+COPY --from=build /app/frontend/next.config.mjs frontend/next.config.mjs
+COPY --from=build /app/frontend/api-origin.mjs frontend/api-origin.mjs
 
 EXPOSE 3000
 CMD ["npm", "run", "start", "--workspace=frontend"]
