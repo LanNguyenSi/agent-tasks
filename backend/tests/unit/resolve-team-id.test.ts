@@ -23,6 +23,7 @@ const agentActor = {
   tokenId: "tok",
   teamId: "team-agent",
   scopes: [],
+  userId: "agent-user-1",
 };
 
 describe("resolveTeamId", () => {

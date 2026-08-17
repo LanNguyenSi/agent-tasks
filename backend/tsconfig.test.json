@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Widened past "." (the exemplar default): tests/unit/confidence.test.ts
+    // imports a shared fixture from ../frontend/src/lib/__fixtures__, so
+    // rootDir must reach the monorepo root to contain it.
+    "rootDir": "..",
+    "noEmit": true,
+    "declaration": false
+  },
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

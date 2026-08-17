@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
-import type { Actor } from "../../src/types/auth.js";
+import type { Actor, AgentActor } from "../../src/types/auth.js";
 
 const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
@@ -72,11 +72,12 @@ vi.mock("../../src/services/github-delegation.js", () => ({
 
 import { taskRouter } from "../../src/routes/tasks.js";
 
-const AGENT: Actor = {
+const AGENT: AgentActor = {
   type: "agent",
   tokenId: "agent-1",
   teamId: "team-1",
   scopes: ["tasks:read", "tasks:update"],
+  userId: "agent-1",
 };
 
 const HUMAN: Actor = {

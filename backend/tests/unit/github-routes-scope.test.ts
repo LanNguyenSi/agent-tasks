@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
-import type { Actor } from "../../src/types/auth.js";
+import type { Actor, AgentActor } from "../../src/types/auth.js";
 
 const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
@@ -62,11 +62,12 @@ function makeApp(actor: Actor) {
   return app;
 }
 
-const AGENT_NO_SCOPES: Actor = {
+const AGENT_NO_SCOPES: AgentActor = {
   type: "agent",
   tokenId: "agent-1",
   teamId: "team-1",
   scopes: [],
+  userId: "agent-user-1",
 };
 
 beforeEach(() => {

@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
-import type { Actor } from "../../src/types/auth.js";
+import type { Actor, AgentActor } from "../../src/types/auth.js";
 import {
   MAX_ATTACHMENT_BYTES,
   ATTACHMENT_BODY_LIMIT_BYTES,
@@ -84,7 +84,13 @@ vi.mock("../../src/services/github-delegation.js", () => ({
 
 import { taskRouter } from "../../src/routes/tasks.js";
 
-const AGENT: Actor = { type: "agent", tokenId: "agent-1", teamId: "team-1", scopes: ["tasks:read", "tasks:update"] };
+const AGENT: AgentActor = {
+  type: "agent",
+  tokenId: "agent-1",
+  teamId: "team-1",
+  scopes: ["tasks:read", "tasks:update"],
+  userId: "agent-1",
+};
 const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
 const OTHER_HUMAN: Actor = { type: "human", userId: "user-2", teamId: "team-1" };
 

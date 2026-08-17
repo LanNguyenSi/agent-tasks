@@ -27,11 +27,17 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Hono } from "hono";
+import type { AppVariables } from "../../src/types/hono.js";
 
 const PREVIOUS_DATABASE_URL = process.env.DATABASE_URL;
 const PREVIOUS_SESSION_SECRET = process.env.SESSION_SECRET;
 
-let createApp: (corsOrigins: string) => Hono;
+// Typed to match createApp()'s real return type (src/app.ts): the bare
+// `Hono` default (BlankEnv) is not assignable-compatible with
+// `Hono<{ Variables: AppVariables }>` because Hono's handler methods take
+// Context contravariantly, so the previous bare annotation only worked
+// because vitest transpiles without typechecking.
+let createApp: (corsOrigins: string) => Hono<{ Variables: AppVariables }>;
 let JSON_BODY_LIMIT_BYTES: number;
 let WEBHOOK_BODY_LIMIT_BYTES: number;
 

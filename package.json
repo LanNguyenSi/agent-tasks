@@ -17,6 +17,7 @@
     "build": "npm run build --workspace=backend && npm run build --workspace=frontend && npm run build --workspace=mcp-server && npm run build --workspace=mcp-bridge && npm run build --workspace=@agent-tasks/cli",
     "test": "npm run test --workspace=frontend && npm run test --workspace=@agent-tasks/cli && npm run test --workspace=backend",
     "typecheck": "npm run typecheck --workspace=backend && npm run typecheck --workspace=frontend && npm run typecheck --workspace=mcp-server && npm run typecheck --workspace=mcp-bridge && npm run typecheck --workspace=@agent-tasks/cli",
+    "typecheck:test": "npm run typecheck:test --workspace=backend && npm run typecheck:test --workspace=mcp-server && npm run typecheck:test --workspace=mcp-bridge && npm run typecheck:test --workspace=@agent-tasks/cli",
     "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend"
   },
   "engines": {

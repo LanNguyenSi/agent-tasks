@@ -79,6 +79,7 @@ const AGENT: Actor = {
   tokenId: "agent-1",
   teamId: "team-1",
   scopes: ["tasks:create"],
+  userId: "agent-1",
 };
 
 function makeApp(actor: Actor) {

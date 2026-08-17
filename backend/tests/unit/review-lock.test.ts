@@ -90,7 +90,13 @@ function canTransitionReviewToDone(
   if (force) return { allowed: true };
   const productionActor: BackendActor = actor.type === "human"
     ? { type: "human", userId: actor.userId! }
-    : { type: "agent", tokenId: actor.tokenId!, teamId: "team-test", scopes: [] };
+    : {
+        type: "agent",
+        tokenId: actor.tokenId!,
+        teamId: "team-test",
+        scopes: [],
+        userId: actor.userId ?? actor.tokenId!,
+      };
   return checkReviewApprovalGate(task, productionActor, project);
 }
 
@@ -255,7 +261,13 @@ function mergeDecision(
 
   const productionActor: BackendActor = actor.type === "human"
     ? { type: "human", userId: actor.userId! }
-    : { type: "agent", tokenId: actor.tokenId!, teamId: "team-test", scopes: [] };
+    : {
+        type: "agent",
+        tokenId: actor.tokenId!,
+        teamId: "team-test",
+        scopes: [],
+        userId: actor.userId ?? actor.tokenId!,
+      };
   const gate = checkReviewApprovalGate(task, productionActor, project);
   if (!gate.allowed) {
     return { outcome: "reject_gate", reason: gate.reason ?? "unknown" };
@@ -527,6 +539,7 @@ describe("distinct-reviewer gate on review→done transition", () => {
         tokenId: "agent-worker",
         teamId: "team-x",
         scopes: [],
+        userId: "user-worker",
       };
 
       const humanResult = checkDistinctReviewerGate(
@@ -554,6 +567,7 @@ describe("distinct-reviewer gate on review→done transition", () => {
         tokenId: "agent-worker",
         teamId: "team-x",
         scopes: [],
+        userId: "user-worker",
       };
       const result = checkDistinctReviewerGate(
         baseTask, // claimedByAgentId === "agent-worker"
@@ -570,6 +584,7 @@ describe("distinct-reviewer gate on review→done transition", () => {
         tokenId: "agent-worker",
         teamId: "team-x",
         scopes: [],
+        userId: "user-worker",
       };
       // Legacy flags say REQUIRES_DISTINCT_REVIEWER, enum says AUTONOMOUS.
       // Enum wins — gate allows.
@@ -614,6 +629,7 @@ describe("distinct-reviewer gate on review→done transition", () => {
         tokenId: "agent-reviewer",
         teamId: "team-x",
         scopes: [],
+        userId: "user-reviewer",
       };
       const result = checkDistinctReviewerGate(
         // baseTask has claimedByAgentId="agent-worker", reviewClaimedByAgentId=null
@@ -645,6 +661,7 @@ describe("distinct-reviewer gate on review→done transition", () => {
         tokenId: "agent-worker",
         teamId: "team-x",
         scopes: [],
+        userId: "user-worker",
       };
       const result = checkDistinctReviewerGate(
         baseTask, // claimedByAgentId === "agent-worker"
@@ -664,6 +681,7 @@ describe("distinct-reviewer gate on review→done transition", () => {
         tokenId: "agent-reviewer",
         teamId: "team-x",
         scopes: [],
+        userId: "user-reviewer",
       };
       const result = checkReviewApprovalGate(
         baseTask, // reviewClaimedByAgentId=null
@@ -680,6 +698,7 @@ describe("distinct-reviewer gate on review→done transition", () => {
         tokenId: "agent-reviewer",
         teamId: "team-x",
         scopes: [],
+        userId: "user-reviewer",
       };
       const result = checkReviewApprovalGate(
         // The claimant holds the review lock somehow (schema edit / admin UI race).
