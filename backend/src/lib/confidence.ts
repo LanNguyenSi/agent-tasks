@@ -728,6 +728,422 @@ function applyScoreCaps(
   return { cappedScore, capFindings };
 }
 
+// ── Milestone 2: per-type required signals (overlay §"Task-Type-Aware
+// Scoring", table verbatim in task 6b88ec87). A task with an EXPLICIT
+// `templateData.taskType` (never the echoed `inferredTaskType`) must
+// evidence every signal the matrix lists for that type somewhere in its
+// spec. A missing signal is ALWAYS a `blocking` finding. Where the signal is
+// the same concept as an existing universal field, the check reuses that
+// field's own presence flag AND CODE, so a missing field ESCALATES its
+// existing (often lower-severity) finding to `blocking` in place instead of
+// adding a second, byte-identical-suggestion entry for the same gap (see the
+// merge in calculateConfidence). Signals with no existing TemplateData field
+// (e.g. "reproduction steps") are detected by a dedicated keyword regex over
+// the raw description: pure heuristic, no LLM, per Scope.
+//
+// Codes below fall into exactly two buckets — every entry's `code` is one or
+// the other, never something in between:
+//
+//  ALIASED to an existing universal `MISS_FINDINGS` code (the finding this
+//  code produces is indistinguishable from the universal one; the matrix
+//  entry only ever escalates severity, it is never the first thing to push a
+//  finding for that code — see the merge loop in calculateConfidence):
+//    missing_goal                (feature; was missing_user_goal)
+//    missing_scope                (feature, docs, refactoring; refactoring's
+//                                  was missing_scope_boundary)
+//    missing_out_of_scope         (refactoring; was missing_non_goals)
+//    missing_risk                 (refactoring; was missing_risk_areas)
+//    missing_acceptance_criteria  (feature, docs — each type's own AC-named
+//                                  entry, present: ctx.acPresent)
+//
+// D-014 (orchestrator decision, task 6b88ec87 review round 2 finding 2): the
+// matrix used to ALSO carry a fifth "verification path in the description"
+// entry on bugfix/feature/security/migration, `present: (ctx) =>
+// ctx.verificationSignal`. That predicate is `!evalsKeystoneViolated`, the
+// EXACT condition the universal evals-keystone finding (missing_acceptance_
+// criteria, blocking) already fires on — the two conditions can never
+// diverge, so whenever this entry's signal was missing, the universal
+// keystone finding was ALREADY present in `findings[]` and ALREADY blocking.
+// The entry was therefore provably inert: it could only ever "escalate" a
+// finding that was already at the ceiling severity, never change any
+// observable output (score/missing/blocking/findings all identical with or
+// without it, on every input — confirmed by the full suite staying green
+// after deletion). It has been deleted from all four type tables rather than
+// kept as a harmless no-op: the type-aware matrix's "verification path"
+// requirement for bugfix/feature/security/migration is fully enforced by the
+// universal evals keystone alone (missing_acceptance_criteria at blocking),
+// so no per-type entry exists for it.
+//
+//  NEW: no universal MISS_FINDINGS counterpart exists, unified to ONE code
+//  per concept across every type table that carries it (rather than each
+//  type inventing its own spelling):
+//    missing_constraints    (feature, security — constraints is a required
+//                            signal for these types but is not scored/
+//                            tracked universally, see the MISS_FINDINGS
+//                            comment above)
+//    missing_rollback        (security, migration; security's was
+//                            missing_rollback_if_relevant)
+//    everything else in the matrix below is type-specific prose (e.g.
+//    missing_reproduction_steps, missing_threat_or_risk,
+//    missing_deployment_impact, ...) and has exactly one type table each.
+//
+// REQUIRED_SIGNAL_ONLY_CODES (below the matrix) is exactly the NEW bucket —
+// deriveNextActions (claim-policy-evaluator.ts) uses it to rank a pure
+// universal finding ahead of a type-specific one within the same severity;
+// an ALIASED code is deliberately excluded from that set because it always
+// escalates a pre-existing universal finding and should sort as one.
+//
+// Per-type score weights/caps are a separate follow-up (M2-thresholds): these
+// findings never change `score` and never set `keystone`, so on their own
+// they do not move `ConfidenceResult.blocking` either.
+interface RequiredSignalContext {
+  descTrim: string;
+  goalPresent: boolean;
+  scopePresent: boolean;
+  outOfScopePresent: boolean;
+  acPresent: boolean;
+  riskPresent: boolean;
+  constraintsPresent: boolean;
+  verificationSignal: boolean;
+}
+
+interface RequiredSignal {
+  code: string;
+  dimension: QualityDimension;
+  message: string;
+  suggestion: string;
+  present: (ctx: RequiredSignalContext) => boolean;
+}
+
+const kw = (pattern: RegExp): RequiredSignal["present"] => (ctx) => pattern.test(ctx.descTrim);
+
+const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
+  bugfix: [
+    {
+      code: "missing_actual_behavior", dimension: "completeness",
+      message: "Actual (buggy) behavior is not described.",
+      suggestion: "State what actually happens today, in observable terms.",
+      present: kw(/\bactual(ly)?\s+behaviou?r\b|\bactually\s+happens?\b|\bcurrently\s+(does|happens|behaves)\b|\bobserved\s+behaviou?r\b|\bwhat\s+(currently\s+)?happens\b/i),
+    },
+    {
+      code: "missing_expected_behavior", dimension: "completeness",
+      message: "Expected (correct) behavior is not described.",
+      suggestion: "State what should happen instead.",
+      present: kw(/\bexpected\s+behaviou?r\b|\bshould\s+(instead\s+)?happen\b|\bexpected\s+result\b|\bdesired\s+behaviou?r\b/i),
+    },
+    {
+      code: "missing_reproduction_steps", dimension: "testability",
+      message: "Reproduction steps are missing.",
+      suggestion: "Add numbered steps to reproduce the bug.",
+      present: kw(/\breproduc(e|es|ing|tion)\b|\brepro\s+steps?\b|\bsteps?\s+to\s+reproduce\b|\bhow\s+to\s+reproduce\b/i),
+    },
+    {
+      code: "missing_error_message_or_symptom", dimension: "concreteness",
+      message: "No error message or symptom is quoted.",
+      suggestion: "Paste the exact error message, stack trace, or observed symptom.",
+      present: kw(/\berror\s+messages?\b|\bstack\s+trace\b|\bexceptions?\b|\bsymptoms?\b|\bthrows?\b|\berror:\s|\bfailure\s+message\b/i),
+    },
+    {
+      code: "missing_affected_environment", dimension: "contextQuality",
+      message: "Affected environment (OS, browser, version, platform) is unstated.",
+      suggestion: "Name the environment the bug occurs in (OS, browser, runtime version, platform).",
+      present: kw(/\benvironments?\b|\bbrowsers?\b|\boperating\s+system\b|\bplatforms?\b|\bnode\s+v?\d/i),
+    },
+  ],
+  feature: [
+    {
+      code: "missing_goal", dimension: "completeness",
+      message: "User goal is missing.",
+      suggestion: "Add a one-line Goal stating the intended outcome.",
+      present: (ctx) => ctx.goalPresent,
+    },
+    {
+      code: "missing_scope", dimension: "scopeClarity",
+      message: "Scope (what may change) is missing.",
+      suggestion: "List the files, modules, or surfaces the change may touch.",
+      present: (ctx) => ctx.scopePresent,
+    },
+    {
+      code: "missing_acceptance_criteria", dimension: "testability",
+      message: "No acceptance criteria and no verification path in the description.",
+      suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
+      present: (ctx) => ctx.acPresent,
+    },
+    {
+      code: "missing_constraints", dimension: "scopeClarity",
+      message: "Constraints are unstated.",
+      suggestion: "Add a Constraints section naming what must not change.",
+      present: (ctx) => ctx.constraintsPresent,
+    },
+    {
+      code: "missing_ux_api_expectations", dimension: "completeness",
+      message: "UX/API expectations are unstated.",
+      suggestion: "Describe the expected UI behavior or API/interface shape.",
+      present: kw(/\bapis?\b|\bux\b|\buser\s+experience\b|\bendpoints?\b|\bresponses?\b|\binterfaces?\b/i),
+    },
+  ],
+  refactoring: [
+    {
+      code: "missing_purpose", dimension: "completeness",
+      message: "Purpose (why this refactor) is not stated.",
+      suggestion: "Add a one-line Purpose stating why this refactor is worth doing.",
+      present: kw(/\bpurpose\b|\bmotivation\b|\bwhy\s+this\b/i),
+    },
+    {
+      // Aliased to the universal `missing_scope` code (see the header
+      // comment above REQUIRED_SIGNALS_BY_TYPE).
+      code: "missing_scope", dimension: "scopeClarity",
+      message: "Scope boundary (what may change) is missing.",
+      suggestion: "List the files, modules, or surfaces the refactor may touch.",
+      present: (ctx) => ctx.scopePresent,
+    },
+    {
+      // Aliased to the universal `missing_out_of_scope` code.
+      code: "missing_out_of_scope", dimension: "scopeClarity",
+      message: "Non-goals are unstated.",
+      suggestion: "Name what must NOT change so a weak agent does not wander.",
+      present: (ctx) => ctx.outOfScopePresent,
+    },
+    {
+      code: "missing_behavior_preservation", dimension: "ambiguityRisk",
+      message: "Behavior-preservation guarantee is not stated.",
+      suggestion: "State that observable behavior is unchanged (or exactly how it changes).",
+      present: kw(/\bbehaviou?r[- ]preserv|\bno\s+behaviou?r\s+change|\bfunctionally\s+equivalent\b|\bsame\s+behaviou?r\b/i),
+    },
+    {
+      code: "missing_regression_strategy", dimension: "testability",
+      message: "Regression strategy is unstated.",
+      suggestion: "State how regressions will be caught (existing tests, new tests, manual pass).",
+      present: kw(/\bregressions?\b|\bexisting\s+tests?\b|\btest\s+suite\b|\btest\s+coverage\b/i),
+    },
+    {
+      // Aliased to the universal `missing_risk` code.
+      code: "missing_risk", dimension: "ambiguityRisk",
+      message: "Risk areas are unstated.",
+      suggestion: "Note the risk level or blast radius (low / medium / high, and why).",
+      present: (ctx) => ctx.riskPresent,
+    },
+  ],
+  security: [
+    {
+      // Bare `secur(e|ity)` matched trivially ("This is a secure change.")
+      // without naming any actual goal/property; require the word to be
+      // followed by a goal-ish object noun instead (still matched by the
+      // dedicated `security goal` phrase below, now generalized).
+      code: "missing_security_goal", dimension: "completeness",
+      message: "Security goal is not stated.",
+      suggestion: "State the security property this change establishes or restores.",
+      present: kw(/\bsecur(e|ity)\s+(goal|property|guarantee|boundary|control|posture)\b|\bharden(ing)?\b|\bmitigat(e|es|ion)\b/i),
+    },
+    {
+      code: "missing_affected_asset", dimension: "concreteness",
+      message: "Affected asset is not named.",
+      suggestion: "Name the asset at risk (endpoint, credential, token, data, resource).",
+      present: kw(/\bassets?\b|\bendpoints?\b|\bcredentials?\b|\btokens?\b|\bsecrets?\b/i),
+    },
+    {
+      code: "missing_threat_or_risk", dimension: "ambiguityRisk",
+      message: "Threat or risk is not described.",
+      suggestion: "Describe the threat, vulnerability, or attack this change addresses.",
+      present: kw(/\bthreats?\b|\bvulnerab(le|ility|ilities)\b|\battacks?\b|\bexploits?\b/i),
+    },
+    {
+      code: "missing_constraints", dimension: "scopeClarity",
+      message: "Constraints are unstated.",
+      suggestion: "Add a Constraints section naming what must not change.",
+      present: (ctx) => ctx.constraintsPresent,
+    },
+    {
+      code: "missing_review_requirement", dimension: "completeness",
+      message: "Review requirement is unstated.",
+      suggestion: "State who must review or sign off before this ships.",
+      present: kw(/\breview\s+requir|\bsecurity\s+review\b|\bsign[- ]?off\b|\bapprovals?\b|\breviewed\s+by\b/i),
+    },
+    {
+      // Unified with migration's `missing_rollback` (same concept, one code
+      // per concept across type tables).
+      code: "missing_rollback", dimension: "completeness",
+      message: "Rollback plan is unstated.",
+      suggestion: "State the rollback plan, or 'not applicable' if there is none.",
+      present: kw(/\brollback\b|\broll\s+back\b|\breverts?\b|\bnot\s+applicable\b|\bno\s+rollback\s+needed\b/i),
+    },
+  ],
+  migration: [
+    {
+      // R2 finding 6 (residual vacuity): bare `\bcurrently\b` matched any
+      // sentence containing the word regardless of what it said — "Nothing
+      // is currently broken." trivially satisfied "current state is
+      // described" without describing any state at all. Require "currently"
+      // to be immediately followed by a stateful verb, so only a genuine
+      // state description ("currently lives on MySQL", "currently uses a
+      // manual process") counts.
+      code: "missing_current_state", dimension: "contextQuality",
+      message: "Current state is not described.",
+      suggestion: "Describe the current state before the migration.",
+      present: kw(/\bcurrent\s+state\b|\bcurrently\s+(lives|runs|uses|stores|is|are|sits|resides)\b|\bexisting\s+(state|schema|setup|behavior)\b/i),
+    },
+    {
+      code: "missing_target_state", dimension: "contextQuality",
+      message: "Target state is not described.",
+      suggestion: "Describe the target state after the migration.",
+      present: kw(/\btarget\s+state\b|\bdesired\s+state\b|\bend\s+state\b|\bafter\s+(the\s+)?migration\b|\bfuture\s+state\b/i),
+    },
+    {
+      // `\bcompat...\b` never matched "incompatible" (no word boundary
+      // between "in" and "compat"); `(in)?` makes the negated form match too.
+      code: "missing_compatibility", dimension: "ambiguityRisk",
+      message: "Compatibility (backward/forward) is unstated.",
+      suggestion: "State the compatibility guarantee during and after the migration.",
+      present: kw(/\b(in)?compat(ible|ibility)?\b|\bbackward(s)?[- ]compat/i),
+    },
+    {
+      // Unified with security's `missing_rollback` (renamed from
+      // `missing_rollback_if_relevant`; same concept, one code per concept).
+      code: "missing_rollback", dimension: "completeness",
+      message: "Rollback plan is unstated.",
+      suggestion: "State the rollback plan, or 'not applicable' if there is none.",
+      present: kw(/\brollback\b|\broll\s+back\b|\breverts?\b|\bnot\s+applicable\b|\bno\s+rollback\s+needed\b/i),
+    },
+    {
+      code: "missing_deployment_impact", dimension: "ambiguityRisk",
+      message: "Deployment impact is unstated.",
+      suggestion: "State the deployment impact (downtime, order of rollout, cutover steps).",
+      present: kw(/\bdeploy(ment)?\b|\bdowntime\b|\bcutover\b/i),
+    },
+    {
+      code: "missing_operational_risk", dimension: "ambiguityRisk",
+      message: "Operational risk is unstated.",
+      suggestion: "Note the operational risk or blast radius (low / medium / high, and why).",
+      present: kw(/\boperational\s+risk\b|\bops\s+risk\b|\bon-?call\b|\brunbook\b|\bblast\s+radius\b/i),
+    },
+  ],
+  docs: [
+    {
+      // R2 finding 6 (residual vacuity): bare `\breaders?\b` matched any
+      // sentence mentioning the word "readers" at all — "The new schema is
+      // incompatible with the old readers." trivially satisfied "target
+      // audience is named" without naming any audience. Require "readers"
+      // to be qualified by a clause that actually characterizes them (who
+      // they are / what they need), which is how genuine audience
+      // descriptions read in prose ("readers should...", "readers who are
+      // new to..."); a bare noun mention no longer counts.
+      code: "missing_target_audience", dimension: "contextQuality",
+      message: "Target audience is not named.",
+      suggestion: "Name who this doc is for.",
+      present: kw(/\btarget\s+audience\b|\baudiences?\b|\breaders?\s+(who|that|will|should|need|are|come|get|can)\b/i),
+    },
+    {
+      code: "missing_source_of_truth", dimension: "contextQuality",
+      message: "Source of truth is not named.",
+      suggestion: "Name the canonical/authoritative source this doc reflects.",
+      present: kw(/\bsource\s+of\s+truth\b|\bcanonical\b|\bauthoritative\b/i),
+    },
+    {
+      code: "missing_scope", dimension: "scopeClarity",
+      message: "Scope (what the doc covers) is missing.",
+      suggestion: "List what the doc covers and what it does not.",
+      present: (ctx) => ctx.scopePresent,
+    },
+    {
+      code: "missing_format", dimension: "structure",
+      message: "Format is unstated.",
+      suggestion: "State the target format (markdown, ADR, README section, etc.).",
+      present: kw(/\bformats?\b|\bmarkdown\b|\btemplates?\b|\bstructure\s+of\b/i),
+    },
+    {
+      code: "missing_acceptance_criteria", dimension: "testability",
+      message: "No acceptance criteria and no verification path in the description.",
+      suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
+      present: (ctx) => ctx.acPresent,
+    },
+    {
+      // R2 finding 6 (residual vacuity): bare `\bowner:\b` matched a
+      // non-answer line like "Owner: nobody in particular." — the label was
+      // present but named no one. Keep the bare-label shortcut (real docs
+      // often just write "Owner: <name>") but reject it when the word right
+      // after the colon is a known negation/non-answer; any other word
+      // still counts as naming someone.
+      code: "missing_review_owner", dimension: "completeness",
+      message: "Review owner is unstated.",
+      suggestion: "Name who reviews and approves this doc.",
+      present: kw(/\breview\s+owner\b|\breviewed\s+by\b|\bapprovers?\b|\bowner:\s*(?!nobody\b|none\b|n\/a\b|tbd\b|unknown\b|nothing\b)\S/i),
+    },
+  ],
+};
+
+// The subset of REQUIRED_SIGNALS_BY_TYPE codes that are genuinely NEW — i.e.
+// do NOT alias an existing universal MISS_FINDINGS code (see the "ALIASED"
+// vs "NEW" buckets in the header comment above). Exported so
+// deriveNextActions (backend/src/services/claim-policy-evaluator.ts) can use
+// membership as a sort tiebreaker: a universal finding (including an
+// ALIASED, escalated-in-place one, which is indistinguishable from a
+// universal finding by the time it reaches deriveNextActions) ranks ahead of
+// a genuinely type-specific prose finding within the same severity, so a
+// typed task's required-signal findings cannot crowd the universal
+// scope/agentPrompt/AC guidance out of the capped nextActions list.
+const UNIVERSAL_FINDING_CODES: ReadonlySet<string> = new Set(
+  Object.values(MISS_FINDINGS).map((f) => f.code),
+);
+export const REQUIRED_SIGNAL_ONLY_CODES: ReadonlySet<string> = new Set(
+  Object.values(REQUIRED_SIGNALS_BY_TYPE)
+    .flat()
+    .map((signal) => signal.code)
+    .filter((code) => !UNIVERSAL_FINDING_CODES.has(code)),
+);
+
+// Missing required signal -> a `blocking` finding, code `missing_<signal-name>`.
+// `taskType` is the EXPLICIT `templateData.taskType` only (never
+// `inferredTaskType`). Unset taskType -> no findings (existing universal
+// rules apply unchanged; see the `[]` return and the merge below).
+//
+// `taskType` is typed as `TaskType | undefined`, but that type is NOT a
+// runtime guarantee: `templateData` reaches this function via an unvalidated
+// `as TemplateData | null` cast at every read path (confidence-gate.ts,
+// routes/tasks.ts x5, scripts/shadow-report.ts) — it is validated by
+// `templateDataSchema` only on WRITE. A stored value of any shape (an
+// out-of-enum string, a number, an object, a prototype-chain property name
+// like "constructor" or "__proto__", ...) reaches here unchanged, so this
+// function must not trust the type and must not index
+// `REQUIRED_SIGNALS_BY_TYPE` before confirming `taskType` is actually an OWN
+// property of it.
+//
+// A plain `typeof taskType === "string"` guard followed by `?? []` is NOT
+// sufficient on its own (task 6b88ec87 review round 2, finding 1):
+// REQUIRED_SIGNALS_BY_TYPE is a plain object literal, so an INHERITED key —
+// "constructor", "__proto__", "toString", "hasOwnProperty", "valueOf", ... —
+// is also a string, passes `typeof`, and resolves through bracket access to
+// a truthy, non-array value (a function inherited from Object.prototype).
+// `?? []` only guards nullish, not "wrong type", so `.filter` on that value
+// threw for any of those five taskType strings. `Object.prototype.
+// hasOwnProperty.call` confirms `taskType` is actually one of the six
+// declared keys before indexing — but hasOwnProperty.call alone is ALSO not
+// enough: its property-key argument is coerced via ToPropertyKey/ToString,
+// so a non-string like the array `["bugfix"]` stringifies to `"bugfix"` and
+// would incorrectly resolve to a real own key. `typeof taskType === "string"`
+// runs FIRST specifically to block that coercion path, so only a genuine
+// string ever reaches hasOwnProperty. With both guards: every other string
+// (in-enum or not), every prototype-chain name, and every non-string value
+// at all degrade to the same `[]` an unset taskType produces — no throw, no
+// behavior change for the untyped case.
+function buildRequiredSignalFindings(
+  taskType: TaskType | undefined,
+  ctx: RequiredSignalContext,
+): QualityFinding[] {
+  const signals =
+    typeof taskType === "string" && Object.prototype.hasOwnProperty.call(REQUIRED_SIGNALS_BY_TYPE, taskType)
+      ? REQUIRED_SIGNALS_BY_TYPE[taskType as TaskType]
+      : [];
+  return signals
+    .filter((signal) => !signal.present(ctx))
+    .map((signal) => ({
+      code: signal.code,
+      severity: "blocking" as const,
+      dimension: signal.dimension,
+      message: signal.message,
+      suggestion: signal.suggestion,
+    }));
+}
+
 export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const td = input.templateData;
   const has = (v?: string | null) => (v?.trim().length ?? 0) > 0;
@@ -786,6 +1202,10 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const dependenciesPresent = present("dependencies");
   const riskPresent = present("risk");
   const agentPromptPresent = present("agentPrompt");
+  // `constraints` is not scored (superseded by the executability fields, see
+  // the MISS_FINDINGS comment above) but is a required signal for several
+  // taskTypes (M2), so it needs its own presence flag here.
+  const constraintsPresent = present("constraints");
 
   const verificationSignal = descTrim.length > 0 && VERIFICATION_SIGNAL_PATTERN.test(descTrim);
   const evalsKeystoneViolated = !acPresent && !verificationSignal;
@@ -840,6 +1260,35 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
       existing.suggestion = existing.suggestion
         ? `${existing.suggestion} ${cf.suggestion}`
         : cf.suggestion;
+    }
+  }
+
+  // Milestone 2: per-type required signals. Reuses `byCode` from the cap
+  // merge above: when a required-signal code already has an entry (e.g. a
+  // universal `missing_scope`/`missing_acceptance_criteria` finding), that
+  // entry is ESCALATED to `blocking` in place rather than duplicated, so a
+  // gap the universal rules already report is never double-fired.
+  const requiredSignalFindings = buildRequiredSignalFindings(td?.taskType, {
+    descTrim,
+    goalPresent,
+    scopePresent,
+    outOfScopePresent,
+    acPresent,
+    riskPresent,
+    constraintsPresent,
+    // The combined "is there any way to know this is done" signal (AC OR a
+    // prose verification path), the SAME condition the evals keystone uses
+    // (`!evalsKeystoneViolated`), not the raw prose-only `verificationSignal`
+    // local above.
+    verificationSignal: !evalsKeystoneViolated,
+  });
+  for (const rf of requiredSignalFindings) {
+    const existing = byCode.get(rf.code);
+    if (existing) {
+      existing.severity = "blocking";
+    } else {
+      findings.push(rf);
+      byCode.set(rf.code, rf);
     }
   }
 

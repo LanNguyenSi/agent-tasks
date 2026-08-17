@@ -128,12 +128,30 @@ export const SECTIONED_DESC = [
 ].join("\n");
 
 /**
- * Parity corpus: exactly the 10 fixtures named below, made up of the 9
- * shapes ported from the frontend suite's original FIXTURES array (9, after the
- * rich-templatedata-no-desc MEDIUM fix folded a 9th in) plus the fully
- * sectioned SECTIONED_DESC case. The exact set is enforced by name (not just
- * by count) in frontend/src/lib/confidence.parity.test.ts, so adding,
- * dropping, or silently swapping a fixture is caught by name.
+ * Parity corpus: exactly the 15 fixtures named below —  the original 10 (9
+ * shapes ported from the frontend suite's original FIXTURES array, after the
+ * rich-templatedata-no-desc MEDIUM fix folded a 9th in, plus the fully
+ * sectioned SECTIONED_DESC case) plus 5 typed fixtures added for task
+ * 6b88ec87's review round 1 (finding 4): "typed-feature-with-ac" above was
+ * the only typed fixture in the original 10, covering 1 of 6 taskTypes; the
+ * 5 below cover the remaining bugfix/refactoring/security/migration/docs
+ * types, each deliberately missing EXACTLY ONE of that type's M2 required
+ * signals (backend/src/lib/confidence.ts's REQUIRED_SIGNALS_BY_TYPE) so the
+ * parity run actually exercises a required-signal finding, not just the
+ * universal ones. The exact set is enforced by name (not just by count) in
+ * frontend/src/lib/confidence.parity.test.ts, which also asserts the exact
+ * missing code each fixture fires (task 6b88ec87 review round 2, finding 5),
+ * so adding, dropping, silently swapping, or DEFUSING a fixture (a wording
+ * change that accidentally satisfies the very signal it claims to miss, or
+ * accidentally satisfies a DIFFERENT signal than the one named) is caught by
+ * name and by code. Two of the five originally shipped defused:
+ * "typed-security-missing-affected-asset" had "credential-stuffing" wording,
+ * which satisfied `\bcredentials?\b` and never actually exercised a missing
+ * asset; "typed-migration-missing-deployment-impact" mentioned "cutover",
+ * which satisfied the deployment regex, so it actually fired
+ * missing_rollback (never mentioned either) instead. Both are reworded above
+ * and both are measured, not guessed: the assertions in
+ * confidence.parity.test.ts run the real built backend scorer.
  * Inputs only — no "expected" values live here. The parity test computes
  * the expected result by actually running the backend scorer, not by a
  * hand-maintained snapshot, so this corpus cannot go stale the way a
@@ -238,6 +256,114 @@ export const CONFIDENCE_PARITY_FIXTURES: ConfidenceFixture[] = [
       title: "Return 400 on empty signup body",
       description: SECTIONED_DESC,
       templateData: null,
+      templateFields: null,
+    },
+  },
+  // ── Typed fixtures added for task 6b88ec87 review round 1 (finding 4) ────
+  // One per remaining taskType, each missing at least one of that type's M2
+  // required signals (see the corpus doc comment above).
+  {
+    name: "typed-bugfix-missing-repro",
+    input: {
+      title: "Fix crash on empty signup body",
+      description: [
+        "Actual behavior: POST /api/signup with an empty body throws a 500.",
+        "Expected behavior: it should return 400 instead.",
+        "Error message: TypeError: Cannot read property 'email' of undefined.",
+        "Affected environment: Node 20 on macOS Sonoma.",
+      ].join(" "),
+      // Reproduction steps are deliberately NOT stated anywhere.
+      templateData: {
+        acceptanceCriteria: "- POST /api/signup with {} returns 400",
+        taskType: "bugfix",
+      },
+      templateFields: null,
+    },
+  },
+  {
+    name: "typed-refactoring-missing-non-goals",
+    input: {
+      title: "Simplify the internal request parser",
+      description: [
+        "Purpose: the parser has grown three near-duplicate branches; simplify for readability.",
+        "Behavior preservation: this is functionally equivalent, no behavior change for callers.",
+        "Regression strategy: the existing parser test suite covers every branch and must stay green.",
+      ].join(" "),
+      // Non-goals (out-of-scope) are deliberately NOT stated anywhere.
+      templateData: {
+        scope: "src/services/parser.ts only",
+        risk: "Low: internal-only refactor, no public API change",
+        taskType: "refactoring",
+      },
+      templateFields: null,
+    },
+  },
+  {
+    // R2 finding 5: was "typed-security-missing-affected-asset" with a
+    // "credential-stuffing" phrase — "credential" satisfies `\bcredentials?\b`
+    // (the asset regex) as a substring, so this fixture was INERT: it never
+    // actually exercised a missing missing_affected_asset finding. Reworded
+    // to avoid every asset word (assets/endpoints/credentials/tokens/secrets)
+    // so the asset genuinely goes unnamed.
+    name: "typed-security-missing-affected-asset",
+    input: {
+      title: "Harden the login rate limiter",
+      description: [
+        "Security goal: harden the authentication flow against repeated failed login abuse.",
+        "Threat: an attacker could brute-force a user's password via many rapid attempts.",
+        "Review requirement: get sign-off from the security lead before merging.",
+        "Rollback: revert the feature flag if false positives spike.",
+      ].join(" "),
+      // The affected asset (endpoint/credential/token/secret) is deliberately NOT named.
+      templateData: {
+        constraints: "No new endpoints; only modify the existing login middleware",
+        acceptanceCriteria: "- Login blocks after 5 failed attempts within 60 seconds",
+        taskType: "security",
+      },
+      templateFields: null,
+    },
+  },
+  {
+    // R2 finding 5: was "typed-migration-missing-deployment-impact" with a
+    // "cutover" mention — "cutover" satisfies `\bcutover\b` (the deployment
+    // regex), so this fixture actually fired missing_rollback (rollback was
+    // never mentioned either), not missing_deployment_impact as its name
+    // claimed. Dropped "cutover" and added an explicit rollback statement so
+    // ONLY deployment impact goes unstated, matching the other four
+    // "typed-X-missing-Y" fixtures' single-signal-missing shape.
+    name: "typed-migration-missing-deployment-impact",
+    input: {
+      title: "Migrate the users table to the new Postgres cluster",
+      description: [
+        "Current state: the users table lives on the legacy MySQL instance.",
+        "Target state: the users table lives on the new Postgres cluster.",
+        "Compatibility: the read API stays backward compatible throughout the migration.",
+        "Rollback: revert to the legacy instance if replication fails.",
+        "Operational risk: on-call must monitor replication lag; blast radius is the users service only.",
+      ].join(" "),
+      // Deployment impact (downtime/rollout order/cutover) is deliberately NOT stated.
+      templateData: {
+        acceptanceCriteria: "- users table reads/writes succeed against the new backend with no data loss",
+        taskType: "migration",
+      },
+      templateFields: null,
+    },
+  },
+  {
+    name: "typed-docs-missing-review-owner",
+    input: {
+      title: "Document the confidence-scorer required-signal matrix",
+      description: [
+        "Target audience: backend engineers extending the M2 required-signal matrix.",
+        "Source of truth: this doc reflects the canonical matrix in backend/src/lib/confidence.ts.",
+        "Format: written in Markdown as a new docs/ section.",
+      ].join(" "),
+      // The review owner is deliberately NOT named.
+      templateData: {
+        scope: "docs/confidence-scorer.md only",
+        acceptanceCriteria: "- doc reviewed and merged with no broken links",
+        taskType: "docs",
+      },
       templateFields: null,
     },
   },

@@ -1,4 +1,4 @@
-import { calculateConfidence, type QualityFinding } from "../lib/confidence.js";
+import { calculateConfidence, type QualityFinding, REQUIRED_SIGNAL_ONLY_CODES } from "../lib/confidence.js";
 import { EnforcementMode } from "../lib/enforcement-mode.js";
 import { SCOPES } from "./scopes.js";
 import type { AgentActor } from "../types/auth.js";
@@ -190,6 +190,16 @@ function triggeredCapCodes(findings: QualityFinding[]): string[] {
  * Turn QualityFindings into a short, prioritised list of human-readable next
  * actions. Blocking findings come first, then warnings. Deduplicated by
  * suggestion text; capped at 5 so the response stays scannable.
+ *
+ * Within a severity tier, a UNIVERSAL finding (title/description/goal/AC/
+ * scope/outOfScope/dependencies/risk/agentPrompt — including a per-taskType
+ * required-signal finding that ALIASES one of those, see confidence.ts's
+ * REQUIRED_SIGNALS_BY_TYPE header comment) sorts ahead of a genuinely
+ * type-specific prose finding (`REQUIRED_SIGNAL_ONLY_CODES`, M2). Without
+ * this, a typed task with many missing required signals can crowd the
+ * universal scope/agentPrompt/AC guidance entirely out of the 5-item cap
+ * below, even though fixing the universal gaps is the more foundational
+ * advice.
  */
 export function deriveNextActions(findings: QualityFinding[]): string[] {
   const SEVERITY_RANK: Record<QualityFinding["severity"], number> = {
@@ -197,7 +207,12 @@ export function deriveNextActions(findings: QualityFinding[]): string[] {
     warning: 1,
     info: 2,
   };
-  const sorted = [...findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
+  const typeSpecificRank = (f: QualityFinding) => (REQUIRED_SIGNAL_ONLY_CODES.has(f.code) ? 1 : 0);
+  const sorted = [...findings].sort((a, b) => {
+    const severityDiff = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
+    if (severityDiff !== 0) return severityDiff;
+    return typeSpecificRank(a) - typeSpecificRank(b);
+  });
   const out: string[] = [];
   const seen = new Set<string>();
   for (const f of sorted) {
