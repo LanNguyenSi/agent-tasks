@@ -311,6 +311,10 @@ export default function SettingsPage() {
   }
 
   const selectedTeam = teams.find((t) => t.id === selectedTeamId);
+  // Single source of truth for the three duplicated "is the caller a team
+  // admin for the selected team" checks below (connect/create buttons, the
+  // empty-state action, and each token row's rename/revoke gating).
+  const isTeamAdmin = selectedTeam?.role === "ADMIN";
   const isDelegationDirty = user
     ? delegation.allowAgentPrCreate !== user.allowAgentPrCreate ||
       delegation.allowAgentPrMerge !== user.allowAgentPrMerge ||
@@ -567,8 +571,7 @@ export default function SettingsPage() {
                   </div>
                   {teams.length > 0 &&
                     (() => {
-                      const canManage = selectedTeam?.role === "ADMIN";
-                      const adminTitle = canManage
+                      const adminTitle = isTeamAdmin
                         ? undefined
                         : "Only team admins can generate agent tokens";
                       return (
@@ -576,7 +579,7 @@ export default function SettingsPage() {
                           <Button
                             onClick={() => setShowConnect(true)}
                             size="sm"
-                            disabled={!canManage}
+                            disabled={!isTeamAdmin}
                             title={adminTitle}
                           >
                             Connect an agent
@@ -585,7 +588,7 @@ export default function SettingsPage() {
                             onClick={() => setShowCreate(true)}
                             size="sm"
                             variant="ghost"
-                            disabled={!canManage}
+                            disabled={!isTeamAdmin}
                             title={adminTitle}
                           >
                             Create custom token
@@ -602,6 +605,12 @@ export default function SettingsPage() {
                         value={selectedTeamId}
                         onChange={(v) => {
                           setSelectedTeamId(v);
+                          // Both targets reference a token from the
+                          // now-stale team's list; a stale id could
+                          // otherwise be actioned against the newly
+                          // selected team's tokens.
+                          setRenameTarget(null);
+                          setRevokeTarget(null);
                           void loadTokens(v);
                         }}
                         options={teams.map((team) => ({
@@ -650,7 +659,7 @@ export default function SettingsPage() {
                   </div>
                 </CollapsibleSection>
 
-                {error && !showCreate && (
+                {error && !showCreate && !renameTarget && (
                   <AlertBanner tone="danger" title="Action failed">
                     {error}
                   </AlertBanner>
@@ -698,7 +707,7 @@ export default function SettingsPage() {
                     description="Generate a token to connect an agent or integration."
                     dashed
                     action={
-                      selectedTeam?.role === "ADMIN" ? (
+                      isTeamAdmin ? (
                         <Button
                           size="sm"
                           onClick={() => setShowConnect(true)}
@@ -711,10 +720,12 @@ export default function SettingsPage() {
                 ) : (
                   <div className="settings-token-list">
                     {tokens.map((token, i) => {
-                      const canManageThisToken = selectedTeam?.role === "ADMIN";
-                      const renameTitle = canManageThisToken
+                      const renameTitle = isTeamAdmin
                         ? undefined
                         : "Only team admins can rename agent tokens";
+                      const revokeTitle = isTeamAdmin
+                        ? undefined
+                        : "Only team admins can revoke agent tokens";
                       return (
                         <div
                           key={token.id}
@@ -743,9 +754,10 @@ export default function SettingsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              disabled={!canManageThisToken}
+                              disabled={!isTeamAdmin}
                               title={renameTitle}
                               onClick={() => {
+                                setError(null);
                                 setRenameTarget({ id: token.id, name: token.name });
                                 setRenameValue(token.name);
                               }}
@@ -755,6 +767,8 @@ export default function SettingsPage() {
                             <Button
                               variant="outline-danger"
                               size="sm"
+                              disabled={!isTeamAdmin}
+                              title={revokeTitle}
                               onClick={() =>
                                 setRevokeTarget({ id: token.id, name: token.name })
                               }
@@ -854,9 +868,10 @@ export default function SettingsPage() {
         open={Boolean(renameTarget)}
         onClose={() => {
           if (renaming) return;
+          setError(null);
           setRenameTarget(null);
         }}
-        title="Rename Agent Token"
+        title={renameTarget ? `Rename "${renameTarget.name}"` : "Rename Agent Token"}
       >
         <form onSubmit={(e) => void handleConfirmRename(e)}>
           <div className="settings-create-token-form">
@@ -891,7 +906,10 @@ export default function SettingsPage() {
               size="sm"
               type="button"
               disabled={renaming}
-              onClick={() => setRenameTarget(null)}
+              onClick={() => {
+                setError(null);
+                setRenameTarget(null);
+              }}
             >
               Cancel
             </Button>

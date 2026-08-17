@@ -14,6 +14,7 @@ vi.mock("../../src/services/agent-token-service.js", () => ({
   createAgentToken: vi.fn().mockResolvedValue({ ok: true, data: {} }),
   listAgentTokens: vi.fn().mockResolvedValue({ ok: true, data: {} }),
   revokeAgentToken: vi.fn().mockResolvedValue({ ok: true }),
+  renameAgentToken: vi.fn().mockResolvedValue({ ok: true, data: {} }),
 }));
 vi.mock("../../src/config/index.js", () => ({
   config: {

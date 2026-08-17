@@ -21,9 +21,18 @@ agentTokenRouter.get("/scopes", (c) => {
   });
 });
 
+// Shared display-metadata rule for a token's `name`, used by BOTH
+// createTokenSchema and renameTokenSchema below so the two token-mutating
+// verbs can't drift apart on what counts as a valid name. `.trim()` runs
+// before `.min(1)` in the check chain, which is a deliberate tightening
+// over the old plain `.min(1)`: a whitespace-only name (e.g. "   ") now
+// 400s instead of being stored verbatim, and the value actually persisted
+// is always the trimmed string for both create and rename.
+const tokenNameSchema = z.string().trim().min(1).max(100);
+
 const createTokenSchema = z.object({
   teamId: z.string().uuid(),
-  name: z.string().min(1).max(100),
+  name: tokenNameSchema,
   // Reject unknown scopes at the edge so a typo ("task:update" instead of
   // "tasks:update") fails loudly at token-creation time instead of silently
   // producing a permanently-403'd token.
@@ -64,10 +73,10 @@ agentTokenRouter.post(
   },
 );
 
-// Same 1-100 char rule as createTokenSchema's `name` — a renamed token
-// must satisfy the same display-metadata constraint as a freshly minted one.
+// Reuses tokenNameSchema — a renamed token must satisfy the exact same
+// display-metadata constraint as a freshly minted one.
 const renameTokenSchema = z.object({
-  name: z.string().min(1).max(100),
+  name: tokenNameSchema,
 });
 
 agentTokenRouter.patch(
