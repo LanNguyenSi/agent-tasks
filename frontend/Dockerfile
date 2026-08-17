@@ -39,6 +39,11 @@ COPY --from=build /app/frontend/package.json frontend/package.json
 # on-the-fly TS transpile to re-evaluate at container start, which needed the
 # typescript package, src/lib/csp.ts+theme.ts, and tsconfig.json's @/* path
 # alias -- none of which shipped in this stage).
+# NOTE: today's only config key (env) is already inlined at next build, so
+# removing these two COPYs would keep the smoke test green -- they are kept
+# deliberately for forward-compatibility: any future runtime-relevant config
+# key (headers, images, output, ...) would otherwise silently lose effect in
+# prod only. Do not drop them on the grounds that the smoke stays green.
 COPY --from=build /app/frontend/next.config.mjs frontend/next.config.mjs
 COPY --from=build /app/frontend/api-origin.mjs frontend/api-origin.mjs
 

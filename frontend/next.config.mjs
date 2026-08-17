@@ -1,3 +1,7 @@
+// @ts-check
+// (tsconfig's include only covers *.ts/*.tsx and checkJs is off, so without
+// this pragma the @type annotation below would be inert and a type error
+// here would only surface at next build.)
 import { resolveApiOrigin } from "./api-origin.mjs";
 
 // The Content-Security-Policy header is set in src/middleware.ts, not here.

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { buildCsp, getThemeInitScriptHash, resolveApiOrigin, sha256Base64 } from "@/lib/csp";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
@@ -168,22 +168,82 @@ describe("resolveApiOrigin", () => {
 });
 
 describe("resolveApiOrigin re-export and config sharing (anti-drift)", () => {
-  it("re-exports the exact same function from ../../api-origin.mjs, not a local redefinition", async () => {
+  // A distinctive origin no fallback or hardcoded literal would ever carry:
+  // any mutant that stops following NEXT_PUBLIC_API_URL fails to produce it.
+  const DRIFT_PROBE_ORIGIN = "https://api.drift-probe.example";
+
+  afterEach(() => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    vi.resetModules();
+  });
+
+  it("csp.ts re-exports the exact same function as api-origin.mjs, not a local redefinition", async () => {
     // Mutation probe: re-defining resolveApiOrigin locally in src/lib/csp.ts
     // (instead of `export { resolveApiOrigin } from "../../api-origin.mjs"`)
     // turns this red, because the two references would then be distinct
-    // function objects even if behaviorally identical.
-    const { resolveApiOrigin: fromApiOrigin } = await import("../../api-origin.mjs");
-    expect(resolveApiOrigin).toBe(fromApiOrigin);
+    // function objects even if behaviorally identical. Both modules are
+    // imported fresh from the same registry generation so the check stays
+    // order-independent under vi.resetModules().
+    vi.resetModules();
+    const cspFresh = await import("@/lib/csp");
+    const apiOriginFresh = await import("../../api-origin.mjs");
+    expect(cspFresh.resolveApiOrigin).toBe(apiOriginFresh.resolveApiOrigin);
   });
 
-  it("next.config.mjs's env.NEXT_PUBLIC_API_URL is produced by calling resolveApiOrigin(), not a hardcoded value", async () => {
-    // Mutation probe: hardcoding the env value in next.config.mjs (instead of
-    // calling resolveApiOrigin()) turns this red whenever NEXT_PUBLIC_API_URL
-    // differs from the hardcoded string -- e.g. under the default fallback
-    // used here.
+  it("next.config.mjs resolves through the VALIDATING resolver: a delimiter-carrying env value rejects the import", async () => {
+    // Mutation probe: re-implementing the resolution inline in next.config.mjs
+    // (dropping the api-origin.mjs import) or hardcoding the value keeps the
+    // config importable even with a CSP-directive-injection vector in the
+    // env -- this import must reject instead, proving the config path still
+    // runs resolveApiOrigin's validation.
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.com;script-src-evil.example.com";
+    vi.resetModules();
+    await expect(import("../../next.config.mjs")).rejects.toThrow(/CSP directive delimiters/);
+  });
+
+  it("next.config.mjs's env value follows NEXT_PUBLIC_API_URL, not a hardcoded literal (including the fallback literal)", async () => {
+    // Mutation probe: hardcoding ANY literal in next.config.mjs -- including
+    // the default http://localhost:3001 fallback, which the previous version
+    // of this test could not distinguish -- turns this red, because the
+    // distinctive probe origin must flow through.
+    process.env.NEXT_PUBLIC_API_URL = DRIFT_PROBE_ORIGIN;
+    vi.resetModules();
     const { default: nextConfig } = await import("../../next.config.mjs");
-    expect(nextConfig.env?.NEXT_PUBLIC_API_URL).toBe(resolveApiOrigin());
+    expect(nextConfig.env?.NEXT_PUBLIC_API_URL).toBe(DRIFT_PROBE_ORIGIN);
+  });
+
+  it("middleware's connect-src carries resolveApiOrigin()'s value under the unset-env fallback", async () => {
+    // Mutation probe: middleware resolving its origin inline with a drifted
+    // fallback (instead of importing resolveApiOrigin) turns this red -- the
+    // middleware half of the config/middleware pair is asserted by VALUE,
+    // not just header shape.
+    vi.resetModules();
+    const { middleware: freshMiddleware } = await import("../../src/middleware");
+    const { resolveApiOrigin: freshResolve } = await import("../../api-origin.mjs");
+    const response = await freshMiddleware(new NextRequest("http://localhost:3100/dashboard"));
+    const header = response.headers.get("Content-Security-Policy-Report-Only");
+    const connectSrc = header
+      ?.split(";")
+      .map((d) => d.trim())
+      .find((d) => d.startsWith("connect-src"));
+    expect(connectSrc).toBe(`connect-src 'self' ${freshResolve()}`);
+  });
+
+  it("middleware's connect-src and the config env value follow NEXT_PUBLIC_API_URL in lockstep", async () => {
+    // Pins the explicit-env path on BOTH halves of the pair at once: config
+    // env and middleware connect-src must carry the same distinctive origin.
+    process.env.NEXT_PUBLIC_API_URL = DRIFT_PROBE_ORIGIN;
+    vi.resetModules();
+    const { middleware: freshMiddleware } = await import("../../src/middleware");
+    const { default: nextConfig } = await import("../../next.config.mjs");
+    const response = await freshMiddleware(new NextRequest("http://localhost:3100/dashboard"));
+    const header = response.headers.get("Content-Security-Policy-Report-Only");
+    const connectSrc = header
+      ?.split(";")
+      .map((d) => d.trim())
+      .find((d) => d.startsWith("connect-src"));
+    expect(connectSrc).toBe(`connect-src 'self' ${DRIFT_PROBE_ORIGIN}`);
+    expect(nextConfig.env?.NEXT_PUBLIC_API_URL).toBe(DRIFT_PROBE_ORIGIN);
   });
 });
 

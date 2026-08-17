@@ -20,8 +20,8 @@ import { THEME_INIT_SCRIPT } from "./theme";
  * Next automatically tags its own injected inline scripts with it, no
  * hash needed for those. That's why the CSP header is emitted from
  * middleware.ts (which runs per request, so a nonce is available) rather
- * than next.config.mjs's headers() (evaluated once at build time, so it
- * cannot carry a per-request value).
+ * than next.config.mjs's headers() (evaluated once at build/start time, so
+ * it cannot carry a per-request value).
  *
  * The theme-init hash is derived from THEME_INIT_SCRIPT itself rather
  * than hardcoded, so it can never silently drift out of sync with the
@@ -50,8 +50,7 @@ import { THEME_INIT_SCRIPT } from "./theme";
  *
  * Re-exported here, rather than only from api-origin.mjs directly, so
  * every existing importer (middleware.ts, tests/unit/csp.test.ts) keeps
- * working unchanged, and so this module's own buildCsp still has a local
- * name to reason about when reading its connect-src usage.
+ * working unchanged.
  */
 export { resolveApiOrigin } from "../../api-origin.mjs";
 
