@@ -21,14 +21,20 @@
 # chain (e.g. an auth gate added later), this script still passes as long
 # as the chain terminates in a 200, per the acceptance criteria.
 #
+# Falsifiability (mutation probe): removing either of these two lines from
+# frontend/Dockerfile's prod stage MUST turn this script red (verified
+# 2026-08-17, both fail rc=1 via the container-exit gate in the ready-poll):
+#   COPY --from=build /app/frontend/src frontend/src
+#   COPY --from=build /app/node_modules/typescript node_modules/typescript
+#
 # Usage: tools/frontend-docker-smoke.sh
 # Env overrides (all optional): NEXT_PUBLIC_API_URL, READY_TIMEOUT_SECS,
 # POLL_INTERVAL_SECS.
 
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
 
 NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://api.smoke.invalid}
 READY_TIMEOUT_SECS=${READY_TIMEOUT_SECS:-60}
@@ -89,7 +95,7 @@ while :; do
     fail "container exited during the ready-poll (docker inspect State.Running=${state})"
   fi
 
-  http_code=$(curl -s -o /dev/null -w '%{http_code}' -L --max-time 5 "${BASE_URL}" || echo 000)
+  http_code=$(curl -s -o /dev/null -w '%{http_code}' -L --max-time 5 "${BASE_URL}") || http_code=000
   if [ "${http_code}" = "200" ]; then
     break
   fi
@@ -105,7 +111,7 @@ poll_end=$(date +%s)
 echo "ready after $((poll_end - poll_start))s"
 
 echo "--- final assertion: GET / -> HTTP 200 (curl -L) ---"
-final_code=$(curl -s -o /dev/null -w '%{http_code}' -L --max-time 5 "${BASE_URL}")
+final_code=$(curl -s -o /dev/null -w '%{http_code}' -L --max-time 5 "${BASE_URL}") || final_code=000
 if [ "${final_code}" != "200" ]; then
   fail "GET / returned HTTP ${final_code}, expected 200"
 fi

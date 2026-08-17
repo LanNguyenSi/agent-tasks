@@ -5,6 +5,10 @@ name: Docker Smoke
 # runtime-only files were missing from frontend/Dockerfile's prod stage.
 # `npm run build` and `docker build` succeeding never caught that -- only
 # actually starting the container and observing it serve a request does.
+# NOTE: this job is paths-filtered. Do NOT add it to branch protection as a
+# plain required status check: PRs not touching these paths would block
+# forever on a check that never reports. A paths-less always-green companion
+# job (or a merge queue) is needed first if it should ever become required.
 on:
   push:
     branches: [master]
@@ -12,13 +16,21 @@ on:
       - "frontend/**"
       - "package.json"
       - "package-lock.json"
+      # backend/package.json is COPYed into the prod stage and feeds npm ci;
+      # .dockerignore shapes the build context -- either can break the image
+      # without touching frontend/**.
+      - "backend/package.json"
+      - ".dockerignore"
       - ".github/workflows/docker-smoke.yml"
       - "tools/frontend-docker-smoke.sh"
   pull_request:
+    branches: [master, main, develop]
     paths:
       - "frontend/**"
       - "package.json"
       - "package-lock.json"
+      - "backend/package.json"
+      - ".dockerignore"
       - ".github/workflows/docker-smoke.yml"
       - "tools/frontend-docker-smoke.sh"
   workflow_dispatch:
@@ -30,12 +42,12 @@ jobs:
   frontend-prod-image:
     name: Frontend prod image
     runs-on: ubuntu-latest
-    # Measured locally (macOS, Docker 29.7.1, cold build cache: base image
-    # pull + fresh npm ci + next build + container start + ready-poll):
-    # ~56s wall time. GitHub-hosted runners are slower and always build
-    # cold (no layer cache carries between jobs here), so this gives
-    # generous headroom without leaving the job able to hang indefinitely.
-    timeout-minutes: 8
+    # Backstop against a wedged runner or registry, not a measured budget:
+    # the real hang-bound is the script's own 60s ready-poll plus the build.
+    # Local cold-cache reference: ~56s wall (macOS, Docker 29.x); GitHub
+    # runners build cold every run and can be several times slower, so this
+    # stays generous on purpose. Re-tune from real CI wall times if needed.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
