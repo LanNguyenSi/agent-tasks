@@ -728,6 +728,307 @@ function applyScoreCaps(
   return { cappedScore, capFindings };
 }
 
+// ── Milestone 2: per-type required signals (overlay §"Task-Type-Aware
+// Scoring", table verbatim in task 6b88ec87). A task with an EXPLICIT
+// `templateData.taskType` (never the echoed `inferredTaskType`) must
+// evidence every signal the matrix lists for that type somewhere in its
+// spec. A missing signal is ALWAYS a `blocking` finding. Where the signal is
+// the same concept as an existing universal field (scope, acceptanceCriteria,
+// constraints, outOfScope, risk), the check reuses that field's own presence
+// flag and finding code, so a missing field ESCALATES its existing (often
+// lower-severity) finding to `blocking` instead of adding a second entry for
+// the same gap (see the merge in calculateConfidence). Signals with no
+// existing TemplateData field (e.g. "reproduction steps") are detected by a
+// dedicated keyword regex over the raw description: pure heuristic, no LLM,
+// per Scope.
+//
+// Per-type score weights/caps are a separate follow-up (M2-thresholds): these
+// findings never change `score` and never set `keystone`, so on their own
+// they do not move `ConfidenceResult.blocking` either.
+interface RequiredSignalContext {
+  descTrim: string;
+  goalPresent: boolean;
+  scopePresent: boolean;
+  outOfScopePresent: boolean;
+  acPresent: boolean;
+  riskPresent: boolean;
+  constraintsPresent: boolean;
+  verificationSignal: boolean;
+}
+
+interface RequiredSignal {
+  code: string;
+  dimension: QualityDimension;
+  message: string;
+  suggestion: string;
+  present: (ctx: RequiredSignalContext) => boolean;
+}
+
+const kw = (pattern: RegExp): RequiredSignal["present"] => (ctx) => pattern.test(ctx.descTrim);
+
+const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
+  bugfix: [
+    {
+      code: "missing_actual_behavior", dimension: "completeness",
+      message: "Actual (buggy) behavior is not described.",
+      suggestion: "State what actually happens today, in observable terms.",
+      present: kw(/\bactual(ly)?\s+behaviou?r\b|\bactually\s+happens?\b|\bcurrently\s+(does|happens|behaves)\b|\bobserved\s+behaviou?r\b|\bwhat\s+(currently\s+)?happens\b/i),
+    },
+    {
+      code: "missing_expected_behavior", dimension: "completeness",
+      message: "Expected (correct) behavior is not described.",
+      suggestion: "State what should happen instead.",
+      present: kw(/\bexpected\s+behaviou?r\b|\bshould\s+(instead\s+)?happen\b|\bexpected\s+result\b|\bdesired\s+behaviou?r\b/i),
+    },
+    {
+      code: "missing_reproduction_steps", dimension: "testability",
+      message: "Reproduction steps are missing.",
+      suggestion: "Add numbered steps to reproduce the bug.",
+      present: kw(/\breproduc(e|es|ing|tion)\b|\brepro\s+steps?\b|\bsteps?\s+to\s+reproduce\b|\bhow\s+to\s+reproduce\b/i),
+    },
+    {
+      code: "missing_error_message_or_symptom", dimension: "concreteness",
+      message: "No error message or symptom is quoted.",
+      suggestion: "Paste the exact error message, stack trace, or observed symptom.",
+      present: kw(/\berror\s+messages?\b|\bstack\s+trace\b|\bexceptions?\b|\bsymptoms?\b|\bthrows?\b|\berror:\s|\bfailure\s+message\b/i),
+    },
+    {
+      code: "missing_affected_environment", dimension: "contextQuality",
+      message: "Affected environment (OS, browser, version, platform) is unstated.",
+      suggestion: "Name the environment the bug occurs in (OS, browser, runtime version, platform).",
+      present: kw(/\benvironments?\b|\bbrowsers?\b|\boperating\s+system\b|\bplatforms?\b|\bversions?\b|\bnode\s+v?\d/i),
+    },
+    {
+      code: "missing_verification_step", dimension: "testability",
+      message: "No verification step for the fix.",
+      suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
+      present: (ctx) => ctx.verificationSignal,
+    },
+  ],
+  feature: [
+    {
+      code: "missing_user_goal", dimension: "completeness",
+      message: "User goal is missing.",
+      suggestion: "Add a one-line Goal stating the intended outcome.",
+      present: (ctx) => ctx.goalPresent,
+    },
+    {
+      code: "missing_scope", dimension: "scopeClarity",
+      message: "Scope (what may change) is missing.",
+      suggestion: "List the files, modules, or surfaces the change may touch.",
+      present: (ctx) => ctx.scopePresent,
+    },
+    {
+      code: "missing_acceptance_criteria", dimension: "testability",
+      message: "No acceptance criteria and no verification path in the description.",
+      suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
+      present: (ctx) => ctx.acPresent,
+    },
+    {
+      code: "missing_constraints", dimension: "scopeClarity",
+      message: "Constraints are unstated.",
+      suggestion: "Add a Constraints section naming what must not change.",
+      present: (ctx) => ctx.constraintsPresent,
+    },
+    {
+      code: "missing_ux_api_expectations", dimension: "completeness",
+      message: "UX/API expectations are unstated.",
+      suggestion: "Describe the expected UI behavior or API/interface shape.",
+      present: kw(/\bapis?\b|\bux\b|\buser\s+experience\b|\bendpoints?\b|\brequests?\b|\bresponses?\b|\binterfaces?\b/i),
+    },
+    {
+      code: "missing_verification", dimension: "testability",
+      message: "No verification path in the description.",
+      suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
+      present: (ctx) => ctx.verificationSignal,
+    },
+  ],
+  refactoring: [
+    {
+      code: "missing_purpose", dimension: "completeness",
+      message: "Purpose (why this refactor) is not stated.",
+      suggestion: "Add a one-line Purpose stating why this refactor is worth doing.",
+      present: kw(/\bpurpose\b|\bmotivation\b|\breason\s+for\b|\bwhy\s+this\b/i),
+    },
+    {
+      code: "missing_scope_boundary", dimension: "scopeClarity",
+      message: "Scope boundary (what may change) is missing.",
+      suggestion: "List the files, modules, or surfaces the refactor may touch.",
+      present: (ctx) => ctx.scopePresent,
+    },
+    {
+      code: "missing_non_goals", dimension: "scopeClarity",
+      message: "Non-goals are unstated.",
+      suggestion: "Name what must NOT change so a weak agent does not wander.",
+      present: (ctx) => ctx.outOfScopePresent,
+    },
+    {
+      code: "missing_behavior_preservation", dimension: "ambiguityRisk",
+      message: "Behavior-preservation guarantee is not stated.",
+      suggestion: "State that observable behavior is unchanged (or exactly how it changes).",
+      present: kw(/\bbehaviou?r[- ]preserv|\bno\s+behaviou?r\s+change|\bfunctionally\s+equivalent\b|\bsame\s+behaviou?r\b/i),
+    },
+    {
+      code: "missing_regression_strategy", dimension: "testability",
+      message: "Regression strategy is unstated.",
+      suggestion: "State how regressions will be caught (existing tests, new tests, manual pass).",
+      present: kw(/\bregressions?\b|\bexisting\s+tests?\b|\btest\s+suite\b|\btest\s+coverage\b/i),
+    },
+    {
+      code: "missing_risk_areas", dimension: "ambiguityRisk",
+      message: "Risk areas are unstated.",
+      suggestion: "Note the risk level or blast radius (low / medium / high, and why).",
+      present: (ctx) => ctx.riskPresent,
+    },
+  ],
+  security: [
+    {
+      code: "missing_security_goal", dimension: "completeness",
+      message: "Security goal is not stated.",
+      suggestion: "State the security property this change establishes or restores.",
+      present: kw(/\bsecurity\s+goal\b|\bharden(ing)?\b|\bmitigat(e|es|ion)\b|\bsecur(e|ity)\b/i),
+    },
+    {
+      code: "missing_affected_asset", dimension: "concreteness",
+      message: "Affected asset is not named.",
+      suggestion: "Name the asset at risk (endpoint, credential, token, data, resource).",
+      present: kw(/\bassets?\b|\bendpoints?\b|\bcredentials?\b|\btokens?\b|\bsecrets?\b|\bresources?\b/i),
+    },
+    {
+      code: "missing_threat_or_risk", dimension: "ambiguityRisk",
+      message: "Threat or risk is not described.",
+      suggestion: "Describe the threat, vulnerability, or attack this change addresses.",
+      present: kw(/\bthreats?\b|\bvulnerab(le|ility|ilities)\b|\battacks?\b|\bexploits?\b|\brisks?\b/i),
+    },
+    {
+      code: "missing_constraints", dimension: "scopeClarity",
+      message: "Constraints are unstated.",
+      suggestion: "Add a Constraints section naming what must not change.",
+      present: (ctx) => ctx.constraintsPresent,
+    },
+    {
+      code: "missing_review_requirement", dimension: "completeness",
+      message: "Review requirement is unstated.",
+      suggestion: "State who must review or sign off before this ships.",
+      present: kw(/\breview\s+requir|\bsecurity\s+review\b|\bsign[- ]?off\b|\bapprovals?\b|\breviewed\s+by\b/i),
+    },
+    {
+      code: "missing_verification", dimension: "testability",
+      message: "No verification path in the description.",
+      suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
+      present: (ctx) => ctx.verificationSignal,
+    },
+    {
+      code: "missing_rollback_if_relevant", dimension: "completeness",
+      message: "Rollback plan is unstated.",
+      suggestion: "State the rollback plan, or 'not applicable' if there is none.",
+      present: kw(/\brollback\b|\broll\s+back\b|\breverts?\b|\bnot\s+applicable\b|\bno\s+rollback\s+needed\b/i),
+    },
+  ],
+  migration: [
+    {
+      code: "missing_current_state", dimension: "contextQuality",
+      message: "Current state is not described.",
+      suggestion: "Describe the current state before the migration.",
+      present: kw(/\bcurrent\s+state\b|\bcurrently\b|\btoday\b|\bexisting\s+(state|schema|setup|behavior)\b/i),
+    },
+    {
+      code: "missing_target_state", dimension: "contextQuality",
+      message: "Target state is not described.",
+      suggestion: "Describe the target state after the migration.",
+      present: kw(/\btarget\s+state\b|\bdesired\s+state\b|\bend\s+state\b|\bafter\s+(the\s+)?migration\b|\bfuture\s+state\b/i),
+    },
+    {
+      code: "missing_compatibility", dimension: "ambiguityRisk",
+      message: "Compatibility (backward/forward) is unstated.",
+      suggestion: "State the compatibility guarantee during and after the migration.",
+      present: kw(/\bcompat(ible|ibility)?\b|\bbackward(s)?[- ]compat/i),
+    },
+    {
+      code: "missing_rollback", dimension: "completeness",
+      message: "Rollback plan is unstated.",
+      suggestion: "State the rollback plan, or 'not applicable' if there is none.",
+      present: kw(/\brollback\b|\broll\s+back\b|\breverts?\b|\bnot\s+applicable\b|\bno\s+rollback\s+needed\b/i),
+    },
+    {
+      code: "missing_deployment_impact", dimension: "ambiguityRisk",
+      message: "Deployment impact is unstated.",
+      suggestion: "State the deployment impact (downtime, order of rollout, cutover steps).",
+      present: kw(/\bdeploy(ment)?\b|\bdowntime\b|\breleases?\b|\bcutover\b/i),
+    },
+    {
+      code: "missing_verification", dimension: "testability",
+      message: "No verification path in the description.",
+      suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
+      present: (ctx) => ctx.verificationSignal,
+    },
+    {
+      code: "missing_operational_risk", dimension: "ambiguityRisk",
+      message: "Operational risk is unstated.",
+      suggestion: "Note the operational risk or blast radius (low / medium / high, and why).",
+      present: kw(/\boperational\s+risk\b|\bops\s+risk\b|\bon-?call\b|\brunbook\b|\bblast\s+radius\b/i),
+    },
+  ],
+  docs: [
+    {
+      code: "missing_target_audience", dimension: "contextQuality",
+      message: "Target audience is not named.",
+      suggestion: "Name who this doc is for.",
+      present: kw(/\btarget\s+audience\b|\baudiences?\b|\breaders?\b/i),
+    },
+    {
+      code: "missing_source_of_truth", dimension: "contextQuality",
+      message: "Source of truth is not named.",
+      suggestion: "Name the canonical/authoritative source this doc reflects.",
+      present: kw(/\bsource\s+of\s+truth\b|\bcanonical\b|\bauthoritative\b/i),
+    },
+    {
+      code: "missing_scope", dimension: "scopeClarity",
+      message: "Scope (what the doc covers) is missing.",
+      suggestion: "List what the doc covers and what it does not.",
+      present: (ctx) => ctx.scopePresent,
+    },
+    {
+      code: "missing_format", dimension: "structure",
+      message: "Format is unstated.",
+      suggestion: "State the target format (markdown, ADR, README section, etc.).",
+      present: kw(/\bformats?\b|\bmarkdown\b|\btemplates?\b|\bstructure\s+of\b/i),
+    },
+    {
+      code: "missing_acceptance_criteria", dimension: "testability",
+      message: "No acceptance criteria and no verification path in the description.",
+      suggestion: "Add 2-5 bullets describing observable completion conditions (the task's evals).",
+      present: (ctx) => ctx.acPresent,
+    },
+    {
+      code: "missing_review_owner", dimension: "completeness",
+      message: "Review owner is unstated.",
+      suggestion: "Name who reviews and approves this doc.",
+      present: kw(/\breview\s+owner\b|\breviewed\s+by\b|\bapprovers?\b|\bowner:/i),
+    },
+  ],
+};
+
+// Missing required signal -> a `blocking` finding, code `missing_<signal-name>`.
+// `taskType` is the EXPLICIT `templateData.taskType` only (never
+// `inferredTaskType`). Unset taskType -> no findings (existing universal
+// rules apply unchanged; see the `[]` return and the merge below).
+function buildRequiredSignalFindings(
+  taskType: TaskType | undefined,
+  ctx: RequiredSignalContext,
+): QualityFinding[] {
+  if (!taskType) return [];
+  return REQUIRED_SIGNALS_BY_TYPE[taskType]
+    .filter((signal) => !signal.present(ctx))
+    .map((signal) => ({
+      code: signal.code,
+      severity: "blocking" as const,
+      dimension: signal.dimension,
+      message: signal.message,
+      suggestion: signal.suggestion,
+    }));
+}
+
 export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const td = input.templateData;
   const has = (v?: string | null) => (v?.trim().length ?? 0) > 0;
@@ -786,6 +1087,10 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const dependenciesPresent = present("dependencies");
   const riskPresent = present("risk");
   const agentPromptPresent = present("agentPrompt");
+  // `constraints` is not scored (superseded by the executability fields, see
+  // the MISS_FINDINGS comment above) but is a required signal for several
+  // taskTypes (M2), so it needs its own presence flag here.
+  const constraintsPresent = present("constraints");
 
   const verificationSignal = descTrim.length > 0 && VERIFICATION_SIGNAL_PATTERN.test(descTrim);
   const evalsKeystoneViolated = !acPresent && !verificationSignal;
@@ -840,6 +1145,35 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
       existing.suggestion = existing.suggestion
         ? `${existing.suggestion} ${cf.suggestion}`
         : cf.suggestion;
+    }
+  }
+
+  // Milestone 2: per-type required signals. Reuses `byCode` from the cap
+  // merge above: when a required-signal code already has an entry (e.g. a
+  // universal `missing_scope`/`missing_acceptance_criteria` finding), that
+  // entry is ESCALATED to `blocking` in place rather than duplicated, so a
+  // gap the universal rules already report is never double-fired.
+  const requiredSignalFindings = buildRequiredSignalFindings(td?.taskType, {
+    descTrim,
+    goalPresent,
+    scopePresent,
+    outOfScopePresent,
+    acPresent,
+    riskPresent,
+    constraintsPresent,
+    // The combined "is there any way to know this is done" signal (AC OR a
+    // prose verification path), the SAME condition the evals keystone uses
+    // (`!evalsKeystoneViolated`), not the raw prose-only `verificationSignal`
+    // local above.
+    verificationSignal: !evalsKeystoneViolated,
+  });
+  for (const rf of requiredSignalFindings) {
+    const existing = byCode.get(rf.code);
+    if (existing) {
+      existing.severity = "blocking";
+    } else {
+      findings.push(rf);
+      byCode.set(rf.code, rf);
     }
   }
 
