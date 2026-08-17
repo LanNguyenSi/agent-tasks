@@ -28,6 +28,7 @@ Authoritative source: [`backend/prisma/schema.prisma`](../backend/prisma/schema.
 These fields on `Project` shape every state-write path:
 
 - `confidenceThreshold` (default `60`). Below this, `task_pickup` and `task_start` reject with `422 confidence_below_threshold`.
+- `taskTypeThresholds` (nullable JSON map, M2). Optional per-task-type override of `confidenceThreshold`, keyed on the six `TaskType` values. Resolution order: `taskTypeThresholds[EXPLICIT templateData.taskType]` -> `confidenceThreshold` -> the global default (`60`). See [`scorer-v2-enforcement.md`](scorer-v2-enforcement.md).
 - `governanceMode` (`AUTONOMOUS \| AWAITS_CONFIRMATION \| REQUIRES_DISTINCT_REVIEWER`, nullable). Source of truth for new code. See [`state-machines.md`](state-machines.md) for what each tier gates.
 - `soloMode` (`Boolean`, **deprecated**). Kept readable for one release. Server derives `governanceMode` from this when the new field is null. Writes go through `governanceMode` and sync-write the legacy flag via `legacyFlagsFromGovernanceMode`.
 - `requireDistinctReviewer` (`Boolean`, **deprecated**). Same deprecation contract as `soloMode`.

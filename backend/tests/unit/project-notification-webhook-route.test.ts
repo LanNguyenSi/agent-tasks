@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
+import { Prisma } from "@prisma/client";
 import type { AppVariables } from "../../src/types/hono.js";
 import type { Actor } from "../../src/types/auth.js";
 
@@ -77,6 +78,9 @@ const baseProject = {
   githubSyncAt: null,
   taskTemplate: null,
   confidenceThreshold: 60,
+  // Prisma returns null (not undefined) for an unset Json? column; the
+  // fixture must match that shape (review round-2 finding 5).
+  taskTypeThresholds: null,
   enforcementMode: null,
   requireDistinctReviewer: false,
   soloMode: true,
@@ -382,6 +386,137 @@ describe("PATCH /projects/:id — enforcementMode (scorer-v2 T5)", () => {
         },
       }),
     );
+  });
+});
+
+describe("PATCH /projects/:id — taskTypeThresholds (M2, task b8629b99)", () => {
+  it("accepts a partial map of valid taskType keys and persists it via prisma.update", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+    prismaMocks.projectUpdate.mockResolvedValue({
+      ...baseProject,
+      taskTypeThresholds: { security: 90, docs: 60 },
+    });
+
+    const res = await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskTypeThresholds: { security: 90, docs: 60 } }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
+      where: { id: "proj-1" },
+      data: expect.objectContaining({ taskTypeThresholds: { security: 90, docs: 60 } }),
+    });
+  });
+
+  it("rejects an unknown taskType key with 400 and does not write", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+
+    const res = await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskTypeThresholds: { chore: 50 } }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(prismaMocks.projectUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects an out-of-range value with 400 and does not write", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+
+    const res = await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskTypeThresholds: { security: 150 } }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(prismaMocks.projectUpdate).not.toHaveBeenCalled();
+  });
+
+  it("accepts null to clear existing overrides (Prisma.JsonNull, not JS null)", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      ...baseProject,
+      taskTypeThresholds: { security: 90 },
+    });
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, taskTypeThresholds: null });
+
+    const res = await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskTypeThresholds: null }),
+    });
+
+    expect(res.status).toBe(200);
+    const call = prismaMocks.projectUpdate.mock.calls[0]![0] as { data: Record<string, unknown> };
+    // Prisma.JsonNull is a branded sentinel singleton, not JS `null` — Prisma
+    // needs it to distinguish "set the JSON column to SQL NULL" from "field
+    // omitted" (mirrors the taskTemplate clear path this feature was modeled
+    // on, routes/projects.ts).
+    expect(call.data.taskTypeThresholds).toBe(Prisma.JsonNull);
+  });
+
+  it("audits a taskTypeThresholds change", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject); // no taskTypeThresholds set
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, taskTypeThresholds: { security: 90 } });
+
+    await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskTypeThresholds: { security: 90 } }),
+    });
+
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "project.updated",
+        payload: {
+          changes: expect.objectContaining({
+            taskTypeThresholds: { from: null, to: { security: 90 } },
+          }),
+        },
+      }),
+    );
+  });
+
+  it("does NOT audit when taskTypeThresholds is unchanged (same map re-sent)", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      ...baseProject,
+      taskTypeThresholds: { security: 90 },
+    });
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, taskTypeThresholds: { security: 90 } });
+
+    await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskTypeThresholds: { security: 90 } }),
+    });
+
+    expect(mockLogAuditEvent).not.toHaveBeenCalled();
+  });
+
+  // Review round-2 finding 4: a plain JSON.stringify comparison is
+  // key-order-sensitive, so re-sending the same map with its keys reordered
+  // would wrongly look like a change and write a spurious audit entry.
+  it("does NOT audit when the same map is re-sent with its keys in a different order", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      ...baseProject,
+      taskTypeThresholds: { security: 90, docs: 60 },
+    });
+    prismaMocks.projectUpdate.mockResolvedValue({
+      ...baseProject,
+      taskTypeThresholds: { docs: 60, security: 90 },
+    });
+
+    await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      // Same entries, reordered keys.
+      body: JSON.stringify({ taskTypeThresholds: { docs: 60, security: 90 } }),
+    });
+
+    expect(mockLogAuditEvent).not.toHaveBeenCalled();
   });
 });
 

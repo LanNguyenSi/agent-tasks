@@ -17,9 +17,17 @@ warn-mode without a backfill.
 | `WARN`  | Compute the score; if it would block, emit a `task.claim_would_block_shadow` audit and allow the claim. The rollout default. |
 | `BLOCK` | Block (422) when the score is below the project threshold OR a keystone is violated.   |
 
-"Would block" means `score < confidenceThreshold` OR the evals keystone is
+"Would block" means `score < effective threshold` OR the evals keystone is
 violated (`ConfidenceResult.blocking`). The keystone clause is threshold
 independent: lowering a project's threshold cannot silently disable it.
+
+The effective threshold itself is layered, not a single flat value (M2, task
+b8629b99): `Project.taskTypeThresholds[EXPLICIT templateData.taskType]` ->
+`Project.confidenceThreshold` -> the global default (`60`). A task with no
+explicit `taskType`, or a project with no `taskTypeThresholds` override, falls
+straight through to the project layer; this is the pre-M2 behaviour and
+stays the default. See `resolveEffectiveThreshold()`
+(`backend/src/lib/confidence.ts`) for the resolution logic.
 
 Humans are never gated. The gate fires only on the claim edge, so a task already
 in progress is never re-evaluated when a project flips to `BLOCK` (grandfathered).
