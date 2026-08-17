@@ -99,28 +99,42 @@ services:
       API_URL: http://backend:3001
     depends_on:
       - backend
-    # Probes the Next.js server itself (node:22-slim ships no curl/wget, but
-    # node 22 has global fetch; 127.0.0.1 avoids an ::1 resolution miss).
-    # Without this the container had Health=none, so the 2026-08-17 outage
-    # (crash-looping frontend, Traefik dropped the route, public site 404)
-    # stayed invisible to `docker ps` and to the deploy panel's post-deploy
-    # gate, which reads container health from `docker compose ps` but treats
-    # "no healthcheck" as clean.
-    # Timing: the panel's normal gate polls optimistically for only ~15s
-    # (4x5s, first clean poll wins, "starting" counts as clean), so this is
-    # tuned to resolve fast: healthy on the first success (~1-6s after
-    # start), unhealthy ~20s after start at the latest for an
-    # alive-but-not-serving process (10s start_period grace against
-    # slow-start flapping + 2 failing checks 5s apart; measured locally:
-    # healthy at 6s, alive-but-not-serving unhealthy at 16s). A fast
-    # crash-loop reports BOTH signals within seconds (measured: state=
-    # restarting AND health=unhealthy), so the 2026-08-17 mode becomes
-    # visible to the gate as well.
+    # Probes the Next.js server itself. node:22-slim ships no curl/wget, but
+    # node 22 has global fetch; the IPv4 literal needs no DNS lookup and is
+    # independent of how next start binds. Without this the container had
+    # Health=none, so the 2026-08-17 alive-but-broken class was invisible to
+    # `docker ps` and to the deploy panel's post-deploy gate (which reads
+    # `docker compose ps` health but treats "no healthcheck" as clean). The
+    # incident's own crash-loop mode is caught by the gate's pre-existing
+    # container-STATE check (compose ps shows state=restarting with an EMPTY
+    # health field while restarting); the health verdict adds operator
+    # visibility (docker ps / docker inspect) and the Traefik effect below.
+    #
+    # ROUTING COUPLING (verified locally against traefik v3.6, filter exists
+    # in v2+v3 sources): Traefik's Docker provider only routes containers
+    # whose health is "healthy" -- "starting" and "unhealthy" are filtered.
+    # So this healthcheck is load-bearing for the public route: on every
+    # (re)start the route appears with the FIRST successful probe (~5s
+    # measured locally), and a genuinely broken frontend is de-routed to a
+    # public 404 -- which the panel gate's route probe fails on, if the app's
+    # liveUrl covers the frontend. Failure side is deliberately loose
+    # (retries 3, timeout 5s) so only ~15-20s of consecutively failing
+    # probes de-routes a serving container; a de-route self-heals with the
+    # next successful probe.
+    # Detection bounds measured locally (idle Mac; slower under VPS load):
+    # healthy ~5-6s after start; connection-refused unhealthy ~21s; hung
+    # server (accepts TCP, never responds) is the slowest mode at ~41s.
+    # Both resolve OUTSIDE the panel's optimistic ~15s poll window -- that
+    # window gap is deploy-panel task 29dba1ee, not something tighter timing
+    # here can fix without risking load-induced de-routes. start_period 10s
+    # is grace against slow-start flapping (probe cost: a ~54MB node process
+    # per tick, 12x/min in a 1G cgroup -- accepted for fast route
+    # appearance).
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.status === 200 ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 5s
-      timeout: 4s
-      retries: 2
+      timeout: 5s
+      retries: 3
       start_period: 10s
     restart: unless-stopped
     # Next.js production server. Idle ~152M but the SSR path can spike
