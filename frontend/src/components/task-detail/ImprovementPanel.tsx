@@ -12,11 +12,18 @@
 // deriveNextActions (lib/confidence.ts), the same faithful mirror of the
 // backend's own derivation used elsewhere in this file's sibling,
 // CreateConfidencePanel.
+//
+// Lives in components/task-detail/ alongside ReviewPanel/TaskHeader/etc.
+// (fix-round 1, MED-5): the spec (authored in May) named
+// components/task/ImprovementPanel.tsx, but that directory did not exist
+// yet at spec time — task-detail/ is where every other TaskDetail sub-panel
+// lives. Moved here deliberately; documented in the PR body as an intentional
+// spec deviation, not an oversight.
 
-import { useState } from "react";
-import { deriveNextActions, type QualityFinding } from "../../lib/confidence";
-import type { TaskConfidenceDetail } from "../../lib/api";
-import ConfidenceBadge from "../ConfidenceBadge";
+import { useEffect, useState } from "react";
+import { deriveNextActions, type QualityFinding } from "@/lib/confidence";
+import type { TaskConfidenceDetail } from "@/lib/api";
+import ConfidenceBadge from "@/components/ConfidenceBadge";
 
 const SEVERITY_ORDER = ["blocking", "warning", "info"] as const;
 
@@ -24,6 +31,18 @@ const SEVERITY_LABEL: Record<QualityFinding["severity"], string> = {
   blocking: "Blocking",
   warning: "Warning",
   info: "Info",
+};
+
+// Human-readable labels for the fixed M3 risk-modifier names
+// (backend/src/lib/confidence.ts RISK_MODIFIER_NAMES, verified against
+// batch18/m3-risk-modifiers commit 49b4afc). Optional/best-effort: an
+// unrecognized name (a modifier the backend adds later) still renders via
+// its own raw string below — nothing is invented for it.
+const RISK_MODIFIER_LABELS: Record<string, string> = {
+  touchesAuth: "Touches auth",
+  touchesDatabase: "Touches database",
+  touchesPersonalData: "Touches personal data",
+  productionImpact: "Production impact",
 };
 
 interface FindingsGroup {
@@ -53,12 +72,23 @@ function groupFindingsBySeverity(findings: QualityFinding[]): FindingsGroup[] {
  * nag on every task that is already in good shape; a failing task starts
  * expanded, with the banner tinted by the worst severity among its findings
  * (a single blocking finding tints the whole banner danger, otherwise
- * warning). Either state is togglable by click.
+ * warning). Either state is togglable by click, and resyncs to the new
+ * default whenever the pass/fail verdict itself changes underneath an
+ * already-rendered panel (fix-round 1, MED-4) — e.g. after a task edit
+ * causes the page to refetch `confidence` and the task flips from failing
+ * to passing or back. The resync is scoped to `passes` alone, not the whole
+ * `confidence` object, so an edit that leaves the pass/fail verdict
+ * unchanged (e.g. one finding's wording changes but the task still fails)
+ * does NOT clobber a state the user manually toggled.
  */
 export default function ImprovementPanel({ confidence }: { confidence: TaskConfidenceDetail }) {
   const { score, threshold, blocking, findings, triggeredRiskModifiers } = confidence;
   const passes = score >= threshold && !blocking;
   const [open, setOpen] = useState(!passes);
+
+  useEffect(() => {
+    setOpen(!passes);
+  }, [passes]);
 
   const tone: "pass" | "warning" | "danger" = passes
     ? "pass"
@@ -77,6 +107,7 @@ export default function ImprovementPanel({ confidence }: { confidence: TaskConfi
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
+        aria-controls="ip-body"
         className="ip-toggle"
       >
         <svg
@@ -101,14 +132,17 @@ export default function ImprovementPanel({ confidence }: { confidence: TaskConfi
       </button>
 
       {open && (
-        <div className="ip-body">
+        <div id="ip-body" className="ip-body">
           {hasRiskModifiers && (
             <div className="ip-section">
               <p className="ip-subheading">Triggered risk modifiers</p>
               <ul className="ip-risk-list">
-                {triggeredRiskModifiers!.map((m) => (
-                  <li key={m.code} className="ip-risk-item">
-                    {m.message}
+                {triggeredRiskModifiers!.map((name) => (
+                  <li key={name} className="ip-risk-item">
+                    <code className="ip-findings-code">{name}</code>
+                    {RISK_MODIFIER_LABELS[name] && (
+                      <span className="ip-risk-label">{RISK_MODIFIER_LABELS[name]}</span>
+                    )}
                   </li>
                 ))}
               </ul>

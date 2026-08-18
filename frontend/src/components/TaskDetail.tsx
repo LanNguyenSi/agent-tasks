@@ -52,7 +52,7 @@ import { buildSavedTemplateData } from "../lib/templateData";
 import type { TemplateDataEdits } from "../lib/templateData";
 import { formatRelativeTime, formatAbsoluteDate } from "../lib/time";
 import ConfidenceBadge from "./ConfidenceBadge";
-import ImprovementPanel from "./task/ImprovementPanel";
+import ImprovementPanel from "./task-detail/ImprovementPanel";
 import Markdown from "./Markdown";
 import TaskArtifactsSection from "./TaskArtifactsSection";
 import TaskAttachmentsSection from "./TaskAttachmentsSection";

@@ -644,16 +644,21 @@ export async function getTask(taskId: string): Promise<Task> {
 }
 
 /**
- * A single triggered risk modifier (M3, task 8e88cfc0, built on a parallel
- * branch as of M4 / task 67526c1c). Kept intentionally minimal and optional
- * everywhere it is used — the ImprovementPanel must render it tolerantly
- * when present and omit it cleanly when the backend has not shipped it yet,
- * without coupling to the exact shape M3 lands with.
+ * A single triggered risk modifier NAME (M3, task 8e88cfc0, landed on branch
+ * batch18/m3-risk-modifiers, commit 49b4afc). Verified against the real M3
+ * response shape (backend/src/routes/tasks.ts + backend/src/lib/confidence.ts
+ * on that branch, fix-round 1 of task 67526c1c): `triggeredRiskModifiers` is
+ * `RiskModifierName[]` — bare modifier names like `"touchesAuth"`,
+ * `"touchesDatabase"`, `"touchesPersonalData"`, `"productionImpact"` — NOT
+ * `{code, message}` objects (that shape was an unverified guess made before
+ * M3 landed and rendered as empty `<li>`s with a React key warning against
+ * the real payload). Kept as a bare `string` rather than importing the
+ * backend's exact 4-name union: the ImprovementPanel renders an
+ * unrecognized name tolerantly (falls back to the raw string via
+ * RISK_MODIFIER_LABELS) rather than failing to compile against a modifier
+ * name the backend adds later.
  */
-export interface TriggeredRiskModifier {
-  code: string;
-  message: string;
-}
+export type TriggeredRiskModifier = string;
 
 /**
  * The authoritative confidence detail returned by `GET /tasks/:id/instructions`

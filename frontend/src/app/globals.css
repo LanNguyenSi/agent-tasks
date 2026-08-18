@@ -4896,9 +4896,13 @@ html[data-theme="light"] {
 /* ── Improvement panel (ip-*) ─────────────────────────────────── */
 /* Findings + nextActions from GET /tasks/:id/instructions, rendered above
    the description editor on the task detail page. Tone follows the worst
-   severity among the panel's findings; --pass is a neutral/quiet style
-   (matches .collapsible-section) so a passing task does not read as an
-   alert. */
+   severity among the panel's findings. The "pass" tone has NO dedicated
+   `.ip-root--pass` rule below -- it deliberately falls through to the bare
+   `.ip-root` base rule (a neutral/quiet style, similar in spirit to
+   .collapsible-section) so a passing task does not read as an alert;
+   `.ip-root--warning` / `.ip-root--danger` are the only modifiers below
+   that add their own color. (fix-round 1, LOW-8: reworded -- the previous
+   wording described --pass as if it had its own rule.) */
 
 .ip-root {
   border-radius: var(--radius-lg);
@@ -4980,9 +4984,23 @@ html[data-theme="light"] {
   gap: 0.25rem;
 }
 
-.ip-risk-item,
 .ip-next-actions-item {
   font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+/* fix-round 1, HIGH-1: each risk-modifier item now renders TWO parts (the
+   raw modifier name via .ip-findings-code, plus an optional human label) --
+   a flex row keeps them on one line instead of stacking. */
+.ip-risk-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+}
+
+.ip-risk-label {
   color: var(--muted);
 }
 

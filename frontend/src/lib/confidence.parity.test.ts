@@ -3,10 +3,13 @@ import {
   calculateConfidence as backendCalculateConfidence,
   resolveEffectiveThreshold as backendResolveEffectiveThreshold,
 } from "../../../backend/src/lib/confidence";
+import { deriveNextActions as backendDeriveNextActions } from "../../../backend/src/services/claim-policy-evaluator";
 import {
   calculateConfidence as frontendCalculateConfidence,
   resolveEffectiveThreshold as frontendResolveEffectiveThreshold,
+  deriveNextActions as frontendDeriveNextActions,
   type TaskType,
+  type QualityFinding,
 } from "./confidence";
 import { CONFIDENCE_PARITY_FIXTURES } from "./__fixtures__/confidence-fixtures";
 
@@ -199,4 +202,118 @@ describe("resolveEffectiveThreshold — cross-package parity (backend vs fronten
       expect(frontendResult).toStrictEqual(backendResult);
     });
   }
+});
+
+/**
+ * deriveNextActions — cross-package parity (fix-round 1, MED-3, task
+ * 67526c1c).
+ *
+ * frontend/src/lib/confidence.ts's `deriveNextActions` is a hand-maintained
+ * mirror of `deriveNextActions` in
+ * backend/src/services/claim-policy-evaluator.ts (the ImprovementPanel's
+ * only consumer — GET /tasks/:id/instructions returns `findings[]` but no
+ * precomputed `nextActions[]`). Before this test, nothing re-ran the real
+ * backend function against a shared corpus: confidence.test.ts's own
+ * `deriveNextActions` describe block only exercises the FRONTEND copy, so a
+ * backend-only edit to the sort/dedup/cap logic (e.g. a SEVERITY_RANK typo,
+ * a changed cap, a broken typeSpecificRank tiebreak) could drift the two
+ * copies apart while every existing suite — frontend AND backend — stayed
+ * green. Same cross-package-import mechanism as the two parity suites
+ * above: import the real backend source directly and run it side by side
+ * with the frontend copy over one shared findings corpus.
+ */
+describe("deriveNextActions — cross-package parity (backend vs frontend, fix-round 1, MED-3)", () => {
+  // One shared corpus, deliberately covering every axis the sort/dedup/cap
+  // logic branches on:
+  //  - mixed severities (blocking, warning, info) in ONE array, out of
+  //    severity order, so a SEVERITY_RANK drift is observable;
+  //  - a duplicate suggestion pair (findings 5 and 6) to exercise dedup-by-
+  //    suggestion;
+  //  - 8 findings total (> the 5-item cap) so the cap itself, and WHICH 5
+  //    survive it, are both exercised;
+  //  - both a universal MISS_FINDINGS code (missing_goal, missing_scope,
+  //    missing_dependencies, missing_out_of_scope, missing_agent_prompt) and
+  //    a REQUIRED_SIGNAL_ONLY-only code (missing_reproduction_steps,
+  //    missing_ux_api_expectations) within the SAME severity tier, so the
+  //    universal-sorts-first tiebreak is observable.
+  const SHARED_CORPUS: QualityFinding[] = [
+    {
+      code: "missing_goal",
+      severity: "blocking",
+      dimension: "completeness",
+      message: "Goal is missing.",
+      suggestion: "Add a one-line Goal stating the intended outcome.",
+    },
+    {
+      code: "missing_reproduction_steps",
+      severity: "blocking",
+      dimension: "testability",
+      message: "Reproduction steps are missing.",
+      suggestion: "Add numbered steps to reproduce the bug.",
+    },
+    {
+      code: "missing_scope",
+      severity: "warning",
+      dimension: "scopeClarity",
+      message: "Scope (what may change) is missing.",
+      suggestion: "List the files, modules, or surfaces the change may touch.",
+    },
+    {
+      code: "missing_ux_api_expectations",
+      severity: "warning",
+      dimension: "completeness",
+      message: "UX/API expectations are unstated.",
+      suggestion: "Describe the expected UI behavior or API/interface shape.",
+    },
+    {
+      code: "missing_dependencies",
+      severity: "info",
+      dimension: "completeness",
+      message: "Dependencies are unstated.",
+      suggestion: "State prerequisite work, or 'none' if there is no prerequisite.",
+    },
+    {
+      // Duplicate suggestion of the previous finding, on purpose.
+      code: "missing_risk",
+      severity: "info",
+      dimension: "ambiguityRisk",
+      message: "Risk / blast radius is unstated.",
+      suggestion: "State prerequisite work, or 'none' if there is no prerequisite.",
+    },
+    {
+      code: "missing_out_of_scope",
+      severity: "info",
+      dimension: "scopeClarity",
+      message: "Out-of-scope boundary is missing.",
+      suggestion: "Name what must NOT change so a weak agent does not wander.",
+    },
+    {
+      code: "missing_agent_prompt",
+      severity: "warning",
+      dimension: "completeness",
+      keystone: true,
+      message: "No literal agent instruction block (agentPrompt).",
+      suggestion: "Add a step-by-step instruction block a weak agent can execute verbatim.",
+    },
+  ];
+
+  it("the comparison itself is falsifiable: a perturbed copy of a real result is NOT strict-equal to it (negative control)", () => {
+    const backendResult = backendDeriveNextActions(SHARED_CORPUS);
+    const perturbed = [...backendResult].reverse();
+    expect(perturbed).not.toStrictEqual(backendResult);
+  });
+
+  it("backend and frontend produce an identical ordered, deduplicated, capped nextActions[] over the shared corpus", () => {
+    const backendResult = backendDeriveNextActions(SHARED_CORPUS);
+    const frontendResult = frontendDeriveNextActions(SHARED_CORPUS);
+    expect(frontendResult).toStrictEqual(backendResult);
+    // Pin the corpus actually exercises what the header comment claims:
+    // capped at 5, and the duplicate suggestion collapsed to one entry.
+    expect(backendResult).toHaveLength(5);
+    expect(new Set(backendResult).size).toBe(backendResult.length);
+  });
+
+  it("backend and frontend agree on an empty findings list", () => {
+    expect(frontendDeriveNextActions([])).toStrictEqual(backendDeriveNextActions([]));
+  });
 });

@@ -110,6 +110,15 @@ export default function TaskDetailPage() {
   function handleUpdate(updated: Task) {
     setTask(updated);
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    // M4 fix-round-1 (MED-4): re-fetch the Improvement panel's confidence
+    // detail after every task edit, same tolerant-failure posture as the
+    // initial load above (a failed refetch resolves to null rather than
+    // surfacing an error) -- otherwise the panel keeps showing the
+    // pre-edit score/findings/verdict forever, since nothing else here
+    // ever updates `improvementPanel`.
+    void getTaskConfidenceDetail(updated.id)
+      .catch(() => null)
+      .then((detail) => setImprovementPanel(detail));
   }
 
   const boardHref =
