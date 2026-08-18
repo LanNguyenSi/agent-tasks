@@ -947,6 +947,23 @@ describe("buildTools", () => {
     );
   });
 
+  // ── R1 review, F3: project_tasks's `project` now shares projectSlug's
+  // input hygiene (.trim().min(1).max(255)) instead of the bare
+  // z.string().min(1) it shipped with -- a whitespace-padded slug now
+  // trims and resolves instead of 404ing on the untrimmed value.
+  it("project_tasks trims a whitespace-padded project slug before resolving", async () => {
+    fetchMock
+      .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+      .mockResolvedValueOnce(ok({ tasks: [] }));
+    const parsed = parseArgs("project_tasks", { project: "agent-tasks " });
+    expect(parsed.project).toBe("agent-tasks");
+    await tool("project_tasks").handler(parsed);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.test/api/projects/by-slug/agent-tasks",
+    );
+  });
+
   // ── project_tasks / tasks_list — sort default + cursor (task 14c947a7) ──
   //
   // Both tools expose `sort`/`cursor`. `project_tasks` defaults its zod
@@ -2032,6 +2049,46 @@ describe("buildTools", () => {
       expect(parsed.error.recipe).toContain("projects_list");
       expect(parsed.error.recipe).toContain("AGENT_TASKS_MCP_LEGACY=1");
       expect(parsed.error.allowedNext).toEqual(["task_create"]);
+    });
+
+    // ── R1 review, F1: the declared zod shape for `project` stays a
+    // permissive slug-or-UUID string, not narrowed to z.string().uuid() --
+    // narrowing it would silently break every slug caller through the real
+    // MCP SDK (McpServer.registerTool parses inputShape before the handler
+    // ever runs; the handler tests above call `tool().handler()` directly
+    // and never exercise that parse step). Exercised via parseArgs (the
+    // real schema), so a future accidental narrowing is caught here even
+    // if every handler-level test above stays green.
+    it("task_create's declared schema accepts a slug value for project (not narrowed to UUID-only)", () => {
+      const parsed = parseArgs("task_create", { project: "some-slug", title: "t" });
+      expect(parsed.project).toBe("some-slug");
+    });
+
+    it("task_create's declared schema accepts a UUID value for project", () => {
+      const parsed = parseArgs("task_create", {
+        project: "00000000-0000-0000-0000-000000000001",
+        title: "t",
+      });
+      expect(parsed.project).toBe("00000000-0000-0000-0000-000000000001");
+    });
+
+    // ── R1 review, F3: `project`'s input hygiene now matches sibling
+    // projectSlug (.trim().min(1).max(255)) instead of the bare
+    // z.string().min(1) it shipped with -- a whitespace-padded slug now
+    // trims and resolves instead of 404ing on the untrimmed value.
+    it("task_create trims a whitespace-padded project slug before resolving", async () => {
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+        .mockResolvedValueOnce(
+          ok({ task: { id: "t1", status: "open" }, confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK" } }),
+        );
+      const parsed = parseArgs("task_create", { project: "agent-tasks ", title: "New task" });
+      expect(parsed.project).toBe("agent-tasks");
+      await tool("task_create").handler(parsed);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://example.test/api/projects/by-slug/agent-tasks",
+      );
     });
   });
 

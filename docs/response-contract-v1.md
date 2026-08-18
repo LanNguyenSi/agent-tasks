@@ -272,9 +272,9 @@ excludes it from its own vocabulary rather than accepting and ignoring it.
 
 ### Project-slug addressing: cache, TTL, and the invalidate-and-retry contract
 
-`task_create`'s `projectSlug` field and `project_tasks`'s (`tasks_list`'s
-browse-scoped successor) `project` field both accept a slug as an
-alternative to a project id, resolved through the same internal,
+`task_create`'s `project` and `projectSlug` fields and `project_tasks`'s
+(`tasks_list`'s browse-scoped successor) `project` field all accept a slug
+as an alternative to a project id, resolved through the same internal,
 instance-scoped cache (`client.ts`'s `projectSlugCache`):
 
 - A resolved slug is cached for 15 minutes (`PROJECT_SLUG_CACHE_TTL_MS`).

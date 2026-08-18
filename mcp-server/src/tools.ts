@@ -348,10 +348,12 @@ export function buildTools(
       inputShape: {
         project: z
           .string()
+          .trim()
           .min(1)
+          .max(255)
           .optional()
           .describe(
-            "Slug or UUID, same polymorphic addressing as project_tasks's `project`. Alternative to projectId/projectSlug. Pass exactly one of project, projectId, or projectSlug.",
+            "Slug or UUID, same polymorphic addressing as project_tasks's `project`. Alternative to projectId/projectSlug. Pass exactly one of project, projectId, or projectSlug. Trimmed and length-capped (max 255) like projectSlug, so the two slug-accepting fields share the same input hygiene. A UUID-shaped value is routed straight to the id endpoint and never treated as a slug -- if this project's slug is itself UUID-shaped, pass it via projectSlug instead, which is always resolved as a slug.",
           ),
         projectId: uuid().optional(),
         projectSlug: z
@@ -662,7 +664,14 @@ export function buildTools(
         "DEFAULT sort is `createdAt:desc` (newest tasks first) — pass `sort: \"createdAt:asc\"` to reverse it. Combined with a small `limit`, the default lets you fetch the N newest open tasks in a single call without blowing the tool-result token cap. " +
         "The response carries `nextCursor` (a task id, or null once the last page is reached) — pass it back as `cursor` to page forward; combined with `sort` + `id` as a tiebreaker, page order is stable even when many tasks share the same createdAt timestamp.",
       inputShape: {
-        project: z.string().min(1),
+        project: z
+          .string()
+          .trim()
+          .min(1)
+          .max(255)
+          .describe(
+            "Slug or UUID; trimmed and length-capped (max 255), same input hygiene as task_create's project/projectSlug fields. A UUID-shaped value is routed straight to the id endpoint and never treated as a slug -- if this project's slug is itself UUID-shaped, it cannot be addressed via this field.",
+          ),
         status: z
           .union([
             z.enum(["open", "in_progress", "review", "done", "abandoned"]),

@@ -127,12 +127,13 @@ export class AgentTasksClient {
 
   // ── Project-slug resolution (rc-v1-C006) ──────────────────────────────
   //
-  // Shared by task_create's projectSlug alternative to projectId and by
-  // listProjectTasks's existing slug-or-id `project` param, so both callers
-  // pay the by-slug round trip at most once per TTL window instead of on
-  // every call. See docs/response-contract-v1.md; the cache and retry
-  // behavior itself is a task-spec requirement of rc-v1-C006, not yet
-  // written into that doc's own prose.
+  // Shared by listProjectTasks's existing slug-or-id `project` param,
+  // createTaskByProjectSlug's projectSlug field, and createTaskByProject's
+  // own unified `project` field, so all three callers pay the by-slug
+  // round trip at most once per TTL window instead of on every call. See
+  // docs/response-contract-v1.md; the cache and retry behavior itself is a
+  // task-spec requirement of rc-v1-C006, not yet written into that doc's
+  // own prose.
 
   /** Cache-first resolution. Also reports whether `id` was cache-served (vs
    *  a fresh network lookup THIS call), so withResolvedProjectSlug can tell
