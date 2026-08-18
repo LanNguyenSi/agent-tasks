@@ -1,6 +1,7 @@
 import {
   calculateConfidence,
   resolveTriggeredRiskModifiers,
+  combineEffectiveThreshold,
   type QualityFinding,
   type ThresholdSource,
   type RiskModifierName,
@@ -129,7 +130,10 @@ export class ClaimPolicyEvaluator {
       { description: task.description, labels: task.labels },
       riskModifiers,
     );
-    const threshold = baseThreshold + riskModifierPoints;
+    // Clamped to 100 through the ONE shared helper (batch 18 review, MED-2) —
+    // an aggressive riskModifiers config on top of a high taskType base can
+    // no longer push the gating number past what a score can ever reach.
+    const threshold = combineEffectiveThreshold(baseThreshold, riskModifierPoints);
 
     const belowThreshold = report.score < threshold;
     // Keystone is threshold-INDEPENDENT: lowering the threshold cannot disable it.

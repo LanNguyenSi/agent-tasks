@@ -515,6 +515,41 @@ describe("ClaimPolicyEvaluator.evaluate — M3 risk modifiers", () => {
     }
   });
 
+  // batch 18 review, MED-2: no upper bound previously existed on
+  // baseThreshold + riskModifierPoints — a security-typed base (suggested
+  // 90) plus even one configured 10-point modifier already reaches the
+  // score ceiling, and stacking further modifiers on top of a high base
+  // could exceed 100 entirely (a value no score can ever clear — permanent
+  // lockout). The evaluator now clamps through the SAME shared helper
+  // (combineEffectiveThreshold) every other threading site uses.
+  it("clamps effectiveThreshold to 100 when base + risk-modifier points would exceed it (base 90 + 20 -> 100, not 110)", () => {
+    const decision = claimPolicyEvaluator.evaluate(
+      makeInput({
+        task: {
+          id: "task-1",
+          projectId: "proj-1",
+          description: "Add a login migration that stores user email, with production impact.",
+          labels: [],
+        },
+        report: makeReport({ score: 95, blocking: false }),
+        projectPolicy: {
+          mode: EnforcementMode.BLOCK,
+          threshold: 90,
+          thresholdSource: "taskType",
+          // touchesAuth 10 + touchesDatabase 10 = 20 points on top of the 90 base.
+          riskModifiers: { touchesAuth: 10, touchesDatabase: 10 },
+        },
+        force: false,
+      }),
+    );
+
+    expect(decision.kind).toBe("block_low_readiness");
+    if (decision.kind === "block_low_readiness") {
+      expect(decision.effectiveThreshold).toBe(100);
+      expect(decision.audit.payload).toMatchObject({ threshold: 100 });
+    }
+  });
+
   it("a triggered modifier does not disable force override — override raises audit's threshold + triggeredRiskModifiers too", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({

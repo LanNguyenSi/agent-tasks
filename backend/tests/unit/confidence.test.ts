@@ -35,6 +35,8 @@ import {
   RISK_MODIFIER_NAMES,
   detectRiskModifierTriggers,
   resolveTriggeredRiskModifiers,
+  combineEffectiveThreshold,
+  MAX_EFFECTIVE_THRESHOLD,
   type TaskQualitySubscores,
   type TaskType,
 } from "../../src/lib/confidence.js";
@@ -992,6 +994,11 @@ describe("resolveTriggeredRiskModifiers — opt-in project config intersection (
     ["NaN", Number.NaN],
     ["negative", -1],
     ["Infinity", Infinity],
+    // batch 18 review, MED-2/LOW-8: `0` used to pass the old `raw >= 0`
+    // check and be reported as triggered (contributing 0 points) — an
+    // asymmetry with negative/NaN, which never triggered at all. `0` now
+    // degrades the SAME way as the others: not triggered, 0 points.
+    ["zero", 0],
   ])("an invalid point value (%s) is skipped: the name is NOT reported as triggered and contributes 0", (_label, bad) => {
     expect(() =>
       resolveTriggeredRiskModifiers({ description: "Add login support." }, { touchesAuth: bad }),
@@ -1000,6 +1007,16 @@ describe("resolveTriggeredRiskModifiers — opt-in project config intersection (
       triggeredRiskModifiers: [],
       riskModifierPoints: 0,
     });
+  });
+
+  // batch 18 review, MED-2: the fix list only removes the `0`/negative
+  // asymmetry above — it does NOT reject non-integer point values. Pin the
+  // current (unchanged) permissive-float behavior so a future edit that
+  // starts rounding/rejecting floats is a deliberate, visible change.
+  it("a positive float point value triggers and contributes the fractional amount unrounded", () => {
+    expect(
+      resolveTriggeredRiskModifiers({ description: "Add login support." }, { touchesAuth: 2.5 }),
+    ).toEqual({ triggeredRiskModifiers: ["touchesAuth"], riskModifierPoints: 2.5 });
   });
 
   it("a non-object riskModifiers (string/number/array) never throws and triggers nothing", () => {
@@ -1014,6 +1031,43 @@ describe("resolveTriggeredRiskModifiers — opt-in project config intersection (
 
   it("RISK_MODIFIER_NAMES names exactly the four overlay modifiers, in the overlay's own order", () => {
     expect(RISK_MODIFIER_NAMES).toEqual(["touchesAuth", "touchesDatabase", "touchesPersonalData", "productionImpact"]);
+  });
+});
+
+// batch 18 review, MED-2: no upper bound existed on base+points — a security
+// taskType base (suggested 90) plus even a single 10-point modifier already
+// reached 100, and a project stacking two modifiers on top of that could
+// exceed 100, a value no score can ever reach (permanent lockout). Every
+// surface that adds M3 points to an M2 base (ClaimPolicyEvaluator, and the
+// create/respec/instructions threading sites in routes/tasks.ts) now routes
+// through this ONE shared clamp.
+describe("combineEffectiveThreshold — M2 base + M3 points, clamped to 100 (M3, batch 18 review MED-2)", () => {
+  it("sums base + points unchanged when the total is at or below 100", () => {
+    expect(combineEffectiveThreshold(60, 10)).toBe(70);
+    expect(combineEffectiveThreshold(90, 0)).toBe(90);
+    expect(combineEffectiveThreshold(80, 20)).toBe(100);
+  });
+
+  // The literal worked example from the review: a security base of 90 plus a
+  // single 10-point modifier — 100, the ceiling, unclamped math would agree
+  // here; the NEXT test is where clamping actually changes the result.
+  it("security base (90) + a 10-point modifier lands exactly at the ceiling (100)", () => {
+    expect(combineEffectiveThreshold(90, 10)).toBe(100);
+  });
+
+  // Clamp-pin (review's own example): base 90 + 20 points of modifiers would
+  // be 110 unclamped — MUST clamp to 100, not overflow past what a score can
+  // ever reach.
+  it("base 90 + 20 points clamps to 100, not 110", () => {
+    expect(combineEffectiveThreshold(90, 20)).toBe(100);
+  });
+
+  it("MAX_EFFECTIVE_THRESHOLD is 100, matching the OpenAPI Confidence.effectiveThreshold maximum", () => {
+    expect(MAX_EFFECTIVE_THRESHOLD).toBe(100);
+  });
+
+  it("a base already at 100 with any additional points stays clamped at 100", () => {
+    expect(combineEffectiveThreshold(100, 5)).toBe(100);
   });
 });
 

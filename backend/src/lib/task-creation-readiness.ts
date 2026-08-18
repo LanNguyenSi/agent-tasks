@@ -55,6 +55,17 @@ export interface TaskCreationReadiness {
    * project has no `taskTypeThresholds` override for a given type, that
    * type's entry falls through to the project/global layer exactly like a
    * live claim would.
+   *
+   * PROJECT-LEVEL ONLY (batch 18 review, MED-5): this is the M2 base for each
+   * type, never the M3-adjusted number. M3 risk modifiers (Project.
+   * riskModifiers) are evaluated PER TASK, against that task's own
+   * description/labels — there is no task here to evaluate them against, so
+   * they are intentionally not folded in. A specific task's actual effective
+   * claim threshold (see Confidence.triggeredRiskModifiers on create/respec/
+   * the 422/instructions) can therefore be higher than what this field shows
+   * for its type. Deliberate scope split (project-level discovery vs.
+   * per-task gating), not a bug — but it makes this map a lower bound, not a
+   * promise.
    */
   taskTypeThresholds: Record<TaskType, EffectiveThreshold>;
 }

@@ -1355,13 +1355,53 @@ export function resolveTriggeredRiskModifiers(
   const triggeredRiskModifiers: RiskModifierName[] = [];
   let riskModifierPoints = 0;
   for (const name of detectRiskModifierTriggers(input)) {
+    // Own-property-safe guard (M2's `isOwnStringKey`, reused here for the
+    // same reason it guards `taskTypeThresholds[taskType]` above): `name` is
+    // always one of the four fixed RISK_MODIFIER_NAMES here (never
+    // attacker/producer controlled), so a prototype-chain collision cannot
+    // actually occur today — but this keeps the two unvalidated-Json-config
+    // lookups in this file on ONE consistent, defensive pattern rather than
+    // two, so a future call site that loosens `name`'s provenance inherits
+    // the guard automatically instead of silently losing it (batch 18
+    // review, LOW-7).
+    if (!isOwnStringKey(config, name)) continue;
     const raw = config[name];
-    if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) {
+    // Only a positive, finite number counts as a point value (batch 18
+    // review, MED-2/LOW-8). `0` used to pass the old `raw >= 0` check and be
+    // reported as "triggered" while contributing zero points — an asymmetry
+    // with negative/NaN/Infinity, which were already skipped entirely. `> 0`
+    // makes all four degrade the same way: not triggered, contributes 0.
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
       triggeredRiskModifiers.push(name);
       riskModifierPoints += raw;
     }
   }
   return { triggeredRiskModifiers, riskModifierPoints };
+}
+
+// Upper bound for any effective claim threshold the layered hierarchy (the M2
+// base from resolveEffectiveThreshold plus the summed M3 risk-modifier
+// points above) can produce — matches the OpenAPI `Confidence.
+// effectiveThreshold` contract (`maximum: 100`) and the fact that a raw
+// score can never exceed 100. Without this bound, an aggressive
+// riskModifiers config stacked on a high taskType base (e.g. security's
+// SUGGESTED base of 90 plus a 10-point productionImpact modifier = 100, or
+// two stacked modifiers pushing past it) can push the number above 100,
+// which no score can ever reach — a permanent, undocumented lockout
+// (batch 18 review, MED-2).
+export const MAX_EFFECTIVE_THRESHOLD = 100;
+
+/**
+ * Combines an M2-resolved base threshold with the summed M3 risk-modifier
+ * points, clamped to MAX_EFFECTIVE_THRESHOLD. This is the ONE shared place
+ * every surface that adds M3 points to an M2 base routes through —
+ * `ClaimPolicyEvaluator#evaluate` and every routes/tasks.ts threading site
+ * (create, respec, /instructions, and transitively the 422 response) — so
+ * the clamp is applied exactly once rather than re-derived per call site
+ * (batch 18 review, MED-2: "an EINER geteilten Stelle, nicht pro Surface").
+ */
+export function combineEffectiveThreshold(baseThreshold: number, riskModifierPoints: number): number {
+  return Math.min(baseThreshold + riskModifierPoints, MAX_EFFECTIVE_THRESHOLD);
 }
 
 export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {

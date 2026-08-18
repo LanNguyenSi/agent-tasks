@@ -84,6 +84,19 @@ export async function computeShadowReport(projectFilter?: string): Promise<Proje
       // layered threshold the live claim gate applies: a per-task-type
       // override on this project changes wouldBlock for exactly the tasks
       // whose inferredTaskType matches it, not the whole population.
+      //
+      // M3 divergence, deliberate (batch 18 review, MED-5): this does NOT
+      // additionally resolve Project.riskModifiers, so `wouldBlock` here is
+      // the M2-only calibration signal, not the exact live gate outcome — a
+      // task whose own description/labels trigger a configured modifier
+      // blocks at the live gate but is NOT counted as `wouldBlock` here,
+      // making this report a conservative UNDER-count relative to
+      // production for such projects. Acceptable for this script's purpose
+      // (tune FIELD_WEIGHTS/EVALS_KEYSTONE_CAP against the population, not
+      // predict every individual task's fate) — the per-task query above
+      // doesn't even select `labels`, and doing so plus the M3 resolution
+      // per row is a follow-up if this script's precision ever needs to
+      // match the live gate exactly.
       const { effectiveThreshold } = resolveEffectiveThreshold(
         conf.inferredTaskType,
         project.taskTypeThresholds,
