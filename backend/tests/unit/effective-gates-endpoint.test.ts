@@ -157,13 +157,59 @@ describe("GET /api/projects/:id returns effectiveGates", () => {
         confidenceThreshold: number;
         templateModeEnabled: boolean;
         requiredFields: string[];
+        taskTypeThresholds: Record<string, { effectiveThreshold: number; thresholdSource: string }>;
       };
     };
+    // Full-shape pin: an accidentally added field in the taskCreation block
+    // must fail here, not ship silently.
+    const projectLayer = { effectiveThreshold: 60, thresholdSource: "project" };
     expect(body.taskCreation).toEqual({
       enforcementMode: "WARN",
       confidenceThreshold: 60,
       templateModeEnabled: false,
       requiredFields: [],
+      // Every type falls through to the flat confidenceThreshold — no
+      // taskTypeThresholds override was set on BASE_PROJECT.
+      taskTypeThresholds: {
+        feature: projectLayer,
+        bugfix: projectLayer,
+        refactoring: projectLayer,
+        docs: projectLayer,
+        security: projectLayer,
+        migration: projectLayer,
+      },
+    });
+    expect(body.taskCreation.taskTypeThresholds.security).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
+  });
+
+  // M2 (task f186b88b): GET /projects/:id findUnique has no `select`, so the
+  // full row (including taskTypeThresholds) already reaches describeTaskCreation
+  // — this pins that a per-type override on the /projects/:id surface is
+  // visible BEFORE task_create, not only after a claim trips the gate.
+  it("surfaces a per-task-type confidenceThreshold override in taskTypeThresholds", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      ...BASE_PROJECT,
+      confidenceThreshold: 60,
+      taskTypeThresholds: { security: 90 },
+    });
+
+    const res = await makeApp(HUMAN_ACTOR).request(`/projects/${PROJECT_ID}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      taskCreation: {
+        taskTypeThresholds: Record<string, { effectiveThreshold: number; thresholdSource: string }>;
+      };
+    };
+    expect(body.taskCreation.taskTypeThresholds.security).toEqual({
+      effectiveThreshold: 90,
+      thresholdSource: "taskType",
+    });
+    expect(body.taskCreation.taskTypeThresholds.bugfix).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
     });
   });
 });
@@ -247,6 +293,49 @@ describe("GET /api/projects/:id/effective-gates", () => {
       "acceptanceCriteria",
       "goal",
     ]);
+  });
+
+  // M2 (task f186b88b): the endpoint's Prisma `select` must carry
+  // taskTypeThresholds or describeTaskCreation falls back to the
+  // project/global layer for every type on this endpoint. The select-shape
+  // assertion below is the actual regression pin: the mocked findUnique
+  // ignores `select`, so the response assertions alone cannot catch a
+  // dropped key.
+  it("surfaces a per-task-type confidenceThreshold override (select fix)", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      teamId: "team-1",
+      githubRepo: "owner/repo",
+      governanceMode: GovernanceMode.AUTONOMOUS,
+      soloMode: false,
+      requireDistinctReviewer: false,
+      taskTemplate: null,
+      enforcementMode: "BLOCK",
+      confidenceThreshold: 60,
+      taskTypeThresholds: { security: 90 },
+    });
+
+    const res = await makeApp(HUMAN_ACTOR).request(
+      `/projects/${PROJECT_ID}/effective-gates`,
+    );
+    expect(res.status).toBe(200);
+    expect(prismaMocks.projectFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ taskTypeThresholds: true }),
+      }),
+    );
+    const body = (await res.json()) as {
+      taskCreation: {
+        taskTypeThresholds: Record<string, { effectiveThreshold: number; thresholdSource: string }>;
+      };
+    };
+    expect(body.taskCreation.taskTypeThresholds.security).toEqual({
+      effectiveThreshold: 90,
+      thresholdSource: "taskType",
+    });
+    expect(body.taskCreation.taskTypeThresholds.bugfix).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
   });
 
   it("404s when the project is missing", async () => {

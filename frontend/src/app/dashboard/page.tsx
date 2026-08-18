@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD } from "../../lib/confidence";
 import { useRouter } from "next/navigation";
 import {
   getCurrentUser,
@@ -689,7 +690,8 @@ export default function DashboardPage() {
           tasks={tasks}
           user={user}
           templateFields={templateFields}
-          confidenceThreshold={selectedProject?.confidenceThreshold ?? 60}
+          confidenceThreshold={selectedProject?.confidenceThreshold ?? GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD}
+          taskTypeThresholds={selectedProject?.taskTypeThresholds ?? null}
           requireDistinctReviewer={selectedProject?.requireDistinctReviewer ?? false}
           isProjectAdmin={isProjectAdmin}
           workflowTransitions={workflowTransitions}

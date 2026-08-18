@@ -616,14 +616,14 @@ export function buildTools(
       name: "projects_get",
       description:
         DEPRECATED +
-        "Fetch a single project by slug or id. Project browsing is not an agent concern under v2. The non-deprecated use is the `effectiveGates` and `taskCreation` fields in the response — call `projects_get_effective_gates` for a leaner payload that carries both.",
+        "Fetch a single project by slug or id. Project browsing is not an agent concern under v2. The non-deprecated use is the `effectiveGates` and `taskCreation` fields in the response (taskCreation includes a per-task-type `taskTypeThresholds` summary with { effectiveThreshold, thresholdSource }) — call `projects_get_effective_gates` for a leaner payload that carries both.",
       inputShape: { slugOrId: z.string().min(1) },
       handler: async ({ slugOrId }) => wrap(() => client.getProject(slugOrId)),
     }),
     def({
       name: "projects_get_effective_gates",
       description:
-        "Return the gate map for a project. Each entry is keyed by `GateCode` (e.g. `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) and carries `active` (whether this gate would evaluate on this project), `because` (why — e.g. governance mode, project binding), and `appliesTo` (the verb names the gate can reject). Use it to answer 'will this verb be blocked?' BEFORE making the call, instead of discovering preconditions by tripping a 4xx. The response also carries a `taskCreation` block ({ enforcementMode, confidenceThreshold, templateModeEnabled, requiredFields[] }): call it BEFORE task_create to learn whether task-template mode is on and which structured templateData fields this project requires.",
+        "Return the gate map for a project. Each entry is keyed by `GateCode` (e.g. `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) and carries `active` (whether this gate would evaluate on this project), `because` (why — e.g. governance mode, project binding), and `appliesTo` (the verb names the gate can reject). Use it to answer 'will this verb be blocked?' BEFORE making the call, instead of discovering preconditions by tripping a 4xx. The response also carries a `taskCreation` block ({ enforcementMode, confidenceThreshold, templateModeEnabled, requiredFields[], taskTypeThresholds }): call it BEFORE task_create to learn whether task-template mode is on, which structured templateData fields this project requires, and the effective per-task-type confidence threshold ({ effectiveThreshold, thresholdSource } per type) so the per-type gate value is visible BEFORE the create, not only after.",
       inputShape: { projectId: uuid() },
       handler: async ({ projectId }) =>
         wrap(() => client.getProjectEffectiveGates(projectId)),

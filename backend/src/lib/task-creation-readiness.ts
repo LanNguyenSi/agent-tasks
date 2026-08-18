@@ -14,7 +14,14 @@
  * the confidence gate at task_pickup/task_start (see services/confidence-gate.ts),
  * governed by `enforcementMode`. Create itself stays informational by design.
  */
-import { GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD, type TemplateFields } from "./confidence.js";
+import {
+  GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD,
+  resolveEffectiveThreshold,
+  taskTypeSchema,
+  type EffectiveThreshold,
+  type TaskType,
+  type TemplateFields,
+} from "./confidence.js";
 import {
   resolveEnforcementMode,
   type EnforcementMode,
@@ -39,11 +46,28 @@ export interface TaskCreationReadiness {
    * ["goal", "acceptanceCriteria"]. Empty when template mode is off.
    */
   requiredFields: (keyof TemplateFields)[];
+  /**
+   * M2 (task f186b88b): the resolved threshold hierarchy for EVERY task
+   * type, keyed by TaskType — the same `resolveEffectiveThreshold` the
+   * claim gate uses (backend/src/lib/confidence.ts), not a re-derivation.
+   * Lets an agent see the per-type override BEFORE it creates a typed task,
+   * instead of only discovering it after a claim gets rejected. When the
+   * project has no `taskTypeThresholds` override for a given type, that
+   * type's entry falls through to the project/global layer exactly like a
+   * live claim would.
+   */
+  taskTypeThresholds: Record<TaskType, EffectiveThreshold>;
 }
 
 export interface TaskCreationProjectLike extends EnforcementModeLike {
   taskTemplate?: unknown;
   confidenceThreshold?: number | null;
+  /** M2 (task b8629b99): per-task-type threshold override, unvalidated Json
+   *  read — see resolveEffectiveThreshold's own-property-safe guard. Optional
+   *  (unlike confidence-gate.ts's GateTask) so a partial `select` that omits
+   *  it still resolves — every entry just falls through to the project/global
+   *  layer, matching the pre-M2 behavior instead of throwing. */
+  taskTypeThresholds?: unknown;
 }
 
 /**
@@ -64,11 +88,22 @@ export function describeTaskCreation(
         (k) => fields[k] === true,
       )
     : [];
+  const taskTypeThresholds = Object.fromEntries(
+    taskTypeSchema.options.map((taskType) => [
+      taskType,
+      resolveEffectiveThreshold(
+        taskType,
+        project.taskTypeThresholds,
+        project.confidenceThreshold,
+      ),
+    ]),
+  ) as Record<TaskType, EffectiveThreshold>;
   return {
     enforcementMode: resolveEnforcementMode(project),
     confidenceThreshold:
       project.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
     templateModeEnabled: requiredFields.length > 0,
     requiredFields,
+    taskTypeThresholds,
   };
 }

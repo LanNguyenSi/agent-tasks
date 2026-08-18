@@ -188,7 +188,7 @@ function buildServer(token: string): McpServer {
     "projects_get",
     {
       description:
-        "Fetch a single project by slug or id. Accepts either a UUID or a slug — the tool routes to the correct endpoint automatically. Returns the full project record plus `effectiveGates` — the set of gates that would fire on this project and under what conditions (use it to preempt 4xx responses instead of discovering preconditions by tripping them), and a `taskCreation` block describing task-template-mode requirements (enforcementMode, confidenceThreshold, templateModeEnabled, requiredFields[]).",
+        "Fetch a single project by slug or id. Accepts either a UUID or a slug — the tool routes to the correct endpoint automatically. Returns the full project record plus `effectiveGates` — the set of gates that would fire on this project and under what conditions (use it to preempt 4xx responses instead of discovering preconditions by tripping them), and a `taskCreation` block describing task-template-mode requirements (enforcementMode, confidenceThreshold, templateModeEnabled, requiredFields[], taskTypeThresholds — the resolved { effectiveThreshold, thresholdSource } for EVERY task type, so a per-type override is visible BEFORE you create a typed task, not only after a claim gets rejected).",
       inputSchema: { slugOrId: z.string().min(1) },
     },
     async ({ slugOrId }) => {
@@ -212,7 +212,7 @@ function buildServer(token: string): McpServer {
     "projects_get_effective_gates",
     {
       description:
-        "Return the gate map for a project — identical to the `effectiveGates` field on `projects_get`, but without the rest of the project payload. Keyed by `GateCode`; each entry carries `active`, `because`, `appliesTo`. Use this to answer 'will this verb be rejected?' before you call it. The response also carries a `taskCreation` block ({ enforcementMode, confidenceThreshold, templateModeEnabled, requiredFields[] }): call it BEFORE task_create to learn whether task-template mode is on and which structured templateData fields this project requires.",
+        "Return the gate map for a project — identical to the `effectiveGates` field on `projects_get`, but without the rest of the project payload. Keyed by `GateCode`; each entry carries `active`, `because`, `appliesTo`. Use this to answer 'will this verb be rejected?' before you call it. The response also carries a `taskCreation` block ({ enforcementMode, confidenceThreshold, templateModeEnabled, requiredFields[], taskTypeThresholds }): call it BEFORE task_create to learn whether task-template mode is on, which structured templateData fields this project requires, and — via `taskTypeThresholds[taskType]` ({ effectiveThreshold, thresholdSource }) — the ACTUAL confidence bar a typed task will be held to, which can be higher than the flat `confidenceThreshold` when the project has a per-type override.",
       inputSchema: { projectId: uuid() },
     },
     async ({ projectId }) => {

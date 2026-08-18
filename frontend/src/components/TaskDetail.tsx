@@ -38,8 +38,10 @@ import {
 } from "../lib/api";
 import {
   calculateConfidence,
+  resolveEffectiveThreshold,
   TASK_TYPES,
   type TaskType,
+  type TaskTypeThresholds,
   type TemplateFields,
 } from "../lib/confidence";
 import { parseChecklistProgress } from "../lib/checklist";
@@ -133,6 +135,14 @@ export interface TaskDetailProps {
   user: User | null;
   templateFields: TemplateFields | null;
   confidenceThreshold: number;
+  /** M2 (task b8629b99): optional per-task-type override of confidenceThreshold
+   *  (project.taskTypeThresholds). Feeds the Agent Template badge's effective-
+   *  threshold derivation (resolveEffectiveThreshold) so a typed task with an
+   *  override shows the SAME above/below-threshold verdict the /start claim
+   *  gate enforces, instead of comparing against the flat project threshold
+   *  alone. null/undefined when the project never set an override — every
+   *  type then falls through to `confidenceThreshold` as before. */
+  taskTypeThresholds?: TaskTypeThresholds | null;
   requireDistinctReviewer?: boolean;
   /** True for a human who is a team ADMIN or a per-project PROJECT_ADMIN
    * (derived from `project.accessRole`, which — unlike `team?.role` —
@@ -173,6 +183,7 @@ export default function TaskDetail({
   user,
   templateFields,
   confidenceThreshold,
+  taskTypeThresholds = null,
   requireDistinctReviewer = false,
   isProjectAdmin = false,
   workflowTransitions = null,
@@ -749,13 +760,27 @@ export default function TaskDetail({
               templateData: isEditing ? editedTemplateData : task.templateData,
               templateFields,
             });
+            // M2 (task f186b88b): compare against the EFFECTIVE threshold, not
+            // the flat project value — a project with a per-task-type override
+            // (e.g. security: 90) must show below-threshold for a typed task
+            // scoring under its own type's bar, even when that score clears
+            // the flat `confidenceThreshold`. `conf.inferredTaskType` is the
+            // scorer's echo of the EXPLICIT templateData.taskType (never a
+            // heuristic guess), matching what resolveEffectiveThreshold and
+            // the /start claim gate both key on.
+            const { effectiveThreshold, thresholdSource } = resolveEffectiveThreshold(
+              conf.inferredTaskType,
+              taskTypeThresholds,
+              confidenceThreshold,
+            );
             return (
               <div className="td-conf-section">
                 <div className="td-conf-badge-row">
                   <ConfidenceBadge score={conf.score} size="md" />
-                  {conf.score < confidenceThreshold && (
+                  {conf.score < effectiveThreshold && (
                     <span className="td-conf-threshold-warn">
-                      Below threshold ({confidenceThreshold}) — agents cannot claim this task
+                      Below threshold ({effectiveThreshold}) — agents cannot claim this task
+                      {thresholdSource === "taskType" && ` (${conf.inferredTaskType} override)`}
                     </span>
                   )}
                 </div>

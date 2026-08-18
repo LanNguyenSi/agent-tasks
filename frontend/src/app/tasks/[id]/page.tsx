@@ -18,6 +18,7 @@ import {
 } from "../../../lib/api";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import TaskDetail from "../../../components/TaskDetail";
+import { GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD } from "../../../lib/confidence";
 import TaskDetailSkeleton from "../../../components/task-detail/TaskDetailSkeleton";
 
 /**
@@ -141,7 +142,8 @@ export default function TaskDetailPage() {
           tasks={tasks}
           user={user}
           templateFields={project.taskTemplate?.fields ?? null}
-          confidenceThreshold={project.confidenceThreshold ?? 60}
+          confidenceThreshold={project.confidenceThreshold ?? GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD}
+          taskTypeThresholds={project.taskTypeThresholds ?? null}
           requireDistinctReviewer={project.requireDistinctReviewer ?? false}
           isProjectAdmin={isProjectAdmin}
           workflowTransitions={workflowTransitions}
