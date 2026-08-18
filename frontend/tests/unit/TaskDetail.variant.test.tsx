@@ -63,6 +63,7 @@ const baseProps = {
   user: null,
   templateFields: null,
   confidenceThreshold: 60,
+  enforcementMode: null,
   onUpdate: () => {},
   onDelete: () => {},
   onClose: () => {},

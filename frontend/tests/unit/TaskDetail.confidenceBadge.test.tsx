@@ -93,6 +93,7 @@ const baseProps = {
   tasks: [] as Task[],
   user: null,
   templateFields: TEMPLATE_FIELDS,
+  enforcementMode: null,
   onUpdate: () => {},
   onDelete: () => {},
   onClose: () => {},

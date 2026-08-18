@@ -103,6 +103,32 @@ describe("GET /projects (listing with sharing)", () => {
     expect(callArgs.where.OR).toBeUndefined();
     expect(callArgs.where.teamId).toBe("team-A");
   });
+
+  // F2 (review round-2, task a9dc7e58): findMany here has no `select`, so
+  // the raw project row — including enforcementMode — reaches the response
+  // unfiltered. Pins the wire shape directly; a `select` added to this
+  // query (mirroring GET /projects/available's) would drop the key
+  // silently while leaving tsc and the rest of the suite green.
+  it("carries enforcementMode on each listed project (no select drops it)", async () => {
+    prismaMocks.projectFindMany.mockResolvedValue([
+      {
+        id: "p-team",
+        teamId: "team-A",
+        name: "Owned",
+        slug: "owned",
+        enforcementMode: "BLOCK",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
+
+    const res = await makeApp(HUMAN).request("/projects?teamId=team-A");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      projects: Array<{ enforcementMode: string }>;
+    };
+    expect(body.projects[0]?.enforcementMode).toBe("BLOCK");
+  });
 });
 
 describe("GET /projects/available (listing with sharing)", () => {

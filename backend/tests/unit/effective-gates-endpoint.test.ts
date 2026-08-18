@@ -127,6 +127,25 @@ describe("GET /api/projects/:id returns effectiveGates", () => {
     expect(body.effectiveGates[GateCode.TaskStatusForMerge].active).toBe(true);
   });
 
+  // F2 (review round-2, task a9dc7e58): GET /projects/:id's findUnique has
+  // no `select`, so the raw project row — including enforcementMode —
+  // reaches the response unfiltered. This pins the wire shape directly
+  // (body.project.enforcementMode), separately from the derived
+  // body.taskCreation.enforcementMode assertions below, which come through
+  // describeTaskCreation and wouldn't catch a select added only to the
+  // project payload's own serialization path.
+  it("carries enforcementMode on the project payload (no select drops it)", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      ...BASE_PROJECT,
+      enforcementMode: "BLOCK",
+    });
+
+    const res = await makeApp(HUMAN_ACTOR).request(`/projects/${PROJECT_ID}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { project: { enforcementMode: string } };
+    expect(body.project.enforcementMode).toBe("BLOCK");
+  });
+
   it("reflects governance mode — AUTONOMOUS disables the reviewer gates", async () => {
     prismaMocks.projectFindUnique.mockResolvedValue({
       ...BASE_PROJECT,
