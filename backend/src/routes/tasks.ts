@@ -47,6 +47,8 @@ import {
   templateDataSchema,
   calculateConfidence,
   resolveEffectiveThreshold,
+  resolveTriggeredRiskModifiers,
+  combineEffectiveThreshold,
   type TemplateData,
   type TemplateFields,
   type TaskType,
@@ -995,12 +997,27 @@ taskRouter.post(
           taskTemplate: unknown;
           enforcementMode: string | null;
           taskTypeThresholds: unknown;
+          // M3 (task 8e88cfc0, batch 18 review HIGH-1): opt-in risk-modifier
+          // point config, same unvalidated Json read as taskTypeThresholds.
+          // Threaded here so create-time surfacing reports the SAME final
+          // effectiveThreshold + triggeredRiskModifiers as the claim gate's
+          // 422 and GET /tasks/:id/instructions — previously this surface
+          // reported the pre-modifier M2 base only, which could tell an
+          // agent "80 passes" while the very next claim attempt blocked at
+          // 90 (respec/create/422/instructions consistency).
+          riskModifiers: unknown;
         }
       | null = null;
     try {
       projectConf = await prisma.project.findUnique({
         where: { id: projectId },
-        select: { confidenceThreshold: true, taskTemplate: true, enforcementMode: true, taskTypeThresholds: true },
+        select: {
+          confidenceThreshold: true,
+          taskTemplate: true,
+          enforcementMode: true,
+          taskTypeThresholds: true,
+          riskModifiers: true,
+        },
       });
     } catch {
       projectConf = null;
@@ -1017,16 +1034,27 @@ taskRouter.post(
     // lookup above degrades `projectConf` to null, so both taskTypeThresholds
     // and confidenceThreshold read as undefined here — resolveEffectiveThreshold
     // falls all the way through to the global default (60), same as before.
-    const { effectiveThreshold, thresholdSource } = resolveEffectiveThreshold(
+    const { effectiveThreshold: baseThreshold, thresholdSource } = resolveEffectiveThreshold(
       conf.inferredTaskType,
       projectConf?.taskTypeThresholds,
       projectConf?.confidenceThreshold,
     );
+    // M3 (task 8e88cfc0, batch 18 review HIGH-1): resolve the SAME risk
+    // modifiers the claim gate does, against the just-created task's own
+    // description + labels, and clamp through the SAME shared helper (MED-2)
+    // — so this surface can never quote a different effectiveThreshold than
+    // the 422/instructions surfaces would for the identical task.
+    const { triggeredRiskModifiers, riskModifierPoints } = resolveTriggeredRiskModifiers(
+      { description: task.description, labels: task.labels },
+      projectConf?.riskModifiers,
+    );
+    const effectiveThreshold = combineEffectiveThreshold(baseThreshold, riskModifierPoints);
     const confidence = {
       score: conf.score,
       threshold: effectiveThreshold,
       effectiveThreshold,
       thresholdSource,
+      triggeredRiskModifiers,
       // The effective mode tells the caller whether a `blocking` score will
       // actually be rejected at task_pickup/task_start (BLOCK) or is advisory
       // (OFF/WARN). Create stays informational regardless.
@@ -1781,6 +1809,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
           soloMode: true,
           requireDistinctReviewer: true,
           taskTypeThresholds: true,
+          riskModifiers: true,
         },
       },
       ...taskInclude,
@@ -2072,6 +2101,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
               soloMode: true,
               requireDistinctReviewer: true,
               taskTypeThresholds: true,
+              riskModifiers: true,
             },
           },
           ...taskInclude,
@@ -4021,7 +4051,13 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     include: {
       workflow: true,
       project: {
-        select: { confidenceThreshold: true, taskTemplate: true, githubRepo: true, taskTypeThresholds: true },
+        select: {
+          confidenceThreshold: true,
+          taskTemplate: true,
+          githubRepo: true,
+          taskTypeThresholds: true,
+          riskModifiers: true,
+        },
       },
       ...taskInclude,
     },
@@ -4053,12 +4089,26 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     templateFields: tpl?.fields ?? null,
   });
   // M2 (task b8629b99): layered threshold hierarchy, keyed on the EXPLICIT
-  // taskType (== inferredTaskType above).
-  const { effectiveThreshold, thresholdSource } = resolveEffectiveThreshold(
+  // taskType (== inferredTaskType above). This is the BASE the M3 risk
+  // modifiers below add to; it is not itself the final effective threshold
+  // once a modifier triggers.
+  const { effectiveThreshold: baseThreshold, thresholdSource } = resolveEffectiveThreshold(
     inferredTaskType,
     task.project.taskTypeThresholds,
     task.project.confidenceThreshold,
   );
+  // M3 (task 8e88cfc0): risk modifiers stack additively on top of the M2
+  // base above. This route does not go through ClaimPolicyEvaluator (it is
+  // read-only informational context, not a claim attempt), so it resolves
+  // the same modifiers independently, same pattern as the M2 threshold
+  // resolution two lines up.
+  const { triggeredRiskModifiers, riskModifierPoints } = resolveTriggeredRiskModifiers(
+    { description: task.description, labels: task.labels },
+    task.project.riskModifiers,
+  );
+  // Clamped through the ONE shared helper (batch 18 review, MED-2) — see
+  // combineEffectiveThreshold's own doc comment in lib/confidence.ts.
+  const effectiveThreshold = combineEffectiveThreshold(baseThreshold, riskModifierPoints);
 
   // Determine actor permissions
   const scopes = actor.type === "agent" ? actor.scopes : null;
@@ -4123,6 +4173,7 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
       threshold: effectiveThreshold,
       effectiveThreshold,
       thresholdSource,
+      triggeredRiskModifiers,
       blocking,
       subscores,
       findings,
@@ -4684,6 +4735,11 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
           enforcementMode: true,
           allowNonCreatorRespec: true,
           taskTypeThresholds: true,
+          // M3 (task 8e88cfc0, batch 18 review HIGH-1): threaded into
+          // confidenceContext below so respec reports the SAME final
+          // effectiveThreshold + triggeredRiskModifiers as create/422/
+          // instructions, not just the pre-modifier M2 base.
+          riskModifiers: true,
         },
       },
     },
@@ -4734,16 +4790,32 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
   // M2 (task b8629b99): a respec can change templateData.taskType itself, so
   // the effective threshold is resolved PER confidence snapshot (before/after)
   // rather than once — a function, not a flat object like the pre-M2 version.
-  const confidenceContext = (taskType: TaskType | undefined) => {
-    const { effectiveThreshold, thresholdSource } = resolveEffectiveThreshold(
+  //
+  // M3 (task 8e88cfc0, batch 18 review HIGH-1): a respec can also change
+  // `description`, which is the risk-modifier text detectors' own input, so
+  // `description` is threaded in per snapshot too — the no-op branch below
+  // passes the (unchanged) pre-write description, the write branch passes
+  // the NEW post-write description, same D5 "score AFTER the write" posture
+  // `calculateConfidence` already follows two call sites down. `task.labels`
+  // is NOT parameterized: respec cannot change labels (respecTaskSchema only
+  // accepts description/templateData), so the pre-fetched value is correct
+  // for both snapshots.
+  const confidenceContext = (taskType: TaskType | undefined, description: string | null) => {
+    const { effectiveThreshold: baseThreshold, thresholdSource } = resolveEffectiveThreshold(
       taskType,
       task.project.taskTypeThresholds,
       task.project.confidenceThreshold,
     );
+    const { triggeredRiskModifiers, riskModifierPoints } = resolveTriggeredRiskModifiers(
+      { description, labels: task.labels },
+      task.project.riskModifiers,
+    );
+    const effectiveThreshold = combineEffectiveThreshold(baseThreshold, riskModifierPoints);
     return {
       threshold: effectiveThreshold,
       effectiveThreshold,
       thresholdSource,
+      triggeredRiskModifiers,
       enforcementMode: resolveEnforcementMode(task.project),
     };
   };
@@ -4777,7 +4849,7 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
       task: unchanged,
       confidence: {
         score: conf.score,
-        ...confidenceContext(conf.inferredTaskType),
+        ...confidenceContext(conf.inferredTaskType, fromDescription),
         blocking: conf.blocking,
         missing: conf.missing,
         findings: conf.findings,
@@ -4836,7 +4908,7 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
   });
   const confidence = {
     score: afterConf.score,
-    ...confidenceContext(afterConf.inferredTaskType),
+    ...confidenceContext(afterConf.inferredTaskType, updated.description),
     blocking: afterConf.blocking,
     missing: afterConf.missing,
     findings: afterConf.findings,
@@ -5686,6 +5758,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
           taskTemplate: true,
           enforcementMode: true,
           taskTypeThresholds: true,
+          riskModifiers: true,
         },
       },
     },

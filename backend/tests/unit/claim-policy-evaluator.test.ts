@@ -70,9 +70,12 @@ function makeActor(overrides: Partial<AgentActor> = {}): AgentActor {
 
 function makeInput(overrides: Partial<ClaimPolicyInput> = {}): ClaimPolicyInput {
   return {
-    task: { id: "task-1", projectId: "proj-1" },
+    // M3 (task 8e88cfc0): description/labels default to "nothing triggers"
+    // (empty description, no labels) so the pre-existing cells above are
+    // unaffected by risk-modifier detection unless a test opts in.
+    task: { id: "task-1", projectId: "proj-1", description: "", labels: [] },
     report: makeReport(),
-    projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
+    projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project", riskModifiers: null },
     actor: makeActor(),
     force: false,
     forceReason: "",
@@ -86,7 +89,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 80, blocking: false }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project", riskModifiers: null },
         force: false,
       }),
     );
@@ -102,7 +105,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 10, blocking: false, missing: ["acceptanceCriteria"], findings }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project", riskModifiers: null },
         force: false,
       }),
     );
@@ -117,6 +120,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
         score: 10,
         threshold: 60,
         thresholdSource: "project",
+        triggeredRiskModifiers: [],
         keystoneBlocked: false,
         missing: ["acceptanceCriteria"],
         findings,
@@ -124,6 +128,12 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
         actorType: "agent",
       });
       expect(decision.nextActions.length).toBeGreaterThan(0);
+      // M3 (task 8e88cfc0): no risk modifiers configured (makeInput's default
+      // task has an empty description/no labels, and this test's
+      // projectPolicy.riskModifiers is null), so the decision's final
+      // threshold equals the M2 base unchanged, with nothing triggered.
+      expect(decision.effectiveThreshold).toBe(60);
+      expect(decision.triggeredRiskModifiers).toEqual([]);
     }
   });
 
@@ -134,7 +144,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 10, blocking: true }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project", riskModifiers: null },
         actor: makeActor({ scopes: [SCOPES.ConfidenceOverride], userId: "operator-1" }),
         force: true,
         forceReason: reason,
@@ -166,7 +176,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 80, blocking: false }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project", riskModifiers: null },
         actor: makeActor({ scopes: [SCOPES.ConfidenceOverride] }),
         force: true,
         forceReason: "harmless-explicit-force",
@@ -184,7 +194,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 10, blocking: false }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project", riskModifiers: null },
         actor: makeActor({ scopes: ["tasks:read", "tasks:claim", "tasks:transition"] }),
         force: true,
         forceReason: "trying-to-self-exempt",
@@ -202,7 +212,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 10, blocking: false }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project", riskModifiers: null },
         actor: makeActor({ scopes: [SCOPES.ConfidenceOverride] }),
         force: true,
         forceReason: shortReason,
@@ -224,7 +234,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 10, blocking: false }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project", riskModifiers: null },
         actor: makeActor({ scopes: ["tasks:read", "tasks:claim", "tasks:transition"] }),
         force: true,
         forceReason: "x".repeat(MIN_FORCE_REASON_LENGTH - 1),
@@ -245,7 +255,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 70, blocking: false }),
-        projectPolicy: { mode: EnforcementMode.WARN, threshold: 90, thresholdSource: "taskType" },
+        projectPolicy: { mode: EnforcementMode.WARN, threshold: 90, thresholdSource: "taskType", riskModifiers: null },
         force: false,
       }),
     );
@@ -335,7 +345,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
       const decision = claimPolicyEvaluator.evaluate(
         makeInput({
           report,
-          projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 40, thresholdSource: "project" },
+          projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 40, thresholdSource: "project", riskModifiers: null },
           force: false,
         }),
       );
@@ -412,7 +422,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
         const decision = claimPolicyEvaluator.evaluate(
           makeInput({
             report,
-            projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 40, thresholdSource: "project" },
+            projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 40, thresholdSource: "project", riskModifiers: null },
             force: false,
           }),
         );
@@ -426,5 +436,139 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
         expect(decision.kind).toBe("allow");
       });
     });
+  });
+});
+
+// ── M3: risk modifiers (task 8e88cfc0) ──────────────────────────────────────
+// The evaluator-level half of the M3 pin: detection itself is unit-tested
+// directly in confidence.test.ts (detectRiskModifierTriggers /
+// resolveTriggeredRiskModifiers); this describes the evaluator's OWN
+// contract — `effectiveThreshold = baseThreshold + sum(triggeredModifiers)`,
+// and that both the returned decision AND its audit payload carry the FINAL
+// threshold plus which modifiers fired.
+describe("ClaimPolicyEvaluator.evaluate — M3 risk modifiers", () => {
+  it("a single triggered, configured modifier raises the effective threshold and blocks a score that would otherwise pass", () => {
+    // Score 65 clears the M2 base (60) but not 60 + touchesAuth's 10 points (70).
+    const decision = claimPolicyEvaluator.evaluate(
+      makeInput({
+        task: { id: "task-1", projectId: "proj-1", description: "Add rate limiting to the login endpoint.", labels: [] },
+        report: makeReport({ score: 65, blocking: false }),
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project", riskModifiers: { touchesAuth: 10 } },
+        force: false,
+      }),
+    );
+
+    expect(decision.kind).toBe("block_low_readiness");
+    if (decision.kind === "block_low_readiness") {
+      expect(decision.effectiveThreshold).toBe(70);
+      expect(decision.triggeredRiskModifiers).toEqual(["touchesAuth"]);
+      expect(decision.audit.payload).toMatchObject({
+        threshold: 70,
+        triggeredRiskModifiers: ["touchesAuth"],
+      });
+    }
+  });
+
+  it("the SAME score/base PASSES when the project has not opted into touchesAuth (opt-in, no modifier applied)", () => {
+    const decision = claimPolicyEvaluator.evaluate(
+      makeInput({
+        task: { id: "task-1", projectId: "proj-1", description: "Add rate limiting to the login endpoint.", labels: [] },
+        report: makeReport({ score: 65, blocking: false }),
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project", riskModifiers: null },
+        force: false,
+      }),
+    );
+    expect(decision.kind).toBe("allow");
+  });
+
+  it("multiple configured, triggered modifiers stack additively onto the M2 base threshold", () => {
+    // base 60 + touchesAuth 10 + touchesDatabase 5 + touchesPersonalData 10
+    // + productionImpact 10 = 95 (the overlay's own worked example).
+    const decision = claimPolicyEvaluator.evaluate(
+      makeInput({
+        task: {
+          id: "task-1",
+          projectId: "proj-1",
+          description: "Add a login migration that stores user email, with production impact.",
+          labels: [],
+        },
+        report: makeReport({ score: 80, blocking: false }),
+        projectPolicy: {
+          mode: EnforcementMode.BLOCK,
+          threshold: 60,
+          thresholdSource: "project",
+          riskModifiers: { touchesAuth: 10, touchesDatabase: 5, touchesPersonalData: 10, productionImpact: 10 },
+        },
+        force: false,
+      }),
+    );
+
+    expect(decision.kind).toBe("block_low_readiness");
+    if (decision.kind === "block_low_readiness") {
+      expect(decision.effectiveThreshold).toBe(95);
+      expect(decision.triggeredRiskModifiers).toEqual([
+        "touchesAuth",
+        "touchesDatabase",
+        "touchesPersonalData",
+        "productionImpact",
+      ]);
+    }
+  });
+
+  // batch 18 review, MED-2: no upper bound previously existed on
+  // baseThreshold + riskModifierPoints — a security-typed base (suggested
+  // 90) plus even one configured 10-point modifier already reaches the
+  // score ceiling, and stacking further modifiers on top of a high base
+  // could exceed 100 entirely (a value no score can ever clear — permanent
+  // lockout). The evaluator now clamps through the SAME shared helper
+  // (combineEffectiveThreshold) every other threading site uses.
+  it("clamps effectiveThreshold to 100 when base + risk-modifier points would exceed it (base 90 + 20 -> 100, not 110)", () => {
+    const decision = claimPolicyEvaluator.evaluate(
+      makeInput({
+        task: {
+          id: "task-1",
+          projectId: "proj-1",
+          description: "Add a login migration that stores user email, with production impact.",
+          labels: [],
+        },
+        report: makeReport({ score: 95, blocking: false }),
+        projectPolicy: {
+          mode: EnforcementMode.BLOCK,
+          threshold: 90,
+          thresholdSource: "taskType",
+          // touchesAuth 10 + touchesDatabase 10 = 20 points on top of the 90 base.
+          riskModifiers: { touchesAuth: 10, touchesDatabase: 10 },
+        },
+        force: false,
+      }),
+    );
+
+    expect(decision.kind).toBe("block_low_readiness");
+    if (decision.kind === "block_low_readiness") {
+      expect(decision.effectiveThreshold).toBe(100);
+      expect(decision.audit.payload).toMatchObject({ threshold: 100 });
+    }
+  });
+
+  it("a triggered modifier does not disable force override — override raises audit's threshold + triggeredRiskModifiers too", () => {
+    const decision = claimPolicyEvaluator.evaluate(
+      makeInput({
+        task: { id: "task-1", projectId: "proj-1", description: "Add rate limiting to the login endpoint.", labels: [] },
+        report: makeReport({ score: 65, blocking: false }),
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project", riskModifiers: { touchesAuth: 10 } },
+        actor: makeActor({ scopes: [SCOPES.ConfidenceOverride] }),
+        force: true,
+        forceReason: "operator-reviewed-override",
+      }),
+    );
+
+    expect(decision.kind).toBe("allow");
+    if (decision.kind === "allow") {
+      expect(decision.audit?.action).toBe("task.claim_override_used");
+      expect(decision.audit?.payload).toMatchObject({
+        threshold: 70,
+        triggeredRiskModifiers: ["touchesAuth"],
+      });
+    }
   });
 });

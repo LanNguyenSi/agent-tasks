@@ -4380,6 +4380,63 @@ const SECURITY_TYPED_TASK = {
   },
 };
 
+// M3 (task 8e88cfc0): risk modifiers. Same description as SECURITY_TYPED_TASK
+// minus `templateData.taskType` (isolates M3 from the M2 taskType layer —
+// this task is untyped, so resolveEffectiveThreshold falls to the flat
+// project threshold). Scores 88 (measured against the built scorer, `node`
+// invocation against dist/lib/confidence.js) — clears the project's flat
+// confidenceThreshold (80) but not 80 + touchesAuth's 10-point modifier (90).
+// The description's "login endpoint" / "login attempt" wording is the ONLY
+// risk-modifier trigger present: no database/personal-data/production
+// keyword or label appears, so a passing test proves the block is caused
+// specifically by touchesAuth, not by an unrelated modifier also firing.
+const AUTH_RISK_TASK = {
+  ...baseTask,
+  status: "open",
+  title: "Rate-limit the login endpoint",
+  description: [
+    "Add rate limiting to the login endpoint in src/routes/auth.ts to mitigate credential-stuffing attempts.",
+    "- Limit to 10 attempts per IP per 60 seconds.",
+    "- Verify with a curl loop against /api/login that the 11th request in a minute returns 429.",
+  ].join("\n"),
+  templateData: {
+    goal: "Reduce credential-stuffing risk on the login endpoint",
+    acceptanceCriteria: "- The 11th login attempt within 60s from one IP returns 429\n- A unit test asserts the 429 response",
+    scope: "src/routes/auth.ts login handler and its rate-limit middleware only",
+    outOfScope: "session middleware and password hashing are unchanged",
+    dependencies: "none",
+    risk: "low: additive middleware only, no schema change",
+    constraints: "No new dependency; keep the existing session cookie format",
+    agentPrompt: "1. Add a rate-limit middleware keyed on IP. 2. Wire it into the login route. 3. Add a test.",
+  },
+  project: {
+    ...baseTask.project,
+    confidenceThreshold: 80,
+    enforcementMode: "BLOCK",
+    riskModifiers: { touchesAuth: 10 },
+  },
+};
+
+// MED-3 (batch 18 review round 2): the reviewer's own mutation probe on
+// `labels: task.labels` -> `[]` in confidence-gate.ts SURVIVED the full
+// suite — every existing M3 test drives a modifier through the DESCRIPTION
+// text channel only; nothing exercised the LABEL channel end to end. Same
+// content as AUTH_RISK_TASK (scores 88, clears the flat 80 project
+// threshold but not 80+10=90), except the project only opts into
+// productionImpact, and the description carries NO "production" keyword at
+// all — the ONLY signal for productionImpact here is the "production"
+// label. A passing test therefore proves the LABEL channel specifically
+// drove the block, and the mutant that zeroes `labels` before it reaches
+// resolveTriggeredRiskModifiers must turn this red.
+const PRODUCTION_LABEL_RISK_TASK = {
+  ...AUTH_RISK_TASK,
+  labels: ["production"],
+  project: {
+    ...AUTH_RISK_TASK.project,
+    riskModifiers: { productionImpact: 10 },
+  },
+};
+
 describe("confidence gate: POST /tasks/:id/start", () => {
   beforeEach(() => {
     vi.spyOn(console, "info").mockImplementation(() => {});
@@ -4766,6 +4823,118 @@ describe("confidence gate: POST /tasks/:id/start", () => {
       expect(body.details.thresholdSource).toBe("project");
     });
   });
+
+  // ── M3: risk modifiers (task 8e88cfc0) ────────────────────────────────────
+  describe("M3 risk modifiers", () => {
+    it("an auth-related task, blocked by the touchesAuth-raised threshold, returns 422 with triggeredRiskModifiers: ['touchesAuth']", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce(AUTH_RISK_TASK);
+      prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+      prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+      const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as {
+        error: string;
+        details: {
+          score: number;
+          threshold: number;
+          effectiveThreshold: number;
+          thresholdSource: string;
+          triggeredRiskModifiers: string[];
+          blocking: boolean;
+        };
+      };
+      expect(body.error).toBe("low_confidence");
+      // Score clears the flat project threshold (80) but not 80 + touchesAuth's 10 (90).
+      expect(body.details.score).toBeGreaterThanOrEqual(80);
+      expect(body.details.score).toBeLessThan(90);
+      expect(body.details.blocking).toBe(false); // threshold-only block, no keystone
+      expect(body.details.threshold).toBe(90);
+      expect(body.details.effectiveThreshold).toBe(90);
+      expectThresholdMirrorsEffective(body.details);
+      expect(body.details.thresholdSource).toBe("project");
+      expect(body.details.triggeredRiskModifiers).toEqual(["touchesAuth"]);
+      expect(logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "task.claim_blocked_low_readiness",
+          payload: expect.objectContaining({ threshold: 90, triggeredRiskModifiers: ["touchesAuth"] }),
+        }),
+      );
+    });
+
+    // Mutation guard: proves the block above is caused by the risk modifier,
+    // not by the task's own content — the SAME task passes once the
+    // project's riskModifiers config is removed (falls back to the 80 base
+    // it clears, opt-in with nothing configured).
+    it("the SAME auth-related task PASSES once the project has no riskModifiers configured", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce({
+        ...AUTH_RISK_TASK,
+        project: { ...AUTH_RISK_TASK.project, riskModifiers: undefined },
+      });
+      prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+      prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+      prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+      const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+      expect(res.status).toBe(200);
+      expect(logAuditEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "task.claim_blocked_low_readiness" }),
+      );
+    });
+
+    // MED-3 (batch 18 review round 2, mutation guard): drives productionImpact
+    // through the LABEL channel only (no "production" keyword anywhere in the
+    // description) — kills the `labels: task.labels` -> `[]` mutant in
+    // confidence-gate.ts that survived the base suite.
+    it("a 'production'-labeled task with NO production keyword in the description is blocked via the label channel, not the text channel", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce(PRODUCTION_LABEL_RISK_TASK);
+      prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+      prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+      const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as {
+        error: string;
+        details: {
+          score: number;
+          threshold: number;
+          effectiveThreshold: number;
+          triggeredRiskModifiers: string[];
+        };
+      };
+      expect(body.error).toBe("low_confidence");
+      expect(body.details.score).toBeGreaterThanOrEqual(80);
+      expect(body.details.score).toBeLessThan(90);
+      expect(body.details.threshold).toBe(90);
+      expect(body.details.effectiveThreshold).toBe(90);
+      expectThresholdMirrorsEffective(body.details);
+      expect(body.details.triggeredRiskModifiers).toEqual(["productionImpact"]);
+    });
+
+    it("GET /tasks/:id/instructions surfaces the same final effectiveThreshold and triggeredRiskModifiers (read-only, no claim attempt)", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce(AUTH_RISK_TASK);
+      prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+      const res = await makeApp().request("/tasks/task-1/instructions");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        task: unknown;
+        confidence: {
+          score: number;
+          threshold: number;
+          effectiveThreshold: number;
+          thresholdSource: string;
+          triggeredRiskModifiers: string[];
+        };
+      };
+      expect(body.confidence.score).toBeGreaterThanOrEqual(80);
+      expect(body.confidence.score).toBeLessThan(90);
+      expect(body.confidence.threshold).toBe(90);
+      expect(body.confidence.effectiveThreshold).toBe(90);
+      expect(body.confidence.thresholdSource).toBe("project");
+      expect(body.confidence.triggeredRiskModifiers).toEqual(["touchesAuth"]);
+    });
+  });
 });
 
 describe("confidence gate: POST /tasks/:id/claim", () => {
@@ -5119,6 +5288,86 @@ describe("POST /tasks/:id/respec", () => {
     expect(body.confidence.effectiveThreshold).toBe(90);
     expectThresholdMirrorsEffective(body.confidence);
     expect(body.confidence.thresholdSource).toBe("taskType");
+  });
+
+  // M3 (task 8e88cfc0, batch 18 review HIGH-1): respec must thread the SAME
+  // risk-modifier resolution as create/claim/instructions. The NEW (written)
+  // description is what resolveTriggeredRiskModifiers detects against — D5's
+  // "score AFTER the write" posture, same as the score itself two tests
+  // above. `task.labels` is unaffected by a respec (respecTaskSchema only
+  // accepts description/templateData), so it is not part of this fixture.
+  it("respec threads risk modifiers: a new description that fires touchesAuth raises effectiveThreshold and lists the modifier", async () => {
+    const task = {
+      ...RESPEC_TASK,
+      project: { ...RESPEC_TASK.project, confidenceThreshold: 80, riskModifiers: { touchesAuth: 10 } },
+    };
+    const newDescription = [
+      "Add rate limiting to the login endpoint in src/routes/auth.ts to mitigate credential-stuffing attempts.",
+      "- Limit to 10 attempts per IP per 60 seconds.",
+      "- Verify with a curl loop against /api/login that the 11th request in a minute returns 429.",
+    ].join("\n");
+    const newTemplateData = {
+      goal: "Reduce credential-stuffing risk on the login endpoint",
+      acceptanceCriteria: "- The 11th login attempt within 60s from one IP returns 429\n- A unit test asserts the 429 response",
+      scope: "src/routes/auth.ts login handler and its rate-limit middleware only",
+      outOfScope: "session middleware and password hashing are unchanged",
+      dependencies: "none",
+      risk: "low: additive middleware only, no schema change",
+      constraints: "No new dependency; keep the existing session cookie format",
+      agentPrompt: "1. Add a rate-limit middleware keyed on IP. 2. Wire it into the login route. 3. Add a test.",
+    };
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(task)
+      .mockResolvedValueOnce({ ...task, description: newDescription, templateData: newTemplateData });
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, {
+      description: newDescription,
+      templateData: newTemplateData,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      confidence: {
+        score: number;
+        threshold: number;
+        effectiveThreshold: number;
+        thresholdSource: string;
+        triggeredRiskModifiers: string[];
+      };
+    };
+    // Same worked example as the create-time M3 test and the claim-gate M3
+    // tests (scores 88): clears the flat threshold (80) but not 80+10=90.
+    expect(body.confidence.score).toBeGreaterThanOrEqual(80);
+    expect(body.confidence.score).toBeLessThan(90);
+    expect(body.confidence.threshold).toBe(90);
+    expect(body.confidence.effectiveThreshold).toBe(90);
+    expectThresholdMirrorsEffective(body.confidence);
+    expect(body.confidence.thresholdSource).toBe("project");
+    expect(body.confidence.triggeredRiskModifiers).toEqual(["touchesAuth"]);
+  });
+
+  // Mutation guard: the PRE-write (before) description carries no risk-
+  // modifier trigger at all — proves the modifier above is detected against
+  // the NEW description (D5, after the write), not stale pre-write state.
+  it("the no-op respec path (unchanged description) does not trigger a risk modifier the description does not contain", async () => {
+    const task = {
+      ...RESPEC_TASK,
+      description: "old description",
+      project: { ...RESPEC_TASK.project, confidenceThreshold: 80, riskModifiers: { touchesAuth: 10 } },
+    };
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(task)
+      .mockResolvedValueOnce(task); // unchanged (D9 no-op re-fetch)
+
+    // Re-send the SAME description: no-op respec (D9 short-circuit).
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: "old description" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      confidence: { threshold: number; effectiveThreshold: number; triggeredRiskModifiers: string[] };
+    };
+    expect(body.confidence.threshold).toBe(80);
+    expect(body.confidence.effectiveThreshold).toBe(80);
+    expectThresholdMirrorsEffective(body.confidence);
+    expect(body.confidence.triggeredRiskModifiers).toEqual([]);
   });
 
   it("rejects a body with neither description nor templateData (400) and never reads the task", async () => {
@@ -5616,6 +5865,94 @@ describe("POST /projects/:projectId/tasks — workflowId project validation", ()
       expect(body.confidence.effectiveThreshold).toBe(60);
       expectThresholdMirrorsEffective(body.confidence);
       expect(body.confidence.thresholdSource).toBe("project");
+    });
+  });
+
+  // M3 (task 8e88cfc0, batch 18 review HIGH-1): create-time confidence
+  // surfacing must thread the SAME risk-modifier resolution as the claim
+  // gate (422) and GET /tasks/:id/instructions, not just the pre-modifier M2
+  // base — otherwise task_create tells an agent "this passes at 80" while
+  // the very next task_start call blocks at 90 for the identical content.
+  describe("M3 create-time risk modifier surfacing", () => {
+    const AUTH_RISK_DESCRIPTION = [
+      "Add rate limiting to the login endpoint in src/routes/auth.ts to mitigate credential-stuffing attempts.",
+      "- Limit to 10 attempts per IP per 60 seconds.",
+      "- Verify with a curl loop against /api/login that the 11th request in a minute returns 429.",
+    ].join("\n");
+    const AUTH_RISK_TEMPLATE_DATA = {
+      goal: "Reduce credential-stuffing risk on the login endpoint",
+      acceptanceCriteria: "- The 11th login attempt within 60s from one IP returns 429\n- A unit test asserts the 429 response",
+      scope: "src/routes/auth.ts login handler and its rate-limit middleware only",
+      outOfScope: "session middleware and password hashing are unchanged",
+      dependencies: "none",
+      risk: "low: additive middleware only, no schema change",
+      constraints: "No new dependency; keep the existing session cookie format",
+      agentPrompt: "1. Add a rate-limit middleware keyed on IP. 2. Wire it into the login route. 3. Add a test.",
+    };
+
+    it("confidence.effectiveThreshold reflects the project's riskModifiers for the just-created task's own description, and lists triggeredRiskModifiers", async () => {
+      prismaMocks.projectFindUnique.mockResolvedValueOnce({
+        confidenceThreshold: 80,
+        taskTemplate: null,
+        enforcementMode: "BLOCK",
+        taskTypeThresholds: null,
+        riskModifiers: { touchesAuth: 10 },
+      });
+
+      const res = await postCreate({
+        title: "Rate-limit the login endpoint",
+        description: AUTH_RISK_DESCRIPTION,
+        templateData: AUTH_RISK_TEMPLATE_DATA,
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        confidence: {
+          score: number;
+          threshold: number;
+          effectiveThreshold: number;
+          thresholdSource: string;
+          triggeredRiskModifiers: string[];
+        };
+      };
+      // Same content as tasks-v2-routes.test.ts's AUTH_RISK_TASK fixture
+      // (scores 88): clears the flat project threshold (80) but not
+      // 80 + touchesAuth's 10-point modifier (90) — same worked example the
+      // claim-gate M3 tests use, so the two surfaces are directly comparable.
+      expect(body.confidence.score).toBeGreaterThanOrEqual(80);
+      expect(body.confidence.score).toBeLessThan(90);
+      expect(body.confidence.threshold).toBe(90);
+      expect(body.confidence.effectiveThreshold).toBe(90);
+      expectThresholdMirrorsEffective(body.confidence);
+      expect(body.confidence.thresholdSource).toBe("project");
+      expect(body.confidence.triggeredRiskModifiers).toEqual(["touchesAuth"]);
+    });
+
+    // Mutation guard: the SAME task content reports NO triggered modifier
+    // once the project has not opted into touchesAuth — proves the 90 above
+    // is caused by the configured modifier, not some unrelated create-time
+    // computation.
+    it("the SAME task reports no triggeredRiskModifiers and the unmodified base threshold once the project has no riskModifiers configured", async () => {
+      prismaMocks.projectFindUnique.mockResolvedValueOnce({
+        confidenceThreshold: 80,
+        taskTemplate: null,
+        enforcementMode: "BLOCK",
+        taskTypeThresholds: null,
+        riskModifiers: null,
+      });
+
+      const res = await postCreate({
+        title: "Rate-limit the login endpoint",
+        description: AUTH_RISK_DESCRIPTION,
+        templateData: AUTH_RISK_TEMPLATE_DATA,
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        confidence: { threshold: number; effectiveThreshold: number; triggeredRiskModifiers: string[] };
+      };
+      expect(body.confidence.threshold).toBe(80);
+      expect(body.confidence.effectiveThreshold).toBe(80);
+      expectThresholdMirrorsEffective(body.confidence);
+      expect(body.confidence.triggeredRiskModifiers).toEqual([]);
     });
   });
 });

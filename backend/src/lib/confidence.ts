@@ -1246,6 +1246,164 @@ export function resolveEffectiveThreshold(
   return { effectiveThreshold: GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD, thresholdSource: "global" };
 }
 
+// ── Milestone 3: risk modifiers (task 8e88cfc0) ─────────────────────────────
+// The third and final layer named by the overlay's "Policy Layer" section
+// (lines 592-598):
+//   riskModifiers: { touchesAuth: 10, touchesDatabase: 5, touchesPersonalData: 10, productionImpact: 10 }
+// Each triggered modifier ADDS its configured points to the M2-resolved base
+// threshold above (resolveEffectiveThreshold); modifiers stack additively.
+// `ClaimPolicyEvaluator#evaluate` (claim-policy-evaluator.ts) is the actual
+// caller that does `effectiveThreshold = baseThreshold + sum(triggered)` —
+// this module only measures the task (which triggers fire, and — after
+// intersecting with the project's opt-in config — how many points they're
+// worth), same analyzer/policy split as the rest of this file. Detection is
+// a FIXED heuristic (regex over description, label match) — never an LLM
+// call (ADR-0011 Non-Goals: "LLM decides claimability").
+//
+// Opt-in, same posture as taskTypeThresholds: a project only applies a
+// modifier by explicitly setting Project.riskModifiers[name] to a number. A
+// project with riskModifiers unset (null/not an object) never adds any
+// points; a modifier name absent from an otherwise-set riskModifiers object,
+// or holding a non-finite/negative value, also never adds points — even if
+// its trigger fires in the task text/labels.
+
+/** The four fixed risk-modifier names named by the overlay. No others are
+ *  recognised: an unrecognised key in Project.riskModifiers is inert. */
+export const RISK_MODIFIER_NAMES = [
+  "touchesAuth",
+  "touchesDatabase",
+  "touchesPersonalData",
+  "productionImpact",
+] as const;
+
+export type RiskModifierName = (typeof RISK_MODIFIER_NAMES)[number];
+
+// Per-modifier text trigger, matched against the task's OWN `description`
+// only — never title, templateData, or the goal+context equivalent
+// `calculateConfidence` uses for its description-quality score. Literal
+// keyword sets from the task spec, case-insensitive, word-bounded so e.g.
+// "authentic" does not match `auth`.
+const RISK_MODIFIER_TEXT_PATTERNS: Record<RiskModifierName, RegExp> = {
+  touchesAuth: /\b(auth|login|signup|password|token|session|jwt|oauth)\b/i,
+  touchesDatabase: /\b(migration|schema|prisma|sql|db|database)\b/i,
+  touchesPersonalData: /\b(pii|gdpr|email|address|name|user[- ]data|personal)\b/i,
+  // productionImpact's description pattern is intentionally the narrowest of
+  // the four (just the word "production") — the label channel below is its
+  // primary signal.
+  productionImpact: /\bproduction\b/i,
+};
+
+const PRODUCTION_LABELS = new Set(["production", "prod"]);
+
+export type RiskModifierDetectionInput = {
+  description: string | null;
+  labels?: readonly string[];
+};
+
+/**
+ * Detects which of the four fixed triggers fire for a task, independent of
+ * whether the project has opted into any of them (see
+ * `resolveTriggeredRiskModifiers` below for the opt-in intersection with
+ * Project.riskModifiers). Stable order (RISK_MODIFIER_NAMES order).
+ */
+export function detectRiskModifierTriggers(input: RiskModifierDetectionInput): RiskModifierName[] {
+  const description = input.description ?? "";
+  const labels = input.labels ?? [];
+  const productionByLabel = labels.some((label) => PRODUCTION_LABELS.has(label.trim().toLowerCase()));
+
+  return RISK_MODIFIER_NAMES.filter((name) => {
+    if (name === "productionImpact") {
+      return productionByLabel || RISK_MODIFIER_TEXT_PATTERNS.productionImpact.test(description);
+    }
+    return RISK_MODIFIER_TEXT_PATTERNS[name].test(description);
+  });
+}
+
+export type ResolvedRiskModifiers = {
+  /** Names that BOTH fired their trigger AND have a valid point entry in the
+   *  project's riskModifiers config, in RISK_MODIFIER_NAMES order. */
+  triggeredRiskModifiers: RiskModifierName[];
+  /** Sum of the point values for triggeredRiskModifiers — the amount
+   *  `ClaimPolicyEvaluator#evaluate` adds to the base threshold. */
+  riskModifierPoints: number;
+};
+
+/**
+ * Intersects the detected triggers with the project's opt-in `riskModifiers`
+ * JSON config and sums the configured points.
+ *
+ * `riskModifiers` reaches this function the same way `taskTypeThresholds`
+ * does: an unvalidated `unknown` read off a Prisma `Json?` column, never
+ * re-validated on read (there is no write-time schema for it yet — no
+ * settings endpoint exists in this milestone). A missing/non-object config
+ * degrades to "no modifiers ever trigger" (opt-in); a present but
+ * non-finite/negative point value for an otherwise-triggered name is
+ * skipped — that name is NOT reported as triggered and contributes 0,
+ * same degrade-safe posture as `resolveEffectiveThreshold`'s taskType
+ * lookup. Points are additive increments, not a 0-100 bounded threshold
+ * value, so (unlike taskTypeThresholdsSchema's confidenceThreshold bound)
+ * no upper cap is applied here.
+ */
+export function resolveTriggeredRiskModifiers(
+  input: RiskModifierDetectionInput,
+  riskModifiers: unknown,
+): ResolvedRiskModifiers {
+  if (riskModifiers === null || typeof riskModifiers !== "object") {
+    return { triggeredRiskModifiers: [], riskModifierPoints: 0 };
+  }
+  const config = riskModifiers as Record<string, unknown>;
+  const triggeredRiskModifiers: RiskModifierName[] = [];
+  let riskModifierPoints = 0;
+  for (const name of detectRiskModifierTriggers(input)) {
+    // Own-property-safe guard (M2's `isOwnStringKey`, reused here for the
+    // same reason it guards `taskTypeThresholds[taskType]` above): `name` is
+    // always one of the four fixed RISK_MODIFIER_NAMES here (never
+    // attacker/producer controlled), so a prototype-chain collision cannot
+    // actually occur today — but this keeps the two unvalidated-Json-config
+    // lookups in this file on ONE consistent, defensive pattern rather than
+    // two, so a future call site that loosens `name`'s provenance inherits
+    // the guard automatically instead of silently losing it (batch 18
+    // review, LOW-7).
+    if (!isOwnStringKey(config, name)) continue;
+    const raw = config[name];
+    // Only a positive, finite number counts as a point value (batch 18
+    // review, MED-2/LOW-8). `0` used to pass the old `raw >= 0` check and be
+    // reported as "triggered" while contributing zero points — an asymmetry
+    // with negative/NaN/Infinity, which were already skipped entirely. `> 0`
+    // makes all four degrade the same way: not triggered, contributes 0.
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+      triggeredRiskModifiers.push(name);
+      riskModifierPoints += raw;
+    }
+  }
+  return { triggeredRiskModifiers, riskModifierPoints };
+}
+
+// Upper bound for any effective claim threshold the layered hierarchy (the M2
+// base from resolveEffectiveThreshold plus the summed M3 risk-modifier
+// points above) can produce — matches the OpenAPI `Confidence.
+// effectiveThreshold` contract (`maximum: 100`) and the fact that a raw
+// score can never exceed 100. Without this bound, an aggressive
+// riskModifiers config stacked on a high taskType base (e.g. security's
+// SUGGESTED base of 90 plus a 10-point productionImpact modifier = 100, or
+// two stacked modifiers pushing past it) can push the number above 100,
+// which no score can ever reach — a permanent, undocumented lockout
+// (batch 18 review, MED-2).
+export const MAX_EFFECTIVE_THRESHOLD = 100;
+
+/**
+ * Combines an M2-resolved base threshold with the summed M3 risk-modifier
+ * points, clamped to MAX_EFFECTIVE_THRESHOLD. This is the ONE shared place
+ * every surface that adds M3 points to an M2 base routes through —
+ * `ClaimPolicyEvaluator#evaluate` and every routes/tasks.ts threading site
+ * (create, respec, /instructions, and transitively the 422 response) — so
+ * the clamp is applied exactly once rather than re-derived per call site
+ * (batch 18 review, MED-2: "an EINER geteilten Stelle, nicht pro Surface").
+ */
+export function combineEffectiveThreshold(baseThreshold: number, riskModifierPoints: number): number {
+  return Math.min(baseThreshold + riskModifierPoints, MAX_EFFECTIVE_THRESHOLD);
+}
+
 export function calculateConfidence(input: ConfidenceInput): ConfidenceResult {
   const td = input.templateData;
   const has = (v?: string | null) => (v?.trim().length ?? 0) > 0;

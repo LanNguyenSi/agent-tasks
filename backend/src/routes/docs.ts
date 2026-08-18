@@ -124,6 +124,15 @@ export const openApiSpec = {
           threshold: { type: "integer", minimum: 0, maximum: 100, example: 60, description: "The EFFECTIVE minimum score for agent claims (M2): taskTypeThresholds[taskType] -> project.confidenceThreshold -> global default (60). Identical to effectiveThreshold below; kept for backward compatibility." },
           effectiveThreshold: { type: "integer", minimum: 0, maximum: 100, example: 60, description: "M2: same value as `threshold`, named explicitly for callers that want to pair it with thresholdSource." },
           thresholdSource: { type: "string", enum: ["global", "project", "taskType"], example: "project", description: "M2: which layer of the threshold hierarchy produced `threshold`/`effectiveThreshold`." },
+          triggeredRiskModifiers: {
+            type: "array",
+            items: {
+              type: "string",
+              enum: ["touchesAuth", "touchesDatabase", "touchesPersonalData", "productionImpact"],
+            },
+            example: ["productionImpact"],
+            description: "M3: risk-modifier names that both fired their trigger (description keywords, or the 'production'/'prod' label for productionImpact) AND had a valid positive point entry in the project's opt-in Project.riskModifiers config. Their summed points are added to the M2 base threshold and clamped to 100 to produce `effectiveThreshold`/`threshold` above. Empty when the project has not opted into any modifier, or none fired.",
+          },
           blocking: { type: "boolean", example: false, description: "True when a hard, threshold-INDEPENDENT keystone is violated (today: no acceptance criteria and no verification signal in the description). The score is already capped below the default threshold in this case." },
           nextActions: {
             type: "array",
@@ -147,7 +156,7 @@ export const openApiSpec = {
             },
           },
         },
-        required: ["score", "missing", "threshold", "blocking", "effectiveThreshold", "thresholdSource"],
+        required: ["score", "missing", "threshold", "blocking", "effectiveThreshold", "thresholdSource", "triggeredRiskModifiers"],
       },
       LowConfidenceError: {
         type: "object",
@@ -356,7 +365,7 @@ export const openApiSpec = {
           taskTypeThresholds: {
             type: "object",
             description:
-              "The resolved threshold hierarchy for EVERY task type (M2) — the same resolveEffectiveThreshold the claim gate uses, not a re-derivation. Lets an agent see a per-type override BEFORE creating a typed task, instead of only discovering it after a claim gets rejected.",
+              "The resolved threshold hierarchy for EVERY task type (M2) — the same resolveEffectiveThreshold the claim gate uses, not a re-derivation. Lets an agent see a per-type override BEFORE creating a typed task, instead of only discovering it after a claim gets rejected. Project-level only: per-task M3 risk modifiers (Project.riskModifiers, evaluated per-task against that task's own description/labels) are NOT reflected here, so a SPECIFIC task's actual effective claim threshold can be higher than the value shown for its type — see the Confidence schema's triggeredRiskModifiers.",
             properties: {
               bugfix: { $ref: "#/components/schemas/EffectiveThreshold" },
               feature: { $ref: "#/components/schemas/EffectiveThreshold" },
