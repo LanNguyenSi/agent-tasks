@@ -35,6 +35,7 @@ import {
   type Task,
   type Comment,
   type WorkflowTransition,
+  type EnforcementMode,
 } from "../lib/api";
 import {
   calculateConfidence,
@@ -143,6 +144,16 @@ export interface TaskDetailProps {
    *  alone. null/undefined when the project never set an override — every
    *  type then falls through to `confidenceThreshold` as before. */
   taskTypeThresholds?: TaskTypeThresholds | null;
+  /** M2 (task a9dc7e58): the project's confidence-gate enforcement mode
+   *  (`project.enforcementMode`). Only `BLOCK` actually stops an agent
+   *  claim server-side (see backend lib/enforcement-mode.ts); `WARN` and
+   *  `OFF` are advisory-only. The Agent Template badge's below-threshold
+   *  copy branches on this so it never claims a claim is blocked when the
+   *  project isn't actually blocking it. `null`/`undefined` (row predates
+   *  the column, or the caller hasn't threaded it) is treated the same as
+   *  `WARN` — the backend's own default for an unset mode — rather than
+   *  assumed to be blocking. */
+  enforcementMode: EnforcementMode | null;
   requireDistinctReviewer?: boolean;
   /** True for a human who is a team ADMIN or a per-project PROJECT_ADMIN
    * (derived from `project.accessRole`, which — unlike `team?.role` —
@@ -184,6 +195,7 @@ export default function TaskDetail({
   templateFields,
   confidenceThreshold,
   taskTypeThresholds = null,
+  enforcementMode,
   requireDistinctReviewer = false,
   isProjectAdmin = false,
   workflowTransitions = null,
@@ -773,13 +785,32 @@ export default function TaskDetail({
               taskTypeThresholds,
               confidenceThreshold,
             );
+            // M2 (task a9dc7e58): only `BLOCK` actually stops a claim server-side
+            // (see backend lib/enforcement-mode.ts); `WARN` and `OFF` are both
+            // advisory-only there, so both get the same non-blocking copy here —
+            // splitting OFF out to hide the warning entirely would be a
+            // badge-behavior change beyond this fix's scope. The badge itself
+            // computes `conf` above unconditionally, independent of
+            // enforcementMode, so OFF still shows the score and this copy here
+            // even though the backend's OFF-mode gate never runs that
+            // computation server-side (confidence-gate.ts short-circuits before
+            // scoring). `null`/`undefined` (row predates the column, or a caller
+            // hasn't threaded it yet) is treated as `WARN` too, matching the
+            // backend's own default for an unset mode — the safe choice, since
+            // claiming "cannot claim this task" when the project doesn't
+            // actually block claims is the misleading direction this fix exists
+            // to remove.
+            const claimsBlocked = enforcementMode === "BLOCK";
             return (
               <div className="td-conf-section">
                 <div className="td-conf-badge-row">
                   <ConfidenceBadge score={conf.score} size="md" />
                   {conf.score < effectiveThreshold && (
                     <span className="td-conf-threshold-warn">
-                      Below threshold ({effectiveThreshold}) — agents cannot claim this task
+                      Below threshold ({effectiveThreshold}) —{" "}
+                      {claimsBlocked
+                        ? "agents cannot claim this task"
+                        : "advisory in this project; agents can still claim it"}
                       {thresholdSource === "taskType" && ` (${conf.inferredTaskType} override)`}
                     </span>
                   )}

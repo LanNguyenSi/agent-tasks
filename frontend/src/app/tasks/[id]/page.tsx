@@ -144,6 +144,7 @@ export default function TaskDetailPage() {
           templateFields={project.taskTemplate?.fields ?? null}
           confidenceThreshold={project.confidenceThreshold ?? GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD}
           taskTypeThresholds={project.taskTypeThresholds ?? null}
+          enforcementMode={project.enforcementMode ?? null}
           requireDistinctReviewer={project.requireDistinctReviewer ?? false}
           isProjectAdmin={isProjectAdmin}
           workflowTransitions={workflowTransitions}
