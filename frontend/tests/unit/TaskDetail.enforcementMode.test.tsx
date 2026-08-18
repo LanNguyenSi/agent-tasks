@@ -122,13 +122,16 @@ describe("TaskDetail — Agent Template badge copy branches on the project's enf
     expect(screen.queryByText(/agents cannot claim this task/)).toBeNull();
   });
 
-  it("missing/undefined enforcementMode (older cached project data): defaults to advisory wording, matching the backend's own WARN default for an unset mode", () => {
+  it("runtime-undefined enforcementMode (older cached project data): defaults to advisory wording, matching the backend's own WARN default for an unset mode", () => {
     render(
       <TaskDetail
         task={makeTask()}
         {...baseProps}
         confidenceThreshold={60}
-        // enforcementMode intentionally omitted
+        // The prop type is required (null at minimum), but stale API data can
+        // still deliver undefined at runtime; force it past the type to pin
+        // that the render path degrades to the advisory wording either way.
+        enforcementMode={undefined as unknown as null}
       />,
     );
 
