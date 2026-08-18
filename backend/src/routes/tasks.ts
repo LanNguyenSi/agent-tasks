@@ -55,6 +55,7 @@ import {
 } from "../lib/confidence.js";
 import { resolveEnforcementMode } from "../lib/enforcement-mode.js";
 import { evaluateConfidenceGate, deriveNextActions } from "../services/confidence-gate.js";
+import { recordBounceBack, recordTerminalSnapshot } from "../services/confidence-telemetry.js";
 import {
   DEFAULT_TRANSITIONS,
   findDefaultTransition,
@@ -2726,6 +2727,22 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       );
     }
 
+    // M5 (task 698eeb01): calibration telemetry snapshot. Best-effort and
+    // fail-open (see services/confidence-telemetry.ts) — awaited so the
+    // write is attempted before responding, but a failure there can never
+    // turn this response into anything other than the successful transition
+    // above.
+    if (outcome === "request_changes") {
+      await recordBounceBack(task.id, task.projectId);
+    } else if (isTerminalState(effectiveDefinition, targetStatus)) {
+      await recordTerminalSnapshot({
+        taskId: task.id,
+        projectId: task.projectId,
+        finalStatus: targetStatus,
+        taskType: (task.templateData as TemplateData | null)?.taskType ?? null,
+      });
+    }
+
     return c.json({
       kind: "review",
       task: updated,
@@ -2985,6 +3002,19 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         selfApprActorName,
         selfApprResult,
       );
+    }
+
+    // M5 (task 698eeb01): calibration telemetry snapshot — mirrors the
+    // review-finish branch above (see its comment for the fail-open rationale).
+    if (selfApprOutcome === "request_changes") {
+      await recordBounceBack(task.id, task.projectId);
+    } else if (isTerminalState(effectiveDefinition, selfApprTargetStatus)) {
+      await recordTerminalSnapshot({
+        taskId: task.id,
+        projectId: task.projectId,
+        finalStatus: selfApprTargetStatus,
+        taskType: (task.templateData as TemplateData | null)?.taskType ?? null,
+      });
     }
 
     return c.json({

@@ -87,6 +87,16 @@ export type AuditAction =
   // shadow signal that quantifies block blast radius before a project flips to
   // BLOCK. Carries score/threshold/keystoneBlocked/caps in the payload.
   | "task.claim_would_block_shadow"
+  // M5 (task 698eeb01): calibration telemetry needs `scoreAtClaim` for EVERY
+  // agent claim the confidence gate evaluates, not just the three decision
+  // branches above (would-block / blocked / override) — otherwise the most
+  // common outcome, a clean claim with nothing to shadow or block, would
+  // leave no claim-time score on record for task_finish's snapshot hook to
+  // read later (see services/confidence-telemetry.ts). Fired once per
+  // successful agent claim that did NOT already produce one of the three
+  // events above. Carries the same score/threshold/thresholdSource/
+  // triggeredRiskModifiers/route/actorType shape.
+  | "task.claim_confidence_recorded"
   // Opt-in reclassification of the debugFlavor flag. Fired when a caller
   // passes `reclassify=true` on task_pickup or task_start and the classifier
   // produces a different result than the persisted value.

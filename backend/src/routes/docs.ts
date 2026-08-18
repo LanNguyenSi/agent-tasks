@@ -386,6 +386,54 @@ export const openApiSpec = {
           "taskTypeThresholds",
         ],
       },
+      ConfidenceTelemetryWeekBucket: {
+        type: "object",
+        description: "One ISO week's worth of confidence-gate claim evaluations for the project.",
+        properties: {
+          weekStart: { type: "string", format: "date", example: "2026-08-17", description: "Monday (UTC) of the ISO week." },
+          overrideCount: { type: "integer", minimum: 0, example: 1 },
+          totalClaims: { type: "integer", minimum: 0, description: "Every agent claim the confidence gate evaluated that week, across all four claim_* audit actions.", example: 5 },
+          rate: { type: "number", minimum: 0, maximum: 1, description: "overrideCount / totalClaims; 0 when totalClaims is 0.", example: 0.2 },
+        },
+        required: ["weekStart", "overrideCount", "totalClaims", "rate"],
+      },
+      ConfidenceTelemetryScoreBandBounceBack: {
+        type: "object",
+        properties: {
+          band: { type: "string", example: "60-70", description: "Half-open [lower,upper) score band, except the top band 90-100 which is closed on both ends." },
+          taskCount: { type: "integer", minimum: 0, example: 4 },
+          avgBounceBackCount: { type: "number", minimum: 0, example: 1.5 },
+        },
+        required: ["band", "taskCount", "avgBounceBackCount"],
+      },
+      ConfidenceTelemetryScoreBandDoneRate: {
+        type: "object",
+        properties: {
+          band: { type: "string", example: "70-80" },
+          taskCount: { type: "integer", minimum: 0, example: 6 },
+          doneRate: { type: "number", minimum: 0, maximum: 1, description: "Share of this band's terminal tasks whose finalStatus is 'done'.", example: 0.83 },
+        },
+        required: ["band", "taskCount", "doneRate"],
+      },
+      ConfidenceTelemetryAggregates: {
+        type: "object",
+        description:
+          "M5 (task 698eeb01) calibration telemetry, collected from task_finish's review-approve snapshot hook and the confidence-gate audit trail. COLLECTION ONLY — no field here feeds an automatic weight/threshold adjustment; a future, deliberately separate milestone calibrates against this data. See services/confidence-telemetry.ts.",
+        properties: {
+          overrideRatePerWeek: { type: "array", items: { $ref: "#/components/schemas/ConfidenceTelemetryWeekBucket" } },
+          bounceBackByScoreBand: { type: "array", items: { $ref: "#/components/schemas/ConfidenceTelemetryScoreBandBounceBack" } },
+          doneRateByScoreBand: { type: "array", items: { $ref: "#/components/schemas/ConfidenceTelemetryScoreBandDoneRate" } },
+          lowScoreSuccesses: { type: "integer", minimum: 0, description: "Terminal tasks with scoreAtClaim < 60 and finalStatus == 'done'.", example: 2 },
+          highScoreFailures: { type: "integer", minimum: 0, description: "Terminal tasks with scoreAtClaim >= 90 and finalStatus != 'done'.", example: 0 },
+        },
+        required: [
+          "overrideRatePerWeek",
+          "bounceBackByScoreBand",
+          "doneRateByScoreBand",
+          "lowScoreSuccesses",
+          "highScoreFailures",
+        ],
+      },
       AvailableProject: {
         type: "object",
         properties: {
@@ -853,6 +901,72 @@ export const openApiSpec = {
                     },
                   },
                 },
+              },
+            },
+          },
+          "403": {
+            description: "Access denied",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "404": {
+            description: "Project not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/projects/{id}/telemetry/confidence": {
+      get: {
+        tags: ["Projects"],
+        summary: "Calibration telemetry aggregates (M5, collection-only)",
+        description:
+          "Read-only. Aggregates the four calibration signals task_finish's review-approve snapshot hook collects (services/confidence-telemetry.ts): review bounce-backs, override frequency, and score-vs-outcome cross-referencing by score band. COLLECTS ONLY — nothing here or in this milestone auto-adjusts a threshold, weight, or riskModifiers config; a future, deliberately separate milestone calibrates against this data once enough volume exists. `scoreAtClaim` is null (and so excluded from the score-banded aggregates) for tasks claimed by a human, or claimed under an enforcementMode=OFF project — the confidence gate never evaluates either case, so there is nothing to snapshot.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+          {
+            name: "period",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["7d", "30d", "90d"], default: "30d" },
+            description: "Lookback window. Defaults to 30d when omitted.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Calibration telemetry aggregates for the requested period",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    period: { type: "string", enum: ["7d", "30d", "90d"], example: "30d" },
+                    periodStart: { type: "string", format: "date-time" },
+                    aggregates: { $ref: "#/components/schemas/ConfidenceTelemetryAggregates" },
+                  },
+                  required: ["period", "periodStart", "aggregates"],
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid period",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
               },
             },
           },

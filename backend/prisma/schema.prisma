@@ -250,15 +250,16 @@ model Project {
   createdAt                DateTime        @default(now())
   updatedAt                DateTime        @updatedAt
 
-  team            Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  tasks           Task[]
-  workflows       Workflow[]
-  boards          Board[]
-  signals         Signal[]
-  auditLogs       AuditLog[]
-  toolInvocations ToolInvocation[]
-  projectMembers  ProjectMember[]
-  projectInvites  ProjectInvite[]
+  team                 Team                  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  tasks                Task[]
+  workflows            Workflow[]
+  boards               Board[]
+  signals              Signal[]
+  auditLogs            AuditLog[]
+  toolInvocations      ToolInvocation[]
+  projectMembers       ProjectMember[]
+  projectInvites       ProjectInvite[]
+  confidenceTelemetry  ConfidenceTelemetry[]
 
   @@unique([teamId, slug])
   @@map("projects")
@@ -411,11 +412,12 @@ model Task {
   blocks    Task[] @relation("TaskDependency")
   blockedBy Task[] @relation("TaskDependency")
 
-  comments    Comment[]
-  attachments TaskAttachment[]
-  artifacts   TaskArtifact[]
-  signals     Signal[]
-  auditLogs   AuditLog[]
+  comments             Comment[]
+  attachments          TaskAttachment[]
+  artifacts            TaskArtifact[]
+  signals              Signal[]
+  auditLogs            AuditLog[]
+  confidenceTelemetry  ConfidenceTelemetry?
 
   @@unique([projectId, externalRef])
   @@index([projectId])
@@ -597,6 +599,72 @@ model AuditLog {
   @@index([taskId])
   @@index([actorId])
   @@map("audit_logs")
+}
+
+// ── Calibration Telemetry (M5, task 698eeb01) ───────────────────────────────
+//
+// COLLECT FIRST, CALIBRATE LATER. This table only accumulates the four
+// signals the overlay's "Milestone 5" names as inputs to a FUTURE,
+// deliberately separate weight-tuning pass:
+//   1. Review bounce-backs      -> bounceBackCount (task_finish outcome
+//      request_changes on this task, cumulative across the whole rework loop)
+//   2. Agent clarification requests -> intentionally NOT a column here. It is
+//      already fully queryable from the existing `Comment` table
+//      (authorAgentId + the task's claim history) without new instrumentation
+//      — see services/confidence-telemetry.ts's header comment.
+//   3. Override frequency       -> read directly off AuditLog's
+//      `task.claim_override_used` rows per project per week; `overrideUsed`
+//      here is a per-task convenience flag (was this task's claim EVER
+//      force-overridden), not the week-bucketed signal itself.
+//   4. Low-score success / high-score failure -> `scoreAtClaim` cross-
+//      referenced with `finalStatus` (done vs. an abandoned/non-done
+//      terminal status) by GET /projects/:id/telemetry/confidence.
+// No column here feeds an automatic threshold/weight adjustment — that is
+// explicitly out of scope for this milestone (a separate, deliberately
+// decoupled follow-up reads this table once enough volume exists).
+//
+// One row per task (upsert on taskId), written by task_finish's review-
+// approve path only (both the review-finish and self-approve branches,
+// every autoMerge variant) — see routes/tasks.ts. `scoreAtClaim` /
+// `effectiveThreshold` / `overrideUsed` are sourced from the confidence-gate
+// audit trail (`task.claim_would_block_shadow` / `task.claim_override_used` /
+// `task.claim_confidence_recorded`) recorded AT CLAIM TIME, never recomputed
+// at finish time — the task's description can have changed since (respec),
+// so recomputing would silently score the WRONG snapshot. All three fields
+// stay null when no such audit row exists for the task (a human claim, or a
+// project with enforcementMode=OFF — the confidence gate never evaluates
+// either, by design, so there is nothing to snapshot).
+//
+// Snapshot writes are BEST-EFFORT and fail OPEN: a telemetry write failure
+// is logged and swallowed, never allowed to block the task_finish transition
+// it rides along with (see services/confidence-telemetry.ts).
+model ConfidenceTelemetry {
+  id                 String   @id @default(uuid())
+  taskId             String   @unique
+  projectId          String
+  scoreAtClaim       Int?
+  effectiveThreshold Int?
+  bounceBackCount    Int      @default(0)
+  overrideUsed       Boolean  @default(false)
+  // Terminal `task.status` at the last snapshot write (e.g. "done", or a
+  // custom workflow's terminal state name). Null until the task actually
+  // reaches a terminal review-approve transition; a task that is only ever
+  // bounced back (request_changes) has a row with bounceBackCount > 0 and
+  // finalStatus still null.
+  finalStatus        String?
+  // Echoes templateData.taskType at snapshot time (task_type semantics are
+  // stable once set; not re-validated here — same unvalidated-Json read
+  // posture as Project.taskTypeThresholds).
+  taskType           String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  task    Task    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([projectId, updatedAt])
+  @@map("confidence_telemetry")
 }
 
 // ── Tool Invocations ─────────────────────────────────────────────────────────
