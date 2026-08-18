@@ -60,7 +60,7 @@ Acking a signal sets `acknowledgedAt`. When a task lands in a terminal state, `a
 
 | Model | Purpose |
 |---|---|
-| `AuditLog` | Immutable trail. `action: String` (drawn from the `AuditAction` union in `backend/src/services/audit.ts`), optional `projectId` / `taskId` / `actorId`, free-form `payload: JSON`. Audit writes are fire-and-forget and swallow errors; do not depend on audit being load-bearing for any flow. |
+| `AuditLog` | Immutable trail. `action: String` (drawn from the `AuditAction` union in `backend/src/services/audit.ts`), optional `projectId` / `taskId` / `actorId`, free-form `payload: JSON`. Audit writes are fire-and-forget and swallow errors; do not depend on audit being load-bearing for any flow. **Documented exception (M5, task 698eeb01):** `ConfidenceTelemetry.scoreAtClaim` / `effectiveThreshold` / `overrideUsed` ARE read back from specific `AuditLog` rows (`task.claim_would_block_shadow` / `_override_used` / `_confidence_recorded`) as their source of truth — see `backend/src/services/confidence-telemetry.ts`'s header comment for the rationale and the planned follow-up (snapshot inside the claim transaction instead). |
 | `ToolInvocation` | Idempotency log for side-effecting MCP verbs (`task_submit_pr`, `task_merge`, `pull_requests_create`, `pull_requests_merge`). Unique on `(projectId, verb, idempotencyKey)`, with `payloadHash` to reject key reuse on a different payload. The row is inserted **after** the side-effect, so two truly concurrent retries can both execute once before one loses the race. |
 
 ## Relations at a glance

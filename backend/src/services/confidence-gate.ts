@@ -2,6 +2,8 @@ import type { Context } from "hono";
 import {
   calculateConfidence,
   resolveEffectiveThreshold,
+  resolveTriggeredRiskModifiers,
+  combineEffectiveThreshold,
   type TemplateData,
   type TemplateFields,
 } from "../lib/confidence.js";
@@ -132,7 +134,54 @@ export async function evaluateConfidenceGate(
 
   switch (decision.kind) {
     case "allow":
-      if (decision.audit) void logAuditEvent(decision.audit);
+      if (decision.audit) {
+        void logAuditEvent(decision.audit);
+      } else {
+        // M5 (task 698eeb01): the evaluator's clean-allow branches (nothing
+        // would block, or force was a no-op) never return an `audit` — record
+        // a lighter-weight snapshot anyway so calibration telemetry has a
+        // claim-time score for the common "claim went cleanly" case too (see
+        // the `task.claim_confidence_recorded` doc comment in services/
+        // audit.ts). Recomputes the SAME risk-modifier resolution the
+        // evaluator just ran a moment ago rather than reading it off
+        // `decision` (whose `allow` variant does not carry it) — duplicated
+        // here instead of widening ClaimDecision's public shape for this one
+        // downstream consumer. `threshold` is deliberately local to this
+        // else-branch, not `baseThreshold`: the pre-modifier number would
+        // understate the true gating threshold for a task that triggered a
+        // modifier but still passed.
+        const { triggeredRiskModifiers, riskModifierPoints } = resolveTriggeredRiskModifiers(
+          { description: task.description, labels: task.labels },
+          task.project.riskModifiers,
+        );
+        void logAuditEvent({
+          action: "task.claim_confidence_recorded",
+          // HIGH-1 (batch 18 review): AuditLog.actorId FKs to users(id), not
+          // to an agent token id (schema.prisma). `actor` here is narrowed to
+          // AgentActor by the `actor.type !== "agent"` guard at the top of
+          // this function, so the repo-wide idiom used at 33 sites in
+          // routes/tasks.ts (`actor.type === "human" ? actor.userId :
+          // undefined`) collapses to `undefined` — writing `actor.tokenId`
+          // instead previously violated the FK, and logAuditEvent silently
+          // swallows the resulting 23503, so this row NEVER persisted for an
+          // agent claim. See the matching fix + doc comment on
+          // ClaimAuditEvent.actorId in claim-policy-evaluator.ts (the same
+          // bug, same fix, in the M3 sibling events). The token identity is
+          // preserved in payload.actorTokenId instead.
+          actorId: undefined,
+          projectId: task.projectId,
+          taskId: task.id,
+          payload: {
+            score: report.score,
+            threshold: combineEffectiveThreshold(baseThreshold, riskModifierPoints),
+            thresholdSource,
+            triggeredRiskModifiers,
+            route,
+            actorType: actor.type,
+            actorTokenId: actor.tokenId,
+          },
+        });
+      }
       return { ok: true };
     case "block_low_readiness":
       void logAuditEvent(decision.audit);

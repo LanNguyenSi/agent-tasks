@@ -34,7 +34,7 @@ in progress is never re-evaluated when a project flips to `BLOCK` (grandfathered
 
 ## The shadow report
 
-Warn-mode is the only calibration signal (there is no seed corpus). Two sources:
+Warn-mode was the only calibration signal at rollout (there is no seed corpus); M5 (task 698eeb01) added a second: `GET /projects/:id/telemetry/confidence` aggregates review bounce-backs, override frequency, and score-vs-outcome by score band from the `ConfidenceTelemetry` table — see `docs/domain-model.md` and `backend/src/services/confidence-telemetry.ts`. Two sources feed the shadow report specifically:
 
 1. Runtime: every real warn-mode would-block writes a `task.claim_would_block_shadow`
    audit event carrying `score`, `threshold`, `keystoneBlocked`, and `caps`.

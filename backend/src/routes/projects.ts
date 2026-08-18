@@ -27,6 +27,10 @@ import { resolveEnforcementMode, EnforcementMode } from "../lib/enforcement-mode
 import { describeTaskCreation } from "../lib/task-creation-readiness.js";
 import { computeEffectiveGates } from "../services/gates/index.js";
 import { httpUrl } from "../lib/url-guard.js";
+import {
+  computeConfidenceTelemetryAggregates,
+  CLAIM_EVALUATION_ACTIONS,
+} from "../services/confidence-telemetry.js";
 
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -376,6 +380,73 @@ projectRouter.get("/projects/:id/effective-gates", async (c) => {
   return c.json({
     effectiveGates: computeEffectiveGates(project),
     taskCreation: describeTaskCreation(project),
+  });
+});
+
+// ── Calibration telemetry (M5, task 698eeb01) ───────────────────────────────
+//
+// Read-only. Surfaces the four signals collected by task_finish's snapshot
+// hook (services/confidence-telemetry.ts) so a future, deliberately
+// SEPARATE milestone can calibrate confidence-gate weights against real
+// outcomes — nothing here or anywhere in this milestone auto-adjusts a
+// threshold, a weight, or riskModifiers. See that module's header comment
+// for the full signal-to-field mapping and the known "no audit row for a
+// human/OFF-mode claim" gap in scoreAtClaim coverage.
+const CONFIDENCE_TELEMETRY_PERIOD_DAYS = { "7d": 7, "30d": 30, "90d": 90 } as const;
+type ConfidenceTelemetryPeriod = keyof typeof CONFIDENCE_TELEMETRY_PERIOD_DAYS;
+
+function isConfidenceTelemetryPeriod(value: string): value is ConfidenceTelemetryPeriod {
+  return Object.prototype.hasOwnProperty.call(CONFIDENCE_TELEMETRY_PERIOD_DAYS, value);
+}
+
+projectRouter.get("/projects/:id/telemetry/confidence", async (c) => {
+  const actor = c.get("actor");
+  const projectId = c.req.param("id");
+
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
+  if (!project) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, projectId))) {
+    return forbidden(c, "Access denied");
+  }
+
+  const periodParam = c.req.query("period") ?? "30d";
+  if (!isConfidenceTelemetryPeriod(periodParam)) {
+    return c.json(
+      {
+        error: "bad_request",
+        message: `period must be one of: ${Object.keys(CONFIDENCE_TELEMETRY_PERIOD_DAYS).join(", ")}`,
+      },
+      400,
+    );
+  }
+  const period = periodParam;
+  const periodStart = new Date(
+    Date.now() - CONFIDENCE_TELEMETRY_PERIOD_DAYS[period] * 24 * 60 * 60 * 1000,
+  );
+
+  const [rows, claimEvents] = await Promise.all([
+    // `updatedAt` — a row is touched by every bounce-back and by the terminal
+    // snapshot, so filtering on it keeps the window focused on tasks with
+    // telemetry ACTIVITY in the period, not merely ones created before it.
+    prisma.confidenceTelemetry.findMany({
+      where: { projectId, updatedAt: { gte: periodStart } },
+      select: { scoreAtClaim: true, finalStatus: true, bounceBackCount: true },
+    }),
+    prisma.auditLog.findMany({
+      where: {
+        projectId,
+        action: { in: [...CLAIM_EVALUATION_ACTIONS] },
+        createdAt: { gte: periodStart },
+      },
+      select: { action: true, createdAt: true },
+    }),
+  ]);
+
+  return c.json({
+    period,
+    periodStart: periodStart.toISOString(),
+    aggregates: computeConfidenceTelemetryAggregates(rows, claimEvents),
   });
 });
 

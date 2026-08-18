@@ -113,7 +113,15 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     expect(decision.kind).toBe("block_low_readiness");
     if (decision.kind === "block_low_readiness") {
       expect(decision.audit.action).toBe("task.claim_blocked_low_readiness");
-      expect(decision.audit.actorId).toBe("agent-1");
+      // HIGH-1 (batch 18 review): AuditLog.actorId FKs to users(id), not to
+      // an agent token id — actorId must be undefined for an agent claim (the
+      // repo idiom actor.type === "human" ? actor.userId : undefined
+      // collapses to undefined here since this evaluator only ever receives
+      // an AgentActor). Writing actor.tokenId here previously violated the
+      // FK and logAuditEvent silently swallowed the resulting 23503, so this
+      // row never persisted for an agent claim in production. The real token
+      // identity now lives in payload.actorTokenId instead.
+      expect(decision.audit.actorId).toBeUndefined();
       expect(decision.audit.taskId).toBe("task-1");
       expect(decision.audit.projectId).toBe("proj-1");
       expect(decision.audit.payload).toMatchObject({
@@ -126,6 +134,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
         findings,
         route: "claim",
         actorType: "agent",
+        actorTokenId: "agent-1",
       });
       expect(decision.nextActions.length).toBeGreaterThan(0);
       // M3 (task 8e88cfc0): no risk modifiers configured (makeInput's default
@@ -156,7 +165,10 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     if (decision.kind === "allow") {
       expect(decision.audit).toBeDefined();
       expect(decision.audit?.action).toBe("task.claim_override_used");
-      expect(decision.audit?.actorId).toBe("agent-1");
+      // HIGH-1 (batch 18 review): same FK-safety fix as cell 2 above —
+      // actorId must be undefined for an agent claim; the token identity
+      // moves to payload.actorTokenId.
+      expect(decision.audit?.actorId).toBeUndefined();
       expect(decision.audit?.taskId).toBe("task-1");
       expect(decision.audit?.projectId).toBe("proj-1");
       expect(decision.audit?.payload).toMatchObject({
@@ -166,6 +178,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
         forceReason: reason,
         keystoneBlocked: true,
         operatorUserId: "operator-1",
+        actorTokenId: "agent-1",
         route: "start",
         actorType: "agent",
       });
@@ -264,11 +277,18 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     if (decision.kind === "allow") {
       expect(decision.audit).toBeDefined();
       expect(decision.audit?.action).toBe("task.claim_would_block_shadow");
+      // HIGH-1 (batch 18 review): same FK-safety fix as cells 2/3 above —
+      // actorId must be undefined for an agent claim (AuditLog.actorId FKs
+      // to users(id), never to an agent token id); the token identity moves
+      // to payload.actorTokenId. This is the THIRD of the three pre-existing
+      // M3 sites the fix round covers (shadow / blocked / override).
+      expect(decision.audit?.actorId).toBeUndefined();
       expect(decision.audit?.payload).toMatchObject({
         score: 70,
         threshold: 90,
         thresholdSource: "taskType",
         belowThreshold: true,
+        actorTokenId: "agent-1",
       });
     }
   });

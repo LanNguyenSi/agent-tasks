@@ -37,6 +37,15 @@ const prismaMocks = vi.hoisted(() => ({
   // project row; only exercised by the "POST /projects/:projectId/tasks —
   // workflowId project validation" suite below.
   projectFindUnique: vi.fn(),
+  // M5 (task 698eeb01): task_finish's calibration-telemetry snapshot hook
+  // (services/confidence-telemetry.ts). Defaulted to resolve cleanly below
+  // so the hundreds of pre-existing approve/request_changes tests in this
+  // file that never touch these mocks keep passing (the hook is fail-open
+  // and would otherwise silently swallow a synchronous "Cannot read
+  // properties of undefined" from an unmocked model — see the "M5 snapshot
+  // hook" describe block for the explicit fail-open pin).
+  confidenceTelemetryUpsert: vi.fn().mockResolvedValue({}),
+  auditLogFindFirst: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -65,6 +74,12 @@ vi.mock("../../src/lib/prisma.js", () => ({
     },
     project: {
       findUnique: prismaMocks.projectFindUnique,
+    },
+    confidenceTelemetry: {
+      upsert: prismaMocks.confidenceTelemetryUpsert,
+    },
+    auditLog: {
+      findFirst: prismaMocks.auditLogFindFirst,
     },
   },
 }));
@@ -2368,6 +2383,221 @@ describe("POST /tasks/:id/finish (review claim)", () => {
     });
     expect(res.status).toBe(400);
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// M5 (task 698eeb01): task_finish's calibration-telemetry snapshot hook.
+// Covers BOTH review-approve dispatch modes named in the task brief — the
+// review-finish branch above (distinct reviewer holds the review claim) and
+// the self-approve branch (work-claim holder acts as self-reviewer on a
+// non-REQUIRES_DISTINCT_REVIEWER project) — plus request_changes
+// bounce-back tracking, an autoMerge variant, and the fail-open contract.
+describe("POST /tasks/:id/finish — M5 confidence-telemetry snapshot hook", () => {
+  const REVIEW_FINISH_TASK = {
+    ...baseTask,
+    status: "review",
+    claimedByAgentId: "agent-author",
+    reviewClaimedByAgentId: AGENT.tokenId,
+    templateData: { taskType: "bugfix" },
+  };
+
+  // Self-approve dispatch: actor holds the WORK claim, no review claim held
+  // by anyone, project is not REQUIRES_DISTINCT_REVIEWER (baseTask.project's
+  // defaults: soloMode=false, requireDistinctReviewer=false, no
+  // governanceMode -> resolves to AWAITS_CONFIRMATION via the legacy-flag
+  // derivation).
+  const SELF_APPROVE_TASK = {
+    ...baseTask,
+    status: "review",
+    claimedByAgentId: AGENT.tokenId,
+    reviewClaimedByAgentId: null,
+    reviewClaimedByUserId: null,
+    templateData: { taskType: "feature" },
+  };
+
+  it("review-finish approve: snapshots the terminal transition with taskType from templateData", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(REVIEW_FINISH_TASK);
+    prismaMocks.agentTokenFindUnique.mockResolvedValueOnce({ name: "Reviewer" });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ outcome: "approve" }),
+    });
+    expect(res.status).toBe(200);
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { taskId: "task-1" },
+        create: expect.objectContaining({
+          taskId: "task-1",
+          projectId: "proj-1",
+          finalStatus: "done",
+          taskType: "bugfix",
+        }),
+        update: expect.objectContaining({ finalStatus: "done", taskType: "bugfix" }),
+      }),
+    );
+  });
+
+  it("review-finish request_changes: increments bounceBackCount, does not set finalStatus", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(REVIEW_FINISH_TASK);
+    prismaMocks.agentTokenFindUnique.mockResolvedValueOnce({ name: "Reviewer" });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ outcome: "request_changes", result: "pls fix" }),
+    });
+    expect(res.status).toBe(200);
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { taskId: "task-1" },
+        create: expect.objectContaining({ taskId: "task-1", projectId: "proj-1", bounceBackCount: 1 }),
+        update: { bounceBackCount: { increment: 1 } },
+      }),
+    );
+    // request_changes is not a terminal transition — finalStatus must not appear
+    // in either write shape.
+    const call = prismaMocks.confidenceTelemetryUpsert.mock.calls[0]![0] as { create: Record<string, unknown> };
+    expect(call.create.finalStatus).toBeUndefined();
+  });
+
+  it("self-approve approve: snapshots the terminal transition (second review-approve dispatch mode)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(SELF_APPROVE_TASK);
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ outcome: "approve" }),
+    });
+    expect(res.status).toBe(200);
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ taskId: "task-1", projectId: "proj-1", finalStatus: "done", taskType: "feature" }),
+      }),
+    );
+  });
+
+  it("self-approve request_changes: increments bounceBackCount", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(SELF_APPROVE_TASK);
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ outcome: "request_changes" }),
+    });
+    expect(res.status).toBe(200);
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ taskId: "task-1", bounceBackCount: 1 }),
+        update: { bounceBackCount: { increment: 1 } },
+      }),
+    );
+  });
+
+  it("autoMerge (Mode B) review-finish approve: the hook still fires after the merge resolves", async () => {
+    const autoMergeReviewTask = {
+      ...REVIEW_FINISH_TASK,
+      branchName: "feat/test",
+      prUrl: "https://github.com/acme/thing/pull/10",
+      prNumber: 10,
+    };
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(autoMergeReviewTask);
+    prismaMocks.agentTokenFindUnique.mockResolvedValueOnce({ name: "Reviewer Bot" });
+    performPrMergeMock.mockResolvedValueOnce({ ok: true, sha: "sha-automerge", alreadyMerged: false });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ outcome: "approve", autoMerge: true }),
+    });
+    expect(res.status).toBe(200);
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ taskId: "task-1", finalStatus: "done" }),
+      }),
+    );
+  });
+
+  // Pins the explicit fail-open requirement: a telemetry write failure must
+  // be logged and swallowed, never allowed to turn a successful transition
+  // into an error response. Uses the REAL confidence-telemetry service (not
+  // mocked away) so this exercises the actual try/catch, not a stand-in.
+  it("fail-open: a confidenceTelemetry.upsert DB error does not block the transition", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(REVIEW_FINISH_TASK);
+    prismaMocks.agentTokenFindUnique.mockResolvedValueOnce({ name: "Reviewer" });
+    prismaMocks.confidenceTelemetryUpsert.mockRejectedValueOnce(new Error("db unreachable"));
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ outcome: "approve" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { task: { status: string } };
+    expect(body.task.status).toBe("done");
+  });
+
+  // LOW-10 (batch 18 review): negative pin — the M5 snapshot hook is wired
+  // into the review-finish and self-approve branches ONLY (per the model
+  // header comment in schema.prisma / services/confidence-telemetry.ts).
+  // The plain work-finish branch (author calls task_finish directly, no
+  // review outcome) never calls recordBounceBack/recordTerminalSnapshot,
+  // even when it reaches a terminal transition (in_progress -> done via a
+  // review-skipping workflow). These reuse the exact fixtures from "POST
+  // /tasks/:id/finish (work claim)" above.
+  it("work-finish (in_progress -> review): does not write calibration telemetry", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      workflowId: null,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null); // built-in default -> review
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42", result: "shipped" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { targetStatus: string };
+    expect(body.targetStatus).toBe("review");
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+  });
+
+  it("work-finish (in_progress -> done, review-skipping workflow): does not write calibration telemetry", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+    });
+    // Workflow only has in_progress -> done (no review state) — a terminal
+    // transition on the work-finish branch, same as "work → done" above.
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce({
+      definition: {
+        initialState: "open",
+        states: [
+          { name: "open", label: "Open", terminal: false },
+          { name: "in_progress", label: "In progress", terminal: false },
+          { name: "done", label: "Done", terminal: true },
+        ],
+        transitions: [
+          { from: "open", to: "in_progress" },
+          { from: "in_progress", to: "done" },
+        ],
+      },
+    });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    expect(data.status).toBe("done");
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
   });
 });
 

@@ -87,6 +87,16 @@ export type AuditAction =
   // shadow signal that quantifies block blast radius before a project flips to
   // BLOCK. Carries score/threshold/keystoneBlocked/caps in the payload.
   | "task.claim_would_block_shadow"
+  // M5 (task 698eeb01): calibration telemetry needs `scoreAtClaim` for EVERY
+  // agent claim the confidence gate evaluates, not just the three decision
+  // branches above (would-block / blocked / override) — otherwise the most
+  // common outcome, a clean claim with nothing to shadow or block, would
+  // leave no claim-time score on record for task_finish's snapshot hook to
+  // read later (see services/confidence-telemetry.ts). Fired once per
+  // successful agent claim that did NOT already produce one of the three
+  // events above. Carries the same score/threshold/thresholdSource/
+  // triggeredRiskModifiers/route/actorType shape.
+  | "task.claim_confidence_recorded"
   // Opt-in reclassification of the debugFlavor flag. Fired when a caller
   // passes `reclassify=true` on task_pickup or task_start and the classifier
   // produces a different result than the persisted value.
@@ -142,6 +152,19 @@ export interface AuditPayload {
 
 export async function logAuditEvent(opts: {
   action: AuditAction;
+  // MUST be a valid `users.id` or omitted/undefined — `AuditLog.actorId` FKs
+  // to `users(id)` (schema.prisma), never to an agent token id. An agent
+  // caller has no user-scoped identity to attribute the action to here; use
+  // the repo idiom `actor.type === "human" ? actor.userId : undefined` (33
+  // call sites in routes/tasks.ts) and put the token id in `payload`
+  // instead (e.g. `actorTokenId`). Passing a token id here is a SILENT bug:
+  // the resulting 23503 FK violation is swallowed below (see the try/catch
+  // comment), so the row simply never persists — no error surfaces anywhere.
+  // HIGH-1 (batch 18 review, task 698eeb01 fix round): this exact mistake
+  // dropped every `task.claim_confidence_recorded` /
+  // `task.claim_would_block_shadow` / `task.claim_blocked_low_readiness` /
+  // `task.claim_override_used` row for an agent claim until fixed — see
+  // services/claim-policy-evaluator.ts and services/confidence-gate.ts.
   actorId?: string;
   projectId?: string;
   taskId?: string;
@@ -153,7 +176,10 @@ export async function logAuditEvent(opts: {
   // which crashes the Node process under the default `throw` policy.
   // Swallow the rejection with a structured log line so a DB hiccup or
   // constraint violation can't take the backend down — audit is
-  // supplementary, not load-bearing.
+  // supplementary, not load-bearing. NOTE: this also means an invalid
+  // `actorId` (e.g. an agent token id — see the doc comment above) fails
+  // SILENTLY from every caller's perspective; there is no runtime signal
+  // short of reading this log line.
   try {
     await prisma.auditLog.create({
       data: {

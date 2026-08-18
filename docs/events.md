@@ -4,7 +4,7 @@ Authoritative source: the `AuditAction` union in [`backend/src/services/audit.ts
 
 ## Audit actions
 
-Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId`, `taskId`, `projectId`. Audit writes are fire-and-forget and swallow errors: never depend on audit being load-bearing for any flow.
+Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId`, `taskId`, `projectId`. Audit writes are fire-and-forget and swallow errors: never depend on audit being load-bearing for any flow. **Documented exception (M5, task 698eeb01):** `ConfidenceTelemetry`'s calibration snapshot (`scoreAtClaim` / `effectiveThreshold` / `overrideUsed`) reads specific `task.claim_*` rows below back as its source of truth — see `backend/src/services/confidence-telemetry.ts`'s header comment.
 
 ### Identity and tokens
 
@@ -56,6 +56,7 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 | `task.imported` | Bulk CSV/Excel import |
 | `task.grounding_gate.bypassed` | Admin override of the debug-grounding gate |
 | `task.artifact.created` / `task.artifact.deleted` | Typed artifact lifecycle |
+| `task.claim_confidence_recorded` | Confidence gate (ADR-0011, M5 task 698eeb01): an agent claim the gate evaluated and did NOT block or shadow-log (the common "claim went cleanly" case) — carries `score`/`threshold`/`thresholdSource`/`actorTokenId` so `GET /projects/:id/telemetry/confidence` has a claim-time score to snapshot later. Siblings `task.claim_blocked_low_readiness` / `task.claim_would_block_shadow` / `task.claim_override_used` cover the other three confidence-gate outcomes (LOW-9, batch 18 review — this table is not yet complete for the older three; a pre-existing gap, not introduced here). |
 
 ### GitHub delegation
 
