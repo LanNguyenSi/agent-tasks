@@ -692,6 +692,7 @@ export default function DashboardPage() {
           templateFields={templateFields}
           confidenceThreshold={selectedProject?.confidenceThreshold ?? GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD}
           taskTypeThresholds={selectedProject?.taskTypeThresholds ?? null}
+          enforcementMode={selectedProject?.enforcementMode ?? null}
           requireDistinctReviewer={selectedProject?.requireDistinctReviewer ?? false}
           isProjectAdmin={isProjectAdmin}
           workflowTransitions={workflowTransitions}

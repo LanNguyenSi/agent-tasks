@@ -55,6 +55,15 @@ export interface TaskTemplate {
   presets?: TemplatePreset[];
 }
 
+/**
+ * Confidence-gate enforcement mode (scorer-v2, T5; see backend
+ * lib/enforcement-mode.ts, the source of truth for this value):
+ *   - `OFF`   — advisory only, agents are never blocked.
+ *   - `WARN`  — advisory + shadow-logged, never blocks (the rollout default).
+ *   - `BLOCK` — a below-threshold or keystone-violating claim is rejected.
+ */
+export type EnforcementMode = "OFF" | "WARN" | "BLOCK";
+
 export interface Project {
   id: string;
   teamId: string;
@@ -71,6 +80,12 @@ export interface Project {
    *  -> global default (60). Any subset of the six taskType keys; null/undefined
    *  when the project never set an override. */
   taskTypeThresholds?: TaskTypeThresholds | null;
+  /** M2 (task a9dc7e58): raw DB column, `null` for rows predating the
+   *  column and `undefined` on API responses that predate this field.
+   *  The backend treats both as the `WARN` rollout default (never blocks) —
+   *  callers that render enforcement-dependent copy should do the same
+   *  rather than defaulting to the blocking `BLOCK` wording. */
+  enforcementMode?: EnforcementMode | null;
   /** @deprecated prefer governanceMode. Derived from governanceMode server-side through the deprecation window. */
   requireDistinctReviewer: boolean;
   /** @deprecated prefer governanceMode. Derived from governanceMode server-side through the deprecation window. */
