@@ -1,4 +1,11 @@
-import type { TemplateData, TaskType, TaskTypeThresholds, QualityFinding } from "./confidence";
+import type {
+  TemplateData,
+  TaskType,
+  TaskTypeThresholds,
+  QualityFinding,
+  ThresholdSource,
+  TaskQualitySubscores,
+} from "./confidence";
 
 // TemplateData is owned by ./confidence (the scorer is its primary consumer);
 // re-export it so existing `import { TemplateData } from "../lib/api"`
@@ -634,6 +641,54 @@ export async function getTeamTasks(
 export async function getTask(taskId: string): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/tasks/${taskId}`);
   return data.task;
+}
+
+/**
+ * A single triggered risk modifier (M3, task 8e88cfc0, built on a parallel
+ * branch as of M4 / task 67526c1c). Kept intentionally minimal and optional
+ * everywhere it is used — the ImprovementPanel must render it tolerantly
+ * when present and omit it cleanly when the backend has not shipped it yet,
+ * without coupling to the exact shape M3 lands with.
+ */
+export interface TriggeredRiskModifier {
+  code: string;
+  message: string;
+}
+
+/**
+ * The authoritative confidence detail returned by `GET /tasks/:id/instructions`
+ * (the `confidence` field of that response). Distinct from `CreateConfidence`
+ * below (a different endpoint, a different response shape, and computed at a
+ * different moment — task creation vs. "right now"): this one additionally
+ * carries `subscores`, `effectiveThreshold`/`thresholdSource`, and
+ * `inferredTaskType`, and it has no precomputed `nextActions` of its own —
+ * callers derive that from `findings` via `deriveNextActions` in
+ * `./confidence` (mirroring the backend's own derivation used by the
+ * endpoints that DO precompute it).
+ */
+export interface TaskConfidenceDetail {
+  score: number;
+  missing: string[];
+  threshold: number;
+  effectiveThreshold: number;
+  thresholdSource: ThresholdSource;
+  blocking: boolean;
+  subscores: TaskQualitySubscores;
+  findings: QualityFinding[];
+  inferredTaskType?: TaskType;
+  /** Optional/provisional — see TriggeredRiskModifier above. */
+  triggeredRiskModifiers?: TriggeredRiskModifier[];
+}
+
+/**
+ * Fetches only the `confidence` slice of the agent-instructions endpoint —
+ * the ImprovementPanel's data source. Non-critical for the task page: a
+ * caller should treat a rejected promise as "no panel today" rather than a
+ * page-breaking error (see the tasks/[id] page's use of `.catch(() => null)`).
+ */
+export async function getTaskConfidenceDetail(taskId: string): Promise<TaskConfidenceDetail> {
+  const data = await request<{ confidence: TaskConfidenceDetail }>(`/api/tasks/${taskId}/instructions`);
+  return data.confidence;
 }
 
 /**

@@ -4893,6 +4893,163 @@ html[data-theme="light"] {
   gap: 0.5rem;
 }
 
+/* ── Improvement panel (ip-*) ─────────────────────────────────── */
+/* Findings + nextActions from GET /tasks/:id/instructions, rendered above
+   the description editor on the task detail page. Tone follows the worst
+   severity among the panel's findings; --pass is a neutral/quiet style
+   (matches .collapsible-section) so a passing task does not read as an
+   alert. */
+
+.ip-root {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.ip-root--warning {
+  border-color: color-mix(in srgb, var(--warning) 40%, var(--border) 60%);
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface) 90%);
+}
+
+.ip-root--danger {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border) 45%);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface) 90%);
+}
+
+.ip-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+
+.ip-chevron {
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform var(--transition-fast);
+}
+
+.ip-chevron--open {
+  transform: rotate(90deg);
+}
+
+.ip-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ip-verdict {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.ip-root--danger .ip-verdict {
+  color: color-mix(in srgb, var(--danger) 80%, var(--text) 20%);
+}
+
+.ip-root--warning .ip-verdict {
+  color: var(--status-review-text);
+}
+
+.ip-body {
+  padding: 0 var(--space-4) var(--space-4);
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ip-subheading {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.35rem;
+}
+
+.ip-risk-list,
+.ip-next-actions-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.ip-risk-item,
+.ip-next-actions-item {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.ip-findings-group + .ip-findings-group {
+  margin-top: var(--space-3);
+}
+
+.ip-findings-heading {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+
+.ip-findings-heading--blocking {
+  color: var(--danger);
+}
+
+.ip-findings-heading--warning {
+  color: var(--warning);
+}
+
+.ip-findings-heading--info {
+  color: var(--muted);
+}
+
+.ip-findings-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.ip-findings-item {
+  font-size: var(--text-xs);
+}
+
+.ip-findings-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.ip-findings-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--muted);
+  background: color-mix(in srgb, white 6%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 0.05rem 0.3rem;
+}
+
+.ip-findings-message {
+  color: var(--text);
+}
+
+.ip-findings-suggestion {
+  margin-top: 0.2rem;
+  color: var(--muted);
+}
+
+.ip-empty {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
 /* Responsive: collapse two columns to one under 900 px */
 @media (max-width: 900px) {
   .td-layout {

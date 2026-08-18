@@ -36,6 +36,7 @@ import {
   type Comment,
   type WorkflowTransition,
   type EnforcementMode,
+  type TaskConfidenceDetail,
 } from "../lib/api";
 import {
   calculateConfidence,
@@ -51,6 +52,7 @@ import { buildSavedTemplateData } from "../lib/templateData";
 import type { TemplateDataEdits } from "../lib/templateData";
 import { formatRelativeTime, formatAbsoluteDate } from "../lib/time";
 import ConfidenceBadge from "./ConfidenceBadge";
+import ImprovementPanel from "./task/ImprovementPanel";
 import Markdown from "./Markdown";
 import TaskArtifactsSection from "./TaskArtifactsSection";
 import TaskAttachmentsSection from "./TaskAttachmentsSection";
@@ -172,6 +174,15 @@ export interface TaskDetailProps {
   /** Open directly in edit mode (e.g. from the create-confidence panel's
    *  "Edit task"), so the user lands on the editors for the missing fields. */
   initialEditing?: boolean;
+  /**
+   * M4 (task 67526c1c): the authoritative confidence detail from
+   * GET /tasks/:id/instructions (lib/api.ts#getTaskConfidenceDetail),
+   * fetched by the caller — TaskDetail does no fetching of its own. Renders
+   * as <ImprovementPanel> above the description editor when present;
+   * omitted entirely when null/undefined (the fetch failed, or the caller
+   * — e.g. the board modal — never requested it).
+   */
+  improvementPanel?: TaskConfidenceDetail | null;
   onUpdate: (task: Task) => void;
   onDelete: (taskId: string) => void;
   onClose: () => void;
@@ -199,6 +210,7 @@ export default function TaskDetail({
   requireDistinctReviewer = false,
   isProjectAdmin = false,
   workflowTransitions = null,
+  improvementPanel = null,
   onUpdate,
   onDelete,
   onClose,
@@ -643,6 +655,9 @@ export default function TaskDetail({
   // ── Main column ────────────────────────────────────────────────────────────
   const mainColumn = (
     <div className="td-main">
+
+      {/* ── Improvement panel (M4, task 67526c1c) ─────────────── */}
+      {improvementPanel && <ImprovementPanel confidence={improvementPanel} />}
 
       {/* ── Description ─────────────────────────────────────── */}
       <section className="td-section">

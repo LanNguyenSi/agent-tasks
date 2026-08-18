@@ -3,10 +3,12 @@ import {
   calculateConfidence,
   descriptionQuality,
   extractSpecSections,
+  deriveNextActions,
   EVALS_KEYSTONE_CAP,
   FIELD_WEIGHTS,
   REQUIRED_SIGNAL_ONLY_CODES,
   type TemplateData,
+  type QualityFinding,
 } from "./confidence";
 import {
   RICH_TEMPLATE_DATA_NO_DESC,
@@ -1279,4 +1281,78 @@ describe("calculateConfidence: required-signal regex quality (finding 3)", () =>
       });
     });
   }
+});
+
+// ── deriveNextActions (M4, task 67526c1c: ImprovementPanel) ─────────────────
+// FAITHFUL MIRROR of deriveNextActions in
+// backend/src/services/claim-policy-evaluator.ts; the first frontend
+// consumer of REQUIRED_SIGNAL_ONLY_CODES (previously only kept for future
+// parity, per its own header comment). GET /tasks/:id/instructions returns
+// `findings[]` but no precomputed `nextActions[]`, so the ImprovementPanel
+// derives it client-side with this function.
+describe("deriveNextActions", () => {
+  function finding(over: Partial<QualityFinding> & Pick<QualityFinding, "code" | "severity">): QualityFinding {
+    return {
+      dimension: "completeness",
+      message: `${over.code} message`,
+      suggestion: `${over.code} suggestion`,
+      ...over,
+    };
+  }
+
+  it("sorts blocking before warning before info", () => {
+    const findings = [
+      finding({ code: "c_info", severity: "info" }),
+      finding({ code: "a_blocking", severity: "blocking" }),
+      finding({ code: "b_warning", severity: "warning" }),
+    ];
+    expect(deriveNextActions(findings)).toEqual([
+      "a_blocking suggestion",
+      "b_warning suggestion",
+      "c_info suggestion",
+    ]);
+  });
+
+  it("within a severity tier, ranks a universal finding ahead of a type-specific-only one", () => {
+    // missing_goal is universal (aliased); missing_reproduction_steps is
+    // bugfix-only and lives in REQUIRED_SIGNAL_ONLY_CODES.
+    expect(REQUIRED_SIGNAL_ONLY_CODES.has("missing_reproduction_steps")).toBe(true);
+    expect(REQUIRED_SIGNAL_ONLY_CODES.has("missing_goal")).toBe(false);
+
+    const findings = [
+      finding({ code: "missing_reproduction_steps", severity: "blocking" }),
+      finding({ code: "missing_goal", severity: "blocking" }),
+    ];
+    expect(deriveNextActions(findings)).toEqual([
+      "missing_goal suggestion",
+      "missing_reproduction_steps suggestion",
+    ]);
+  });
+
+  it("deduplicates by suggestion text", () => {
+    const findings = [
+      finding({ code: "a", severity: "warning", suggestion: "same suggestion" }),
+      finding({ code: "b", severity: "warning", suggestion: "same suggestion" }),
+    ];
+    expect(deriveNextActions(findings)).toEqual(["same suggestion"]);
+  });
+
+  it("skips findings with no suggestion", () => {
+    const findings = [
+      finding({ code: "a", severity: "warning", suggestion: undefined }),
+      finding({ code: "b", severity: "warning" }),
+    ];
+    expect(deriveNextActions(findings)).toEqual(["b suggestion"]);
+  });
+
+  it("caps the result at 5", () => {
+    const findings = Array.from({ length: 8 }, (_, i) =>
+      finding({ code: `f${i}`, severity: "warning" }),
+    );
+    expect(deriveNextActions(findings)).toHaveLength(5);
+  });
+
+  it("returns an empty array for no findings", () => {
+    expect(deriveNextActions([])).toEqual([]);
+  });
 });
