@@ -257,7 +257,7 @@ describe("GET /projects/:projectId/tasks — OpenAPI documents externalRef", () 
   // is no existing generic parity test covering it. Pin the OpenAPI entry
   // directly so removing/mis-documenting it fails CI (task f84e58b4).
   it("lists externalRef as a query parameter capped at 255 chars", () => {
-    const params = openApiSpec.paths["/api/projects/{projectId}/tasks"].get.parameters as Array<{
+    const params = openApiSpec.paths["/api/projects/{projectId}/tasks"].get.parameters as ReadonlyArray<{
       name: string;
       in: string;
       schema?: { type?: string; maxLength?: number };
