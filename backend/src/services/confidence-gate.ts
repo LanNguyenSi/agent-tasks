@@ -111,7 +111,7 @@ export async function evaluateConfidenceGate(
   const decision = claimPolicyEvaluator.evaluate({
     task: { id: task.id, projectId: task.projectId },
     report,
-    projectPolicy: { mode, threshold: effectiveThreshold },
+    projectPolicy: { mode, threshold: effectiveThreshold, thresholdSource },
     actor,
     force,
     forceReason,

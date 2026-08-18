@@ -1,4 +1,4 @@
-import type { TemplateData, TaskType, QualityFinding } from "./confidence";
+import type { TemplateData, TaskType, TaskTypeThresholds, QualityFinding } from "./confidence";
 
 // TemplateData is owned by ./confidence (the scorer is its primary consumer);
 // re-export it so existing `import { TemplateData } from "../lib/api"`
@@ -65,6 +65,12 @@ export interface Project {
   githubSyncAt: string | null;
   taskTemplate: TaskTemplate | null;
   confidenceThreshold: number;
+  /** M2 (task b8629b99): optional per-task-type override of confidenceThreshold.
+   *  Resolution order (see `resolveEffectiveThreshold` in ./confidence):
+   *  taskTypeThresholds[EXPLICIT templateData.taskType] -> confidenceThreshold
+   *  -> global default (60). Any subset of the six taskType keys; null/undefined
+   *  when the project never set an override. */
+  taskTypeThresholds?: TaskTypeThresholds | null;
   /** @deprecated prefer governanceMode. Derived from governanceMode server-side through the deprecation window. */
   requireDistinctReviewer: boolean;
   /** @deprecated prefer governanceMode. Derived from governanceMode server-side through the deprecation window. */

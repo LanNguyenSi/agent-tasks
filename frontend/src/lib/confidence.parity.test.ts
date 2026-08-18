@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { calculateConfidence as backendCalculateConfidence } from "../../../backend/src/lib/confidence";
-import { calculateConfidence as frontendCalculateConfidence } from "./confidence";
+import {
+  calculateConfidence as backendCalculateConfidence,
+  resolveEffectiveThreshold as backendResolveEffectiveThreshold,
+} from "../../../backend/src/lib/confidence";
+import {
+  calculateConfidence as frontendCalculateConfidence,
+  resolveEffectiveThreshold as frontendResolveEffectiveThreshold,
+  type TaskType,
+} from "./confidence";
 import { CONFIDENCE_PARITY_FIXTURES } from "./__fixtures__/confidence-fixtures";
 
 /**
@@ -139,4 +146,53 @@ describe("calculateConfidence — cross-package parity (backend vs frontend, tas
       });
     }
   });
+});
+
+/**
+ * resolveEffectiveThreshold — cross-package parity (task f186b88b).
+ *
+ * The frontend gained its own mirror of the backend's threshold-hierarchy
+ * resolver (global -> project -> taskType) specifically so the TaskDetail
+ * badge can show the SAME below/above-threshold verdict the /start claim
+ * gate will enforce for a typed task with a per-type confidenceThreshold
+ * override. Same cross-package-import mechanism as the calculateConfidence
+ * parity suite above: import the real backend source directly and run it
+ * side by side with the frontend copy over a shared case matrix.
+ */
+describe("resolveEffectiveThreshold — cross-package parity (backend vs frontend, task f186b88b)", () => {
+  const CASES: Array<{
+    name: string;
+    taskType: string | undefined;
+    taskTypeThresholds: unknown;
+    projectThreshold: number | null | undefined;
+  }> = [
+    { name: "no taskType -> project layer", taskType: undefined, taskTypeThresholds: { security: 90 }, projectThreshold: 60 },
+    { name: "taskType with a matching override -> taskType layer", taskType: "security", taskTypeThresholds: { security: 90 }, projectThreshold: 60 },
+    { name: "taskType with NO override for that type -> project layer", taskType: "docs", taskTypeThresholds: { security: 90 }, projectThreshold: 60 },
+    { name: "no project threshold, no override -> global default", taskType: "security", taskTypeThresholds: null, projectThreshold: undefined },
+    { name: "null taskTypeThresholds -> project layer", taskType: "security", taskTypeThresholds: null, projectThreshold: 75 },
+    { name: "corrupted override value (out of range) -> falls through to project layer", taskType: "security", taskTypeThresholds: { security: 999 }, projectThreshold: 60 },
+    { name: "prototype-chain key ('constructor') never resolves as an override", taskType: "constructor", taskTypeThresholds: { security: 90 }, projectThreshold: 60 },
+    { name: "project threshold missing entirely (undefined) with no override -> global default", taskType: "bugfix", taskTypeThresholds: undefined, projectThreshold: undefined },
+  ];
+
+  for (const { name, taskType, taskTypeThresholds, projectThreshold } of CASES) {
+    it(`backend and frontend produce an identical result: ${name}`, () => {
+      // A couple of CASES deliberately pass a non-TaskType string (e.g.
+      // "constructor") to pin the own-property-safe guard on both sides —
+      // the cast reflects that intent, it is not a type-safety escape hatch.
+      const castTaskType = taskType as TaskType | undefined;
+      const backendResult = backendResolveEffectiveThreshold(
+        castTaskType,
+        taskTypeThresholds,
+        projectThreshold,
+      );
+      const frontendResult = frontendResolveEffectiveThreshold(
+        castTaskType,
+        taskTypeThresholds,
+        projectThreshold,
+      );
+      expect(frontendResult).toStrictEqual(backendResult);
+    });
+  }
 });

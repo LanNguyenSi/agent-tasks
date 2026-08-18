@@ -1,4 +1,9 @@
-import { calculateConfidence, type QualityFinding, REQUIRED_SIGNAL_ONLY_CODES } from "../lib/confidence.js";
+import {
+  calculateConfidence,
+  type QualityFinding,
+  type ThresholdSource,
+  REQUIRED_SIGNAL_ONLY_CODES,
+} from "../lib/confidence.js";
 import { EnforcementMode } from "../lib/enforcement-mode.js";
 import { SCOPES } from "./scopes.js";
 import type { AgentActor } from "../types/auth.js";
@@ -50,8 +55,16 @@ export type ClaimPolicyInput = {
   /**
    * The resolved project policy. `mode` is already narrowed to the two modes
    * that evaluate a report: OFF short-circuits before compute in the caller.
+   * `thresholdSource` (M2, task f186b88b) names which layer of the
+   * global -> project -> taskType hierarchy produced `threshold` — carried
+   * into every audit payload below so an auditor reading `threshold: 90`
+   * can tell it came from a taskType override rather than the project
+   * default. Required, not optional: the sole production caller
+   * (confidence-gate.ts) already resolves it via `resolveEffectiveThreshold`
+   * alongside `threshold`, so a caller that forgets it is a compile error,
+   * not a silently-missing audit field.
    */
-  projectPolicy: { mode: EnforcementMode.WARN | EnforcementMode.BLOCK; threshold: number };
+  projectPolicy: { mode: EnforcementMode.WARN | EnforcementMode.BLOCK; threshold: number; thresholdSource: ThresholdSource };
   actor: AgentActor;
   force: boolean;
   forceReason: string;
@@ -70,7 +83,7 @@ export type ClaimPolicyInput = {
 export class ClaimPolicyEvaluator {
   evaluate(input: ClaimPolicyInput): ClaimDecision {
     const { task, report, projectPolicy, actor, force, forceReason, route } = input;
-    const { mode, threshold } = projectPolicy;
+    const { mode, threshold, thresholdSource } = projectPolicy;
 
     const belowThreshold = report.score < threshold;
     // Keystone is threshold-INDEPENDENT: lowering the threshold cannot disable it.
@@ -91,6 +104,7 @@ export class ClaimPolicyEvaluator {
             payload: {
               score: report.score,
               threshold,
+              thresholdSource,
               belowThreshold,
               keystoneBlocked: report.blocking,
               caps: triggeredCapCodes(report.findings),
@@ -139,6 +153,7 @@ export class ClaimPolicyEvaluator {
           payload: {
             score: report.score,
             threshold,
+            thresholdSource,
             keystoneBlocked: report.blocking,
             missing: report.missing,
             findings: report.findings,
@@ -160,6 +175,7 @@ export class ClaimPolicyEvaluator {
           payload: {
             score: report.score,
             threshold,
+            thresholdSource,
             forceReason,
             keystoneBlocked: report.blocking,
             missing: report.missing,

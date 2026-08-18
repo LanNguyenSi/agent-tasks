@@ -9,6 +9,17 @@ import {
 } from "../../src/lib/task-creation-readiness.js";
 import { EnforcementMode } from "../../src/lib/enforcement-mode.js";
 
+// Every taskType resolves to the global default when the project sets
+// neither `confidenceThreshold` nor `taskTypeThresholds`.
+const ALL_GLOBAL_DEFAULT = {
+  bugfix: { effectiveThreshold: DEFAULT_CONFIDENCE_THRESHOLD, thresholdSource: "global" },
+  feature: { effectiveThreshold: DEFAULT_CONFIDENCE_THRESHOLD, thresholdSource: "global" },
+  refactoring: { effectiveThreshold: DEFAULT_CONFIDENCE_THRESHOLD, thresholdSource: "global" },
+  security: { effectiveThreshold: DEFAULT_CONFIDENCE_THRESHOLD, thresholdSource: "global" },
+  migration: { effectiveThreshold: DEFAULT_CONFIDENCE_THRESHOLD, thresholdSource: "global" },
+  docs: { effectiveThreshold: DEFAULT_CONFIDENCE_THRESHOLD, thresholdSource: "global" },
+};
+
 describe("describeTaskCreation", () => {
   it("defaults a bare project: WARN, default threshold, template mode off", () => {
     const out = describeTaskCreation({});
@@ -17,6 +28,7 @@ describe("describeTaskCreation", () => {
       confidenceThreshold: DEFAULT_CONFIDENCE_THRESHOLD,
       templateModeEnabled: false,
       requiredFields: [],
+      taskTypeThresholds: ALL_GLOBAL_DEFAULT,
     });
   });
 
@@ -72,5 +84,53 @@ describe("describeTaskCreation", () => {
     const out = describeTaskCreation({ enforcementMode: "OFF" });
     expect(out.confidenceThreshold).toBe(DEFAULT_CONFIDENCE_THRESHOLD);
     expect(out.enforcementMode).toBe(EnforcementMode.OFF);
+  });
+
+  // ── M2 (task f186b88b): taskTypeThresholds discovery ─────────────────────
+  // The bug this closes: an agent could only learn a project's per-type
+  // override AFTER task_create, by tripping the claim gate. taskTypeThresholds
+  // now surfaces the resolved value for every type up front.
+  it("taskTypeThresholds: an unset project falls through to the flat confidenceThreshold for every type", () => {
+    const out = describeTaskCreation({ confidenceThreshold: 75 });
+    for (const taskType of ["bugfix", "feature", "refactoring", "security", "migration", "docs"] as const) {
+      expect(out.taskTypeThresholds[taskType]).toEqual({
+        effectiveThreshold: 75,
+        thresholdSource: "project",
+      });
+    }
+  });
+
+  it("taskTypeThresholds: a per-type override wins for that type only, everything else stays on the project layer", () => {
+    const out = describeTaskCreation({
+      confidenceThreshold: 60,
+      taskTypeThresholds: { security: 90, docs: 50 },
+    });
+    expect(out.taskTypeThresholds.security).toEqual({
+      effectiveThreshold: 90,
+      thresholdSource: "taskType",
+    });
+    expect(out.taskTypeThresholds.docs).toEqual({
+      effectiveThreshold: 50,
+      thresholdSource: "taskType",
+    });
+    expect(out.taskTypeThresholds.bugfix).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
+    expect(out.taskTypeThresholds.feature).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
+  });
+
+  it("taskTypeThresholds: a corrupted override value (out of range) degrades that type to the project layer only, not the whole map", () => {
+    const out = describeTaskCreation({
+      confidenceThreshold: 65,
+      taskTypeThresholds: { security: 999 },
+    });
+    expect(out.taskTypeThresholds.security).toEqual({
+      effectiveThreshold: 65,
+      thresholdSource: "project",
+    });
   });
 });

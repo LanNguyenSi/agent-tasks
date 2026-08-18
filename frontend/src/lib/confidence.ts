@@ -101,6 +101,62 @@ export interface ConfidenceResult {
   inferredTaskType?: TaskType;
 }
 
+// ── Milestone 2: per-task-type confidence thresholds (task b8629b99) ───────
+// FAITHFUL MIRROR of resolveEffectiveThreshold in backend/src/lib/confidence.ts
+// (task f186b88b closes the frontend gap: this mirror did not exist before —
+// the TaskDetail badge compared the client-side score against the flat
+// `project.confidenceThreshold` prop only, so a project with a per-type
+// override (e.g. security: 90) showed an above-threshold badge for a task
+// the /start claim gate would reject). Keep in sync with the backend.
+
+/** Global fallback when a project has never set `confidenceThreshold` either.
+ *  Same rollout default as the backend's GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD. */
+export const GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD = 60;
+
+export type TaskTypeThresholds = Partial<Record<TaskType, number>>;
+
+export type ThresholdSource = "global" | "project" | "taskType";
+
+export interface EffectiveThreshold {
+  effectiveThreshold: number;
+  thresholdSource: ThresholdSource;
+}
+
+/**
+ * Resolves the layered confidence-threshold hierarchy:
+ *   Project.taskTypeThresholds[taskType] -> Project.confidenceThreshold ->
+ *   GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD (60).
+ *
+ * `taskType` must be the EXPLICIT `templateData.taskType` (`inferredTaskType`
+ * on `ConfidenceResult`, which simply echoes it) — never a heuristically
+ * guessed type. `taskTypeThresholds` reaches this function the same way it
+ * reaches the backend: an unvalidated value straight off the `Project` API
+ * response (write-time validated server-side, never re-validated on read),
+ * so the same own-property-safe guard and numeric re-validation the backend
+ * applies are mirrored here. FAITHFUL MIRROR of the backend; keep in sync.
+ */
+export function resolveEffectiveThreshold(
+  taskType: TaskType | undefined,
+  taskTypeThresholds: unknown,
+  projectThreshold: number | null | undefined,
+): EffectiveThreshold {
+  if (
+    taskTypeThresholds !== null &&
+    typeof taskTypeThresholds === "object" &&
+    typeof taskType === "string" &&
+    Object.prototype.hasOwnProperty.call(taskTypeThresholds, taskType)
+  ) {
+    const raw = (taskTypeThresholds as Record<string, unknown>)[taskType];
+    if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0 && raw <= 100) {
+      return { effectiveThreshold: raw, thresholdSource: "taskType" };
+    }
+  }
+  if (typeof projectThreshold === "number" && Number.isFinite(projectThreshold)) {
+    return { effectiveThreshold: projectThreshold, thresholdSource: "project" };
+  }
+  return { effectiveThreshold: GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD, thresholdSource: "global" };
+}
+
 interface ConfidenceInput {
   title: string;
   description: string | null;

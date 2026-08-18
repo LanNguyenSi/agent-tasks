@@ -157,13 +157,50 @@ describe("GET /api/projects/:id returns effectiveGates", () => {
         confidenceThreshold: number;
         templateModeEnabled: boolean;
         requiredFields: string[];
+        taskTypeThresholds: Record<string, { effectiveThreshold: number; thresholdSource: string }>;
       };
     };
-    expect(body.taskCreation).toEqual({
-      enforcementMode: "WARN",
+    expect(body.taskCreation.enforcementMode).toBe("WARN");
+    expect(body.taskCreation.confidenceThreshold).toBe(60);
+    expect(body.taskCreation.templateModeEnabled).toBe(false);
+    expect(body.taskCreation.requiredFields).toEqual([]);
+    // Every type falls through to the flat confidenceThreshold — no
+    // taskTypeThresholds override was set on BASE_PROJECT.
+    expect(body.taskCreation.taskTypeThresholds.bugfix).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
+    expect(body.taskCreation.taskTypeThresholds.security).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
+  });
+
+  // M2 (task f186b88b): GET /projects/:id findUnique has no `select`, so the
+  // full row (including taskTypeThresholds) already reaches describeTaskCreation
+  // — this pins that a per-type override on the /projects/:id surface is
+  // visible BEFORE task_create, not only after a claim trips the gate.
+  it("surfaces a per-task-type confidenceThreshold override in taskTypeThresholds", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      ...BASE_PROJECT,
       confidenceThreshold: 60,
-      templateModeEnabled: false,
-      requiredFields: [],
+      taskTypeThresholds: { security: 90 },
+    });
+
+    const res = await makeApp(HUMAN_ACTOR).request(`/projects/${PROJECT_ID}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      taskCreation: {
+        taskTypeThresholds: Record<string, { effectiveThreshold: number; thresholdSource: string }>;
+      };
+    };
+    expect(body.taskCreation.taskTypeThresholds.security).toEqual({
+      effectiveThreshold: 90,
+      thresholdSource: "taskType",
+    });
+    expect(body.taskCreation.taskTypeThresholds.bugfix).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
     });
   });
 });
@@ -247,6 +284,43 @@ describe("GET /api/projects/:id/effective-gates", () => {
       "acceptanceCriteria",
       "goal",
     ]);
+  });
+
+  // M2 (task f186b88b): this endpoint's Prisma `select` previously omitted
+  // taskTypeThresholds, so describeTaskCreation always fell back to the
+  // project/global layer here even when the project HAD a per-type override
+  // — an agent calling projects_get_effective_gates before task_create never
+  // saw the real bar a typed task would be held to. Pins the select fix.
+  it("surfaces a per-task-type confidenceThreshold override (select fix)", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      teamId: "team-1",
+      githubRepo: "owner/repo",
+      governanceMode: GovernanceMode.AUTONOMOUS,
+      soloMode: false,
+      requireDistinctReviewer: false,
+      taskTemplate: null,
+      enforcementMode: "BLOCK",
+      confidenceThreshold: 60,
+      taskTypeThresholds: { security: 90 },
+    });
+
+    const res = await makeApp(HUMAN_ACTOR).request(
+      `/projects/${PROJECT_ID}/effective-gates`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      taskCreation: {
+        taskTypeThresholds: Record<string, { effectiveThreshold: number; thresholdSource: string }>;
+      };
+    };
+    expect(body.taskCreation.taskTypeThresholds.security).toEqual({
+      effectiveThreshold: 90,
+      thresholdSource: "taskType",
+    });
+    expect(body.taskCreation.taskTypeThresholds.bugfix).toEqual({
+      effectiveThreshold: 60,
+      thresholdSource: "project",
+    });
   });
 
   it("404s when the project is missing", async () => {

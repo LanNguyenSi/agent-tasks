@@ -72,7 +72,7 @@ function makeInput(overrides: Partial<ClaimPolicyInput> = {}): ClaimPolicyInput 
   return {
     task: { id: "task-1", projectId: "proj-1" },
     report: makeReport(),
-    projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60 },
+    projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
     actor: makeActor(),
     force: false,
     forceReason: "",
@@ -86,7 +86,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 80, blocking: false }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60 },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
         force: false,
       }),
     );
@@ -102,7 +102,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 10, blocking: false, missing: ["acceptanceCriteria"], findings }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60 },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
         force: false,
       }),
     );
@@ -116,6 +116,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
       expect(decision.audit.payload).toMatchObject({
         score: 10,
         threshold: 60,
+        thresholdSource: "project",
         keystoneBlocked: false,
         missing: ["acceptanceCriteria"],
         findings,
@@ -133,7 +134,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 10, blocking: true }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60 },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
         actor: makeActor({ scopes: [SCOPES.ConfidenceOverride], userId: "operator-1" }),
         force: true,
         forceReason: reason,
@@ -151,6 +152,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
       expect(decision.audit?.payload).toMatchObject({
         score: 10,
         threshold: 60,
+        thresholdSource: "project",
         forceReason: reason,
         keystoneBlocked: true,
         operatorUserId: "operator-1",
@@ -164,7 +166,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 80, blocking: false }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60 },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
         actor: makeActor({ scopes: [SCOPES.ConfidenceOverride] }),
         force: true,
         forceReason: "harmless-explicit-force",
@@ -182,7 +184,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 10, blocking: false }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60 },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
         actor: makeActor({ scopes: ["tasks:read", "tasks:claim", "tasks:transition"] }),
         force: true,
         forceReason: "trying-to-self-exempt",
@@ -200,7 +202,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 10, blocking: false }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60 },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
         actor: makeActor({ scopes: [SCOPES.ConfidenceOverride] }),
         force: true,
         forceReason: shortReason,
@@ -222,7 +224,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({
         report: makeReport({ score: 10, blocking: false }),
-        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60 },
+        projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 60, thresholdSource: "project" },
         actor: makeActor({ scopes: ["tasks:read", "tasks:claim", "tasks:transition"] }),
         force: true,
         forceReason: "x".repeat(MIN_FORCE_REASON_LENGTH - 1),
@@ -230,6 +232,34 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
     );
 
     expect(decision.kind).toBe("force_forbidden");
+  });
+
+  // M2 (task f186b88b): the WARN-mode shadow audit is the one payload of the
+  // three that was never unit-tested for the score/threshold shape at all —
+  // pin `thresholdSource` here too, using a distinct "taskType" source value
+  // (not the "project" every other test in this file uses) so this actually
+  // exercises the field being PLUMBED THROUGH, not just echoing a hardcoded
+  // literal that happens to match by coincidence.
+  it("WARN mode: a would-block claim shadow-logs task.claim_would_block_shadow with the resolved thresholdSource", () => {
+    const decision = claimPolicyEvaluator.evaluate(
+      makeInput({
+        report: makeReport({ score: 70, blocking: false }),
+        projectPolicy: { mode: EnforcementMode.WARN, threshold: 90, thresholdSource: "taskType" },
+        force: false,
+      }),
+    );
+
+    expect(decision.kind).toBe("allow");
+    if (decision.kind === "allow") {
+      expect(decision.audit).toBeDefined();
+      expect(decision.audit?.action).toBe("task.claim_would_block_shadow");
+      expect(decision.audit?.payload).toMatchObject({
+        score: 70,
+        threshold: 90,
+        thresholdSource: "taskType",
+        belowThreshold: true,
+      });
+    }
   });
 
   // ── Safety pin (task 6b88ec87 review round 1, "missing_tests" finding) ────
@@ -304,7 +334,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
       const decision = claimPolicyEvaluator.evaluate(
         makeInput({
           report,
-          projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 40 },
+          projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 40, thresholdSource: "project" },
           force: false,
         }),
       );
@@ -381,7 +411,7 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
         const decision = claimPolicyEvaluator.evaluate(
           makeInput({
             report,
-            projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 40 },
+            projectPolicy: { mode: EnforcementMode.BLOCK, threshold: 40, thresholdSource: "project" },
             force: false,
           }),
         );

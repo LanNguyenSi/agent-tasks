@@ -358,6 +358,13 @@ projectRouter.get("/projects/:id/effective-gates", async (c) => {
       taskTemplate: true,
       enforcementMode: true,
       confidenceThreshold: true,
+      // M2 (task f186b88b): without this, describeTaskCreation's per-type
+      // taskTypeThresholds summary silently degraded to the project/global
+      // layer for every type on THIS endpoint only — a dropped `select` key,
+      // not a code bug, but with the same effect: an agent calling
+      // projects_get_effective_gates never sees a project's per-type
+      // override before creating the task.
+      taskTypeThresholds: true,
     },
   });
 
