@@ -9,12 +9,14 @@ import {
   getTasks,
   getTeams,
   getEffectiveWorkflow,
+  getTaskConfidenceDetail,
   isProjectAdminRole,
   type User,
   type Task,
   type Project,
   type Team,
   type WorkflowTransition,
+  type TaskConfidenceDetail,
 } from "../../../lib/api";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import TaskDetail from "../../../components/TaskDetail";
@@ -47,6 +49,11 @@ export default function TaskDetailPage() {
   // override dropdown to the transitions the backend will actually accept
   // (null = not loaded / not admin → the control falls back to the base states).
   const [workflowTransitions, setWorkflowTransitions] = useState<WorkflowTransition[] | null>(null);
+  // M4 (task 67526c1c): the Improvement panel's data. Fetched alongside the
+  // other page data but non-critical — a failure resolves to null via the
+  // .catch below rather than surfacing as a page error, so the panel simply
+  // does not render instead of blocking the whole task page.
+  const [improvementPanel, setImprovementPanel] = useState<TaskConfidenceDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,10 +67,11 @@ export default function TaskDetailPage() {
           return;
         }
         const fetchedTask = await getTask(taskId);
-        const [fetchedProject, projectTasks, allTeams] = await Promise.all([
+        const [fetchedProject, projectTasks, allTeams, confidenceDetail] = await Promise.all([
           getProject(fetchedTask.projectId),
           getTasks(fetchedTask.projectId),
           getTeams(),
+          getTaskConfidenceDetail(taskId).catch(() => null),
         ]);
         if (cancelled) return;
         const matchedTeam = allTeams.find((t) => t.id === fetchedProject.teamId) ?? null;
@@ -72,6 +80,7 @@ export default function TaskDetailPage() {
         setProject(fetchedProject);
         setTeam(matchedTeam);
         setTasks(projectTasks);
+        setImprovementPanel(confidenceDetail);
         setError(null);
 
         // Only admins get the status-override control, so only they need the
@@ -101,6 +110,15 @@ export default function TaskDetailPage() {
   function handleUpdate(updated: Task) {
     setTask(updated);
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    // M4 fix-round-1 (MED-4): re-fetch the Improvement panel's confidence
+    // detail after every task edit, same tolerant-failure posture as the
+    // initial load above (a failed refetch resolves to null rather than
+    // surfacing an error) -- otherwise the panel keeps showing the
+    // pre-edit score/findings/verdict forever, since nothing else here
+    // ever updates `improvementPanel`.
+    void getTaskConfidenceDetail(updated.id)
+      .catch(() => null)
+      .then((detail) => setImprovementPanel(detail));
   }
 
   const boardHref =
@@ -148,6 +166,7 @@ export default function TaskDetailPage() {
           requireDistinctReviewer={project.requireDistinctReviewer ?? false}
           isProjectAdmin={isProjectAdmin}
           workflowTransitions={workflowTransitions}
+          improvementPanel={improvementPanel}
           onUpdate={handleUpdate}
           onDelete={goToBoard}
           onClose={goToBoard}

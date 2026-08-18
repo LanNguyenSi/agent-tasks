@@ -1,4 +1,11 @@
-import type { TemplateData, TaskType, TaskTypeThresholds, QualityFinding } from "./confidence";
+import type {
+  TemplateData,
+  TaskType,
+  TaskTypeThresholds,
+  QualityFinding,
+  ThresholdSource,
+  TaskQualitySubscores,
+} from "./confidence";
 
 // TemplateData is owned by ./confidence (the scorer is its primary consumer);
 // re-export it so existing `import { TemplateData } from "../lib/api"`
@@ -634,6 +641,59 @@ export async function getTeamTasks(
 export async function getTask(taskId: string): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/tasks/${taskId}`);
   return data.task;
+}
+
+/**
+ * A single triggered risk modifier NAME (M3, task 8e88cfc0, landed on branch
+ * batch18/m3-risk-modifiers, commit 49b4afc). Verified against the real M3
+ * response shape (backend/src/routes/tasks.ts + backend/src/lib/confidence.ts
+ * on that branch, fix-round 1 of task 67526c1c): `triggeredRiskModifiers` is
+ * `RiskModifierName[]` — bare modifier names like `"touchesAuth"`,
+ * `"touchesDatabase"`, `"touchesPersonalData"`, `"productionImpact"` — NOT
+ * `{code, message}` objects (that shape was an unverified guess made before
+ * M3 landed and rendered as empty `<li>`s with a React key warning against
+ * the real payload). Kept as a bare `string` rather than importing the
+ * backend's exact 4-name union: the ImprovementPanel renders an
+ * unrecognized name tolerantly (falls back to the raw string via
+ * RISK_MODIFIER_LABELS) rather than failing to compile against a modifier
+ * name the backend adds later.
+ */
+export type TriggeredRiskModifier = string;
+
+/**
+ * The authoritative confidence detail returned by `GET /tasks/:id/instructions`
+ * (the `confidence` field of that response). Distinct from `CreateConfidence`
+ * below (a different endpoint, a different response shape, and computed at a
+ * different moment — task creation vs. "right now"): this one additionally
+ * carries `subscores`, `effectiveThreshold`/`thresholdSource`, and
+ * `inferredTaskType`, and it has no precomputed `nextActions` of its own —
+ * callers derive that from `findings` via `deriveNextActions` in
+ * `./confidence` (mirroring the backend's own derivation used by the
+ * endpoints that DO precompute it).
+ */
+export interface TaskConfidenceDetail {
+  score: number;
+  missing: string[];
+  threshold: number;
+  effectiveThreshold: number;
+  thresholdSource: ThresholdSource;
+  blocking: boolean;
+  subscores: TaskQualitySubscores;
+  findings: QualityFinding[];
+  inferredTaskType?: TaskType;
+  /** Optional/provisional — see TriggeredRiskModifier above. */
+  triggeredRiskModifiers?: TriggeredRiskModifier[];
+}
+
+/**
+ * Fetches only the `confidence` slice of the agent-instructions endpoint —
+ * the ImprovementPanel's data source. Non-critical for the task page: a
+ * caller should treat a rejected promise as "no panel today" rather than a
+ * page-breaking error (see the tasks/[id] page's use of `.catch(() => null)`).
+ */
+export async function getTaskConfidenceDetail(taskId: string): Promise<TaskConfidenceDetail> {
+  const data = await request<{ confidence: TaskConfidenceDetail }>(`/api/tasks/${taskId}/instructions`);
+  return data.confidence;
 }
 
 /**

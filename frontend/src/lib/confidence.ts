@@ -982,10 +982,8 @@ const REQUIRED_SIGNALS_BY_TYPE: Record<TaskType, RequiredSignal[]> = {
 // The subset of REQUIRED_SIGNALS_BY_TYPE codes that are genuinely NEW — i.e.
 // do NOT alias an existing universal MISS_FINDINGS code (see the "ALIASED"
 // vs "NEW" buckets in the header comment above). FAITHFUL MIRROR of the
-// backend export of the same name — kept here even though the frontend has
-// no deriveNextActions consumer today, so the two copies stay structurally
-// identical and this does not silently drift if a frontend consumer is
-// added later.
+// backend export of the same name; used by deriveNextActions below (task
+// 67526c1c, M4: Improvement panel), the first frontend consumer.
 const UNIVERSAL_FINDING_CODES: ReadonlySet<string> = new Set(
   Object.values(MISS_FINDINGS).map((f) => f.code),
 );
@@ -995,6 +993,52 @@ export const REQUIRED_SIGNAL_ONLY_CODES: ReadonlySet<string> = new Set(
     .map((signal) => signal.code)
     .filter((code) => !UNIVERSAL_FINDING_CODES.has(code)),
 );
+
+/**
+ * Turn QualityFindings into a short, prioritised list of human-readable next
+ * actions. Blocking findings come first, then warnings. Deduplicated by
+ * suggestion text; capped at 5 so the response stays scannable.
+ *
+ * Within a severity tier, a UNIVERSAL finding (title/description/goal/AC/
+ * scope/outOfScope/dependencies/risk/agentPrompt — including a per-taskType
+ * required-signal finding that ALIASES one of those, see
+ * REQUIRED_SIGNALS_BY_TYPE's header comment) sorts ahead of a genuinely
+ * type-specific prose finding (`REQUIRED_SIGNAL_ONLY_CODES`, M2). Without
+ * this, a typed task with many missing required signals can crowd the
+ * universal scope/agentPrompt/AC guidance entirely out of the 5-item cap
+ * below, even though fixing the universal gaps is the more foundational
+ * advice.
+ *
+ * FAITHFUL MIRROR of deriveNextActions in
+ * backend/src/services/claim-policy-evaluator.ts; keep in sync. The backend
+ * already returns a precomputed `nextActions[]` on some responses (task
+ * create, claim policy), but GET /tasks/:id/instructions returns only
+ * `findings[]` — this lets the ImprovementPanel derive the same list
+ * client-side from that response without a backend change.
+ */
+export function deriveNextActions(findings: QualityFinding[]): string[] {
+  const SEVERITY_RANK: Record<QualityFinding["severity"], number> = {
+    blocking: 0,
+    warning: 1,
+    info: 2,
+  };
+  const typeSpecificRank = (f: QualityFinding) => (REQUIRED_SIGNAL_ONLY_CODES.has(f.code) ? 1 : 0);
+  const sorted = [...findings].sort((a, b) => {
+    const severityDiff = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
+    if (severityDiff !== 0) return severityDiff;
+    return typeSpecificRank(a) - typeSpecificRank(b);
+  });
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const f of sorted) {
+    if (!f.suggestion) continue;
+    if (seen.has(f.suggestion)) continue;
+    seen.add(f.suggestion);
+    out.push(f.suggestion);
+    if (out.length >= 5) break;
+  }
+  return out;
+}
 
 // Missing required signal -> a `blocking` finding, code `missing_<signal-name>`.
 // `taskType` is the EXPLICIT `templateData.taskType` only (never
