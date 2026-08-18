@@ -662,6 +662,14 @@ export const openApiSpec = {
             schema: { type: "string", format: "uuid" },
           },
           {
+            name: "externalRef",
+            in: "query",
+            required: false,
+            schema: { type: "string", maxLength: 255 },
+            description:
+              "Exact-match filter on the task's externalRef, scoped to this project (no partial or case-insensitive matching). Rejected with 400 when longer than 255 characters — the same cap `CreateTaskRequest.externalRef` enforces at create time, so no stored value could ever exceed it and a longer filter could never match anything. (An earlier version of this endpoint silently dropped over-length values instead, which returned this project's *unfiltered* task list — indistinguishable from a filtered response to the caller.)",
+          },
+          {
             name: "sort",
             in: "query",
             required: false,

@@ -702,6 +702,19 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
   }
 
   const externalRefFilter = c.req.query("externalRef");
+  // Hardened (task f84e58b4): reject rather than silently drop a filter
+  // value over 255 chars. CreateTaskRequest.externalRef caps stored values
+  // at 255 (docs.ts), so a longer filter could never match anything — the
+  // old silent-drop fell through to the *unfiltered* project task list,
+  // which looks identical to a filtered response to the caller. 400 is safe
+  // for project-pilot's forge-import 409 lookup: it truncates its
+  // externalRef key to 255 chars before querying (never sends >255).
+  if (externalRefFilter !== undefined && externalRefFilter.length > 255) {
+    return c.json(
+      { error: "bad_request", message: "externalRef must be at most 255 characters" },
+      400,
+    );
+  }
   const detail = c.req.query("detail");
 
   const statuses = parseCsv(c.req.query("status"));
@@ -775,7 +788,8 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
   if (labels.length > 0) {
     where.labels = { hasSome: labels };
   }
-  if (externalRefFilter && externalRefFilter.length <= 255) {
+  if (externalRefFilter) {
+    // Length already validated (<=255) above; anything longer 400'd already.
     where.externalRef = externalRefFilter;
   }
   if (statuses.length > 0) {

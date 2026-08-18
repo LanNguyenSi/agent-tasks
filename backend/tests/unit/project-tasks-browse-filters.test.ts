@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
 import type { Actor, AgentActor } from "../../src/types/auth.js";
+import { openApiSpec } from "../../src/routes/docs.js";
 
 const prismaMocks = vi.hoisted(() => ({
   taskFindMany: vi.fn(),
@@ -217,21 +218,54 @@ describe("GET /projects/:projectId/tasks — limit clamping", () => {
   });
 });
 
-describe("GET /projects/:projectId/tasks — externalRef filter (pre-existing behavior)", () => {
-  it("filters by exact externalRef match", async () => {
+describe("GET /projects/:projectId/tasks — externalRef filter", () => {
+  it("filters by exact externalRef match, scoped to the project", async () => {
     await makeApp().request(`/projects/${PROJECT_ID}/tasks?externalRef=my-key`);
-    expect(lastFindManyArgs().where).toMatchObject({
+    expect(lastFindManyArgs().where).toEqual({
+      projectId: PROJECT_ID,
       externalRef: "my-key",
     });
   });
 
-  it("silently ignores externalRef longer than 255 chars", async () => {
-    // Documented quirk preserved from the original implementation: prevents
-    // unbounded string columns from hitting the DB. Worth pinning so we
-    // notice if anyone tightens it to a 400.
+  it("accepts externalRef at exactly the 255-char cap", async () => {
+    const atCap = "a".repeat(255);
+    await makeApp().request(`/projects/${PROJECT_ID}/tasks?externalRef=${atCap}`);
+    expect(lastFindManyArgs().where).toMatchObject({ externalRef: atCap });
+  });
+
+  it("rejects externalRef longer than 255 chars with 400 (task f84e58b4)", async () => {
+    // Hardened from the original silent-drop behavior: a caller passing a
+    // >255-char value used to get back the project's *unfiltered* task list
+    // while believing it had been filtered. project-pilot's forge-import 409
+    // lookup already truncates its externalRef key to 255 chars before
+    // querying (project-pilot backend/src/services/forge-task-migration.ts),
+    // so it never sends a value long enough to trip this and stays
+    // compatible with the 400.
     const tooLong = "a".repeat(256);
-    await makeApp().request(`/projects/${PROJECT_ID}/tasks?externalRef=${tooLong}`);
-    expect(lastFindManyArgs().where.externalRef).toBeUndefined();
+    const res = await makeApp().request(`/projects/${PROJECT_ID}/tasks?externalRef=${tooLong}`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toMatch(/externalRef/);
+    expect(prismaMocks.taskFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /projects/:projectId/tasks — OpenAPI documents externalRef", () => {
+  // Drift guard: this route parses `externalRef` by hand (no Zod schema for
+  // its query params, unlike CreateTaskRequest/RespecTaskRequest), so there
+  // is no existing generic parity test covering it. Pin the OpenAPI entry
+  // directly so removing/mis-documenting it fails CI (task f84e58b4).
+  it("lists externalRef as a query parameter capped at 255 chars", () => {
+    const params = openApiSpec.paths["/api/projects/{projectId}/tasks"].get.parameters as Array<{
+      name: string;
+      in: string;
+      schema?: { type?: string; maxLength?: number };
+    }>;
+    const externalRefParam = params.find((p) => p.name === "externalRef");
+    expect(externalRefParam).toBeDefined();
+    expect(externalRefParam?.in).toBe("query");
+    expect(externalRefParam?.schema).toMatchObject({ type: "string", maxLength: 255 });
   });
 });
 
