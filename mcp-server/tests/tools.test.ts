@@ -1772,9 +1772,10 @@ describe("buildTools", () => {
     expect(parsed.error.allowedNext).toEqual(["project_tasks"]);
   });
 
-  // ── task_create: projectSlug addressing (rc-v1-C006) ─────────────────────
+  // ── task_create: project/projectId/projectSlug addressing (rc-v1-C006,
+  // widened to a unified `project` field) ──────────────────────────────────
 
-  describe("task_create projectSlug addressing", () => {
+  describe("task_create project addressing", () => {
     it("passing both projectId and projectSlug is a project_addressing_conflict teaching error, no network call made", async () => {
       let captured = "";
       try {
@@ -1800,7 +1801,7 @@ describe("buildTools", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("passing neither projectId nor projectSlug is a project_addressing_conflict teaching error mentioning projects_list only as the legacy-flag option, no network call made", async () => {
+    it("passing none of project, projectId, or projectSlug is a project_addressing_conflict teaching error mentioning projects_list only as the legacy-flag option, no network call made", async () => {
       let captured = "";
       try {
         await tool("task_create").handler({ title: "t" } as never);
@@ -1813,13 +1814,130 @@ describe("buildTools", () => {
         ok: false,
         error: {
           code: "project_addressing_conflict",
-          message: "neither projectId nor projectSlug was provided; pass exactly one",
+          message: "none of project, projectId, or projectSlug was provided; pass exactly one",
           recipe:
-            "ask the operator for this project's slug or id (or, with AGENT_TASKS_MCP_LEGACY=1 set, call projects_list), then resubmit task_create with projectId or projectSlug set",
+            "ask the operator for this project's slug or id (or, with AGENT_TASKS_MCP_LEGACY=1 set, call projects_list), then resubmit task_create with project, projectId, or projectSlug set",
           allowedNext: ["task_create"],
         },
       });
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("passing project and projectId is a project_addressing_conflict teaching error naming both fields, no network call made", async () => {
+      let captured = "";
+      try {
+        await tool("task_create").handler({
+          project: "agent-tasks",
+          projectId: "22222222-2222-2222-2222-222222222222",
+          title: "t",
+        } as never);
+        throw new Error("expected a throw");
+      } catch (e) {
+        captured = e instanceof Error ? e.message : String(e);
+      }
+      const parsed = JSON.parse(captured);
+      expect(parsed).toEqual({
+        ok: false,
+        error: {
+          code: "project_addressing_conflict",
+          message: "project and projectId were both provided; pass exactly one",
+          recipe: "resubmit task_create with only one of project or projectId",
+          allowedNext: ["task_create"],
+        },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("passing project and projectSlug is a project_addressing_conflict teaching error naming both fields, no network call made", async () => {
+      let captured = "";
+      try {
+        await tool("task_create").handler({
+          project: "agent-tasks",
+          projectSlug: "other-project",
+          title: "t",
+        } as never);
+        throw new Error("expected a throw");
+      } catch (e) {
+        captured = e instanceof Error ? e.message : String(e);
+      }
+      const parsed = JSON.parse(captured);
+      expect(parsed).toEqual({
+        ok: false,
+        error: {
+          code: "project_addressing_conflict",
+          message: "project and projectSlug were both provided; pass exactly one",
+          recipe: "resubmit task_create with only one of project or projectSlug",
+          allowedNext: ["task_create"],
+        },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("a UUID passed as project skips slug resolution and creates the task directly", async () => {
+      fetchMock.mockResolvedValueOnce(
+        ok({ task: { id: "t1", status: "open" }, confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK" } }),
+      );
+      const result = await tool("task_create").handler({
+        project: "00000000-0000-0000-0000-000000000001",
+        title: "New task",
+      } as never);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe(
+        "https://example.test/api/projects/00000000-0000-0000-0000-000000000001/tasks",
+      );
+      expect(JSON.parse(init.body)).toEqual({ title: "New task" });
+      expect(result).toEqual({
+        ok: true,
+        task: { id: "t1", status: "open" },
+        confidence: 90,
+        next: ["task_start to begin work on this task"],
+      });
+    });
+
+    it("a slug passed as project resolves to the project id and creates the task there, returning the usual receipt", async () => {
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+        .mockResolvedValueOnce(
+          ok({ task: { id: "t1", status: "open" }, confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK" } }),
+        );
+      const result = await tool("task_create").handler({ project: "agent-tasks", title: "New task" } as never);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://example.test/api/projects/by-slug/agent-tasks",
+      );
+      const [url, init] = fetchMock.mock.calls[1];
+      expect(url).toBe("https://example.test/api/projects/p1/tasks");
+      expect(JSON.parse(init.body)).toEqual({ title: "New task" });
+      expect(result).toEqual({
+        ok: true,
+        task: { id: "t1", status: "open" },
+        confidence: 90,
+        next: ["task_start to begin work on this task"],
+      });
+    });
+
+    it("an unresolvable project slug maps to the unknown_project_slug teaching error, mentioning projects_list only as the legacy-flag option, and never reaches the create endpoint", async () => {
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify({ error: "not_found", message: "Resource not found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      let captured = "";
+      try {
+        await tool("task_create").handler({ project: "ghost-project", title: "t" } as never);
+        throw new Error("expected a throw");
+      } catch (e) {
+        captured = e instanceof Error ? e.message : String(e);
+      }
+      const parsed = JSON.parse(captured);
+      expect(parsed.error.code).toBe("unknown_project_slug");
+      expect(parsed.error.message).toContain("ghost-project");
+      expect(parsed.error.recipe).toContain("projects_list");
+      expect(parsed.error.recipe).toContain("AGENT_TASKS_MCP_LEGACY=1");
+      expect(parsed.error.allowedNext).toEqual(["task_create"]);
+      expect(fetchMock).toHaveBeenCalledTimes(1); // only the failed by-slug lookup
     });
 
     it("an unresolvable projectSlug maps to the unknown_project_slug teaching error, mentioning projects_list only as the legacy-flag option, and never reaches the create endpoint", async () => {

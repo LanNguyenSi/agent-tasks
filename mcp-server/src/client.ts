@@ -369,6 +369,23 @@ export class AgentTasksClient {
     return this.withResolvedProjectSlug(slug, (projectId) => this.createTask(projectId, input));
   }
 
+  // task_create's unified `project` field (mirrors project_tasks's own
+  // `project`, rc-v1-C006's listProjectTasks polymorphic param): accepts a
+  // slug OR a UUID in one field instead of the separate projectId/
+  // projectSlug pair. Same UUID-passthrough check as listProjectTasks
+  // (isUuid), same TTL-cached resolver as createTaskByProjectSlug for the
+  // slug branch -- not a second resolver. Throws ProjectSlugNotFoundError
+  // on a fresh (non-cached) 404 -- see withResolvedProjectSlug.
+  createTaskByProject(project: string, input: CreateTaskInput) {
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        project,
+      );
+    return isUuid
+      ? this.createTask(project, input)
+      : this.createTaskByProjectSlug(project, input);
+  }
+
   claimTask(taskId: string) {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/claim`);
   }

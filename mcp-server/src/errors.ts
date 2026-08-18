@@ -866,17 +866,29 @@ function lowConfidenceError(body: BackendErrorBody, message: string): TeachingEr
 // catalog entry #8 (resultMustBePlainStringError) — a client-side guard
 // checked before, or in place of, any network call.
 //
-// project_addressing_conflict covers BOTH directions of the same "exactly
-// one of projectId/projectSlug" requirement, not just "both provided":
-// task_create's own client-side guard (tools.ts) also rejects the mirror-
-// image mistake, neither field set. That case used to throw a bare,
-// unteaching Error (rc-v1-C006 round-2 review, LOW) instead of going
+// project_addressing_conflict covers every direction of the same "exactly
+// one of project/projectId/projectSlug" requirement, not just "both
+// provided": task_create's own client-side guard (tools.ts) also rejects
+// the mirror-image mistake, no field set at all. That case used to throw a
+// bare, unteaching Error (rc-v1-C006 round-2 review, LOW) instead of going
 // through this catalog. Rather than mint a second, near-duplicate code for
-// what is really the same "exactly one" constraint violated the other way,
-// `reason` selects direction-specific message/recipe/allowedNext under the
-// SAME code: "both" needs no extra corrective (the caller already named
-// both candidates, it just needs to pick one), but "neither" used to point
-// at projects_list as the self-service way to find the project.
+// what is really the same "exactly one" constraint violated a different
+// way, `reason` selects a direction-specific message/recipe/allowedNext
+// under the SAME code: any "both provided" pairing needs no extra
+// corrective (the caller already named both candidates, it just needs to
+// pick one), but "neither" used to point at projects_list as the
+// self-service way to find the project.
+//
+// task_create's own unified `project` field (added alongside project_tasks's
+// pre-existing one) widens the "exactly one" constraint from a pair to a
+// triple: `project` conflicting with EITHER projectId or projectSlug is its
+// own reason (project_and_projectId / project_and_projectSlug) rather than
+// folded into "both_provided", so the message names the two fields that
+// actually collided instead of a generic "more than one". projectId and
+// projectSlug conflicting with EACH OTHER keeps the original "both_provided"
+// reason and wording unchanged (byte-identical for any caller not using the
+// new field). "neither_provided"'s message/recipe now names all three
+// fields, since a caller who provides none of them can now choose any one.
 //
 // rc-v1-C007 pruned projects_list out of the DEFAULT tool registration
 // (tools.ts's LEGACY_VERB_NAMES); it is opt-in only via
@@ -891,13 +903,33 @@ function lowConfidenceError(body: BackendErrorBody, message: string): TeachingEr
 // operator" fallback.
 export function projectAddressingConflictError(
   verb: string,
-  reason: "both_provided" | "neither_provided" = "both_provided",
+  reason:
+    | "both_provided"
+    | "neither_provided"
+    | "project_and_projectId"
+    | "project_and_projectSlug" = "both_provided",
 ): TeachingError {
   if (reason === "neither_provided") {
     return buildTeachingError({
       code: "project_addressing_conflict",
-      message: "neither projectId nor projectSlug was provided; pass exactly one",
-      recipe: `ask the operator for this project's slug or id (or, with AGENT_TASKS_MCP_LEGACY=1 set, call projects_list), then resubmit ${verb} with projectId or projectSlug set`,
+      message: "none of project, projectId, or projectSlug was provided; pass exactly one",
+      recipe: `ask the operator for this project's slug or id (or, with AGENT_TASKS_MCP_LEGACY=1 set, call projects_list), then resubmit ${verb} with project, projectId, or projectSlug set`,
+      allowedNext: [verb],
+    });
+  }
+  if (reason === "project_and_projectId") {
+    return buildTeachingError({
+      code: "project_addressing_conflict",
+      message: "project and projectId were both provided; pass exactly one",
+      recipe: `resubmit ${verb} with only one of project or projectId`,
+      allowedNext: [verb],
+    });
+  }
+  if (reason === "project_and_projectSlug") {
+    return buildTeachingError({
+      code: "project_addressing_conflict",
+      message: "project and projectSlug were both provided; pass exactly one",
+      recipe: `resubmit ${verb} with only one of project or projectSlug`,
       allowedNext: [verb],
     });
   }
