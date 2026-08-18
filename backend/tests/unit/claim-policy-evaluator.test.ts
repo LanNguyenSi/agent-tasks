@@ -237,9 +237,10 @@ describe("ClaimPolicyEvaluator.evaluate", () => {
   // M2 (task f186b88b): the WARN-mode shadow audit is the one payload of the
   // three that was never unit-tested for the score/threshold shape at all —
   // pin `thresholdSource` here too, using a distinct "taskType" source value
-  // (not the "project" every other test in this file uses) so this actually
-  // exercises the field being PLUMBED THROUGH, not just echoing a hardcoded
-  // literal that happens to match by coincidence.
+  // (not the "project" every other test in this file uses). Scope honesty:
+  // this exercises the evaluator echoing its INPUT into the payload; the
+  // gate->evaluator plumbing itself is pinned end-to-end in
+  // confidence-gate.audit.test.ts.
   it("WARN mode: a would-block claim shadow-logs task.claim_would_block_shadow with the resolved thresholdSource", () => {
     const decision = claimPolicyEvaluator.evaluate(
       makeInput({

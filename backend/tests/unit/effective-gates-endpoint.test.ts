@@ -160,15 +160,24 @@ describe("GET /api/projects/:id returns effectiveGates", () => {
         taskTypeThresholds: Record<string, { effectiveThreshold: number; thresholdSource: string }>;
       };
     };
-    expect(body.taskCreation.enforcementMode).toBe("WARN");
-    expect(body.taskCreation.confidenceThreshold).toBe(60);
-    expect(body.taskCreation.templateModeEnabled).toBe(false);
-    expect(body.taskCreation.requiredFields).toEqual([]);
-    // Every type falls through to the flat confidenceThreshold — no
-    // taskTypeThresholds override was set on BASE_PROJECT.
-    expect(body.taskCreation.taskTypeThresholds.bugfix).toEqual({
-      effectiveThreshold: 60,
-      thresholdSource: "project",
+    // Full-shape pin: an accidentally added field in the taskCreation block
+    // must fail here, not ship silently.
+    const projectLayer = { effectiveThreshold: 60, thresholdSource: "project" };
+    expect(body.taskCreation).toEqual({
+      enforcementMode: "WARN",
+      confidenceThreshold: 60,
+      templateModeEnabled: false,
+      requiredFields: [],
+      // Every type falls through to the flat confidenceThreshold — no
+      // taskTypeThresholds override was set on BASE_PROJECT.
+      taskTypeThresholds: {
+        feature: projectLayer,
+        bugfix: projectLayer,
+        refactoring: projectLayer,
+        docs: projectLayer,
+        security: projectLayer,
+        migration: projectLayer,
+      },
     });
     expect(body.taskCreation.taskTypeThresholds.security).toEqual({
       effectiveThreshold: 60,
@@ -286,11 +295,12 @@ describe("GET /api/projects/:id/effective-gates", () => {
     ]);
   });
 
-  // M2 (task f186b88b): this endpoint's Prisma `select` previously omitted
-  // taskTypeThresholds, so describeTaskCreation always fell back to the
-  // project/global layer here even when the project HAD a per-type override
-  // — an agent calling projects_get_effective_gates before task_create never
-  // saw the real bar a typed task would be held to. Pins the select fix.
+  // M2 (task f186b88b): the endpoint's Prisma `select` must carry
+  // taskTypeThresholds or describeTaskCreation falls back to the
+  // project/global layer for every type on this endpoint. The select-shape
+  // assertion below is the actual regression pin: the mocked findUnique
+  // ignores `select`, so the response assertions alone cannot catch a
+  // dropped key.
   it("surfaces a per-task-type confidenceThreshold override (select fix)", async () => {
     prismaMocks.projectFindUnique.mockResolvedValue({
       teamId: "team-1",
@@ -308,6 +318,11 @@ describe("GET /api/projects/:id/effective-gates", () => {
       `/projects/${PROJECT_ID}/effective-gates`,
     );
     expect(res.status).toBe(200);
+    expect(prismaMocks.projectFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ taskTypeThresholds: true }),
+      }),
+    );
     const body = (await res.json()) as {
       taskCreation: {
         taskTypeThresholds: Record<string, { effectiveThreshold: number; thresholdSource: string }>;

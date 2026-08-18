@@ -173,6 +173,10 @@ describe("resolveEffectiveThreshold — cross-package parity (backend vs fronten
     { name: "null taskTypeThresholds -> project layer", taskType: "security", taskTypeThresholds: null, projectThreshold: 75 },
     { name: "corrupted override value (out of range) -> falls through to project layer", taskType: "security", taskTypeThresholds: { security: 999 }, projectThreshold: 60 },
     { name: "prototype-chain key ('constructor') never resolves as an override", taskType: "constructor", taskTypeThresholds: { security: 90 }, projectThreshold: 60 },
+    { name: "prototype-chain key ('__proto__') never resolves as an override", taskType: "__proto__", taskTypeThresholds: { security: 90 }, projectThreshold: 60 },
+    { name: "null project threshold -> global default", taskType: "docs", taskTypeThresholds: { security: 90 }, projectThreshold: null },
+    { name: "non-numeric override value (string) -> falls through to project layer", taskType: "security", taskTypeThresholds: { security: "90" }, projectThreshold: 60 },
+    { name: "NaN override value -> falls through to project layer", taskType: "security", taskTypeThresholds: { security: Number.NaN }, projectThreshold: 60 },
     { name: "project threshold missing entirely (undefined) with no override -> global default", taskType: "bugfix", taskTypeThresholds: undefined, projectThreshold: undefined },
   ];
 
