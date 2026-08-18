@@ -156,7 +156,19 @@ export async function evaluateConfidenceGate(
         );
         void logAuditEvent({
           action: "task.claim_confidence_recorded",
-          actorId: actor.tokenId,
+          // HIGH-1 (batch 18 review): AuditLog.actorId FKs to users(id), not
+          // to an agent token id (schema.prisma). `actor` here is narrowed to
+          // AgentActor by the `actor.type !== "agent"` guard at the top of
+          // this function, so the repo-wide idiom used at 33 sites in
+          // routes/tasks.ts (`actor.type === "human" ? actor.userId :
+          // undefined`) collapses to `undefined` — writing `actor.tokenId`
+          // instead previously violated the FK, and logAuditEvent silently
+          // swallows the resulting 23503, so this row NEVER persisted for an
+          // agent claim. See the matching fix + doc comment on
+          // ClaimAuditEvent.actorId in claim-policy-evaluator.ts (the same
+          // bug, same fix, in the M3 sibling events). The token identity is
+          // preserved in payload.actorTokenId instead.
+          actorId: undefined,
           projectId: task.projectId,
           taskId: task.id,
           payload: {
@@ -166,6 +178,7 @@ export async function evaluateConfidenceGate(
             triggeredRiskModifiers,
             route,
             actorType: actor.type,
+            actorTokenId: actor.tokenId,
           },
         });
       }

@@ -130,8 +130,52 @@ describe("GET /projects/:id/telemetry/confidence", () => {
     );
   });
 
+  // MED-5 (batch 18 review): the previous version of the test above only
+  // asserted `gte: expect.any(Date)`, which passes for ANY Date regardless
+  // of its value — an off-by-one in CONFIDENCE_TELEMETRY_PERIOD_DAYS (e.g.
+  // "7d" resolving to 8 days) survived undetected. This captures the actual
+  // Date passed to both prisma calls and checks its distance from
+  // Date.now() against the period's real day count, with slack only for the
+  // request's own wall-clock round trip.
+  it("periodStart is Date.now() minus the period's own day count for 7d and 90d, not an off-by-one", async () => {
+    const ROUND_TRIP_SLACK_MS = 5_000;
+    const PERIOD_DAYS: Record<string, number> = { "7d": 7, "90d": 90 };
+
+    for (const period of ["7d", "90d"]) {
+      prismaMocks.confidenceTelemetryFindMany.mockClear();
+      prismaMocks.auditLogFindMany.mockClear();
+
+      const before = Date.now();
+      const res = await makeApp(HUMAN_ACTOR).request(`/projects/${PROJECT_ID}/telemetry/confidence?period=${period}`);
+      const after = Date.now();
+      expect(res.status).toBe(200);
+
+      const expectedMs = PERIOD_DAYS[period]! * 24 * 60 * 60 * 1000;
+
+      const telemetryCall = prismaMocks.confidenceTelemetryFindMany.mock.calls.at(-1)?.[0] as {
+        where: { updatedAt: { gte: Date } };
+      };
+      const auditCall = prismaMocks.auditLogFindMany.mock.calls.at(-1)?.[0] as {
+        where: { createdAt: { gte: Date } };
+      };
+      const telemetryPeriodStartMs = telemetryCall.where.updatedAt.gte.getTime();
+      const auditPeriodStartMs = auditCall.where.createdAt.gte.getTime();
+
+      // Both prisma calls must use the SAME periodStart.
+      expect(auditPeriodStartMs).toBe(telemetryPeriodStartMs);
+      // periodStart must sit within [before, after] minus expectedMs, with
+      // slack only for the request's own execution time — an off-by-one day
+      // (86_400_000ms) blows straight through a 5s tolerance window.
+      expect(before - telemetryPeriodStartMs).toBeGreaterThanOrEqual(expectedMs - ROUND_TRIP_SLACK_MS);
+      expect(after - telemetryPeriodStartMs).toBeLessThanOrEqual(expectedMs + ROUND_TRIP_SLACK_MS);
+    }
+  });
+
   it("returns fixture-driven aggregates end to end, pinning the score-band boundaries on both sides", async () => {
     prismaMocks.confidenceTelemetryFindMany.mockResolvedValue([
+      // HIGH-2 (batch 18 review): "abandoned" exercises a finalStatus
+      // production cannot reach today (see services/confidence-telemetry.ts's
+      // header comment) — used here to pin the aggregator's non-done branch.
       { scoreAtClaim: 59, finalStatus: "abandoned", bounceBackCount: 0 }, // just below the 60-70 band
       { scoreAtClaim: 60, finalStatus: "done", bounceBackCount: 1 }, // lower edge of 60-70 (inclusive)
       { scoreAtClaim: 69, finalStatus: "done", bounceBackCount: 0 }, // still inside 60-70

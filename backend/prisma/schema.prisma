@@ -605,20 +605,35 @@ model AuditLog {
 //
 // COLLECT FIRST, CALIBRATE LATER. This table only accumulates the four
 // signals the overlay's "Milestone 5" names as inputs to a FUTURE,
-// deliberately separate weight-tuning pass:
+// deliberately separate weight-tuning pass. Only THREE of the four are
+// aggregated by GET /projects/:id/telemetry/confidence today (MED-3, batch
+// 18 review):
 //   1. Review bounce-backs      -> bounceBackCount (task_finish outcome
 //      request_changes on this task, cumulative across the whole rework loop)
-//   2. Agent clarification requests -> intentionally NOT a column here. It is
-//      already fully queryable from the existing `Comment` table
-//      (authorAgentId + the task's claim history) without new instrumentation
-//      — see services/confidence-telemetry.ts's header comment.
+//   2. Agent clarification requests -> intentionally NOT a column here, but
+//      NOT because it is a free read off the existing `Comment` table as a
+//      prior version of this comment claimed (corrected MED-3): `Task`
+//      carries only the CURRENT claim and every terminal transition nulls
+//      it, so attributing a `Comment` to its author's claim window needs a
+//      join against the AuditLog claim-history trail, not a plain read.
+//      Real work, filed as a follow-up — see
+//      services/confidence-telemetry.ts's header comment for the full
+//      explanation.
 //   3. Override frequency       -> read directly off AuditLog's
 //      `task.claim_override_used` rows per project per week; `overrideUsed`
 //      here is a per-task convenience flag (was this task's claim EVER
 //      force-overridden), not the week-bucketed signal itself.
 //   4. Low-score success / high-score failure -> `scoreAtClaim` cross-
-//      referenced with `finalStatus` (done vs. an abandoned/non-done
-//      terminal status) by GET /projects/:id/telemetry/confidence.
+//      referenced with `finalStatus` by GET /projects/:id/telemetry/confidence.
+//      HIGH-2 (batch 18 review): `finalStatus` can only ever be `"done"` in
+//      production today — routes/workflows.ts's `FIXED_TERMINAL_STATES`
+//      locks the terminal-state set to `{"done"}`, and no verb writes any
+//      other terminal disposition (`task_abandon` resets `status` to the
+//      workflow's `initialState`, it does not write `"abandoned"`). Until a
+//      non-done terminal disposition exists, `highScoreFailures` is
+//      STRUCTURALLY 0 and `doneRateByScoreBand`'s `doneRate` is
+//      STRUCTURALLY 1.0 for every populated band — not evidence of a
+//      well-calibrated gate, just the only reachable outcome today.
 // No column here feeds an automatic threshold/weight adjustment — that is
 // explicitly out of scope for this milestone (a separate, deliberately
 // decoupled follow-up reads this table once enough volume exists).
@@ -633,7 +648,13 @@ model AuditLog {
 // so recomputing would silently score the WRONG snapshot. All three fields
 // stay null when no such audit row exists for the task (a human claim, or a
 // project with enforcementMode=OFF — the confidence gate never evaluates
-// either, by design, so there is nothing to snapshot).
+// either, by design, so there is nothing to snapshot). MED-7 (batch 18
+// review): reading AuditLog back this way is a deliberate, documented
+// exception to this codebase's general "audit is never load-bearing" policy
+// (docs/domain-model.md, docs/events.md) — see
+// services/confidence-telemetry.ts's header comment for the chosen
+// documentation-only fix and the follow-up (snapshot inside the claim
+// transaction instead of reading it back).
 //
 // Snapshot writes are BEST-EFFORT and fail OPEN: a telemetry write failure
 // is logged and swallowed, never allowed to block the task_finish transition
@@ -646,11 +667,15 @@ model ConfidenceTelemetry {
   effectiveThreshold Int?
   bounceBackCount    Int      @default(0)
   overrideUsed       Boolean  @default(false)
-  // Terminal `task.status` at the last snapshot write (e.g. "done", or a
-  // custom workflow's terminal state name). Null until the task actually
-  // reaches a terminal review-approve transition; a task that is only ever
-  // bounced back (request_changes) has a row with bounceBackCount > 0 and
-  // finalStatus still null.
+  // Terminal `task.status` at the last snapshot write. LOW-9 (batch 18
+  // review): the state vocabulary is server-side LOCKED (routes/workflows.ts
+  // FIXED_STATE_NAMES / FIXED_TERMINAL_STATES) — there is no such thing as a
+  // "custom workflow's terminal state name" (a prior version of this comment
+  // claimed there was); the only value this column can hold in production
+  // today is `"done"`. Null until the task actually reaches a terminal
+  // review-approve transition; a task that is only ever bounced back
+  // (request_changes) has a row with bounceBackCount > 0 and finalStatus
+  // still null.
   finalStatus        String?
   // Echoes templateData.taskType at snapshot time (task_type semantics are
   // stable once set; not re-validated here — same unvalidated-Json read

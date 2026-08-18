@@ -12,6 +12,7 @@
  *     failure can never block the task_finish transition it rides with.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Prisma } from "@prisma/client";
 
 const prismaMocks = vi.hoisted(() => ({
   confidenceTelemetryUpsert: vi.fn(),
@@ -78,6 +79,16 @@ describe("computeConfidenceTelemetryAggregates — fixture-driven", () => {
   // still-in-flight (no finalStatus) row to prove it is excluded from
   // doneRateByScoreBand/lowScoreSuccesses/highScoreFailures but still counted
   // in bounceBackByScoreBand.
+  //
+  // HIGH-2 (batch 18 review): the "abandoned" rows below exercise a
+  // finalStatus this pure aggregator must handle correctly, but which
+  // production cannot actually produce today — routes/workflows.ts locks
+  // the terminal-state set to {"done"} and no verb writes any other
+  // terminal disposition (task_abandon resets status to the workflow's
+  // initialState, it does not write "abandoned"). This is deliberate
+  // read-side support ahead of that write-path follow-up, not a claim that
+  // highScoreFailures is non-zero in practice today (see
+  // services/confidence-telemetry.ts's header comment).
   const rows: ConfidenceTelemetryRow[] = [
     // low band (< LOW_SCORE_MAX=60): one success (counts toward lowScoreSuccesses), one failure
     { scoreAtClaim: 55, finalStatus: DONE_STATUS, bounceBackCount: 2 },
@@ -166,6 +177,41 @@ describe("computeConfidenceTelemetryAggregates — fixture-driven", () => {
   });
 });
 
+// MED-4 (batch 18 review): the fixture-driven suite above never placed a
+// row at the EXACT classification boundary (score === HIGH_SCORE_MIN=90, or
+// score === LOW_SCORE_MAX=60), so a `>=` -> `>` mutant on the highScoreFailures
+// filter (or a `<` -> `<=` mutant on the lowScoreSuccesses filter) survived —
+// 92/58 sit strictly inside their bands either way the comparison operator
+// reads. Isolated fixtures below pin both operators directly at the boundary.
+describe("computeConfidenceTelemetryAggregates — score classification boundary pins (MED-4)", () => {
+  // HIGH-2 (batch 18 review): as in the fixture-driven suite above, the
+  // "abandoned" finalStatus below exercises a state production cannot reach
+  // today (see services/confidence-telemetry.ts's header comment) — used
+  // here purely to pin the aggregator's own boundary comparison, not as a
+  // claim that highScoreFailures is non-zero in practice.
+  it("HIGH_SCORE_MIN (90) is an INCLUSIVE lower bound: exactly 90 + non-done counts as a high-score failure, exactly 90 + done does not", () => {
+    const rows: ConfidenceTelemetryRow[] = [
+      { scoreAtClaim: 90, finalStatus: "abandoned", bounceBackCount: 0 },
+      { scoreAtClaim: 90, finalStatus: DONE_STATUS, bounceBackCount: 0 },
+    ];
+    const aggregates = computeConfidenceTelemetryAggregates(rows, []);
+    expect(aggregates.highScoreFailures).toBe(1);
+    // Both rows land in the "90-100" band (never "80-90") — a scoreBand
+    // boundary mutant that misassigns 90 would surface here as a wrong band
+    // label or a taskCount split across two bands.
+    expect(aggregates.doneRateByScoreBand).toEqual([{ band: "90-100", taskCount: 2, doneRate: 0.5 }]);
+  });
+
+  it("LOW_SCORE_MAX (60) is an EXCLUSIVE upper bound: 59 + done counts as a low-score success, exactly 60 + done does not", () => {
+    const rows: ConfidenceTelemetryRow[] = [
+      { scoreAtClaim: 59, finalStatus: DONE_STATUS, bounceBackCount: 0 },
+      { scoreAtClaim: 60, finalStatus: DONE_STATUS, bounceBackCount: 0 },
+    ];
+    const aggregates = computeConfidenceTelemetryAggregates(rows, []);
+    expect(aggregates.lowScoreSuccesses).toBe(1);
+  });
+});
+
 describe("recordBounceBack / recordTerminalSnapshot — fail-open contract", () => {
   it("recordBounceBack swallows a DB error and logs it, never throws", async () => {
     prismaMocks.auditLogFindFirst.mockRejectedValue(new Error("db unreachable"));
@@ -227,5 +273,78 @@ describe("recordBounceBack / recordTerminalSnapshot — fail-open contract", () 
         create: expect.objectContaining({ scoreAtClaim: null, effectiveThreshold: null, overrideUsed: false }),
       }),
     );
+  });
+
+  // ── LOW-8 (batch 18 review) ────────────────────────────────────────────
+  it("recordTerminalSnapshot's update path OMITS scoreAtClaim/effectiveThreshold (does not null-clobber) when this call's resolve finds no claim-snapshot row", async () => {
+    prismaMocks.auditLogFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    prismaMocks.confidenceTelemetryUpsert.mockResolvedValue({});
+
+    await recordTerminalSnapshot({ taskId: "task-6", projectId: "proj-1", finalStatus: "done", taskType: "bugfix" });
+
+    const call = prismaMocks.confidenceTelemetryUpsert.mock.calls[0]![0] as { update: Record<string, unknown> };
+    // The field must be ABSENT from the update payload, not present-as-null:
+    // Prisma only clobbers a column when the key is present. A `create` still
+    // sets these to null (a fresh row has nothing to clobber) — see the test
+    // above.
+    expect(call.update).not.toHaveProperty("scoreAtClaim");
+    expect(call.update).not.toHaveProperty("effectiveThreshold");
+    expect(call.update).toMatchObject({ finalStatus: "done", taskType: "bugfix", overrideUsed: false });
+  });
+
+  it("recordTerminalSnapshot's update path DOES include scoreAtClaim/effectiveThreshold when the resolve finds a claim snapshot", async () => {
+    prismaMocks.auditLogFindFirst
+      .mockResolvedValueOnce({ payload: { score: 80, threshold: 60 } })
+      .mockResolvedValueOnce(null);
+    prismaMocks.confidenceTelemetryUpsert.mockResolvedValue({});
+
+    await recordTerminalSnapshot({ taskId: "task-7", projectId: "proj-1", finalStatus: "done", taskType: null });
+
+    const call = prismaMocks.confidenceTelemetryUpsert.mock.calls[0]![0] as { update: Record<string, unknown> };
+    expect(call.update).toMatchObject({ scoreAtClaim: 80, effectiveThreshold: 60, overrideUsed: false });
+  });
+
+  it("recordBounceBack retries the upsert once on a P2002 race and succeeds without logging an error", async () => {
+    prismaMocks.auditLogFindFirst.mockResolvedValue(null);
+    prismaMocks.confidenceTelemetryUpsert
+      .mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint failed on the fields: (`taskId`)", {
+          code: "P2002",
+          clientVersion: "test",
+        }),
+      )
+      .mockResolvedValueOnce({});
+
+    await recordBounceBack("task-8", "proj-1");
+
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledTimes(2);
+    expect(loggerMocks.error).not.toHaveBeenCalled();
+  });
+
+  it("recordTerminalSnapshot retries the upsert once on a P2002 race and succeeds without logging an error", async () => {
+    prismaMocks.auditLogFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    prismaMocks.confidenceTelemetryUpsert
+      .mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint failed on the fields: (`taskId`)", {
+          code: "P2002",
+          clientVersion: "test",
+        }),
+      )
+      .mockResolvedValueOnce({});
+
+    await recordTerminalSnapshot({ taskId: "task-9", projectId: "proj-1", finalStatus: "done", taskType: null });
+
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledTimes(2);
+    expect(loggerMocks.error).not.toHaveBeenCalled();
+  });
+
+  it("a non-P2002 upsert error is NOT retried — it goes straight to the fail-open swallow after exactly one attempt", async () => {
+    prismaMocks.auditLogFindFirst.mockResolvedValue(null);
+    prismaMocks.confidenceTelemetryUpsert.mockRejectedValueOnce(new Error("db unreachable"));
+
+    await recordBounceBack("task-10", "proj-1");
+
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledTimes(1);
+    expect(loggerMocks.error).toHaveBeenCalledTimes(1);
   });
 });

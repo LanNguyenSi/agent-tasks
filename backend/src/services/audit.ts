@@ -152,6 +152,19 @@ export interface AuditPayload {
 
 export async function logAuditEvent(opts: {
   action: AuditAction;
+  // MUST be a valid `users.id` or omitted/undefined — `AuditLog.actorId` FKs
+  // to `users(id)` (schema.prisma), never to an agent token id. An agent
+  // caller has no user-scoped identity to attribute the action to here; use
+  // the repo idiom `actor.type === "human" ? actor.userId : undefined` (33
+  // call sites in routes/tasks.ts) and put the token id in `payload`
+  // instead (e.g. `actorTokenId`). Passing a token id here is a SILENT bug:
+  // the resulting 23503 FK violation is swallowed below (see the try/catch
+  // comment), so the row simply never persists — no error surfaces anywhere.
+  // HIGH-1 (batch 18 review, task 698eeb01 fix round): this exact mistake
+  // dropped every `task.claim_confidence_recorded` /
+  // `task.claim_would_block_shadow` / `task.claim_blocked_low_readiness` /
+  // `task.claim_override_used` row for an agent claim until fixed — see
+  // services/claim-policy-evaluator.ts and services/confidence-gate.ts.
   actorId?: string;
   projectId?: string;
   taskId?: string;
@@ -163,7 +176,10 @@ export async function logAuditEvent(opts: {
   // which crashes the Node process under the default `throw` policy.
   // Swallow the rejection with a structured log line so a DB hiccup or
   // constraint violation can't take the backend down — audit is
-  // supplementary, not load-bearing.
+  // supplementary, not load-bearing. NOTE: this also means an invalid
+  // `actorId` (e.g. an agent token id — see the doc comment above) fails
+  // SILENTLY from every caller's perspective; there is no runtime signal
+  // short of reading this log line.
   try {
     await prisma.auditLog.create({
       data: {

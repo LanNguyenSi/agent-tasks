@@ -3,15 +3,25 @@
  * overlay's "Milestone 5" names as future weight-tuning inputs, so a later,
  * DELIBERATELY SEPARATE milestone can calibrate the confidence-gate weights
  * against real outcomes. This milestone only COLLECTS — nothing here ever
- * auto-adjusts a threshold, a weight, or a project's `riskModifiers`.
+ * auto-adjusts a threshold, a weight, or a project's `riskModifiers`. Only
+ * THREE of the four are aggregated by `computeConfidenceTelemetryAggregates`
+ * / the read endpoint today (see signal 2 below and MED-3, batch 18 review).
  *
  *   1. Review bounce-backs           -> `recordBounceBack` (task_finish
  *      outcome request_changes, cumulative per task across the rework loop)
- *   2. Agent clarification requests  -> NOT modeled here. Already fully
- *      queryable from the existing `Comment` table (`authorAgentId` is set
- *      whenever an agent comments, and the task's claim history is on
- *      `Task`) — adding a redundant counter column would just be a second,
- *      driftable source of truth for data the schema already has.
+ *   2. Agent clarification requests  -> NOT modeled here, and NOT because the
+ *      data is already queryable elsewhere (a prior version of this comment
+ *      claimed the `Comment` table alone was sufficient — that was wrong,
+ *      corrected MED-3, batch 18 review): `Task` carries only the CURRENT
+ *      claim (`claimedByAgentId`/`claimedByUserId`), and every terminal
+ *      transition NULLS it, so which agent authored a given `Comment` on a
+ *      task that has since changed hands or finished cannot be reconstructed
+ *      from `Task` alone — it would need a join against the `AuditLog`
+ *      claim-history trail (`task.claimed`/`task.released`/`task.reviewed`)
+ *      to attribute each comment to the claim-holder at the time it was
+ *      posted. That reconstruction is real work, not a free read, and is
+ *      explicitly OUT OF SCOPE for this milestone — a follow-up task, not
+ *      built here.
  *   3. Override frequency            -> read directly off `AuditLog`'s
  *      `task.claim_override_used` rows, grouped per project per week, by
  *      `computeConfidenceTelemetryAggregates`'s `overrideRatePerWeek`.
@@ -21,6 +31,24 @@
  *   4. Low-score success / high-score failure -> `scoreAtClaim` cross-
  *      referenced against `finalStatus`, surfaced as `lowScoreSuccesses` /
  *      `highScoreFailures` plus the per-band breakdowns.
+ *
+ *      HIGH-2 (batch 18 review): `finalStatus` can currently only ever be
+ *      `"done"` in production. `routes/workflows.ts`'s `FIXED_TERMINAL_STATES`
+ *      locks the terminal-state set to `{"done"}` server-side (the state
+ *      vocabulary itself is fixed, not just its terminal flag), and no verb
+ *      writes any other terminal disposition — `task_abandon` resets
+ *      `status` back to the workflow's `initialState`, it does not write
+ *      `"abandoned"`. Until a non-done terminal disposition exists (a filed
+ *      follow-up), `highScoreFailures` is STRUCTURALLY 0 and
+ *      `doneRateByScoreBand`'s `doneRate` is STRUCTURALLY 1.0 for every
+ *      band with any terminal tasks in it — that is not evidence the
+ *      confidence gate is well-calibrated, it is an artifact of there being
+ *      only one reachable terminal outcome to measure against. This module
+ *      and its tests still exercise a non-"done" `finalStatus` (fixture rows
+ *      commented accordingly) to keep the aggregator's logic correct AHEAD
+ *      of that write-path follow-up landing, per the "collect first" design
+ *      — it is read-side support for a state production cannot reach yet,
+ *      not a claim that the gap is already closed.
  *
  * `scoreAtClaim` / `effectiveThreshold` / `overrideUsed` are sourced from the
  * confidence-gate's OWN audit trail (`task.claim_would_block_shadow` /
@@ -35,14 +63,50 @@
  * not a bug: this milestone reuses the gate's existing instrumentation
  * rather than adding a parallel one.
  *
+ * MED-7 (batch 18 review): reading `AuditLog` back as above is a deliberate,
+ * documented EXCEPTION to this codebase's general audit policy ("audit
+ * writes are fire-and-forget and swallow errors: never depend on audit
+ * being load-bearing for any flow" — docs/domain-model.md, docs/events.md).
+ * Chosen here (over adding a `snapshotSource` discriminator to the response)
+ * as the cheaper fix for a collection-only milestone: a follow-up should
+ * snapshot `scoreAtClaim`/`effectiveThreshold` directly inside the claim
+ * transaction instead of reading them back off the audit trail, which would
+ * close the gap properly rather than merely documenting it.
+ *
  * Every write in this module is BEST-EFFORT and FAILS OPEN: a DB error is
  * logged and swallowed, never thrown, so a telemetry hiccup can never block
  * the task_finish transition it rides along with. See
  * `backend/tests/unit/confidence-telemetry.test.ts` for the pinned fail-open
  * behaviour.
  */
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
+
+/**
+ * LOW-8 (batch 18 review): a single retry on P2002 (unique constraint
+ * violation on `taskId`). Two concurrent calls into `recordBounceBack` /
+ * `recordTerminalSnapshot` for the SAME task (e.g. a racing bounce-back and
+ * terminal snapshot, or two retried task_finish requests) can both observe
+ * no existing row and race on `upsert`'s internal create path; the loser
+ * throws P2002 instead of falling through to `update`. Re-running the SAME
+ * upsert once finds the winner's row and takes the `update` branch instead
+ * of losing this write entirely. Any other error (including a P2002 on the
+ * retry itself) propagates to the caller's fail-open try/catch unchanged.
+ */
+async function upsertConfidenceTelemetryWithRetry(
+  args: Parameters<typeof prisma.confidenceTelemetry.upsert>[0],
+): Promise<void> {
+  try {
+    await prisma.confidenceTelemetry.upsert(args);
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      await prisma.confidenceTelemetry.upsert(args);
+      return;
+    }
+    throw err;
+  }
+}
 
 /** Score-at-claim below this is "low" for `lowScoreSuccesses` (exclusive upper bound). */
 export const LOW_SCORE_MAX = 60;
@@ -103,7 +167,7 @@ export function scoreBand(score: number): string {
 export async function recordBounceBack(taskId: string, projectId: string): Promise<void> {
   try {
     const claimFields = await resolveClaimSnapshotFields(taskId);
-    await prisma.confidenceTelemetry.upsert({
+    await upsertConfidenceTelemetryWithRetry({
       where: { taskId },
       create: { taskId, projectId, bounceBackCount: 1, ...claimFields },
       update: { bounceBackCount: { increment: 1 } },
@@ -136,10 +200,26 @@ export async function recordTerminalSnapshot(params: {
   const { taskId, projectId, finalStatus, taskType } = params;
   try {
     const claimFields = await resolveClaimSnapshotFields(taskId);
-    await prisma.confidenceTelemetry.upsert({
+    // LOW-8 (batch 18 review): `claimFields.scoreAtClaim` / `effectiveThreshold`
+    // can resolve to null (no claim-snapshot audit row for this task — see
+    // the module header). Spreading them into `create` unconditionally is
+    // safe (a fresh row has nothing to clobber), but spreading into `update`
+    // unconditionally is NOT: it would overwrite a PREVIOUSLY recorded
+    // non-null snapshot with null if a later resolve ever regresses to
+    // null. Only include them in `update` when non-null, so an existing
+    // value is preserved rather than clobbered. `overrideUsed` is monotonic
+    // (the AuditLog query behind it is "did an override event EVER happen",
+    // which can only go false -> true, never back) so it is always safe to
+    // include as-is.
+    const updateClaimFields = {
+      ...(claimFields.scoreAtClaim !== null ? { scoreAtClaim: claimFields.scoreAtClaim } : {}),
+      ...(claimFields.effectiveThreshold !== null ? { effectiveThreshold: claimFields.effectiveThreshold } : {}),
+      overrideUsed: claimFields.overrideUsed,
+    };
+    await upsertConfidenceTelemetryWithRetry({
       where: { taskId },
       create: { taskId, projectId, finalStatus, taskType, ...claimFields },
-      update: { finalStatus, taskType, ...claimFields },
+      update: { finalStatus, taskType, ...updateClaimFields },
     });
   } catch (err) {
     logger.error(

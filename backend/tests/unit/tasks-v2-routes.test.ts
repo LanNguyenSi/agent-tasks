@@ -2537,6 +2537,68 @@ describe("POST /tasks/:id/finish — M5 confidence-telemetry snapshot hook", () 
     const body = (await res.json()) as { task: { status: string } };
     expect(body.task.status).toBe("done");
   });
+
+  // LOW-10 (batch 18 review): negative pin — the M5 snapshot hook is wired
+  // into the review-finish and self-approve branches ONLY (per the model
+  // header comment in schema.prisma / services/confidence-telemetry.ts).
+  // The plain work-finish branch (author calls task_finish directly, no
+  // review outcome) never calls recordBounceBack/recordTerminalSnapshot,
+  // even when it reaches a terminal transition (in_progress -> done via a
+  // review-skipping workflow). These reuse the exact fixtures from "POST
+  // /tasks/:id/finish (work claim)" above.
+  it("work-finish (in_progress -> review): does not write calibration telemetry", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      workflowId: null,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null); // built-in default -> review
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42", result: "shipped" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { targetStatus: string };
+    expect(body.targetStatus).toBe("review");
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+  });
+
+  it("work-finish (in_progress -> done, review-skipping workflow): does not write calibration telemetry", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+    });
+    // Workflow only has in_progress -> done (no review state) — a terminal
+    // transition on the work-finish branch, same as "work → done" above.
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce({
+      definition: {
+        initialState: "open",
+        states: [
+          { name: "open", label: "Open", terminal: false },
+          { name: "in_progress", label: "In progress", terminal: false },
+          { name: "done", label: "Done", terminal: true },
+        ],
+        transitions: [
+          { from: "open", to: "in_progress" },
+          { from: "in_progress", to: "done" },
+        ],
+      },
+    });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    expect(data.status).toBe("done");
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+  });
 });
 
 // ── /tasks/:id/submit-pr ─────────────────────────────────────────────────────

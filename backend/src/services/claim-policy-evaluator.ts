@@ -27,7 +27,19 @@ export type ClaimAuditEvent = {
     | "task.claim_would_block_shadow"
     | "task.claim_blocked_low_readiness"
     | "task.claim_override_used";
-  actorId: string;
+  // HIGH-1 (batch 18 review): `AuditLog.actorId` FKs to `users(id)` (see
+  // schema.prisma), never to an agent token id. This evaluator only ever
+  // receives an `AgentActor` (`ClaimPolicyInput.actor: AgentActor`), so the
+  // repo-wide idiom used at 33 sites in routes/tasks.ts —
+  // `actor.type === "human" ? actor.userId : undefined` — collapses to
+  // `undefined` here (TypeScript rejects the ternary itself as a no-overlap
+  // comparison once `actor` is narrowed to `AgentActor`). Writing
+  // `actor.tokenId` here previously violated the FK; `logAuditEvent` swallows
+  // the resulting 23503, so every `ClaimAuditEvent` for an agent claim was
+  // silently dropped and never persisted. `undefined` is therefore the ONLY
+  // FK-safe value this field can carry; the real token identity travels in
+  // `payload.actorTokenId` instead (see the three construction sites below).
+  actorId: string | undefined;
   projectId: string;
   taskId: string;
   payload: Record<string, unknown>;
@@ -148,7 +160,8 @@ export class ClaimPolicyEvaluator {
           kind: "allow",
           audit: {
             action: "task.claim_would_block_shadow",
-            actorId: actor.tokenId,
+            // HIGH-1: see the ClaimAuditEvent.actorId doc comment above.
+            actorId: undefined,
             projectId: task.projectId,
             taskId: task.id,
             payload: {
@@ -162,6 +175,7 @@ export class ClaimPolicyEvaluator {
               missing: report.missing,
               route,
               actorType: actor.type,
+              actorTokenId: actor.tokenId,
             },
           },
         };
@@ -200,7 +214,8 @@ export class ClaimPolicyEvaluator {
         triggeredRiskModifiers,
         audit: {
           action: "task.claim_blocked_low_readiness",
-          actorId: actor.tokenId,
+          // HIGH-1: see the ClaimAuditEvent.actorId doc comment above.
+          actorId: undefined,
           projectId: task.projectId,
           taskId: task.id,
           payload: {
@@ -213,6 +228,7 @@ export class ClaimPolicyEvaluator {
             findings: report.findings,
             route,
             actorType: actor.type,
+            actorTokenId: actor.tokenId,
           },
         },
       };
@@ -223,7 +239,8 @@ export class ClaimPolicyEvaluator {
         kind: "allow",
         audit: {
           action: "task.claim_override_used",
-          actorId: actor.tokenId,
+          // HIGH-1: see the ClaimAuditEvent.actorId doc comment above.
+          actorId: undefined,
           projectId: task.projectId,
           taskId: task.id,
           payload: {
@@ -234,9 +251,11 @@ export class ClaimPolicyEvaluator {
             forceReason,
             keystoneBlocked: report.blocking,
             missing: report.missing,
-            // Operator identity behind the override: the token (actorId) plus the
-            // user the token authenticates as. Lets an audit pin who waved it through.
+            // Operator identity behind the override: the token (actorTokenId)
+            // plus the user the token authenticates as. Lets an audit pin who
+            // waved it through.
             operatorUserId: actor.userId,
+            actorTokenId: actor.tokenId,
             route,
             actorType: actor.type,
           },
