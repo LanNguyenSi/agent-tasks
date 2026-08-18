@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { SUGGESTED_TASK_TYPE_THRESHOLDS } from "../lib/confidence.js";
+import { GateCode } from "../services/gates/index.js";
 
 export const docsRouter = new Hono();
 
@@ -266,6 +267,115 @@ export const openApiSpec = {
           updatedAt: { type: "string", format: "date-time" },
         },
         required: ["id", "teamId", "name", "slug", "createdAt", "updatedAt"],
+      },
+      EffectiveGate: {
+        type: "object",
+        description:
+          "Per-project projection of one registered gate (services/gates/): whether it would evaluate on this project right now, and why. `active=false` does NOT mean the gate is gone — it means the gate is registered but currently short-circuits to allowed for this project (typical for governance gates that bypass on a permissive governanceMode).",
+        properties: {
+          code: {
+            type: "string",
+            enum: Object.values(GateCode),
+            example: GateCode.DistinctReviewer,
+            description: "Stable wire identifier — part of the public API (services/gates/types.ts); renaming requires a deprecation cycle.",
+          },
+          name: { type: "string", example: "Distinct reviewer required for review→done" },
+          active: { type: "boolean", example: true },
+          because: {
+            type: "string",
+            example:
+              "governanceMode=REQUIRES_DISTINCT_REVIEWER; the work-claimant cannot approve their own task (a different actor must hold the review lock).",
+            description: "Human-readable reason, safe to surface to an agent or the UI.",
+          },
+          appliesTo: {
+            type: "array",
+            items: { type: "string" },
+            example: ["task_finish", "tasks_transition"],
+            description: "Verb names (stdio MCP + HTTP bridge) that can trip this gate. Freetext — the source of truth is the verb that actually invokes the check.",
+          },
+        },
+        required: ["code", "name", "active", "because", "appliesTo"],
+      },
+      EffectiveThreshold: {
+        type: "object",
+        description:
+          "Resolved confidence-threshold value for one task type (M2): taskTypeThresholds[taskType] -> project.confidenceThreshold -> global default (60).",
+        properties: {
+          effectiveThreshold: { type: "integer", minimum: 0, maximum: 100, example: 60 },
+          thresholdSource: {
+            type: "string",
+            enum: ["global", "project", "taskType"],
+            example: "project",
+            description: "Which layer of the threshold hierarchy produced effectiveThreshold.",
+          },
+        },
+        required: ["effectiveThreshold", "thresholdSource"],
+      },
+      TaskCreationReadiness: {
+        type: "object",
+        description:
+          "Per-project task-creation knobs an agent should read BEFORE composing a task, so it can supply the structured spec fields the confidence scorer (and, in BLOCK mode, the claim gate) expects. Read-only summary; it never blocks by itself — a low-readiness claim is still enforced separately at task_pickup/task_start.",
+        properties: {
+          enforcementMode: {
+            type: "string",
+            enum: ["OFF", "WARN", "BLOCK"],
+            example: "WARN",
+            description: "Effective confidence-gate enforcement mode; a null column resolves to WARN (the rollout default).",
+          },
+          confidenceThreshold: {
+            type: "integer",
+            minimum: 0,
+            maximum: 100,
+            example: 60,
+            description: "The flat project threshold, before any per-task-type override.",
+          },
+          templateModeEnabled: {
+            type: "boolean",
+            example: false,
+            description: "True when the project marks at least one template field as required.",
+          },
+          requiredFields: {
+            type: "array",
+            items: {
+              type: "string",
+              enum: [
+                "goal",
+                "acceptanceCriteria",
+                "context",
+                "constraints",
+                "scope",
+                "outOfScope",
+                "dependencies",
+                "risk",
+                "agentPrompt",
+              ],
+            },
+            example: ["goal", "acceptanceCriteria"],
+            description: "The template fields the project marks required. Empty when template mode is off.",
+          },
+          taskTypeThresholds: {
+            type: "object",
+            description:
+              "The resolved threshold hierarchy for EVERY task type (M2) — the same resolveEffectiveThreshold the claim gate uses, not a re-derivation. Lets an agent see a per-type override BEFORE creating a typed task, instead of only discovering it after a claim gets rejected.",
+            properties: {
+              bugfix: { $ref: "#/components/schemas/EffectiveThreshold" },
+              feature: { $ref: "#/components/schemas/EffectiveThreshold" },
+              refactoring: { $ref: "#/components/schemas/EffectiveThreshold" },
+              security: { $ref: "#/components/schemas/EffectiveThreshold" },
+              migration: { $ref: "#/components/schemas/EffectiveThreshold" },
+              docs: { $ref: "#/components/schemas/EffectiveThreshold" },
+            },
+            required: ["bugfix", "feature", "refactoring", "security", "migration", "docs"],
+            additionalProperties: false,
+          },
+        },
+        required: [
+          "enforcementMode",
+          "confidenceThreshold",
+          "templateModeEnabled",
+          "requiredFields",
+          "taskTypeThresholds",
+        ],
       },
       AvailableProject: {
         type: "object",
@@ -633,6 +743,115 @@ export const openApiSpec = {
                   },
                   required: ["project"],
                 },
+              },
+            },
+          },
+          "404": {
+            description: "Project not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/projects/{id}/effective-gates": {
+      get: {
+        tags: ["Projects"],
+        summary: "Get effective gates + task-creation readiness for a project",
+        description:
+          "Dedicated discovery endpoint — same effectiveGates/taskCreation data as GET /projects/:id, without the project payload. Backs the projects_get_effective_gates MCP verb. Lets a caller learn which invariants would trip BEFORE calling a gated verb (effectiveGates), and which structured fields / per-task-type confidence thresholds apply BEFORE composing a task (taskCreation), instead of only discovering either after tripping a 4xx.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Effective gate map + task-creation readiness",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    effectiveGates: {
+                      type: "object",
+                      description:
+                        "Keyed by GateCode — one entry per registered gate. Deterministic key ordering is NOT guaranteed; key by `code`, not object/array position.",
+                      additionalProperties: { $ref: "#/components/schemas/EffectiveGate" },
+                    },
+                    taskCreation: { $ref: "#/components/schemas/TaskCreationReadiness" },
+                  },
+                  required: ["effectiveGates", "taskCreation"],
+                  // Example mirrors the fixture in
+                  // backend/tests/unit/effective-gates-endpoint.test.ts
+                  // ("surfaces a per-task-type confidenceThreshold override
+                  // (select fix)"): governanceMode=AUTONOMOUS,
+                  // githubRepo="owner/repo", enforcementMode=BLOCK,
+                  // confidenceThreshold=60, taskTypeThresholds={security:90}.
+                  example: {
+                    effectiveGates: {
+                      distinct_reviewer: {
+                        code: "distinct_reviewer",
+                        name: "Distinct reviewer required for review→done",
+                        active: false,
+                        because:
+                          "governanceMode=AUTONOMOUS (legacy soloMode=true) — single-actor project, no distinct reviewer needed.",
+                        appliesTo: ["task_finish", "tasks_transition"],
+                      },
+                      self_merge: {
+                        code: "self_merge",
+                        name: "Work-claimant cannot merge their own PR",
+                        active: false,
+                        because: "governanceMode=AUTONOMOUS — single-actor project, self-merge permitted by design.",
+                        appliesTo: ["pull_requests_merge", "task_merge", "task_finish"],
+                      },
+                      task_status_for_merge: {
+                        code: "task_status_for_merge",
+                        name: "Task status allows PR merge",
+                        active: true,
+                        because:
+                          "Every project requires task.status ∈ {review, done} before merging the backing PR; open / in_progress tasks must transition first.",
+                        appliesTo: ["pull_requests_merge", "task_merge"],
+                      },
+                      pr_repo_matches_project: {
+                        code: "pr_repo_matches_project",
+                        name: "PR URL repo matches project binding",
+                        active: true,
+                        because: "Project is bound to owner/repo; PR URLs pointing elsewhere are rejected (ADR-0010 §5b).",
+                        appliesTo: ["task_finish", "submit_pr", "tasks_update", "pull_requests_create"],
+                      },
+                    },
+                    taskCreation: {
+                      enforcementMode: "BLOCK",
+                      confidenceThreshold: 60,
+                      templateModeEnabled: false,
+                      requiredFields: [],
+                      taskTypeThresholds: {
+                        bugfix: { effectiveThreshold: 60, thresholdSource: "project" },
+                        feature: { effectiveThreshold: 60, thresholdSource: "project" },
+                        refactoring: { effectiveThreshold: 60, thresholdSource: "project" },
+                        security: { effectiveThreshold: 90, thresholdSource: "taskType" },
+                        migration: { effectiveThreshold: 60, thresholdSource: "project" },
+                        docs: { effectiveThreshold: 60, thresholdSource: "project" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "403": {
+            description: "Access denied",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
               },
             },
           },
