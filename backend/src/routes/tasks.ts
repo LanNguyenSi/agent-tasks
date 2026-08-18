@@ -47,6 +47,7 @@ import {
   templateDataSchema,
   calculateConfidence,
   resolveEffectiveThreshold,
+  resolveTriggeredRiskModifiers,
   type TemplateData,
   type TemplateFields,
   type TaskType,
@@ -1781,6 +1782,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
           soloMode: true,
           requireDistinctReviewer: true,
           taskTypeThresholds: true,
+          riskModifiers: true,
         },
       },
       ...taskInclude,
@@ -2072,6 +2074,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
               soloMode: true,
               requireDistinctReviewer: true,
               taskTypeThresholds: true,
+              riskModifiers: true,
             },
           },
           ...taskInclude,
@@ -4021,7 +4024,13 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     include: {
       workflow: true,
       project: {
-        select: { confidenceThreshold: true, taskTemplate: true, githubRepo: true, taskTypeThresholds: true },
+        select: {
+          confidenceThreshold: true,
+          taskTemplate: true,
+          githubRepo: true,
+          taskTypeThresholds: true,
+          riskModifiers: true,
+        },
       },
       ...taskInclude,
     },
@@ -4053,12 +4062,24 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     templateFields: tpl?.fields ?? null,
   });
   // M2 (task b8629b99): layered threshold hierarchy, keyed on the EXPLICIT
-  // taskType (== inferredTaskType above).
-  const { effectiveThreshold, thresholdSource } = resolveEffectiveThreshold(
+  // taskType (== inferredTaskType above). This is the BASE the M3 risk
+  // modifiers below add to; it is not itself the final effective threshold
+  // once a modifier triggers.
+  const { effectiveThreshold: baseThreshold, thresholdSource } = resolveEffectiveThreshold(
     inferredTaskType,
     task.project.taskTypeThresholds,
     task.project.confidenceThreshold,
   );
+  // M3 (task 8e88cfc0): risk modifiers stack additively on top of the M2
+  // base above. This route does not go through ClaimPolicyEvaluator (it is
+  // read-only informational context, not a claim attempt), so it resolves
+  // the same modifiers independently, same pattern as the M2 threshold
+  // resolution two lines up.
+  const { triggeredRiskModifiers, riskModifierPoints } = resolveTriggeredRiskModifiers(
+    { description: task.description, labels: task.labels },
+    task.project.riskModifiers,
+  );
+  const effectiveThreshold = baseThreshold + riskModifierPoints;
 
   // Determine actor permissions
   const scopes = actor.type === "agent" ? actor.scopes : null;
@@ -4123,6 +4144,7 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
       threshold: effectiveThreshold,
       effectiveThreshold,
       thresholdSource,
+      triggeredRiskModifiers,
       blocking,
       subscores,
       findings,
@@ -5686,6 +5708,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
           taskTemplate: true,
           enforcementMode: true,
           taskTypeThresholds: true,
+          riskModifiers: true,
         },
       },
     },

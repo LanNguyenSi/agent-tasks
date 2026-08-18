@@ -32,6 +32,9 @@ import {
   taskTypeThresholdsSchema,
   GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD,
   SUGGESTED_TASK_TYPE_THRESHOLDS,
+  RISK_MODIFIER_NAMES,
+  detectRiskModifierTriggers,
+  resolveTriggeredRiskModifiers,
   type TaskQualitySubscores,
   type TaskType,
 } from "../../src/lib/confidence.js";
@@ -844,6 +847,173 @@ describe("resolveEffectiveThreshold — layered threshold hierarchy (M2)", () =>
       effectiveThreshold: 60,
       thresholdSource: "project",
     });
+  });
+});
+
+// ── M3: risk modifiers (task 8e88cfc0) ──────────────────────────────────────
+// Overlay §"Policy Layer": riskModifiers raises the effective threshold by N
+// points per triggered modifier, stacking additively. Detection is a FIXED
+// heuristic — regex over `description`, label match for productionImpact —
+// never an LLM (ADR-0011 Non-Goals).
+
+describe("detectRiskModifierTriggers — heuristic detectors (M3)", () => {
+  it("touchesAuth matches every keyword in its set (case-insensitive, whole word)", () => {
+    for (const word of ["auth", "login", "signup", "password", "token", "session", "jwt", "oauth", "AUTH", "Login"]) {
+      expect(
+        detectRiskModifierTriggers({ description: `The task touches ${word} handling.` }),
+      ).toContain("touchesAuth");
+    }
+  });
+
+  it("touchesDatabase matches every keyword in its set", () => {
+    for (const word of ["migration", "schema", "prisma", "sql", "db", "database", "SCHEMA"]) {
+      expect(
+        detectRiskModifierTriggers({ description: `Run a ${word} change.` }),
+      ).toContain("touchesDatabase");
+    }
+  });
+
+  it("touchesPersonalData matches every keyword in its set", () => {
+    for (const word of ["pii", "gdpr", "email", "address", "name", "user-data", "user data", "personal", "PII"]) {
+      expect(
+        detectRiskModifierTriggers({ description: `Handle ${word} in the export.` }),
+      ).toContain("touchesPersonalData");
+    }
+  });
+
+  it("productionImpact matches either a production/prod label or the word 'production' in description", () => {
+    expect(detectRiskModifierTriggers({ description: "", labels: ["production"] })).toContain("productionImpact");
+    expect(detectRiskModifierTriggers({ description: "", labels: ["prod"] })).toContain("productionImpact");
+    // Label match is case-insensitive and trims whitespace.
+    expect(detectRiskModifierTriggers({ description: "", labels: [" PROD "] })).toContain("productionImpact");
+    expect(
+      detectRiskModifierTriggers({ description: "This change has production impact.", labels: [] }),
+    ).toContain("productionImpact");
+    // Neither channel fires -> not triggered.
+    expect(
+      detectRiskModifierTriggers({ description: "Nothing risky here.", labels: ["frontend"] }),
+    ).not.toContain("productionImpact");
+  });
+
+  it("each detector emits exactly its own modifier name — no cross-trigger bleed", () => {
+    expect(detectRiskModifierTriggers({ description: "Add login support." })).toEqual(["touchesAuth"]);
+    expect(detectRiskModifierTriggers({ description: "Write a migration." })).toEqual(["touchesDatabase"]);
+    expect(detectRiskModifierTriggers({ description: "Export user email." })).toEqual(["touchesPersonalData"]);
+    expect(detectRiskModifierTriggers({ description: "", labels: ["production"] })).toEqual(["productionImpact"]);
+  });
+
+  it("multiple modifiers stack: a description hitting several keyword sets triggers all of them, in RISK_MODIFIER_NAMES order", () => {
+    const triggered = detectRiskModifierTriggers({
+      description: "Add a login migration that stores user email, with production impact.",
+      labels: [],
+    });
+    expect(triggered).toEqual(["touchesAuth", "touchesDatabase", "touchesPersonalData", "productionImpact"]);
+  });
+
+  it("a description matching no keyword triggers nothing", () => {
+    expect(detectRiskModifierTriggers({ description: "Refactor the internal request parser for clarity." })).toEqual(
+      [],
+    );
+  });
+
+  it("null description and absent labels never throw and trigger nothing", () => {
+    expect(() => detectRiskModifierTriggers({ description: null })).not.toThrow();
+    expect(detectRiskModifierTriggers({ description: null })).toEqual([]);
+  });
+
+  // Word-boundary pin: a substring match (no LLM judgement, purely
+  // mechanical) must not false-positive on a longer word that happens to
+  // contain a keyword. A mutant dropping the `\b` word boundaries from
+  // RISK_MODIFIER_TEXT_PATTERNS would make this red.
+  it("word-boundary: a longer word containing a keyword as a substring does not trigger", () => {
+    expect(detectRiskModifierTriggers({ description: "This is an authentic experience." })).not.toContain(
+      "touchesAuth",
+    );
+    expect(detectRiskModifierTriggers({ description: "Use PostgreSQL for storage." })).not.toContain(
+      "touchesDatabase",
+    );
+  });
+});
+
+describe("resolveTriggeredRiskModifiers — opt-in project config intersection (M3)", () => {
+  it("a project with riskModifiers unset (null) never triggers anything, even when the text/labels fire", () => {
+    expect(
+      resolveTriggeredRiskModifiers({ description: "Add login support.", labels: ["production"] }, null),
+    ).toEqual({ triggeredRiskModifiers: [], riskModifierPoints: 0 });
+  });
+
+  it("a project with riskModifiers undefined never triggers anything", () => {
+    expect(resolveTriggeredRiskModifiers({ description: "Add login support." }, undefined)).toEqual({
+      triggeredRiskModifiers: [],
+      riskModifierPoints: 0,
+    });
+  });
+
+  it("a triggered name absent from the project's config contributes nothing, even though the text fired", () => {
+    // touchesAuth fires in text, but the project only opted into touchesDatabase.
+    expect(
+      resolveTriggeredRiskModifiers({ description: "Add login support." }, { touchesDatabase: 5 }),
+    ).toEqual({ triggeredRiskModifiers: [], riskModifierPoints: 0 });
+  });
+
+  it("a single configured, triggered modifier contributes exactly its configured points", () => {
+    expect(
+      resolveTriggeredRiskModifiers({ description: "Add login support." }, { touchesAuth: 10 }),
+    ).toEqual({ triggeredRiskModifiers: ["touchesAuth"], riskModifierPoints: 10 });
+  });
+
+  // The literal overlay example (task spec, §"Policy Layer"): all four
+  // configured and all four triggered stack ADDITIVELY (10 + 5 + 10 + 10 = 35).
+  it("multiple triggered AND configured modifiers stack additively", () => {
+    const result = resolveTriggeredRiskModifiers(
+      { description: "Add a login migration that stores user email, with production impact.", labels: [] },
+      { touchesAuth: 10, touchesDatabase: 5, touchesPersonalData: 10, productionImpact: 10 },
+    );
+    expect(result.triggeredRiskModifiers).toEqual([
+      "touchesAuth",
+      "touchesDatabase",
+      "touchesPersonalData",
+      "productionImpact",
+    ]);
+    expect(result.riskModifierPoints).toBe(35);
+  });
+
+  it("an unrecognised key in the project's config is inert (only RISK_MODIFIER_NAMES are consulted)", () => {
+    expect(
+      resolveTriggeredRiskModifiers(
+        { description: "Add login support." },
+        { touchesAuth: 10, notARealModifier: 999 },
+      ),
+    ).toEqual({ triggeredRiskModifiers: ["touchesAuth"], riskModifierPoints: 10 });
+  });
+
+  it.each([
+    ["a string", "10"],
+    ["NaN", Number.NaN],
+    ["negative", -1],
+    ["Infinity", Infinity],
+  ])("an invalid point value (%s) is skipped: the name is NOT reported as triggered and contributes 0", (_label, bad) => {
+    expect(() =>
+      resolveTriggeredRiskModifiers({ description: "Add login support." }, { touchesAuth: bad }),
+    ).not.toThrow();
+    expect(resolveTriggeredRiskModifiers({ description: "Add login support." }, { touchesAuth: bad })).toEqual({
+      triggeredRiskModifiers: [],
+      riskModifierPoints: 0,
+    });
+  });
+
+  it("a non-object riskModifiers (string/number/array) never throws and triggers nothing", () => {
+    for (const bad of ["not-an-object", 42, ["touchesAuth", 10]]) {
+      expect(() => resolveTriggeredRiskModifiers({ description: "Add login support." }, bad)).not.toThrow();
+      expect(resolveTriggeredRiskModifiers({ description: "Add login support." }, bad)).toEqual({
+        triggeredRiskModifiers: [],
+        riskModifierPoints: 0,
+      });
+    }
+  });
+
+  it("RISK_MODIFIER_NAMES names exactly the four overlay modifiers, in the overlay's own order", () => {
+    expect(RISK_MODIFIER_NAMES).toEqual(["touchesAuth", "touchesDatabase", "touchesPersonalData", "productionImpact"]);
   });
 });
 

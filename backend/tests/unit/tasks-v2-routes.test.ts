@@ -4380,6 +4380,43 @@ const SECURITY_TYPED_TASK = {
   },
 };
 
+// M3 (task 8e88cfc0): risk modifiers. Same description as SECURITY_TYPED_TASK
+// minus `templateData.taskType` (isolates M3 from the M2 taskType layer —
+// this task is untyped, so resolveEffectiveThreshold falls to the flat
+// project threshold). Scores 88 (measured against the built scorer, `node`
+// invocation against dist/lib/confidence.js) — clears the project's flat
+// confidenceThreshold (80) but not 80 + touchesAuth's 10-point modifier (90).
+// The description's "login endpoint" / "login attempt" wording is the ONLY
+// risk-modifier trigger present: no database/personal-data/production
+// keyword or label appears, so a passing test proves the block is caused
+// specifically by touchesAuth, not by an unrelated modifier also firing.
+const AUTH_RISK_TASK = {
+  ...baseTask,
+  status: "open",
+  title: "Rate-limit the login endpoint",
+  description: [
+    "Add rate limiting to the login endpoint in src/routes/auth.ts to mitigate credential-stuffing attempts.",
+    "- Limit to 10 attempts per IP per 60 seconds.",
+    "- Verify with a curl loop against /api/login that the 11th request in a minute returns 429.",
+  ].join("\n"),
+  templateData: {
+    goal: "Reduce credential-stuffing risk on the login endpoint",
+    acceptanceCriteria: "- The 11th login attempt within 60s from one IP returns 429\n- A unit test asserts the 429 response",
+    scope: "src/routes/auth.ts login handler and its rate-limit middleware only",
+    outOfScope: "session middleware and password hashing are unchanged",
+    dependencies: "none",
+    risk: "low: additive middleware only, no schema change",
+    constraints: "No new dependency; keep the existing session cookie format",
+    agentPrompt: "1. Add a rate-limit middleware keyed on IP. 2. Wire it into the login route. 3. Add a test.",
+  },
+  project: {
+    ...baseTask.project,
+    confidenceThreshold: 80,
+    enforcementMode: "BLOCK",
+    riskModifiers: { touchesAuth: 10 },
+  },
+};
+
 describe("confidence gate: POST /tasks/:id/start", () => {
   beforeEach(() => {
     vi.spyOn(console, "info").mockImplementation(() => {});
@@ -4764,6 +4801,89 @@ describe("confidence gate: POST /tasks/:id/start", () => {
       expect(body.details.effectiveThreshold).toBe(60);
       expectThresholdMirrorsEffective(body.details);
       expect(body.details.thresholdSource).toBe("project");
+    });
+  });
+
+  // ── M3: risk modifiers (task 8e88cfc0) ────────────────────────────────────
+  describe("M3 risk modifiers", () => {
+    it("an auth-related task, blocked by the touchesAuth-raised threshold, returns 422 with triggeredRiskModifiers: ['touchesAuth']", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce(AUTH_RISK_TASK);
+      prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+      prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+
+      const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as {
+        error: string;
+        details: {
+          score: number;
+          threshold: number;
+          effectiveThreshold: number;
+          thresholdSource: string;
+          triggeredRiskModifiers: string[];
+          blocking: boolean;
+        };
+      };
+      expect(body.error).toBe("low_confidence");
+      // Score clears the flat project threshold (80) but not 80 + touchesAuth's 10 (90).
+      expect(body.details.score).toBeGreaterThanOrEqual(80);
+      expect(body.details.score).toBeLessThan(90);
+      expect(body.details.blocking).toBe(false); // threshold-only block, no keystone
+      expect(body.details.threshold).toBe(90);
+      expect(body.details.effectiveThreshold).toBe(90);
+      expectThresholdMirrorsEffective(body.details);
+      expect(body.details.thresholdSource).toBe("project");
+      expect(body.details.triggeredRiskModifiers).toEqual(["touchesAuth"]);
+      expect(logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "task.claim_blocked_low_readiness",
+          payload: expect.objectContaining({ threshold: 90, triggeredRiskModifiers: ["touchesAuth"] }),
+        }),
+      );
+    });
+
+    // Mutation guard: proves the block above is caused by the risk modifier,
+    // not by the task's own content — the SAME task passes once the
+    // project's riskModifiers config is removed (falls back to the 80 base
+    // it clears, opt-in with nothing configured).
+    it("the SAME auth-related task PASSES once the project has no riskModifiers configured", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce({
+        ...AUTH_RISK_TASK,
+        project: { ...AUTH_RISK_TASK.project, riskModifiers: undefined },
+      });
+      prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+      prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+      prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+      const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+      expect(res.status).toBe(200);
+      expect(logAuditEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "task.claim_blocked_low_readiness" }),
+      );
+    });
+
+    it("GET /tasks/:id/instructions surfaces the same final effectiveThreshold and triggeredRiskModifiers (read-only, no claim attempt)", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce(AUTH_RISK_TASK);
+      prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+      const res = await makeApp().request("/tasks/task-1/instructions");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        task: unknown;
+        confidence: {
+          score: number;
+          threshold: number;
+          effectiveThreshold: number;
+          thresholdSource: string;
+          triggeredRiskModifiers: string[];
+        };
+      };
+      expect(body.confidence.score).toBeGreaterThanOrEqual(80);
+      expect(body.confidence.score).toBeLessThan(90);
+      expect(body.confidence.threshold).toBe(90);
+      expect(body.confidence.effectiveThreshold).toBe(90);
+      expect(body.confidence.thresholdSource).toBe("project");
+      expect(body.confidence.triggeredRiskModifiers).toEqual(["touchesAuth"]);
     });
   });
 });

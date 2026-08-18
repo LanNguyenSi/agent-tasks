@@ -1,7 +1,9 @@
 import {
   calculateConfidence,
+  resolveTriggeredRiskModifiers,
   type QualityFinding,
   type ThresholdSource,
+  type RiskModifierName,
   REQUIRED_SIGNAL_ONLY_CODES,
 } from "../lib/confidence.js";
 import { EnforcementMode } from "../lib/enforcement-mode.js";
@@ -44,13 +46,35 @@ export type ClaimAuditEvent = {
  */
 export type ClaimDecision =
   | { kind: "allow"; audit?: ClaimAuditEvent }
-  | { kind: "block_low_readiness"; audit: ClaimAuditEvent; nextActions: string[] }
+  | {
+      kind: "block_low_readiness";
+      audit: ClaimAuditEvent;
+      nextActions: string[];
+      /**
+       * M3 (task 8e88cfc0): the FINAL threshold that actually gated this
+       * decision — the M2 base (`projectPolicy.threshold`) plus the summed
+       * points of `triggeredRiskModifiers`. Carried on the decision itself
+       * (not just inside `audit.payload`) so the HTTP adapter
+       * (confidence-gate.ts) can surface it in the 422 response without
+       * recomputing it from a stale pre-evaluator local.
+       */
+      effectiveThreshold: number;
+      /** Risk-modifier names that both fired their trigger AND had a valid
+       *  point entry in the project's opt-in riskModifiers config. */
+      triggeredRiskModifiers: RiskModifierName[];
+    }
   | { kind: "force_forbidden"; message: string }
   | { kind: "force_reason_too_short"; message: string };
 
 /** Everything the evaluator needs to reach a verdict, gathered by the caller. */
 export type ClaimPolicyInput = {
-  task: { id: string; projectId: string };
+  /**
+   * `description` and `labels` are read-only inputs to the M3 risk-modifier
+   * detectors (`resolveTriggeredRiskModifiers`) — the task's OWN fields,
+   * never templateData or the goal+context description-equivalent
+   * `calculateConfidence` uses for scoring.
+   */
+  task: { id: string; projectId: string; description: string | null; labels: string[] };
   report: ConfidenceReport;
   /**
    * The resolved project policy. `mode` is already narrowed to the two modes
@@ -63,8 +87,19 @@ export type ClaimPolicyInput = {
    * (confidence-gate.ts) already resolves it via `resolveEffectiveThreshold`
    * alongside `threshold`, so a caller that forgets it is a compile error,
    * not a silently-missing audit field.
+   *
+   * `riskModifiers` (M3, task 8e88cfc0) is the project's opt-in risk-modifier
+   * config (`Project.riskModifiers`, raw unvalidated Json — see
+   * `resolveTriggeredRiskModifiers`). `threshold` here is still the M2 BASE
+   * (pre-modifiers); the evaluator adds the triggered modifiers' points on
+   * top of it below.
    */
-  projectPolicy: { mode: EnforcementMode.WARN | EnforcementMode.BLOCK; threshold: number; thresholdSource: ThresholdSource };
+  projectPolicy: {
+    mode: EnforcementMode.WARN | EnforcementMode.BLOCK;
+    threshold: number;
+    thresholdSource: ThresholdSource;
+    riskModifiers: unknown;
+  };
   actor: AgentActor;
   force: boolean;
   forceReason: string;
@@ -83,7 +118,18 @@ export type ClaimPolicyInput = {
 export class ClaimPolicyEvaluator {
   evaluate(input: ClaimPolicyInput): ClaimDecision {
     const { task, report, projectPolicy, actor, force, forceReason, route } = input;
-    const { mode, threshold, thresholdSource } = projectPolicy;
+    const { mode, threshold: baseThreshold, thresholdSource, riskModifiers } = projectPolicy;
+
+    // M3 (task 8e88cfc0): risk modifiers stack additively on top of the
+    // M2-resolved base threshold. `threshold` below (used in every audit
+    // payload and returned to the caller for the 422 response) is always
+    // this FINAL, post-modifier number — the M2 base is an internal-only
+    // intermediate here, never itself surfaced.
+    const { triggeredRiskModifiers, riskModifierPoints } = resolveTriggeredRiskModifiers(
+      { description: task.description, labels: task.labels },
+      riskModifiers,
+    );
+    const threshold = baseThreshold + riskModifierPoints;
 
     const belowThreshold = report.score < threshold;
     // Keystone is threshold-INDEPENDENT: lowering the threshold cannot disable it.
@@ -105,6 +151,7 @@ export class ClaimPolicyEvaluator {
               score: report.score,
               threshold,
               thresholdSource,
+              triggeredRiskModifiers,
               belowThreshold,
               keystoneBlocked: report.blocking,
               caps: triggeredCapCodes(report.findings),
@@ -145,6 +192,8 @@ export class ClaimPolicyEvaluator {
       return {
         kind: "block_low_readiness",
         nextActions: deriveNextActions(report.findings),
+        effectiveThreshold: threshold,
+        triggeredRiskModifiers,
         audit: {
           action: "task.claim_blocked_low_readiness",
           actorId: actor.tokenId,
@@ -154,6 +203,7 @@ export class ClaimPolicyEvaluator {
             score: report.score,
             threshold,
             thresholdSource,
+            triggeredRiskModifiers,
             keystoneBlocked: report.blocking,
             missing: report.missing,
             findings: report.findings,
@@ -176,6 +226,7 @@ export class ClaimPolicyEvaluator {
             score: report.score,
             threshold,
             thresholdSource,
+            triggeredRiskModifiers,
             forceReason,
             keystoneBlocked: report.blocking,
             missing: report.missing,

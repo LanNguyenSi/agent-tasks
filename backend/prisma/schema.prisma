@@ -192,6 +192,20 @@ model Project {
   // security 90, migration 85, docs 60. See
   // lib/confidence.ts#SUGGESTED_TASK_TYPE_THRESHOLDS.
   taskTypeThresholds       Json?
+  // M3 (task 8e88cfc0): optional risk-modifier config, the overlay's
+  // "Policy Layer" riskModifiers — { touchesAuth: 10, touchesDatabase: 5,
+  // touchesPersonalData: 10, productionImpact: 10 } is the documented
+  // example, never auto-applied. Opt-in: a project only applies a modifier
+  // by explicitly setting its point value here. Only the four names
+  // lib/confidence.ts#RISK_MODIFIER_NAMES recognises are ever consulted; any
+  // other key is inert. Each triggered modifier ADDS its points on top of
+  // the M2-resolved base threshold (taskTypeThresholds -> confidenceThreshold
+  // -> global default); modifiers stack additively
+  // (ClaimPolicyEvaluator#evaluate). No write-time validation schema yet —
+  // there is no settings endpoint for this field in this milestone; read
+  // paths degrade unvalidated/malformed entries to "not triggered" (same
+  // posture as taskTypeThresholds).
+  riskModifiers            Json?
   // scorer-v2 (T5): per-project confidence-gate enforcement. Nullable; null
   // resolves to WARN via resolveEnforcementMode() so existing rows roll out in
   // warn-mode without a backfill (mirrors governanceMode). New code reads via the

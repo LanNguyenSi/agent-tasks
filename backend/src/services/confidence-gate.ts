@@ -22,6 +22,12 @@ type GateTask = {
   title: string;
   description: string | null;
   templateData: unknown;
+  // M3 (task 8e88cfc0): the risk-modifier text detectors read the task's OWN
+  // labels (touchesAuth/touchesDatabase/touchesPersonalData match on
+  // `description`; productionImpact also checks `labels`). Required, same
+  // rationale as `taskTypeThresholds` below: a caller that forgets to select
+  // `labels` gets a compile error, not a silently-empty detector input.
+  labels: string[];
   project: {
     confidenceThreshold: number;
     taskTemplate: unknown;
@@ -33,6 +39,11 @@ type GateTask = {
     // future /start or /claim select into a compile-time TS2345, not a
     // silent runtime fallback to the project layer.
     taskTypeThresholds: unknown;
+    // M3 (task 8e88cfc0): opt-in risk-modifier point config, unvalidated Json
+    // read (see resolveTriggeredRiskModifiers). Required for the same reason
+    // taskTypeThresholds is: a dropped `riskModifiers: true` select becomes a
+    // compile error here rather than a silent "no modifiers ever trigger".
+    riskModifiers: unknown;
   };
 };
 
@@ -96,9 +107,10 @@ export async function evaluateConfidenceGate(
   // M2 (task b8629b99): layered threshold hierarchy — a per-task-type
   // override (keyed on the EXPLICIT taskType the scorer already echoes as
   // `report.inferredTaskType`) beats the flat project threshold, which beats
-  // the global default. The evaluator below is unaware of the layering; it
-  // only ever sees the single already-resolved number.
-  const { effectiveThreshold, thresholdSource } = resolveEffectiveThreshold(
+  // the global default. This is the BASE the evaluator adds M3 risk-modifier
+  // points on top of below — it is not itself the final gating number once
+  // risk modifiers are in play (see `decision.effectiveThreshold`).
+  const { effectiveThreshold: baseThreshold, thresholdSource } = resolveEffectiveThreshold(
     report.inferredTaskType,
     task.project.taskTypeThresholds,
     task.project.confidenceThreshold,
@@ -109,9 +121,9 @@ export async function evaluateConfidenceGate(
   const forceReason = c.req.query("forceReason")?.trim() ?? "";
 
   const decision = claimPolicyEvaluator.evaluate({
-    task: { id: task.id, projectId: task.projectId },
+    task: { id: task.id, projectId: task.projectId, description: task.description, labels: task.labels },
     report,
-    projectPolicy: { mode, threshold: effectiveThreshold, thresholdSource },
+    projectPolicy: { mode, threshold: baseThreshold, thresholdSource, riskModifiers: task.project.riskModifiers },
     actor,
     force,
     forceReason,
@@ -128,12 +140,17 @@ export async function evaluateConfidenceGate(
         ok: false,
         response: lowConfidence(c, {
           ...report,
-          threshold: effectiveThreshold,
+          threshold: decision.effectiveThreshold,
           // M2 (task b8629b99): `threshold` is kept (== effectiveThreshold) for
           // BC with existing consumers; these two additive fields let a caller
           // tell which layer of the hierarchy actually produced the number.
-          effectiveThreshold,
+          // M3 (task 8e88cfc0): both now reflect the FINAL, post-risk-modifier
+          // number (`decision.effectiveThreshold`, not the pre-modifier
+          // `baseThreshold` local above) — `triggeredRiskModifiers` names which
+          // modifiers, if any, raised it above the M2 base.
+          effectiveThreshold: decision.effectiveThreshold,
           thresholdSource,
+          triggeredRiskModifiers: decision.triggeredRiskModifiers,
           nextActions: decision.nextActions,
         }),
       };
