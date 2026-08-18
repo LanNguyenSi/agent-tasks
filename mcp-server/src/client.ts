@@ -127,12 +127,13 @@ export class AgentTasksClient {
 
   // ── Project-slug resolution (rc-v1-C006) ──────────────────────────────
   //
-  // Shared by task_create's projectSlug alternative to projectId and by
-  // listProjectTasks's existing slug-or-id `project` param, so both callers
-  // pay the by-slug round trip at most once per TTL window instead of on
-  // every call. See docs/response-contract-v1.md; the cache and retry
-  // behavior itself is a task-spec requirement of rc-v1-C006, not yet
-  // written into that doc's own prose.
+  // Shared by listProjectTasks's existing slug-or-id `project` param,
+  // createTaskByProjectSlug's projectSlug field, and createTaskByProject's
+  // own unified `project` field, so all three callers pay the by-slug
+  // round trip at most once per TTL window instead of on every call. See
+  // docs/response-contract-v1.md; the cache and retry behavior itself is a
+  // task-spec requirement of rc-v1-C006, not yet written into that doc's
+  // own prose.
 
   /** Cache-first resolution. Also reports whether `id` was cache-served (vs
    *  a fresh network lookup THIS call), so withResolvedProjectSlug can tell
@@ -367,6 +368,23 @@ export class AgentTasksClient {
   // see withResolvedProjectSlug.
   createTaskByProjectSlug(slug: string, input: CreateTaskInput) {
     return this.withResolvedProjectSlug(slug, (projectId) => this.createTask(projectId, input));
+  }
+
+  // task_create's unified `project` field (mirrors project_tasks's own
+  // `project`, rc-v1-C006's listProjectTasks polymorphic param): accepts a
+  // slug OR a UUID in one field instead of the separate projectId/
+  // projectSlug pair. Same UUID-passthrough check as listProjectTasks
+  // (isUuid), same TTL-cached resolver as createTaskByProjectSlug for the
+  // slug branch -- not a second resolver. Throws ProjectSlugNotFoundError
+  // on a fresh (non-cached) 404 -- see withResolvedProjectSlug.
+  createTaskByProject(project: string, input: CreateTaskInput) {
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        project,
+      );
+    return isUuid
+      ? this.createTask(project, input)
+      : this.createTaskByProjectSlug(project, input);
   }
 
   claimTask(taskId: string) {

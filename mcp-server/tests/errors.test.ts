@@ -1051,6 +1051,9 @@ describe("mapBackendError catalog", () => {
       resultMustBePlainStringError(),
       resultMustBePlainStringError("tasks_update"),
       projectAddressingConflictError("task_create"),
+      projectAddressingConflictError("task_create", "neither_provided"),
+      projectAddressingConflictError("task_create", "project_and_projectId"),
+      projectAddressingConflictError("task_create", "project_and_projectSlug"),
       unknownProjectSlugError("does-not-exist", "task_create"),
     ];
     for (const fixture of fixtures) {
@@ -1100,7 +1103,7 @@ describe("projectAddressingConflictError / unknownProjectSlugError", () => {
   it('projectAddressingConflictError(verb, "neither_provided") mentions projects_list in the recipe as the legacy-flag option, but does not put it in allowedNext, distinct from the default "both_provided" wording', () => {
     const err = projectAddressingConflictError("task_create", "neither_provided");
     expect(err.error.code).toBe("project_addressing_conflict");
-    expect(err.error.message).toMatch(/neither projectId nor projectSlug/i);
+    expect(err.error.message).toMatch(/none of project, projectId, or projectSlug/i);
     expect(err.error.recipe).toContain("projects_list");
     expect(err.error.recipe).toContain("AGENT_TASKS_MCP_LEGACY=1");
     expect(err.error.allowedNext).toEqual(["task_create"]);
@@ -1113,6 +1116,29 @@ describe("projectAddressingConflictError / unknownProjectSlugError", () => {
     const explicit = projectAddressingConflictError("task_create", "both_provided");
     expect(withDefault).toEqual(explicit);
     expect(withDefault.error.message).toMatch(/both provided/i);
+  });
+
+  // task_create's unified `project` field (mirrors project_tasks's own):
+  // conflicting with EITHER projectId or projectSlug is its own reason, so
+  // the message names the two fields that actually collided.
+  it('projectAddressingConflictError(verb, "project_and_projectId") names project and projectId in message and recipe', () => {
+    const err = projectAddressingConflictError("task_create", "project_and_projectId");
+    expect(err.error.code).toBe("project_addressing_conflict");
+    expect(err.error.message).toBe("project and projectId were both provided; pass exactly one");
+    expect(err.error.recipe).toBe("resubmit task_create with only one of project or projectId");
+    expect(err.error.allowedNext).toEqual(["task_create"]);
+    assertAllowedNextRegistered(err, registeredVerbNames());
+    expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
+  });
+
+  it('projectAddressingConflictError(verb, "project_and_projectSlug") names project and projectSlug in message and recipe', () => {
+    const err = projectAddressingConflictError("task_create", "project_and_projectSlug");
+    expect(err.error.code).toBe("project_addressing_conflict");
+    expect(err.error.message).toBe("project and projectSlug were both provided; pass exactly one");
+    expect(err.error.recipe).toBe("resubmit task_create with only one of project or projectSlug");
+    expect(err.error.allowedNext).toEqual(["task_create"]);
+    assertAllowedNextRegistered(err, registeredVerbNames());
+    expect(serializeResult(err).length).toBeLessThanOrEqual(ERROR_BUDGET_CHARS);
   });
 
   it("unknownProjectSlugError mentions projects_list in the recipe as the legacy-flag option, and includes only the calling verb in allowedNext", () => {
@@ -1779,6 +1805,14 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
       // added), not as its primary corrective call -- it is scoped to
       // exactly this fixture, not a blanket vocabulary exclusion.
       allowedRecipeOnlyVerbs: ["projects_list"],
+    },
+    {
+      label: "project_addressing_conflict (project_and_projectId)",
+      err: projectAddressingConflictError("task_create", "project_and_projectId"),
+    },
+    {
+      label: "project_addressing_conflict (project_and_projectSlug)",
+      err: projectAddressingConflictError("task_create", "project_and_projectSlug"),
     },
     {
       label: "unknown_project_slug",

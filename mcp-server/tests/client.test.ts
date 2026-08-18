@@ -323,8 +323,9 @@ describe("AgentTasksClient", () => {
   // ── Project-slug resolution: cache, invalidate-and-retry, unknown slug
   // (rc-v1-C006) ────────────────────────────────────────────────────────
   //
-  // Shared machinery behind both listProjectTasks's existing slug-or-id
-  // `project` param and createTaskByProjectSlug's new projectSlug field.
+  // Shared machinery behind listProjectTasks's existing slug-or-id
+  // `project` param, createTaskByProjectSlug's projectSlug field, and
+  // createTaskByProject's own unified `project` field.
   describe("project-slug resolution (rc-v1-C006)", () => {
     it("throws ProjectSlugNotFoundError, not a bare AgentTasksApiError, on a fresh (non-cached) 404 slug lookup", async () => {
       fetchMock.mockResolvedValueOnce(err(404, { error: "not_found", message: "Resource not found" }));
@@ -626,6 +627,70 @@ describe("AgentTasksClient", () => {
       const client = new AgentTasksClient(config);
       try {
         await client.createTaskByProjectSlug("ghost-project", { title: "x" });
+        throw new Error("expected a throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(ProjectSlugNotFoundError);
+        expect((e as ProjectSlugNotFoundError).slug).toBe("ghost-project");
+      }
+    });
+
+    // createTaskByProject: task_create's unified `project` field, same
+    // polymorphic UUID-or-slug addressing as listProjectTasks's own
+    // `project` param, reusing the SAME TTL-cached resolver (not a second
+    // one) via createTaskByProjectSlug for the slug branch.
+    it("createTaskByProject: passes a UUID straight through, no slug-lookup round trip", async () => {
+      fetchMock.mockResolvedValueOnce(ok({ task: { id: "t1" } }));
+      const client = new AgentTasksClient(config);
+      await client.createTaskByProject("00000000-0000-0000-0000-000000000001", {
+        title: "New task",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe(
+        "https://example.test/api/projects/00000000-0000-0000-0000-000000000001/tasks",
+      );
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body)).toEqual({ title: "New task" });
+    });
+
+    it("createTaskByProject: resolves a slug via /projects/by-slug before POSTing to the tasks endpoint", async () => {
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+        .mockResolvedValueOnce(ok({ task: { id: "t1" } }));
+      const client = new AgentTasksClient(config);
+      await client.createTaskByProject("agent-tasks", { title: "New task" });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://example.test/api/projects/by-slug/agent-tasks",
+      );
+      const [url, init] = fetchMock.mock.calls[1];
+      expect(url).toBe("https://example.test/api/projects/p1/tasks");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body)).toEqual({ title: "New task" });
+    });
+
+    it("createTaskByProject reuses a slug cached by a prior listProjectTasks call (shared cache, same resolver as createTaskByProjectSlug)", async () => {
+      const client = new AgentTasksClient(config);
+      fetchMock
+        .mockResolvedValueOnce(ok({ project: { id: "p1" } }))
+        .mockResolvedValueOnce(ok({ tasks: [] }));
+      await client.listProjectTasks("agent-tasks");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      fetchMock.mockResolvedValueOnce(ok({ task: { id: "t1" } }));
+      await client.createTaskByProject("agent-tasks", { title: "New task" });
+      // No second by-slug round trip: only the create POST.
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock.mock.calls[2][0]).toBe(
+        "https://example.test/api/projects/p1/tasks",
+      );
+    });
+
+    it("ProjectSlugNotFoundError on createTaskByProject carries the slug that failed to resolve", async () => {
+      fetchMock.mockResolvedValueOnce(err(404, { error: "not_found", message: "Resource not found" }));
+      const client = new AgentTasksClient(config);
+      try {
+        await client.createTaskByProject("ghost-project", { title: "x" });
         throw new Error("expected a throw");
       } catch (e) {
         expect(e).toBeInstanceOf(ProjectSlugNotFoundError);

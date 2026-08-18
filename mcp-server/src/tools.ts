@@ -344,8 +344,17 @@ export function buildTools(
     def({
       name: "task_create",
       description:
-        "Create a new task in a project. Only title is required (plus exactly one of projectId or projectSlug). Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. When a project uses task-template mode, call projects_get_effective_gates first and populate the templateData fields it lists under taskCreation.requiredFields.\n\nprojectSlug (rc-v1-C006) is an alternative to projectId: resolved to a project id mcp-server-side via an internal TTL-cached slug lookup (~15 min, invalidated and retried once if the cached id 404s downstream). Passing both projectId and projectSlug is a project_addressing_conflict teaching error; a projectSlug that resolves to nothing is an unknown_project_slug teaching error whose recipe asks the operator for the correct slug or id (or, with AGENT_TASKS_MCP_LEGACY=1 set, call projects_list).\n\nReturns a receipt by default ({ ok, task: { id, status }, confidence: <score>, deviations? }) — description/templateData are NOT echoed back. A CONFIDENCE_BELOW_THRESHOLD deviation appears when score < threshold, with detail ({score, threshold, enforcementMode, missing[] clamped to the first 5, totalMissing}) and a task_respec hint; low confidence never blocks creation itself, only the hard gate at task_pickup/task_start (when enforcementMode=BLOCK) does. Pass include:[\"task\"] for the full { task, confidence } object.",
+        "Create a new task in a project. Only title is required (plus exactly one of project, projectId, or projectSlug). Use externalRef as an idempotency key for bulk imports — the backend dedupes on (projectId, externalRef). Pass dependsOn=[taskId, ...] to declare blocking task IDs (same project); task_pickup will skip the new task until all listed blockers reach status=done. Note: dependsOn is a CREATE-time field only — there is no v2 verb to add or remove blockers post-create; use the REST /tasks/:id/dependencies endpoints (currently human-only) for that. Pass debugFlavor=true/false to explicitly classify the task: true forces the grounding hint at pickup, false suppresses it. When omitted, the backend runs the title/label heuristic lazily at task_pickup instead. When a project uses task-template mode, call projects_get_effective_gates first and populate the templateData fields it lists under taskCreation.requiredFields.\n\nproject is a slug-or-UUID alternative to projectId/projectSlug, matching project_tasks's own `project` param: pass a slug ('agent-tasks') or a UUID in one field instead of choosing between the other two. projectSlug (rc-v1-C006) remains a slug-only alternative to projectId. All three resolve through the same mcp-server-side, TTL-cached slug lookup (~15 min, invalidated and retried once if the cached id 404s downstream) when a slug is given. Passing project together with projectId, project together with projectSlug, or projectId together with projectSlug is a project_addressing_conflict teaching error; passing none of the three is the same error in the other direction. A slug that resolves to nothing is an unknown_project_slug teaching error whose recipe asks the operator for the correct slug or id (or, with AGENT_TASKS_MCP_LEGACY=1 set, call projects_list).\n\nReturns a receipt by default ({ ok, task: { id, status }, confidence: <score>, deviations? }) — description/templateData are NOT echoed back. A CONFIDENCE_BELOW_THRESHOLD deviation appears when score < threshold, with detail ({score, threshold, enforcementMode, missing[] clamped to the first 5, totalMissing}) and a task_respec hint; low confidence never blocks creation itself, only the hard gate at task_pickup/task_start (when enforcementMode=BLOCK) does. Pass include:[\"task\"] for the full { task, confidence } object.",
       inputShape: {
+        project: z
+          .string()
+          .trim()
+          .min(1)
+          .max(255)
+          .optional()
+          .describe(
+            "Slug or UUID, same polymorphic addressing as project_tasks's `project`. Alternative to projectId/projectSlug. Pass exactly one of project, projectId, or projectSlug. Trimmed and length-capped (max 255) like projectSlug, so the two slug-accepting fields share the same input hygiene. A UUID-shaped value is routed straight to the id endpoint and never treated as a slug -- if this project's slug is itself UUID-shaped, pass it via projectSlug instead, which is always resolved as a slug.",
+          ),
         projectId: uuid().optional(),
         projectSlug: z
           .string()
@@ -354,7 +363,7 @@ export function buildTools(
           .max(255)
           .optional()
           .describe(
-            "Alternative to projectId. Resolved mcp-server-side via a TTL-cached slug lookup. Pass exactly one of projectId or projectSlug.",
+            "Slug-only alternative to projectId. Resolved mcp-server-side via a TTL-cached slug lookup. Pass exactly one of project, projectId, or projectSlug.",
           ),
         title: z.string().min(1).max(255),
         description: z.string().optional(),
@@ -383,15 +392,31 @@ export function buildTools(
           ),
         include: includeSchema,
       },
-      handler: async ({ projectId, projectSlug, include, ...input }) => {
-        // rc-v1-C006: projectId/projectSlug validation happens here, before
-        // any network call, same pattern as task_respec's own client-side
-        // "at least one of" guard below — except CONFLICT is a proper
-        // teaching error per the task spec, not a bare thrown message.
+      handler: async ({ project, projectId, projectSlug, include, ...input }) => {
+        // rc-v1-C006 (extended for the unified `project` field): addressing
+        // validation happens here, before any network call, same pattern as
+        // task_respec's own client-side "at least one of" guard below —
+        // except CONFLICT is a proper teaching error per the task spec, not
+        // a bare thrown message. Checked pairwise so the message names the
+        // two fields that actually collided, not a generic "more than one".
+        if (project !== undefined && projectId !== undefined) {
+          throw new Error(
+            serializeTeachingError(
+              projectAddressingConflictError("task_create", "project_and_projectId"),
+            ),
+          );
+        }
+        if (project !== undefined && projectSlug !== undefined) {
+          throw new Error(
+            serializeTeachingError(
+              projectAddressingConflictError("task_create", "project_and_projectSlug"),
+            ),
+          );
+        }
         if (projectId !== undefined && projectSlug !== undefined) {
           throw new Error(serializeTeachingError(projectAddressingConflictError("task_create")));
         }
-        if (projectId === undefined && projectSlug === undefined) {
+        if (project === undefined && projectId === undefined && projectSlug === undefined) {
           throw new Error(
             serializeTeachingError(
               projectAddressingConflictError("task_create", "neither_provided"),
@@ -401,9 +426,11 @@ export function buildTools(
         let response: unknown;
         try {
           response =
-            projectId !== undefined
-              ? await wrap(() => client.createTask(projectId, input))
-              : await wrap(() => client.createTaskByProjectSlug(projectSlug as string, input));
+            project !== undefined
+              ? await wrap(() => client.createTaskByProject(project, input))
+              : projectId !== undefined
+                ? await wrap(() => client.createTask(projectId, input))
+                : await wrap(() => client.createTaskByProjectSlug(projectSlug as string, input));
         } catch (err) {
           // ProjectSlugNotFoundError is raised by client.ts's resolver on a
           // FRESH 404 (not a stale cache entry — that case is retried
@@ -637,7 +664,14 @@ export function buildTools(
         "DEFAULT sort is `createdAt:desc` (newest tasks first) — pass `sort: \"createdAt:asc\"` to reverse it. Combined with a small `limit`, the default lets you fetch the N newest open tasks in a single call without blowing the tool-result token cap. " +
         "The response carries `nextCursor` (a task id, or null once the last page is reached) — pass it back as `cursor` to page forward; combined with `sort` + `id` as a tiebreaker, page order is stable even when many tasks share the same createdAt timestamp.",
       inputShape: {
-        project: z.string().min(1),
+        project: z
+          .string()
+          .trim()
+          .min(1)
+          .max(255)
+          .describe(
+            "Slug or UUID; trimmed and length-capped (max 255), same input hygiene as task_create's project/projectSlug fields. A UUID-shaped value is routed straight to the id endpoint and never treated as a slug -- if this project's slug is itself UUID-shaped, it cannot be addressed via this field.",
+          ),
         status: z
           .union([
             z.enum(["open", "in_progress", "review", "done", "abandoned"]),
