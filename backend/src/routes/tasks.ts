@@ -56,6 +56,7 @@ import {
 import { resolveEnforcementMode } from "../lib/enforcement-mode.js";
 import { evaluateConfidenceGate, deriveNextActions } from "../services/confidence-gate.js";
 import { recordBounceBack, recordTerminalSnapshot } from "../services/confidence-telemetry.js";
+import { getLlmRewriteClient, type RewriteSuggestion } from "../services/llm-rewrite.js";
 import {
   DEFAULT_TRANSITIONS,
   findDefaultTransition,
@@ -4221,6 +4222,88 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
       foreign: isForeignDeliverable(task, task.project),
     },
   });
+});
+
+// ── LLM rewrite suggestion (M4, task fc4f2dc7) ────────────────────────────────
+// ADR-0011: LLMs are advisory only, never gating. This handler NEVER writes
+// to the task -- it only reads the task + its live confidence findings,
+// asks the model for a rewritten description, and returns the suggestion
+// for the caller to display. Applying it is a separate, explicit
+// PATCH /tasks/:id the caller makes after a human reviews the diff.
+
+taskRouter.post("/tasks/:id/suggest-rewrite", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:read")) {
+    return forbidden(c, "Missing scope: tasks:read");
+  }
+
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    select: {
+      id: true,
+      projectId: true,
+      title: true,
+      description: true,
+      templateData: true,
+      project: {
+        select: {
+          aiHelpersEnabled: true,
+          taskTemplate: true,
+        },
+      },
+    },
+  });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  // Opt-in gate (M4): a project must explicitly turn this on
+  // (Project.aiHelpersEnabled). An off project 404s -- the endpoint is
+  // invisible, same posture as "task not found" -- and no LLM call (no
+  // API-key touch, no external egress) ever happens for it.
+  if (!task.project.aiHelpersEnabled) return notFound(c);
+
+  const llmClient = getLlmRewriteClient();
+  if (!llmClient) {
+    return c.json(
+      {
+        error: "llm_not_configured",
+        message: "The LLM rewrite helper is not configured on this server (missing ANTHROPIC_API_KEY).",
+      },
+      503,
+    );
+  }
+
+  const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
+  const { findings } = calculateConfidence({
+    title: task.title,
+    description: task.description,
+    templateData: task.templateData as TemplateData | null,
+    templateFields: tpl?.fields ?? null,
+  });
+
+  let result: RewriteSuggestion;
+  try {
+    result = await llmClient.suggestRewrite({
+      title: task.title,
+      description: task.description,
+      findings,
+    });
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), taskId: task.id },
+      "LLM rewrite suggestion failed",
+    );
+    return c.json(
+      { error: "llm_request_failed", message: "The LLM rewrite helper failed to produce a suggestion." },
+      502,
+    );
+  }
+
+  return c.json({ suggestion: result.suggestion, changedSignals: result.changedSignals });
 });
 
 // ── Update task ───────────────────────────────────────────────────────────────

@@ -183,6 +183,12 @@ export interface TaskDetailProps {
    * — e.g. the board modal — never requested it).
    */
   improvementPanel?: TaskConfidenceDetail | null;
+  /** M4 (task fc4f2dc7): project.aiHelpersEnabled -- gates the
+   *  ImprovementPanel's opt-in "Suggest improvement" (LLM rewrite) button.
+   *  Defaults to false so callers that don't thread it (e.g. the dashboard
+   *  modal, which doesn't wire `improvementPanel` either yet) simply don't
+   *  show the button. */
+  aiHelpersEnabled?: boolean;
   onUpdate: (task: Task) => void;
   onDelete: (taskId: string) => void;
   onClose: () => void;
@@ -211,6 +217,7 @@ export default function TaskDetail({
   isProjectAdmin = false,
   workflowTransitions = null,
   improvementPanel = null,
+  aiHelpersEnabled = false,
   onUpdate,
   onDelete,
   onClose,
@@ -657,7 +664,16 @@ export default function TaskDetail({
     <div className="td-main">
 
       {/* ── Improvement panel (M4, task 67526c1c) ─────────────── */}
-      {improvementPanel && <ImprovementPanel confidence={improvementPanel} />}
+      {improvementPanel && (
+        <ImprovementPanel
+          confidence={improvementPanel}
+          taskId={task.id}
+          description={task.description}
+          aiHelpersEnabled={aiHelpersEnabled}
+          onUpdate={onUpdate}
+          onError={onError}
+        />
+      )}
 
       {/* ── Description ─────────────────────────────────────── */}
       <section className="td-section">

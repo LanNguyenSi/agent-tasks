@@ -1423,6 +1423,76 @@ export const openApiSpec = {
         },
       },
     },
+    "/api/tasks/{id}/suggest-rewrite": {
+      post: {
+        tags: ["Tasks"],
+        summary: "Suggest an LLM-rewritten task description (advisory only)",
+        description:
+          "M4 (ADR-0011: LLMs are advisory only, never gating). Reads the task and its live confidence findings and asks an LLM to propose a rewritten description that addresses them; NEVER modifies the task itself, and never calls any mutating verb. Gated behind the project's `aiHelpersEnabled` flag (default false, set via PATCH /projects/:id) -- when off, this returns 404 identically to a missing task, so the feature is invisible unless explicitly opted in. Returns 503 if the server has no ANTHROPIC_API_KEY configured. To apply a suggestion, PATCH /tasks/:id with the returned `suggestion` as the new `description` -- this endpoint never writes it for you. Requires scope: tasks:read.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Rewrite suggestion",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    suggestion: { type: "string", description: "Proposed rewritten task description." },
+                    changedSignals: {
+                      type: "array",
+                      items: { type: "string" },
+                      description: "Confidence-finding `code` values (see the Confidence schema's `findings`) the suggestion addresses.",
+                    },
+                  },
+                  required: ["suggestion", "changedSignals"],
+                },
+              },
+            },
+          },
+          "403": {
+            description: "Missing scope or access denied",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "404": {
+            description: "Task not found, or the project has aiHelpersEnabled=false",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "502": {
+            description: "The LLM request failed or returned an unparseable response",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "503": {
+            description: "The LLM rewrite helper is not configured on this server (missing ANTHROPIC_API_KEY)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/tasks/{id}/claim": {
       post: {
         tags: ["Tasks"],

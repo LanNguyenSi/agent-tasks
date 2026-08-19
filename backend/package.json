@@ -21,6 +21,7 @@
     "shadow:report": "tsx src/scripts/shadow-report.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
     "@hono/node-server": "^2.0.5",
     "@hono/zod-validator": "^0.4.1",
     "@lannguyensi/evidence-ledger": "^0.5.1",

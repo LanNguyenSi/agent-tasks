@@ -5068,6 +5068,52 @@ html[data-theme="light"] {
   color: var(--muted);
 }
 
+/* M4: "Suggest improvement" LLM rewrite helper (advisory only, ADR-0011). */
+.ip-rewrite-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.ip-rewrite-error {
+  font-size: var(--text-xs);
+  color: var(--danger);
+}
+
+/* Before/After diff inside the "Suggested rewrite" modal. */
+.ip-rewrite-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+.ip-rewrite-signals {
+  grid-column: 1 / -1;
+}
+
+.ip-rewrite-text {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-base);
+  background: color-mix(in srgb, white 4%, var(--surface) 96%);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+@media (max-width: 640px) {
+  .ip-rewrite-diff {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Responsive: collapse two columns to one under 900 px */
 @media (max-width: 900px) {
   .td-layout {

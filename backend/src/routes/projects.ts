@@ -79,6 +79,11 @@ const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, s
   // task's own creator may respec it. True relaxes that to any agent with
   // project access and the tasks:update scope. See routes/tasks.ts.
   allowNonCreatorRespec: z.boolean().optional(),
+  // M4 (task fc4f2dc7): opt-in gate for the LLM-advisory "Suggest
+  // improvement" rewrite helper (POST /tasks/:id/suggest-rewrite). Default
+  // false: an off project gets a 404 on that endpoint and no LLM call is
+  // ever made for it. See routes/tasks.ts and services/llm-rewrite.ts.
+  aiHelpersEnabled: z.boolean().optional(),
   // Outbound Signal-webhook target. See docs/notification-webhooks.md.
   // Pass an empty string OR null to clear. URL is validated for shape only —
   // we do not probe reachability here; failed deliveries surface in audit.
@@ -609,6 +614,15 @@ projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), as
     governanceChange.allowNonCreatorRespec = {
       from: project.allowNonCreatorRespec,
       to: body.allowNonCreatorRespec,
+    };
+  }
+  if (
+    body.aiHelpersEnabled !== undefined &&
+    body.aiHelpersEnabled !== project.aiHelpersEnabled
+  ) {
+    governanceChange.aiHelpersEnabled = {
+      from: project.aiHelpersEnabled,
+      to: body.aiHelpersEnabled,
     };
   }
   // Notification-webhook config is ops-sensitive: a flipped URL changes
