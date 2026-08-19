@@ -67,8 +67,9 @@ the third-highest MCP token consumer in the audited window, and
 those callers to the v2 replacements in the table below, or set the flag
 while migrating.
 
-The 8 converted v2 write verbs (`task_create`, `task_respec`, `task_finish`,
-`task_submit_pr`, `task_note`, `task_merge`, `task_abandon`, and the
+The 9 converted v2 write verbs (`task_create`, `task_respec`, `task_finish`,
+`task_submit_pr`, `task_note`, `task_merge`, `task_abandon`,
+`task_creator_abandon`, and the
 `tasks_comment` alias) return a small receipt by default
 (`{ ok, task: { id, status? }, ... }`, per `docs/response-contract-v1.md`)
 instead of the raw backend body; pass `include: ["task"]` on any of them to
