@@ -56,7 +56,12 @@ import {
 import { resolveEnforcementMode } from "../lib/enforcement-mode.js";
 import { evaluateConfidenceGate, deriveNextActions } from "../services/confidence-gate.js";
 import { recordBounceBack, recordTerminalSnapshot } from "../services/confidence-telemetry.js";
-import { getLlmRewriteClient, type RewriteSuggestion } from "../services/llm-rewrite.js";
+import {
+  getLlmRewriteClient,
+  RewriteSuggestionTruncatedError,
+  DEFAULT_MODEL as REWRITE_DEFAULT_MODEL,
+  type RewriteSuggestion,
+} from "../services/llm-rewrite.js";
 import {
   DEFAULT_TRANSITIONS,
   findDefaultTransition,
@@ -4268,10 +4273,16 @@ taskRouter.post("/tasks/:id/suggest-rewrite", async (c) => {
 
   const llmClient = getLlmRewriteClient();
   if (!llmClient) {
+    // Review round-2 finding 6: the response body stays generic -- the env
+    // var name is an internal configuration detail, not something to hand
+    // an unauthenticated-beyond-project-access caller. The OpenAPI
+    // description (docs.ts) and this server-side log still name
+    // ANTHROPIC_API_KEY for whoever operates the deployment.
+    logger.warn({ taskId: task.id }, "suggest-rewrite: LLM rewrite helper not configured (missing ANTHROPIC_API_KEY)");
     return c.json(
       {
         error: "llm_not_configured",
-        message: "The LLM rewrite helper is not configured on this server (missing ANTHROPIC_API_KEY).",
+        message: "The LLM rewrite helper is not configured on this server.",
       },
       503,
     );
@@ -4297,11 +4308,38 @@ taskRouter.post("/tasks/:id/suggest-rewrite", async (c) => {
       { err: err instanceof Error ? err.message : String(err), taskId: task.id },
       "LLM rewrite suggestion failed",
     );
+    // Review round-2 finding 3: a truncated (stop_reason=max_tokens)
+    // response gets its own, more actionable message instead of the
+    // generic "failed to produce a suggestion" -- the caller can tell this
+    // apart from a genuine API/parse failure.
+    if (err instanceof RewriteSuggestionTruncatedError) {
+      return c.json(
+        {
+          error: "llm_response_truncated",
+          message: "The LLM suggestion exceeded the model's output limit before it could finish. Try again, or narrow the task description first.",
+        },
+        502,
+      );
+    }
     return c.json(
       { error: "llm_request_failed", message: "The LLM rewrite helper failed to produce a suggestion." },
       502,
     );
   }
+
+  // Review round-2 finding 9: egress traceability for the paid, external
+  // call this handler just made -- taskId/projectId/actor/model, on the
+  // success path only (the failure path above already logs the error).
+  logger.info(
+    {
+      taskId: task.id,
+      projectId: task.projectId,
+      actorType: actor.type,
+      actorId: actor.type === "human" ? actor.userId : actor.tokenId,
+      model: process.env.AGENT_TASKS_REWRITE_MODEL || REWRITE_DEFAULT_MODEL,
+    },
+    "suggest-rewrite: LLM rewrite suggestion produced",
+  );
 
   return c.json({ suggestion: result.suggestion, changedSignals: result.changedSignals });
 });

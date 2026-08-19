@@ -226,4 +226,68 @@ describe("ImprovementPanel — Suggest improvement (M4 LLM rewrite)", () => {
     expect(await screen.findByText("Project has not enabled AI helpers")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Suggested rewrite" })).not.toBeInTheDocument();
   });
+
+  // Review round-2 finding 10 (optional): a retry after a prior failure
+  // must clear the stale inline error, not stack it alongside the new
+  // (successful) result.
+  it("clears the inline error on a retry that succeeds", async () => {
+    apiMocks.suggestTaskRewrite.mockRejectedValueOnce(new Error("Project has not enabled AI helpers"));
+    render(
+      <ImprovementPanel
+        confidence={makeConfidence()}
+        taskId="task-1"
+        description="Old description"
+        aiHelpersEnabled
+        onUpdate={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Suggest improvement" }));
+    expect(await screen.findByText("Project has not enabled AI helpers")).toBeInTheDocument();
+
+    apiMocks.suggestTaskRewrite.mockResolvedValueOnce({
+      suggestion: "New description with acceptance criteria.",
+      changedSignals: ["missing_description"],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Suggest improvement" }));
+
+    expect(await screen.findByRole("dialog", { name: "Suggested rewrite" })).toBeInTheDocument();
+    expect(screen.queryByText("Project has not enabled AI helpers")).not.toBeInTheDocument();
+  });
+
+  // Review round-2 finding 10 (optional): a rejected Apply must surface via
+  // onError, not fail silently.
+  it("calls onError and keeps the modal open when Apply's updateTask rejects", async () => {
+    apiMocks.suggestTaskRewrite.mockResolvedValue({
+      suggestion: "New description with acceptance criteria.",
+      changedSignals: ["missing_description"],
+    });
+    apiMocks.updateTask.mockRejectedValue(new Error("Task was claimed by someone else"));
+    const onError = vi.fn();
+    const onUpdate = vi.fn();
+
+    render(
+      <ImprovementPanel
+        confidence={makeConfidence()}
+        taskId="task-1"
+        description="Old description"
+        aiHelpersEnabled
+        onUpdate={onUpdate}
+        onError={onError}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Suggest improvement" }));
+    await screen.findByRole("dialog", { name: "Suggested rewrite" });
+    await userEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    await vi.waitFor(() => {
+      expect(onError).toHaveBeenCalledWith("Task was claimed by someone else");
+    });
+    expect(onUpdate).not.toHaveBeenCalled();
+    // Apply failed -- the diff is still there for the user to retry/cancel,
+    // not silently dismissed.
+    expect(screen.getByRole("dialog", { name: "Suggested rewrite" })).toBeInTheDocument();
+  });
 });

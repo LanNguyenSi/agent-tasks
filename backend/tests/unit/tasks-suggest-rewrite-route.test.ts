@@ -44,9 +44,18 @@ vi.mock("../../src/services/team-access.js", () => ({
 
 const llmMocks = vi.hoisted(() => ({
   getLlmRewriteClient: vi.fn(),
+  // A real (mock-module-local) Error subclass, not vi.fn() — routes/tasks.js
+  // does `err instanceof RewriteSuggestionTruncatedError` in its catch
+  // block, so this must be a real constructor the thrown error can actually
+  // be an instance of. DEFAULT_MODEL mirrors the real module's export so
+  // the route's success-path log line (review round-2 finding 9) doesn't
+  // read `undefined`.
+  RewriteSuggestionTruncatedError: class RewriteSuggestionTruncatedError extends Error {},
 }));
 vi.mock("../../src/services/llm-rewrite.js", () => ({
   getLlmRewriteClient: llmMocks.getLlmRewriteClient,
+  RewriteSuggestionTruncatedError: llmMocks.RewriteSuggestionTruncatedError,
+  DEFAULT_MODEL: "claude-haiku-4-5",
 }));
 
 import { taskRouter } from "../../src/routes/tasks.js";
@@ -138,6 +147,17 @@ describe("POST /tasks/:id/suggest-rewrite", () => {
     expect(body.error).toBe("llm_not_configured");
   });
 
+  // Review round-2 finding 6: the response text must NOT name the env var
+  // (an internal config detail) -- only the OpenAPI doc and the server log
+  // do that now.
+  it("does not name ANTHROPIC_API_KEY in the 503 response body", async () => {
+    llmMocks.getLlmRewriteClient.mockReturnValue(null);
+    const res = await post(HUMAN);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).not.toContain("ANTHROPIC_API_KEY");
+    expect(body.message).toBe("The LLM rewrite helper is not configured on this server.");
+  });
+
   it("returns 502 when the LLM client throws", async () => {
     llmMocks.getLlmRewriteClient.mockReturnValue({
       suggestRewrite: vi.fn().mockRejectedValue(new Error("boom")),
@@ -146,6 +166,22 @@ describe("POST /tasks/:id/suggest-rewrite", () => {
     expect(res.status).toBe(502);
     const body = await res.json();
     expect(body.error).toBe("llm_request_failed");
+  });
+
+  // Review round-2 finding 3: a truncated (stop_reason=max_tokens) response
+  // gets its own error code and a more actionable message than the generic
+  // "failed to produce a suggestion".
+  it("returns 502 with error 'llm_response_truncated' when the LLM client throws RewriteSuggestionTruncatedError", async () => {
+    llmMocks.getLlmRewriteClient.mockReturnValue({
+      suggestRewrite: vi
+        .fn()
+        .mockRejectedValue(new llmMocks.RewriteSuggestionTruncatedError("truncated")),
+    });
+    const res = await post(HUMAN);
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("llm_response_truncated");
+    expect(body.message).toMatch(/output limit/i);
   });
 
   it("returns 200 with the suggestion and changedSignals, and never writes the task", async () => {

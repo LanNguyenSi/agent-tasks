@@ -86,6 +86,10 @@ const baseProject = {
   soloMode: true,
   governanceMode: "AUTONOMOUS",
   requireGroundingForDebug: false,
+  // M4 (task fc4f2dc7): opt-in gate for the "Suggest improvement" LLM
+  // rewrite helper (POST /tasks/:id/suggest-rewrite). Matches the schema
+  // default (review round-2 finding 8).
+  aiHelpersEnabled: false,
   notificationWebhookUrl: null,
   notificationWebhookSecret: null,
   createdAt: new Date(),
@@ -382,6 +386,87 @@ describe("PATCH /projects/:id — enforcementMode (scorer-v2 T5)", () => {
         payload: {
           changes: expect.objectContaining({
             enforcementMode: { from: null, to: "OFF" },
+          }),
+        },
+      }),
+    );
+  });
+});
+
+describe("PATCH /projects/:id — aiHelpersEnabled (M4, task fc4f2dc7, review round-2 finding 8)", () => {
+  it("accepts aiHelpersEnabled=true and persists it via prisma.update", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject); // false by default
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, aiHelpersEnabled: true });
+
+    const res = await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ aiHelpersEnabled: true }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
+      where: { id: "proj-1" },
+      data: expect.objectContaining({ aiHelpersEnabled: true }),
+    });
+  });
+
+  it("audits an aiHelpersEnabled change", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject); // false
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, aiHelpersEnabled: true });
+
+    await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ aiHelpersEnabled: true }),
+    });
+
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "project.updated",
+        payload: {
+          changes: expect.objectContaining({
+            aiHelpersEnabled: { from: false, to: true },
+          }),
+        },
+      }),
+    );
+  });
+
+  it("does NOT audit when aiHelpersEnabled is re-sent unchanged", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({ ...baseProject, aiHelpersEnabled: true });
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, aiHelpersEnabled: true });
+
+    await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ aiHelpersEnabled: true }),
+    });
+
+    expect(mockLogAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("persists aiHelpersEnabled=false to turn the helper back off, and audits the flip", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({ ...baseProject, aiHelpersEnabled: true });
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, aiHelpersEnabled: false });
+
+    const res = await makeApp().request("/projects/proj-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ aiHelpersEnabled: false }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
+      where: { id: "proj-1" },
+      data: expect.objectContaining({ aiHelpersEnabled: false }),
+    });
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "project.updated",
+        payload: {
+          changes: expect.objectContaining({
+            aiHelpersEnabled: { from: true, to: false },
           }),
         },
       }),

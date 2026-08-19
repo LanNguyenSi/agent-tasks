@@ -71,6 +71,14 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   // start → note → finish` sequence (~5 calls) every second per agent —
   // far above legitimate cadence, still enough to dampen a brute-force run.
   app.use("/api/mcp", rateLimit({ windowMs: 60_000, max: 300 }));
+  // M4 LLM rewrite helper (review round-2 finding 1): each call is a paid
+  // Anthropic API request, and the SDK's own defaults (10-minute timeout,
+  // 2 retries, timeouts ARE retried) let one client burn up to ~30 minutes
+  // of server-side work per request before services/llm-rewrite.ts trims
+  // those defaults down. 10/min per (IP, path) is far above one human
+  // clicking "Suggest improvement" on one task, and dampens both cost and
+  // thread-pool exhaustion from a burst.
+  app.use("/api/tasks/:id/suggest-rewrite", rateLimit({ windowMs: 60_000, max: 10 }));
 
   // Public
   app.route("/api/health", healthRouter);
