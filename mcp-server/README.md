@@ -49,15 +49,15 @@ Drop `--scope user` if you want it project-local instead. See
 
 ## Tools
 
-**23 tools registered by default.** rc-v1-C007 pruned 14 still-deprecated v1
+**24 tools registered by default.** rc-v1-C007 pruned 14 still-deprecated v1
 verbs out of the default registration (`projects_list`, `projects_get`,
 `tasks_list`, `tasks_instructions`, `tasks_create`, `tasks_claim`,
 `tasks_release`, `tasks_transition`, `tasks_update`, `review_approve`,
 `review_request_changes`, `review_claim`, `review_release`,
 `pull_requests_comment`); handler code for all 14 is untouched, only their
 registration is gated. Set `AGENT_TASKS_MCP_LEGACY=1` in the server
-process's environment to register all 37 tools (the full pre-rc-v1-C007
-set) for a client still depending on one of the pruned names. Two of the
+process's environment to register all 38 tools (the full pre-rc-v1-C007
+set plus every verb added since) for a client still depending on one of the pruned names. Two of the
 pruned verbs, `tasks_list` and `projects_list`, are known to have had
 active workflow users as of this pruning: `docs/response-contract-v1.md`'s
 Motivation section measured `tasks_list` as the third-highest MCP token
@@ -244,8 +244,8 @@ curl -X POST https://agent-tasks.opentriologue.ai/api/mcp \
 - Stateless Streamable HTTP (no session ID, one round-trip per
   request)
 - Same Bearer auth as the rest of the agent-tasks REST API
-- The HTTP endpoint is a **hand-maintained subset** of the 37 tools this
-  stdio package can expose (23 registered by default, the remaining 14
+- The HTTP endpoint is a **hand-maintained subset** of the 38 tools this
+  stdio package can expose (24 registered by default, the remaining 14
   legacy-only under `AGENT_TASKS_MCP_LEGACY=1`, see "Tools" above). It
   covers the full v1 alias surface (projects_*, tasks_*, review_*,
   signals_*, pull_requests_*) but does **not** yet include the v2 verbs

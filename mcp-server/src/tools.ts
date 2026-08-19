@@ -496,6 +496,24 @@ export function buildTools(
       },
     }),
     def({
+      name: "task_creator_abandon",
+      description:
+        "Retire an OPEN, UNCLAIMED task you created into status=abandoned, for the case where the task itself was a mistake (e.g. filed in the wrong project) rather than work you started and gave up on. Distinct from task_abandon: that verb releases a CLAIM (work or review) you currently hold; this verb never requires a claim and instead ends the task's lifecycle outright. Typical use: you filed a task in the wrong project, re-filed the correct one, and now need to retire the original so it stops showing up as an open duplicate. Wraps POST /api/tasks/:id/creator-abandon.\n\nNarrow authz, no relaxation and no force: only the task's own creator may call this (403 otherwise), and the task must still be status=open with no work or review claim held by anyone (409 'Task must be open and unclaimed to creator-abandon' otherwise). Agent-only, requires the tasks:update scope; humans have DELETE for this case instead. 404 if the task does not exist. Optional `reason` is recorded on the audit trail but not required.\n\nReturns a receipt by default ({ ok, task: { id, status } }). Pass include:[\"task\"] for the full backend object.",
+      inputShape: {
+        taskId: uuid(),
+        reason: z
+          .string()
+          .optional()
+          .describe("Optional free-text reason, recorded on the audit trail (e.g. 'refiled as <taskId> in the correct project')."),
+        include: includeSchema,
+      },
+      handler: async ({ taskId, reason, include }) => {
+        const response = await wrap(() => client.creatorAbandonTask(taskId, reason !== undefined ? { reason } : undefined));
+        if (include?.includes("task")) return response;
+        return receiptForAbandon(response as AbandonResponse);
+      },
+    }),
+    def({
       name: "task_submit_pr",
       description:
         "Record the branch + pull request metadata on a work-claimed task. Atomic metadata write, not a state transition. Use this after `gh pr create` to satisfy the `branchPresent` / `prPresent` workflow gates before calling task_finish. The canonical v2 flow for projects that enforce branch gates is: task_start → (work + gh pr create) → task_submit_pr → task_finish. For projects that only need prPresent, the shorthand `task_finish { prUrl }` still works and this verb is optional. This is the v2-native replacement for the v1 `tasks_update { branchName, prUrl, prNumber }` path, pruned from the default tool registration by rc-v1-C007 and reachable only with AGENT_TASKS_MCP_LEGACY=1 set. Re-submission is allowed and overwrites the prior values (supports the request_changes rework loop). Caller must hold the work claim; task must be in a non-terminal state and not `open`. Cross-repo hardening: prUrl must point at the same repo as project.githubRepo; mismatches are rejected with 400 cross_repo_pr_rejected. Authorship verification: the PR must be authored by the delegation user; mismatches are rejected with 403 pr_author_mismatch (fails open on GitHub API errors).\n\nReturns a receipt by default ({ ok, task: { id, status }, next: [\"task_finish once CI is green\"] }). Not a state transition, so no `transition` field. Pass include:[\"task\"] for the full backend object.",

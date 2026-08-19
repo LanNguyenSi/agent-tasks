@@ -5907,6 +5907,226 @@ describe("POST /tasks/:id/respec", () => {
   });
 });
 
+// ── POST /tasks/:id/creator-abandon ─────────────────────────────────────────
+//
+// Task 7a1360da (batch 19): lets the agent that created an OPEN, UNCLAIMED
+// task retire it to status=abandoned without ever holding a claim. Fixes the
+// structural deadlock where a task filed in the wrong project can never
+// satisfy prPresent/pr_repo_matches_project, so the only prior workaround
+// (file a new task in the right project, leave the old one open forever)
+// left an unclosable open duplicate behind.
+
+describe("POST /tasks/:id/creator-abandon", () => {
+  const AGENT_WITH_UPDATE: Actor = { ...AGENT, scopes: [...AGENT.scopes, "tasks:update"] };
+  const AGENT_NO_UPDATE_SCOPE: Actor = {
+    ...AGENT,
+    scopes: AGENT.scopes.filter((s) => s !== "tasks:update"),
+  };
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+
+  // Open + fully unclaimed, authored by the AGENT actor's own token: the
+  // baseline eligible state for every "allowed" test below.
+  const CREATOR_ABANDON_TASK = {
+    ...baseTask,
+    id: "task-1",
+    status: "open",
+    createdByAgentId: "agent-1",
+    createdByUserId: null,
+    claimedByAgentId: null,
+    claimedByUserId: null,
+    claimedAt: null,
+    reviewClaimedByAgentId: null,
+    reviewClaimedByUserId: null,
+  };
+
+  function creatorAbandonRequest(actor: Actor, body?: Record<string, unknown>) {
+    return makeApp(actor).request("/tasks/task-1/creator-abandon", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    });
+  }
+
+  it("creator can creator-abandon an open, unclaimed task: sets status=abandoned via atomic CAS and audits with reason", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(CREATOR_ABANDON_TASK) // guard fetch
+      .mockResolvedValueOnce({ ...CREATOR_ABANDON_TASK, status: "abandoned" }); // re-fetch after write
+
+    const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, {
+      reason: "refiled as 9f1c1234 in repo-intelligence; deliverable PR lives there",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { task: { status: string } };
+    expect(body.task.status).toBe("abandoned");
+
+    const casCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    expect(casCall.where).toMatchObject({
+      id: "task-1",
+      status: "open",
+      claimedByUserId: null,
+      claimedByAgentId: null,
+      reviewClaimedByUserId: null,
+      reviewClaimedByAgentId: null,
+      createdByAgentId: "agent-1",
+    });
+    expect(casCall.data.status).toBe("abandoned");
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.creator_abandoned",
+        taskId: "task-1",
+        projectId: "proj-1",
+        payload: expect.objectContaining({
+          actorType: "agent",
+          agentTokenId: "agent-1",
+          previousStatus: "open",
+          reason: "refiled as 9f1c1234 in repo-intelligence; deliverable PR lives there",
+        }),
+      }),
+    );
+  });
+
+  it("works with no body at all: reason is optional and defaults to null in the audit payload", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(CREATOR_ABANDON_TASK)
+      .mockResolvedValueOnce({ ...CREATOR_ABANDON_TASK, status: "abandoned" });
+
+    const res = await makeApp(AGENT_WITH_UPDATE).request("/tasks/task-1/creator-abandon", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ reason: null }) }),
+    );
+  });
+
+  // ── Integration scenario: task 5ade6732 (the batch 19 motivating case) ───
+  //
+  // A task filed in the wrong project, whose deliverable PR actually belongs
+  // in a different repo. The agent re-files a new task in the correct
+  // project, then creator-abandons the old one. End state: the old task
+  // carries status=abandoned, which drops it out of every default open-task
+  // listing (the browse route above filters `where.status = "open"` when
+  // `isExplicitSearch` is false, and PROJECT_TASK_STATUSES /
+  // CLAIMABLE_VALID_STATUSES already treat "abandoned" as a first-class
+  // filter value) — no open duplicate remains — and an audit row records why.
+  it("integration: re-home scenario ends with the old task at status=abandoned (no open duplicate) and an audit trail", async () => {
+    const wrongProjectTask = {
+      ...CREATOR_ABANDON_TASK,
+      id: "old-task-5ade6732",
+      projectId: "proj-agent-preflight",
+      title: "Fix thing (wrong project)",
+    };
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(wrongProjectTask)
+      .mockResolvedValueOnce({ ...wrongProjectTask, status: "abandoned" });
+
+    const res = await makeApp(AGENT_WITH_UPDATE).request("/tasks/old-task-5ade6732/creator-abandon", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "refiled in repo-intelligence; deliverable PR lives there" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { task: { status: string } };
+    expect(body.task.status).toBe("abandoned");
+    expect(body.task.status).not.toBe("open");
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.creator_abandoned",
+        taskId: "old-task-5ade6732",
+        projectId: "proj-agent-preflight",
+        payload: expect.objectContaining({ previousStatus: "open" }),
+      }),
+    );
+  });
+
+  it("returns 403 when caller is not the task's creator, and does not write", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...CREATOR_ABANDON_TASK,
+      createdByAgentId: "some-other-agent",
+    });
+
+    const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, {});
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe("Only the task's creator can creator-abandon it");
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when the task is (work-)claimed even though status is still open", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...CREATOR_ABANDON_TASK, claimedByAgentId: "agent-1" });
+
+    const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, {});
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe("Task must be open and unclaimed to creator-abandon");
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when the task is review-claimed even though status is still open", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...CREATOR_ABANDON_TASK,
+      reviewClaimedByAgentId: "agent-2",
+    });
+
+    const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, {});
+    expect(res.status).toBe(409);
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it.each(["in_progress", "review", "done", "abandoned"])(
+    "returns 409 when task.status is %s",
+    async (status) => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...CREATOR_ABANDON_TASK, status });
+      const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, {});
+      expect(res.status).toBe(409);
+      expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it("loses the CAS race (another actor mutated the row between read and write) -> 409 (TOCTOU regression)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(CREATOR_ABANDON_TASK);
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, {});
+    expect(res.status).toBe(409);
+  });
+
+  it("404s when the task does not exist", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(null);
+    const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, {});
+    expect(res.status).toBe(404);
+  });
+
+  it("agent without tasks:update scope gets 403 with the exact scope message, before touching the task", async () => {
+    const res = await creatorAbandonRequest(AGENT_NO_UPDATE_SCOPE, {});
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe("Missing scope: tasks:update");
+    expect(prismaMocks.taskFindUnique).not.toHaveBeenCalled();
+  });
+
+  // Human-override paths untouched: this verb is agent-only. A human caller
+  // never reaches the task lookup at all (the actor-type check runs first),
+  // and the existing human-only DELETE /tasks/:id route is unmodified by
+  // this change.
+  it("returns 403 for a human caller; humans use DELETE instead, and this route never touches the task", async () => {
+    const res = await creatorAbandonRequest(HUMAN, {});
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/agent-only/);
+    expect(prismaMocks.taskFindUnique).not.toHaveBeenCalled();
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid reason type (400) and never reads the task", async () => {
+    const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, { reason: 12345 });
+    expect(res.status).toBe(400);
+    expect(prismaMocks.taskFindUnique).not.toHaveBeenCalled();
+  });
+});
+
 // ── POST /projects/:projectId/tasks — workflowId project validation ────────
 //
 // Review finding from task 5107416c: with the first gate-relaxing registered

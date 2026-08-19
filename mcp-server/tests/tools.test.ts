@@ -108,6 +108,7 @@ describe("buildTools", () => {
         "task_attachment_get",
         "task_attachment_list",
         "task_create",
+        "task_creator_abandon",
         "task_finish",
         "task_merge",
         "task_note",
@@ -147,6 +148,7 @@ describe("buildTools", () => {
         "task_attachment_get",
         "task_attachment_list",
         "task_create",
+        "task_creator_abandon",
         "task_finish",
         "task_merge",
         "task_note",
@@ -187,7 +189,7 @@ describe("buildTools", () => {
   // a first-class alias). These two tests pin the marker/set relationship
   // mechanically in both directions, so this specific class of drift fails
   // here instead of only being caught by inspection. ──────────────────────
-  it("the [DEPRECATED marker set (across all 37 tools, legacy mode) is exactly LEGACY_VERB_NAMES -- no verb carries the marker without being pruned, and no pruned verb is missing it", () => {
+  it("the [DEPRECATED marker set (across all 38 tools, legacy mode) is exactly LEGACY_VERB_NAMES -- no verb carries the marker without being pruned, and no pruned verb is missing it", () => {
     const allTools = buildTools(new AgentTasksClient(config), { legacy: true });
     const markedNames = new Set(
       allTools.filter((t) => t.description.includes("[DEPRECATED")).map((t) => t.name),

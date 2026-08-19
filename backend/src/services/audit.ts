@@ -144,7 +144,17 @@ export type AuditAction =
   // no audit trail of who tried to route a create through a workflow id
   // this project does not own (potentially a gate-relaxing template from
   // another project).
-  | "task.workflow_id_rejected_cross_project";
+  | "task.workflow_id_rejected_cross_project"
+  // Creator-abandon verb (POST /tasks/:id/creator-abandon, task 7a1360da):
+  // lets the agent that CREATED a task retire it to status="abandoned"
+  // without ever claiming it. Narrow authz: creator-only (no
+  // allowNonCreatorRespec-style relaxation), open-only, fully unclaimed
+  // (mirrors task_respec's CAS guard); see the route's block comment in
+  // routes/tasks.ts for why "abandoned" is safe to write directly even
+  // though it is outside the workflow engine's fixed state vocabulary.
+  // Payload carries { actorType: "agent", agentTokenId, previousStatus,
+  // reason } so operators can see who gave up on the task and why.
+  | "task.creator_abandoned";
 
 export interface AuditPayload {
   [key: string]: unknown;

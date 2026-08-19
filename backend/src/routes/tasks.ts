@@ -3833,6 +3833,137 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
   return c.json({ task: updated });
 });
 
+// ── Creator abandon (v2 MCP) ──────────────────────────────────────────────────
+//
+// Fixes the structural deadlock described in task 7a1360da: a task filed in
+// the wrong project (wrong deliverableRepo) can never reach `prPresent` /
+// `pr_repo_matches_project`, so task_finish and task_submit_pr both hard-
+// refuse it. The only prior workaround was filing a NEW task in the right
+// project and leaving the old one open forever: agents had no path to close
+// it out (no status=abandoned write, and DELETE below is human-only).
+//
+// Deliberately narrow (orchestrator decision, task 7a1360da batch 19):
+//   - creator-only: task.createdByAgentId === actor.tokenId. No
+//     allowNonCreatorRespec-style relaxation and no `force` escape hatch.
+//   - open-only, fully unclaimed (no work or review claim by ANYONE),
+//     mirrors task_respec's CAS guard above.
+//   - agent-only. Humans already have DELETE for an open+unclaimed task they
+//     can see; this verb exists only because agents cannot call DELETE (see
+//     `taskRouter.delete` below, which rejects `actor.type !== "human"`).
+//     No human path is touched by this route.
+//
+// `abandoned` is not part of the workflow engine's fixed state vocabulary
+// (routes/workflows.ts FIXED_STATE_NAMES / FIXED_TERMINAL_STATES: a custom
+// workflow definition can only ever declare open/in_progress/review/done),
+// so this write bypasses the transition graph entirely, the same way the
+// claim-abandon route above resets `status` to `effectiveDef.initialState`
+// without going through a transition. This is not new surface for the
+// `status` column either: PROJECT_TASK_STATUSES and CLAIMABLE_VALID_STATUSES
+// above already list "abandoned" as a valid filter value (docs/okf/claim-
+// model.md documents `status` as a free String, enforced only at these
+// input-schema edges), and the default task listing filters `status: "open"`
+// (see `isExplicitSearch` above), so an abandoned task disappears from every
+// default view with no new query-side handling needed.
+//
+// Known limitation, out of scope here: `blockedBy` dependency gating (see
+// `blockedBy: { none: { status: { not: "done" } } }` above) never unblocks a
+// dependent task whose blocker was creator-abandoned rather than finished;
+// the same gap already exists for any non-"done" terminal disposition and is
+// not introduced by this route.
+const creatorAbandonSchema = z.object({
+  reason: z.string().trim().min(1).max(2000).optional(),
+});
+
+const CREATOR_ABANDON_STATE_CONFLICT_MESSAGE = "Task must be open and unclaimed to creator-abandon";
+
+taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type !== "agent") {
+    return forbidden(c, "creator-abandon is agent-only; humans can delete an open task directly");
+  }
+  if (!actor.scopes.includes("tasks:update")) {
+    return forbidden(c, "Missing scope: tasks:update");
+  }
+
+  // Optional body: `{ reason?: string }`. No-body callers (the historic
+  // task_abandon no-body form) are preserved via the `catch(() => ({}))`
+  // fallback, same pattern as /tasks/:id/start above.
+  const rawBody = await c.req.json().catch(() => ({}));
+  const parsedBody = creatorAbandonSchema.safeParse(rawBody);
+  if (!parsedBody.success) {
+    return c.json({ error: "bad_request", message: parsedBody.error.message }, 400);
+  }
+  const { reason } = parsedBody.data;
+
+  const task = await prisma.task.findUnique({ where: { id: c.req.param("id") } });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  if (task.createdByAgentId !== actor.tokenId) {
+    return forbidden(c, "Only the task's creator can creator-abandon it");
+  }
+
+  // Fast-path state check. The atomic updateMany below is the real guard
+  // (TOCTOU-safe); this lets the common "wrong state" case short-circuit
+  // with a clear message before attempting the write (mirrors task_respec).
+  if (
+    task.status !== "open" ||
+    task.claimedByUserId ||
+    task.claimedByAgentId ||
+    task.reviewClaimedByUserId ||
+    task.reviewClaimedByAgentId
+  ) {
+    return conflict(c, CREATOR_ABANDON_STATE_CONFLICT_MESSAGE);
+  }
+
+  const previousStatus = task.status;
+
+  // Atomic compare-and-swap: only abandon if the row is STILL open, fully
+  // unclaimed, AND still created by this same agent (defense-in-depth; the
+  // creator field cannot legitimately change out from under us, but guarding
+  // it in the CAS costs nothing and keeps this write path self-contained).
+  const abandonResult = await prisma.task.updateMany({
+    where: {
+      id: task.id,
+      status: "open",
+      claimedByUserId: null,
+      claimedByAgentId: null,
+      reviewClaimedByUserId: null,
+      reviewClaimedByAgentId: null,
+      createdByAgentId: actor.tokenId,
+    },
+    data: { status: "abandoned", updatedAt: new Date() },
+  });
+  if (abandonResult.count === 0) {
+    return conflict(c, CREATOR_ABANDON_STATE_CONFLICT_MESSAGE);
+  }
+
+  // updateMany cannot use `include`, so re-fetch the freshly written row.
+  const updated = await prisma.task.findUnique({
+    where: { id: task.id },
+    include: taskInclude,
+  });
+  if (!updated) return notFound(c);
+
+  void logAuditEvent({
+    action: "task.creator_abandoned",
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: {
+      actorType: "agent",
+      agentTokenId: actor.tokenId,
+      previousStatus,
+      reason: reason ?? null,
+    },
+  });
+
+  return c.json({ task: updated });
+});
+
 // ── Task-scoped PR merge (v2 MCP) ────────────────────────────────────────────
 //
 // Explicit merge verb, intentionally separate from `task_finish { outcome:

@@ -107,7 +107,7 @@ describe("agent-tasks-mcp spawned through a node_modules/.bin-shaped symlink (rc
 
       const listed = await client.listTools();
       const names = listed.tools.map((t) => t.name);
-      expect(listed.tools.length).toBe(23);
+      expect(listed.tools.length).toBe(24);
       expect(names).toContain("task_start");
       // A pruned v1 verb stays absent by default.
       expect(names).not.toContain("tasks_claim");
@@ -116,7 +116,7 @@ describe("agent-tasks-mcp spawned through a node_modules/.bin-shaped symlink (rc
   );
 
   it(
-    "registers the full 37-tool legacy set when AGENT_TASKS_MCP_LEGACY=1 is set in the spawned process's environment",
+    "registers the full 38-tool legacy set when AGENT_TASKS_MCP_LEGACY=1 is set in the spawned process's environment",
     async () => {
       const client = await connectOverSymlink({
         AGENT_TASKS_TOKEN: "fake-token-registration-only",
@@ -125,7 +125,7 @@ describe("agent-tasks-mcp spawned through a node_modules/.bin-shaped symlink (rc
 
       const listed = await client.listTools();
       const names = listed.tools.map((t) => t.name);
-      expect(listed.tools.length).toBe(37);
+      expect(listed.tools.length).toBe(38);
       expect(names).toContain("task_start");
       expect(names).toContain("tasks_claim");
     },
