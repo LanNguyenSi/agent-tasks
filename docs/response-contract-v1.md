@@ -57,8 +57,8 @@ object via `include` (see
 [include semantics](#include-semantics-replacing-verbose)). A write verb
 is any verb that mutates task state or metadata: `task_pickup`,
 `task_start`, `task_create`, `task_respec`, `task_submit_pr`,
-`task_finish`, `task_merge`, `task_abandon`, `task_note`, and their v1
-equivalents.
+`task_finish`, `task_merge`, `task_abandon`, `task_creator_abandon`,
+`task_note`, and their v1 equivalents.
 
 `task_pickup` is the deliberate exception: delivering the task spec is
 its purpose (see [onboarding channels](#onboarding-channels-by-rate-of-change)),
@@ -199,8 +199,8 @@ instead of composing several narrow ones.
 The full five-value vocabulary above is the target surface across both
 write and read verbs. Today, the write verbs converted under this
 contract (`task_create`, `task_respec`, `task_finish`, `task_submit_pr`,
-`task_merge`, `task_abandon`, `task_note` and its `tasks_comment`
-equivalent) accept only `include: ["task"]`; passing any other value
+`task_merge`, `task_abandon`, `task_creator_abandon`, `task_note` and its
+`tasks_comment` equivalent) accept only `include: ["task"]`; passing any other value
 (`"description"`, `"comments"`, `"instructions"`, `"artifacts"`) on one of
 these verbs is a schema validation error, not a silent no-op. The
 remaining vocabulary is the read-verb surface, landing with rc-v1-C006.
@@ -262,7 +262,7 @@ what every verb accepts today. Per verb, as implemented:
 | `tasks_get` (and the read-verb summary projection) | `"description"`, `"comments"`, `"artifacts"`, `"task"` |
 | `task_start` | `"description"`, `"instructions"`, `"comments"`, `"task"` |
 | `task_pickup` | `"comments"`, `"task"` (both resolve to the same full object for this verb) |
-| Every other converted write verb (`task_create`, `task_respec`, `task_finish`, `task_submit_pr`, `task_merge`, `task_abandon`, `task_note`, `tasks_comment`) | `"task"` only |
+| Every other converted write verb (`task_create`, `task_respec`, `task_finish`, `task_submit_pr`, `task_merge`, `task_abandon`, `task_creator_abandon`, `task_note`, `tasks_comment`) | `"task"` only |
 | `signals_poll` | no `include` parameter at all; see the cap and cursor section below instead |
 
 `"instructions"` is accepted by exactly one verb, `task_start`: it is
