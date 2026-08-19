@@ -206,6 +206,16 @@ model Project {
   // paths degrade unvalidated/malformed entries to "not triggered" (same
   // posture as taskTypeThresholds).
   riskModifiers            Json?
+  // M4 (task fc4f2dc7): opt-in gate for the LLM-advisory "Suggest
+  // improvement" rewrite helper (POST /tasks/:id/suggest-rewrite). Default
+  // false: a project must explicitly turn this on before its tasks expose
+  // the endpoint — an off project gets a 404, same as a missing task, and
+  // no LLM call (no API-key touch, no external egress) ever happens for
+  // it. Per ADR-0011, the LLM output here is advisory only and never
+  // applied automatically or used for gating. Toggle via PATCH
+  // /projects/:id (project-admin only), same as requireGroundingForDebug /
+  // allowNonCreatorRespec.
+  aiHelpersEnabled         Boolean         @default(false)
   // scorer-v2 (T5): per-project confidence-gate enforcement. Nullable; null
   // resolves to WARN via resolveEnforcementMode() so existing rows roll out in
   // warn-mode without a backfill (mirrors governanceMode). New code reads via the

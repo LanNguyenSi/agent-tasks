@@ -22,8 +22,16 @@
 
 import { useEffect, useState } from "react";
 import { deriveNextActions, type QualityFinding } from "@/lib/confidence";
-import type { TaskConfidenceDetail } from "@/lib/api";
+import {
+  suggestTaskRewrite,
+  updateTask,
+  type Task,
+  type TaskConfidenceDetail,
+  type RewriteSuggestion,
+} from "@/lib/api";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
+import { Button } from "@/components/ui/Button";
+import Modal from "@/components/ui/Modal";
 
 const SEVERITY_ORDER = ["blocking", "warning", "info"] as const;
 
@@ -81,7 +89,36 @@ function groupFindingsBySeverity(findings: QualityFinding[]): FindingsGroup[] {
  * unchanged (e.g. one finding's wording changes but the task still fails)
  * does NOT clobber a state the user manually toggled.
  */
-export default function ImprovementPanel({ confidence }: { confidence: TaskConfidenceDetail }) {
+export interface ImprovementPanelProps {
+  confidence: TaskConfidenceDetail;
+  /** Required only when `aiHelpersEnabled` is true (the "Suggest
+   *  improvement" button needs it to call the endpoint). Optional so
+   *  existing callers that only render the findings/next-actions body
+   *  (aiHelpersEnabled omitted/false) don't need to thread it. */
+  taskId?: string;
+  /** Current task description, rendered as the "Before" side of the
+   *  rewrite diff modal. */
+  description?: string | null;
+  /** M4: Project.aiHelpersEnabled -- gates the "Suggest improvement"
+   *  button. False/omitted hides the button entirely (the endpoint itself
+   *  also 404s in that case; this just avoids showing a dead control). */
+  aiHelpersEnabled?: boolean;
+  /** Called with the updated task after a suggestion is applied via the
+   *  existing PATCH /tasks/:id route -- same callback TaskDetail already
+   *  passes to its other mutating actions. Optional for the same reason as
+   *  `taskId` above. */
+  onUpdate?: (task: Task) => void;
+  onError?: (message: string) => void;
+}
+
+export default function ImprovementPanel({
+  confidence,
+  taskId = "",
+  description = null,
+  aiHelpersEnabled = false,
+  onUpdate = () => {},
+  onError = () => {},
+}: ImprovementPanelProps) {
   const { score, threshold, blocking, findings, triggeredRiskModifiers } = confidence;
   const passes = score >= threshold && !blocking;
   const [open, setOpen] = useState(!passes);
@@ -89,6 +126,42 @@ export default function ImprovementPanel({ confidence }: { confidence: TaskConfi
   useEffect(() => {
     setOpen(!passes);
   }, [passes]);
+
+  // ── M4: "Suggest improvement" (LLM rewrite, advisory only) ─────────────
+  const [rewriteBusy, setRewriteBusy] = useState(false);
+  const [rewriteError, setRewriteError] = useState<string | null>(null);
+  const [suggestion, setSuggestion] = useState<RewriteSuggestion | null>(null);
+  const [applying, setApplying] = useState(false);
+
+  async function handleSuggestRewrite() {
+    setRewriteBusy(true);
+    setRewriteError(null);
+    try {
+      const result = await suggestTaskRewrite(taskId);
+      setSuggestion(result);
+    } catch (err) {
+      setRewriteError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRewriteBusy(false);
+    }
+  }
+
+  // Apply goes through the EXISTING PATCH /tasks/:id route (updateTask) --
+  // this component never writes the task itself. Nothing is applied until
+  // the user reviews the diff and clicks Apply.
+  async function handleApplySuggestion() {
+    if (!suggestion) return;
+    setApplying(true);
+    try {
+      const updated = await updateTask(taskId, { description: suggestion.suggestion });
+      onUpdate(updated);
+      setSuggestion(null);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setApplying(false);
+    }
+  }
 
   const tone: "pass" | "warning" | "danger" = passes
     ? "pass"
@@ -133,6 +206,27 @@ export default function ImprovementPanel({ confidence }: { confidence: TaskConfi
 
       {open && (
         <div id="ip-body" className="ip-body">
+          {/* Fix-round-2b, LOW maint: also require taskId -- without it,
+              clicking the button would POST to /api/tasks//suggest-rewrite
+              (an empty path segment). aiHelpersEnabled alone was not a
+              sufficient guard for callers that render this panel before a
+              task id is known. */}
+          {aiHelpersEnabled && taskId && (
+            <div className="ip-section ip-rewrite-row">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={handleSuggestRewrite}
+                loading={rewriteBusy}
+                disabled={rewriteBusy}
+              >
+                Suggest improvement
+              </Button>
+              {rewriteError && <p className="ip-rewrite-error">{rewriteError}</p>}
+            </div>
+          )}
+
           {hasRiskModifiers && (
             <div className="ip-section">
               <p className="ip-subheading">Triggered risk modifiers</p>
@@ -187,6 +281,55 @@ export default function ImprovementPanel({ confidence }: { confidence: TaskConfi
 
           {isEmpty && <p className="ip-empty">No open findings.</p>}
         </div>
+      )}
+
+      {suggestion && (
+        <Modal
+          open
+          onClose={() => setSuggestion(null)}
+          title="Suggested rewrite"
+          body={
+            <div className="ip-rewrite-diff">
+              <div className="ip-rewrite-col">
+                <p className="ip-subheading">Before</p>
+                <pre className="ip-rewrite-text">{description && description.trim().length > 0 ? description : "(empty)"}</pre>
+              </div>
+              <div className="ip-rewrite-col">
+                <p className="ip-subheading">After</p>
+                <pre className="ip-rewrite-text">{suggestion.suggestion}</pre>
+              </div>
+              {suggestion.changedSignals.length > 0 && (
+                <div className="ip-rewrite-signals">
+                  <p className="ip-subheading">Addresses</p>
+                  <ul className="ip-risk-list">
+                    {suggestion.changedSignals.map((code) => (
+                      <li key={code} className="ip-risk-item">
+                        <code className="ip-findings-code">{code}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          }
+          footer={
+            <>
+              <Button type="button" variant="secondary" size="sm" onClick={() => setSuggestion(null)}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={handleApplySuggestion}
+                loading={applying}
+                disabled={applying}
+              >
+                Apply
+              </Button>
+            </>
+          }
+        />
       )}
     </section>
   );

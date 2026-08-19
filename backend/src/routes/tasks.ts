@@ -57,6 +57,13 @@ import { resolveEnforcementMode } from "../lib/enforcement-mode.js";
 import { evaluateConfidenceGate, deriveNextActions } from "../services/confidence-gate.js";
 import { recordBounceBack, recordTerminalSnapshot } from "../services/confidence-telemetry.js";
 import {
+  getLlmRewriteClient,
+  RewriteSuggestionTruncatedError,
+  DEFAULT_MODEL as REWRITE_DEFAULT_MODEL,
+  shouldWarnLlmNotConfigured,
+  type RewriteSuggestion,
+} from "../services/llm-rewrite.js";
+import {
   DEFAULT_TRANSITIONS,
   findDefaultTransition,
   defaultWorkflowDefinition,
@@ -4372,6 +4379,127 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
       foreign: isForeignDeliverable(task, task.project),
     },
   });
+});
+
+// ── LLM rewrite suggestion (M4, task fc4f2dc7) ────────────────────────────────
+// ADR-0011: LLMs are advisory only, never gating. This handler NEVER writes
+// to the task -- it only reads the task + its live confidence findings,
+// asks the model for a rewritten description, and returns the suggestion
+// for the caller to display. Applying it is a separate, explicit
+// PATCH /tasks/:id the caller makes after a human reviews the diff.
+
+taskRouter.post("/tasks/:id/suggest-rewrite", async (c) => {
+  const actor = c.get("actor") as Actor;
+
+  if (actor.type === "agent" && !actor.scopes.includes("tasks:read")) {
+    return forbidden(c, "Missing scope: tasks:read");
+  }
+
+  const task = await prisma.task.findUnique({
+    where: { id: c.req.param("id") },
+    select: {
+      id: true,
+      projectId: true,
+      title: true,
+      description: true,
+      templateData: true,
+      project: {
+        select: {
+          aiHelpersEnabled: true,
+          taskTemplate: true,
+        },
+      },
+    },
+  });
+  if (!task) return notFound(c);
+
+  if (!(await hasProjectAccess(actor, task.projectId))) {
+    return forbidden(c, "Access denied to this project");
+  }
+
+  // Opt-in gate (M4): a project must explicitly turn this on
+  // (Project.aiHelpersEnabled). An off project 404s -- the endpoint is
+  // invisible, same posture as "task not found" -- and no LLM call (no
+  // API-key touch, no external egress) ever happens for it.
+  if (!task.project.aiHelpersEnabled) return notFound(c);
+
+  const llmClient = getLlmRewriteClient();
+  if (!llmClient) {
+    // Review round-2 finding 6: the response body stays generic -- the env
+    // var name is an internal configuration detail, not something to hand
+    // an unauthenticated-beyond-project-access caller. The OpenAPI
+    // description (docs.ts) and this server-side log still name
+    // ANTHROPIC_API_KEY for whoever operates the deployment.
+    // Fix-round-2b, LOW maint: this branch is hit on EVERY request while
+    // unconfigured (a sticky condition, same as the `cached` state it comes
+    // from) -- gated behind shouldWarnLlmNotConfigured() so it logs once per
+    // process instead of once per request.
+    if (shouldWarnLlmNotConfigured()) {
+      logger.warn({ taskId: task.id }, "suggest-rewrite: LLM rewrite helper not configured (missing ANTHROPIC_API_KEY)");
+    }
+    return c.json(
+      {
+        error: "llm_not_configured",
+        message: "The LLM rewrite helper is not configured on this server.",
+      },
+      503,
+    );
+  }
+
+  const tpl = task.project.taskTemplate as { fields?: TemplateFields } | null;
+  const { findings } = calculateConfidence({
+    title: task.title,
+    description: task.description,
+    templateData: task.templateData as TemplateData | null,
+    templateFields: tpl?.fields ?? null,
+  });
+
+  let result: RewriteSuggestion;
+  try {
+    result = await llmClient.suggestRewrite({
+      title: task.title,
+      description: task.description,
+      findings,
+    });
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), taskId: task.id },
+      "LLM rewrite suggestion failed",
+    );
+    // Review round-2 finding 3: a truncated (stop_reason=max_tokens)
+    // response gets its own, more actionable message instead of the
+    // generic "failed to produce a suggestion" -- the caller can tell this
+    // apart from a genuine API/parse failure.
+    if (err instanceof RewriteSuggestionTruncatedError) {
+      return c.json(
+        {
+          error: "llm_response_truncated",
+          message: "The LLM suggestion exceeded the model's output limit before it could finish. Try again, or narrow the task description first.",
+        },
+        502,
+      );
+    }
+    return c.json(
+      { error: "llm_request_failed", message: "The LLM rewrite helper failed to produce a suggestion." },
+      502,
+    );
+  }
+
+  // Review round-2 finding 9: egress traceability for the paid, external
+  // call this handler just made -- taskId/projectId/actor/model, on the
+  // success path only (the failure path above already logs the error).
+  logger.info(
+    {
+      taskId: task.id,
+      projectId: task.projectId,
+      actorType: actor.type,
+      actorId: actor.type === "human" ? actor.userId : actor.tokenId,
+      model: process.env.AGENT_TASKS_REWRITE_MODEL || REWRITE_DEFAULT_MODEL,
+    },
+    "suggest-rewrite: LLM rewrite suggestion produced",
+  );
+
+  return c.json({ suggestion: result.suggestion, changedSignals: result.changedSignals });
 });
 
 // ── Update task ───────────────────────────────────────────────────────────────

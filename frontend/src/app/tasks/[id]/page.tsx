@@ -167,6 +167,7 @@ export default function TaskDetailPage() {
           isProjectAdmin={isProjectAdmin}
           workflowTransitions={workflowTransitions}
           improvementPanel={improvementPanel}
+          aiHelpersEnabled={project.aiHelpersEnabled ?? false}
           onUpdate={handleUpdate}
           onDelete={goToBoard}
           onClose={goToBoard}

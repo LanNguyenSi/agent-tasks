@@ -119,6 +119,11 @@ export interface Project {
    * which — unlike `team?.role === "ADMIN"` — also covers per-project-only
    * admins who hold no team-level role. */
   accessRole?: string | null;
+  /** M4 (task fc4f2dc7): opt-in gate for the LLM-advisory "Suggest
+   *  improvement" rewrite helper (POST /tasks/:id/suggest-rewrite).
+   *  Default false server-side; `undefined` on API responses that predate
+   *  this field is treated the same as `false` by every caller. */
+  aiHelpersEnabled?: boolean;
 }
 
 /** Whether a project `accessRole` (from GET /projects/:id) grants admin
@@ -694,6 +699,24 @@ export interface TaskConfidenceDetail {
 export async function getTaskConfidenceDetail(taskId: string): Promise<TaskConfidenceDetail> {
   const data = await request<{ confidence: TaskConfidenceDetail }>(`/api/tasks/${taskId}/instructions`);
   return data.confidence;
+}
+
+/**
+ * M4 (task fc4f2dc7): the ImprovementPanel's "Suggest improvement" button.
+ * Response of `POST /tasks/:id/suggest-rewrite` -- advisory only (ADR-0011),
+ * this call never changes the task. `changedSignals` lists the confidence
+ * `findings[].code` values the suggestion addresses. 404s when the
+ * project's `aiHelpersEnabled` flag is off (the caller should not show the
+ * button at all in that case -- see `Project.aiHelpersEnabled`); 503 when
+ * the server has no LLM configured.
+ */
+export interface RewriteSuggestion {
+  suggestion: string;
+  changedSignals: string[];
+}
+
+export async function suggestTaskRewrite(taskId: string): Promise<RewriteSuggestion> {
+  return request<RewriteSuggestion>(`/api/tasks/${taskId}/suggest-rewrite`, { method: "POST" });
 }
 
 /**
