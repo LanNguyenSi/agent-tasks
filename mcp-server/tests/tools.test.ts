@@ -1387,6 +1387,36 @@ describe("buildTools", () => {
     expect(result).toEqual(backendBody);
   });
 
+  // task 7a1360da follow-up (batch 19 round 2 review): task_creator_abandon
+  // had no handler-level test at all -- everything below exercises only the
+  // backend route. Mirrors the task_abandon pair above, plus the "no
+  // reason" wire-format check the backend's own test suite already covers
+  // server-side (tasks-v2-routes.test.ts's "works with no body at all").
+  it("task_creator_abandon calls POST .../creator-abandon with taskId, omits the body entirely when reason is not given, and returns an abandon receipt", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1", status: "abandoned" } }));
+    const result = await tool("task_creator_abandon").handler({ taskId: TASK_ID } as never);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`https://example.test/api/tasks/${TASK_ID}/creator-abandon`);
+    expect(init.method).toBe("POST");
+    // client.ts's request() only sets body/Content-Type when input !==
+    // undefined; tools.ts's handler passes `reason !== undefined ? {
+    // reason } : undefined`, so a call with no reason must reach fetch with
+    // no body at all, not `{}` or `{ reason: undefined }`.
+    expect(init.body).toBeUndefined();
+    expect(init.headers).not.toHaveProperty("Content-Type");
+    expect(result).toEqual({ ok: true, task: { id: "t1", status: "abandoned" } });
+  });
+
+  it("task_creator_abandon include:[\"task\"] returns the full backend object", async () => {
+    const backendBody = { task: { id: "t1", status: "abandoned" } };
+    fetchMock.mockResolvedValue(ok(backendBody));
+    const result = await tool("task_creator_abandon").handler({
+      taskId: TASK_ID,
+      include: ["task"],
+    } as never);
+    expect(result).toEqual(backendBody);
+  });
+
   // Shared fixture for the two loops below: one entry per converted write
   // verb, its happy-path call args, and the mocked backend body. Both the
   // receipt-budget loop and the include:["task"] bypass loop drive off this

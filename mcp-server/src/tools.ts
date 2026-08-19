@@ -498,11 +498,14 @@ export function buildTools(
     def({
       name: "task_creator_abandon",
       description:
-        "Retire an OPEN, UNCLAIMED task you created into status=abandoned, for the case where the task itself was a mistake (e.g. filed in the wrong project) rather than work you started and gave up on. Distinct from task_abandon: that verb releases a CLAIM (work or review) you currently hold; this verb never requires a claim and instead ends the task's lifecycle outright. Typical use: you filed a task in the wrong project, re-filed the correct one, and now need to retire the original so it stops showing up as an open duplicate. Wraps POST /api/tasks/:id/creator-abandon.\n\nNarrow authz, no relaxation and no force: only the task's own creator may call this (403 otherwise), and the task must still be status=open with no work or review claim held by anyone (409 'Task must be open and unclaimed to creator-abandon' otherwise). Agent-only, requires the tasks:update scope; humans have DELETE for this case instead. 404 if the task does not exist. Optional `reason` is recorded on the audit trail but not required.\n\nReturns a receipt by default ({ ok, task: { id, status } }). Pass include:[\"task\"] for the full backend object.",
+        "Retire an OPEN, UNCLAIMED task you created into status=abandoned, for the case where the task itself was a mistake (e.g. filed in the wrong project) rather than work you started and gave up on. Distinct from task_abandon: that verb releases a CLAIM (work or review) you currently hold; this verb never requires a claim and instead ends the task's lifecycle outright. Typical use: you filed a task in the wrong project, re-filed the correct one, and now need to retire the original so it stops showing up as an open duplicate. Wraps POST /api/tasks/:id/creator-abandon.\n\nNarrow authz, no relaxation and no force: only the task's own creator may call this (403 otherwise), and the task must still be status=open with no work or review claim held by anyone (409 'Task must be open and unclaimed to creator-abandon' otherwise). Agent-only, requires the tasks:update scope; humans have DELETE for this case instead. 404 if the task does not exist. Optional `reason` is recorded on the audit trail but not required.\n\nNot a dead end: abandoned is recoverable only by a project admin, via a status PATCH to the workflow's initial state (no agent path, and no other target status is allowed).\n\nReturns a receipt by default ({ ok, task: { id, status } }). Pass include:[\"task\"] for the full backend object.",
       inputShape: {
         taskId: uuid(),
         reason: z
           .string()
+          .trim()
+          .min(1)
+          .max(2000)
           .optional()
           .describe("Optional free-text reason, recorded on the audit trail (e.g. 'refiled as <taskId> in the correct project')."),
         include: includeSchema,

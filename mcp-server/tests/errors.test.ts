@@ -582,6 +582,17 @@ describe("mapBackendError catalog", () => {
     assertAllowedNextRegistered(err, registered);
   });
 
+  // ── 7a. creator_abandon_conflict ─────────────────────────────────────────
+  it("creator_abandon_conflict: a claimed/non-open task on task_creator_abandon maps to tasks_get only (no self-service retry)", () => {
+    const err = mapBackendError(409, {
+      error: "conflict",
+      message: "Task must be open and unclaimed to creator-abandon",
+    });
+    expect(err.error.code).toBe("creator_abandon_conflict");
+    expect(err.error.allowedNext).toEqual(["tasks_get"]);
+    assertAllowedNextRegistered(err, registered);
+  });
+
   // ── 9. low_confidence ────────────────────────────────────────────────────
   //
   // rc-v1-C005 review round 1, finding #2: the 422 low_confidence body
@@ -1781,6 +1792,13 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
       label: "respec_conflict",
       err: mapBackendError(409, { error: "conflict", message: "Task must be open and unclaimed to respec" }),
     },
+    {
+      label: "creator_abandon_conflict",
+      err: mapBackendError(409, {
+        error: "conflict",
+        message: "Task must be open and unclaimed to creator-abandon",
+      }),
+    },
     { label: "result_not_plain_string (task_finish)", err: resultMustBePlainStringError("task_finish") },
     { label: "result_not_plain_string (tasks_update)", err: resultMustBePlainStringError("tasks_update") },
     {
@@ -1857,6 +1875,7 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
   it("catalogFixtures' distinct codes match errors.ts's own file-header catalog-seed enumeration (drift guard)", () => {
     const EXPECTED_CATALOG_CODES = [
       "already_claimed",
+      "creator_abandon_conflict",
       "cross_repo_pr_rejected",
       "force_admin_only",
       "low_confidence",

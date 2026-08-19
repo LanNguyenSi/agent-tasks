@@ -76,6 +76,7 @@ const NON_VERB_TOKENS = new Set([
   "pr_author_mismatch", // 403 error code (rc-v1-C005: task_submit_pr)
   "force_admin_only", // 403 error code (rc-v1-C005: tasks_transition force=true)
   "respec_conflict", // 409 error code (rc-v1-C005: task_respec state conflict)
+  "creator_abandon_conflict", // 409 error code (task 7a1360da follow-up, batch 19 round 2: task_creator_abandon state conflict)
   "result_not_plain_string", // client-side error code (rc-v1-C005: task_finish result guard)
   "low_confidence", // 422 error code (rc-v1-C005 review round 1, finding #2: confidence-gate detail preservation)
   "project_addressing_conflict", // client-side error code (rc-v1-C006 round-2 review: task_create's projectId/projectSlug exactly-one guard)

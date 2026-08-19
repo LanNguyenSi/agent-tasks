@@ -50,6 +50,14 @@
  *      — it is read-side support for a state production cannot reach yet,
  *      not a claim that the gap is already closed.
  *
+ *      Update (task 7a1360da follow-up, batch 19 round 2): `POST
+ *      /tasks/:id/creator-abandon` now DOES write `status: "abandoned"` in
+ *      production, but only ever on an OPEN, UNCLAIMED task, which has no
+ *      `scoreAtClaim` snapshot to finalize — so this aggregate still stays
+ *      single-outcome, just by omission (no candidate row exists) now
+ *      rather than by construction (no other terminal value existed) as
+ *      claimed above.
+ *
  * `scoreAtClaim` / `effectiveThreshold` / `overrideUsed` are sourced from the
  * confidence-gate's OWN audit trail (`task.claim_would_block_shadow` /
  * `task.claim_override_used` / `task.claim_confidence_recorded` — see

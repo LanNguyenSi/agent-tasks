@@ -154,7 +154,16 @@ export type AuditAction =
   // though it is outside the workflow engine's fixed state vocabulary.
   // Payload carries { actorType: "agent", agentTokenId, previousStatus,
   // reason } so operators can see who gave up on the task and why.
-  | "task.creator_abandoned";
+  | "task.creator_abandoned"
+  // Unabandon: the ONE recovery path out of the `abandoned` sink (review
+  // finding on task 7a1360da's follow-up). PATCH /tasks/:id, human lane
+  // only, project-admin-only, and only `abandoned -> effectiveDef.
+  // initialState` — every other from=abandoned target still 400s. See the
+  // "abandoned" block comment above POST /tasks/:id/creator-abandon in
+  // routes/tasks.ts for why this is the one door back in. Distinct from
+  // "task.transitioned" so the audit trail can tell a workflow-engine move
+  // apart from this out-of-band recovery write.
+  | "task.unabandoned";
 
 export interface AuditPayload {
   [key: string]: unknown;

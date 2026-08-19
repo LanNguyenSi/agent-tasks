@@ -56,15 +56,16 @@ verbs out of the default registration (`projects_list`, `projects_get`,
 `review_request_changes`, `review_claim`, `review_release`,
 `pull_requests_comment`); handler code for all 14 is untouched, only their
 registration is gated. Set `AGENT_TASKS_MCP_LEGACY=1` in the server
-process's environment to register all 38 tools (the full pre-rc-v1-C007
-set plus every verb added since) for a client still depending on one of the pruned names. Two of the
-pruned verbs, `tasks_list` and `projects_list`, are known to have had
-active workflow users as of this pruning: `docs/response-contract-v1.md`'s
-Motivation section measured `tasks_list` as the third-highest MCP token
-consumer in the audited window, and `projects_list` was the only way to
-resolve a project slug before `task_create`'s `projectSlug` field and
-`project_tasks` shipped. Migrate those callers to the v2 replacements in
-the table below, or set the flag while migrating.
+process's environment to register all 38 tools (the full pre-rc-v1-C007 set
+plus every verb added since) for a client still depending on one of the
+pruned names. Two of the pruned verbs, `tasks_list` and `projects_list`, are
+known to have had active workflow users as of this pruning:
+`docs/response-contract-v1.md`'s Motivation section measured `tasks_list` as
+the third-highest MCP token consumer in the audited window, and
+`projects_list` was the only way to resolve a project slug before
+`task_create`'s `projectSlug` field and `project_tasks` shipped. Migrate
+those callers to the v2 replacements in the table below, or set the flag
+while migrating.
 
 The 8 converted v2 write verbs (`task_create`, `task_respec`, `task_finish`,
 `task_submit_pr`, `task_note`, `task_merge`, `task_abandon`, and the

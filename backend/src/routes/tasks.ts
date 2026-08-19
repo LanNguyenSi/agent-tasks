@@ -3861,15 +3861,35 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
 // `status` column either: PROJECT_TASK_STATUSES and CLAIMABLE_VALID_STATUSES
 // above already list "abandoned" as a valid filter value (docs/okf/claim-
 // model.md documents `status` as a free String, enforced only at these
-// input-schema edges), and the default task listing filters `status: "open"`
-// (see `isExplicitSearch` above), so an abandoned task disappears from every
-// default view with no new query-side handling needed.
+// input-schema edges). But this route IS the first thing that makes that
+// value reachable in production: before it, no verb ever wrote a non-"done"
+// terminal disposition (see services/confidence-telemetry.ts:36-43's
+// HIGH-2 note — `task_abandon` resets `status` back to `initialState`, it
+// never writes "abandoned"), so the "abandoned disappears from views /
+// blockedBy never unblocks on it" gaps below were latent, not exercised,
+// until this route existed to write the value at all.
+//
+// Default-view scope, precisely: `GET /tasks/claimable` (`isExplicitSearch`
+// above) and `POST /tasks/pickup` (`status: "open"` / `status: "review"`
+// literals) both filter status explicitly, so an abandoned task drops out
+// of THOSE two views for free. `GET /projects/:id/tasks` and
+// `GET /teams/:id/tasks` apply NO status filter at all when the caller
+// omits `?status=` — every status, "abandoned" included, comes back and
+// renders on the dashboard. That is correct today: humans are meant to see
+// an abandoned task there (it is how a project admin finds one to restore,
+// see the "abandoned -> initialState" PATCH special case in the human
+// status-write block below) — just not implicitly assumed to be filtered.
+//
+// Recovery: `abandoned` is not a dead end. It is recoverable ONLY by a
+// project admin, via `PATCH /tasks/:id { status: <effectiveDef.
+// initialState> }` — see that route's special case below for the from=
+// "abandoned" branch. No agent path and no other target status exists;
+// every other from="abandoned" write 400s.
 //
 // Known limitation, out of scope here: `blockedBy` dependency gating (see
 // `blockedBy: { none: { status: { not: "done" } } }` above) never unblocks a
-// dependent task whose blocker was creator-abandoned rather than finished;
-// the same gap already exists for any non-"done" terminal disposition and is
-// not introduced by this route.
+// dependent task whose blocker was creator-abandoned rather than finished —
+// a follow-up, not fixed by this route.
 const creatorAbandonSchema = z.object({
   reason: z.string().trim().min(1).max(2000).optional(),
 });
@@ -4536,6 +4556,10 @@ taskRouter.patch("/tasks/:id", async (c) => {
   let didStatusChange = false;
   let statusClaimPatch: Record<string, unknown> = {};
   let isTerminalTransition = false;
+  // Set only by the unabandon special case just below — distinguishes it
+  // from an ordinary "task.transitioned" write in the audit event fired
+  // further down, without adding a second code path for the write itself.
+  let isUnabandonTransition = false;
   const transitionSkippedGates: Array<{ rule: TransitionRule; reason: string }> = [];
 
   if (body.status !== undefined && body.status !== previousStatus) {
@@ -4543,153 +4567,200 @@ taskRouter.patch("/tasks/:id", async (c) => {
     didStatusChange = true;
 
     const effectiveDef = await resolveEffectiveDefinition(task, prisma);
-    const transition = effectiveDef.transitions.find(
-      (t) => t.from === previousStatus && t.to === targetStatus,
-    );
-    if (!transition) {
-      return c.json(
-        {
-          error: "bad_request",
-          message: `Transition from '${previousStatus}' to '${targetStatus}' is not allowed by workflow`,
-        },
-        400,
-      );
-    }
-    let resolvedRequires = transition.requires;
-    const requiredRole = transition.requiredRole;
 
-    // Foreign-deliverable skip (ADR-0010 §5c v1), mirrored from
-    // /transition: ciGreen/prMerged cannot be evaluated on a repo this
-    // project's GitHub token has no standing on. Uses the PENDING
-    // (post-write) deliverableRepo, same pattern as the cross-repo prUrl
-    // guard above: a same-call "set deliverableRepo + move status" must not
-    // evaluate this skip against the stale pre-write value.
-    const pendingDeliverableTask = {
-      ...task,
-      deliverableRepo: body.deliverableRepo !== undefined ? body.deliverableRepo : task.deliverableRepo,
-    };
-    if (isForeignDeliverable(pendingDeliverableTask, task.project) && resolvedRequires) {
-      const githubBacked = resolvedRequires.filter((r) => GITHUB_BACKED_RULES.has(r as never));
-      if (githubBacked.length > 0) {
-        const effectiveRepo = effectiveDeliverableRepo(pendingDeliverableTask, task.project);
-        for (const r of githubBacked) {
-          transitionSkippedGates.push({
-            rule: r as TransitionRule,
-            reason: `Task deliverable is ${effectiveRepo ?? "an external repo"}; this project's GitHub token has no standing there, so '${r}' cannot be evaluated and is treated as satisfied (v1 semantics).`,
-          });
-        }
-        resolvedRequires = resolvedRequires.filter((r) => !GITHUB_BACKED_RULES.has(r as never));
-      }
-    }
-
-    if (requiredRole && requiredRole !== "any") {
-      if (!(await hasProjectRole(actor, task.projectId, requiredRole as ProjectRole))) {
-        return forbidden(c, `Requires role: ${requiredRole}`);
-      }
-    }
-    // requiredRole undefined/"any" falls back to the write-tier check
-    // already enforced above for the whole PATCH (requireProjectWrite).
-
-    // Distinct-reviewer gate: same structural backstop /transition applies
-    // on review → done, now driven by the shared pipeline instead of the
-    // narrower inline special case this replaces.
-    if (previousStatus === "review" && targetStatus === "done") {
-      const gate = checkReviewApprovalGate(task, actor, task.project);
-      if (!gate.allowed) {
-        void logAuditEvent({
-          action: "task.review_rejected_self_reviewer",
-          actorId: actor.userId,
-          projectId: task.projectId,
-          taskId: task.id,
-          payload: {
-            reason: gate.reason,
-            actorType: "human",
-            endpoint: "patch",
-            claimedByUserId: task.claimedByUserId,
-            claimedByAgentId: task.claimedByAgentId,
-            reviewClaimedByUserId: task.reviewClaimedByUserId,
-            reviewClaimedByAgentId: task.reviewClaimedByAgentId,
+    // ── Unabandon: the one recovery path out of the `abandoned` sink ──────
+    //
+    // Review finding on task 7a1360da (batch 19, round 2): `abandoned` is
+    // written by POST /tasks/:id/creator-abandon above but, before this
+    // block, had no way back — it sits outside the workflow engine's fixed
+    // state vocabulary (see that route's block comment), so the generic
+    // `effectiveDef.transitions.find(from=previousStatus, to=targetStatus)`
+    // lookup below can never match a `from: "abandoned"` edge and would
+    // 400 every attempt to leave it, permanently, even for a project admin.
+    // task_finish/task_submit_pr both 400 on it too (neither modifies
+    // `status` off a terminal-looking value), and POST /tasks/:id/transition
+    // force:true only bypasses PRECONDITIONS, not transition existence —
+    // so this PATCH lane is deliberately the one and only exit:
+    //   - human-only (agents are already fully locked out of `status` via
+    //     the forbiddenFields check in the agent lane above — no new
+    //     surface for agents here).
+    //   - project-admin-only (not just write-access): restoring a task an
+    //     agent gave up on is a deliberate operator decision, not routine
+    //     contributor work.
+    //   - the ONLY allowed target is the workflow's initial state — never
+    //     straight to in_progress/review/done. A restored task always
+    //     re-enters at the top and goes through the normal gates from
+    //     there.
+    // Recoverable only by a project admin via a status PATCH to
+    // `effectiveDef.initialState` — there is no other path back.
+    if (previousStatus === "abandoned") {
+      if (targetStatus !== effectiveDef.initialState) {
+        return c.json(
+          {
+            error: "bad_request",
+            message: `Transition from 'abandoned' to '${targetStatus}' is not allowed; an abandoned task can only be restored to '${effectiveDef.initialState}' by a project admin`,
           },
-        });
-        return forbidden(c, distinctReviewerRejectionMessage());
+          400,
+        );
       }
-    }
-
-    let githubToken: string | null = null;
-    const needsGithub =
-      resolvedRequires?.some((r) => GITHUB_BACKED_RULES.has(r as never)) ?? false;
-    if (needsGithub && task.project.githubRepo) {
-      const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate", {
-        preferUserId: actor.userId,
-      });
-      githubToken = delegate?.githubAccessToken ?? null;
-    }
-
-    // Evaluated against the PENDING (post-write) branchName/prUrl/prNumber
-    // so a same-call "set branchName + move to review" doesn't spuriously
-    // fail branchPresent against the stale pre-write task.
-    const { failed, unknown, errors: ruleErrors } = await evaluateTransitionRules(
-      resolvedRequires,
-      {
-        branchName: body.branchName !== undefined ? body.branchName : task.branchName,
-        prUrl: body.prUrl !== undefined ? body.prUrl : task.prUrl,
-        prNumber: body.prNumber !== undefined ? body.prNumber : task.prNumber,
-        projectGithubRepo: task.project.githubRepo,
-        githubToken,
-      },
-    );
-
-    if (failed.length > 0) {
-      // No force escape hatch on PATCH — always the "blocked" branch.
-      // canForce is always false (unlike /transition's admin-derived
-      // hint): this endpoint never accepts force=true.
-      return c.json(
-        {
-          error: "precondition_failed",
-          message: `Transition blocked — ${failed
-            .map((r) => (ruleErrors[r] ? `${RULE_MESSAGES[r]} (${ruleErrors[r]})` : RULE_MESSAGES[r]))
-            .join(" ")} Use POST /tasks/:id/transition with force:true (project admin only) to bypass.`,
-          failed: failed.map((r) => ({
-            rule: r,
-            message: RULE_MESSAGES[r],
-            ...(ruleErrors[r] ? { error: ruleErrors[r] } : {}),
-          })),
-          canForce: false,
-        },
-        422,
+      if (!(await isProjectAdmin(actor, task.projectId))) {
+        return forbidden(c, "Only a project admin can restore an abandoned task");
+      }
+      isUnabandonTransition = true;
+      // statusClaimPatch stays {} (the declared default): creator-abandon's
+      // CAS guard requires the task to already be fully unclaimed before it
+      // writes `abandoned`, so there is no dangling claim to clear here.
+      // isTerminalTransition stays false: the initial state is never
+      // terminal, so no acknowledgeSignalsForTask() call below either.
+    } else {
+      const transition = effectiveDef.transitions.find(
+        (t) => t.from === previousStatus && t.to === targetStatus,
       );
-    }
+      if (!transition) {
+        return c.json(
+          {
+            error: "bad_request",
+            message: `Transition from '${previousStatus}' to '${targetStatus}' is not allowed by workflow`,
+          },
+          400,
+        );
+      }
+      let resolvedRequires = transition.requires;
+      const requiredRole = transition.requiredRole;
 
-    if (unknown.length > 0) {
-      logger.warn(
-        { component: "workflow", taskId: task.id, fromStatus: previousStatus, toStatus: targetStatus, unknown },
-        "task status patch references unknown rules",
-      );
-    }
-
-    // Claim-clearing rules, mirrored from /transition: terminal target
-    // clears both claims; leaving a review state (non-terminal) clears
-    // only the review-claim. Closes the dangling-claim gap this task also
-    // flagged: PATCH status='done' used to leave claims untouched.
-    isTerminalTransition = isTerminalState(effectiveDef, targetStatus);
-    const isLeavingReview =
-      !isTerminalTransition && isReviewState(effectiveDef, previousStatus);
-    statusClaimPatch = isTerminalTransition
-      ? {
-          claimedByUserId: null,
-          claimedByAgentId: null,
-          claimedAt: null,
-          reviewClaimedByUserId: null,
-          reviewClaimedByAgentId: null,
-          reviewClaimedAt: null,
+      // Foreign-deliverable skip (ADR-0010 §5c v1), mirrored from
+      // /transition: ciGreen/prMerged cannot be evaluated on a repo this
+      // project's GitHub token has no standing on. Uses the PENDING
+      // (post-write) deliverableRepo, same pattern as the cross-repo prUrl
+      // guard above: a same-call "set deliverableRepo + move status" must not
+      // evaluate this skip against the stale pre-write value.
+      const pendingDeliverableTask = {
+        ...task,
+        deliverableRepo: body.deliverableRepo !== undefined ? body.deliverableRepo : task.deliverableRepo,
+      };
+      if (isForeignDeliverable(pendingDeliverableTask, task.project) && resolvedRequires) {
+        const githubBacked = resolvedRequires.filter((r) => GITHUB_BACKED_RULES.has(r as never));
+        if (githubBacked.length > 0) {
+          const effectiveRepo = effectiveDeliverableRepo(pendingDeliverableTask, task.project);
+          for (const r of githubBacked) {
+            transitionSkippedGates.push({
+              rule: r as TransitionRule,
+              reason: `Task deliverable is ${effectiveRepo ?? "an external repo"}; this project's GitHub token has no standing there, so '${r}' cannot be evaluated and is treated as satisfied (v1 semantics).`,
+            });
+          }
+          resolvedRequires = resolvedRequires.filter((r) => !GITHUB_BACKED_RULES.has(r as never));
         }
-      : isLeavingReview
+      }
+
+      if (requiredRole && requiredRole !== "any") {
+        if (!(await hasProjectRole(actor, task.projectId, requiredRole as ProjectRole))) {
+          return forbidden(c, `Requires role: ${requiredRole}`);
+        }
+      }
+      // requiredRole undefined/"any" falls back to the write-tier check
+      // already enforced above for the whole PATCH (requireProjectWrite).
+
+      // Distinct-reviewer gate: same structural backstop /transition applies
+      // on review → done, now driven by the shared pipeline instead of the
+      // narrower inline special case this replaces.
+      if (previousStatus === "review" && targetStatus === "done") {
+        const gate = checkReviewApprovalGate(task, actor, task.project);
+        if (!gate.allowed) {
+          void logAuditEvent({
+            action: "task.review_rejected_self_reviewer",
+            actorId: actor.userId,
+            projectId: task.projectId,
+            taskId: task.id,
+            payload: {
+              reason: gate.reason,
+              actorType: "human",
+              endpoint: "patch",
+              claimedByUserId: task.claimedByUserId,
+              claimedByAgentId: task.claimedByAgentId,
+              reviewClaimedByUserId: task.reviewClaimedByUserId,
+              reviewClaimedByAgentId: task.reviewClaimedByAgentId,
+            },
+          });
+          return forbidden(c, distinctReviewerRejectionMessage());
+        }
+      }
+
+      let githubToken: string | null = null;
+      const needsGithub =
+        resolvedRequires?.some((r) => GITHUB_BACKED_RULES.has(r as never)) ?? false;
+      if (needsGithub && task.project.githubRepo) {
+        const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate", {
+          preferUserId: actor.userId,
+        });
+        githubToken = delegate?.githubAccessToken ?? null;
+      }
+
+      // Evaluated against the PENDING (post-write) branchName/prUrl/prNumber
+      // so a same-call "set branchName + move to review" doesn't spuriously
+      // fail branchPresent against the stale pre-write task.
+      const { failed, unknown, errors: ruleErrors } = await evaluateTransitionRules(
+        resolvedRequires,
+        {
+          branchName: body.branchName !== undefined ? body.branchName : task.branchName,
+          prUrl: body.prUrl !== undefined ? body.prUrl : task.prUrl,
+          prNumber: body.prNumber !== undefined ? body.prNumber : task.prNumber,
+          projectGithubRepo: task.project.githubRepo,
+          githubToken,
+        },
+      );
+
+      if (failed.length > 0) {
+        // No force escape hatch on PATCH — always the "blocked" branch.
+        // canForce is always false (unlike /transition's admin-derived
+        // hint): this endpoint never accepts force=true.
+        return c.json(
+          {
+            error: "precondition_failed",
+            message: `Transition blocked — ${failed
+              .map((r) => (ruleErrors[r] ? `${RULE_MESSAGES[r]} (${ruleErrors[r]})` : RULE_MESSAGES[r]))
+              .join(" ")} Use POST /tasks/:id/transition with force:true (project admin only) to bypass.`,
+            failed: failed.map((r) => ({
+              rule: r,
+              message: RULE_MESSAGES[r],
+              ...(ruleErrors[r] ? { error: ruleErrors[r] } : {}),
+            })),
+            canForce: false,
+          },
+          422,
+        );
+      }
+
+      if (unknown.length > 0) {
+        logger.warn(
+          { component: "workflow", taskId: task.id, fromStatus: previousStatus, toStatus: targetStatus, unknown },
+          "task status patch references unknown rules",
+        );
+      }
+
+      // Claim-clearing rules, mirrored from /transition: terminal target
+      // clears both claims; leaving a review state (non-terminal) clears
+      // only the review-claim. Closes the dangling-claim gap this task also
+      // flagged: PATCH status='done' used to leave claims untouched.
+      isTerminalTransition = isTerminalState(effectiveDef, targetStatus);
+      const isLeavingReview =
+        !isTerminalTransition && isReviewState(effectiveDef, previousStatus);
+      statusClaimPatch = isTerminalTransition
         ? {
+            claimedByUserId: null,
+            claimedByAgentId: null,
+            claimedAt: null,
             reviewClaimedByUserId: null,
             reviewClaimedByAgentId: null,
             reviewClaimedAt: null,
           }
-        : {};
+        : isLeavingReview
+          ? {
+              reviewClaimedByUserId: null,
+              reviewClaimedByAgentId: null,
+              reviewClaimedAt: null,
+            }
+          : {};
+    }
   }
 
   let updated;
@@ -4726,7 +4797,11 @@ taskRouter.patch("/tasks/:id", async (c) => {
 
   if (didStatusChange) {
     void logAuditEvent({
-      action: "task.transitioned",
+      // Unabandon fires its own dedicated action so the audit trail can
+      // tell this out-of-band recovery write apart from an ordinary
+      // workflow-engine transition; everything else about the event shape
+      // (from/to/actorType/via) stays identical.
+      action: isUnabandonTransition ? "task.unabandoned" : "task.transitioned",
       actorId: actor.userId,
       projectId: task.projectId,
       taskId: task.id,

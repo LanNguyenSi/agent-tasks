@@ -1405,6 +1405,121 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
   });
 });
 
+// ── PATCH /tasks/:id — unabandon: the one recovery path out of `abandoned`
+// (task 7a1360da follow-up, batch 19 round 2 review, HIGH) ─────────────────
+//
+// `abandoned` (POST /tasks/:id/creator-abandon, above) used to be an
+// irreversible sink: neither the human PATCH status pipeline nor POST
+// /tasks/:id/transition (even with force:true, which only bypasses
+// PRECONDITIONS, not transition existence) could move a task out of it. This
+// block covers the special case added to close that gap: PATCH /tasks/:id,
+// human + project-admin only, and only `abandoned -> effectiveDef.
+// initialState` — every other target still 400s, and agents stay fully
+// locked out via the pre-existing forbiddenFields guard (no new surface).
+describe("PATCH /tasks/:id — unabandon: abandoned -> initialState is the one recovery path (7a1360da follow-up)", () => {
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+  const AGENT_WITH_UPDATE: Actor = { ...AGENT, scopes: [...AGENT.scopes, "tasks:update"] };
+
+  const ABANDONED_TASK = { ...baseTask, status: "abandoned" };
+
+  it("project admin restores an abandoned task to the workflow's initial state (200) and audits task.unabandoned", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(ABANDONED_TASK);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "open" }),
+    });
+
+    expect(res.status).toBe(200);
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("open");
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.unabandoned",
+        payload: expect.objectContaining({ from: "abandoned", to: "open", actorType: "human", via: "patch" }),
+      }),
+    );
+    // Distinct from an ordinary transition: no "task.transitioned" event
+    // for this same write.
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.transitioned" }),
+    );
+  });
+
+  it("non-admin human (write access, not admin) cannot restore an abandoned task (403) and does not write", async () => {
+    accessMocks.isProjectAdmin.mockResolvedValueOnce(false);
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(ABANDONED_TASK);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "open" }),
+    });
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe("Only a project admin can restore an abandoned task");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("agent cannot touch status on an abandoned task (403 via the pre-existing agent-lane status guard; no new agent surface)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(ABANDONED_TASK);
+
+    const res = await makeApp(AGENT_WITH_UPDATE).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "open" }),
+    });
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe("Agents cannot update: status");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("abandoned -> done is rejected (400) even for a project admin: done is not the initial state", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(ABANDONED_TASK);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toContain("only be restored to 'open'");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it.each(["in_progress", "review"])(
+    "abandoned -> %s is rejected (400) even for a project admin: only the initial state is reachable",
+    async (targetStatus) => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce(ABANDONED_TASK);
+      prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+      const res = await makeApp(HUMAN).request("/tasks/task-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: targetStatus }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+      expect(logAuditEvent).not.toHaveBeenCalled();
+    },
+  );
+});
+
 // ── PATCH /tasks/:id — foreign-deliverable skip uses the PENDING
 // deliverableRepo (agent-tasks 4237f26d) ────────────────────────────────────
 //
@@ -6039,16 +6154,40 @@ describe("POST /tasks/:id/creator-abandon", () => {
     );
   });
 
-  it("returns 403 when caller is not the task's creator, and does not write", async () => {
-    prismaMocks.taskFindUnique.mockResolvedValueOnce({
-      ...CREATOR_ABANDON_TASK,
-      createdByAgentId: "some-other-agent",
-    });
+  // it.each covers BOTH the ordinary "someone else's agent task" case and,
+  // separately, a HUMAN-created task (createdByAgentId: null). The null
+  // case is the important negative control (review finding, batch 19 round
+  // 2): `task.createdByAgentId !== actor.tokenId` correctly rejects when
+  // createdByAgentId is null (null !== "agent-1"), but a future refactor to
+  // a truthy-style guard (`createdByAgentId && createdByAgentId !==
+  // actor.tokenId`) would silently make EVERY human-created task
+  // creator-abandonable by any agent with tasks:update -- this test fails
+  // loudly the moment that refactor lands.
+  it.each(["some-other-agent", null])(
+    "returns 403 when caller is not the task's creator (createdByAgentId=%s), and does not write",
+    async (createdByAgentId) => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce({
+        ...CREATOR_ABANDON_TASK,
+        createdByAgentId,
+      });
+
+      const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, {});
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { message: string };
+      expect(body.message).toBe("Only the task's creator can creator-abandon it");
+      expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+      expect(logAuditEvent).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns 403 when the caller lacks project access, and does not write", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(CREATOR_ABANDON_TASK);
+    accessMocks.hasProjectAccess.mockResolvedValueOnce(false);
 
     const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, {});
     expect(res.status).toBe(403);
     const body = (await res.json()) as { message: string };
-    expect(body.message).toBe("Only the task's creator can creator-abandon it");
+    expect(body.message).toBe("Access denied to this project");
     expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
     expect(logAuditEvent).not.toHaveBeenCalled();
   });
