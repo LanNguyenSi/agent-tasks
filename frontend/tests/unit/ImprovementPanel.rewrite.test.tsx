@@ -107,6 +107,22 @@ describe("ImprovementPanel — Suggest improvement (M4 LLM rewrite)", () => {
     expect(screen.queryByRole("button", { name: "Suggest improvement" })).not.toBeInTheDocument();
   });
 
+  // Fix-round-2b, LOW maint: aiHelpersEnabled alone was not a sufficient
+  // guard -- a taskId-less render (taskId defaults to "") would still show
+  // the button and, on click, POST to /api/tasks//suggest-rewrite.
+  it("does not render the button when aiHelpersEnabled is true but taskId is omitted", () => {
+    render(
+      <ImprovementPanel
+        confidence={makeConfidence()}
+        description="Old description"
+        aiHelpersEnabled
+        onUpdate={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Suggest improvement" })).not.toBeInTheDocument();
+  });
+
   it("renders the button when aiHelpersEnabled is true, and calls suggestTaskRewrite(taskId) on click", async () => {
     apiMocks.suggestTaskRewrite.mockResolvedValue({
       suggestion: "New description with acceptance criteria.",

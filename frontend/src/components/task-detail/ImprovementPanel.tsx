@@ -206,7 +206,12 @@ export default function ImprovementPanel({
 
       {open && (
         <div id="ip-body" className="ip-body">
-          {aiHelpersEnabled && (
+          {/* Fix-round-2b, LOW maint: also require taskId -- without it,
+              clicking the button would POST to /api/tasks//suggest-rewrite
+              (an empty path segment). aiHelpersEnabled alone was not a
+              sufficient guard for callers that render this panel before a
+              task id is known. */}
+          {aiHelpersEnabled && taskId && (
             <div className="ip-section ip-rewrite-row">
               <Button
                 type="button"

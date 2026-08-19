@@ -51,11 +51,17 @@ const llmMocks = vi.hoisted(() => ({
   // the route's success-path log line (review round-2 finding 9) doesn't
   // read `undefined`.
   RewriteSuggestionTruncatedError: class RewriteSuggestionTruncatedError extends Error {},
+  // Fix-round-2b, LOW maint: the route now gates its "not configured" warn
+  // log behind this. Defaults to `true` (matches the real module's
+  // "first call after a reset" behavior) so the existing 503 tests, which
+  // don't assert on logging, are unaffected either way.
+  shouldWarnLlmNotConfigured: vi.fn().mockReturnValue(true),
 }));
 vi.mock("../../src/services/llm-rewrite.js", () => ({
   getLlmRewriteClient: llmMocks.getLlmRewriteClient,
   RewriteSuggestionTruncatedError: llmMocks.RewriteSuggestionTruncatedError,
   DEFAULT_MODEL: "claude-haiku-4-5",
+  shouldWarnLlmNotConfigured: llmMocks.shouldWarnLlmNotConfigured,
 }));
 
 import { taskRouter } from "../../src/routes/tasks.js";
@@ -156,6 +162,24 @@ describe("POST /tasks/:id/suggest-rewrite", () => {
     const body = (await res.json()) as { message: string };
     expect(body.message).not.toContain("ANTHROPIC_API_KEY");
     expect(body.message).toBe("The LLM rewrite helper is not configured on this server.");
+  });
+
+  // Fix-round-2b, LOW maint: the route defers to shouldWarnLlmNotConfigured()
+  // (llm-rewrite.js) to decide whether to log, instead of unconditionally
+  // logging on every request. The once-per-process gating logic itself is
+  // unit-tested directly in llm-rewrite.test.ts; this just pins that the
+  // route actually calls it (and does not crash) on the 503 path.
+  it("calls shouldWarnLlmNotConfigured() on the 503 (unconfigured) path", async () => {
+    llmMocks.getLlmRewriteClient.mockReturnValue(null);
+    await post(HUMAN);
+    expect(llmMocks.shouldWarnLlmNotConfigured).toHaveBeenCalledTimes(1);
+  });
+
+  it("still returns 503 when shouldWarnLlmNotConfigured() returns false", async () => {
+    llmMocks.getLlmRewriteClient.mockReturnValue(null);
+    llmMocks.shouldWarnLlmNotConfigured.mockReturnValueOnce(false);
+    const res = await post(HUMAN);
+    expect(res.status).toBe(503);
   });
 
   it("returns 502 when the LLM client throws", async () => {

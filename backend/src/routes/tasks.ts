@@ -60,6 +60,7 @@ import {
   getLlmRewriteClient,
   RewriteSuggestionTruncatedError,
   DEFAULT_MODEL as REWRITE_DEFAULT_MODEL,
+  shouldWarnLlmNotConfigured,
   type RewriteSuggestion,
 } from "../services/llm-rewrite.js";
 import {
@@ -4278,7 +4279,13 @@ taskRouter.post("/tasks/:id/suggest-rewrite", async (c) => {
     // an unauthenticated-beyond-project-access caller. The OpenAPI
     // description (docs.ts) and this server-side log still name
     // ANTHROPIC_API_KEY for whoever operates the deployment.
-    logger.warn({ taskId: task.id }, "suggest-rewrite: LLM rewrite helper not configured (missing ANTHROPIC_API_KEY)");
+    // Fix-round-2b, LOW maint: this branch is hit on EVERY request while
+    // unconfigured (a sticky condition, same as the `cached` state it comes
+    // from) -- gated behind shouldWarnLlmNotConfigured() so it logs once per
+    // process instead of once per request.
+    if (shouldWarnLlmNotConfigured()) {
+      logger.warn({ taskId: task.id }, "suggest-rewrite: LLM rewrite helper not configured (missing ANTHROPIC_API_KEY)");
+    }
     return c.json(
       {
         error: "llm_not_configured",

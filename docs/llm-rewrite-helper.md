@@ -61,6 +61,7 @@ behind a before/after diff modal with an explicit Apply step.
 | Status | `error`                | When |
 | ------ | ---------------------- | ---- |
 | 404    | (task-not-found shape) | Task does not exist, or the project has `aiHelpersEnabled: false` |
+| 429    | `rate_limited`         | More than 10 requests/minute from this caller against this task (see Security posture) |
 | 503    | `llm_not_configured`   | Server has no `ANTHROPIC_API_KEY` configured |
 | 502    | `llm_request_failed`   | The Anthropic API call failed, or its response was not parseable JSON |
 | 502    | `llm_response_truncated` | The response hit the model's output-token limit before finishing |
@@ -81,13 +82,22 @@ behind a before/after diff modal with an explicit Apply step.
   generally. This reduces, but does not eliminate, prompt-injection risk;
   the tool-less/advisory-only design above is the structural backstop that
   does not depend on the model obeying the delimiter.
-- **Rate-limited.** `POST /tasks/:id/suggest-rewrite` is capped at 10
-  requests/minute per (caller IP, path) in `app.ts` -- it is a paid,
-  externally-billed call, and the Anthropic SDK's own defaults (10-minute
-  timeout, 2 retries, and a timed-out request IS retried) could otherwise
-  let one burst tie up disproportionate server time and API spend. The
-  server-side client itself also trims those SDK defaults down to a 30s
-  timeout and a single retry.
+- **Rate-limited, but per-task -- not a spend cap.** `POST
+  /tasks/:id/suggest-rewrite` is capped at 10 requests/minute per (caller
+  IP, path) in `app.ts`, and `path` here includes the literal task id --
+  so the effective key is (caller IP, taskId). This dampens one client
+  hammering a single task and the thread-pool/latency impact of that, and
+  the Anthropic SDK's own defaults (10-minute timeout, 2 retries, and a
+  timed-out request IS retried) could otherwise let one such burst tie up
+  disproportionate server time; the server-side client itself also trims
+  those SDK defaults down to a 30s timeout and a single retry. **It does
+  NOT cap a caller's total Anthropic spend**: a caller with access to many
+  taskIds (or one that simply rotates which task it calls this endpoint
+  for) can still drive an arbitrary number of paid LLM calls per minute,
+  since each taskId gets its own bucket. Operators who need a hard ceiling
+  on `ANTHROPIC_API_KEY` spend should set one on the Anthropic side
+  (organization/workspace spend limits); a per-actor or per-project
+  request budget in this service is a possible follow-up, not built here.
 - **No key material in error responses.** A 503 tells the caller the
   helper "is not configured on this server" without naming the env var;
   the env var name is documented here and in the OpenAPI spec, and logged

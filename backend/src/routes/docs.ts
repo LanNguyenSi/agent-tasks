@@ -1474,6 +1474,14 @@ export const openApiSpec = {
               },
             },
           },
+          "429": {
+            description: "Rate limited (`error: \"rate_limited\"`): more than 10 requests/minute from this caller against this task. Per-(caller IP, taskId), not a ceiling on total Anthropic spend -- see docs/llm-rewrite-helper.md's Security posture section.",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
           "502": {
             description: "The LLM request failed or returned an unparseable response (`error: \"llm_request_failed\"`), or the response was truncated at the model's output-token limit before it could finish (`error: \"llm_response_truncated\"`)",
             content: {

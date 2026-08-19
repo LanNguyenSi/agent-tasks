@@ -76,8 +76,15 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   // 2 retries, timeouts ARE retried) let one client burn up to ~30 minutes
   // of server-side work per request before services/llm-rewrite.ts trims
   // those defaults down. 10/min per (IP, path) is far above one human
-  // clicking "Suggest improvement" on one task, and dampens both cost and
-  // thread-pool exhaustion from a burst.
+  // clicking "Suggest improvement" on one task, and dampens per-task
+  // hammering (repeated calls against the same taskId) and its
+  // thread-pool exhaustion. Fix-round-2b (review round-2 finding MED-1,
+  // corrected overclaim): the key is (IP, path) and `path` here includes
+  // the literal :id segment -- so this is a per-(IP, taskId) cap, NOT a
+  // ceiling on a caller's total Anthropic spend. A caller with many
+  // taskIds (or one that rotates them) is not slowed down by this limit at
+  // all; it is not a substitute for an Anthropic-side spend cap. See
+  // docs/llm-rewrite-helper.md's Security posture section.
   app.use("/api/tasks/:id/suggest-rewrite", rateLimit({ windowMs: 60_000, max: 10 }));
 
   // Public
