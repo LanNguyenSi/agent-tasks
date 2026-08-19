@@ -42,7 +42,10 @@
 // pr_author_mismatch from the read_first context on backend/src/routes/
 // tasks.ts): not_claimed, already_claimed, precondition_failed,
 // cross_repo_pr_rejected, pr_author_mismatch, force_admin_only,
-// respec_conflict, result_not_plain_string. Plus low_confidence (422, the
+// respec_conflict, result_not_plain_string. Plus creator_abandon_conflict
+// (409, task_creator_abandon's CAS/state-conflict sibling to respec_conflict,
+// added task 7a1360da follow-up, batch 19 round 2 -- see
+// creatorAbandonConflictError below) and low_confidence (422, the
 // pre-claim confidence gate on task_start / the deprecated tasks_claim,
 // backend/src/services/confidence-gate.ts via backend/src/middleware/
 // error.ts's lowConfidence helper): NOT in the contract's original seed
@@ -693,6 +696,33 @@ function respecConflictError(message: string): TeachingError {
     message,
     recipe: "task_respec only works on an open, unclaimed task; call task_abandon first if you hold the claim, then retry task_respec",
     allowedNext: ["task_abandon", "task_respec"],
+  });
+}
+
+// 7a. Creator-abandon conflict. task_creator_abandon only retires an OPEN,
+// unclaimed task the caller created (backend/src/routes/tasks.ts,
+// CREATOR_ABANDON_STATE_CONFLICT_MESSAGE = "Task must be open and unclaimed
+// to creator-abandon") -- any other state, or a lost CAS race, is rejected
+// with 409 `conflict`. Same generic backend code ("conflict") as
+// RESPEC_CONFLICT_PATTERN immediately above and several other unrelated
+// 409s, so this entry is message-pattern matched and mints its own code,
+// sibling to respec_conflict. Unlike respec_conflict there is no
+// self-service corrective to name: this verb never holds a claim to release
+// first, and a lost CAS race means some other actor already changed the row
+// out from under the caller. `recipe` deliberately avoids the literal
+// `task_creator_abandon` token (the recipe-vs-allowedNext coherence guard
+// in tests/errors.test.ts would then require it in `allowedNext`, and
+// blindly retrying the same call is not a reliable next step here) --
+// allowedNext offers only `tasks_get` so the caller can see the task's
+// current state and decide what to do next.
+const CREATOR_ABANDON_CONFLICT_PATTERN = /open and unclaimed to creator-abandon/i;
+
+function creatorAbandonConflictError(message: string): TeachingError {
+  return buildTeachingError({
+    code: "creator_abandon_conflict",
+    message,
+    recipe: "creator-abandon only works on an open, unclaimed task; call tasks_get to see its current state",
+    allowedNext: ["tasks_get"],
   });
 }
 
@@ -1454,6 +1484,9 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
   }
   if (status === 409 && code === "conflict" && RESPEC_CONFLICT_PATTERN.test(message)) {
     return respecConflictError(message);
+  }
+  if (status === 409 && code === "conflict" && CREATOR_ABANDON_CONFLICT_PATTERN.test(message)) {
+    return creatorAbandonConflictError(message);
   }
 
   return genericDegrade(status, message, body.details, body.error);

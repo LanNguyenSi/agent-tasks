@@ -469,6 +469,13 @@ export class AgentTasksClient {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/abandon`);
   }
 
+  // Task 7a1360da: distinct from abandonTask above, which releases a CLAIM.
+  // creatorAbandonTask retires an OPEN, UNCLAIMED task the caller created
+  // into status="abandoned", with no claim involved at all.
+  creatorAbandonTask(taskId: string, input?: { reason?: string }) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/creator-abandon`, input);
+  }
+
   mergeTask(taskId: string, mergeMethod?: "squash" | "merge" | "rebase") {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/merge`, {
       mergeMethod: mergeMethod ?? "squash",
