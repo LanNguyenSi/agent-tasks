@@ -1475,7 +1475,7 @@ export const openApiSpec = {
             },
           },
           "502": {
-            description: "The LLM request failed or returned an unparseable response",
+            description: "The LLM request failed or returned an unparseable response (`error: \"llm_request_failed\"`), or the response was truncated at the model's output-token limit before it could finish (`error: \"llm_response_truncated\"`)",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorResponse" },
