@@ -340,6 +340,33 @@ describe("POST /tasks/pickup", () => {
     expect(reviewCall.where.reviewClaimedByUserId).toBeNull();
   });
 
+  // Task 5200f326: a dependent whose SOLE blocker is creator-abandoned
+  // (POST /tasks/:id/creator-abandon, task 7a1360da) must resurface here,
+  // not stay hidden forever behind the dependency gate the way a `not:
+  // "done"` predicate would. Both the review-pickup and work-pickup
+  // queries share the same `blockedBy` gate; a live DB would return the
+  // dependent for either pool once its only blocker's status is `done` or
+  // `abandoned`, so asserting the query shape is the correct level for
+  // this mocked-Prisma suite (see claim-race.test.ts's header comment for
+  // the same convention).
+  it("review + work pickup: blockedBy gate treats 'done' and 'abandoned' as resolved, nothing else", async () => {
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null) // hard-limit
+      .mockResolvedValueOnce(null) // review pickup miss
+      .mockResolvedValueOnce(null); // work pickup miss
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { kind: string };
+    expect(body.kind).toBe("idle");
+
+    const reviewCall = prismaMocks.taskFindFirst.mock.calls[1]![0];
+    const workCall = prismaMocks.taskFindFirst.mock.calls[2]![0];
+    expect(reviewCall.where.blockedBy).toEqual({ none: { status: { notIn: ["done", "abandoned"] } } });
+    expect(workCall.where.blockedBy).toEqual({ none: { status: { notIn: ["done", "abandoned"] } } });
+  });
+
   it("returns idle when no signals, no review task, no work task", async () => {
     prismaMocks.taskFindFirst.mockResolvedValue(null);
     prismaMocks.signalFindFirst.mockResolvedValue(null);
@@ -511,6 +538,60 @@ describe("POST /tasks/:id/start", () => {
     expect(updateCall.where).toMatchObject({ reviewClaimedByUserId: null, reviewClaimedByAgentId: null });
     expect(updateCall.data.reviewClaimedByAgentId).toBe("agent-1");
     expect(updateCall.data.status).toBeUndefined();
+  });
+});
+
+// ── Dependency gate: abandoned blocker is treated as resolved ──────────────
+//
+// Task 5200f326: a dependent whose SOLE blocker was creator-abandoned
+// (POST /tasks/:id/creator-abandon, task 7a1360da) used to deadlock forever
+// -- `unresolved = blockers.filter(dep => dep.status !== "done")` treated
+// "abandoned" as still-blocking, and there is no agent path back out of
+// "abandoned". Orchestrator decision: treat-abandoned-as-resolved at this
+// predicate (RESOLVED_BLOCKER_STATUSES = ["done", "abandoned"]), not
+// auto-detach -- the blockedBy edge itself is left intact.
+describe("POST /tasks/:id/start — dependency gate treats an abandoned blocker as resolved (task 5200f326)", () => {
+  it("open task whose SOLE blocker is creator-abandoned is claimable, not blocked (200)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "open" }); // initial fetch
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null); // hard-limit ok
+    prismaMocks.taskFindMany.mockResolvedValueOnce([
+      { id: "blocker-1", title: "Blocker", status: "abandoned" },
+    ]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null); // falls back to built-in default
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { kind: string };
+    expect(body.kind).toBe("work");
+  });
+
+  it("open task with an unresolved (open) blocker stays blocked (409, negative control)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "open" });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null); // hard-limit ok
+    prismaMocks.taskFindMany.mockResolvedValueOnce([
+      { id: "blocker-1", title: "Blocker", status: "open" },
+    ]);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; blockedBy: { id: string; status: string }[] };
+    expect(body.error).toBe("blocked");
+    expect(body.blockedBy).toEqual([{ id: "blocker-1", title: "Blocker", status: "open" }]);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("open task with an in_progress blocker stays blocked (409, negative control)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "open" });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null); // hard-limit ok
+    prismaMocks.taskFindMany.mockResolvedValueOnce([
+      { id: "blocker-1", title: "Blocker", status: "in_progress" },
+    ]);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("blocked");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 });
 
@@ -965,6 +1046,59 @@ describe("POST /tasks/:id/claim — gate enforcement (REST parity with MCP task_
 
     const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
     expect(res.status).toBe(409);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// See the /tasks/:id/start block above for the full rationale (task
+// 5200f326). POST /tasks/:id/claim duplicates the same dependency-gate
+// filter independently, so it needs its own regression coverage.
+describe("POST /tasks/:id/claim — dependency gate treats an abandoned blocker as resolved (task 5200f326)", () => {
+  it("open task whose SOLE blocker is creator-abandoned is claimable, not blocked (200)", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce({
+        ...baseTask,
+        status: "open",
+        branchName: null,
+        workflowId: null,
+        workflow: null,
+      })
+      // Re-fetch after the atomic CAS claim.
+      .mockResolvedValueOnce({
+        ...baseTask,
+        status: "in_progress",
+        branchName: null,
+        claimedByAgentId: "agent-1",
+        claimedByUserId: null,
+      });
+    prismaMocks.taskFindMany.mockResolvedValueOnce([
+      { id: "blocker-1", title: "Blocker", status: "abandoned" },
+    ]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null); // falls back to built-in default
+
+    const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBe(200);
+    const claimCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    expect(claimCall.data.status).toBe("in_progress");
+  });
+
+  it("open task with an unresolved (open) blocker stays blocked (409, negative control)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: null,
+      workflowId: null,
+      workflow: null,
+    });
+    prismaMocks.taskFindMany.mockResolvedValueOnce([
+      { id: "blocker-1", title: "Blocker", status: "open" },
+    ]);
+
+    const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; blockedBy: { id: string; status: string }[] };
+    expect(body.error).toBe("blocked");
+    expect(body.blockedBy).toEqual([{ id: "blocker-1", title: "Blocker", status: "open" }]);
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 });

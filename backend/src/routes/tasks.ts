@@ -115,6 +115,15 @@ import {
 import { readAttachmentContent, parseIncludeBase64Flag } from "../services/attachment-content.js";
 import { httpUrl } from "../lib/url-guard.js";
 
+// Blocker statuses that no longer hold a dependent task back. `abandoned`
+// joined `done` here per task 5200f326: treat-abandoned-as-resolved at this
+// predicate (not auto-detaching the blockedBy edge). Before this, a
+// dependent whose sole blocker was creator-abandoned (POST
+// /tasks/:id/creator-abandon, task 7a1360da) deadlocked permanently — hidden
+// from task_pickup and 409ing forever on task_start / POST /tasks/:id/claim,
+// with no operator-visible recovery path since `abandoned` is not a
+// transition target anything can reach `done` from.
+const RESOLVED_BLOCKER_STATUSES: string[] = ["done", "abandoned"];
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -1673,7 +1682,7 @@ taskRouter.post("/tasks/pickup", async (c) => {
       reviewClaimedByUserId: null,
       createdByAgentId: { not: actor.tokenId },
       ...teamFilter,
-      blockedBy: { none: { status: { not: "done" } } },
+      blockedBy: { none: { status: { notIn: RESOLVED_BLOCKER_STATUSES } } },
     },
     orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
     include: {
@@ -1692,7 +1701,7 @@ taskRouter.post("/tasks/pickup", async (c) => {
       claimedByAgentId: null,
       claimedByUserId: null,
       ...teamFilter,
-      blockedBy: { none: { status: { not: "done" } } },
+      blockedBy: { none: { status: { notIn: RESOLVED_BLOCKER_STATUSES } } },
     },
     orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
     include: {
@@ -1878,7 +1887,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       where: { blocks: { some: { id: task.id } } },
       select: { id: true, title: true, status: true },
     });
-    const unresolved = blockers.filter((dep) => dep.status !== "done");
+    const unresolved = blockers.filter((dep) => !RESOLVED_BLOCKER_STATUSES.includes(dep.status));
     if (unresolved.length > 0) {
       return c.json(
         {
@@ -3893,10 +3902,14 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
 // "abandoned" branch. No agent path and no other target status exists;
 // every other from="abandoned" write 400s.
 //
-// Known limitation, out of scope here: `blockedBy` dependency gating (see
-// `blockedBy: { none: { status: { not: "done" } } }` above) never unblocks a
-// dependent task whose blocker was creator-abandoned rather than finished —
-// a follow-up, not fixed by this route.
+// The gap this used to leave open, closed by task 5200f326: `blockedBy`
+// dependency gating (`RESOLVED_BLOCKER_STATUSES` above, used at both
+// task_pickup's `blockedBy: { none: ... }` queries and the task_start /
+// POST /tasks/:id/claim `unresolved` filters) now treats `abandoned` the
+// same as `done` for gating purposes, so a dependent whose sole blocker
+// gets creator-abandoned here becomes claimable again instead of deadlocked
+// forever. Deliberately a predicate change only, not auto-detach: the
+// blockedBy edge itself is left intact for audit/history.
 const creatorAbandonSchema = z.object({
   reason: z.string().trim().min(1).max(2000).optional(),
 });
@@ -6144,12 +6157,12 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     return conflict(c, "Task is already claimed");
   }
 
-  // Dependency gate — all blocking tasks must be done
+  // Dependency gate — all blocking tasks must be done or abandoned
   const blockers = await prisma.task.findMany({
     where: { blocks: { some: { id: task.id } } },
     select: { id: true, title: true, status: true },
   });
-  const unresolved = blockers.filter((dep) => dep.status !== "done");
+  const unresolved = blockers.filter((dep) => !RESOLVED_BLOCKER_STATUSES.includes(dep.status));
   if (unresolved.length > 0) {
     return c.json({
       error: "blocked",
