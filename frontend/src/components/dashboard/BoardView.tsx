@@ -190,12 +190,11 @@ export default function BoardView({
               <span className="db-col-dot" aria-hidden="true" />
               <span className="db-col-title">{columnLabel}</span>
               <Badge tone={badgeTone}>{columnTasks.length}</Badge>
-              {/* Supersedes D19 (operator decision 2026-08-20): backlog is now
-                  the default human create target too, not agent-only. The
-                  missing + on this Backlog column is a leftover from before
-                  that change, not a deliberate rule -- it awaits a follow-up
-                  task on column gating, not changed here. */}
-              {status !== "backlog" && (
+              {/* Column-gated create affordance (operator decision
+                  2026-08-20): the + only appears where the pipeline can
+                  legally start -- Backlog and Open. In Progress, Review, and
+                  Done never get one. */}
+              {(status === "backlog" || status === "open") && (
                 <button
                   type="button"
                   className="db-col-add"
