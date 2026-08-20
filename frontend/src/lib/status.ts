@@ -5,6 +5,7 @@
 // Unknown statuses fall back to the open (grey) treatment in consumers.
 
 export const STATUS_LABELS: Record<string, string> = {
+  backlog: "Backlog",
   open: "Open",
   "in-progress": "In Progress",
   review: "Review",
@@ -17,6 +18,10 @@ export const STATUS_LABELS: Record<string, string> = {
 // inline styles. These vars are for components that need programmatic access
 // (e.g. custom workflow states that must fall back to the open treatment).
 export const STATUS_COLORS: Record<string, { dot: string; text: string }> = {
+  backlog: {
+    dot: "var(--status-backlog)",
+    text: "var(--status-backlog-text)",
+  },
   open: {
     dot: "var(--status-open)",
     text: "var(--status-open-text)",

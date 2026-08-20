@@ -16,6 +16,7 @@ interface StatusChipProps {
 
 // Map API status strings to CSS modifier class suffixes.
 const STATUS_CLASS_MAP: Record<string, string> = {
+  backlog: "backlog",
   open: "open",
   "in-progress": "in-progress",
   review: "review",

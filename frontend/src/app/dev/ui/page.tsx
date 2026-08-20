@@ -37,15 +37,16 @@ const ICON_NAMES: IconName[] = [
 
 // ── B1 data ──────────────────────────────────────────────────────
 
-const STATUS_VALUES = ["open", "in-progress", "review", "done", "unknown-status"] as const;
+const STATUS_VALUES = ["backlog", "open", "in-progress", "review", "done", "unknown-status"] as const;
 const PRIORITY_VALUES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const;
 const BADGE_TONES: BadgeTone[] = [
   "neutral", "primary",
-  "status-open", "status-in-progress", "status-review", "status-done",
+  "status-backlog", "status-open", "status-in-progress", "status-review", "status-done",
 ];
 const BADGE_TONE_LABELS: Record<BadgeTone, string> = {
   neutral: "neutral",
   primary: "primary",
+  "status-backlog": "status-backlog",
   "status-open": "status-open",
   "status-in-progress": "status-in-progress",
   "status-review": "status-review",

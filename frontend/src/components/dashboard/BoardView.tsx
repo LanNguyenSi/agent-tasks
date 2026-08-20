@@ -24,11 +24,12 @@ import { DONE_BOARD_VISIBLE_LIMIT } from "../../lib/dashboardPrefs";
 import type { Task, TaskTemplate } from "../../lib/api";
 import { formatAbsoluteDate } from "../../lib/time";
 
-const STATUSES = ["open", "in_progress", "review", "done"] as const;
+const STATUSES = ["backlog", "open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
 
 // Badge tone per column status.
 const COLUMN_BADGE_TONE: Record<string, BadgeTone> = {
+  backlog: "status-backlog",
   open: "status-open",
   "in-progress": "status-in-progress",
   review: "status-review",

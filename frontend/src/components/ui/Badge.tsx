@@ -11,6 +11,7 @@ import type { ReactNode } from "react";
 export type BadgeTone =
   | "neutral"
   | "primary"
+  | "status-backlog"
   | "status-open"
   | "status-in-progress"
   | "status-review"

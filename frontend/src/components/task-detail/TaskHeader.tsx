@@ -63,6 +63,17 @@ interface TaskHeaderProps {
   onAdvance: (action: AdvanceAction) => void;
   /** Opens the delete task confirm dialog */
   onDeleteRequest: () => void;
+  /** Promotes a backlog task (PATCH status "open"). Only rendered/called
+   * when task.status === "backlog"; visible unconditionally like Edit and
+   * Delete above — the server enforces the write-tier gate, the UI doesn't
+   * pre-check it. */
+  onPromote: () => void;
+  /** Opens the discard confirm dialog for a backlog task (PATCH status
+   * "abandoned" on confirm, see TaskDetail's onDiscardRequest handler). */
+  onDiscardRequest: () => void;
+  /** True while a promote or discard request for this task is in flight;
+   * disables both buttons, mirroring advanceBusy above. */
+  backlogActionBusy: boolean;
   /** Scrolls to the review panel section */
   onScrollToReview: () => void;
   /** True for a human who is a team ADMIN or a per-project PROJECT_ADMIN.
@@ -96,6 +107,9 @@ export default function TaskHeader({
   onStartEditing,
   onAdvance,
   onDeleteRequest,
+  onPromote,
+  onDiscardRequest,
+  backlogActionBusy,
   onScrollToReview,
   isProjectAdmin,
   statusOverrideTargets = null,
@@ -266,6 +280,32 @@ export default function TaskHeader({
             {transitionHint && (
               <span className="td-transition-hint">{transitionHint}</span>
             )}
+          </>
+        )}
+
+        {/* Backlog Promote/Discard: same slot as the gated transition
+            buttons above, since a backlog task has no workflow transitions
+            of its own. */}
+        {!isEditing && task.status === "backlog" && (
+          <>
+            <button
+              type="button"
+              className="td-btn-transition"
+              onClick={onPromote}
+              disabled={backlogActionBusy}
+              aria-busy={backlogActionBusy || undefined}
+            >
+              <Icon name="arrow-right" size={13} aria-hidden />
+              Promote
+            </button>
+            <button
+              type="button"
+              className="td-btn-transition"
+              onClick={onDiscardRequest}
+              disabled={backlogActionBusy}
+            >
+              Discard
+            </button>
           </>
         )}
 
