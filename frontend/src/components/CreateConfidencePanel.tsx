@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { CreateConfidence } from "../lib/api";
+import type { CreateConfidence, EnforcementMode } from "../lib/api";
 import ConfidenceBadge from "./ConfidenceBadge";
 import { Button } from "./ui/Button";
 
@@ -29,11 +29,21 @@ const MAX_NEXT_ACTIONS = 5;
  */
 export default function CreateConfidencePanel({
   confidence,
+  enforcementMode,
   assignmentError,
   onEdit,
   onClose,
 }: {
   confidence: CreateConfidence;
+  /** M2 (task e32cee5f, follow-up to a9dc7e58): the project's confidence-gate
+   *  enforcement mode (`project.enforcementMode`). Only `BLOCK` actually stops
+   *  an agent claim server-side (see backend lib/enforcement-mode.ts); `WARN`
+   *  and `OFF` are advisory-only. The below-threshold verdict branches on this
+   *  so it never claims a claim is blocked when the project isn't actually
+   *  blocking it. `null`/`undefined` (row predates the column, or the caller
+   *  hasn't threaded it) is treated the same as `WARN` — the backend's own
+   *  default for an unset mode — rather than assumed to be blocking. */
+  enforcementMode: EnforcementMode | null;
   assignmentError?: string | null;
   /** Open the just-created task in the editor to act on the missing fields. */
   onEdit: () => void;
@@ -41,6 +51,11 @@ export default function CreateConfidencePanel({
 }) {
   const { score, threshold, blocking, missing, nextActions } = confidence;
   const passes = score >= threshold && !blocking;
+  // M2 (task e32cee5f): mirrors TaskDetail's claimsBlocked (task a9dc7e58) —
+  // `blocking` above is the score-independent keystone verdict, unrelated to
+  // enforcementMode; this is the separate "does the project's mode actually
+  // stop a claim" check the below-threshold copy needs.
+  const claimsBlocked = enforcementMode === "BLOCK";
 
   // The Modal's focus effect only runs on open, not on this in-place content
   // swap, so focus would fall to document.body. Pull it into the panel.
@@ -62,7 +77,9 @@ export default function CreateConfidencePanel({
         <span className={`ccp-verdict-text ${passes ? "ccp-verdict-text--pass" : "ccp-verdict-text--fail"}`}>
           {passes
             ? `At or above the ${threshold} threshold`
-            : `Below the ${threshold} threshold: agents cannot claim this task`}
+            : claimsBlocked
+              ? `Below the ${threshold} threshold: agents cannot claim this task`
+              : `Below the ${threshold} threshold: advisory in this project, agents can still claim it`}
         </span>
       </div>
 

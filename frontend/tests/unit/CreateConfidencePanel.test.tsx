@@ -29,7 +29,7 @@ const noop = () => {};
 
 describe("CreateConfidencePanel", () => {
   it("renders the server score, humanized missing fields, and the nextActions", () => {
-    render(<CreateConfidencePanel confidence={base} onEdit={noop} onClose={noop} />);
+    render(<CreateConfidencePanel confidence={base} enforcementMode={null} onEdit={noop} onClose={noop} />);
 
     expect(screen.getByText(/62\/100/)).toBeInTheDocument();
     expect(screen.getByText(/At or above the 60 threshold/)).toBeInTheDocument();
@@ -41,18 +41,39 @@ describe("CreateConfidencePanel", () => {
   });
 
   it("warns when the task is below threshold or blocking", () => {
-    render(<CreateConfidencePanel confidence={{ ...base, score: 40, blocking: true }} onEdit={noop} onClose={noop} />);
+    render(
+      <CreateConfidencePanel
+        confidence={{ ...base, score: 40, blocking: true }}
+        enforcementMode={null}
+        onEdit={noop}
+        onClose={noop}
+      />,
+    );
     expect(screen.getByText(/Below the 60 threshold/)).toBeInTheDocument();
     expect(screen.queryByText(/At or above/)).not.toBeInTheDocument();
   });
 
   it("treats a keystone-blocking task as below threshold even when the score clears it", () => {
-    render(<CreateConfidencePanel confidence={{ ...base, score: 80, blocking: true }} onEdit={noop} onClose={noop} />);
+    render(
+      <CreateConfidencePanel
+        confidence={{ ...base, score: 80, blocking: true }}
+        enforcementMode={null}
+        onEdit={noop}
+        onClose={noop}
+      />,
+    );
     expect(screen.getByText(/Below the 60 threshold/)).toBeInTheDocument();
   });
 
   it("warns for a below-threshold score even when not blocking (isolates the score comparison)", () => {
-    render(<CreateConfidencePanel confidence={{ ...base, score: 40, blocking: false }} onEdit={noop} onClose={noop} />);
+    render(
+      <CreateConfidencePanel
+        confidence={{ ...base, score: 40, blocking: false }}
+        enforcementMode={null}
+        onEdit={noop}
+        onClose={noop}
+      />,
+    );
     expect(screen.getByText(/Below the 60 threshold/)).toBeInTheDocument();
     expect(screen.queryByText(/At or above/)).not.toBeInTheDocument();
   });
@@ -61,6 +82,7 @@ describe("CreateConfidencePanel", () => {
     render(
       <CreateConfidencePanel
         confidence={base}
+        enforcementMode={null}
         assignmentError="Self-assignment failed: forbidden"
         onEdit={noop}
         onClose={noop}
@@ -74,7 +96,9 @@ describe("CreateConfidencePanel", () => {
   it("wires the Edit task and Close buttons", async () => {
     const onEdit = vi.fn();
     const onClose = vi.fn();
-    render(<CreateConfidencePanel confidence={base} onEdit={onEdit} onClose={onClose} />);
+    render(
+      <CreateConfidencePanel confidence={base} enforcementMode={null} onEdit={onEdit} onClose={onClose} />,
+    );
 
     await userEvent.click(screen.getByRole("button", { name: "Edit task" }));
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
@@ -84,12 +108,21 @@ describe("CreateConfidencePanel", () => {
   });
 
   it("omits the missing line when nothing is missing", () => {
-    render(<CreateConfidencePanel confidence={{ ...base, missing: [] }} onEdit={noop} onClose={noop} />);
+    render(
+      <CreateConfidencePanel confidence={{ ...base, missing: [] }} enforcementMode={null} onEdit={noop} onClose={noop} />,
+    );
     expect(screen.queryByText(/^Missing:/)).not.toBeInTheDocument();
   });
 
   it("omits the next-steps block when there are no nextActions", () => {
-    render(<CreateConfidencePanel confidence={{ ...base, nextActions: [] }} onEdit={noop} onClose={noop} />);
+    render(
+      <CreateConfidencePanel
+        confidence={{ ...base, nextActions: [] }}
+        enforcementMode={null}
+        onEdit={noop}
+        onClose={noop}
+      />,
+    );
     expect(screen.queryByText("Next steps to raise confidence")).not.toBeInTheDocument();
   });
 });

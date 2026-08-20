@@ -99,6 +99,7 @@ export default function NewTaskFlow({
         projectId={project.id}
         templateFields={project.taskTemplate?.fields ?? null}
         templatePresets={project.taskTemplate?.presets ?? []}
+        enforcementMode={project.enforcementMode ?? null}
         onTaskCreated={onTaskCreated}
         onEditTask={onEditTask}
       />
