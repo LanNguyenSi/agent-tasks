@@ -280,6 +280,34 @@ describe("handlePullRequestEvent", () => {
     expect(mockCommentCreate).toHaveBeenCalled();
   });
 
+  // Backlog-escape fix, defense-in-depth: findTasksByPr's own where clause
+  // already excludes status "backlog" (see pr-binding.test.ts), so in
+  // production a backlog task is never returned here at all. This test
+  // stubs mockTaskFindMany to return one anyway (as if that filter were
+  // absent) to pin pickMergeTargetStatus's independent backlog short-circuit
+  // as a second, standalone barrier — a backlog task's prNumber/prUrl/
+  // branchName binding fields (set via the agent PATCH lane, which stays
+  // allowed) must never let a merge event transition it, in ANY governance
+  // mode including AUTONOMOUS.
+  it("does not transition a backlog task on PR merged, even if it were returned by the query (backlog-escape fix)", async () => {
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "backlog" })]);
+
+    await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
+
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockSignalUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not transition a backlog task on PR merged under AUTONOMOUS governance, even if it were returned by the query (backlog-escape fix)", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", governanceMode: "AUTONOMOUS" }]);
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "backlog" })]);
+
+    await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
+
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockSignalUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("does not transition on PR closed without merge", async () => {
     mockTaskFindMany.mockResolvedValue([makeTask({ status: "review" })]);
 
@@ -366,5 +394,24 @@ describe("handleIssuesEvent", () => {
       where: { taskId: "task-1", acknowledgedAt: null },
       data: { acknowledgedAt: expect.any(Date) },
     });
+  });
+
+  // Backlog-escape fix: the query's own where clause now excludes status
+  // "backlog" (not just "done"), so a backlog task's title matching `[GH
+  // #N]` is never returned here and never gets written to "done" by the
+  // unconditional update loop below the query. Asserted directly on the
+  // where clause so a regression back to `{ not: "done" }` is caught even
+  // without a matching row in the mock.
+  it("issue.closed query excludes status backlog (not just done)", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+    mockTaskFindMany.mockResolvedValue([]);
+
+    await handleIssuesEvent({ ...baseIssuePayload, action: "closed" });
+
+    expect(mockTaskFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: { notIn: ["done", "backlog"] } }),
+      }),
+    );
   });
 });

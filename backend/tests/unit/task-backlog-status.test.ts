@@ -319,11 +319,13 @@ describe("POST /tasks/:id/start — v1 backlog routing (task 'backlog_not_promot
     expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("human task_start on a backlog task does not claim it (falls to the existing error path, not a promote)", async () => {
+  it("human task_start on a backlog task does not claim it (falls to the existing error path, not a promote): pins exact 409 bad_state (D11)", async () => {
     prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "backlog" });
 
     const res = await makeApp(HUMAN).request("/tasks/task-1/start", { method: "POST" });
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("bad_state");
     expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
   });
 });
@@ -406,6 +408,19 @@ describe("POST /tasks/pickup — work pool excludes backlog (real pickup path)",
     const body = (await res.json()) as { kind: string; task: { id: string } };
     expect(body.kind).toBe("work");
     expect(body.task.id).toBe("task-open");
+
+    // F-1 fix: assert directly on the actual where clause the route sent to
+    // prisma for the work-pool lookup, not only on the re-implemented
+    // pickWorkPickupWinner predicate above. pickWorkPickupWinner simulates
+    // what a correct filter WOULD do; it would happily "pass" even if the
+    // route's real query literal drifted (e.g. widened to an `in` list that
+    // forgot to exclude "backlog"), because the simulation never inspects
+    // what the route itself asked prisma for. This closes that gap — the
+    // route's work-pool findFirst call (the 3rd taskFindFirst call: after
+    // the hard-limit check and the review-pickup miss) must query
+    // status === "open" exactly.
+    const workPoolCall = prismaMocks.taskFindFirst.mock.calls[2]![0] as { where: { status: string } };
+    expect(workPoolCall.where.status).toBe("open");
   });
 
   it("AC6: a task blocked solely by a backlog-status blocker is not returned by pickup (blockedBy gate)", async () => {
@@ -459,11 +474,11 @@ describe("POST /tasks/:id/claim — v1 backlog routing (legacy alias)", () => {
     expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("human legacy claim on a backlog task is rejected (no implicit promote-via-claim)", async () => {
+  it("human legacy claim on a backlog task is rejected (no implicit promote-via-claim): pins exact 409 bad_state (D11)", async () => {
     prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "backlog" });
 
     const res = await makeApp(HUMAN).request("/tasks/task-1/claim", { method: "POST" });
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBe(409);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("bad_state");
     expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
@@ -489,7 +504,7 @@ describe("POST /projects/:projectId/tasks/import — v1 backlog routing (agent-c
     expect(prismaMocks.taskCreate.mock.calls[0]![0].data.status).toBe("backlog");
   });
 
-  it("agent import with one item carrying an explicit non-backlog status rejects the whole batch with 400 backlog_routing_enforced", async () => {
+  it("agent import with one item carrying an explicit non-backlog status rejects the whole batch with 400 backlog_routing_enforced, naming the item by title", async () => {
     const res = await postImport(AGENT, [
       { title: "Imported A" },
       { title: "Imported B", status: "open" },
@@ -498,9 +513,42 @@ describe("POST /projects/:projectId/tasks/import — v1 backlog routing (agent-c
     const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe("backlog_routing_enforced");
     expect(body.message).toMatch(/backlog/i);
+    // F-1 fix: the offending item is named by its title, not by its
+    // (deduped, potentially misleading) array index.
+    expect(body.message).toContain("Imported B");
+    expect(body.message).not.toMatch(/item index/i);
     // Whole-batch rejection: nothing gets inserted, not even the earlier
     // valid item.
     expect(prismaMocks.taskCreate).not.toHaveBeenCalled();
+  });
+
+  it("agent import error message names the item by externalRef when present, preferred over title", async () => {
+    const res = await postImport(AGENT, [
+      { title: "Imported A", externalRef: "ext-a" },
+      { title: "Imported B", externalRef: "ext-b", status: "open" },
+    ]);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.message).toContain("ext-b");
+  });
+
+  it("agent import error message identifies the correct offending item even when an earlier in-batch externalRef dup shifted the deduped index (F-1 index-mismatch fix)", async () => {
+    // Item 0 and item 1 share externalRef "dup-ref": item 1 is spliced out of
+    // dedupedItems as an in-batch duplicate before the backlog-routing check
+    // runs. The offending item (explicit status "open") is item 2 in the
+    // original request, but dedupedItems[1] after the splice — the old
+    // "item index" wording would have named index 1, i.e. the wrong item
+    // (the deduped-away item 1, not item 2). Naming by externalRef/title
+    // sidesteps that index drift entirely.
+    const res = await postImport(AGENT, [
+      { title: "Imported A", externalRef: "dup-ref" },
+      { title: "Imported A duplicate", externalRef: "dup-ref" },
+      { title: "Imported C", status: "open" },
+    ]);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.message).toContain("Imported C");
+    expect(body.message).not.toContain("Imported A duplicate");
   });
 
   it("human import with an explicit status (in_progress) passes through unchanged, regression", async () => {

@@ -1184,11 +1184,18 @@ taskRouter.post(
         (item) => item.status !== undefined && item.status !== "backlog",
       );
       if (badIndex !== -1) {
+        const badItem = dedupedItems[badIndex];
+        // Identify the offending item by externalRef (if present) or title,
+        // not by its index into dedupedItems: that array has already had
+        // in-batch externalRef duplicates spliced out, so its index no
+        // longer lines up with the caller's original request payload and
+        // would point at the wrong item.
+        const badItemLabel = badItem.externalRef ?? badItem.title;
         return c.json(
           {
             error: "backlog_routing_enforced",
             message:
-              `Agent-created tasks are routed to "backlog" status in v1 and cannot be created directly as "${dedupedItems[badIndex].status}" (item index ${badIndex}). Omit status (or pass status: "backlog") and have an operator promote tasks once they are ready.`,
+              `Agent-created tasks are routed to "backlog" status in v1 and cannot be created directly as "${badItem.status}" (item "${badItemLabel}"). Omit status (or pass status: "backlog") and have an operator promote tasks once they are ready.`,
           },
           400,
         );
@@ -1759,7 +1766,15 @@ taskRouter.post("/tasks/pickup", async (c) => {
   // ── 3. Work pickup ────────────────────────────────────────────────────────
   const workTask = await prisma.task.findFirst({
     where: {
-      status: "open", // TODO: use initial states across team workflows — misses coding-agent "backlog" tasks
+      // This literal IS the v1 backlog gate: task_pickup's work-pool query
+      // must never surface a "backlog" task (it awaits operator promotion —
+      // see backlog_not_promoted at /tasks/:id/start). A future
+      // generalization to per-workflow initial states (e.g. `status: {
+      // in: initialStates }`) MUST keep excluding "backlog" explicitly —
+      // widening this to cover custom initial states without also excluding
+      // "backlog" would silently reopen the pre-promotion escape this gate
+      // closes.
+      status: "open",
       claimedByAgentId: null,
       claimedByUserId: null,
       ...teamFilter,

@@ -1854,6 +1854,84 @@ describe("PATCH /tasks/:id — backlog promote/discard (T-002)", () => {
     expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
     expect(logAuditEvent).not.toHaveBeenCalled();
   });
+
+  // F-1 fix: the webhook path was closed by excluding "backlog" from
+  // findTasksByPr / pickMergeTargetStatus / the issues.closed query, but the
+  // agent PATCH lane that SETS branchName/prUrl/prNumber (the fields those
+  // webhook queries bind on) deliberately stays open — an agent may still
+  // report its branch/PR on a backlog task; only the webhook is barred from
+  // acting on that binding while the task is unpromoted. This pins that the
+  // PATCH write itself is unaffected by the fix: fields land, status is
+  // untouched (never sent in the update payload, stays "backlog").
+  it("F-1: agent PATCH sets branchName/prUrl/prNumber on a backlog task; status is untouched, stays backlog", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(BACKLOG_TASK);
+    prismaMocks.taskUpdate.mockResolvedValueOnce({
+      ...BACKLOG_TASK,
+      branchName: "feat/agent-branch",
+      prUrl: "https://github.com/acme/thing/pull/42",
+      prNumber: 42,
+    });
+
+    const res = await makeApp(AGENT_WITH_UPDATE).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        branchName: "feat/agent-branch",
+        prUrl: "https://github.com/acme/thing/pull/42",
+        prNumber: 42,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      task: { status: string; branchName: string; prUrl: string; prNumber: number };
+    };
+    expect(body.task.status).toBe("backlog");
+    expect(body.task.branchName).toBe("feat/agent-branch");
+    expect(body.task.prUrl).toBe("https://github.com/acme/thing/pull/42");
+    expect(body.task.prNumber).toBe(42);
+
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBeUndefined();
+    expect(updateCall.data.branchName).toBe("feat/agent-branch");
+    expect(updateCall.data.prUrl).toBe("https://github.com/acme/thing/pull/42");
+    expect(updateCall.data.prNumber).toBe(42);
+  });
+});
+
+// ── PATCH /tasks/:id — non-backlog -> abandoned stays 400 (F-1 regression) ──
+//
+// updateTaskSchema's status enum was widened to include "abandoned" so the
+// backlog->abandoned "discard" special case above could validate it. That
+// widening must reach ONLY the backlog->abandoned branch: every other
+// from-state has no `to: "abandoned"` edge in the default workflow's
+// transition graph, so it still falls through to the generic
+// effectiveDef.transitions lookup and 400s exactly as before the widening.
+describe("PATCH /tasks/:id — non-backlog -> abandoned stays 400 (F-1 regression, D11)", () => {
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+
+  it.each(["open", "in_progress", "review"])(
+    "%s -> abandoned is rejected (400 bad_request, not allowed by workflow), not routed through the backlog-discard branch",
+    async (fromStatus) => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: fromStatus });
+      prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+      const res = await makeApp(HUMAN).request("/tasks/task-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "abandoned" }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string; message: string };
+      expect(body.error).toBe("bad_request");
+      expect(body.message).toContain("not allowed by workflow");
+      expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+      expect(logAuditEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "task.backlog_discarded" }),
+      );
+    },
+  );
 });
 
 // ── PATCH /tasks/:id — foreign-deliverable skip uses the PENDING

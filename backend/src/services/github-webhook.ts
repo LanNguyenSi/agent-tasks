@@ -73,7 +73,10 @@ export interface GitHubPullRequestReviewPayload {
  *   4. title pattern   — legacy fallback ([PR #N])
  *
  * Results are deduplicated and ordered by match strength.
- * Only non-done tasks are returned (idempotency).
+ * Only non-done, non-backlog tasks are returned (idempotency, and — v1
+ * backlog gate — an unpromoted backlog task must never be moved by a webhook
+ * event; only an operator promotion (PATCH backlog->open) takes it out of
+ * backlog).
  */
 export interface PrBindingHint {
   prNumber: number;
@@ -88,18 +91,18 @@ export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
   const queries = [
     // 1. prNumber (strongest)
     prisma.task.findMany({
-      where: { projectId, prNumber, status: { not: "done" } },
+      where: { projectId, prNumber, status: { notIn: ["done", "backlog"] } },
     }),
     // 2. prUrl
     prUrl
       ? prisma.task.findMany({
-          where: { projectId, prUrl, status: { not: "done" } },
+          where: { projectId, prUrl, status: { notIn: ["done", "backlog"] } },
         })
       : Promise.resolve([]),
     // 3. branchName
     headBranch
       ? prisma.task.findMany({
-          where: { projectId, branchName: headBranch, status: { not: "done" } },
+          where: { projectId, branchName: headBranch, status: { notIn: ["done", "backlog"] } },
         })
       : Promise.resolve([]),
     // 4. title pattern (legacy fallback)
@@ -107,7 +110,7 @@ export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
       where: {
         projectId,
         title: { contains: `[PR #${prNumber}]` },
-        status: { not: "done" },
+        status: { notIn: ["done", "backlog"] },
       },
     }),
   ];
@@ -193,12 +196,14 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
         payload: { source: "github_webhook", issue_number: payload.issue.number },
       });
     } else if (payload.action === "closed") {
-      // Find and close tasks that match this issue
+      // Find and close tasks that match this issue. v1 backlog gate: an
+      // unpromoted backlog task must never be moved by a webhook event, so
+      // it is excluded here the same way findTasksByPr excludes it below.
       const tasks = await prisma.task.findMany({
         where: {
           projectId: project.id,
           title: { contains: `[GH #${payload.issue.number}]` },
-          status: { not: "done" },
+          status: { notIn: ["done", "backlog"] },
         },
       });
 
@@ -236,6 +241,13 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
  * non-solo projects get. Per-workflow merge targets are the job of the
  * custom-workflow vocabulary epic; until then the safe default is the review
  * hand-off.
+ *
+ * `backlog` short-circuits the same way `done` does, regardless of
+ * governance mode: an unpromoted backlog task leaves backlog only through an
+ * operator's explicit PATCH promotion, never through a webhook-observed PR
+ * merge. (findTasksByPr already excludes backlog tasks from its query, so in
+ * practice this branch is a defense-in-depth backstop for any caller that
+ * looks up currentStatus another way.)
  */
 export function pickMergeTargetStatus(input: {
   project: GovernanceFlagsLike;
@@ -243,6 +255,7 @@ export function pickMergeTargetStatus(input: {
 }): string | null {
   const { project, currentStatus } = input;
   if (currentStatus === "done") return null;
+  if (currentStatus === "backlog") return null;
   if (resolveGovernanceMode(project) === GovernanceMode.AUTONOMOUS) return "done";
   if (currentStatus === "review") return null;
   return "review";
