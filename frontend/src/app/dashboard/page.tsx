@@ -675,6 +675,7 @@ export default function DashboardPage() {
         projectId={selectedProjectId}
         templateFields={templateFields}
         templatePresets={selectedProject?.taskTemplate?.presets ?? []}
+        enforcementMode={selectedProject?.enforcementMode ?? null}
         initialStatus={newTaskInitialStatus}
         onTaskCreated={(task) => {
           setTasks((prev) => [task, ...prev]);

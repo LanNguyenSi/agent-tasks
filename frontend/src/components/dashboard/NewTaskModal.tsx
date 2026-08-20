@@ -8,7 +8,14 @@
 // All existing fields, validation, and create behavior are preserved.
 
 import { useEffect, useMemo, useState } from "react";
-import { createTask, claimTask, type Task, type TaskTemplate, type TemplatePreset } from "../../lib/api";
+import {
+  createTask,
+  claimTask,
+  type EnforcementMode,
+  type Task,
+  type TaskTemplate,
+  type TemplatePreset,
+} from "../../lib/api";
 import { calculateConfidence, TASK_TYPES, type TaskType } from "../../lib/confidence";
 import { buildSavedTemplateData } from "../../lib/templateData";
 import ConfidenceBadge from "../ConfidenceBadge";
@@ -34,6 +41,12 @@ interface NewTaskModalProps {
   projectId: string;
   templateFields: TaskTemplate["fields"] | null;
   templatePresets: TemplatePreset[];
+  /** M2 (task e32cee5f): the project's confidence-gate enforcement mode
+   *  (`project.enforcementMode`), threaded through to CreateConfidencePanel
+   *  so its below-threshold copy never claims a claim is blocked when the
+   *  project isn't actually blocking it (see CreateConfidencePanel's own
+   *  doc for the null/undefined-as-advisory default). */
+  enforcementMode: EnforcementMode | null;
   /**
    * Initial status when opened from a board column's + button.
    * Defaults to "open".
@@ -57,6 +70,7 @@ export default function NewTaskModal({
   projectId,
   templateFields,
   templatePresets,
+  enforcementMode,
   initialStatus = "open",
   onTaskCreated,
   onEditTask,
@@ -213,6 +227,7 @@ export default function NewTaskModal({
   const body = createdConfidence ? (
     <CreateConfidencePanel
       confidence={createdConfidence}
+      enforcementMode={enforcementMode}
       assignmentError={createdAssignmentError}
       onEdit={handleEditTask}
       onClose={onClose}
