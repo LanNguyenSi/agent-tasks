@@ -2,6 +2,31 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## 0.14.0
+
+**Backlog status v1 on the MCP surface** (PR #477): `project_tasks` and
+`tasks_list` status filters accept `backlog`; new teaching errors
+`backlog_routing_enforced` (400, agent tried to create with an explicit
+non-backlog status) and `backlog_not_promoted` (403, task_start/claim on an
+unpromoted task) with recipes; `task_create` receipts on a backlog-routed
+task carry the "awaits operator promotion" next hint; `workflow_primer`
+gains a "Backlog routing (v1)" section; a regression test pins that the
+client tolerates unknown status strings in responses (cross-version window).
+
+Also since 0.13.0:
+
+- `task_create` accepts a unified `project` param (slug or UUID) (#469).
+- Creator-abandon flow surfaced (task_creator_abandon recipes and
+  conflict teaching error) (#473).
+- Confidence: per-type thresholds surfaced on badge-relevant read paths (#465).
+- Error wire ceiling enforced with surrogate-safe clamps and a
+  recipe-allowedNext coherence guard (#451).
+- `task_start` receipt consumes `effectiveGates` + `previousStatus` (#446).
+- `already_claimed` passes activeClaim detail through, three-case recipe
+  (review-retention aware) (#443, #444).
+- Clamped zod issue details in the generic degrade path (#442).
+- Test-file typecheck in CI (#464).
+
 ## 0.13.0
 
 **Response Contract v1** (rc-v1 series, PRs #434–#440; normative reference:
