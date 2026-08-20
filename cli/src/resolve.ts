@@ -10,6 +10,12 @@
  * surface, its newest-first sort, and its page cap). Zero matches or more
  * than one match is a hard error listing the candidates: this never
  * silently guesses which task was meant.
+ *
+ * The search pool includes `backlog` tasks (D18 revision), so a backlog
+ * task's id-prefix resolves the same as any other. Resolving the id is pure
+ * discovery, not a claim grant -- a claim-oriented command (`start`,
+ * `claim`, ...) still gets the server's 403 `backlog_not_promoted` if the
+ * resolved task hasn't been promoted out of backlog by a human.
  */
 import type { Config } from "./config.js";
 import * as api from "./api.js";

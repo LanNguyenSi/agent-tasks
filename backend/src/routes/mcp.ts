@@ -250,8 +250,8 @@ function buildServer(token: string): McpServer {
         projectId: uuid().optional(),
         status: z
           .union([
-            z.enum(["open", "in_progress", "review", "done", "abandoned"]),
-            z.array(z.enum(["open", "in_progress", "review", "done", "abandoned"])).min(1),
+            z.enum(["backlog", "open", "in_progress", "review", "done", "abandoned"]),
+            z.array(z.enum(["backlog", "open", "in_progress", "review", "done", "abandoned"])).min(1),
           ])
           .optional(),
         priority: z

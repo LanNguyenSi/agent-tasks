@@ -195,6 +195,24 @@ describe("GET /tasks/claimable — status filter", () => {
     expect(body.message).toContain("invalid status");
     expect(prismaMocks.taskFindMany).not.toHaveBeenCalled();
   });
+
+  it("D18: accepts an explicit status=backlog search without weakening claim eligibility", async () => {
+    // Explicit-search-only value (see CLAIMABLE_VALID_STATUSES in
+    // backend/src/routes/tasks.ts): a backlog task is now reachable by the
+    // CLI's id-prefix search pool, but this is search, not a claim grant --
+    // the implicit no-params "what can I claim right now?" default (tested
+    // above/below) never includes backlog, and `/tasks/:id/start` still
+    // 403s backlog_not_promoted regardless of how the id was found.
+    await makeApp().request("/tasks/claimable?status=backlog");
+    const where = lastFindManyArgs().where;
+    expect(where.status).toBe("backlog");
+  });
+
+  it("D18: status=backlog,open uses Prisma's { in: [...] } operator alongside other statuses", async () => {
+    await makeApp().request("/tasks/claimable?status=backlog,open");
+    const where = lastFindManyArgs().where;
+    expect(where.status).toEqual({ in: ["backlog", "open"] });
+  });
 });
 
 describe("GET /tasks/claimable — priority and labels", () => {

@@ -1292,7 +1292,10 @@ taskRouter.post(
 // MCP `tasks_list` tool dispatches to. With no query parameters it preserves
 // the original behaviour (status=open, unclaimed, scoped to the actor's team
 // or an explicit projectId). Pass `status` or `claimedByAgentId` to broaden
-// the search across already-claimed/in-progress/done tasks.
+// the search across already-claimed/in-progress/done/backlog tasks -- an
+// explicit `status=backlog` (or a list including it) is search-only and
+// carries no claim eligibility of its own (D18 revision, see
+// CLAIMABLE_VALID_STATUSES below).
 //
 // `verbose=false` (the default) returns a SUMMARY projection without the
 // long-form `description`, `comments`, `attachments`, or `artifacts`. The
@@ -1302,7 +1305,17 @@ taskRouter.post(
 // inside the agent's context window. Set `verbose=true` to opt into the full
 // response.
 
-const CLAIMABLE_VALID_STATUSES = ["open", "in_progress", "review", "done", "abandoned"] as const;
+// "backlog" is accepted here (D18 revision) purely as an *explicit-search*
+// value: isExplicitSearch below only ever sets `where.status` from a passed
+// `status` list, never the implicit "status=open, unclaimed" default that
+// answers "what can I claim right now?". Including "backlog" in this array
+// therefore does not change what the no-params call returns, and does not
+// touch claim eligibility -- a backlog task found this way is still 403
+// backlog_not_promoted at `/tasks/:id/start` until a human promotes it. This
+// only makes backlog tasks reachable by the CLI's id-prefix search pool
+// (cli/src/api.ts's searchTaskPool), which was previously unable to find
+// them at all short of a full UUID.
+const CLAIMABLE_VALID_STATUSES = ["backlog", "open", "in_progress", "review", "done", "abandoned"] as const;
 const CLAIMABLE_VALID_PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 
 const claimableSummarySelect = {

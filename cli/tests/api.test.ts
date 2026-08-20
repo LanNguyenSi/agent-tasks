@@ -282,8 +282,22 @@ describe("searchTaskPool", () => {
     // backwards from `tasks list`'s newest-first table the ID column comes
     // from.
     expect(url).toBe(
-      "http://api.test/api/tasks/claimable?status=open%2Cin_progress%2Creview%2Cdone%2Cabandoned&limit=200&sort=createdAt%3Adesc",
+      "http://api.test/api/tasks/claimable?status=backlog%2Copen%2Cin_progress%2Creview%2Cdone%2Cabandoned&limit=200&sort=createdAt%3Adesc",
     );
+  });
+
+  it("D18: includes backlog in the search pool so a backlog task's prefix resolves", async () => {
+    const tasks = [
+      { id: "abcdef12-0000-0000-0000-000000000000", title: "Backlog match", status: "backlog", priority: "LOW" },
+    ];
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tasks, nextCursor: null }));
+    const result = await searchTaskPool(config, "abcdef12");
+    expect(result).toEqual({
+      match: { kind: "unique", id: "abcdef12-0000-0000-0000-000000000000" },
+      searched: 1,
+      capped: false,
+    });
+    expect(fetchMock.mock.calls[0]![0] as string).toContain("backlog");
   });
 
   it("forwards a custom limit", async () => {

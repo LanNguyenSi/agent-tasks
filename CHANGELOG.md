@@ -5,13 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+**CLI id-prefix resolver now finds backlog tasks (D18 revision).** The 0.29.0 backlog-status-v1 known limitation below is resolved: `/api/tasks/claimable`'s `CLAIMABLE_VALID_STATUSES` now accepts `backlog` as an explicit-search value, so the CLI's id-prefix resolver (used by `tasks get`/`start`/`finish`/`comment` and friends) can resolve a backlog task's id the same way it resolves any other status, instead of only accepting the full UUID. This is discovery only, not a claim grant: the implicit "what can I claim right now?" default is unchanged (still `status=open`, unclaimed), and a backlog task found this way still 403s `backlog_not_promoted` at `/tasks/:id/start`/`claim` until a human promotes it. `tasks list --project --status backlog` is also now accepted client-side (the project-scoped browse endpoint already supported it). See `docs/okf/claim-model.md`.
+
 ## [0.29.0] - 2026-08-20
 
 **Backlog status v1.**
 
 **Agent-created tasks now route to a new backlog status, awaiting human operator review before agent pickup is allowed.** The backlog status is invisible to agents during `task_pickup`; humans must explicitly promote backlog tasks to `open` (audit event `task.backlog_promoted`) or discard them to `abandoned` (audit event `task.backlog_discarded`). Human-created tasks continue to default to `open`. Backlog tasks are a draft space: `task_respec` is allowed for any caller (agent or human) until promotion. Backend: agent hard-routes to backlog; `task_start` and legacy `claim` reject backlog tasks with `403 backlog_not_promoted`; human PATCH promotes/discards. MCP: teaching errors guide agents toward the operator UI; `workflow_primer` documents the backlog routing flow. Frontend: backlog column left of Open on the dashboard board with a count badge; backlog filter and promote/discard actions in the task list and detail views. No DB schema change (additive enum); old MCP bridges tolerate the new status. Release order: server before bridge.
 
-**Known limitation (D18)**: the CLI cannot resolve backlog-task IDs by prefix; the id-prefix resolver uses `/api/tasks/claimable` which intentionally excludes backlog from search results. Full UUIDs work. The web UI and MCP clients can manipulate backlog tasks directly; see `docs/okf/claim-model.md` for context.
+**Known limitation (D18), resolved in Unreleased**: the CLI could not resolve backlog-task IDs by prefix; the id-prefix resolver used `/api/tasks/claimable` which intentionally excluded backlog from search results, so only full UUIDs worked. See the `[Unreleased]` entry above and `docs/okf/claim-model.md` for the fix.
 
 **Also in this release (since 0.28.0):** Response Contract v1 across the MCP surface (receipts by default, `include` valves, legacy re-registration; mcp-server 0.13.0 line), the confidence milestones M3 (risk modifiers, read side), M4 (optional advisory LLM rewrite helper, opt-in) and M5 telemetry slices, agent creator-abandon with admin unabandon recovery, abandoned blockers resolved in the blockedBy gate, per-type confidence thresholds on badges and discovery endpoints, enforcement-mode-aware claim wording in the create panel, and CI hardening (test-file typecheck steps, frontend prod-image smoke). Details live in the merged PR history (#371 to #477) and the per-package changelogs.
 

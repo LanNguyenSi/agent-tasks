@@ -45,6 +45,27 @@ describe("resolveTaskId", () => {
     expect(result).toBe("abcdef12-0000-0000-0000-000000000000");
   });
 
+  it("resolves a backlog task by id prefix from a mixed-status pool (D18)", async () => {
+    // Backlog tasks were previously invisible to the search pool -- this
+    // pins that a backlog task, alongside open and done tasks, resolves by
+    // prefix the same way any other status does. Resolving the id is
+    // discovery only, not a claim grant (see backend claim-model.md D18).
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        tasks: [
+          { id: "aaaaaaaa-0000-0000-0000-000000000000", title: "Open task", status: "open", priority: "LOW" },
+          { id: "bbbbbbbb-0000-0000-0000-000000000000", title: "Backlog task", status: "backlog", priority: "LOW" },
+          { id: "cccccccc-0000-0000-0000-000000000000", title: "Done task", status: "done", priority: "LOW" },
+        ],
+        nextCursor: null,
+      }),
+    );
+    const result = await resolveTaskId(config, "bbbbbbbb");
+    expect(result).toBe("bbbbbbbb-0000-0000-0000-000000000000");
+    const requestedUrl = String(fetchMock.mock.calls.at(-1)?.[0]);
+    expect(requestedUrl).toContain("backlog");
+  });
+
   it("resolves a prefix matched only on a later page (paging past the first page)", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
