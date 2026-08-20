@@ -354,12 +354,25 @@ export function receiptForCreate(
   const labelsDev = labelsDroppedDeviation(input.labels, response.task.labels);
   if (labelsDev) deviations.push(labelsDev);
 
+  // v1 backlog routing (backend/src/routes/tasks.ts): every agent-created
+  // task lands in `backlog`, not `open` -- "task_start to begin work on
+  // this task" would be actively wrong advice here (task_start 403s with
+  // backlog_not_promoted until an operator promotes it), so a backlog task
+  // gets its own next hint instead, regardless of whether any deviation
+  // also fired.
+  const next =
+    response.task.status === "backlog"
+      ? ["awaits operator promotion; task_start rejects a backlog task until an operator promotes it to open"]
+      : deviations.length === 0
+        ? ["task_start to begin work on this task"]
+        : undefined;
+
   return buildReceipt({
     taskId: response.task.id,
     status: response.task.status,
     confidence: response.confidence?.score,
     deviations,
-    next: deviations.length === 0 ? ["task_start to begin work on this task"] : undefined,
+    next,
   });
 }
 

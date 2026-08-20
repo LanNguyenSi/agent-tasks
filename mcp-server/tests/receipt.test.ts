@@ -110,6 +110,28 @@ describe("receiptForCreate", () => {
     expect(size(receipt)).toBeLessThanOrEqual(TIER1_BUDGET_CHARS);
   });
 
+  it("v1 backlog routing: an agent-created task lands in backlog, and next says so instead of recommending task_start", () => {
+    const backlogTask = { ...freshTask, status: "backlog" };
+    const receipt = receiptForCreate({ task: backlogTask, confidence: highConfidence }, { labels: ["backend"] });
+    expect(receipt).toEqual({
+      ok: true,
+      task: { id: "t1", status: "backlog" },
+      confidence: 90,
+      next: ["awaits operator promotion; task_start rejects a backlog task until an operator promotes it to open"],
+    });
+    expect((receipt as { next?: string[] }).next?.[0]).not.toMatch(/task_start to begin work/);
+  });
+
+  it("v1 backlog routing: the backlog next hint wins even when a deviation also fires (task_start would still be wrong advice)", () => {
+    const belowThreshold = { ...highConfidence, score: 10 };
+    const backlogTask = { ...freshTask, status: "backlog" };
+    const receipt = receiptForCreate({ task: backlogTask, confidence: belowThreshold }, {}) as Receipt;
+    expect(receipt.deviations?.[0]?.code).toBe("CONFIDENCE_BELOW_THRESHOLD");
+    expect(receipt.next).toEqual([
+      "awaits operator promotion; task_start rejects a backlog task until an operator promotes it to open",
+    ]);
+  });
+
   it("no-echo: the caller's description/templateData never appear in the receipt, even though the raw backend object carries them", () => {
     const backendResponse = {
       task: {
