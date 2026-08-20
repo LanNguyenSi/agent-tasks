@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 **Agent-created tasks now route to a new backlog status, awaiting human operator review before agent pickup is allowed.** The backlog status is invisible to agents during `task_pickup`; humans must explicitly promote backlog tasks to `open` (audit event `task.backlog_promoted`) or discard them to `abandoned` (audit event `task.backlog_discarded`). Human-created tasks continue to default to `open`. Backlog tasks are a draft space: `task_respec` is allowed for any caller (agent or human) until promotion. Backend: agent hard-routes to backlog; `task_start` and legacy `claim` reject backlog tasks with `403 backlog_not_promoted`; human PATCH promotes/discards. MCP: teaching errors guide agents toward the operator UI; `workflow_primer` documents the backlog routing flow. Frontend: backlog column left of Open on the dashboard board with a count badge; backlog filter and promote/discard actions in the task list and detail views. No DB schema change (additive enum); old MCP bridges tolerate the new status. Release order: server before bridge.
 
+**Known limitation (D18)**: the CLI cannot resolve backlog-task IDs by prefix; the id-prefix resolver uses `/api/tasks/claimable` which intentionally excludes backlog from search results. Full UUIDs work. The web UI and MCP clients can manipulate backlog tasks directly; see `docs/okf/claim-model.md` for context.
+
 ## [0.28.0] - 2026-06-27
 
 **Full remediation of the 2026-06-10 security audit: all 9 MEDIUM findings and 3 LOW findings addressed, alongside per-task attachment caps and a teams-page table/cards overhaul.** The `vX.Y.Z` tag is deploy provenance for the whole app; the individual workspace packages carry their own versions.
