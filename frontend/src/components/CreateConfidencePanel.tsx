@@ -30,6 +30,7 @@ const MAX_NEXT_ACTIONS = 5;
 export default function CreateConfidencePanel({
   confidence,
   enforcementMode,
+  status,
   assignmentError,
   onEdit,
   onClose,
@@ -44,6 +45,14 @@ export default function CreateConfidencePanel({
    *  hasn't threaded it) is treated the same as `WARN` — the backend's own
    *  default for an unset mode — rather than assumed to be blocking. */
   enforcementMode: EnforcementMode | null;
+  /** Review round 1 fix (task 31528564): the status the task was just created
+   *  with. A "backlog" task cannot be claimed by an agent at ANY confidence
+   *  score until an operator promotes it to Open (backend
+   *  backlog_not_promoted, POST /tasks/:id/claim 409s it) -- that's a
+   *  separate, stronger gate than the threshold/enforcementMode verdict
+   *  below, so it takes priority over both the pass and below-threshold
+   *  copy rather than being folded into either. */
+  status: string;
   assignmentError?: string | null;
   /** Open the just-created task in the editor to act on the missing fields. */
   onEdit: () => void;
@@ -51,6 +60,7 @@ export default function CreateConfidencePanel({
 }) {
   const { score, threshold, blocking, missing, nextActions } = confidence;
   const passes = score >= threshold && !blocking;
+  const isBacklog = status === "backlog";
   // M2 (task e32cee5f): mirrors TaskDetail's claimsBlocked (task a9dc7e58) —
   // `blocking` above is the score-independent keystone verdict, unrelated to
   // enforcementMode; this is the separate "does the project's mode actually
@@ -74,12 +84,18 @@ export default function CreateConfidencePanel({
 
       <div role="status" aria-live="polite" className="ccp-verdict-row">
         <ConfidenceBadge score={score} size="md" />
-        <span className={`ccp-verdict-text ${passes ? "ccp-verdict-text--pass" : "ccp-verdict-text--fail"}`}>
-          {passes
-            ? `At or above the ${threshold} threshold`
-            : claimsBlocked
-              ? `Below the ${threshold} threshold: agents cannot claim this task`
-              : `Below the ${threshold} threshold: advisory in this project; agents can still claim it`}
+        <span
+          className={`ccp-verdict-text ${
+            isBacklog ? "" : passes ? "ccp-verdict-text--pass" : "ccp-verdict-text--fail"
+          }`}
+        >
+          {isBacklog
+            ? "Backlog: agents can claim this task only after it is promoted to Open."
+            : passes
+              ? `At or above the ${threshold} threshold`
+              : claimsBlocked
+                ? `Below the ${threshold} threshold: agents cannot claim this task`
+                : `Below the ${threshold} threshold: advisory in this project; agents can still claim it`}
         </span>
       </div>
 

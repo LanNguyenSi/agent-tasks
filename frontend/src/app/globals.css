@@ -1921,7 +1921,7 @@ input[type="checkbox"] {
   transition: border-color var(--transition-fast);
 }
 
-.select-trigger:hover {
+.select-trigger:hover:not([aria-disabled="true"]) {
   border-color: var(--border-hover);
 }
 
@@ -1930,7 +1930,7 @@ input[type="checkbox"] {
   outline-offset: 2px;
 }
 
-.select-trigger:disabled {
+.select-trigger[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
 }

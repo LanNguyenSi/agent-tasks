@@ -14,8 +14,14 @@ interface FormFieldProps {
 
 export default function FormField({ label, children, hint }: FormFieldProps) {
   const id = useId();
+  const hintId = `${id}-hint`;
   const child = isValidElement(children)
-    ? (children as ReactElement<{ id?: string; ariaLabel?: string; "aria-label"?: string }>)
+    ? (children as ReactElement<{
+        id?: string;
+        ariaLabel?: string;
+        "aria-label"?: string;
+        ariaDescribedBy?: string;
+      }>)
     : null;
 
   // Associate the visible label with its control. A native form element gets
@@ -27,8 +33,18 @@ export default function FormField({ label, children, hint }: FormFieldProps) {
   let htmlFor: string | undefined;
   if (child) {
     if ((child.type as unknown) === Select) {
+      const overrides: { ariaLabel?: string; ariaDescribedBy?: string } = {};
       if (!child.props.ariaLabel && !child.props["aria-label"]) {
-        control = cloneElement(child, { ariaLabel: label });
+        overrides.ariaLabel = label;
+      }
+      // Review round 1 fix (task 31528564): when there's a hint (e.g. the
+      // Assignee "why disabled" copy), wire it up via aria-describedby so
+      // screen-reader users hear the reason, not just the aria-disabled state.
+      if (hint && !child.props.ariaDescribedBy) {
+        overrides.ariaDescribedBy = hintId;
+      }
+      if (Object.keys(overrides).length > 0) {
+        control = cloneElement(child, overrides);
       }
     } else if (typeof child.type === "string") {
       if (child.props.id) {
@@ -46,7 +62,11 @@ export default function FormField({ label, children, hint }: FormFieldProps) {
         {label}
       </label>
       {control}
-      {hint && <p className="form-field-hint">{hint}</p>}
+      {hint && (
+        <p id={hintId} className="form-field-hint">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

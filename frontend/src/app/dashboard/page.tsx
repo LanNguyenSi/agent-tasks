@@ -63,7 +63,6 @@ type Status = (typeof STATUSES)[number];
 // buttons still pass their own column's status until a follow-up task lands
 // on column gating); NewTaskModal clamps anything it can't offer to its own
 // default internally, so no narrowing is needed here.
-type ModalStatus = Status;
 
 const LIST_PAGE_SIZE = 12;
 
@@ -124,7 +123,7 @@ export default function DashboardPage() {
   const [showFilters, setShowFilters] = useState(false);
   // Status preset when opening NewTaskModal from a board column's + button
   // or a generic create entry point (toolbar, "C" shortcut).
-  const [newTaskInitialStatus, setNewTaskInitialStatus] = useState<ModalStatus>(DEFAULT_CREATE_STATUS);
+  const [newTaskInitialStatus, setNewTaskInitialStatus] = useState<Status>(DEFAULT_CREATE_STATUS);
 
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
@@ -646,7 +645,7 @@ export default function DashboardPage() {
             // clamps anything other than "backlog" | "open" (e.g. a
             // non-Open column's +, still ungated until a follow-up task
             // lands) to its own default internally.
-            setNewTaskInitialStatus(status as ModalStatus);
+            setNewTaskInitialStatus(status);
             setBootError(null);
             setShowNewTask(true);
           }}

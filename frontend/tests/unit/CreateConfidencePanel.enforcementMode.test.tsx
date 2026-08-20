@@ -35,7 +35,7 @@ describe("CreateConfidencePanel — below-threshold verdict copy branches on the
     render(
       <CreateConfidencePanel
         confidence={BELOW_THRESHOLD}
-        enforcementMode="BLOCK"
+        enforcementMode="BLOCK" status="open"
         onEdit={noop}
         onClose={noop}
       />,
@@ -49,7 +49,7 @@ describe("CreateConfidencePanel — below-threshold verdict copy branches on the
     render(
       <CreateConfidencePanel
         confidence={BELOW_THRESHOLD}
-        enforcementMode="WARN"
+        enforcementMode="WARN" status="open"
         onEdit={noop}
         onClose={noop}
       />,
@@ -63,7 +63,7 @@ describe("CreateConfidencePanel — below-threshold verdict copy branches on the
     render(
       <CreateConfidencePanel
         confidence={BELOW_THRESHOLD}
-        enforcementMode="OFF"
+        enforcementMode="OFF" status="open"
         onEdit={noop}
         onClose={noop}
       />,
@@ -80,7 +80,7 @@ describe("CreateConfidencePanel — below-threshold verdict copy branches on the
         // The prop type is required (null at minimum), but stale caller data
         // can still deliver undefined at runtime; force it past the type to
         // pin that the render path degrades to the advisory wording either way.
-        enforcementMode={undefined as unknown as null}
+        enforcementMode={undefined as unknown as null} status="open"
         onEdit={noop}
         onClose={noop}
       />,
@@ -94,7 +94,7 @@ describe("CreateConfidencePanel — below-threshold verdict copy branches on the
     render(
       <CreateConfidencePanel
         confidence={BELOW_THRESHOLD}
-        enforcementMode={null}
+        enforcementMode={null} status="open"
         onEdit={noop}
         onClose={noop}
       />,

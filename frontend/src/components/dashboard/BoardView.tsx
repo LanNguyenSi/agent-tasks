@@ -190,8 +190,11 @@ export default function BoardView({
               <span className="db-col-dot" aria-hidden="true" />
               <span className="db-col-title">{columnLabel}</span>
               <Badge tone={badgeTone}>{columnTasks.length}</Badge>
-              {/* No add-task button on Backlog: human create goes to Open per
-                  spec, backlog drafts are the agent flow (decision D19). */}
+              {/* Supersedes D19 (operator decision 2026-08-20): backlog is now
+                  the default human create target too, not agent-only. The
+                  missing + on this Backlog column is a leftover from before
+                  that change, not a deliberate rule -- it awaits a follow-up
+                  task on column gating, not changed here. */}
               {status !== "backlog" && (
                 <button
                   type="button"

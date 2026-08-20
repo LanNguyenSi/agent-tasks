@@ -29,7 +29,7 @@ const noop = () => {};
 
 describe("CreateConfidencePanel", () => {
   it("renders the server score, humanized missing fields, and the nextActions", () => {
-    render(<CreateConfidencePanel confidence={base} enforcementMode={null} onEdit={noop} onClose={noop} />);
+    render(<CreateConfidencePanel confidence={base} enforcementMode={null} status="open" onEdit={noop} onClose={noop} />);
 
     expect(screen.getByText(/62\/100/)).toBeInTheDocument();
     expect(screen.getByText(/At or above the 60 threshold/)).toBeInTheDocument();
@@ -44,7 +44,7 @@ describe("CreateConfidencePanel", () => {
     render(
       <CreateConfidencePanel
         confidence={{ ...base, score: 40, blocking: true }}
-        enforcementMode={null}
+        enforcementMode={null} status="open"
         onEdit={noop}
         onClose={noop}
       />,
@@ -57,7 +57,7 @@ describe("CreateConfidencePanel", () => {
     render(
       <CreateConfidencePanel
         confidence={{ ...base, score: 80, blocking: true }}
-        enforcementMode={null}
+        enforcementMode={null} status="open"
         onEdit={noop}
         onClose={noop}
       />,
@@ -69,7 +69,7 @@ describe("CreateConfidencePanel", () => {
     render(
       <CreateConfidencePanel
         confidence={{ ...base, score: 40, blocking: false }}
-        enforcementMode={null}
+        enforcementMode={null} status="open"
         onEdit={noop}
         onClose={noop}
       />,
@@ -82,7 +82,7 @@ describe("CreateConfidencePanel", () => {
     render(
       <CreateConfidencePanel
         confidence={base}
-        enforcementMode={null}
+        enforcementMode={null} status="open"
         assignmentError="Self-assignment failed: forbidden"
         onEdit={noop}
         onClose={noop}
@@ -97,7 +97,7 @@ describe("CreateConfidencePanel", () => {
     const onEdit = vi.fn();
     const onClose = vi.fn();
     render(
-      <CreateConfidencePanel confidence={base} enforcementMode={null} onEdit={onEdit} onClose={onClose} />,
+      <CreateConfidencePanel confidence={base} enforcementMode={null} status="open" onEdit={onEdit} onClose={onClose} />,
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Edit task" }));
@@ -109,16 +109,57 @@ describe("CreateConfidencePanel", () => {
 
   it("omits the missing line when nothing is missing", () => {
     render(
-      <CreateConfidencePanel confidence={{ ...base, missing: [] }} enforcementMode={null} onEdit={noop} onClose={noop} />,
+      <CreateConfidencePanel confidence={{ ...base, missing: [] }} enforcementMode={null} status="open" onEdit={noop} onClose={noop} />,
     );
     expect(screen.queryByText(/^Missing:/)).not.toBeInTheDocument();
+  });
+
+  // Review round 1 fix (task 31528564): a backlog task can't be claimed by
+  // an agent at ANY confidence until an operator promotes it (backend
+  // backlog_not_promoted); the panel's below-threshold "cannot claim" /
+  // "advisory, can still claim" clauses are both false for it, so a
+  // status-aware clause replaces them instead.
+  it("shows the backlog claim clause instead of the pass/below-threshold copy, for a backlog task", () => {
+    render(
+      <CreateConfidencePanel confidence={base} enforcementMode={null} status="backlog" onEdit={noop} onClose={noop} />,
+    );
+    expect(
+      screen.getByText(/Backlog: agents can claim this task only after it is promoted to Open\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/At or above/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/cannot claim this task/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/advisory in this project/)).not.toBeInTheDocument();
+  });
+
+  it("shows the backlog claim clause even when the score is below threshold and BLOCK-enforced", () => {
+    render(
+      <CreateConfidencePanel
+        confidence={{ ...base, score: 40, blocking: true }}
+        enforcementMode="BLOCK"
+        status="backlog"
+        onEdit={noop}
+        onClose={noop}
+      />,
+    );
+    expect(
+      screen.getByText(/Backlog: agents can claim this task only after it is promoted to Open\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/cannot claim this task/)).not.toBeInTheDocument();
+  });
+
+  it("does NOT show the backlog clause for a non-backlog (open) task", () => {
+    render(
+      <CreateConfidencePanel confidence={base} enforcementMode={null} status="open" onEdit={noop} onClose={noop} />,
+    );
+    expect(screen.queryByText(/Backlog: agents can claim/)).not.toBeInTheDocument();
+    expect(screen.getByText(/At or above the 60 threshold/)).toBeInTheDocument();
   });
 
   it("omits the next-steps block when there are no nextActions", () => {
     render(
       <CreateConfidencePanel
         confidence={{ ...base, nextActions: [] }}
-        enforcementMode={null}
+        enforcementMode={null} status="open"
         onEdit={noop}
         onClose={noop}
       />,

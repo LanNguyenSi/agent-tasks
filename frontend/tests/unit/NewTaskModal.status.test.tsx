@@ -96,7 +96,10 @@ describe("NewTaskModal -- Status dropdown", () => {
 describe("NewTaskModal -- Assignee guard while status is backlog", () => {
   it("disables the Assignee control with a hint while status is backlog", () => {
     renderModal();
-    expect(assigneeCombobox()).toBeDisabled();
+    // Review round 1 fix (task 31528564): Select's disabled state is now the
+    // aria-disabled pattern (the trigger stays natively enabled/focusable),
+    // so the disabled assertion checks aria-disabled, not toBeDisabled().
+    expect(assigneeCombobox()).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByText(/backlog tasks can't be claimed/i)).toBeInTheDocument();
   });
 
@@ -105,7 +108,7 @@ describe("NewTaskModal -- Assignee guard while status is backlog", () => {
     await userEvent.click(statusCombobox());
     await userEvent.click(screen.getByRole("option", { name: "Open" }));
 
-    expect(assigneeCombobox()).toBeEnabled();
+    expect(assigneeCombobox()).not.toHaveAttribute("aria-disabled");
     expect(screen.queryByText(/backlog tasks can't be claimed/i)).not.toBeInTheDocument();
   });
 
@@ -117,13 +120,15 @@ describe("NewTaskModal -- Assignee guard while status is backlog", () => {
     await userEvent.click(assigneeCombobox());
     await userEvent.click(screen.getByRole("option", { name: "Assign to me" }));
 
-    // ...then switch to Backlog: the Assignee control becomes disabled (so
-    // the user can no longer change it), but its already-picked "me" value
-    // is deliberately NOT reset here -- handleSubmit's own
-    // `status !== "backlog"` check is what must stop the claim call.
+    // ...then switch to Backlog: the Assignee control becomes disabled and
+    // the already-picked "me" is reset to Unassigned by the status onChange
+    // (review finding 3). handleSubmit's own `status !== "backlog"` check
+    // stays as defense in depth: this test pins that the two layers together
+    // can never fire a claim for a backlog create (removing BOTH would make
+    // the claim-call assertion below fail).
     await userEvent.click(statusCombobox());
     await userEvent.click(screen.getByRole("option", { name: "Backlog" }));
-    expect(assigneeCombobox()).toBeDisabled();
+    expect(assigneeCombobox()).toHaveAttribute("aria-disabled", "true");
 
     await fillTitle();
     await userEvent.click(screen.getByRole("button", { name: "Create task" }));
@@ -131,6 +136,31 @@ describe("NewTaskModal -- Assignee guard while status is backlog", () => {
     await waitFor(() => expect(mockCreateTask).toHaveBeenCalled());
     expect(mockCreateTask.mock.calls[0]![1]).toMatchObject({ status: "backlog" });
     expect(mockClaimTask).not.toHaveBeenCalled();
+  });
+
+  it("a keyboard user cannot select 'me' while status is backlog (disabled trigger suppresses ArrowDown/Enter)", async () => {
+    renderModal();
+    const assignee = assigneeCombobox();
+    assignee.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    await userEvent.keyboard("{Enter}");
+    expect(screen.queryByRole("option", { name: "Assign to me" })).not.toBeInTheDocument();
+    expect(assignee).toHaveTextContent("Unassigned");
+  });
+
+  it("resets a stale 'me' pick back to unassigned when switching from Open to Backlog", async () => {
+    renderModal({ initialStatus: "open" });
+
+    await userEvent.click(assigneeCombobox());
+    await userEvent.click(screen.getByRole("option", { name: "Assign to me" }));
+    expect(assigneeCombobox()).toHaveTextContent("Assign to me");
+
+    await userEvent.click(statusCombobox());
+    await userEvent.click(screen.getByRole("option", { name: "Backlog" }));
+
+    expect(assigneeCombobox()).toHaveTextContent("Unassigned");
+    expect(assigneeCombobox()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("submits with status open and DOES call claimTask when assignee is 'me'", async () => {

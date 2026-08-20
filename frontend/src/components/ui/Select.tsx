@@ -26,8 +26,15 @@ interface SelectProps {
   style?: CSSProperties;
   /** Accessible name for the combobox when no adjacent <label> is wired up. */
   ariaLabel?: string;
-  /** Disables the trigger; the listbox cannot be opened while true. */
+  /** Disables the trigger; the listbox cannot be opened while true. Uses the
+   *  aria-disabled pattern (not the native `disabled` attribute) so the
+   *  trigger stays focusable and reachable by keyboard/screen-reader users
+   *  even while unavailable -- see the .select-trigger[aria-disabled] rule
+   *  in globals.css and the guarded open/keydown/click handlers below. */
   disabled?: boolean;
+  /** id of an element (e.g. a FormField hint) that explains WHY the control
+   *  is disabled; wired to aria-describedby so screen readers announce it. */
+  ariaDescribedBy?: string;
 }
 
 export default function Select({
@@ -39,6 +46,7 @@ export default function Select({
   style,
   ariaLabel,
   disabled = false,
+  ariaDescribedBy,
 }: SelectProps) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -65,7 +73,20 @@ export default function Select({
     setActiveIndex(options.findIndex((o) => o.value === value));
   }
 
+  // Guards the trigger's click behavior under the aria-disabled pattern: the
+  // button stays focusable/tab-reachable (no native `disabled` attribute),
+  // so the handler itself is what suppresses interaction while disabled.
+  function handleTriggerClick() {
+    if (disabled) return;
+    if (open) {
+      setOpen(false);
+    } else {
+      handleOpen();
+    }
+  }
+
   function handleKeyDown(e: React.KeyboardEvent) {
+    if (disabled) return;
     if (!open) {
       if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) {
         e.preventDefault();
@@ -120,10 +141,10 @@ export default function Select({
         aria-haspopup="listbox"
         aria-controls={open ? `${id}-list` : undefined}
         aria-activedescendant={open && activeIndex >= 0 ? `${id}-opt-${activeIndex}` : undefined}
-        aria-disabled={disabled}
-        disabled={disabled}
-        onClick={() => (disabled ? undefined : open ? setOpen(false) : handleOpen())}
-        onKeyDown={disabled ? undefined : handleKeyDown}
+        aria-disabled={disabled || undefined}
+        aria-describedby={ariaDescribedBy}
+        onClick={handleTriggerClick}
+        onKeyDown={handleKeyDown}
         className="select-trigger"
       >
         <span className="select-trigger-label">

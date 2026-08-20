@@ -249,6 +249,7 @@ export default function NewTaskModal({
     <CreateConfidencePanel
       confidence={createdConfidence}
       enforcementMode={enforcementMode}
+      status={status}
       assignmentError={createdAssignmentError}
       onEdit={handleEditTask}
       onClose={onClose}
@@ -287,7 +288,18 @@ export default function NewTaskModal({
             <Select
               className="ntm-w-full"
               value={status}
-              onChange={(v) => setStatus(v as CreateStatus)}
+              onChange={(v) => {
+                const next = v as CreateStatus;
+                setStatus(next);
+                // Review round 1 fix (task 31528564): a stale "me" pick from
+                // Open would otherwise survive the switch to Backlog -- the
+                // trigger is disabled and keeps showing "Assign to me" while
+                // submit silently creates the task unassigned. Reset it here
+                // so the visible state matches what will actually happen;
+                // handleSubmit's own `status !== "backlog"` guard stays as
+                // defense in depth regardless.
+                if (next === "backlog") setAssignee("unassigned");
+              }}
               options={[
                 { value: "backlog", label: "Backlog" },
                 { value: "open", label: "Open" },
