@@ -2,6 +2,18 @@
 
 All notable changes to `@agent-tasks/mcp-bridge` are documented here.
 
+## 0.8.1
+
+### Changed
+
+- **`@agent-tasks/mcp-server` dependency bumped to `0.14.0`.** Ships the
+  backlog-status v1 MCP surface to npx consumers: backlog-aware status
+  filters, the `backlog_routing_enforced` / `backlog_not_promoted` teaching
+  errors, the "awaits operator promotion" receipt hint, and the primer's
+  backlog section.
+- mcp-bridge typechecks against mcp-server source, unblocking fresh
+  worktrees (#452); test-file typecheck runs in CI (#464).
+
 ## 0.8.0
 
 ### Changed
