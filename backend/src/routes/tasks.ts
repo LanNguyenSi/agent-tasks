@@ -121,8 +121,13 @@ import { httpUrl } from "../lib/url-guard.js";
 // dependent whose sole blocker was creator-abandoned (POST
 // /tasks/:id/creator-abandon, task 7a1360da) deadlocked permanently — hidden
 // from task_pickup and 409ing forever on task_start / POST /tasks/:id/claim,
-// with no operator-visible recovery path since `abandoned` is not a
-// transition target anything can reach `done` from.
+// with no AGENT-reachable recovery path (`abandoned` is not a transition
+// target anything can reach `done` from). Recovery still existed for a
+// human/admin: a project admin can unabandon via the `PATCH /tasks/:id`
+// "abandoned" -> initialState special case (see the recovery note near the
+// creator-abandon route below), or a human can DELETE
+// /tasks/:id/dependencies/:blockerTaskId to detach the blocking edge
+// outright.
 const RESOLVED_BLOCKER_STATUSES: string[] = ["done", "abandoned"];
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();

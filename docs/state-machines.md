@@ -66,7 +66,7 @@ Both paths run the self-merge gate first; only the resulting status differs. Too
 
 ## Confidence gate
 
-A task whose description does not score above `Project.confidenceThreshold` (default `60`) cannot be claimed. `task_pickup` filters such tasks out; `task_start` rejects with `422 confidence_below_threshold`. `task_pickup` also skips tasks whose `blockedBy` parents are not all `done`, so the dependency graph is enforced at claim time, not at transition time.
+A task whose description does not score above `Project.confidenceThreshold` (default `60`) cannot be claimed. `task_pickup` filters such tasks out; `task_start` rejects with `422 confidence_below_threshold`. `task_pickup` also skips tasks until every `blockedBy` parent reaches a resolved status (`done` or `abandoned`), so the dependency graph is enforced at claim time, not at transition time.
 
 ## Further reading
 

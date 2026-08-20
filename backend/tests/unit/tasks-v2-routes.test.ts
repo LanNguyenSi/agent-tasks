@@ -557,7 +557,11 @@ describe("POST /tasks/:id/start — dependency gate treats an abandoned blocker 
     prismaMocks.taskFindMany.mockResolvedValueOnce([
       { id: "blocker-1", title: "Blocker", status: "abandoned" },
     ]);
-    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null); // falls back to built-in default
+    // Post-gate call (only reached once the gate passes): mockResolvedValue,
+    // not Once. Under a mutant that regresses the gate to reject this case
+    // (409 before this call), an undrained Once queue entry here would leak
+    // into a later test instead of failing only this one.
+    prismaMocks.workflowFindFirst.mockResolvedValue(null); // falls back to built-in default
 
     const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
     expect(res.status).toBe(200);
@@ -591,6 +595,38 @@ describe("POST /tasks/:id/start — dependency gate treats an abandoned blocker 
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("blocked");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("mixed blocker set (done + abandoned + open) stays blocked (409) and blockedBy names only the open one", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "open" });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null); // hard-limit ok
+    prismaMocks.taskFindMany.mockResolvedValueOnce([
+      { id: "blocker-done", title: "Done blocker", status: "done" },
+      { id: "blocker-abandoned", title: "Abandoned blocker", status: "abandoned" },
+      { id: "blocker-open", title: "Open blocker", status: "open" },
+    ]);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; blockedBy: { id: string; status: string }[] };
+    expect(body.error).toBe("blocked");
+    expect(body.blockedBy).toEqual([{ id: "blocker-open", title: "Open blocker", status: "open" }]);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("open task with a single review-status blocker stays blocked (409, negative control)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "open" });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null); // hard-limit ok
+    prismaMocks.taskFindMany.mockResolvedValueOnce([
+      { id: "blocker-1", title: "Blocker", status: "review" },
+    ]);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; blockedBy: { id: string; status: string }[] };
+    expect(body.error).toBe("blocked");
+    expect(body.blockedBy).toEqual([{ id: "blocker-1", title: "Blocker", status: "review" }]);
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 });
@@ -1063,8 +1099,12 @@ describe("POST /tasks/:id/claim — dependency gate treats an abandoned blocker 
         workflowId: null,
         workflow: null,
       })
-      // Re-fetch after the atomic CAS claim.
-      .mockResolvedValueOnce({
+      // Re-fetch after the atomic CAS claim: a post-gate call, only reached
+      // once the gate passes. mockResolvedValue, not Once: under a mutant
+      // that regresses the gate to reject this case (409 before this call),
+      // an undrained Once queue entry here would leak into a later test
+      // instead of failing only this one.
+      .mockResolvedValue({
         ...baseTask,
         status: "in_progress",
         branchName: null,
@@ -1074,7 +1114,8 @@ describe("POST /tasks/:id/claim — dependency gate treats an abandoned blocker 
     prismaMocks.taskFindMany.mockResolvedValueOnce([
       { id: "blocker-1", title: "Blocker", status: "abandoned" },
     ]);
-    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null); // falls back to built-in default
+    // Also a post-gate call; see the taskFindUnique comment above.
+    prismaMocks.workflowFindFirst.mockResolvedValue(null); // falls back to built-in default
 
     const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
     expect(res.status).toBe(200);
@@ -1099,6 +1140,26 @@ describe("POST /tasks/:id/claim — dependency gate treats an abandoned blocker 
     const body = (await res.json()) as { error: string; blockedBy: { id: string; status: string }[] };
     expect(body.error).toBe("blocked");
     expect(body.blockedBy).toEqual([{ id: "blocker-1", title: "Blocker", status: "open" }]);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("open task with a single review-status blocker stays blocked (409, negative control)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "open",
+      branchName: null,
+      workflowId: null,
+      workflow: null,
+    });
+    prismaMocks.taskFindMany.mockResolvedValueOnce([
+      { id: "blocker-1", title: "Blocker", status: "review" },
+    ]);
+
+    const res = await makeApp().request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; blockedBy: { id: string; status: string }[] };
+    expect(body.error).toBe("blocked");
+    expect(body.blockedBy).toEqual([{ id: "blocker-1", title: "Blocker", status: "review" }]);
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 });
