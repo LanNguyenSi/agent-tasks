@@ -129,6 +129,10 @@ describe("CreateConfidencePanel", () => {
     expect(screen.queryByText(/At or above/)).not.toBeInTheDocument();
     expect(screen.queryByText(/cannot claim this task/)).not.toBeInTheDocument();
     expect(screen.queryByText(/advisory in this project/)).not.toBeInTheDocument();
+    // Backlog is neither pass nor fail: the verdict row stays color-neutral.
+    const verdict = screen.getByText(/Backlog: agents can claim/).closest(".ccp-verdict-text");
+    expect(verdict).not.toHaveClass("ccp-verdict-text--pass");
+    expect(verdict).not.toHaveClass("ccp-verdict-text--fail");
   });
 
   it("shows the backlog claim clause even when the score is below threshold and BLOCK-enforced", () => {
