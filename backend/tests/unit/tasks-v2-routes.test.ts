@@ -1715,6 +1715,225 @@ describe("PATCH /tasks/:id — unabandon: abandoned -> initialState is the one r
   );
 });
 
+// ── PATCH /tasks/:id — backlog promote/discard (T-002) ──────────────────────
+//
+// The other two edges out of the v1 backlog pre-promotion status
+// ("backlog_routing_enforced" at create, "backlog_not_promoted" at
+// task_start — both from T-001). Promote (backlog->open) makes the task
+// claimable; discard (backlog->abandoned) rejects it outright without ever
+// promoting it. Both are human-only (agents are already fully locked out of
+// `status` via the pre-existing forbiddenFields guard — no new agent
+// surface) and, deliberately UNLIKE unabandon above, WRITE-TIER only rather
+// than project-admin-only (D4): promoting/discarding a backlog task is
+// routine contributor work, not an exceptional recovery decision.
+describe("PATCH /tasks/:id — backlog promote/discard (T-002)", () => {
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+  const AGENT_WITH_UPDATE: Actor = { ...AGENT, scopes: [...AGENT.scopes, "tasks:update"] };
+  const BACKLOG_TASK = { ...baseTask, id: "task-1", status: "backlog" };
+
+  it("AC1: write-access human promotes backlog->open (200), audits task.backlog_promoted, emits NO signal, and never checks project-admin (D4)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(BACKLOG_TASK);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "open" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { task: { status: string } };
+    expect(body.task.status).toBe("open");
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("open");
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.backlog_promoted",
+        taskId: "task-1",
+        projectId: "proj-1",
+        payload: expect.objectContaining({ from: "backlog", to: "open", actorType: "human", via: "patch" }),
+      }),
+    );
+    // Distinct from an ordinary transition and from unabandon.
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.transitioned" }));
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.unabandoned" }));
+
+    // Spec non-decision (T-002): promote emits no signal at all, unlike an
+    // ordinary reopen (which does emit task_available further down in the
+    // same handler).
+    expect(signalEmitters.emitTaskAvailableSignal).not.toHaveBeenCalled();
+    expect(signalEmitters.emitReviewSignal).not.toHaveBeenCalled();
+    // D4: write-tier only, unlike unabandon — the promote branch never
+    // consults project-admin at all.
+    expect(accessMocks.isProjectAdmin).not.toHaveBeenCalled();
+  });
+
+  it("human without project write access cannot promote (403), and does not write", async () => {
+    accessMocks.requireProjectWrite.mockResolvedValueOnce(false);
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(BACKLOG_TASK);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "open" }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("AC2: write-access human discards backlog->abandoned (200), audits task.backlog_discarded, and never checks project-admin (D4)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(BACKLOG_TASK);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "abandoned" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { task: { status: string } };
+    expect(body.task.status).toBe("abandoned");
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBe("abandoned");
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.backlog_discarded",
+        taskId: "task-1",
+        projectId: "proj-1",
+        payload: expect.objectContaining({ from: "backlog", to: "abandoned", actorType: "human", via: "patch" }),
+      }),
+    );
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.transitioned" }));
+    // Distinct from the agent-only creator-abandon route's own audit action.
+    expect(logAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task.creator_abandoned" }),
+    );
+    expect(signalEmitters.emitTaskAvailableSignal).not.toHaveBeenCalled();
+    expect(signalEmitters.emitReviewSignal).not.toHaveBeenCalled();
+    expect(accessMocks.isProjectAdmin).not.toHaveBeenCalled();
+  });
+
+  it.each(["in_progress", "review", "done"])(
+    "AC3: backlog->%s is rejected (400), not promoted or discarded",
+    async (targetStatus) => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce(BACKLOG_TASK);
+      prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+      const res = await makeApp(HUMAN).request("/tasks/task-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: targetStatus }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string; message: string };
+      expect(body.error).toBe("bad_request");
+      expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+      expect(logAuditEvent).not.toHaveBeenCalled();
+    },
+  );
+
+  it("AC4: agent PATCH with a status field on a backlog task is rejected outright (403) — no promotion, no write, no audit", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(BACKLOG_TASK);
+
+    const res = await makeApp(AGENT_WITH_UPDATE).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "open" }),
+    });
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe("Agents cannot update: status");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  // F-1 fix: the webhook path was closed by excluding "backlog" from
+  // findTasksByPr / pickMergeTargetStatus / the issues.closed query, but the
+  // agent PATCH lane that SETS branchName/prUrl/prNumber (the fields those
+  // webhook queries bind on) deliberately stays open — an agent may still
+  // report its branch/PR on a backlog task; only the webhook is barred from
+  // acting on that binding while the task is unpromoted. This pins that the
+  // PATCH write itself is unaffected by the fix: fields land, status is
+  // untouched (never sent in the update payload, stays "backlog").
+  it("F-1: agent PATCH sets branchName/prUrl/prNumber on a backlog task; status is untouched, stays backlog", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(BACKLOG_TASK);
+    prismaMocks.taskUpdate.mockResolvedValueOnce({
+      ...BACKLOG_TASK,
+      branchName: "feat/agent-branch",
+      prUrl: "https://github.com/acme/thing/pull/42",
+      prNumber: 42,
+    });
+
+    const res = await makeApp(AGENT_WITH_UPDATE).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        branchName: "feat/agent-branch",
+        prUrl: "https://github.com/acme/thing/pull/42",
+        prNumber: 42,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      task: { status: string; branchName: string; prUrl: string; prNumber: number };
+    };
+    expect(body.task.status).toBe("backlog");
+    expect(body.task.branchName).toBe("feat/agent-branch");
+    expect(body.task.prUrl).toBe("https://github.com/acme/thing/pull/42");
+    expect(body.task.prNumber).toBe(42);
+
+    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    expect(updateCall.data.status).toBeUndefined();
+    expect(updateCall.data.branchName).toBe("feat/agent-branch");
+    expect(updateCall.data.prUrl).toBe("https://github.com/acme/thing/pull/42");
+    expect(updateCall.data.prNumber).toBe(42);
+  });
+});
+
+// ── PATCH /tasks/:id — non-backlog -> abandoned stays 400 (F-1 regression) ──
+//
+// updateTaskSchema's status enum was widened to include "abandoned" so the
+// backlog->abandoned "discard" special case above could validate it. That
+// widening must reach ONLY the backlog->abandoned branch: every other
+// from-state has no `to: "abandoned"` edge in the default workflow's
+// transition graph, so it still falls through to the generic
+// effectiveDef.transitions lookup and 400s exactly as before the widening.
+describe("PATCH /tasks/:id — non-backlog -> abandoned stays 400 (F-1 regression, D11)", () => {
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+
+  it.each(["open", "in_progress", "review"])(
+    "%s -> abandoned is rejected (400 bad_request, not allowed by workflow), not routed through the backlog-discard branch",
+    async (fromStatus) => {
+      prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: fromStatus });
+      prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+      const res = await makeApp(HUMAN).request("/tasks/task-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "abandoned" }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string; message: string };
+      expect(body.error).toBe("bad_request");
+      expect(body.message).toContain("not allowed by workflow");
+      expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+      expect(logAuditEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "task.backlog_discarded" }),
+      );
+    },
+  );
+});
+
 // ── PATCH /tasks/:id — foreign-deliverable skip uses the PENDING
 // deliverableRepo (agent-tasks 4237f26d) ────────────────────────────────────
 //
@@ -4342,6 +4561,61 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
   });
 });
 
+// ── POST /tasks/:id/transition — backlog negative control (T-002 AC7) ──────
+//
+// No production code change in this suite: this proves the EXISTING
+// force-admin-only gate (`if (force && !isProjectAdmin) forbidden(...)`,
+// checked before the transition-existence lookup) still does its job on a
+// backlog task specifically. It also documents, as a negative control, that
+// /transition is NOT the promote/discard path — PATCH /tasks/:id is (see
+// the "PATCH /tasks/:id — backlog promote/discard" suite above): even an
+// admin's force:true here still 400s on backlog->open, because no workflow
+// definition ever declares that transition (the same reason unabandon can't
+// be reached from here either). Promote only exists via PATCH.
+describe("POST /tasks/:id/transition — backlog negative control (T-002 AC7, no code change)", () => {
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+  const BACKLOG_TRANSITION_TASK = { ...baseTask, id: "task-1", status: "backlog" };
+
+  it("non-admin force:true on backlog->open is rejected with the force-admin-only 403, no write", async () => {
+    accessMocks.isProjectAdmin.mockResolvedValueOnce(false);
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(BACKLOG_TRANSITION_TASK);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1/transition", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "open", force: true, forceReason: "trying to self-promote" }),
+    });
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe("Only team admins can force a transition");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("admin force:true on backlog->open passes the force gate but still 400s (no engine edge) — /transition is not the promote path", async () => {
+    accessMocks.isProjectAdmin.mockResolvedValueOnce(true);
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(BACKLOG_TRANSITION_TASK);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1/transition", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "open", force: true, forceReason: "operator override attempt" }),
+    });
+
+    // Not the force-admin-only 403 the non-admin case above gets: the admin
+    // gate itself is satisfied. The 400 comes from the generic "no such
+    // transition" lookup, same as any other unreachable edge.
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toBe("Transition from 'backlog' to 'open' is not allowed by workflow");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+});
+
 describe("debug-flavor detection on pickup + start", () => {
   it("pickup attaches groundingHint and persists metadata.debugFlavor on a debug-flavored work task", async () => {
     prismaMocks.taskFindFirst
@@ -5750,11 +6024,11 @@ describe("POST /tasks/:id/respec", () => {
     expect(Array.isArray(body.confidence.findings)).toBe(true);
     expect(Array.isArray(body.confidence.nextActions)).toBe(true);
 
-    // Atomic CAS guard: open + fully unclaimed.
+    // Atomic CAS guard: open (or backlog, T-002/D6) + fully unclaimed.
     const casCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(casCall.where).toMatchObject({
       id: "task-1",
-      status: "open",
+      status: { in: ["open", "backlog"] },
       claimedByUserId: null,
       claimedByAgentId: null,
       reviewClaimedByUserId: null,
@@ -5951,6 +6225,36 @@ describe("POST /tasks/:id/respec", () => {
 
     const res = await respecRequest(AGENT_WITH_UPDATE, { description: "fixed by a different agent" });
     expect(res.status).toBe(200);
+  });
+
+  // T-002/D6: while a task is still "backlog" (unpromoted draft space), ANY
+  // authenticated agent with project access may respec it — the creator-only
+  // restriction is skipped entirely, independent of the project's
+  // allowNonCreatorRespec flag (false here, same as the 403 test above it
+  // would normally trigger for a non-creator).
+  it("AC6: agent that is NOT the creator CAN respec while task.status is 'backlog', even with allowNonCreatorRespec=false (draft-space carve-out)", async () => {
+    const task = { ...RESPEC_TASK, status: "backlog", createdByAgentId: "some-other-agent" };
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(task)
+      .mockResolvedValueOnce({ ...task, description: "fixed while still in backlog" });
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: "fixed while still in backlog" });
+    expect(res.status).toBe(200);
+    const casCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    expect(casCall.where.status).toEqual({ in: ["open", "backlog"] });
+  });
+
+  // The other direction of AC6: once the SAME task is promoted to "open",
+  // the ordinary creator-only / allowNonCreatorRespec=false rule applies
+  // again unchanged — the backlog carve-out does not leak past promotion.
+  it("AC6: the SAME non-creator agent gets 403 once the task is promoted to 'open' (allowNonCreatorRespec still false)", async () => {
+    const task = { ...RESPEC_TASK, status: "open", createdByAgentId: "some-other-agent" };
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(task);
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, { description: "should be rejected post-promotion" });
+    expect(res.status).toBe(403);
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
   });
 
   it("human with project write access can respec regardless of who created the task (no creator check)", async () => {
@@ -6272,7 +6576,8 @@ describe("POST /tasks/:id/creator-abandon", () => {
     const casCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(casCall.where).toMatchObject({
       id: "task-1",
-      status: "open",
+      // open (or backlog, T-002/D6) — see the block comment above.
+      status: { in: ["open", "backlog"] },
       claimedByUserId: null,
       claimedByAgentId: null,
       reviewClaimedByUserId: null,
@@ -6306,6 +6611,53 @@ describe("POST /tasks/:id/creator-abandon", () => {
     expect(logAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({ payload: expect.objectContaining({ reason: null }) }),
     );
+  });
+
+  // ── T-002/D6: creator-abandon extended to also accept "backlog" ──────────
+  //
+  // Lets a creator-agent withdraw its OWN not-yet-promoted backlog task
+  // without waiting on an operator promote/discard. The open-task behavior
+  // above (creator-abandon on an "open" task) is unchanged — the it.each
+  // 409 suite below still rejects every OTHER status, "abandoned" included.
+  it("AC5: creator withdraws its own backlog task via creator-abandon (200), audits task.creator_abandoned with fromStatus 'backlog'", async () => {
+    const backlogTask = { ...CREATOR_ABANDON_TASK, status: "backlog" };
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(backlogTask)
+      .mockResolvedValueOnce({ ...backlogTask, status: "abandoned" });
+
+    const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, { reason: "no longer needed" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { task: { status: string } };
+    expect(body.task.status).toBe("abandoned");
+
+    const casCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
+    expect(casCall.where.status).toEqual({ in: ["open", "backlog"] });
+
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.creator_abandoned",
+        payload: expect.objectContaining({
+          previousStatus: "backlog",
+          fromStatus: "backlog",
+          reason: "no longer needed",
+        }),
+      }),
+    );
+  });
+
+  it("AC5: an agent that is NOT the creator of a backlog task is rejected (403), regression of the creator-only check", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...CREATOR_ABANDON_TASK,
+      status: "backlog",
+      createdByAgentId: "some-other-agent",
+    });
+
+    const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, {});
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe("Only the task's creator can creator-abandon it");
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
   });
 
   // ── Integration scenario: task 5ade6732 (the batch 19 motivating case) ───

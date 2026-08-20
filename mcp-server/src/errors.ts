@@ -51,7 +51,10 @@
 // error.ts's lowConfidence helper): NOT in the contract's original seed
 // list, added on review (rc-v1-C005 round 1) to close an information-loss
 // gap the generic degrade path left on the highest-traffic verb — see
-// lowConfidenceError below. Every other backend error degrades to the
+// lowConfidenceError below. Plus backlog_routing_enforced (400, task_create)
+// and backlog_not_promoted (403, task_start / the deprecated tasks_claim
+// alias), the v1 backlog-routing pair -- see backlogRoutingEnforcedError and
+// backlogNotPromotedError below. Every other backend error degrades to the
 // generic shape (status-derived code, message passthrough, recipe ->
 // workflow_primer, and now also a clamped passthrough of any structured
 // body.details — see genericDegrade) rather than being forwarded as raw
@@ -723,6 +726,42 @@ function creatorAbandonConflictError(message: string): TeachingError {
     message,
     recipe: "creator-abandon only works on an open, unclaimed task; call tasks_get to see its current state",
     allowedNext: ["tasks_get"],
+  });
+}
+
+// 7b/7c. v1 backlog routing (backend/src/routes/tasks.ts): every
+// agent-created task lands in `backlog` and waits for an operator to
+// promote it to `open` -- an agent cannot create a directly-claimable task
+// in v1. Two distinct backend codes, each already its own (not a shared
+// generic code needing message-pattern matching, unlike respec_conflict/
+// creator_abandon_conflict above): backlog_routing_enforced (400,
+// task_create rejects an explicit non-backlog status from an agent caller)
+// and backlog_not_promoted (403, task_start and the deprecated tasks_claim
+// alias reject a backlog task no operator has promoted yet).
+
+function backlogRoutingEnforcedError(message: string): TeachingError {
+  return buildTeachingError({
+    code: "backlog_routing_enforced",
+    message,
+    recipe:
+      'omit status (or pass status: "backlog") on task_create; agent-created tasks always land in backlog and wait for an operator to promote them to open',
+    allowedNext: ["task_create"],
+  });
+}
+
+// backlog_not_promoted's recipe deliberately avoids the literal task_start /
+// task_pickup tokens (the message already says "before an agent can start
+// it") -- same allowedNext-vs-recipe discipline as
+// creatorAbandonConflictError's own comment above: there is no self-service
+// way to promote a backlog task (that edge is human-only), so the recipe
+// names only the two verbs an agent CAN still call while it waits.
+function backlogNotPromotedError(message: string): TeachingError {
+  return buildTeachingError({
+    code: "backlog_not_promoted",
+    message,
+    recipe:
+      "this task awaits operator promotion from backlog to open; call task_respec to refine it while it waits, or task_creator_abandon to withdraw it if you created it",
+    allowedNext: ["task_respec", "task_creator_abandon"],
   });
 }
 
@@ -1487,6 +1526,12 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
   }
   if (status === 409 && code === "conflict" && CREATOR_ABANDON_CONFLICT_PATTERN.test(message)) {
     return creatorAbandonConflictError(message);
+  }
+  if (status === 400 && code === "backlog_routing_enforced") {
+    return backlogRoutingEnforcedError(message);
+  }
+  if (status === 403 && code === "backlog_not_promoted") {
+    return backlogNotPromotedError(message);
   }
 
   return genericDegrade(status, message, body.details, body.error);

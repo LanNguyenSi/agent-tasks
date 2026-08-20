@@ -212,6 +212,37 @@ describe("AgentTasksClient", () => {
     expect(init.body).toBeUndefined();
   });
 
+  // Cross-version tolerance regression (v1 backlog routing): AgentTasksClient's
+  // response path (request()'s JSON.parse above) applies no runtime schema
+  // validation to a success body -- `status?: string` on the request/
+  // response types is a compile-time-only annotation, never checked at
+  // runtime. An older bridge pinned to a pre-backlog mcp-server, talking to
+  // a newer backend that has started returning status: "backlog" on some
+  // tasks, must not throw or drop data on a status value its own type
+  // declarations never anticipated. This pins that tolerance directly
+  // rather than only asserting it by reading the source.
+  describe("cross-version tolerance: an unrecognized task status in a response body does not throw", () => {
+    it("listProjectTasks resolves normally when a returned task carries status: 'backlog'", async () => {
+      fetchMock.mockResolvedValueOnce(
+        ok({ tasks: [{ id: "t1", status: "backlog" }], nextCursor: null }),
+      );
+      const client = new AgentTasksClient(config);
+      await expect(
+        client.listProjectTasks("00000000-0000-0000-0000-000000000001"),
+      ).resolves.toEqual({ tasks: [{ id: "t1", status: "backlog" }], nextCursor: null });
+    });
+
+    it("listProjectTasks resolves normally when a returned task carries a completely made-up status value", async () => {
+      fetchMock.mockResolvedValueOnce(
+        ok({ tasks: [{ id: "t1", status: "some_future_status_this_client_has_never_heard_of" }] }),
+      );
+      const client = new AgentTasksClient(config);
+      await expect(
+        client.listProjectTasks("00000000-0000-0000-0000-000000000001"),
+      ).resolves.toEqual({ tasks: [{ id: "t1", status: "some_future_status_this_client_has_never_heard_of" }] });
+    });
+  });
+
   describe("listProjectTasks", () => {
     it("passes UUID through without a slug-lookup round-trip", async () => {
       fetchMock.mockResolvedValueOnce(ok({ tasks: [] }));

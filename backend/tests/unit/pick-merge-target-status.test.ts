@@ -23,6 +23,16 @@ describe("pickMergeTargetStatus", () => {
     expect(pickMergeTargetStatus({ project: DR, currentStatus: "done" })).toBeNull();
   });
 
+  // Backlog-escape fix: an unpromoted backlog task must never be moved by a
+  // webhook-observed PR merge, in ANY governance mode — including AUTONOMOUS,
+  // which would otherwise auto-`done` it. Backlog leaves only via an
+  // operator's explicit PATCH promotion.
+  it("current=backlog short-circuits regardless of mode, including AUTONOMOUS", () => {
+    expect(pickMergeTargetStatus({ project: AUTONOMOUS, currentStatus: "backlog" })).toBeNull();
+    expect(pickMergeTargetStatus({ project: AWAITS, currentStatus: "backlog" })).toBeNull();
+    expect(pickMergeTargetStatus({ project: DR, currentStatus: "backlog" })).toBeNull();
+  });
+
   it("AUTONOMOUS → done regardless of currentStatus", () => {
     for (const currentStatus of ["open", "in_progress", "review"]) {
       expect(pickMergeTargetStatus({ project: AUTONOMOUS, currentStatus })).toBe("done");

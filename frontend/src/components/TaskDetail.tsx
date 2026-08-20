@@ -233,6 +233,8 @@ export default function TaskDetail({
   const [savingTask, setSavingTask] = useState(false);
   const [deletingTask, setDeletingTask] = useState(false);
   const [showDeleteTaskConfirm, setShowDeleteTaskConfirm] = useState(false);
+  const [backlogActionBusy, setBacklogActionBusy] = useState(false);
+  const [showDiscardTaskConfirm, setShowDiscardTaskConfirm] = useState(false);
   const [claimBusy, setClaimBusy] = useState(false);
   const [advanceBusy, setAdvanceBusy] = useState(false);
   const [adminReleaseBusy, setAdminReleaseBusy] = useState(false);
@@ -295,6 +297,7 @@ export default function TaskDetail({
     setCommentText("");
     setDepPickerValue("");
     setShowDeleteTaskConfirm(false);
+    setShowDiscardTaskConfirm(false);
     setResultExpanded(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.id]);
@@ -503,6 +506,36 @@ export default function TaskDetail({
     }
   }
 
+  // Backlog Promote/Discard: direct PATCH, not the gated /transition
+  // endpoint — mirrors the backend contract (PATCH status "open"/"abandoned"
+  // on a backlog task is the human promote/discard path, see
+  // backend/src/routes/tasks.ts). Visible unconditionally; the server
+  // enforces the write-tier gate and any failure surfaces via onError.
+  async function handlePromoteBacklog() {
+    setBacklogActionBusy(true);
+    try {
+      const updated = await updateTask(task.id, { status: "open" });
+      onUpdate(updated);
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setBacklogActionBusy(false);
+    }
+  }
+
+  async function handleDiscardBacklog() {
+    setBacklogActionBusy(true);
+    try {
+      const updated = await updateTask(task.id, { status: "abandoned" });
+      onUpdate(updated);
+      setShowDiscardTaskConfirm(false);
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setBacklogActionBusy(false);
+    }
+  }
+
   async function handleClaim() {
     setClaimBusy(true);
     try {
@@ -644,6 +677,9 @@ export default function TaskDetail({
       onStartEditing={startEditing}
       onAdvance={(action) => void handleAdvance(action)}
       onDeleteRequest={() => setShowDeleteTaskConfirm(true)}
+      onPromote={() => void handlePromoteBacklog()}
+      onDiscardRequest={() => setShowDiscardTaskConfirm(true)}
+      backlogActionBusy={backlogActionBusy}
       onScrollToReview={() =>
         reviewSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
       }
@@ -1290,6 +1326,21 @@ export default function TaskDetail({
         tone="danger"
         onConfirm={discardChanges}
         onCancel={() => setShowDiscardPrompt(false)}
+      />
+
+      <ConfirmDialog
+        open={showDiscardTaskConfirm}
+        title="Discard task?"
+        message={`Task "${task.title}" will be marked abandoned.`}
+        confirmLabel="Discard task"
+        cancelLabel="Keep task"
+        tone="danger"
+        busy={backlogActionBusy}
+        onConfirm={() => void handleDiscardBacklog()}
+        onCancel={() => {
+          if (backlogActionBusy) return;
+          setShowDiscardTaskConfirm(false);
+        }}
       />
 
       <ConfirmDialog

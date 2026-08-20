@@ -33,7 +33,12 @@ const REPO_README_PATH = resolve(__filename, "..", "..", "..", "README.md");
 // +572 chars into 5932), so it would misfire as an "unbounded growth"
 // alarm on perfectly ordinary future prose additions instead of reserving
 // the alarm for genuinely runaway growth.
-const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 6400;
+// Ceiling raised from 6400 to 7500 for the v1 backlog-routing feature: the
+// backlog_routing_enforced/backlog_not_promoted trap-list entries plus the
+// new "## Backlog routing (v1)" section add ~860 chars (6166 -> 7263, same
+// deliberate-raise rationale as the round above, not a budget the mechanical
+// trap-list-sync guard leaves any real choice about skipping).
+const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 7500;
 
 // docs/response-contract-v1.md's "Onboarding channels by rate of change" table:
 // HANDSHAKE_PRIMER targets ~300-500 tokens with a HARD budget of 2000 chars
@@ -81,6 +86,8 @@ const NON_VERB_TOKENS = new Set([
   "low_confidence", // 422 error code (rc-v1-C005 review round 1, finding #2: confidence-gate detail preservation)
   "project_addressing_conflict", // client-side error code (rc-v1-C006 round-2 review: task_create's projectId/projectSlug exactly-one guard)
   "unknown_project_slug", // client-side error code (rc-v1-C006: an unresolvable projectSlug/project value)
+  "backlog_routing_enforced", // 400 error code (v1 backlog routing: task_create rejects an explicit non-backlog status from an agent)
+  "backlog_not_promoted", // 403 error code (v1 backlog routing: task_start/task_pickup on an unpromoted backlog task)
 ]);
 
 function snakeCaseTokens(text: string): string[] {

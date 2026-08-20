@@ -106,4 +106,21 @@ describe("findTasksByPr — binding strategy", () => {
     const result = await findTasksByPr("p1", { prNumber: 999 });
     expect(result).toEqual([]);
   });
+
+  // Backlog-escape fix: every one of the four matching queries must exclude
+  // "backlog" tasks, not just "done" ones — an unpromoted backlog task must
+  // never be bound or transitioned by a webhook event. Asserted directly on
+  // the where clause each strategy sends to prisma, not just on the
+  // aggregate result, so a regression back to `status: { not: "done" }` on
+  // any one strategy is caught even if the others still filter correctly.
+  it("every matching strategy's where clause excludes both done and backlog statuses", async () => {
+    mockTaskFindMany.mockResolvedValue([]);
+    await findTasksByPr("p1", { prNumber: 42, prUrl: "https://pr/42", headBranch: "feat/x" });
+
+    const calls = mockTaskFindMany.mock.calls as Array<[{ where: Record<string, unknown> }]>;
+    expect(calls).toHaveLength(4);
+    for (const [{ where }] of calls) {
+      expect(where.status).toEqual({ notIn: ["done", "backlog"] });
+    }
+  });
 });

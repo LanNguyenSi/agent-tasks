@@ -758,7 +758,11 @@ export async function updateTask(
     title?: string;
     description?: string | null;
     priority?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-    status?: "open" | "in_progress" | "review" | "done";
+    // "open" promotes a backlog task; "abandoned" discards one. The backend
+    // only accepts these two targets when the task's current status is
+    // "backlog" (see backend/src/routes/tasks.ts); any other combination
+    // is rejected server-side.
+    status?: "open" | "in_progress" | "review" | "done" | "abandoned";
     dueAt?: string | null;
     branchName?: string | null;
     prUrl?: string | null;

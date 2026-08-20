@@ -51,8 +51,16 @@ import { isOverdue, matchesTaskSearch } from "../../lib/taskDisplay";
 
 // ── Types ────────────────────────────────────────────────────────
 
-const STATUSES = ["open", "in_progress", "review", "done"] as const;
+// Drives the list-view status chip row (~L645) and the board's + button
+// status cast; also includes "backlog" so the chip row shows it.
+const STATUSES = ["backlog", "open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
+// NewTaskModal has no "backlog" status option (decision D19: human create
+// goes to open, backlog drafts are the agent flow) and BoardView already
+// suppresses the Backlog column's + button, so this state can never
+// actually receive "backlog" -- narrowed here so the type stays truthful
+// against NewTaskModal's own (backlog-less) initialStatus prop type.
+type ModalStatus = Exclude<Status, "backlog">;
 
 const LIST_PAGE_SIZE = 12;
 
@@ -112,7 +120,7 @@ export default function DashboardPage() {
   const [showImport, setShowImport] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   // Status preset when opening NewTaskModal from a board column's + button.
-  const [newTaskInitialStatus, setNewTaskInitialStatus] = useState<Status>("open");
+  const [newTaskInitialStatus, setNewTaskInitialStatus] = useState<ModalStatus>("open");
 
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
@@ -630,7 +638,10 @@ export default function DashboardPage() {
           templateFields={templateFields}
           onSelectTask={selectTask}
           onAddTask={(status) => {
-            setNewTaskInitialStatus(status as Status);
+            // BoardView never invokes onAddTask for the Backlog column (its +
+            // button is suppressed there), so "backlog" never reaches this
+            // cast in practice -- the assertion is exhaustive-but-safe.
+            setNewTaskInitialStatus(status as ModalStatus);
             setBootError(null);
             setShowNewTask(true);
           }}

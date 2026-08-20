@@ -30,6 +30,13 @@ export interface ColumnDef<T = Record<string, unknown>> {
   width?: string;
   align?: "left" | "center" | "right";
   render?: (row: T) => ReactNode;
+  /**
+   * Renders `header` visually-hidden (.sr-only) in the `<th>` while keeping
+   * it as the accessible name and the stacked-mode `data-label` prefix.
+   * For a column whose purpose is conveyed by its cell content alone (e.g.
+   * a trailing row-actions column) so the header text isn't shown twice.
+   */
+  headerVisuallyHidden?: boolean;
 }
 
 type SortDir = "ascending" | "descending" | "none";
@@ -194,6 +201,8 @@ export function Table<T extends object>({
                       />
                     </span>
                   </button>
+                ) : col.headerVisuallyHidden ? (
+                  <span className="sr-only">{col.header}</span>
                 ) : (
                   col.header
                 )}

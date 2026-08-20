@@ -6,6 +6,7 @@ import {
   getCurrentUser,
   getTeamTasks,
   getTeams,
+  updateTask,
   type Team,
   type TeamTasksCounts,
   type TeamTasksProject,
@@ -23,24 +24,26 @@ import Pagination from "../../components/ui/Pagination";
 import Select from "../../components/ui/Select";
 import { Table } from "../../components/ui/Table";
 import NewTaskFlow from "../../components/tasks/NewTaskFlow";
+import ConfirmDialog from "../../components/ui/ConfirmDialog";
 // Column definitions live outside this route file — see _components/columns.tsx
 // for why (Next's typed-routes codegen rejects extra named exports from a
 // page.tsx).
-import { TASK_PAGE_COLUMNS, type EnrichedTask } from "./_components/columns";
+import { TASK_PAGE_COLUMNS, buildTaskPageColumns, type EnrichedTask } from "./_components/columns";
 
 type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-type Status = "open" | "in_progress" | "review" | "done";
+type Status = "backlog" | "open" | "in_progress" | "review" | "done";
 type SortColumn = "title" | "status" | "project" | "due" | "updated" | "priority";
 type SortDirection = "asc" | "desc";
 type Scope = "all" | "open" | "mine" | "priority" | "review" | "done";
 
-const STATUSES: Status[] = ["open", "in_progress", "review", "done"];
+const STATUSES: Status[] = ["backlog", "open", "in_progress", "review", "done"];
 const PRIORITIES: Priority[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 const DEFAULT_PAGE_SIZE = 25;
 
 // Labels for filter chips (underscore-form API keys).
 const STATUS_CHIP_LABELS: Record<Status, string> = {
+  backlog: "Backlog",
   open: "Open",
   in_progress: "In Progress",
   review: "In Review",
@@ -175,6 +178,12 @@ function TasksPageInner() {
   const [retryToken, setRetryToken] = useState(0);
   // In-place create flow (project picker + NewTaskModal), see NewTaskFlow.
   const [newTaskOpen, setNewTaskOpen] = useState(false);
+  // Backlog Promote/Discard row actions (see _components/columns.tsx).
+  // busyTaskId disables both buttons on the in-flight row; discardTarget
+  // drives the confirm dialog, mirroring TaskDetail's delete-task confirm.
+  const [rowActionBusyId, setRowActionBusyId] = useState<string | null>(null);
+  const [discardTarget, setDiscardTarget] = useState<EnrichedTask | null>(null);
+  const [rowActionError, setRowActionError] = useState<string | null>(null);
 
   // ── Parse URL params ──────────────────────────────────────────
 
@@ -384,6 +393,43 @@ function TasksPageInner() {
         ? sort.direction === "asc" ? "desc" : "asc"
         : col === "title" || col === "project" ? "asc" : "desc";
     updateParams({ sort: `${col}:${nextDir}` }, false);
+  }
+
+  // Promote a backlog task to open. Server enforces the write-tier gate;
+  // any failure (403/409/etc.) surfaces via rowActionError, same as the
+  // fetch-error banner above.
+  async function handlePromote(task: EnrichedTask): Promise<void> {
+    setRowActionBusyId(task.id);
+    setRowActionError(null);
+    try {
+      await updateTask(task.id, { status: "open" });
+      setRetryToken((t) => t + 1);
+    } catch (err) {
+      setRowActionError(err instanceof Error ? err.message : "Failed to promote task.");
+    } finally {
+      setRowActionBusyId(null);
+    }
+  }
+
+  function requestDiscard(task: EnrichedTask): void {
+    setDiscardTarget(task);
+  }
+
+  async function confirmDiscard(): Promise<void> {
+    if (!discardTarget) return;
+    const task = discardTarget;
+    setRowActionBusyId(task.id);
+    setRowActionError(null);
+    try {
+      await updateTask(task.id, { status: "abandoned" });
+      setDiscardTarget(null);
+      setRetryToken((t) => t + 1);
+    } catch (err) {
+      setRowActionError(err instanceof Error ? err.message : "Failed to discard task.");
+      setDiscardTarget(null);
+    } finally {
+      setRowActionBusyId(null);
+    }
   }
 
   function clearFilters(): void {
@@ -618,6 +664,17 @@ function TasksPageInner() {
           </div>
         </div>
 
+        {/* Backlog Promote/Discard row action error, dismissible like the fetch banner */}
+        {rowActionError && (
+          <AlertBanner
+            tone="danger"
+            title="Action failed"
+            onDismiss={() => setRowActionError(null)}
+          >
+            {rowActionError}
+          </AlertBanner>
+        )}
+
         {/* Fetch error banner with working Retry */}
         {fetchError && (
           <AlertBanner
@@ -676,7 +733,14 @@ function TasksPageInner() {
             <>
               {/* Task table: shared ui/Table primitive with server-side controlled sort. */}
               <Table
-                columns={TASK_PAGE_COLUMNS}
+                columns={buildTaskPageColumns(
+                  {
+                    onPromote: (t) => void handlePromote(t),
+                    onDiscard: requestDiscard,
+                    busyTaskId: rowActionBusyId,
+                  },
+                  pagedTasks,
+                )}
                 rows={pagedTasks}
                 rowKey={(t) => t.id}
                 rowHref={(t) => `/tasks/${t.id}?${searchParams.toString()}`}
@@ -727,6 +791,26 @@ function TasksPageInner() {
         projects={projects}
         onTaskCreated={() => setRetryToken((t) => t + 1)}
         onEditTask={(id) => router.push(`/tasks/${id}`)}
+      />
+
+      {/* Discard confirm — mirrors TaskDetail's delete-task confirm dialog */}
+      <ConfirmDialog
+        open={discardTarget !== null}
+        title="Discard task?"
+        message={
+          discardTarget
+            ? `Task "${discardTarget.title}" will be marked abandoned.`
+            : ""
+        }
+        confirmLabel="Discard task"
+        cancelLabel="Keep task"
+        tone="danger"
+        busy={discardTarget !== null && rowActionBusyId === discardTarget.id}
+        onConfirm={() => void confirmDiscard()}
+        onCancel={() => {
+          if (discardTarget && rowActionBusyId === discardTarget.id) return;
+          setDiscardTarget(null);
+        }}
       />
     </main>
   );

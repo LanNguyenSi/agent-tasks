@@ -695,9 +695,9 @@ export function buildTools(
           ),
         status: z
           .union([
-            z.enum(["open", "in_progress", "review", "done", "abandoned"]),
+            z.enum(["open", "in_progress", "review", "done", "abandoned", "backlog"]),
             z
-              .array(z.enum(["open", "in_progress", "review", "done", "abandoned"]))
+              .array(z.enum(["open", "in_progress", "review", "done", "abandoned", "backlog"]))
               .min(1),
           ])
           .optional(),
@@ -762,8 +762,8 @@ export function buildTools(
         projectId: uuid().optional(),
         status: z
           .union([
-            z.enum(["open", "in_progress", "review", "done", "abandoned"]),
-            z.array(z.enum(["open", "in_progress", "review", "done", "abandoned"])).min(1),
+            z.enum(["open", "in_progress", "review", "done", "abandoned", "backlog"]),
+            z.array(z.enum(["open", "in_progress", "review", "done", "abandoned", "backlog"])).min(1),
           ])
           .optional(),
         priority: z

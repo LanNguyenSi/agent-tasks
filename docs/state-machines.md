@@ -4,11 +4,11 @@ Authoritative source: [`backend/src/services/default-workflow.ts`](../backend/sr
 
 ## Default workflow
 
-Four valid statuses. `Task.status` is a free `String` column; custom workflows can define their own state names, but the default workflow uses these four:
+The product status vocabulary includes six values. The workflow engine itself, implemented in `DEFAULT_TRANSITIONS` below, defines only four states: `open`, `in_progress`, `review`, and `done`. `Task.status` is a free `String` column; custom workflows can define their own state names, but the default workflow engine uses these four:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> open: task_create
+    [*] --> open: task_create (human)<br/>OR agent task promoted from backlog
     open --> in_progress: Start (no rule)
     in_progress --> review: Submit for review<br/>requires branchPresent + prPresent
     in_progress --> done: Mark done<br/>requires branchPresent + prPresent
@@ -16,9 +16,18 @@ stateDiagram-v2
     review --> done: Approve (no rule)
     review --> in_progress: Request changes (no rule)
     done --> [*]
+    
+    note right of open
+        Backlog and abandoned are
+        external to the engine:
+        handled by dedicated claim-routes
+        and operator UI, not transitions
+    end note
 ```
 
-`open → in_progress` deliberately has no precondition, so exploratory work without a branch is allowed. Gates only attach on `→ review` and `→ done`.
+Agent-created tasks land in `backlog` status (handled outside the workflow engine via dedicated routing in `task_start` and claim routes) for human operator review before they can enter the standard workflow. Human-created tasks and promoted backlog tasks default to `open`. The standard workflow then proceeds `open → in_progress → review → done` with branching for release and request-changes.
+
+`open → in_progress` deliberately has no precondition, so exploratory work without a branch is allowed. Gates only attach on `→ review` and `→ done`. Backlog tasks are invisible to `task_pickup` and cannot be claimed until promoted to `open` by a human via `PATCH`; see `docs/okf/claim-model.md` and `docs/okf/task-lifecycle.md` for the full backlog contract. `abandoned` status (terminal) is reachable only via human discard of a backlog task or admin reset; it is not a workflow transition target.
 
 ## Transition-rule layer
 

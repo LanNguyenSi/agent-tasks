@@ -593,6 +593,35 @@ describe("mapBackendError catalog", () => {
     assertAllowedNextRegistered(err, registered);
   });
 
+  // ── 7b. backlog_routing_enforced ──────────────────────────────────────────
+  it("backlog_routing_enforced: task_create's own 400 code maps to an omit-status recipe naming task_create", () => {
+    const err = mapBackendError(400, {
+      error: "backlog_routing_enforced",
+      message:
+        'Agent-created tasks are routed to "backlog" status in v1 and cannot be created directly as "open". Omit status (or pass status: "backlog") and have an operator promote the task once it is ready.',
+    });
+    expect(err.error.code).toBe("backlog_routing_enforced");
+    expect(err.error.allowedNext).toEqual(["task_create"]);
+    assertAllowedNextRegistered(err, registered);
+  });
+
+  // ── 7c. backlog_not_promoted ───────────────────────────────────────────────
+  it("backlog_not_promoted: task_start/task_pickup's own 403 code maps to task_respec/task_creator_abandon, not a bare 'cannot start'", () => {
+    const err = mapBackendError(403, {
+      error: "backlog_not_promoted",
+      message: "This task is in backlog status and awaits operator promotion before an agent can start it.",
+    });
+    expect(err.error.code).toBe("backlog_not_promoted");
+    expect(err.error.allowedNext).toEqual(["task_respec", "task_creator_abandon"]);
+    assertAllowedNextRegistered(err, registered);
+    // The recipe deliberately avoids the literal task_start/task_pickup
+    // tokens (same allowedNext-vs-recipe discipline as
+    // creatorAbandonConflictError) -- there is no self-service promote path,
+    // so it must not read as "retry task_start", only as "wait, or act via
+    // one of these two verbs instead".
+    expect(err.error.recipe).not.toMatch(/task_start|task_pickup/);
+  });
+
   // ── 9. low_confidence ────────────────────────────────────────────────────
   //
   // rc-v1-C005 review round 1, finding #2: the 422 low_confidence body
@@ -1799,6 +1828,20 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
         message: "Task must be open and unclaimed to creator-abandon",
       }),
     },
+    {
+      label: "backlog_routing_enforced",
+      err: mapBackendError(400, {
+        error: "backlog_routing_enforced",
+        message: 'Agent-created tasks are routed to "backlog" status in v1 and cannot be created directly as "open".',
+      }),
+    },
+    {
+      label: "backlog_not_promoted",
+      err: mapBackendError(403, {
+        error: "backlog_not_promoted",
+        message: "This task is in backlog status and awaits operator promotion before an agent can start it.",
+      }),
+    },
     { label: "result_not_plain_string (task_finish)", err: resultMustBePlainStringError("task_finish") },
     { label: "result_not_plain_string (tasks_update)", err: resultMustBePlainStringError("tasks_update") },
     {
@@ -1875,6 +1918,8 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
   it("catalogFixtures' distinct codes match errors.ts's own file-header catalog-seed enumeration (drift guard)", () => {
     const EXPECTED_CATALOG_CODES = [
       "already_claimed",
+      "backlog_not_promoted",
+      "backlog_routing_enforced",
       "creator_abandon_conflict",
       "cross_repo_pr_rejected",
       "force_admin_only",

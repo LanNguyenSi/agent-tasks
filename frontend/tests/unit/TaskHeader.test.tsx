@@ -67,6 +67,9 @@ function renderHeader(
       target: string,
       options?: { force?: boolean; forceReason?: string },
     ) => Promise<StatusOverrideResult>;
+    onPromote?: () => void;
+    onDiscardRequest?: () => void;
+    backlogActionBusy?: boolean;
   } = {},
 ) {
   render(
@@ -79,6 +82,9 @@ function renderHeader(
       onStartEditing={vi.fn()}
       onAdvance={onAdvance}
       onDeleteRequest={vi.fn()}
+      onPromote={overrides.onPromote ?? vi.fn()}
+      onDiscardRequest={overrides.onDiscardRequest ?? vi.fn()}
+      backlogActionBusy={overrides.backlogActionBusy ?? false}
       onScrollToReview={vi.fn()}
       isProjectAdmin={overrides.isProjectAdmin ?? false}
       statusOverrideTargets={overrides.statusOverrideTargets ?? null}
@@ -315,5 +321,36 @@ describe("TaskHeader admin status override", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("This transition cannot be forced.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Override anyway…" })).not.toBeInTheDocument();
+  });
+});
+
+describe("backlog Promote/Discard", () => {
+  it("renders Promote and Discard for a backlog task and fires the matching callback", async () => {
+    const onPromote = vi.fn();
+    const onDiscardRequest = vi.fn();
+    renderHeader(makeTask({ status: "backlog" }), vi.fn(), false, {
+      onPromote,
+      onDiscardRequest,
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Promote" }));
+    expect(onPromote).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(onDiscardRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render Promote/Discard for a non-backlog task", () => {
+    renderHeader(makeTask({ status: "open" }));
+    expect(screen.queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard" })).not.toBeInTheDocument();
+  });
+
+  it("disables both buttons while backlogActionBusy is true", () => {
+    renderHeader(makeTask({ status: "backlog" }), vi.fn(), false, {
+      backlogActionBusy: true,
+    });
+    expect(screen.getByRole("button", { name: "Promote" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
   });
 });

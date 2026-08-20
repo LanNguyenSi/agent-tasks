@@ -514,6 +514,63 @@ describe("buildTools", () => {
     expect(parsed.error.allowedNext).toEqual(["task_abandon", "task_respec"]);
   });
 
+  // v1 backlog routing (AC4): wrap() end-to-end, task_start's own
+  // backlog_not_promoted 403 and task_create's own backlog_routing_enforced
+  // 400 map through mapBackendError to their catalog entries (dedicated
+  // unit tests on the mapping itself live in errors.test.ts).
+
+  it("task_start maps 403 (backlog task not yet promoted) to the backlog_not_promoted catalog entry", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "backlog_not_promoted",
+          message: "This task is in backlog status and awaits operator promotion before an agent can start it.",
+        }),
+        { status: 403, headers: { "content-type": "application/json" } },
+      ),
+    );
+    let captured = "";
+    try {
+      await tool("task_start").handler({
+        taskId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.code).toBe("backlog_not_promoted");
+    expect(parsed.error.allowedNext).toEqual(["task_respec", "task_creator_abandon"]);
+  });
+
+  it("task_create maps 400 (agent-supplied non-backlog status) to the backlog_routing_enforced catalog entry", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "backlog_routing_enforced",
+          message: 'Agent-created tasks are routed to "backlog" status in v1 and cannot be created directly as "open".',
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+    let captured = "";
+    try {
+      await tool("task_create").handler({
+        projectId: "22222222-2222-2222-2222-222222222222",
+        title: "Direct-status create",
+        status: "open",
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      captured = e instanceof Error ? e.message : String(e);
+    }
+    const parsed = JSON.parse(captured);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.code).toBe("backlog_routing_enforced");
+    expect(parsed.error.allowedNext).toEqual(["task_create"]);
+  });
+
   it("task_respec maps 403 (non-creator, allowNonCreatorRespec unset) to the generic degrade shape (uncataloged code)", async () => {
     fetchMock.mockResolvedValue(
       new Response(
@@ -938,6 +995,25 @@ describe("buildTools", () => {
     expect(url).toContain("limit=25");
   });
 
+  // v1 backlog routing: project_tasks's status filter accepts "backlog" and
+  // forwards it end-to-end through the mcp-server layer (zod input parse ->
+  // client -> backend request), and a "backlog" status on the returned task
+  // round-trips through unmodified (no receipt/summary projection applies
+  // to this raw-passthrough verb).
+  it("project_tasks filters on status: 'backlog' end-to-end and returns backlog tasks unmodified", async () => {
+    fetchMock.mockResolvedValueOnce(
+      ok({ tasks: [{ id: "t1", status: "backlog", title: "drafted by an agent" }], nextCursor: null }),
+    );
+    const parsed = parseArgs("project_tasks", {
+      project: "00000000-0000-0000-0000-000000000001",
+      status: "backlog",
+    });
+    const result = await tool("project_tasks").handler(parsed);
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("status=backlog");
+    expect(result).toEqual({ tasks: [{ id: "t1", status: "backlog", title: "drafted by an agent" }], nextCursor: null });
+  });
+
   it("project_tasks skips the slug round-trip when given a UUID", async () => {
     fetchMock.mockResolvedValueOnce(ok({ tasks: [] }));
     await tool("project_tasks").handler({
@@ -1229,6 +1305,28 @@ describe("buildTools", () => {
       next: ["task_start to begin work on this task"],
     });
     expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+
+  // v1 backlog routing (AC3): an agent-created task's receipt surfaces
+  // status: "backlog" (task.status, not a bespoke field) and its next hint
+  // names operator promotion instead of task_start.
+  it("task_create's receipt shows status: 'backlog' and an 'awaits operator promotion' next hint for an agent-created task", async () => {
+    fetchMock.mockResolvedValue(
+      ok({
+        task: { id: "t1", status: "backlog", labels: [] },
+        confidence: { score: 90, threshold: 60, enforcementMode: "BLOCK", blocking: false, missing: [], findings: [], nextActions: [] },
+      }),
+    );
+    const result = await tool("task_create").handler({
+      projectId: "22222222-2222-2222-2222-222222222222",
+      title: "Drafted by an agent",
+    } as never);
+    expect(result).toEqual({
+      ok: true,
+      task: { id: "t1", status: "backlog" },
+      confidence: 90,
+      next: ["awaits operator promotion; task_start rejects a backlog task until an operator promotes it to open"],
+    });
   });
 
   it("task_create include:[\"task\"] returns the full pre-contract { task, confidence } object", async () => {
