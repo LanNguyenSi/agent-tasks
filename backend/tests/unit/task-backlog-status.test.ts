@@ -142,6 +142,14 @@ async function postCreate(actor: Actor, body: Record<string, unknown>) {
   });
 }
 
+async function postImport(actor: Actor, tasks: Array<Record<string, unknown>>) {
+  return makeApp(actor).request(`/projects/${PROJECT_ID}/tasks/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tasks }),
+  });
+}
+
 // Base fixture for /tasks/:id/start and /tasks/pickup — mirrors baseTask in
 // tasks-v2-routes.test.ts, trimmed to the fields those two routes read.
 const baseTask = {
@@ -433,5 +441,79 @@ describe("POST /tasks/pickup — work pool excludes backlog (real pickup path)",
     // The higher-priority, older task is blocked by an unresolved (backlog)
     // blocker, so the lower-priority, unblocked task wins instead.
     expect(body.task.id).toBe("task-open");
+  });
+});
+
+// ── legacy claim alias: backlog guard ────────────────────────────────────────
+
+describe("POST /tasks/:id/claim — v1 backlog routing (legacy alias)", () => {
+  it("agent legacy claim on a backlog task returns 403 backlog_not_promoted, not the null-check claim path", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "backlog" });
+
+    const res = await makeApp(AGENT).request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("backlog_not_promoted");
+    expect(body.message).toContain("awaits operator promotion");
+    // The claim CAS write must never have been attempted.
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("human legacy claim on a backlog task is rejected (no implicit promote-via-claim)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "backlog" });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("bad_state");
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+// ── batch import: backlog routing ────────────────────────────────────────────
+
+describe("POST /projects/:projectId/tasks/import — v1 backlog routing (agent-created)", () => {
+  it("agent import without status routes every item to backlog and never emits task_available", async () => {
+    const res = await postImport(AGENT, [{ title: "Imported A" }, { title: "Imported B" }]);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { created: number };
+    expect(body.created).toBe(2);
+    expect(prismaMocks.taskCreate.mock.calls[0]![0].data.status).toBe("backlog");
+    expect(prismaMocks.taskCreate.mock.calls[1]![0].data.status).toBe("backlog");
+    expect(signalEmitters.emitTaskAvailableSignal).not.toHaveBeenCalled();
+  });
+
+  it("agent import with explicit status:\"backlog\" on every item is accepted", async () => {
+    const res = await postImport(AGENT, [{ title: "Imported A", status: "backlog" }]);
+    expect(res.status).toBe(201);
+    expect(prismaMocks.taskCreate.mock.calls[0]![0].data.status).toBe("backlog");
+  });
+
+  it("agent import with one item carrying an explicit non-backlog status rejects the whole batch with 400 backlog_routing_enforced", async () => {
+    const res = await postImport(AGENT, [
+      { title: "Imported A" },
+      { title: "Imported B", status: "open" },
+    ]);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("backlog_routing_enforced");
+    expect(body.message).toMatch(/backlog/i);
+    // Whole-batch rejection: nothing gets inserted, not even the earlier
+    // valid item.
+    expect(prismaMocks.taskCreate).not.toHaveBeenCalled();
+  });
+
+  it("human import with an explicit status (in_progress) passes through unchanged, regression", async () => {
+    const res = await postImport(HUMAN, [{ title: "Human import", status: "in_progress" }]);
+    expect(res.status).toBe(201);
+    expect(prismaMocks.taskCreate.mock.calls[0]![0].data.status).toBe("in_progress");
+    expect(signalEmitters.emitTaskAvailableSignal).not.toHaveBeenCalled();
+  });
+
+  it("human import without status still defaults to open and emits task_available, regression", async () => {
+    const res = await postImport(HUMAN, [{ title: "Human import" }]);
+    expect(res.status).toBe(201);
+    expect(prismaMocks.taskCreate.mock.calls[0]![0].data.status).toBe("open");
+    expect(signalEmitters.emitTaskAvailableSignal).toHaveBeenCalledTimes(1);
   });
 });

@@ -1171,6 +1171,30 @@ taskRouter.post(
       dedupedItems.push(item);
     }
 
+    // v1 backlog routing (mirrors the single-create guard above): this batch
+    // path had its own copy of the create logic and let an agent import
+    // items straight into an explicit non-backlog status. Reject the whole
+    // batch upfront, before any insert, rather than partially importing —
+    // consistent with the single-create route's pre-insert 400, and
+    // distinct from the per-item P2002/skip handling below (a DB-level
+    // conflict on individual rows, not a routing-rule violation on the
+    // request itself).
+    if (actor.type === "agent") {
+      const badIndex = dedupedItems.findIndex(
+        (item) => item.status !== undefined && item.status !== "backlog",
+      );
+      if (badIndex !== -1) {
+        return c.json(
+          {
+            error: "backlog_routing_enforced",
+            message:
+              `Agent-created tasks are routed to "backlog" status in v1 and cannot be created directly as "${dedupedItems[badIndex].status}" (item index ${badIndex}). Omit status (or pass status: "backlog") and have an operator promote tasks once they are ready.`,
+          },
+          400,
+        );
+      }
+    }
+
     const created: Array<{ index: number; id: string }> = [];
     const skipped: string[] = [...inBatchDupes];
     const errors: Array<{ index: number; error: string }> = [];
@@ -1182,13 +1206,19 @@ taskRouter.post(
     for (let i = 0; i < dedupedItems.length; i++) {
       const item = dedupedItems[i];
 
+      // Same actor-based routing as single-create: an agent's item is always
+      // forced to backlog (the upfront check above already rejected any
+      // explicit non-backlog status), a human's explicit status or the
+      // "open" default passes through unchanged.
+      const itemCreateStatus = actor.type === "agent" ? "backlog" : (item.status ?? "open");
+
       try {
         const task = await prisma.task.create({
           data: {
             projectId,
             title: item.title,
             description: item.description,
-            ...(item.status !== undefined ? { status: item.status } : {}),
+            status: itemCreateStatus,
             priority: item.priority,
             dueAt: item.dueAt ? new Date(item.dueAt) : null,
             ...(item.externalRef !== undefined ? { externalRef: item.externalRef } : {}),
@@ -1204,9 +1234,9 @@ taskRouter.post(
         });
         created.push({ index: i, id: task.id });
 
-        // Emit signal so agents discover imported tasks
-        const effectiveStatus = item.status ?? "open";
-        if (effectiveStatus === "open") {
+        // Emit signal so agents discover imported tasks. A backlog task is
+        // not claimable yet — no signal until an operator promotes it.
+        if (itemCreateStatus === "open") {
           void emitTaskAvailableSignal(task.id, projectId, actor.type, actorName);
         }
 
@@ -6270,6 +6300,32 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
   // Already claimed
   if (task.claimedByUserId || task.claimedByAgentId) {
     return conflict(c, "Task is already claimed");
+  }
+
+  // v1 backlog routing: this legacy alias only checked claimedBy*, so a
+  // backlog task (unclaimed by definition) was directly claimable here even
+  // though task_start already blocks agents on the same status. Mirrors the
+  // task_start guard (line ~1914 above) with the same code and message
+  // style for an agent caller. A human hitting the same status falls
+  // through to the generic bad_state 409 used elsewhere in this file — v1
+  // has no implicit promote-via-claim for either caller type.
+  if (task.status === "backlog") {
+    if (actor.type === "agent") {
+      return c.json(
+        {
+          error: "backlog_not_promoted",
+          message: "This task is in backlog status and awaits operator promotion before an agent can start it.",
+        },
+        403,
+      );
+    }
+    return c.json(
+      {
+        error: "bad_state",
+        message: "Task in 'backlog' cannot be claimed — awaits operator promotion",
+      },
+      409,
+    );
   }
 
   // Dependency gate — all blocking tasks must be done or abandoned
