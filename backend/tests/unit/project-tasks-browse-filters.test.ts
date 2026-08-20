@@ -149,6 +149,24 @@ describe("GET /projects/:projectId/tasks — status filter", () => {
       status: { in: ["open"] },
     });
   });
+
+  // AC8 (v1 backlog routing): `backlog` is a valid filter value alongside
+  // the pre-existing statuses, so a caller can browse the operator-review
+  // queue explicitly.
+  it("accepts 'backlog' as a filter value", async () => {
+    const res = await makeApp().request(`/projects/${PROJECT_ID}/tasks?status=backlog`);
+    expect(res.status).toBe(200);
+    expect(lastFindManyArgs().where).toMatchObject({
+      status: { in: ["backlog"] },
+    });
+  });
+
+  it("accepts 'backlog' combined with other statuses in one CSV filter", async () => {
+    await makeApp().request(`/projects/${PROJECT_ID}/tasks?status=backlog,open`);
+    expect(lastFindManyArgs().where).toMatchObject({
+      status: { in: ["backlog", "open"] },
+    });
+  });
 });
 
 describe("GET /projects/:projectId/tasks — priority filter", () => {

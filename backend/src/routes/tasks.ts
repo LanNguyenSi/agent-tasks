@@ -280,7 +280,7 @@ const deliverableRepoSchema = z
 export const createTaskSchema = z.object({
   title: z.string().min(1).max(255),
   description: z.string().optional(),
-  status: z.enum(["open", "in_progress", "review", "done"]).optional(),
+  status: z.enum(["backlog", "open", "in_progress", "review", "done"]).optional(),
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).default("MEDIUM"),
   workflowId: z.string().uuid().optional(),
   dueAt: z.string().datetime().optional(),
@@ -691,7 +691,7 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
 // unbounded so the frontend dashboard (which fetches every project task
 // without query params) keeps working; when supplied, limit is clamped to a
 // 500 ceiling.
-const PROJECT_TASK_STATUSES = ["open", "in_progress", "review", "done", "abandoned"] as const;
+const PROJECT_TASK_STATUSES = ["backlog", "open", "in_progress", "review", "done", "abandoned"] as const;
 const PROJECT_TASK_PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 
 function parseCsv(raw: string | undefined): string[] {
@@ -877,6 +877,26 @@ taskRouter.post(
       return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
     }
 
+    // v1 backlog routing (hard rule, no config flag): every agent-created
+    // task lands in `backlog` and waits for an operator to promote it — an
+    // agent cannot create a directly-claimable task in v1. Reject an
+    // explicit non-backlog status outright instead of silently downgrading
+    // it, so the caller learns about the rule and the promote path rather
+    // than getting a task in a status it never asked for. Human callers are
+    // unaffected: their explicit status (or the "open" default) passes
+    // through unchanged below.
+    if (actor.type === "agent" && body.status !== undefined && body.status !== "backlog") {
+      return c.json(
+        {
+          error: "backlog_routing_enforced",
+          message:
+            `Agent-created tasks are routed to "backlog" status in v1 and cannot be created directly as "${body.status}". Omit status (or pass status: "backlog") and have an operator promote the task once it is ready.`,
+        },
+        400,
+      );
+    }
+    const createStatus = actor.type === "agent" ? "backlog" : (body.status ?? "open");
+
     // Validate dependsOn before create: every blocker must exist in the same
     // project. A new task has no incoming edges yet, so no cycle is possible.
     if (body.dependsOn && body.dependsOn.length > 0) {
@@ -950,7 +970,7 @@ taskRouter.post(
           projectId,
           title: body.title,
           description: body.description,
-          ...(body.status !== undefined ? { status: body.status } : {}),
+          status: createStatus,
           priority: body.priority,
           workflowId: body.workflowId,
           dueAt: body.dueAt ? new Date(body.dueAt) : null,
@@ -980,9 +1000,9 @@ taskRouter.post(
       throw e;
     }
 
-    // Emit task_available signal when task is open (claimable)
-    const effectiveStatus = body.status ?? "open";
-    if (effectiveStatus === "open") {
+    // Emit task_available signal when task is open (claimable). A backlog
+    // task is not claimable yet — no signal until an operator promotes it.
+    if (createStatus === "open") {
       const actorName = actor.type === "agent"
         ? (await prisma.agentToken.findUnique({ where: { id: actor.tokenId }, select: { name: true } }))?.name ?? "Agent"
         : (await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? "Human";
@@ -1874,6 +1894,24 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         409,
       );
     }
+  }
+
+  // v1 backlog routing: a `backlog` task has not been promoted by an
+  // operator yet, so an agent cannot start it — checked ahead of the
+  // initial/review-state branches below (and their generic bad_state
+  // fallback) with a distinct, actionable error code. Humans are not
+  // exempted here either: a backlog task is still not the initial state of
+  // any workflow, so a human hitting this same status falls through to the
+  // generic bad_state 409 below instead of claiming it — v1 has no implicit
+  // promote-via-start path for either caller type.
+  if (actor.type === "agent" && task.status === "backlog") {
+    return c.json(
+      {
+        error: "backlog_not_promoted",
+        message: "This task is in backlog status and awaits operator promotion before an agent can start it.",
+      },
+      403,
+    );
   }
 
   // Resolve the workflow definition once so both branches can compute the
