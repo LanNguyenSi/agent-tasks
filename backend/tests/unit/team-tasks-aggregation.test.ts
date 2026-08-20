@@ -195,7 +195,7 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
     };
     expect(body.tasks).toEqual([]);
     expect(body.projects).toEqual([]);
-    expect(body.counts).toEqual({ open: 0, review: 0, done: 0, doneRecent: 0, doneOlder: 0, priority: 0, mine: 0, total: 0 });
+    expect(body.counts).toEqual({ open: 0, review: 0, done: 0, doneRecent: 0, doneOlder: 0, priority: 0, mine: 0, backlog: 0, total: 0 });
     expect(prismaMocks.taskFindMany).not.toHaveBeenCalled();
     expect(prismaMocks.taskGroupBy).not.toHaveBeenCalled();
     expect(prismaMocks.taskCount).not.toHaveBeenCalled();
@@ -311,8 +311,24 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
         doneOlder: 0,
         priority: 0,
         mine: 0,
+        backlog: 0,
         total: 0,
       });
+    });
+
+    it("backlog count is read from the groupBy bucket (agent-created, awaiting promotion)", async () => {
+      prismaMocks.taskGroupBy.mockResolvedValueOnce([
+        { status: "open", _count: { _all: 70 } },
+        { status: "in_progress", _count: { _all: 5 } },
+        { status: "review", _count: { _all: 1 } },
+        { status: "done", _count: { _all: 778 } },
+        { status: "backlog", _count: { _all: 9 } },
+      ]);
+      const res = await makeApp(HUMAN).request("/teams/team-A/tasks");
+      const body = (await res.json()) as { counts: { backlog: number; total: number } };
+      expect(body.counts.backlog).toBe(9);
+      // total sums every status bucket from groupBy, backlog included.
+      expect(body.counts.total).toBe(70 + 5 + 1 + 778 + 9);
     });
   });
 
