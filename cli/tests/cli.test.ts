@@ -212,6 +212,11 @@ describe("tasks list browse-mode argument validation", () => {
     expect(res.stderr).toContain("invalid status 'banana'");
   });
 
+  it("accepts --status backlog in browse mode (D18 revision)", () => {
+    const res = run(["tasks", "list", "--project", "agent-tasks", "--status", "backlog"]);
+    expect(res.stderr).not.toContain("invalid status");
+  });
+
   it("rejects an invalid --priority value (uppercase enum)", () => {
     const res = run(["tasks", "list", "--project", "agent-tasks", "--priority", "high"]);
     expect(res.status).toBe(1);

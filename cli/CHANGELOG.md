@@ -65,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `chmod 600`. It warns rather than refuses so existing setups keep
   working.
 
+- Note: the id-prefix search pool now includes backlog tasks, so the newest-first capped window is shared with them; ambiguity and capping stay loudly reported.
+
 ## [0.3.0] - 2026-04-27
 
 Adds the v2 verb API surface (mirroring the agent-tasks MCP tools

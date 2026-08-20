@@ -281,7 +281,7 @@ tasks
   .option("-p, --project <slug-or-id>", "Restrict to one project (slug or UUID). Switches to browse mode.")
   .option(
     "-s, --status <csv>",
-    "Filter by status (browse mode only). CSV of: open, in_progress, review, done, abandoned.",
+    "Filter by status (browse mode only). CSV of: backlog, open, in_progress, review, done, abandoned.",
   )
   .option(
     "--priority <csv>",

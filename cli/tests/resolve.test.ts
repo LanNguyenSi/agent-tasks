@@ -62,6 +62,8 @@ describe("resolveTaskId", () => {
     );
     const result = await resolveTaskId(config, "bbbbbbbb");
     expect(result).toBe("bbbbbbbb-0000-0000-0000-000000000000");
+    const requestedUrl = String(fetchMock.mock.calls.at(-1)?.[0]);
+    expect(requestedUrl).toContain("backlog");
   });
 
   it("resolves a prefix matched only on a later page (paging past the first page)", async () => {
