@@ -96,6 +96,17 @@ describe("NewTaskFlow", () => {
     expect(await screen.findByRole("button", { name: "Create task" })).toBeInTheDocument();
   });
 
+  it("hands off to NewTaskModal with Backlog preselected (no initialStatus passed)", async () => {
+    // 2026-08-20 operator decision, supersedes D19: this is one of the three
+    // generic create entry points, and NewTaskFlow passes no initialStatus
+    // to NewTaskModal, so it inherits the shared DEFAULT_CREATE_STATUS.
+    mockGetProject.mockResolvedValue(makeProject());
+    renderFlow([PROJECTS[0]!]);
+
+    await screen.findByRole("button", { name: "Create task" });
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent("Backlog");
+  });
+
   it("skips the picker when only one project is accessible", async () => {
     mockGetProject.mockResolvedValue(makeProject());
     renderFlow([PROJECTS[0]!]);

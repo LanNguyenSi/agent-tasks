@@ -743,7 +743,9 @@ export async function createTask(
   body: {
     title: string;
     description?: string;
-    status?: "open" | "in_progress" | "review" | "done";
+    // Human create can target "backlog" too (2026-08-20 operator decision,
+    // supersedes D19); the backend's POST create route accepts it.
+    status?: "backlog" | "open" | "in_progress" | "review" | "done";
     priority?: string;
     dueAt?: string;
     templateData?: TemplateData;

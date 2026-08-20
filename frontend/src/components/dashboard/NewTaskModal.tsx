@@ -17,6 +17,7 @@ import {
   type TemplatePreset,
 } from "../../lib/api";
 import { calculateConfidence, TASK_TYPES, type TaskType } from "../../lib/confidence";
+import { DEFAULT_CREATE_STATUS } from "../../lib/status";
 import { buildSavedTemplateData } from "../../lib/templateData";
 import ConfidenceBadge from "../ConfidenceBadge";
 import CreateConfidencePanel from "../CreateConfidencePanel";
@@ -27,8 +28,22 @@ import Select from "../ui/Select";
 import { Button } from "../ui/Button";
 import { useToast } from "../ui/Toast";
 
-type Status = "open" | "in_progress" | "review" | "done";
+// Statuses this modal can actually create a task with -- the Status dropdown
+// offers exactly these two, Backlog first. Supersedes D19 (operator decision
+// 2026-08-20): backlog is now the default human create target too, not
+// agent-only; human create no longer always targets "open".
+type CreateStatus = "backlog" | "open";
 type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
+// Any status a caller might still pass in as a preset (e.g. a non-Open board
+// column's + button -- that gating still exists until a follow-up task
+// removes it). Anything other than "backlog" | "open" is clamped below since
+// those are the only values the Status dropdown can submit.
+type IncomingStatus = CreateStatus | "in_progress" | "review" | "done";
+
+function resolveCreateStatus(value: IncomingStatus | undefined): CreateStatus {
+  return value === "backlog" || value === "open" ? value : DEFAULT_CREATE_STATUS;
+}
 
 function toIsoDateOrNull(value: string): string | null {
   if (!value) return null;
@@ -48,10 +63,12 @@ interface NewTaskModalProps {
    *  doc for the null/undefined-as-advisory default). */
   enforcementMode: EnforcementMode | null;
   /**
-   * Initial status when opened from a board column's + button.
-   * Defaults to "open".
+   * Initial status hint from the caller (e.g. a board column's + button).
+   * Defaults to DEFAULT_CREATE_STATUS (backlog). Any value the Status
+   * dropdown cannot offer is clamped to DEFAULT_CREATE_STATUS -- see
+   * resolveCreateStatus.
    */
-  initialStatus?: Status;
+  initialStatus?: IncomingStatus;
   /**
    * Called after a task is successfully created. The parent adds the task
    * to its local list.
@@ -71,16 +88,17 @@ export default function NewTaskModal({
   templateFields,
   templatePresets,
   enforcementMode,
-  initialStatus = "open",
+  initialStatus,
   onTaskCreated,
   onEditTask,
 }: NewTaskModalProps) {
   const { toast } = useToast();
+  const resolvedInitialStatus = resolveCreateStatus(initialStatus);
 
   // ── Core fields (always visible) ──────────────────────────────
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [status, setStatus] = useState<Status>(initialStatus);
+  const [status, setStatus] = useState<CreateStatus>(resolvedInitialStatus);
   const [priority, setPriority] = useState<Priority>("MEDIUM");
   const [dueAt, setDueAt] = useState("");
   const [assignee, setAssignee] = useState<"unassigned" | "me">("unassigned");
@@ -108,7 +126,7 @@ export default function NewTaskModal({
     if (!open) return;
     setTitle("");
     setDescription("");
-    setStatus(initialStatus);
+    setStatus(resolvedInitialStatus);
     setPriority("MEDIUM");
     setDueAt("");
     setAssignee("unassigned");
@@ -126,7 +144,7 @@ export default function NewTaskModal({
     setCreatedConfidence(null);
     setCreatedAssignmentError(null);
     setCreatedTaskId(null);
-  }, [open, initialStatus]);
+  }, [open, resolvedInitialStatus]);
 
   const templateData = useMemo(
     () =>
@@ -172,7 +190,10 @@ export default function NewTaskModal({
 
       let task = created;
       let assignmentError: string | null = null;
-      if (assignee === "me") {
+      // Backlog tasks can't be claimed (POST /tasks/:id/claim 409s "backlog"
+      // out); the Assignee "me" option is disabled while status is backlog,
+      // so this should be unreachable, but guard the call itself too.
+      if (assignee === "me" && status !== "backlog") {
         try {
           task = await claimTask(task.id);
         } catch (claimError) {
@@ -228,6 +249,7 @@ export default function NewTaskModal({
     <CreateConfidencePanel
       confidence={createdConfidence}
       enforcementMode={enforcementMode}
+      status={status}
       assignmentError={createdAssignmentError}
       onEdit={handleEditTask}
       onClose={onClose}
@@ -266,12 +288,21 @@ export default function NewTaskModal({
             <Select
               className="ntm-w-full"
               value={status}
-              onChange={(v) => setStatus(v as Status)}
+              onChange={(v) => {
+                const next = v as CreateStatus;
+                setStatus(next);
+                // Review round 1 fix (task 31528564): a stale "me" pick from
+                // Open would otherwise survive the switch to Backlog -- the
+                // trigger is disabled and keeps showing "Assign to me" while
+                // submit silently creates the task unassigned. Reset it here
+                // so the visible state matches what will actually happen;
+                // handleSubmit's own `status !== "backlog"` guard stays as
+                // defense in depth regardless.
+                if (next === "backlog") setAssignee("unassigned");
+              }}
               options={[
+                { value: "backlog", label: "Backlog" },
                 { value: "open", label: "Open" },
-                { value: "in_progress", label: "In Progress" },
-                { value: "review", label: "In Review" },
-                { value: "done", label: "Done" },
               ]}
             />
           </FormField>
@@ -298,13 +329,24 @@ export default function NewTaskModal({
           </FormField>
         </div>
 
-        {/* Assignee */}
+        {/* Assignee -- "me" is disabled while status is backlog: claiming a
+            backlog task 409s server-side (POST /tasks/:id/claim rejects
+            "backlog"), so this guard keeps the post-create claim call from
+            ever firing on one. */}
         <div className="ntm-assignee-wrap">
-          <FormField label="Assignee">
+          <FormField
+            label="Assignee"
+            hint={
+              status === "backlog"
+                ? "Backlog tasks can't be claimed until they're promoted to Open."
+                : undefined
+            }
+          >
             <Select
               className="ntm-w-full"
               value={assignee}
               onChange={(v) => setAssignee(v as "unassigned" | "me")}
+              disabled={status === "backlog"}
               options={[
                 { value: "unassigned", label: "Unassigned" },
                 { value: "me", label: "Assign to me" },

@@ -1921,13 +1921,18 @@ input[type="checkbox"] {
   transition: border-color var(--transition-fast);
 }
 
-.select-trigger:hover {
+.select-trigger:hover:not([aria-disabled="true"]) {
   border-color: var(--border-hover);
 }
 
 .select-trigger:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+.select-trigger[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .select-trigger-label {

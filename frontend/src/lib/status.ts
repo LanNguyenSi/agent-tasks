@@ -43,6 +43,12 @@ export const STATUS_COLORS: Record<string, { dot: string; text: string }> = {
 // Canonical list of known standard status values.
 export const KNOWN_STATUSES = Object.keys(STATUS_LABELS);
 
+// The status NewTaskModal preselects on every generic create entry point
+// (dashboard toolbar, "C" shortcut, /tasks "+ New Task"). Supersedes D19:
+// human create used to always target "open"; per the 2026-08-20 operator
+// decision, backlog is now the default human create target too.
+export const DEFAULT_CREATE_STATUS = "backlog" as const;
+
 // Statuses that should appear muted (receded) in list views.
 // Done work has shipped; it should visually recede in a queue so open/active
 // tasks draw the eye. Only list surfaces (tasks page) apply this treatment —

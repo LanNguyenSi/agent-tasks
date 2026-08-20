@@ -48,6 +48,7 @@ import BoardView from "../../components/dashboard/BoardView";
 import TaskListView from "../../components/dashboard/TaskListView";
 import NewTaskModal from "../../components/dashboard/NewTaskModal";
 import { isOverdue, matchesTaskSearch } from "../../lib/taskDisplay";
+import { DEFAULT_CREATE_STATUS } from "../../lib/status";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -55,12 +56,13 @@ import { isOverdue, matchesTaskSearch } from "../../lib/taskDisplay";
 // status cast; also includes "backlog" so the chip row shows it.
 const STATUSES = ["backlog", "open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
-// NewTaskModal has no "backlog" status option (decision D19: human create
-// goes to open, backlog drafts are the agent flow) and BoardView already
-// suppresses the Backlog column's + button, so this state can never
-// actually receive "backlog" -- narrowed here so the type stays truthful
-// against NewTaskModal's own (backlog-less) initialStatus prop type.
-type ModalStatus = Exclude<Status, "backlog">;
+// Supersedes D19 (operator decision 2026-08-20): human create no longer
+// always targets "open" -- backlog is now the default human create target
+// too, and NewTaskModal's Status dropdown offers backlog and open. This
+// state can still carry any board-column status (BoardView's non-Open +
+// buttons still pass their own column's status until a follow-up task lands
+// on column gating); NewTaskModal clamps anything it can't offer to its own
+// default internally, so no narrowing is needed here.
 
 const LIST_PAGE_SIZE = 12;
 
@@ -119,8 +121,9 @@ export default function DashboardPage() {
   const [showNewTask, setShowNewTask] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  // Status preset when opening NewTaskModal from a board column's + button.
-  const [newTaskInitialStatus, setNewTaskInitialStatus] = useState<ModalStatus>("open");
+  // Status preset when opening NewTaskModal from a board column's + button
+  // or a generic create entry point (toolbar, "C" shortcut).
+  const [newTaskInitialStatus, setNewTaskInitialStatus] = useState<Status>(DEFAULT_CREATE_STATUS);
 
   const [taskQuery, setTaskQuery] = useState("");
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "overdue" | "unassigned">("all");
@@ -362,7 +365,7 @@ export default function DashboardPage() {
       }
       if (!isTyping && (e.key === "c" || e.key === "C") && !e.metaKey && !e.ctrlKey) {
         if (selectedProjectId && !showNewTask) {
-          setNewTaskInitialStatus("open");
+          setNewTaskInitialStatus(DEFAULT_CREATE_STATUS);
           setBootError(null);
           setShowNewTask(true);
         }
@@ -499,7 +502,7 @@ export default function DashboardPage() {
       <Button
         size="sm"
         onClick={() => {
-          setNewTaskInitialStatus("open");
+          setNewTaskInitialStatus(DEFAULT_CREATE_STATUS);
           setBootError(null);
           setShowNewTask(true);
         }}
@@ -638,10 +641,11 @@ export default function DashboardPage() {
           templateFields={templateFields}
           onSelectTask={selectTask}
           onAddTask={(status) => {
-            // BoardView never invokes onAddTask for the Backlog column (its +
-            // button is suppressed there), so "backlog" never reaches this
-            // cast in practice -- the assertion is exhaustive-but-safe.
-            setNewTaskInitialStatus(status as ModalStatus);
+            // BoardView's own Status type mirrors this page's; NewTaskModal
+            // clamps anything other than "backlog" | "open" (e.g. a
+            // non-Open column's +, still ungated until a follow-up task
+            // lands) to its own default internally.
+            setNewTaskInitialStatus(status);
             setBootError(null);
             setShowNewTask(true);
           }}
