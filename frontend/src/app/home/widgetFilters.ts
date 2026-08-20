@@ -15,6 +15,8 @@ export function isBacklogTask(t: Pick<Task, "status">): boolean {
  * and backlog (not yet promoted, so not actionable work). Backlog tasks
  * surface in their own widget instead.
  */
+// Kept in sync with the backend priorityCount query (routes/tasks.ts,
+// counts.priority): both exclude done and unpromoted backlog drafts.
 export function isPriorityTask(t: Pick<Task, "priority" | "status">): boolean {
   return (t.priority === "CRITICAL" || t.priority === "HIGH") && t.status !== "done" && !isBacklogTask(t);
 }

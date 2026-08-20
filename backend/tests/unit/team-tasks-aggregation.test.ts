@@ -269,14 +269,17 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
       expect(groupByWhere).toEqual({ projectId: { in: ["p-1", "p-2"] } });
     });
 
-    it("priority count is HIGH|CRITICAL AND status != done", async () => {
+    it("priority count is HIGH|CRITICAL excluding done AND unpromoted backlog drafts", async () => {
       await makeApp(HUMAN).request("/teams/team-A/tasks");
       // calls[0] is the filteredTotal count; priority is the second count.
+      // Kept in sync with the frontend's isPriorityTask (home/widgetFilters.ts):
+      // a backlog HIGH/CRITICAL draft must not inflate the badge over the
+      // rendered, backlog-filtered widget rows.
       const priorityWhere = prismaMocks.taskCount.mock.calls[1]![0]!.where;
       expect(priorityWhere).toEqual({
         projectId: { in: ["p-1", "p-2"] },
         priority: { in: ["HIGH", "CRITICAL"] },
-        status: { not: "done" },
+        status: { notIn: ["done", "backlog"] },
       });
     });
 
