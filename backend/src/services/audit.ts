@@ -124,9 +124,11 @@ export type AuditAction =
   | "task.claim_released_by_admin"
   | "task.review_claim_released_by_admin"
   // Respec verb (POST /tasks/:id/respec): an agent (creator, or any agent
-  // when the project's allowNonCreatorRespec flag is set) or a human with
-  // project write access corrected description/templateData on an OPEN+
-  // UNCLAIMED task instead of delete+recreate. Payload carries the full
+  // when the project's allowNonCreatorRespec flag is set, or ANY agent while
+  // the task is still "backlog" — T-002/D6 draft-space carve-out) or a human
+  // with project write access corrected description/templateData on an
+  // OPEN-or-BACKLOG + UNCLAIMED task instead of delete+recreate. Payload
+  // carries the full
   // {from,to} of every changed field (capped per field beyond 8KB
   // serialized — see respecAuditValue in routes/tasks.ts) plus the
   // before/after confidence score. Fired only when at least one field
@@ -148,13 +150,27 @@ export type AuditAction =
   // Creator-abandon verb (POST /tasks/:id/creator-abandon, task 7a1360da):
   // lets the agent that CREATED a task retire it to status="abandoned"
   // without ever claiming it. Narrow authz: creator-only (no
-  // allowNonCreatorRespec-style relaxation), open-only, fully unclaimed
-  // (mirrors task_respec's CAS guard); see the route's block comment in
-  // routes/tasks.ts for why "abandoned" is safe to write directly even
-  // though it is outside the workflow engine's fixed state vocabulary.
-  // Payload carries { actorType: "agent", agentTokenId, previousStatus,
-  // reason } so operators can see who gave up on the task and why.
+  // allowNonCreatorRespec-style relaxation), open-OR-backlog (T-002/D6
+  // extended this from open-only), fully unclaimed (mirrors task_respec's
+  // CAS guard); see the route's block comment in routes/tasks.ts for why
+  // "abandoned" is safe to write directly even though it is outside the
+  // workflow engine's fixed state vocabulary. Payload carries { actorType:
+  // "agent", agentTokenId, previousStatus, fromStatus, reason } so operators
+  // can see who gave up on the task, from which status, and why.
   | "task.creator_abandoned"
+  // Backlog promote/discard (PATCH /tasks/:id, human write-tier, T-002/D4):
+  // the two edges out of the v1 backlog pre-promotion status (see
+  // "backlog_routing_enforced"/"backlog_not_promoted" in routes/tasks.ts).
+  // Promote moves backlog -> open, making the task claimable; discard moves
+  // backlog -> abandoned, the same terminal status creator-abandon writes,
+  // without ever promoting it. Both bypass the workflow engine's transition
+  // graph the same way unabandon does (mirrors "task.unabandoned" below) and
+  // are distinct actions rather than "task.transitioned" so operators can
+  // tell an operator-driven backlog decision apart from an ordinary
+  // workflow-engine move. Payload carries { from, to, actorType: "human",
+  // via: "patch" }, same shape as "task.transitioned".
+  | "task.backlog_promoted"
+  | "task.backlog_discarded"
   // Unabandon: the ONE recovery path out of the `abandoned` sink (review
   // finding on task 7a1360da's follow-up). PATCH /tasks/:id, human lane
   // only, project-admin-only, and only `abandoned -> effectiveDef.

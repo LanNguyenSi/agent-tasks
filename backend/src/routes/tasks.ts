@@ -315,7 +315,14 @@ export const updateTaskSchema = z.object({
   title: z.string().min(1).max(255).optional(),
   description: z.string().nullable().optional(),
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(),
-  status: z.enum(["open", "in_progress", "review", "done"]).optional(),
+  // "abandoned" is reachable ONLY via the backlog->abandoned "discard"
+  // special case in the PATCH handler below (T-002): every other from-state
+  // still 400s there because no workflow definition ever declares a
+  // transition INTO "abandoned" (it sits outside the engine's fixed state
+  // vocabulary, same as "backlog" itself — see the creator-abandon route's
+  // block comment). "backlog" is deliberately NOT a valid target here: v1
+  // has no demote-back-to-backlog path.
+  status: z.enum(["open", "in_progress", "review", "done", "abandoned"]).optional(),
   dueAt: z.string().datetime().nullable().optional(),
   branchName: z.string().max(255).nullable().optional(),
   prUrl: httpUrl().nullable().optional(),
@@ -3904,8 +3911,11 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
 // Deliberately narrow (orchestrator decision, task 7a1360da batch 19):
 //   - creator-only: task.createdByAgentId === actor.tokenId. No
 //     allowNonCreatorRespec-style relaxation and no `force` escape hatch.
-//   - open-only, fully unclaimed (no work or review claim by ANYONE),
-//     mirrors task_respec's CAS guard above.
+//   - open OR backlog, fully unclaimed (no work or review claim by ANYONE).
+//     T-002/D6 extended this from open-only so a creator-agent can also
+//     withdraw its own not-yet-promoted backlog task without waiting on an
+//     operator; mirrors task_respec's CAS guard above (also status-scoped
+//     the same open-or-backlog way, see that route below).
 //   - agent-only. Humans already have DELETE for an open+unclaimed task they
 //     can see; this verb exists only because agents cannot call DELETE (see
 //     `taskRouter.delete` below, which rejects `actor.type !== "human"`).
@@ -3993,8 +4003,9 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
   // Fast-path state check. The atomic updateMany below is the real guard
   // (TOCTOU-safe); this lets the common "wrong state" case short-circuit
   // with a clear message before attempting the write (mirrors task_respec).
+  // "open" OR "backlog" (T-002/D6) — see the block comment above.
   if (
-    task.status !== "open" ||
+    (task.status !== "open" && task.status !== "backlog") ||
     task.claimedByUserId ||
     task.claimedByAgentId ||
     task.reviewClaimedByUserId ||
@@ -4005,14 +4016,15 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
 
   const previousStatus = task.status;
 
-  // Atomic compare-and-swap: only abandon if the row is STILL open, fully
-  // unclaimed, AND still created by this same agent (defense-in-depth; the
-  // creator field cannot legitimately change out from under us, but guarding
-  // it in the CAS costs nothing and keeps this write path self-contained).
+  // Atomic compare-and-swap: only abandon if the row is STILL open or
+  // backlog, fully unclaimed, AND still created by this same agent
+  // (defense-in-depth; the creator field cannot legitimately change out from
+  // under us, but guarding it in the CAS costs nothing and keeps this write
+  // path self-contained).
   const abandonResult = await prisma.task.updateMany({
     where: {
       id: task.id,
-      status: "open",
+      status: { in: ["open", "backlog"] },
       claimedByUserId: null,
       claimedByAgentId: null,
       reviewClaimedByUserId: null,
@@ -4040,6 +4052,11 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
       actorType: "agent",
       agentTokenId: actor.tokenId,
       previousStatus,
+      // T-002/D6: additive alias for previousStatus, added when this route
+      // was extended to also accept "backlog" — kept alongside the
+      // pre-existing field rather than replacing it, for payload
+      // back-compat with any existing consumer keyed on previousStatus.
+      fromStatus: previousStatus,
       reason: reason ?? null,
     },
   });
@@ -4744,6 +4761,10 @@ taskRouter.patch("/tasks/:id", async (c) => {
   // from an ordinary "task.transitioned" write in the audit event fired
   // further down, without adding a second code path for the write itself.
   let isUnabandonTransition = false;
+  // Set only by the backlog promote/discard special cases just below —
+  // same purpose as isUnabandonTransition, distinct audit actions.
+  let isBacklogPromoteTransition = false;
+  let isBacklogDiscardTransition = false;
   const transitionSkippedGates: Array<{ rule: TransitionRule; reason: string }> = [];
 
   if (body.status !== undefined && body.status !== previousStatus) {
@@ -4796,6 +4817,39 @@ taskRouter.patch("/tasks/:id", async (c) => {
       // writes `abandoned`, so there is no dangling claim to clear here.
       // isTerminalTransition stays false: the initial state is never
       // terminal, so no acknowledgeSignalsForTask() call below either.
+    } else if (previousStatus === "backlog" && targetStatus === "open") {
+      // ── Backlog promote: the v1 operator gate for agent-created tasks ────
+      //
+      // T-002/D4: deliberately WRITE-TIER only (requireProjectWrite, already
+      // enforced above for this whole PATCH), NOT project-admin like
+      // unabandon. Unabandon recovers a task an agent gave up on — an
+      // exceptional operator decision. Promote is the routine "I reviewed
+      // this backlog task, it's ready to work" action any contributor with
+      // write access performs, so it does not get the stricter admin bar.
+      //
+      // Bypasses the engine transition graph the same way unabandon does:
+      // "backlog" is outside the workflow engine's fixed state vocabulary
+      // (routes/workflows.ts FIXED_STATE_NAMES only ever allows
+      // open/in_progress/review/done in a custom definition), so
+      // effectiveDef.transitions can never contain a `from: "backlog"` edge
+      // for the generic lookup below to match.
+      isBacklogPromoteTransition = true;
+      // statusClaimPatch stays {} (the declared default): a backlog task is
+      // never claimable (task_start's backlog_not_promoted gate blocks
+      // agents outright, and humans have no promote-via-start path either
+      // per T-001), so there is never a dangling claim to clear here.
+    } else if (previousStatus === "backlog" && targetStatus === "abandoned") {
+      // ── Backlog discard: reject a backlog task outright, without ever
+      // promoting it ────────────────────────────────────────────────────
+      //
+      // Same write-tier authz as promote (D4) — discarding an unpromoted
+      // task is no more sensitive than promoting one. Mirrors the agent's
+      // own POST /tasks/:id/creator-abandon in shape: writes "abandoned"
+      // directly, bypasses the engine graph (same reasoning as promote
+      // above), and fires no acknowledgeSignalsForTask (isTerminalTransition
+      // stays false — "abandoned" is not a recognized engine terminal
+      // state, same as creator-abandon's own write).
+      isBacklogDiscardTransition = true;
     } else {
       const transition = effectiveDef.transitions.find(
         (t) => t.from === previousStatus && t.to === targetStatus,
@@ -4981,11 +5035,17 @@ taskRouter.patch("/tasks/:id", async (c) => {
 
   if (didStatusChange) {
     void logAuditEvent({
-      // Unabandon fires its own dedicated action so the audit trail can
-      // tell this out-of-band recovery write apart from an ordinary
-      // workflow-engine transition; everything else about the event shape
-      // (from/to/actorType/via) stays identical.
-      action: isUnabandonTransition ? "task.unabandoned" : "task.transitioned",
+      // Unabandon/promote/discard each fire their own dedicated action so
+      // the audit trail can tell these out-of-band recovery/gate writes
+      // apart from an ordinary workflow-engine transition; everything else
+      // about the event shape (from/to/actorType/via) stays identical.
+      action: isUnabandonTransition
+        ? "task.unabandoned"
+        : isBacklogPromoteTransition
+          ? "task.backlog_promoted"
+          : isBacklogDiscardTransition
+            ? "task.backlog_discarded"
+            : "task.transitioned",
       actorId: actor.userId,
       projectId: task.projectId,
       taskId: task.id,
@@ -5023,7 +5083,12 @@ taskRouter.patch("/tasks/:id", async (c) => {
       );
     }
 
-    if (body.status === "open" && previousStatus !== "open") {
+    // Promote (backlog->open) deliberately emits no signal at all — a
+    // spec non-decision for v1 (T-002): unlike a genuine reopen, a
+    // just-promoted task was never previously visible/claimable, so there is
+    // no "it's back" event to announce, and adding one is left for a future
+    // slice if an operator workflow actually needs it.
+    if (body.status === "open" && previousStatus !== "open" && !isBacklogPromoteTransition) {
       // Safe to look up `actor.userId` directly (no agent branch, unlike
       // /transition's reopen block): agents get a hard 403 at the
       // status-field guard near the top of this handler (forbiddenFields
@@ -5171,8 +5236,14 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
   }
 
   if (actor.type === "agent") {
+    // T-002/D6: while the task is still in "backlog" (unpromoted draft
+    // space), the creator-only restriction is skipped entirely — any agent
+    // with project access and tasks:update may respec it, same as if
+    // allowNonCreatorRespec were set, regardless of the project's actual
+    // flag. Once promoted to "open" the ordinary creator-only /
+    // allowNonCreatorRespec rule below applies unchanged.
     const isCreator = task.createdByAgentId === actor.tokenId;
-    if (!isCreator && !task.project.allowNonCreatorRespec) {
+    if (task.status !== "backlog" && !isCreator && !task.project.allowNonCreatorRespec) {
       return forbidden(
         c,
         "Only the task's creator can respec it (a project admin can set allowNonCreatorRespec to relax this)",
@@ -5191,10 +5262,11 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
   // (TOCTOU-safe); this lets the common "wrong state" case short-circuit
   // with a clear message before attempting the write. `notFound` is already
   // ruled out by the findUnique above, so a CAS miss below can only mean
-  // this same "not open/unclaimed" condition (raced after this check) — no
-  // second read is needed to disambiguate the failure.
+  // this same "not open|backlog/unclaimed" condition (raced after this
+  // check) — no second read is needed to disambiguate the failure.
+  // "open" OR "backlog" (T-002/D6) — see the creator-only skip above.
   if (
-    task.status !== "open" ||
+    (task.status !== "open" && task.status !== "backlog") ||
     task.claimedByUserId ||
     task.claimedByAgentId ||
     task.reviewClaimedByUserId ||
@@ -5278,16 +5350,16 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
     });
   }
 
-  // Atomic compare-and-swap: only respec if the row is STILL open and
-  // unclaimed. The check above is a fast path; two actors (or a claim
-  // racing this respec) can both pass it before either writes (TOCTOU).
-  // Guarding the WHERE clause on the same state makes exactly one writer
-  // win; the loser sees count===0 and gets the same 409 (mirrors the claim
-  // CAS pattern used by /tasks/:id/start above).
+  // Atomic compare-and-swap: only respec if the row is STILL open or
+  // backlog, and unclaimed. The check above is a fast path; two actors (or a
+  // claim/promote racing this respec) can both pass it before either writes
+  // (TOCTOU). Guarding the WHERE clause on the same state makes exactly one
+  // writer win; the loser sees count===0 and gets the same 409 (mirrors the
+  // claim CAS pattern used by /tasks/:id/start above).
   const respecResult = await prisma.task.updateMany({
     where: {
       id: task.id,
-      status: "open",
+      status: { in: ["open", "backlog"] },
       claimedByUserId: null,
       claimedByAgentId: null,
       reviewClaimedByUserId: null,
