@@ -20,7 +20,7 @@ An OKF (Open Knowledge Format) v0.1 bundle describing the agent-tasks codebase: 
 - [confidence-scorer](confidence-scorer.md): the authoritative backend scorer vs. the hand-maintained frontend mirror, and the exact spec-section heading aliases both share.
 - [governance-merge](governance-merge.md): the governanceMode enum, self-merge/distinct-reviewer gates, and where the webhook and REST merge paths pick different post-merge statuses.
 - [workflow-gates](workflow-gates.md): the four transition preconditions, branchName atomic folding, the cross-repo PR guard, externalRef idempotency, the `release-ops-no-pr` template for PR-less task classes.
-- [claim-model](claim-model.md): task_pickup's resolution order, single-active-claim enforcement, and why status is an unconstrained free string.
+- [claim-model](claim-model.md): backlog filtering and guards, task_pickup's resolution order, single-active-claim enforcement, and why status is an unconstrained free string.
 
 ## Runbooks
 

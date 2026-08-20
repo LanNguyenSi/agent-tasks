@@ -46,7 +46,7 @@ These fields on `Project` shape every state-write path:
 | `TaskArtifact` | Typed agent output (build logs, coverage, code) with inline `content` or external `url`. Authored by `User` or `AgentToken`. Lifecycle audit-logged as `task.artifact.created` / `.deleted`. |
 | `Comment` | Human or agent comment on a task. |
 
-`Task.status` is a free `String` because custom workflows can define their own states. The default workflow's four states (`open`, `in_progress`, `review`, `done`) are encoded in `backend/src/services/default-workflow.ts`, not in the DB.
+`Task.status` is a free `String` because custom workflows can define their own states. The default workflow includes five canonical states: `backlog` (agent-created tasks awaiting human review), `open`, `in_progress`, `review`, `done`, plus `abandoned` (terminal). Agent creates route to `backlog` automatically; human creates default to `open`. Only `backlog`, `open`, `in_progress`, and `review` flow through the standard workflow; `abandoned` is terminal and only reachable via explicit discard or admin reset.
 
 ## Signal layer
 
