@@ -642,7 +642,7 @@ export const openApiSpec = {
             type: "array",
             items: { type: "string", format: "uuid" },
             maxItems: 50,
-            description: "Blocking task ids in the same project; task pickup skips this task until every blocker is done. Create-time only.",
+            description: "Blocking task ids in the same project; task pickup skips this task until every blocker reaches a resolved status (done or abandoned). Create-time only.",
           },
           debugFlavor: {
             type: "boolean",
