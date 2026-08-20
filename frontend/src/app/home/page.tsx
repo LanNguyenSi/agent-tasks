@@ -23,6 +23,7 @@ import { Button } from "../../components/ui/Button";
 import EmptyState from "../../components/ui/EmptyState";
 import { StatusChip } from "../../components/ui/StatusChip";
 import { PriorityLabel } from "../../components/ui/PriorityLabel";
+import { isBacklogTask, isPriorityTask } from "./widgetFilters";
 
 type EnrichedTask = Task & { projectName: string };
 
@@ -77,11 +78,17 @@ interface WidgetProps {
    * set, the widget offers a link to reveal them via the full done list.
    */
   olderCount?: number;
+  /**
+   * Overrides the computed "more" link. Needed for scopes the /tasks page
+   * doesn't have a preset for (e.g. "backlog") — those fall back to the
+   * status filter param instead of the scope preset.
+   */
+  moreHrefOverride?: string;
 }
 
-function TaskWidget({ title, tasks, teamId, scope, emptyState, total, olderCount = 0 }: WidgetProps) {
+function TaskWidget({ title, tasks, teamId, scope, emptyState, total, olderCount = 0, moreHrefOverride }: WidgetProps) {
   const listHref = `/tasks?teamId=${teamId}&scope=${scope}`;
-  const moreHref = scope === "done" ? `${listHref}&recency=recent` : listHref;
+  const moreHref = moreHrefOverride ?? (scope === "done" ? `${listHref}&recency=recent` : listHref);
   const olderHref = `/tasks?teamId=${teamId}&scope=done&recency=older`;
   const displayTotal = total ?? tasks.length;
   const moreCount = Math.max(0, displayTotal - WIDGET_LIMIT);
@@ -240,10 +247,9 @@ export default function HomeDashboardPage() {
     [allTasks],
   );
 
-  const priorityTasks = useMemo(
-    () => allTasks.filter((t) => (t.priority === "CRITICAL" || t.priority === "HIGH") && t.status !== "done"),
-    [allTasks],
-  );
+  const priorityTasks = useMemo(() => allTasks.filter(isPriorityTask), [allTasks]);
+
+  const backlogTasks = useMemo(() => allTasks.filter(isBacklogTask), [allTasks]);
 
   const recentlyDone = useMemo(() => {
     const now = Date.now();
@@ -350,7 +356,7 @@ export default function HomeDashboardPage() {
               </AlertBanner>
             </div>
 
-            {/* Widgets: My Tasks, Open Tasks, Priority, In Review, Recently Done */}
+            {/* Widgets: My Tasks, Open Tasks, Priority, Backlog, In Review, Recently Done */}
             <div className="home-widgets-grid">
               <TaskWidget
                 title="My Tasks"
@@ -393,6 +399,15 @@ export default function HomeDashboardPage() {
                 scope="priority"
                 total={counts?.priority}
                 emptyState={<EmptyState title="No high-priority tasks." />}
+              />
+              <TaskWidget
+                title="Backlog"
+                tasks={backlogTasks}
+                teamId={teamId}
+                scope="backlog"
+                total={counts?.backlog}
+                moreHrefOverride={`/tasks?teamId=${teamId}&status=backlog`}
+                emptyState={<EmptyState title="No drafts waiting for promotion." />}
               />
               <TaskWidget
                 title="In Review"

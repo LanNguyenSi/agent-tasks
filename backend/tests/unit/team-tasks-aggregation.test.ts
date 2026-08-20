@@ -195,7 +195,7 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
     };
     expect(body.tasks).toEqual([]);
     expect(body.projects).toEqual([]);
-    expect(body.counts).toEqual({ open: 0, review: 0, done: 0, doneRecent: 0, doneOlder: 0, priority: 0, mine: 0, total: 0 });
+    expect(body.counts).toEqual({ open: 0, review: 0, done: 0, doneRecent: 0, doneOlder: 0, priority: 0, mine: 0, backlog: 0, total: 0 });
     expect(prismaMocks.taskFindMany).not.toHaveBeenCalled();
     expect(prismaMocks.taskGroupBy).not.toHaveBeenCalled();
     expect(prismaMocks.taskCount).not.toHaveBeenCalled();
@@ -269,14 +269,17 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
       expect(groupByWhere).toEqual({ projectId: { in: ["p-1", "p-2"] } });
     });
 
-    it("priority count is HIGH|CRITICAL AND status != done", async () => {
+    it("priority count is HIGH|CRITICAL excluding done AND unpromoted backlog drafts", async () => {
       await makeApp(HUMAN).request("/teams/team-A/tasks");
       // calls[0] is the filteredTotal count; priority is the second count.
+      // Kept in sync with the frontend's isPriorityTask (home/widgetFilters.ts):
+      // a backlog HIGH/CRITICAL draft must not inflate the badge over the
+      // rendered, backlog-filtered widget rows.
       const priorityWhere = prismaMocks.taskCount.mock.calls[1]![0]!.where;
       expect(priorityWhere).toEqual({
         projectId: { in: ["p-1", "p-2"] },
         priority: { in: ["HIGH", "CRITICAL"] },
-        status: { not: "done" },
+        status: { notIn: ["done", "backlog"] },
       });
     });
 
@@ -311,8 +314,24 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
         doneOlder: 0,
         priority: 0,
         mine: 0,
+        backlog: 0,
         total: 0,
       });
+    });
+
+    it("backlog count is read from the groupBy bucket (agent-created, awaiting promotion)", async () => {
+      prismaMocks.taskGroupBy.mockResolvedValueOnce([
+        { status: "open", _count: { _all: 70 } },
+        { status: "in_progress", _count: { _all: 5 } },
+        { status: "review", _count: { _all: 1 } },
+        { status: "done", _count: { _all: 778 } },
+        { status: "backlog", _count: { _all: 9 } },
+      ]);
+      const res = await makeApp(HUMAN).request("/teams/team-A/tasks");
+      const body = (await res.json()) as { counts: { backlog: number; total: number } };
+      expect(body.counts.backlog).toBe(9);
+      // total sums every status bucket from groupBy, backlog included.
+      expect(body.counts.total).toBe(70 + 5 + 1 + 778 + 9);
     });
   });
 

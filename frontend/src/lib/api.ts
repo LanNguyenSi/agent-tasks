@@ -590,6 +590,9 @@ export interface TeamTasksCounts {
   doneOlder?: number;
   priority: number;
   mine: number;
+  // Agent-created drafts awaiting operator promotion. Optional for
+  // forward-compat with a backend predating this field.
+  backlog?: number;
   total: number;
 }
 

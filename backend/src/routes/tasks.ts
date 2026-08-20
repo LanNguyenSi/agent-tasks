@@ -487,7 +487,7 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
     return c.json({
       tasks: [],
       projects: [],
-      counts: { open: 0, review: 0, done: 0, doneRecent: 0, doneOlder: 0, priority: 0, mine: 0, total: 0 },
+      counts: { open: 0, review: 0, done: 0, doneRecent: 0, doneOlder: 0, priority: 0, mine: 0, backlog: 0, total: 0 },
       filteredTotal: 0,
     });
   }
@@ -642,7 +642,9 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
         where: {
           ...countWhere,
           priority: { in: ["HIGH", "CRITICAL"] },
-          status: { not: "done" },
+          // Unpromoted backlog drafts are not actionable work; keep this in
+          // sync with the frontend's isPriorityTask (home/widgetFilters.ts).
+          status: { notIn: ["done", "backlog"] },
         },
       }),
       prisma.task.count({
@@ -674,6 +676,9 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
     doneOlder,
     priority: priorityCount,
     mine: mineCount,
+    // Agent-created tasks awaiting operator promotion; already present in
+    // statusGroups since that groupBy is unfiltered by status.
+    backlog: byStatus.backlog ?? 0,
     total: statusGroups.reduce((s, g) => s + g._count._all, 0),
   };
 
