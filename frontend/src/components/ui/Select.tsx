@@ -26,6 +26,8 @@ interface SelectProps {
   style?: CSSProperties;
   /** Accessible name for the combobox when no adjacent <label> is wired up. */
   ariaLabel?: string;
+  /** Disables the trigger; the listbox cannot be opened while true. */
+  disabled?: boolean;
 }
 
 export default function Select({
@@ -36,6 +38,7 @@ export default function Select({
   className = "",
   style,
   ariaLabel,
+  disabled = false,
 }: SelectProps) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -117,8 +120,10 @@ export default function Select({
         aria-haspopup="listbox"
         aria-controls={open ? `${id}-list` : undefined}
         aria-activedescendant={open && activeIndex >= 0 ? `${id}-opt-${activeIndex}` : undefined}
-        onClick={() => (open ? setOpen(false) : handleOpen())}
-        onKeyDown={handleKeyDown}
+        aria-disabled={disabled}
+        disabled={disabled}
+        onClick={() => (disabled ? undefined : open ? setOpen(false) : handleOpen())}
+        onKeyDown={disabled ? undefined : handleKeyDown}
         className="select-trigger"
       >
         <span className="select-trigger-label">

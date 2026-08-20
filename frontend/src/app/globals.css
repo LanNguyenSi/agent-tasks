@@ -1930,6 +1930,11 @@ input[type="checkbox"] {
   outline-offset: 2px;
 }
 
+.select-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .select-trigger-label {
   overflow: hidden;
   text-overflow: ellipsis;
