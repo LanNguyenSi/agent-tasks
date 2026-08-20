@@ -70,10 +70,17 @@ describe("BoardView -- backlog column", () => {
     expect(within(backlogColumn).getByText("1")).toBeInTheDocument();
   });
 
-  it("does not render an add-task button on the Backlog column, but keeps it on Open", () => {
+  it("renders an add-task button on Backlog and Open only, not on In Progress/Review/Done (column gating, operator decision 2026-08-20)", () => {
+    const allColumnTasks: Task[] = [
+      task({ id: "b-1", title: "Agent-drafted task", status: "backlog" }),
+      task({ id: "o-1", title: "An open task", status: "open" }),
+      task({ id: "i-1", title: "An in-progress task", status: "in_progress" }),
+      task({ id: "r-1", title: "A review task", status: "review" }),
+      task({ id: "d-1", title: "A done task", status: "done" }),
+    ];
     render(
       <BoardView
-        tasks={tasks}
+        tasks={allColumnTasks}
         activeTaskId={null}
         templateFields={null}
         onSelectTask={() => {}}
@@ -81,9 +88,15 @@ describe("BoardView -- backlog column", () => {
       />,
     );
     const backlogColumn = screen.getByLabelText("Backlog, 1 task");
-    expect(within(backlogColumn).queryByLabelText("Add task to Backlog")).not.toBeInTheDocument();
+    expect(within(backlogColumn).getByLabelText("Add task to Backlog")).toBeInTheDocument();
     const openColumn = screen.getByLabelText("Open, 1 task");
     expect(within(openColumn).getByLabelText("Add task to Open")).toBeInTheDocument();
+    const inProgressColumn = screen.getByLabelText("In Progress, 1 task");
+    expect(within(inProgressColumn).queryByLabelText("Add task to In Progress")).not.toBeInTheDocument();
+    const reviewColumn = screen.getByLabelText("Review, 1 task");
+    expect(within(reviewColumn).queryByLabelText("Add task to Review")).not.toBeInTheDocument();
+    const doneColumn = screen.getByLabelText("Done, 1 task");
+    expect(within(doneColumn).queryByLabelText("Add task to Done")).not.toBeInTheDocument();
   });
 
   it("shows an empty Backlog column with a 0 count when there are no backlog tasks", () => {

@@ -58,11 +58,11 @@ const STATUSES = ["backlog", "open", "in_progress", "review", "done"] as const;
 type Status = (typeof STATUSES)[number];
 // Supersedes D19 (operator decision 2026-08-20): human create no longer
 // always targets "open" -- backlog is now the default human create target
-// too, and NewTaskModal's Status dropdown offers backlog and open. This
-// state can still carry any board-column status (BoardView's non-Open +
-// buttons still pass their own column's status until a follow-up task lands
-// on column gating); NewTaskModal clamps anything it can't offer to its own
-// default internally, so no narrowing is needed here.
+// too, and NewTaskModal's Status dropdown offers backlog and open.
+// BoardView only renders its + on the Backlog and Open columns (operator
+// decision 2026-08-20, column gating), so this state only ever carries one
+// of those two in practice; NewTaskModal clamps anything else to its own
+// default internally as a robustness net, so no narrowing is needed here.
 
 const LIST_PAGE_SIZE = 12;
 
@@ -641,10 +641,9 @@ export default function DashboardPage() {
           templateFields={templateFields}
           onSelectTask={selectTask}
           onAddTask={(status) => {
-            // BoardView's own Status type mirrors this page's; NewTaskModal
-            // clamps anything other than "backlog" | "open" (e.g. a
-            // non-Open column's +, still ungated until a follow-up task
-            // lands) to its own default internally.
+            // BoardView only renders the + on Backlog/Open columns, so
+            // status here is always one of those two; NewTaskModal still
+            // clamps anything else to its own default as a robustness net.
             setNewTaskInitialStatus(status);
             setBootError(null);
             setShowNewTask(true);

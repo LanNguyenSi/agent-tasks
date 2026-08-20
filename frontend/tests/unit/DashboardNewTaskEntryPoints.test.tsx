@@ -16,7 +16,7 @@
  * component-level test can't observe the actual wiring.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { User, Team, Project, Task } from "../../src/lib/api";
 
@@ -134,5 +134,31 @@ describe("dashboard New Task entry points default to Backlog", () => {
 
     const statusCombobox = await screen.findByRole("combobox", { name: "Status" });
     expect(statusCombobox).toHaveTextContent("Backlog");
+  });
+});
+
+describe("dashboard board column + buttons preselect their own column (column gating, operator decision 2026-08-20)", () => {
+  it("the Backlog column's + opens the modal with Backlog preselected", async () => {
+    await renderDashboardReady();
+    await userEvent.click(await screen.findByRole("button", { name: "Add task to Backlog" }));
+
+    const statusCombobox = await screen.findByRole("combobox", { name: "Status" });
+    expect(statusCombobox).toHaveTextContent("Backlog");
+  });
+
+  it("the Open column's + opens the modal with Open preselected", async () => {
+    await renderDashboardReady();
+    await userEvent.click(await screen.findByRole("button", { name: "Add task to Open" }));
+
+    const statusCombobox = await screen.findByRole("combobox", { name: "Status" });
+    expect(statusCombobox).toHaveTextContent("Open");
+  });
+
+  it("does not render a + button on In Progress, Review, or Done columns", async () => {
+    await renderDashboardReady();
+    const board = await screen.findByLabelText("Board");
+    expect(within(board).queryByRole("button", { name: "Add task to In Progress" })).not.toBeInTheDocument();
+    expect(within(board).queryByRole("button", { name: "Add task to Review" })).not.toBeInTheDocument();
+    expect(within(board).queryByRole("button", { name: "Add task to Done" })).not.toBeInTheDocument();
   });
 });
