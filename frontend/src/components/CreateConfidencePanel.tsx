@@ -79,7 +79,7 @@ export default function CreateConfidencePanel({
             ? `At or above the ${threshold} threshold`
             : claimsBlocked
               ? `Below the ${threshold} threshold: agents cannot claim this task`
-              : `Below the ${threshold} threshold: advisory in this project, agents can still claim it`}
+              : `Below the ${threshold} threshold: advisory in this project; agents can still claim it`}
         </span>
       </div>
 
