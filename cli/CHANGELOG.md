@@ -35,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   backend's project-scoped endpoint doesn't attach `project` to each row
   itself.
 
+### Fixed
+
+- The id-prefix resolver (`tasks get`/`start`/`finish`/`comment` and
+  friends) can now resolve a `backlog`-status task's id prefix, instead of
+  reporting a misleading "no task found matching id prefix" and requiring
+  the full UUID. Resolving the id is discovery only, not a claim grant: a
+  claim-oriented command still gets the server's `403
+  backlog_not_promoted` if the resolved task hasn't been promoted out of
+  backlog by a human. `tasks list --project --status backlog` is also now
+  accepted (the project-scoped browse endpoint already supported it
+  server-side).
+
 ### Changed
 
 - `--json` and `--quiet` are now mutually exclusive: passing both is a

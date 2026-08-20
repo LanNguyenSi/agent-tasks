@@ -331,7 +331,13 @@ tasks
 
     const statuses = opts.status ? splitCsv(opts.status) : undefined;
     if (statuses) {
-      const validStatuses = ["open", "in_progress", "review", "done", "abandoned"];
+      // "backlog" is allowed here (D18 revision): `tasks list --project` is
+      // browse/display, and the project-scoped tasks endpoint
+      // (PROJECT_TASK_STATUSES, backend/src/routes/tasks.ts) already
+      // accepts it. Claim-oriented commands (start, claim, ...) don't take
+      // a --status filter at all, so this can't leak backlog into a claim
+      // path.
+      const validStatuses = ["backlog", "open", "in_progress", "review", "done", "abandoned"];
       const bad = statuses.find((s) => !validStatuses.includes(s));
       if (bad) {
         console.error(
