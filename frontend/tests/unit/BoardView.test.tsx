@@ -70,6 +70,22 @@ describe("BoardView -- backlog column", () => {
     expect(within(backlogColumn).getByText("1")).toBeInTheDocument();
   });
 
+  it("does not render an add-task button on the Backlog column, but keeps it on Open", () => {
+    render(
+      <BoardView
+        tasks={tasks}
+        activeTaskId={null}
+        templateFields={null}
+        onSelectTask={() => {}}
+        onAddTask={() => {}}
+      />,
+    );
+    const backlogColumn = screen.getByLabelText("Backlog, 1 task");
+    expect(within(backlogColumn).queryByLabelText("Add task to Backlog")).not.toBeInTheDocument();
+    const openColumn = screen.getByLabelText("Open, 1 task");
+    expect(within(openColumn).getByLabelText("Add task to Open")).toBeInTheDocument();
+  });
+
   it("shows an empty Backlog column with a 0 count when there are no backlog tasks", () => {
     render(
       <BoardView

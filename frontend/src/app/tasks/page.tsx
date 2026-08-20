@@ -733,11 +733,14 @@ function TasksPageInner() {
             <>
               {/* Task table: shared ui/Table primitive with server-side controlled sort. */}
               <Table
-                columns={buildTaskPageColumns({
-                  onPromote: (t) => void handlePromote(t),
-                  onDiscard: requestDiscard,
-                  busyTaskId: rowActionBusyId,
-                })}
+                columns={buildTaskPageColumns(
+                  {
+                    onPromote: (t) => void handlePromote(t),
+                    onDiscard: requestDiscard,
+                    busyTaskId: rowActionBusyId,
+                  },
+                  pagedTasks,
+                )}
                 rows={pagedTasks}
                 rowKey={(t) => t.id}
                 rowHref={(t) => `/tasks/${t.id}?${searchParams.toString()}`}

@@ -21,7 +21,7 @@ import { Skeleton } from "../../../components/ui/Skeleton";
 import AlertBanner from "../../../components/ui/AlertBanner";
 import { Button } from "../../../components/ui/Button";
 
-const STATUS_ORDER = ["open", "in-progress", "review", "done"];
+const STATUS_ORDER = ["backlog", "open", "in-progress", "review", "done"];
 
 const GOV_LABELS: Record<string, string> = {
   REQUIRES_DISTINCT_REVIEWER: "Requires distinct reviewer",

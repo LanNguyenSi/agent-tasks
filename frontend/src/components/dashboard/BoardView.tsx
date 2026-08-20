@@ -190,14 +190,18 @@ export default function BoardView({
               <span className="db-col-dot" aria-hidden="true" />
               <span className="db-col-title">{columnLabel}</span>
               <Badge tone={badgeTone}>{columnTasks.length}</Badge>
-              <button
-                type="button"
-                className="db-col-add"
-                aria-label={`Add task to ${columnLabel}`}
-                onClick={() => onAddTask?.(status)}
-              >
-                <Icon name="plus" size={13} />
-              </button>
+              {/* No add-task button on Backlog: human create goes to Open per
+                  spec, backlog drafts are the agent flow (decision D19). */}
+              {status !== "backlog" && (
+                <button
+                  type="button"
+                  className="db-col-add"
+                  aria-label={`Add task to ${columnLabel}`}
+                  onClick={() => onAddTask?.(status)}
+                >
+                  <Icon name="plus" size={13} />
+                </button>
+              )}
             </header>
 
             <div className="db-col-cards">

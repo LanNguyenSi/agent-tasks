@@ -113,14 +113,22 @@ export interface BacklogRowActionHandlers {
 // clickable link (rowHref, see page.tsx), so each button stops propagation
 // on click and on Enter/Space keydown to keep the row from navigating —
 // same pattern as ProjectRowActions in app/teams/page.tsx.
+// `rows` is the set of currently rendered table rows (the current page).
+// The backlog actions column is only appended when at least one of those
+// rows is a backlog task -- otherwise every project without backlog tasks
+// would carry a permanently empty 13%-wide column.
 export function buildTaskPageColumns(
   handlers: BacklogRowActionHandlers,
+  rows: EnrichedTask[],
 ): ColumnDef<EnrichedTask>[] {
+  const hasBacklogRow = rows.some((t) => normalizeStatus(t.status) === "backlog");
+  if (!hasBacklogRow) return TASK_PAGE_COLUMNS;
   return [
     ...TASK_PAGE_COLUMNS,
     {
       key: "backlogActions",
-      header: "",
+      header: "Backlog actions",
+      headerVisuallyHidden: true,
       width: "13%",
       render: (t) => {
         if (normalizeStatus(t.status) !== "backlog") return null;
