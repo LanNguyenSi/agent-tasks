@@ -361,7 +361,11 @@ export default function HomeDashboardPage() {
               </AlertBanner>
             </div>
 
-            {/* Widgets: My Tasks, Open Tasks, Priority, Backlog, In Review, Recently Done */}
+            {/* Widgets (this grid only): My Tasks, Open Tasks, Priority,
+                Backlog, In Review, Recently Done. The stat strip near the
+                top of this function covers the same six scopes but is
+                ordered independently (it leads with Open, then Mine) --
+                do not assume either list mirrors the other. */}
             <div className="home-widgets-grid">
               <TaskWidget
                 title="My Tasks"

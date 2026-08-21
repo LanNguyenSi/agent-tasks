@@ -1704,6 +1704,13 @@ input[type="checkbox"] {
   padding: 0.65rem 0.75rem;
   overflow-x: auto;
   margin: 0.5em 0;
+  /* Scroll-affordance review (batch 21, side finding c): no fade here.
+     Horizontally-scrolling code blocks are a near-universal convention
+     (every code editor/markdown renderer does this); unlike the kanban
+     board (#486) this box paints its own background/border, so the
+     mask-image fade technique would punch a visible hole in that
+     background at the edge rather than blend into the page -- it would
+     need a solid --surface-colored gradient instead, out of scope here. */
 }
 .prose-markdown pre code {
   background: none;
@@ -2303,6 +2310,15 @@ input[type="checkbox"] {
     font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.04em;
+  }
+  /* A column whose render() returns null for some rows (e.g. backlogActions,
+     shown only on backlog rows) leaves the <td> with no children at all.
+     Suppress the label prefix there so non-backlog rows don't show an empty
+     "BACKLOG ACTIONS: " line. Columns that always render *some* content
+     (even a "—" placeholder span, e.g. Due/Synced) are never :empty and
+     keep their label. */
+  .table-td:not(:first-child):empty::before {
+    content: none;
   }
 }
 
@@ -6112,6 +6128,11 @@ a.proj-chip:hover {
   gap: var(--space-2);
   overflow-x: auto;
   padding-bottom: var(--space-1);
+  /* Scroll-affordance review (batch 21, side finding c): no fade here.
+     flex-wrap: wrap is unconditional on this row, so multi-chip overflow
+     wraps to the next line and a fade would almost never have anything to
+     signal. A single over-long nowrap state chip (.wf-state-node) can
+     still scroll on a very narrow viewport; that rare case is accepted. */
 }
 
 /* State chip in the diagram strip — reuses status-chip look */
