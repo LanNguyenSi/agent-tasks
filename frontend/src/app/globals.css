@@ -588,12 +588,6 @@ input[type="checkbox"] {
   gap: var(--space-4);
 }
 
-.board-columns {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(220px, 1fr));
-  gap: 0.9rem;
-}
-
 /* ── Task card ────────────────────────────────────────────────── */
 
 .task-card {
@@ -1533,10 +1527,6 @@ input[type="checkbox"] {
     grid-template-columns: 1fr;
   }
 
-  .board-columns {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .task-detail-grid {
     grid-template-columns: 1fr;
   }
@@ -1621,10 +1611,6 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 760px) {
-  .board-columns {
-    grid-template-columns: 1fr;
-  }
-
   /* Flat cards (ConfirmDialog) tighten their own padding; framed cards
      keep padding on the regions, re-asserted to 0 on the card so the
      rule above doesn't reintroduce it. */
