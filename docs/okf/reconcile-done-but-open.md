@@ -3,7 +3,7 @@ type: runbook
 title: "Reconciling a task whose PR merged but the record is stuck open"
 description: "task_start, ensure branchName, task_finish with prUrl, task_merge, relies on task_merge's alreadyMerged idempotency to bring a stale task record in line with GitHub reality."
 tags: [reconcile, task-lifecycle, idempotency, runbook]
-timestamp: 2026-08-17T18:01:17Z
+timestamp: 2026-08-21T09:00:00Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/default-workflow.ts
@@ -12,7 +12,7 @@ sources:
 
 Symptom: a task's PR is already merged on GitHub, but the task row in agent-tasks is still `open` (or `review`), tracking fell behind reality (e.g. a human merged the PR outside the tool, or a prior agent session died before calling the finish verbs).
 
-**Preconditions this flow assumes**: the task is currently in the workflow's *initial* state (`open` by default) or a *review* state. `POST /tasks/:id/start` explicitly rejects any other status with `409 bad_state` ("must be in initial state ... or a review state"), so this flow does **not** apply to a task stuck `in_progress` under a claim nobody holds anymore; that needs an admin-forced transition (`POST /tasks/:id/transition {force:true}`, admin-only, see `claim-model.md`) before these verbs become callable again.
+**Preconditions this flow assumes**: the task is currently in the workflow's *initial* state (`open` by default) or a *review* state. `POST /tasks/:id/start` explicitly rejects any other status with `409 bad_state` ("must be in initial state ... or a review state"), so this flow does **not** apply to a task stuck `in_progress` under a claim nobody holds anymore; that needs an admin-forced transition (`POST /tasks/:id/transition {force:true}`, admin-only, see `claim-model.md`) before these verbs become callable again. One exception to the generic `409`: since task backlog-status-v1 (`#477`, 2026-08-20) a `backlog` task is rejected earlier and more specifically, with `403 backlog_not_promoted` (see `claim-model.md`) — moot for this runbook in practice, since a backlog task (unpromoted, no branch/PR) cannot be the "PR already merged" scenario this doc addresses; `pickMergeTargetStatus` also no-ops on `backlog` (`governance-merge.md`), so a webhook merge event cannot even move a backlog task into this stuck state to begin with.
 
 **Steps**:
 1. `task_start` (`POST /tasks/:id/start`), claims the task and transitions `open → in_progress` (default workflow; no `requires` gate on this edge, see `backend/src/services/default-workflow.ts` `DEFAULT_TRANSITIONS`). If the task is in a review state instead, this call acquires the review lock rather than the work claim.
