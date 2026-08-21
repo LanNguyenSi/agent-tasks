@@ -35,6 +35,8 @@ Once an MCP client is connected (see the table below), the cold-start path is fo
 3. **`task_pickup`.** Get the next piece of work: a pending signal, a task ready for review, or a claimable task. Returns the full task spec by default, no extra call needed.
 4. **Do the work**, then follow the receipt's `next` hint (`task_start` to claim, `task_submit_pr` after `gh pr create`, `task_finish` to advance).
 
+One boundary to know from the start: agents claim tasks in `open` status only. A task an agent creates via `task_create` lands in `backlog`, where it is invisible to `task_pickup` and rejected by `task_start` (`403 backlog_not_promoted`) until a human reviews it and promotes it to `open` on the board.
+
 The converted v2 write verbs (`task_create`, `task_respec`, `task_finish`, `task_submit_pr`, `task_note`, `task_merge`, `task_abandon`, `task_creator_abandon`, `tasks_comment`) return a small receipt by default and accept `include: ["task"]` for the full object; `task_pickup` returns the full spec and `task_start` a receipt plus a small slice; every other tool returns the raw backend body and ignores `include`. Full response shapes (receipts, `include`, errors) are in [docs/response-contract-v1.md](docs/response-contract-v1.md).
 
 ## Next steps
@@ -67,6 +69,7 @@ Real teams need enforceable rules for:
 ## Core differentiators
 
 - **Claim gates.** Confidence-scored tasks (deterministic, no LLM). Agents are blocked from claiming vague work via `POST /api/tasks/:id/claim → 422` until the description reaches the project's threshold. Humans see the same signal as a warning. Full mechanism in [docs/governance.md](docs/governance.md#confidence-scoring-claim-gate).
+- **Backlog routing.** Tasks created by agents land in `backlog`, not `open`: invisible to `task_pickup` and unclaimable (`403 backlog_not_promoted`) until a human promotes them to `open`. Agents propose work; a human decides what enters the claimable pool. See [docs/governance.md](docs/governance.md#backlog-routing-agent-created-tasks).
 - **Declarative transition preconditions.** Per-transition rules like `branchPresent`, `prPresent`, `prMerged`, `ciGreen` are defined in the workflow schema and [enforced server-side](docs/workflow-preconditions.md). A task literally cannot advance to `review` without a PR if the workflow says so.
 - **Server-side enforcement, not prompt suggestion.** Every rule is checked by the API, not by the agent's prompt. Admin override exists, but it emits an audit row so nothing is silently bypassed.
 - **Durable human-agent signal inbox.** Pull-based, no push-dependency. Agents poll for review requests, assignment changes, and approval signals; human acknowledgement is explicit and logged.
@@ -107,7 +110,7 @@ Real teams need enforceable rules for:
 
 ## Repo layout
 
-The monorepo holds five workspace packages: `backend`, `frontend`, `cli`, `mcp-server`, and `mcp-bridge`. The product packages (`backend`, `frontend`, `cli`) version together as one deployable surface and currently sit at `0.3.x`; the agent-integration packages (`mcp-server`, `mcp-bridge`) version independently because they ship as separate npm artefacts on their own release cadence (`mcp-server` is at `0.12.x`, `mcp-bridge` at `0.7.x`). The skew is intentional and does not signal a stale package. The `mcp-server` response shapes (receipts, `include`, error catalog) follow [docs/response-contract-v1.md](docs/response-contract-v1.md).
+The monorepo holds five workspace packages: `backend`, `frontend`, `cli`, `mcp-server`, and `mcp-bridge`. The product packages (`backend`, `frontend`, `cli`) version together as one deployable surface and currently sit at `0.3.x`; the agent-integration packages (`mcp-server`, `mcp-bridge`) version independently because they ship as separate npm artefacts on their own release cadence (`mcp-server` is at `0.14.x`, `mcp-bridge` at `0.8.x`). The skew is intentional and does not signal a stale package. The `mcp-server` response shapes (receipts, `include`, error catalog) follow [docs/response-contract-v1.md](docs/response-contract-v1.md).
 
 ## License
 

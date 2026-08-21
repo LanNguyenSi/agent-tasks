@@ -121,6 +121,13 @@ table.
 
 The canonical agent surface. Prefer these for all new integrations.
 
+Note on the claim boundary: agents claim tasks in `open` status only.
+`task_create` routes agent-created tasks to `backlog` status, where they are
+invisible to `task_pickup` and rejected by `task_start` with
+`403 backlog_not_promoted` until a human promotes them to `open` (the
+`workflow_primer`'s "Backlog routing" section teaches the same rule
+in-session).
+
 | Tool                  | Wraps                                        |
 | --------------------- | -------------------------------------------- |
 | `task_pickup`         | `POST /api/tasks/pickup`                     |

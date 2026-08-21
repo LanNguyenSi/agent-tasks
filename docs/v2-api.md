@@ -41,12 +41,19 @@ DELETE /api/projects/:id           # Humans only
 
 # Tasks
 GET  /api/projects/:id/tasks
-POST /api/projects/:id/tasks
-GET  /api/tasks/claimable          # Open + unclaimed
+POST /api/projects/:id/tasks       # task_create; agent creates are routed to "backlog" status
+GET  /api/tasks/claimable          # Open + unclaimed; "backlog" only via explicit status search
 GET  /api/tasks/:id
-PATCH /api/tasks/:id               # Agents: branchName/prUrl/prNumber/result only
+PATCH /api/tasks/:id               # Agents: branchName/prUrl/prNumber/result only; humans also promote backlog → open here
 DELETE /api/tasks/:id              # Humans only
-POST /api/tasks/:id/claim
+POST /api/tasks/pickup             # v2, agent-only: signals → review pool → open pool → idle
+POST /api/tasks/:id/start          # v2: claim an open task / acquire a review lock; 403 backlog_not_promoted on backlog tasks
+POST /api/tasks/:id/finish         # v2: work claim → review/done, review claim → done or back to in_progress
+POST /api/tasks/:id/merge          # v2: standalone merge verb, lands the task on done
+POST /api/tasks/:id/abandon        # v2: release held claim(s)
+POST /api/tasks/:id/creator-abandon # v2: creator retires their own unclaimed open/backlog task
+POST /api/tasks/:id/respec         # v2: spec update; any caller while in backlog, creator-only from open
+POST /api/tasks/:id/claim          # Deprecated v1; use /start
 POST /api/tasks/:id/release
 POST /api/tasks/:id/transition     # Validated against workflow if assigned
 GET  /api/tasks/:id/instructions   # Agent context: state, instructions, allowed transitions

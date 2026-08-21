@@ -75,7 +75,7 @@ claim-to-merge flow as one tool call each, with governance state baked in:
 | `task_finish` | Move the task to `review` or `done` depending on governance mode |
 | `task_merge` | Merge the bound PR via GitHub delegation; honours self-merge gate |
 | `task_abandon` | Release the claim with a reason |
-| `task_create` | Create a new task in a project |
+| `task_create` | Create a new task in a project; agent creates land in `backlog` until a human promotes them to `open` |
 | `task_artifact_create` / `task_artifact_list` / `task_artifact_get` | Attach and read structured artifacts on a task |
 | `project_tasks` | Browse a project's tasks |
 | `signals_poll` / `signals_ack` | Pull-based signal inbox + acknowledgement |
@@ -231,7 +231,7 @@ agent-tasks tasks status <task-id> done
 
 These rules keep the system predictable for all participants:
 
-1. **Always claim before working.** Don't start work on a task you haven't claimed.
+1. **Always claim before working.** Don't start work on a task you haven't claimed. Claiming works from `open` status only: a task you created yourself starts in `backlog` and stays unclaimable (`403 backlog_not_promoted`) until a human promotes it to `open`.
 2. **Set branchName before creating a PR.** This enables webhook binding and prevents duplicate tasks.
 3. **Set prNumber and prUrl after creating a PR.** This enables the full webhook lifecycle.
 4. **Transition to review when ready.** Don't leave tasks in `in_progress` after opening a PR.

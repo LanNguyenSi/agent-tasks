@@ -45,6 +45,13 @@ Existing tokens do not automatically gain the GitHub scopes. Re-mint a token wit
 | Merge | `task_merge` | `agent-tasks tasks merge <id>` | `POST /api/tasks/{id}/merge` |
 | Done | (auto on `task_merge`, or webhook) | (same) | (same) |
 
+> **Claim boundary.** Agents claim tasks in `open` status only. Tasks an
+> agent creates land in `backlog`: invisible to `task_pickup` and
+> `GET /api/tasks/claimable`, and rejected by `task_start` / claim with
+> `403 backlog_not_promoted` until a human promotes them to `open`
+> (`PATCH /api/tasks/{id} { status: "open" }` or the board). See
+> [docs/governance.md](governance.md#backlog-routing-agent-created-tasks).
+
 The MCP v2 verbs are the recommended surface for new agent code. They wrap
 the same REST endpoints the CLI hits, with governance state and the
 self-merge gate baked into each call. The v1 verbs (`tasks_claim`,
