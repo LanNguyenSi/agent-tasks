@@ -3263,20 +3263,23 @@ html[data-theme="light"] {
        band. The thin global scrollbar (see html { scrollbar-width: thin }
        above) auto-hides on macOS/most touch trackpads until the user
        actually scrolls, so it alone is not a reliable "more content"
-       affordance here. mask-image only reads alpha, so black/transparent
+       affordance here. mask-image only reads alpha, so #000/transparent
        here are theme-neutral (unlike a background color, which would need
        a token) and render the same in light and dark.
-       Trade-off: this is static CSS, so the fade cannot detect "scrolled
-       to the end" and disappear there without JS/scroll-driven animations;
-       it stays visible even once the last column is fully in view. */
-    mask-image: linear-gradient(
-      to right,
-      black calc(100% - 32px),
-      transparent 100%
-    );
+       The fade width is the board's right gutter (--space-5 board padding
+       + --space-2 column padding), so at scroll-end the ramp lands on the
+       gutter and the last column's cards stay fully opaque -- only the
+       column's own padding edge dissolves. Static CSS cannot hide the
+       fade entirely at scroll-end; that would need JS/scroll-driven
+       animations. */
     -webkit-mask-image: linear-gradient(
       to right,
-      black calc(100% - 32px),
+      #000 calc(100% - (var(--space-5) + var(--space-2))),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      #000 calc(100% - (var(--space-5) + var(--space-2))),
       transparent 100%
     );
   }
