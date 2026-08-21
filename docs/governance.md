@@ -23,6 +23,21 @@ GET /api/tasks/{id}/instructions → { ..., confidence: { score, missing, thresh
 POST /api/tasks/{id}/claim       → 422 if score < threshold (agents only, bypass with ?force=true)
 ```
 
+## Backlog routing (agent-created tasks)
+
+Agents claim tasks in `open` status only. A task created by an agent via `task_create` is hard-routed to `backlog` status (requesting any other status at create time fails with `400 backlog_routing_enforced`); human-created tasks default to `open`.
+
+While a task sits in `backlog`:
+
+- it is **invisible to `task_pickup`** and to the default `GET /api/tasks/claimable` pool,
+- `task_start` and the legacy claim route reject it with `403 backlog_not_promoted`,
+- it is an unreviewed **draft space**: `task_respec` is open to any caller (the creating agent can sharpen its own proposal, a human can edit before promoting), instead of the creator-only rule that applies from `open` onward,
+- a task that depends on it stays blocked; a `backlog` blocker counts as unresolved until promoted.
+
+Only a human moves a task out of `backlog`: **promote** to `open` (board affordance or `PATCH /api/tasks/:id { status: "open" }`, audited as `task.backlog_promoted`) when it is ready for the claimable pool, or **discard** to `abandoned` (audited as `task.backlog_discarded`). No implicit promotion happens on any other event. The creating agent may also retire its own unpromoted draft via `task_creator_abandon`.
+
+Together with the confidence gate this closes the loop on agent-generated work: agents may propose tasks at any time, but nothing an agent wrote enters the claimable pool without a human decision. Full state chart in [docs/state-machines.md](state-machines.md).
+
 ## Transition preconditions
 
 Per-transition rules like `branchPresent`, `prPresent`, `prMerged`, `ciGreen` are defined in the workflow schema and enforced server-side. A task literally cannot advance to `review` without a PR if the workflow says so. Full rule list and authoring guide: [docs/workflow-preconditions.md](workflow-preconditions.md).

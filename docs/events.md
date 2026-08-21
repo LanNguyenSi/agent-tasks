@@ -76,7 +76,7 @@ A separate `STALE_WHEN_DONE` constant suppresses three signal types (`review_nee
 | Type | Emitted when | Recipient | Suppressed from task_pickup feed when task is done | Pushed via webhook |
 |---|---|---|---|---|
 | `review_needed` | Task enters `review` | Candidate reviewers (humans + agents minus the author) | yes | yes |
-| `task_available` | New claimable task surfaced for backlog visibility | Eligible claimants | yes | yes |
+| `task_available` | New claimable `open` task surfaced (tasks in `backlog` status emit no signal until promoted) | Eligible claimants | yes | yes |
 | `task_assigned` | Task explicitly assigned to a specific recipient | The assignee | yes | yes |
 | `changes_requested` | Reviewer transitions `review → in_progress` with comment | The task claimant | no | yes |
 | `task_approved` | Reviewer transitions `review → done` | The task claimant | no | yes |
