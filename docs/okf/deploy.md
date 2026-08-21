@@ -3,7 +3,7 @@ type: runbook
 title: "Deploy: no in-repo automation, prod is docker-compose"
 description: "ci.yml only tests and builds; deploy/verify is an external ops concern; prod runtime is db + one-shot Prisma db push + backend/frontend behind Traefik."
 tags: [deploy, docker-compose, ops, ci]
-timestamp: 2026-08-17T15:30:00Z
+timestamp: 2026-08-21T09:00:00Z
 sources:
   - .github/workflows/ci.yml
   - .github/workflows/docker-smoke.yml

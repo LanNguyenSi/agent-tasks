@@ -3,7 +3,7 @@ type: invariant
 title: "Auth: MCP bridge token resolution and backend validation"
 description: "How mcp-bridge resolves and sends a bearer token and how backend/src/middleware/auth.ts hashes and validates it against a stored AgentToken."
 tags: [auth, token, mcp-bridge, backend, invariant]
-timestamp: 2026-08-17T18:32:38Z
+timestamp: 2026-08-21T09:00:00Z
 sources:
   - mcp-bridge/src/token-store.ts
   - mcp-bridge/src/cli.ts
