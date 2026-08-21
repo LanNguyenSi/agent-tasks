@@ -293,6 +293,11 @@ export default function HomeDashboardPage() {
         href={`/tasks?teamId=${teamId}&scope=priority`}
       />
       <StatTile
+        count={counts?.backlog ?? backlogTasks.length}
+        label="Backlog"
+        href={`/tasks?teamId=${teamId}&status=backlog`}
+      />
+      <StatTile
         count={counts?.review ?? inReviewTasks.length}
         label="In Review"
         href={`/tasks?teamId=${teamId}&scope=review`}
