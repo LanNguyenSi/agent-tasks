@@ -116,20 +116,38 @@ export interface BacklogRowActionHandlers {
 // `rows` is the set of currently rendered table rows (the current page).
 // The backlog actions column is only appended when at least one of those
 // rows is a backlog task -- otherwise every project without backlog tasks
-// would carry a permanently empty 13%-wide column.
+// would carry a permanently empty 16%-wide column.
+// TASK_PAGE_COLUMNS' widths sum to 100% on their own (34+12+16+13+13+12).
+// The table uses table-layout: fixed (globals.css .table--fixed) whenever
+// any column declares a width, so percentages are binding, not hints: (a)
+// if a row's declared widths summed to more than 100%, the browser scales
+// every column down proportionally to fit, which shrinks the trailing
+// actions column enough to clip its buttons (the original bug this const
+// fixes). We keep the present-case sum at exactly 100% to prevent this.
+// (b) The backlogActions column is 16% (not 13%) so its two sm buttons
+// (Promote, Discard, ~70px each with gap) fit side-by-side when the table
+// is capped at ~1152px by .page-shell. The title column gives up 16pp
+// (34% -> 18%) via this const -- 13pp absorb the appended column, 3pp more
+// widen it for side-by-side buttons -- because its ellipsis already
+// handles overflow.
+const TITLE_WIDTH_WITH_BACKLOG_ACTIONS = "18%";
+
 export function buildTaskPageColumns(
   handlers: BacklogRowActionHandlers,
   rows: EnrichedTask[],
 ): ColumnDef<EnrichedTask>[] {
   const hasBacklogRow = rows.some((t) => normalizeStatus(t.status) === "backlog");
   if (!hasBacklogRow) return TASK_PAGE_COLUMNS;
+  const baseColumns = TASK_PAGE_COLUMNS.map((c) =>
+    c.key === "title" ? { ...c, width: TITLE_WIDTH_WITH_BACKLOG_ACTIONS } : c,
+  );
   return [
-    ...TASK_PAGE_COLUMNS,
+    ...baseColumns,
     {
       key: "backlogActions",
       header: "Backlog actions",
       headerVisuallyHidden: true,
-      width: "13%",
+      width: "16%",
       render: (t) => {
         if (normalizeStatus(t.status) !== "backlog") return null;
         const busy = handlers.busyTaskId === t.id;

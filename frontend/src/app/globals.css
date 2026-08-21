@@ -3939,10 +3939,18 @@ html[data-theme="light"] {
   margin-top: var(--space-1);
 }
 
-/* Promote/Discard row actions in the backlogActions column (backlog rows only) */
+/* Promote/Discard row actions in the backlogActions column (backlog rows only).
+   flex-wrap: wrap is a safety net for edge cases where the cell becomes too
+   narrow: very narrow viewports, longer button labels from i18n, or future
+   font changes. The default case (normal viewport + English labels) fits
+   both buttons side-by-side, but if wrapping occurs here, flex-wrap ensures
+   they stack (Promote above Discard) instead of overflowing the fixed-width
+   cell. justify-content: flex-end keeps wrapped buttons right-aligned. */
 .tasks-row-actions {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-1);
 }
 
