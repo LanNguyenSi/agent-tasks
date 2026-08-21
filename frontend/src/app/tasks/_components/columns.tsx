@@ -117,14 +117,29 @@ export interface BacklogRowActionHandlers {
 // The backlog actions column is only appended when at least one of those
 // rows is a backlog task -- otherwise every project without backlog tasks
 // would carry a permanently empty 13%-wide column.
+// TASK_PAGE_COLUMNS' widths sum to 100% on their own (34+12+16+13+13+12).
+// The table uses table-layout: fixed (globals.css .table--fixed) whenever
+// any column declares a width, so percentages are binding, not hints: if a
+// row's declared widths summed to more than 100%, the browser scales every
+// column down proportionally to fit, which shrinks the trailing actions
+// column enough to clip its buttons (the bug this const fixes). Appending
+// the 13%-wide backlogActions column below would push the sum to 113%, so
+// the title column -- the one column with headroom, since its ellipsis
+// already handles overflow -- gives up the same 13pp here to keep the
+// present-case sum at exactly 100%.
+const TITLE_WIDTH_WITH_BACKLOG_ACTIONS = "21%";
+
 export function buildTaskPageColumns(
   handlers: BacklogRowActionHandlers,
   rows: EnrichedTask[],
 ): ColumnDef<EnrichedTask>[] {
   const hasBacklogRow = rows.some((t) => normalizeStatus(t.status) === "backlog");
   if (!hasBacklogRow) return TASK_PAGE_COLUMNS;
+  const baseColumns = TASK_PAGE_COLUMNS.map((c) =>
+    c.key === "title" ? { ...c, width: TITLE_WIDTH_WITH_BACKLOG_ACTIONS } : c,
+  );
   return [
-    ...TASK_PAGE_COLUMNS,
+    ...baseColumns,
     {
       key: "backlogActions",
       header: "Backlog actions",

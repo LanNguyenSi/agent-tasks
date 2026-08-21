@@ -3939,10 +3939,16 @@ html[data-theme="light"] {
   margin-top: var(--space-1);
 }
 
-/* Promote/Discard row actions in the backlogActions column (backlog rows only) */
+/* Promote/Discard row actions in the backlogActions column (backlog rows only).
+   flex-wrap: wrap so the two sm buttons stack onto a second line instead of
+   overflowing the fixed-width backlogActions cell (and the table's right
+   edge with it) at narrower viewports, e.g. <=1200px once the Updated
+   column is hidden and the remaining columns no longer sum to 100%. */
 .tasks-row-actions {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-1);
 }
 

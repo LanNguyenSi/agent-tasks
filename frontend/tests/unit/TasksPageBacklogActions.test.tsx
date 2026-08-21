@@ -15,6 +15,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   buildTaskPageColumns,
   TASK_PAGE_COLUMNS,
@@ -126,5 +128,43 @@ describe("/tasks backlog row actions", () => {
       expect(col?.headerVisuallyHidden).toBe(true);
       expect(cols).toHaveLength(TASK_PAGE_COLUMNS.length + 1);
     });
+
+    // Regression test for the clipped-Discard-button bug (operator report
+    // 2026-08-20): the /tasks table uses table-layout: fixed once any
+    // column declares a width (globals.css .table--fixed), so declared
+    // percentage widths are binding. If they summed to more than 100%, the
+    // browser scales every column down proportionally, shrinking the
+    // trailing actions column enough to clip its Promote/Discard buttons.
+    // Pin the present-case (backlog row -> backlogActions column appended)
+    // sum at exactly 100 so a future width edit that reintroduces overflow
+    // fails loudly here instead of only showing up as a visual clip.
+    it("sums declared column widths to exactly 100% when the backlogActions column is present", () => {
+      const rows = [task({ id: "b-1", title: "Draft task", status: "backlog" })];
+      const cols = buildTaskPageColumns(
+        { onPromote: vi.fn(), onDiscard: vi.fn(), busyTaskId: null },
+        rows,
+      );
+      const total = cols.reduce((sum, c) => {
+        const pct = c.width ? parseFloat(c.width) : 0;
+        return sum + pct;
+      }, 0);
+      expect(total).toBe(100);
+    });
+  });
+
+  // Regression test for the same clipped-Discard-button bug, second half: at
+  // <=1200px the Updated column is hidden (globals.css, "Hide the Updated
+  // column" media query) without the remaining columns being renormalized
+  // to 100%, so the backlogActions column can still be too narrow for two
+  // sm buttons side by side. .tasks-row-actions must wrap (stack Promote
+  // above Discard) instead of overflowing the fixed-width cell -- verified
+  // visually via a full-CSS repro render at 1000px (see task report); this
+  // pins the CSS declaration mechanically so a future edit that drops the
+  // wrap fails loudly here too.
+  it("wraps the backlog row actions instead of letting them overflow their fixed-width cell", () => {
+    const css = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+    const match = css.match(/\.tasks-row-actions\s*\{([^}]*)\}/);
+    expect(match).not.toBeNull();
+    expect(match?.[1]).toMatch(/flex-wrap:\s*wrap/);
   });
 });
