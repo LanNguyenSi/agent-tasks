@@ -205,5 +205,59 @@ describe("/tasks backlog row actions", () => {
       );
       expect(cols).toBe(TASK_PAGE_COLUMNS);
     });
+
+    // Regression test for the empty "BACKLOG ACTIONS:" label in card mode
+    // (<=900px, operator report 2026-08-21): a mixed /tasks page renders the
+    // backlogActions column (appended once any row is backlog) for EVERY
+    // row, but its render() returns null for a non-backlog row (see above).
+    // The stacked-mode CSS (globals.css) prints a `data-label` prefix via
+    // `::before` on every non-first .table-td, so a non-backlog row showed
+    // an empty "BACKLOG ACTIONS: " line. The fix suppresses the prefix with
+    // a `:not(:first-child):empty::before { content: none; }` rule, which
+    // only fires when the <td> truly has no child nodes. This first
+    // assertion pins the DOM precondition the CSS relies on: the cell must
+    // render with zero children (not e.g. an empty string or whitespace
+    // node) for a non-backlog row, same as `col.render(t)` returning null
+    // does today.
+    it("renders the backlogActions cell with no child nodes for a non-backlog row (precondition for the :empty CSS suppression)", () => {
+      const rows = [
+        task({ id: "o-1", title: "Open task", status: "open" }),
+        task({ id: "b-1", title: "Draft task", status: "backlog" }),
+      ];
+      const cols = buildTaskPageColumns(
+        { onPromote: vi.fn(), onDiscard: vi.fn(), busyTaskId: null },
+        rows,
+      );
+      const col = cols.find((c) => c.key === "backlogActions");
+      const openTask = rows[0]!;
+      const rendered = col?.render ? col.render(openTask) : undefined;
+      expect(rendered).toBeNull();
+    });
+
+    // Pins the CSS suppression rule itself so a future edit that drops or
+    // weakens it (e.g. removing the `:empty` qualifier, or the rule
+    // entirely) fails loudly here instead of only showing up as a visual
+    // regression at <=900px. Checked in both the default 900px stacked mode
+    // and the late-stack (720px) variant, since both duplicate the
+    // `data-label` ::before rule.
+    it("pins the empty-cell label suppression (:empty::before { content: none }) via CSS", () => {
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = dirname(__filename);
+      const css = readFileSync(join(__dirname, "../../src/app/globals.css"), "utf8");
+
+      // Anchored at line start (^ with the `m` flag) so this does NOT match
+      // as a substring of the scoped `.table-wrapper--late-stack .table-td:...`
+      // selector checked below -- the two rules must both exist standalone.
+      const defaultRule = /^\s*\.table-td:not\(:first-child\):empty::before\s*\{\s*content:\s*none;\s*\}/m;
+      expect(css, "default 900px stacked mode must suppress the label on empty cells").toMatch(
+        defaultRule,
+      );
+
+      const lateStackRule =
+        /\.table-wrapper--late-stack \.table-td:not\(:first-child\):empty::before\s*\{\s*content:\s*none;\s*\}/;
+      expect(css, "late-stack (720px) variant must suppress the label on empty cells").toMatch(
+        lateStackRule,
+      );
+    });
   });
 });

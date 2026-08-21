@@ -361,7 +361,14 @@ export default function HomeDashboardPage() {
               </AlertBanner>
             </div>
 
-            {/* Widgets: My Tasks, Open Tasks, Priority, Backlog, In Review, Recently Done */}
+            {/* Widgets (this grid only): My Tasks, Open Tasks, Priority,
+                Backlog, In Review, Recently Done. The stat strip above
+                (home-stat-strip, near the top of this function) covers the
+                same six scopes but leads with Open then Mine -- the
+                reverse of this grid's My Tasks/Open Tasks order. No
+                established reason for the swap was found in this file's
+                history; treat the two lists as independently ordered
+                rather than assuming one is a copy-paste of the other. */}
             <div className="home-widgets-grid">
               <TaskWidget
                 title="My Tasks"
