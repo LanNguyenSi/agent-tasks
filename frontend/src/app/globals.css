@@ -3940,10 +3940,12 @@ html[data-theme="light"] {
 }
 
 /* Promote/Discard row actions in the backlogActions column (backlog rows only).
-   flex-wrap: wrap so the two sm buttons stack onto a second line instead of
-   overflowing the fixed-width backlogActions cell (and the table's right
-   edge with it) at narrower viewports, e.g. <=1200px once the Updated
-   column is hidden and the remaining columns no longer sum to 100%. */
+   flex-wrap: wrap is a safety net for edge cases where the cell becomes too
+   narrow: very narrow viewports, longer button labels from i18n, or future
+   font changes. The default case (normal viewport + English labels) fits
+   both buttons side-by-side, but if wrapping occurs here, flex-wrap ensures
+   they stack (Promote above Discard) instead of overflowing the fixed-width
+   cell. justify-content: flex-end keeps wrapped buttons right-aligned. */
 .tasks-row-actions {
   display: inline-flex;
   flex-wrap: wrap;
