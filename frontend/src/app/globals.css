@@ -2374,10 +2374,6 @@ input[type="checkbox"] {
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
-  /* Same empty-cell suppression as the default 900px stacked mode above. */
-  .table-wrapper--late-stack .table-td:not(:first-child):empty::before {
-    content: none;
-  }
 }
 
 /* Also undo the global 900px stacked mode for late-stack tables */
@@ -6133,10 +6129,10 @@ a.proj-chip:hover {
   overflow-x: auto;
   padding-bottom: var(--space-1);
   /* Scroll-affordance review (batch 21, side finding c): no fade here.
-     flex-wrap: wrap is unconditional on this row (no narrower-viewport
-     override switches it to nowrap), so state chips wrap to a second line
-     instead of overflowing horizontally -- overflow-x: auto is effectively
-     inert, not a real scroll surface a fade would ever need to signal. */
+     flex-wrap: wrap is unconditional on this row, so multi-chip overflow
+     wraps to the next line and a fade would almost never have anything to
+     signal. A single over-long nowrap state chip (.wf-state-node) can
+     still scroll on a very narrow viewport; that rare case is accepted. */
 }
 
 /* State chip in the diagram strip — reuses status-chip look */

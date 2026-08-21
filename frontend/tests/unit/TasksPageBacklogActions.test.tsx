@@ -23,6 +23,7 @@ import {
   TASK_PAGE_COLUMNS,
   type EnrichedTask,
 } from "../../src/app/tasks/_components/columns";
+import { Table } from "../../src/components/ui/Table";
 import type { Task } from "../../src/lib/api";
 
 function task(over: Partial<Task> & { id: string; title: string; status: string }): EnrichedTask {
@@ -219,7 +220,12 @@ describe("/tasks backlog row actions", () => {
     // render with zero children (not e.g. an empty string or whitespace
     // node) for a non-backlog row, same as `col.render(t)` returning null
     // does today.
-    it("renders the backlogActions cell with no child nodes for a non-backlog row (precondition for the :empty CSS suppression)", () => {
+    it("renders an empty <td> (zero child nodes) for the backlogActions cell of a non-backlog row", () => {
+      // The :empty CSS suppression depends on a DOM fact about Table.tsx:
+      // the <td> must end up with literally no child nodes when render()
+      // returns null. Mount the real Table so a cell-wrapper refactor
+      // (e.g. wrapping every cell in a span) fails here instead of
+      // silently reintroducing the empty "BACKLOG ACTIONS: " label.
       const rows = [
         task({ id: "o-1", title: "Open task", status: "open" }),
         task({ id: "b-1", title: "Draft task", status: "backlog" }),
@@ -228,35 +234,31 @@ describe("/tasks backlog row actions", () => {
         { onPromote: vi.fn(), onDiscard: vi.fn(), busyTaskId: null },
         rows,
       );
-      const col = cols.find((c) => c.key === "backlogActions");
-      const openTask = rows[0]!;
-      const rendered = col?.render ? col.render(openTask) : undefined;
-      expect(rendered).toBeNull();
+      const { container } = render(
+        <Table columns={cols} rows={rows} rowKey={(r) => r.id} />,
+      );
+      const tds = container.querySelectorAll('td[data-col="backlogActions"]');
+      expect(tds).toHaveLength(2);
+      expect(tds[0]!.childNodes.length).toBe(0);
+      expect(tds[1]!.childNodes.length).toBeGreaterThan(0);
     });
 
     // Pins the CSS suppression rule itself so a future edit that drops or
     // weakens it (e.g. removing the `:empty` qualifier, or the rule
     // entirely) fails loudly here instead of only showing up as a visual
-    // regression at <=900px. Checked in both the default 900px stacked mode
-    // and the late-stack (720px) variant, since both duplicate the
-    // `data-label` ::before rule.
+    // regression at <=900px. Only the default 900px stacked mode is pinned:
+    // late-stack tables currently never enter stacked mode (the later 900px
+    // undo block overrides the 720px late-stack block), so a rule there
+    // would be inert.
     it("pins the empty-cell label suppression (:empty::before { content: none }) via CSS", () => {
       const __filename = fileURLToPath(import.meta.url);
       const __dirname = dirname(__filename);
       const css = readFileSync(join(__dirname, "../../src/app/globals.css"), "utf8");
 
-      // Anchored at line start (^ with the `m` flag) so this does NOT match
-      // as a substring of the scoped `.table-wrapper--late-stack .table-td:...`
-      // selector checked below -- the two rules must both exist standalone.
-      const defaultRule = /^\s*\.table-td:not\(:first-child\):empty::before\s*\{\s*content:\s*none;\s*\}/m;
+      const defaultRule =
+        /^\s*\.table-td:not\(:first-child\):empty::before\s*\{\s*content:\s*none\s*;?\s*\}/m;
       expect(css, "default 900px stacked mode must suppress the label on empty cells").toMatch(
         defaultRule,
-      );
-
-      const lateStackRule =
-        /\.table-wrapper--late-stack \.table-td:not\(:first-child\):empty::before\s*\{\s*content:\s*none;\s*\}/;
-      expect(css, "late-stack (720px) variant must suppress the label on empty cells").toMatch(
-        lateStackRule,
       );
     });
   });
