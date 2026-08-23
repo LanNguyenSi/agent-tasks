@@ -3614,15 +3614,17 @@ html[data-theme="light"] {
   margin-top: var(--space-1);
 }
 
-/* Stat strip: 5-column row of large-number tiles */
+/* Stat strip: 6-column row of large-number tiles (one row per D2). Below
+   1100px, six columns crowd the number+label pair, so it drops to 3
+   columns (3x2); below 560px (phone) it drops further to 2 (2x3). */
 .home-stat-strip {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: var(--space-3);
   margin-bottom: var(--space-5);
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1099px) {
   .home-stat-strip {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
