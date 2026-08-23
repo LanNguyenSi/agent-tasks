@@ -65,4 +65,36 @@ describe("late-stack table CSS media-query boundaries (globals.css)", () => {
       undoRuleRe,
     );
   });
+
+  it("suppresses the empty-cell label in the 720px late-stack block", () => {
+    const css = readGlobalsCss();
+    // Find the 720px late-stack stacked-mode block.
+    const stackedModeBlockIdx = css.indexOf("@media (max-width: 720px)");
+    expect(stackedModeBlockIdx, "720px block must exist").toBeGreaterThan(-1);
+
+    const afterMediaStart = css.slice(stackedModeBlockIdx);
+    // Find the matching closing brace of the 720px block.
+    let braceCount = 0;
+    let blockEndIdx = -1;
+    for (let i = 0; i < afterMediaStart.length; i++) {
+      if (afterMediaStart[i] === "{") braceCount++;
+      if (afterMediaStart[i] === "}") {
+        braceCount--;
+        if (braceCount === 0) {
+          blockEndIdx = i;
+          break;
+        }
+      }
+    }
+    expect(blockEndIdx, "720px block must have a closing brace").toBeGreaterThan(-1);
+
+    const blockContent = afterMediaStart.slice(0, blockEndIdx + 1);
+    // The 720px block must contain the suppression rule for empty cells.
+    const suppressionRuleRe =
+      /\.table-wrapper--late-stack \.table-td:not\(:first-child\):empty::before\s*\{\s*content:\s*none\s*;?\s*\}/;
+    expect(
+      blockContent,
+      "720px late-stack block must suppress the label prefix on empty cells",
+    ).toMatch(suppressionRuleRe);
+  });
 });

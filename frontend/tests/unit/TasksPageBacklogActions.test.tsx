@@ -246,14 +246,9 @@ describe("/tasks backlog row actions", () => {
     // Pins the CSS suppression rule itself so a future edit that drops or
     // weakens it (e.g. removing the `:empty` qualifier, or the rule
     // entirely) fails loudly here instead of only showing up as a visual
-    // regression at <=900px. Only the default 900px stacked mode is pinned:
-    // late-stack tables now DO enter stacked mode below 720px (see
-    // LateStackTableCss.test.ts, task 125ad0f9), but neither workflow
-    // late-stack table (StatesTable, TransitionsTable) has a column whose
-    // render() can return null, so no empty <td> ever occurs there and the
-    // (unscoped, source-order-losing) label rule in the late-stack 720px
-    // block staying un-suppressed for :empty cells is currently inert in
-    // practice. This test only covers /tasks (the default stacked mode).
+    // regression at <=900px. Only the default 900px stacked mode is pinned
+    // here; the late-stack 720px block now carries its own suppression rule
+    // (see LateStackTableCss.test.ts, task 125ad0f9).
     it("pins the empty-cell label suppression (:empty::before { content: none }) via CSS", () => {
       const __filename = fileURLToPath(import.meta.url);
       const __dirname = dirname(__filename);

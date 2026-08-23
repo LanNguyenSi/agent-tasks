@@ -2374,6 +2374,10 @@ input[type="checkbox"] {
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
+  /* Suppress the label prefix on empty cells, mirroring the default block's suppression. */
+  .table-wrapper--late-stack .table-td:not(:first-child):empty::before {
+    content: none;
+  }
 }
 
 /* Also undo the global 900px stacked mode for late-stack tables, but only
