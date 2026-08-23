@@ -2374,10 +2374,18 @@ input[type="checkbox"] {
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
+  /* Suppress the label prefix on empty cells, mirroring the default block's suppression. */
+  .table-wrapper--late-stack .table-td:not(:first-child):empty::before {
+    content: none;
+  }
 }
 
-/* Also undo the global 900px stacked mode for late-stack tables */
-@media (max-width: 900px) {
+/* Also undo the global 900px stacked mode for late-stack tables, but only
+   above the late-stack threshold (721px-900px). Below that, the 720px
+   block above must win so late-stack tables actually stack; this block
+   used to be unscoped and always won by source order, which kept
+   late-stack tables in table mode at every width. */
+@media (max-width: 900px) and (min-width: 721px) {
   .table-wrapper--late-stack .table-compact-sort {
     display: none;
   }
