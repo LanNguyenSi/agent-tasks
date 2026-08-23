@@ -27,6 +27,20 @@ import { isBacklogTask, isPriorityTask } from "./widgetFilters";
 
 type EnrichedTask = Task & { projectName: string };
 
+type HomeScope = {
+  key: string;
+  scope: "mine" | "priority" | "backlog" | "open" | "review" | "done";
+  statLabel: string;
+  widgetTitle: string;
+  count: number;
+  tasks: EnrichedTask[];
+  total?: number;
+  href: string;
+  moreHrefOverride?: string;
+  olderCount?: number;
+  emptyState: ReactNode;
+};
+
 // ── TaskRow ───────────────────────────────────────────────────────
 
 function TaskRow({ task, teamId }: { task: EnrichedTask; teamId: string }) {
@@ -280,19 +294,7 @@ export default function HomeDashboardPage() {
   // Tasks, In Review, Recently Done. To reorder either surface, reorder
   // this array; do not add a second, independently-ordered list. hrefs,
   // counts, and empty states are carried over unchanged from before.
-  const homeScopes: {
-    key: string;
-    scope: string;
-    statLabel: string;
-    widgetTitle: string;
-    count: number;
-    tasks: EnrichedTask[];
-    total?: number;
-    href: string;
-    moreHrefOverride?: string;
-    olderCount?: number;
-    emptyState: ReactNode;
-  }[] = [
+  const homeScopes: HomeScope[] = [
     {
       key: "mine",
       scope: "mine",

@@ -14,7 +14,7 @@
  * useRouter so the page can mount without a real router.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, cleanup } from "@testing-library/react";
 import type { User, Team, Task, TeamTasksProject, TeamTasksCounts } from "../../src/lib/api";
 
 const routerMocks = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
@@ -161,5 +161,114 @@ describe("home page — shared scope order (stat strip + widget grid)", () => {
     );
 
     expect(titles).toEqual(EXPECTED_WIDGET_TITLES);
+  });
+});
+
+describe("home page — widget plumbing", () => {
+  it("(a) Backlog widget title link and more-link href end with &status=backlog (moreHrefOverride)", async () => {
+    await renderHomePage();
+
+    const grid = document.querySelector(".home-widgets-grid");
+    if (!grid) throw new Error("widget grid not found");
+
+    // Find the Backlog widget (third widget in D1 order)
+    const widgets = Array.from(grid.querySelectorAll(".home-widget-card"));
+    const backlogWidget = widgets[2]; // My Tasks, Priority, then Backlog
+    if (!backlogWidget) throw new Error("Backlog widget not found");
+
+    // Check title link href
+    const titleLink = backlogWidget.querySelector(".home-widget-title-link") as HTMLAnchorElement;
+    expect(titleLink).not.toBeNull();
+    expect(titleLink.href).toContain("status=backlog");
+
+    // Check more-link href
+    const moreLink = backlogWidget.querySelector(".home-widget-more") as HTMLAnchorElement;
+    expect(moreLink).not.toBeNull();
+    expect(moreLink.href).toContain("status=backlog");
+  });
+
+  it("(b) Recently Done widget shows link to scope=done&recency=older when olderCount > 0", async () => {
+    mockGetCurrentUser.mockResolvedValue(makeUser());
+    mockGetTeams.mockResolvedValue([makeTeam()]);
+    mockGetTeamTasks.mockResolvedValue({
+      tasks: [
+        makeTask({ id: "t1", status: "done", updatedAt: new Date().toISOString() }),
+        makeTask({ id: "t2", status: "done", updatedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() }),
+      ],
+      projects: [makeProject()],
+      counts: makeCounts({
+        doneRecent: 1,
+        doneOlder: 1, // Ensures olderCount > 0
+      }),
+    });
+
+    render(<HomeDashboardPage />);
+    await vi.waitFor(() => {
+      expect(document.querySelector(".home-stat-strip")).not.toBeNull();
+      expect(document.querySelector(".home-widgets-grid")).not.toBeNull();
+    });
+
+    const grid = document.querySelector(".home-widgets-grid");
+    if (!grid) throw new Error("widget grid not found");
+
+    // Find the Recently Done widget (last widget in D1 order)
+    const widgets = Array.from(grid.querySelectorAll(".home-widget-card"));
+    const doneWidget = widgets[5]; // Six widgets total, Recently Done is last
+    if (!doneWidget) throw new Error("Recently Done widget not found");
+
+    // Check for the older done link
+    const olderLinks = Array.from(doneWidget.querySelectorAll(".widget-link")) as HTMLAnchorElement[];
+    const olderLink = olderLinks.find((link) => link.href.includes("recency=older"));
+    expect(olderLink).not.toBeNull();
+    expect(olderLink?.href).toContain("scope=done");
+    expect(olderLink?.href).toContain("recency=older");
+  });
+
+  it("(c) Empty state action buttons render with correct hrefs when mine and open slices are empty", async () => {
+    mockGetCurrentUser.mockResolvedValue(makeUser({ id: "u-1" }));
+    mockGetTeams.mockResolvedValue([makeTeam()]);
+    mockGetTeamTasks.mockResolvedValue({
+      tasks: [], // No tasks: mine and open will both be empty
+      projects: [makeProject()],
+      counts: makeCounts({
+        mine: 0,
+        open: 0,
+        priority: 0,
+        review: 0,
+        doneRecent: 0,
+      }),
+    });
+
+    render(<HomeDashboardPage />);
+    await vi.waitFor(() => {
+      expect(document.querySelector(".home-stat-strip")).not.toBeNull();
+      expect(document.querySelector(".home-widgets-grid")).not.toBeNull();
+    });
+
+    const grid = document.querySelector(".home-widgets-grid");
+    if (!grid) throw new Error("widget grid not found");
+
+    // Find the My Tasks widget (first widget in D1 order) - should have "Browse open tasks" button
+    const widgets = Array.from(grid.querySelectorAll(".home-widget-card"));
+    const myTasksWidget = widgets[0];
+    if (!myTasksWidget) throw new Error("My Tasks widget not found");
+
+    // Check for "Browse open tasks" button with href containing scope=open
+    const browseOpenButton = Array.from(myTasksWidget.querySelectorAll("a, button")).find(
+      (el) => el.textContent?.includes("Browse open tasks")
+    ) as HTMLAnchorElement | null;
+    expect(browseOpenButton).not.toBeNull();
+    expect(browseOpenButton?.href).toContain("scope=open");
+
+    // Find the Open Tasks widget (fourth widget in D1 order) - should have "View all tasks" button
+    const openTasksWidget = widgets[3];
+    if (!openTasksWidget) throw new Error("Open Tasks widget not found");
+
+    // Check for "View all tasks" button with href containing scope=all
+    const viewAllButton = Array.from(openTasksWidget.querySelectorAll("a, button")).find(
+      (el) => el.textContent?.includes("View all tasks")
+    ) as HTMLAnchorElement | null;
+    expect(viewAllButton).not.toBeNull();
+    expect(viewAllButton?.href).toContain("scope=all");
   });
 });
