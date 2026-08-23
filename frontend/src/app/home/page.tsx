@@ -273,40 +273,124 @@ export default function HomeDashboardPage() {
 
   const teamId = selectedTeam?.id ?? "";
 
+  // ── Ordered scope list (D1/D3) ───────────────────────────────
+  // Single source of truth for BOTH the stat strip and the widget grid:
+  // each surface below renders this list, in this order, and nothing
+  // else. D1 (operator-decided): My Tasks, Priority, Backlog, Open
+  // Tasks, In Review, Recently Done. To reorder either surface, reorder
+  // this array; do not add a second, independently-ordered list. hrefs,
+  // counts, and empty states are carried over unchanged from before.
+  const homeScopes: {
+    key: string;
+    scope: string;
+    statLabel: string;
+    widgetTitle: string;
+    count: number;
+    tasks: EnrichedTask[];
+    total?: number;
+    href: string;
+    moreHrefOverride?: string;
+    olderCount?: number;
+    emptyState: ReactNode;
+  }[] = [
+    {
+      key: "mine",
+      scope: "mine",
+      statLabel: "Mine",
+      widgetTitle: "My Tasks",
+      count: counts?.mine ?? myTasks.length,
+      tasks: myTasks,
+      total: counts?.mine,
+      href: `/tasks?teamId=${teamId}&scope=mine`,
+      emptyState: (
+        <EmptyState
+          title="Nothing assigned to you."
+          action={
+            <Button href={`/tasks?teamId=${teamId}&scope=open`} variant="ghost" size="sm">
+              Browse open tasks
+            </Button>
+          }
+        />
+      ),
+    },
+    {
+      key: "priority",
+      scope: "priority",
+      statLabel: "Priority",
+      widgetTitle: "Priority (High / Critical)",
+      count: counts?.priority ?? priorityTasks.length,
+      tasks: priorityTasks,
+      total: counts?.priority,
+      href: `/tasks?teamId=${teamId}&scope=priority`,
+      emptyState: <EmptyState title="No high-priority tasks." />,
+    },
+    {
+      key: "backlog",
+      scope: "backlog",
+      statLabel: "Backlog",
+      widgetTitle: "Backlog",
+      count: counts?.backlog ?? backlogTasks.length,
+      tasks: backlogTasks,
+      total: counts?.backlog,
+      href: `/tasks?teamId=${teamId}&status=backlog`,
+      moreHrefOverride: `/tasks?teamId=${teamId}&status=backlog`,
+      emptyState: <EmptyState title="No drafts waiting for promotion." />,
+    },
+    {
+      key: "open",
+      scope: "open",
+      statLabel: "Open",
+      widgetTitle: "Open Tasks",
+      count: counts?.open ?? openTasks.length,
+      tasks: openTasks,
+      total: counts?.open,
+      href: `/tasks?teamId=${teamId}&scope=open`,
+      emptyState: (
+        <EmptyState
+          title="No open tasks."
+          action={
+            <Button href={`/tasks?teamId=${teamId}&scope=all`} variant="ghost" size="sm">
+              View all tasks
+            </Button>
+          }
+        />
+      ),
+    },
+    {
+      key: "review",
+      scope: "review",
+      statLabel: "In Review",
+      widgetTitle: "In Review",
+      count: counts?.review ?? inReviewTasks.length,
+      tasks: inReviewTasks,
+      total: counts?.review,
+      href: `/tasks?teamId=${teamId}&scope=review`,
+      emptyState: <EmptyState title="Nothing in review." />,
+    },
+    {
+      key: "done",
+      scope: "done",
+      statLabel: "Recently Done",
+      widgetTitle: "Recently Done",
+      count: counts?.doneRecent ?? recentlyDone.length,
+      tasks: recentlyDone,
+      // total = the server's recent (<=14d) done count; olderCount = the >14d count.
+      // The widget's "more" link stays in the recent window; "older done" deep-links
+      // to the >14d slice.
+      total: counts?.doneRecent ?? recentlyDone.length,
+      href: `/tasks?teamId=${teamId}&scope=done`,
+      olderCount: olderDoneCount,
+      emptyState: <EmptyState title="No tasks completed in the last 14 days." />,
+    },
+  ];
+
   // ── Stat strip ────────────────────────────────────────────────
 
   const statStrip = (
     <div className="home-stat-strip">
-      <StatTile
-        count={counts?.open ?? openTasks.length}
-        label="Open"
-        href={`/tasks?teamId=${teamId}&scope=open`}
-      />
-      <StatTile
-        count={counts?.mine ?? myTasks.length}
-        label="Mine"
-        href={`/tasks?teamId=${teamId}&scope=mine`}
-      />
-      <StatTile
-        count={counts?.priority ?? priorityTasks.length}
-        label="Priority"
-        href={`/tasks?teamId=${teamId}&scope=priority`}
-      />
-      <StatTile
-        count={counts?.backlog ?? backlogTasks.length}
-        label="Backlog"
-        href={`/tasks?teamId=${teamId}&status=backlog`}
-      />
-      <StatTile
-        count={counts?.review ?? inReviewTasks.length}
-        label="In Review"
-        href={`/tasks?teamId=${teamId}&scope=review`}
-      />
-      <StatTile
-        count={counts?.doneRecent ?? recentlyDone.length}
-        label="Recently Done"
-        href={`/tasks?teamId=${teamId}&scope=done`}
-      />
+      {homeScopes.map((s) => (
+        <StatTile key={s.key} count={s.count} label={s.statLabel} href={s.href} />
+      ))}
     </div>
   );
 
@@ -361,83 +445,25 @@ export default function HomeDashboardPage() {
               </AlertBanner>
             </div>
 
-            {/* Widgets (this grid only): My Tasks, Open Tasks, Priority,
-                Backlog, In Review, Recently Done. The stat strip near the
-                top of this function covers the same six scopes but is
-                ordered independently (it leads with Open, then Mine) --
-                do not assume either list mirrors the other. */}
+            {/* Widgets: same six scopes as the stat strip above, rendered
+                from the same `homeScopes` list in the same D1 order (My
+                Tasks, Priority, Backlog, Open Tasks, In Review, Recently
+                Done) -- see the comment at homeScopes for the ordering
+                rule. */}
             <div className="home-widgets-grid">
-              <TaskWidget
-                title="My Tasks"
-                tasks={myTasks}
-                teamId={teamId}
-                scope="mine"
-                total={counts?.mine}
-                emptyState={
-                  <EmptyState
-                    title="Nothing assigned to you."
-                    action={
-                      <Button href={`/tasks?teamId=${teamId}&scope=open`} variant="ghost" size="sm">
-                        Browse open tasks
-                      </Button>
-                    }
-                  />
-                }
-              />
-              <TaskWidget
-                title="Open Tasks"
-                tasks={openTasks}
-                teamId={teamId}
-                scope="open"
-                total={counts?.open}
-                emptyState={
-                  <EmptyState
-                    title="No open tasks."
-                    action={
-                      <Button href={`/tasks?teamId=${teamId}&scope=all`} variant="ghost" size="sm">
-                        View all tasks
-                      </Button>
-                    }
-                  />
-                }
-              />
-              <TaskWidget
-                title="Priority (High / Critical)"
-                tasks={priorityTasks}
-                teamId={teamId}
-                scope="priority"
-                total={counts?.priority}
-                emptyState={<EmptyState title="No high-priority tasks." />}
-              />
-              <TaskWidget
-                title="Backlog"
-                tasks={backlogTasks}
-                teamId={teamId}
-                scope="backlog"
-                total={counts?.backlog}
-                moreHrefOverride={`/tasks?teamId=${teamId}&status=backlog`}
-                emptyState={<EmptyState title="No drafts waiting for promotion." />}
-              />
-              <TaskWidget
-                title="In Review"
-                tasks={inReviewTasks}
-                teamId={teamId}
-                scope="review"
-                total={counts?.review}
-                emptyState={<EmptyState title="Nothing in review." />}
-              />
-              {/* total = the server's recent (<=14d) done count; olderCount = the >14d count.
-                  The widget's "more" link stays in the recent window; "older done" deep-links
-                  to the >14d slice. */}
-              <TaskWidget
-                title="Recently Done"
-                tasks={recentlyDone}
-                teamId={teamId}
-                scope="done"
-                total={counts?.doneRecent ?? recentlyDone.length}
-                olderCount={olderDoneCount}
-                emptyState={<EmptyState title="No tasks completed in the last 14 days." />}
-              />
+              {homeScopes.map((s) => (
+                <TaskWidget
+                  key={s.key}
+                  title={s.widgetTitle}
+                  tasks={s.tasks}
+                  teamId={teamId}
+                  scope={s.scope}
+                  total={s.total}
+                  moreHrefOverride={s.moreHrefOverride}
+                  olderCount={s.olderCount}
+                  emptyState={s.emptyState}
+                />
+              ))}
             </div>
           </>
         )
