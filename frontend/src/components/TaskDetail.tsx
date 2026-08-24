@@ -47,6 +47,7 @@ import {
   type TemplateFields,
 } from "../lib/confidence";
 import { parseChecklistProgress } from "../lib/checklist";
+import { isResolvedBlocker } from "../lib/blockerStatus";
 import { isHttpUrl, parsePrNumberFromUrl } from "../lib/pr";
 import { buildSavedTemplateData } from "../lib/templateData";
 import type { TemplateDataEdits } from "../lib/templateData";
@@ -962,7 +963,7 @@ export default function TaskDetail({
               {task.blockedBy?.map((dep) => (
                 <div key={dep.id} className="td-dep-edit-row">
                   <span className="td-dep-edit-row-left">
-                    <span className={["td-dep-status-dot", dep.status === "done" ? "td-dep-status-dot--done" : "td-dep-status-dot--blocked"].join(" ")} />
+                    <span className={["td-dep-status-dot", isResolvedBlocker(dep.status) ? "td-dep-status-dot--done" : "td-dep-status-dot--blocked"].join(" ")} />
                     <span>{dep.title}</span>
                     <span className="td-dep-status">({dep.status})</span>
                   </span>
@@ -1033,7 +1034,7 @@ export default function TaskDetail({
           <div className="td-dep-view-list">
             {task.blockedBy?.map((dep) => (
               <div key={dep.id} className="td-dep-view-row">
-                <span className={["td-dep-status-dot", dep.status === "done" ? "td-dep-status-dot--done" : "td-dep-status-dot--blocked"].join(" ")} />
+                <span className={["td-dep-status-dot", isResolvedBlocker(dep.status) ? "td-dep-status-dot--done" : "td-dep-status-dot--blocked"].join(" ")} />
                 <span>{dep.title}</span>
                 <span className="td-dep-status">({dep.status})</span>
               </div>
