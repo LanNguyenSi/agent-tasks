@@ -41,6 +41,7 @@ import {
 import {
   calculateConfidence,
   resolveEffectiveThreshold,
+  resolveConfidenceWarning,
   TASK_TYPES,
   type TaskType,
   type TaskTypeThresholds,
@@ -855,30 +856,57 @@ export default function TaskDetail({
             // M2 (task a9dc7e58): only `BLOCK` actually stops a claim server-side
             // (see backend lib/enforcement-mode.ts); `WARN` and `OFF` are both
             // advisory-only there, so both get the same non-blocking copy here —
-            // splitting OFF out to hide the warning entirely would be a
-            // badge-behavior change beyond this fix's scope. The badge itself
-            // computes `conf` above unconditionally, independent of
-            // enforcementMode, so OFF still shows the score and this copy here
-            // even though the backend's OFF-mode gate never runs that
-            // computation server-side (confidence-gate.ts short-circuits before
-            // scoring). `null`/`undefined` (row predates the column, or a caller
-            // hasn't threaded it yet) is treated as `WARN` too, matching the
+            // splitting OFF out to hide the below-threshold warning entirely
+            // would be a badge-behavior change beyond this fix's scope. The
+            // badge itself computes `conf` above unconditionally, independent
+            // of enforcementMode, so OFF still shows the score and this copy
+            // here even though the backend's OFF-mode gate never runs that
+            // computation server-side (confidence-gate.ts short-circuits
+            // before scoring; see the updated enforcement-mode.ts docstring).
+            // `null`/`undefined` (row predates the column, or a caller hasn't
+            // threaded it yet) is treated as `WARN` too, matching the
             // backend's own default for an unset mode — the safe choice, since
             // claiming "cannot claim this task" when the project doesn't
-            // actually block claims is the misleading direction this fix exists
-            // to remove.
-            const claimsBlocked = enforcementMode === "BLOCK";
+            // actually block claims is the misleading direction this fix
+            // exists to remove.
+            //
+            // task c271feb9: `resolveConfidenceWarning` additionally surfaces a
+            // keystone violation (`conf.blocking`) independent of the
+            // threshold comparison, mirroring the backend's
+            // `wouldBlock = belowThreshold || report.blocking`: a BLOCK
+            // project's /start gate rejects a keystone-violating claim even
+            // when the score itself clears the threshold, so the badge must
+            // warn about that too, or an over-threshold keystone-blocking
+            // task shows no warning while the claim gate still 422s.
+            const belowThreshold = conf.score < effectiveThreshold;
+            const warning = resolveConfidenceWarning({
+              score: conf.score,
+              effectiveThreshold,
+              blocking: conf.blocking,
+              enforcementMode,
+            });
             return (
               <div className="td-conf-section">
                 <div className="td-conf-badge-row">
                   <ConfidenceBadge score={conf.score} size="md" />
-                  {conf.score < effectiveThreshold && (
+                  {warning.show && (
                     <span className="td-conf-threshold-warn">
-                      Below threshold ({effectiveThreshold}) —{" "}
-                      {claimsBlocked
-                        ? "agents cannot claim this task"
-                        : "advisory in this project; agents can still claim it"}
-                      {thresholdSource === "taskType" && ` (${conf.inferredTaskType} override)`}
+                      {belowThreshold ? (
+                        <>
+                          Below threshold ({effectiveThreshold}) —{" "}
+                          {warning.claimsBlocked
+                            ? "agents cannot claim this task"
+                            : "advisory in this project; agents can still claim it"}
+                          {thresholdSource === "taskType" && ` (${conf.inferredTaskType} override)`}
+                        </>
+                      ) : (
+                        <>
+                          Keystone violation:{" "}
+                          {warning.claimsBlocked
+                            ? "agents cannot claim this task"
+                            : "advisory in this project; agents can still claim it"}
+                        </>
+                      )}
                     </span>
                   )}
                 </div>

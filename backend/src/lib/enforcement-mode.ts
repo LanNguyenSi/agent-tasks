@@ -4,11 +4,14 @@
  * `enforcementMode` is a per-project knob controlling what the confidence gate
  * does with a low-readiness agent claim:
  *
- *   - `OFF`   — advisory only. The score is computed and surfaced, but an agent
- *               is never blocked.
- *   - `WARN`  — compute + surface + shadow-log would-blocks, but never block.
+ *   - `OFF`   : fully advisory. `confidence-gate.ts` short-circuits before the
+ *               score is even computed server-side, so nothing is surfaced or
+ *               audited here; an agent is never blocked. (The frontend badge
+ *               may still show a client-computed score independently of this
+ *               gate.)
+ *   - `WARN`  : compute + surface + shadow-log would-blocks, but never block.
  *               The safe-rollout default.
- *   - `BLOCK` — block agent claims below the project threshold AND on a violated
+ *   - `BLOCK` : block agent claims below the project threshold AND on a violated
  *               keystone (`ConfidenceResult.blocking`) regardless of threshold.
  *
  * Existing rows have `enforcementMode: null` until they're next written.

@@ -157,6 +157,57 @@ export function resolveEffectiveThreshold(
   return { effectiveThreshold: GLOBAL_DEFAULT_CONFIDENCE_THRESHOLD, thresholdSource: "global" };
 }
 
+// ── TaskDetail badge warning (task c271feb9) ────────────────────────────────────
+
+export interface ConfidenceWarningState {
+  /** Whether the badge should render a warning at all. */
+  show: boolean;
+  /** True when this warning is caused (at least in part) by a keystone
+   *  quality-gate violation (`ConfidenceResult.blocking`) rather than
+   *  purely by an under-threshold score. */
+  keystoneBlocking: boolean;
+  /** True when the project's enforcement mode actually stops the claim
+   *  server-side (`BLOCK` only; mirrors `enforcementBlocks` in the
+   *  backend's enforcement-mode.ts). */
+  claimsBlocked: boolean;
+}
+
+/**
+ * Decides whether the TaskDetail confidence badge shows a warning, and what
+ * kind. Mirrors the backend's `wouldBlock = belowThreshold || report.blocking`
+ * (`services/claim-policy-evaluator.ts`): a BLOCK project's /start gate
+ * rejects a claim on a keystone violation regardless of the score/threshold
+ * comparison, so the badge must surface that state too. Before this task the
+ * badge only compared `score < effectiveThreshold`, so a BLOCK project with
+ * an over-threshold score but a keystone-blocking task showed NO warning at
+ * all while /start still returned 422 (falsely permissive).
+ *
+ * `enforcementMode` decides both whether the keystone-only case is shown,
+ * and the wording once it is:
+ *   - `BLOCK`: either condition shows a blocking warning (claims stopped).
+ *   - `WARN`: either condition shows an advisory warning (claims allowed).
+ *   - `OFF`/null/undefined: the pre-existing below-threshold warning is
+ *     unchanged, but the NEW keystone-only case is suppressed: the backend's
+ *     confidence-gate.ts short-circuits before computing anything under OFF
+ *     (see the updated enforcement-mode.ts docstring), so there is no
+ *     server-side keystone signal to surface for an OFF project.
+ */
+export function resolveConfidenceWarning(input: {
+  score: number;
+  effectiveThreshold: number;
+  blocking: boolean;
+  enforcementMode: "OFF" | "WARN" | "BLOCK" | null | undefined;
+}): ConfidenceWarningState {
+  const { score, effectiveThreshold, blocking, enforcementMode } = input;
+  const belowThreshold = score < effectiveThreshold;
+  const keystoneBlocking = blocking && enforcementMode !== "OFF";
+  return {
+    show: belowThreshold || keystoneBlocking,
+    keystoneBlocking: keystoneBlocking && !belowThreshold,
+    claimsBlocked: enforcementMode === "BLOCK",
+  };
+}
+
 interface ConfidenceInput {
   title: string;
   description: string | null;
