@@ -4,6 +4,7 @@ import {
   descriptionQuality,
   extractSpecSections,
   deriveNextActions,
+  resolveConfidenceWarning,
   EVALS_KEYSTONE_CAP,
   FIELD_WEIGHTS,
   REQUIRED_SIGNAL_ONLY_CODES,
@@ -1354,5 +1355,86 @@ describe("deriveNextActions", () => {
 
   it("returns an empty array for no findings", () => {
     expect(deriveNextActions([])).toEqual([]);
+  });
+});
+
+describe("resolveConfidenceWarning (task c271feb9)", () => {
+  it("AC1: BLOCK project, over-threshold score, keystone-blocking task shows a blocking warning", () => {
+    const warning = resolveConfidenceWarning({
+      score: 80,
+      effectiveThreshold: 60,
+      blocking: true,
+      enforcementMode: "BLOCK",
+    });
+    expect(warning.show).toBe(true);
+    expect(warning.keystoneBlocking).toBe(true);
+    expect(warning.claimsBlocked).toBe(true);
+  });
+
+  it("AC2: WARN project, over-threshold score, keystone-blocking task shows an advisory warning", () => {
+    const warning = resolveConfidenceWarning({
+      score: 80,
+      effectiveThreshold: 60,
+      blocking: true,
+      enforcementMode: "WARN",
+    });
+    expect(warning.show).toBe(true);
+    expect(warning.keystoneBlocking).toBe(true);
+    expect(warning.claimsBlocked).toBe(false);
+  });
+
+  it("AC2: OFF project, over-threshold score, keystone-blocking task shows nothing", () => {
+    const warning = resolveConfidenceWarning({
+      score: 80,
+      effectiveThreshold: 60,
+      blocking: true,
+      enforcementMode: "OFF",
+    });
+    expect(warning.show).toBe(false);
+  });
+
+  it("keeps the pre-existing below-threshold warning for OFF (unchanged scope)", () => {
+    const warning = resolveConfidenceWarning({
+      score: 40,
+      effectiveThreshold: 60,
+      blocking: false,
+      enforcementMode: "OFF",
+    });
+    expect(warning.show).toBe(true);
+    expect(warning.keystoneBlocking).toBe(false);
+    expect(warning.claimsBlocked).toBe(false);
+  });
+
+  it("below-threshold + BLOCK stays blocking, unaffected by the new keystone branch", () => {
+    const warning = resolveConfidenceWarning({
+      score: 40,
+      effectiveThreshold: 60,
+      blocking: false,
+      enforcementMode: "BLOCK",
+    });
+    expect(warning.show).toBe(true);
+    expect(warning.keystoneBlocking).toBe(false);
+    expect(warning.claimsBlocked).toBe(true);
+  });
+
+  it("shows nothing when neither below-threshold nor keystone-blocking applies", () => {
+    const warning = resolveConfidenceWarning({
+      score: 80,
+      effectiveThreshold: 60,
+      blocking: false,
+      enforcementMode: "BLOCK",
+    });
+    expect(warning.show).toBe(false);
+  });
+
+  it("null/undefined enforcementMode is treated like WARN for the keystone branch", () => {
+    const warning = resolveConfidenceWarning({
+      score: 80,
+      effectiveThreshold: 60,
+      blocking: true,
+      enforcementMode: null,
+    });
+    expect(warning.show).toBe(true);
+    expect(warning.claimsBlocked).toBe(false);
   });
 });
