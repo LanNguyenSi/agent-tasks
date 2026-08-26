@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+**Label changes on a task are now audited (`task.labels_changed`).** Since the label editor (#496) made a task's `labels` human-writable via PATCH `/tasks/:id`, a claim-gating input (labels feed `resolveTriggeredRiskModifiers`'s claim-threshold risk modifiers and the easy-pick/heavy-pick dispatch routing) could be changed without a trail. The human PATCH lane now emits `task.labels_changed` with `{from, to, actorType}` whenever the label set actually changes (order-insensitive; a reorder of the same set does not fire). Agents still cannot write `labels` via PATCH. See `docs/events.md`.
+
 **CLI id-prefix resolver now finds backlog tasks (D18 revision).** The 0.29.0 backlog-status-v1 known limitation below is resolved: `/api/tasks/claimable`'s `CLAIMABLE_VALID_STATUSES` now accepts `backlog` as an explicit-search value, so the CLI's id-prefix resolver (used by `tasks get`/`start`/`finish`/`comment` and friends) can resolve a backlog task's id the same way it resolves any other status, instead of only accepting the full UUID. This is discovery only, not a claim grant: the implicit "what can I claim right now?" default is unchanged (still `status=open`, unclaimed), and a backlog task found this way still 403s `backlog_not_promoted` at `/tasks/:id/start`/`claim` until a human promotes it. `tasks list --project --status backlog` is also now accepted client-side (the project-scoped browse endpoint already supported it). See `docs/okf/claim-model.md`.
 
 ## [0.29.0] - 2026-08-20

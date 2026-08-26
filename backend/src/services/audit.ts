@@ -117,6 +117,15 @@ export type AuditAction =
   | "task.deliverable_repo_set"
   | "task.deliverable_repo_changed"
   | "task.foreign_pr_linked"
+  // Labels are a claim-gating input (resolveTriggeredRiskModifiers reads
+  // them to raise the effective claim threshold, and they drive the
+  // easy-pick/heavy-pick dispatch label) and, since the label editor landed
+  // (#496), a human-project-write caller can change them via PATCH
+  // /tasks/:id with no trail. Mirrors task.deliverable_repo_changed:
+  // fires on the human PATCH lane only, order-insensitively (a reorder of
+  // the same set is not a change), and never for the agent lane (labels
+  // are not in agentUpdateTaskSchema, so agents cannot write this field).
+  | "task.labels_changed"
   // Human-project-admin escape hatch (POST /tasks/:id/admin-release): an
   // admin force-releases a work or review claim held by ANYONE, without
   // touching task.status. One event per claim actually released (no event

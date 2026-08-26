@@ -5176,6 +5176,27 @@ taskRouter.patch("/tasks/:id", async (c) => {
     });
   }
 
+  // Labels are a claim-gating input (resolveTriggeredRiskModifiers below,
+  // and easy-pick/heavy-pick dispatch routing) that the label editor (#496)
+  // made human-writable via this PATCH lane. Order-insensitive: reordering
+  // the same set is not a change, so compare sorted copies rather than the
+  // raw arrays.
+  if (body.labels !== undefined) {
+    const before = [...task.labels].sort();
+    const after = [...body.labels].sort();
+    const labelsChanged =
+      before.length !== after.length || before.some((label, i) => label !== after[i]);
+    if (labelsChanged) {
+      void logAuditEvent({
+        action: "task.labels_changed",
+        actorId: actor.userId,
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: { from: task.labels, to: body.labels, actorType: "human" },
+      });
+    }
+  }
+
   if (body.prUrl) {
     // The human lane can set/clear deliverableRepo in the SAME PATCH that
     // links the prUrl, so both the condition and the payload must use the
