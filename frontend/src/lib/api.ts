@@ -135,6 +135,31 @@ export function isProjectAdminRole(accessRole: string | null | undefined): boole
   return accessRole === "ADMIN" || accessRole === "PROJECT_ADMIN";
 }
 
+/** Whether a project `accessRole` grants write access to task fields: the
+ * frontend mirror of the backend's `requireProjectWrite` gate
+ * (backend/src/services/team-access.ts). Every team role (ADMIN /
+ * HUMAN_MEMBER / REVIEWER) is write-capable there; on a per-project share
+ * only PROJECT_ADMIN / PROJECT_CONTRIBUTOR write (PROJECT_VIEWER is
+ * read-only). Deliberately an allow-list rather than "anything that isn't
+ * PROJECT_VIEWER": the backend itself fails closed the same way (an
+ * unrecognized per-project role falls through `getUserRoleInProject` to
+ * neither PROJECT_ADMIN nor PROJECT_CONTRIBUTOR and is rejected), so a
+ * future read-only role added to the vocabulary is excluded here too by
+ * default instead of silently becoming write-capable. `null`/`undefined`
+ * (role unset, or a response that predates the field) is not write-capable
+ * either, same fail-closed default as `isProjectAdminRole`. */
+const PROJECT_WRITE_ROLES = new Set([
+  "ADMIN",
+  "HUMAN_MEMBER",
+  "REVIEWER",
+  "PROJECT_ADMIN",
+  "PROJECT_CONTRIBUTOR",
+]);
+
+export function isProjectWriteRole(accessRole: string | null | undefined): boolean {
+  return accessRole != null && PROJECT_WRITE_ROLES.has(accessRole);
+}
+
 export interface Task {
   id: string;
   projectId: string;
@@ -774,6 +799,7 @@ export async function updateTask(
     prNumber?: number | null;
     result?: string | null;
     templateData?: TemplateData | null;
+    labels?: string[];
   },
 ): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/tasks/${taskId}`, {

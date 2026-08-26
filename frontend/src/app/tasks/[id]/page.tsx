@@ -11,6 +11,7 @@ import {
   getEffectiveWorkflow,
   getTaskConfidenceDetail,
   isProjectAdminRole,
+  isProjectWriteRole,
   type User,
   type Task,
   type Project,
@@ -130,6 +131,7 @@ export default function TaskDetailPage() {
   // both a team ADMIN and a per-project-only PROJECT_ADMIN — unlike
   // `team?.role === "ADMIN"`, which misses the latter (see workflow/page.tsx).
   const isProjectAdmin = isProjectAdminRole(project?.accessRole);
+  const isProjectWrite = isProjectWriteRole(project?.accessRole);
 
   function goToBoard() {
     router.push(boardHref);
@@ -165,6 +167,7 @@ export default function TaskDetailPage() {
           enforcementMode={project.enforcementMode ?? null}
           requireDistinctReviewer={project.requireDistinctReviewer ?? false}
           isProjectAdmin={isProjectAdmin}
+          isProjectWrite={isProjectWrite}
           workflowTransitions={workflowTransitions}
           improvementPanel={improvementPanel}
           aiHelpersEnabled={project.aiHelpersEnabled ?? false}
