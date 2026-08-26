@@ -192,6 +192,14 @@ describe("TaskMetaSidebar labels editor", () => {
     expect(screen.queryByLabelText(/Remove label/)).not.toBeInTheDocument();
   });
 
+  // Mutation probe: this asserts the component actually calls the
+  // onUpdateLabels callback (the abstraction over PATCH /tasks/:id in
+  // TaskDetail.tsx) with the right payload, not just that some local state
+  // updates. Verified by temporarily neutering handleAddLabel's call to
+  // onUpdateLabels in TaskMetaSidebar.tsx (commenting out the
+  // `onUpdateLabels([...])` call) and re-running this file: this test goes
+  // red because onUpdateLabels is never called, confirming the test would
+  // catch that mutation. Restored afterward.
   it("a write-capable human can add a label, calling onUpdateLabels with the full new array", async () => {
     const { onUpdateLabels } = renderSidebar(makeTask({ labels: ["frontend"] }), {
       canEditLabels: true,
@@ -200,6 +208,52 @@ describe("TaskMetaSidebar labels editor", () => {
     await userEvent.type(input, "needs-operator");
     await userEvent.click(screen.getByRole("button", { name: "Add" }));
     expect(onUpdateLabels).toHaveBeenCalledWith(["frontend", "needs-operator"]);
+  });
+
+  it("trims surrounding whitespace before calling onUpdateLabels", async () => {
+    const { onUpdateLabels } = renderSidebar(makeTask({ labels: [] }), {
+      canEditLabels: true,
+    });
+    const input = screen.getByLabelText("Add label");
+    await userEvent.type(input, "  needs-operator  ");
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(onUpdateLabels).toHaveBeenCalledWith(["needs-operator"]);
+  });
+
+  it("rejects a duplicate label case-insensitively, naming the existing variant, without calling onUpdateLabels", async () => {
+    const { onUpdateLabels } = renderSidebar(makeTask({ labels: ["Frontend"] }), {
+      canEditLabels: true,
+    });
+    const input = screen.getByLabelText("Add label");
+    await userEvent.type(input, "frontend");
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(
+      await screen.findByText('That label is already on this task (as "Frontend").'),
+    ).toBeInTheDocument();
+    expect(onUpdateLabels).not.toHaveBeenCalled();
+  });
+
+  it("keeps the typed draft in the input when onUpdateLabels resolves false (save failed)", async () => {
+    const onUpdateLabels = vi.fn().mockResolvedValue(false);
+    renderSidebar(makeTask({ labels: [] }), { canEditLabels: true, onUpdateLabels });
+    const input = screen.getByLabelText("Add label") as HTMLInputElement;
+    await userEvent.type(input, "needs-operator");
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(onUpdateLabels).toHaveBeenCalledWith(["needs-operator"]);
+    expect(input.value).toBe("needs-operator");
+  });
+
+  it("disables the input, Add, and every Remove button while labelsBusy", () => {
+    renderSidebar(makeTask({ labels: ["frontend", "ui"] }), {
+      canEditLabels: true,
+      labelsBusy: true,
+    });
+    expect(screen.getByLabelText("Add label")).toBeDisabled();
+    // The Add button renders a "Loading" sr-only suffix while busy (see
+    // Button.tsx), so its accessible name is no longer the exact "Add".
+    expect(screen.getByRole("button", { name: /^Add/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove label frontend" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove label ui" })).toBeDisabled();
   });
 
   it("a write-capable human can remove a label, calling onUpdateLabels with it excluded", async () => {
@@ -255,23 +309,5 @@ describe("TaskMetaSidebar labels editor", () => {
     const options = document.querySelectorAll(`#${listId} option`);
     const values = [...options].map((o) => o.getAttribute("value"));
     expect(values).toEqual(["ui", "dx"]);
-  });
-
-  // Mutation probe: this asserts the component actually calls the
-  // onUpdateLabels callback (the abstraction over PATCH /tasks/:id in
-  // TaskDetail.tsx) with the right payload, not just that some local state
-  // updates. Verified by temporarily neutering handleAddLabel's call to
-  // onUpdateLabels in TaskMetaSidebar.tsx (commenting out the
-  // `onUpdateLabels([...])` call) and re-running this file: the "add a
-  // label" test above goes red because onUpdateLabels is never called,
-  // confirming the test would catch that mutation. Restored afterward.
-  it("mutation-probe anchor: add-label test fails if the PATCH call is removed (see comment)", async () => {
-    const { onUpdateLabels } = renderSidebar(makeTask({ labels: [] }), {
-      canEditLabels: true,
-    });
-    const input = screen.getByLabelText("Add label");
-    await userEvent.type(input, "dx");
-    await userEvent.click(screen.getByRole("button", { name: "Add" }));
-    expect(onUpdateLabels).toHaveBeenCalledWith(["dx"]);
   });
 });

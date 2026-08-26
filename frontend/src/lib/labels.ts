@@ -23,8 +23,11 @@ export function validateNewLabel(
   if (trimmed.length > LABEL_MAX_LENGTH) {
     return `Label must be ${LABEL_MAX_LENGTH} characters or fewer.`;
   }
-  if (existingLabels.includes(trimmed)) {
-    return "That label is already on this task.";
+  const existingMatch = existingLabels.find(
+    (l) => l.toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (existingMatch) {
+    return `That label is already on this task (as "${existingMatch}").`;
   }
   if (existingLabels.length >= LABELS_MAX_COUNT) {
     return `A task can have at most ${LABELS_MAX_COUNT} labels.`;

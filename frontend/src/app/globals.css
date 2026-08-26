@@ -4356,7 +4356,10 @@ html[data-theme="light"] {
 }
 
 .td-label-chip {
-  gap: 4px;
+  gap: var(--space-1);
+  /* Optical adjustment: the badge's own horizontal padding plus this gap
+     already covers the remove button's left side; trim the right edge by
+     3px so the chip doesn't look lopsided around the circular button. */
   padding-right: 3px;
 }
 

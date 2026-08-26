@@ -663,7 +663,18 @@ export default function TaskDetail({
         onUpdate(updated);
         return true;
       } catch (err) {
-        onError((err as Error).message);
+        // A 400 here is almost always the schema limits (trim/empty/
+        // >100 chars/>20 labels) rejecting a payload the client-side
+        // validateNewLabel check should have already caught -- most
+        // likely a stale client vs. a since-changed label set on the
+        // server. The raw "Validation failed" backend message names no
+        // field, so swap in a label-specific one instead of surfacing it
+        // verbatim.
+        if (err instanceof ApiRequestError && err.status === 400) {
+          onError("Could not save labels: the server rejected the label set. Reload and try again.");
+        } else {
+          onError((err as Error).message);
+        }
         return false;
       } finally {
         setLabelsBusy(false);

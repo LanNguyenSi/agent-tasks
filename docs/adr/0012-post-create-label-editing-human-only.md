@@ -17,9 +17,9 @@ MCP verb an agent uses to revise a backlog draft it created) is
 deliberately not parametrized to touch it either.
 
 This surfaced as friction during the 2026-08-25 batch-27 refinement:
-labels like `needs-operator` on agent-created backlog drafts could only
-be fixed by an operator editing the database directly, because neither
-the UI nor any agent verb offered a path.
+labels like `needs-operator` on agent-created backlog drafts could not be
+fixed through any supported path, because neither the UI, the CLI, nor
+any agent verb offered a path; only a hand-rolled API call could.
 
 Task 93397e91 scoped fixing the human side only (an editor in
 TaskMetaSidebar, against the existing PATCH /tasks/:id write-tier gate)
