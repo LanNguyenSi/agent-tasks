@@ -13,6 +13,7 @@ import {
   getTask,
   getEffectiveWorkflow,
   isProjectAdminRole,
+  isProjectWriteRole,
   type User,
   type Team,
   type Project,
@@ -194,6 +195,7 @@ export default function DashboardPage() {
   }, [selectedProjectId]);
 
   const isProjectAdmin = isProjectAdminRole(selectedProjectAccessRole);
+  const isProjectWrite = isProjectWriteRole(selectedProjectAccessRole);
 
   // ── Restore persisted view preferences once after mount ──────
 
@@ -710,6 +712,7 @@ export default function DashboardPage() {
           enforcementMode={selectedProject?.enforcementMode ?? null}
           requireDistinctReviewer={selectedProject?.requireDistinctReviewer ?? false}
           isProjectAdmin={isProjectAdmin}
+          isProjectWrite={isProjectWrite}
           workflowTransitions={workflowTransitions}
           onUpdate={handleTaskUpdate}
           onDelete={handleTaskDelete}

@@ -169,6 +169,13 @@ export interface TaskDetailProps {
    * don't thread it simply don't expose the admin controls, rather than
    * erroring. */
   isProjectAdmin?: boolean;
+  /** True for a human with project write access (see
+   * `isProjectWriteRole` in lib/api.ts). Gates the label add/remove
+   * editor in TaskMetaSidebar; write-tier, not admin-only, since PATCH
+   * /tasks/:id's `labels` field only requires `requireProjectWrite`.
+   * Defaults to false so callers that don't thread it don't show the
+   * editor. */
+  isProjectWrite?: boolean;
   /** Effective-workflow edges, used to constrain the admin status-override
    * dropdown to targets the backend will accept (force bypasses `requires`
    * gates, not edge existence). null = not loaded → fall back to base states. */
@@ -217,6 +224,7 @@ export default function TaskDetail({
   enforcementMode,
   requireDistinctReviewer = false,
   isProjectAdmin = false,
+  isProjectWrite = false,
   workflowTransitions = null,
   improvementPanel = null,
   aiHelpersEnabled = false,
@@ -240,6 +248,7 @@ export default function TaskDetail({
   const [claimBusy, setClaimBusy] = useState(false);
   const [advanceBusy, setAdvanceBusy] = useState(false);
   const [adminReleaseBusy, setAdminReleaseBusy] = useState(false);
+  const [labelsBusy, setLabelsBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [resultExpanded, setResultExpanded] = useState(false);
   const [reviewComment, setReviewComment] = useState("");
@@ -641,6 +650,39 @@ export default function TaskDetail({
     },
     [task.id, onUpdate, onError],
   );
+
+  // Labels editor (TaskMetaSidebar). Persists the full replacement array
+  // against the existing human PATCH /tasks/:id lane (updateTask), same
+  // gate (requireProjectWrite) the backend already enforces server-side --
+  // isProjectWrite here only controls whether the editor renders.
+  const handleUpdateLabels = useCallback(
+    async (labels: string[]): Promise<boolean> => {
+      setLabelsBusy(true);
+      try {
+        const updated = await updateTask(task.id, { labels });
+        onUpdate(updated);
+        return true;
+      } catch (err) {
+        onError((err as Error).message);
+        return false;
+      } finally {
+        setLabelsBusy(false);
+      }
+    },
+    [task.id, onUpdate, onError],
+  );
+
+  // Suggestion source for the label editor's datalist: every label already
+  // used somewhere in the project, deduped and sorted. `tasks` is the
+  // project's task list the caller already fetches for the dependency
+  // picker above, so this needs no new data source.
+  const projectLabels = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of tasks) {
+      for (const label of t.labels ?? []) set.add(label);
+    }
+    return [...set].sort();
+  }, [tasks]);
 
   const webhookEvents = (task.comments ?? []).filter((c: Comment) =>
     c.content.startsWith("[webhook]"),
@@ -1287,6 +1329,10 @@ export default function TaskDetail({
         isProjectAdmin={isProjectAdmin}
         onAdminRelease={handleAdminRelease}
         adminReleaseBusy={adminReleaseBusy}
+        canEditLabels={isProjectWrite}
+        projectLabels={projectLabels}
+        onUpdateLabels={handleUpdateLabels}
+        labelsBusy={labelsBusy}
       />
     </aside>
   );

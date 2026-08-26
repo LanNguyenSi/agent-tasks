@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/Button";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { formatAbsoluteDate, formatDueDate } from "@/lib/time";
 import { isHttpUrl } from "@/lib/pr";
+import { validateNewLabel } from "@/lib/labels";
 
 type AdminReleaseKind = "work" | "review";
 
@@ -35,6 +36,23 @@ interface TaskMetaSidebarProps {
    * component knows whether to close the confirm dialog. */
   onAdminRelease: (opts: { releaseWorkClaim?: boolean; releaseReviewClaim?: boolean }) => Promise<boolean>;
   adminReleaseBusy: boolean;
+  /** True for a human with project write access (any team role, or a
+   * per-project PROJECT_ADMIN/PROJECT_CONTRIBUTOR share; mirrors the
+   * backend's `requireProjectWrite` gate that PATCH /tasks/:id enforces
+   * for the `labels` field). Gates the label add/remove editor below;
+   * unlike `isProjectAdmin` this is NOT admin-only, since label editing is
+   * routine write-tier work, not an admin escape hatch. Defaults to false
+   * so callers that don't thread it simply don't expose the editor. */
+  canEditLabels?: boolean;
+  /** Suggestion source for the label input's datalist: every label already
+   * used somewhere in the project (deduped, sorted by the caller). Free
+   * input beyond this list stays possible. Defaults to []. */
+  projectLabels?: string[];
+  /** Persists a full replacement label array via PATCH /tasks/:id (the
+   * existing human-write lane; see TaskDetail.tsx). Resolves `true` on
+   * success so the input can clear itself only after the save lands. */
+  onUpdateLabels?: (labels: string[]) => Promise<boolean>;
+  labelsBusy?: boolean;
 }
 
 function isOverdue(task: Task): boolean {
@@ -88,6 +106,10 @@ export default function TaskMetaSidebar({
   isProjectAdmin,
   onAdminRelease,
   adminReleaseBusy,
+  canEditLabels = false,
+  projectLabels = [],
+  onUpdateLabels,
+  labelsBusy = false,
 }: TaskMetaSidebarProps) {
   const overdue = isOverdue(task);
   const assigned = Boolean(task.claimedByUserId || task.claimedByAgentId);
@@ -109,6 +131,29 @@ export default function TaskMetaSidebar({
       adminReleaseConfirm === "review" ? { releaseReviewClaim: true } : { releaseWorkClaim: true },
     );
     if (ok) setAdminReleaseConfirm(null);
+  }
+
+  // ── Labels editor (write-tier, not admin-only) ────────────────────────
+  const labels = task.labels ?? [];
+  const [labelDraft, setLabelDraft] = useState("");
+  const [labelError, setLabelError] = useState<string | null>(null);
+
+  async function handleAddLabel() {
+    if (!onUpdateLabels) return;
+    const validationError = validateNewLabel(labelDraft, labels);
+    if (validationError) {
+      setLabelError(validationError);
+      return;
+    }
+    setLabelError(null);
+    const ok = await onUpdateLabels([...labels, labelDraft.trim()]);
+    if (ok) setLabelDraft("");
+  }
+
+  async function handleRemoveLabel(label: string) {
+    if (!onUpdateLabels) return;
+    setLabelError(null);
+    await onUpdateLabels(labels.filter((l) => l !== label));
   }
 
   return (
@@ -219,16 +264,77 @@ export default function TaskMetaSidebar({
           </>
         )}
 
-        {/* Labels */}
-        {task.labels && task.labels.length > 0 && (
+        {/* Labels: read-only badges for everyone; add/remove editor only for
+            a human with project write access (canEditLabels). A non-write
+            viewer with no labels sees nothing here at all (same as the
+            pre-editor behavior) rather than a dead editor -- "sees no
+            editor" is one of the two acceptable non-permitted outcomes
+            alongside disabled-with-reason. */}
+        {(canEditLabels || labels.length > 0) && (
           <>
             <span className="td-prop-label">Labels</span>
             <span className="td-prop-value">
-              {task.labels.map((label) => (
-                <span key={label} className="badge badge--neutral">
-                  {label}
+              <span className="td-labels-list">
+                {labels.map((label) => (
+                  <span key={label} className="badge badge--neutral td-label-chip">
+                    {label}
+                    {canEditLabels && (
+                      <button
+                        type="button"
+                        className="td-label-remove"
+                        onClick={() => void handleRemoveLabel(label)}
+                        disabled={labelsBusy}
+                        aria-label={`Remove label ${label}`}
+                      >
+                        <Icon name="x" size={9} aria-hidden />
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </span>
+              {canEditLabels && (
+                <span className="td-label-add-row">
+                  <input
+                    className="td-label-input"
+                    list="td-label-suggestions"
+                    value={labelDraft}
+                    onChange={(e) => {
+                      setLabelDraft(e.target.value);
+                      setLabelError(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void handleAddLabel();
+                      }
+                    }}
+                    placeholder="Add label…"
+                    disabled={labelsBusy}
+                    aria-label="Add label"
+                  />
+                  <datalist id="td-label-suggestions">
+                    {projectLabels
+                      .filter((l) => !labels.includes(l))
+                      .map((l) => (
+                        <option key={l} value={l} />
+                      ))}
+                  </datalist>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void handleAddLabel()}
+                    disabled={labelsBusy || labelDraft.length === 0}
+                    loading={labelsBusy}
+                  >
+                    Add
+                  </Button>
                 </span>
-              ))}
+              )}
+              {labelError && (
+                <span className="td-label-error" role="alert">
+                  {labelError}
+                </span>
+              )}
             </span>
           </>
         )}
