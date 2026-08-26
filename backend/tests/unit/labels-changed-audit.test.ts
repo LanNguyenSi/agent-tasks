@@ -188,11 +188,29 @@ describe("PATCH /tasks/:id — labels audit", () => {
         action: "task.labels_changed",
         taskId: TASK_ID,
         projectId: PROJECT_ID,
+        actorId: "user-1",
         payload: expect.objectContaining({
           from: ["easy-pick"],
           to: ["heavy-pick", "urgent"],
           actorType: "human",
         }),
+      }),
+    );
+  });
+
+  it("audits task.labels_changed for a same-cardinality swap (easy-pick -> heavy-pick)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({ ...baseTask, labels: ["easy-pick"], project: baseProject });
+    const res = await makeApp(HUMAN).request(`/tasks/${TASK_ID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ labels: ["heavy-pick"] }),
+    });
+    expect(res.status).toBe(200);
+    expect(logAuditEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.labels_changed",
+        actorId: "user-1",
+        payload: expect.objectContaining({ from: ["easy-pick"], to: ["heavy-pick"] }),
       }),
     );
   });
@@ -251,6 +269,12 @@ describe("PATCH /tasks/:id — labels audit", () => {
       body: JSON.stringify({ labels: ["heavy-pick"] }),
     });
     expect(res.status).toBe(200);
+    // The guarantee is about persistence, not only about the event: the agent
+    // lane must not write labels at all.
+    expect(prismaMocks.taskUpdate).toHaveBeenCalled();
+    for (const call of prismaMocks.taskUpdate.mock.calls) {
+      expect(call[0].data).not.toHaveProperty("labels");
+    }
     expect(logAuditEventMock).not.toHaveBeenCalledWith(
       expect.objectContaining({ action: "task.labels_changed" }),
     );
