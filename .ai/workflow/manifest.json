@@ -1,20 +1,23 @@
 {
   "kit": "orchestrator-workflow",
-  "version": "0.14.0",
+  "version": "0.25.0",
   "harnesses": [],
   "models": {
     "explorer": "sonnet",
     "task-slicer": "sonnet",
     "implementer": "sonnet",
-    "reviewer": "opus"
+    "reviewer": "opus",
+    "advisor": "opus"
   },
+  "profile": "full",
+  "tiers": false,
   "files": {
     ".ai/workflow/templates/00-goal.md": "455d3946cc42146255f0dc1147f51ec5e52afe89a5232aef863898a6eb4261b3",
     ".ai/workflow/templates/01-plan.md": "0b69aa09ccf24b3c7a09c209d30c09eb9814096ed18fb7fe18e67e4b8be42ad4",
     ".ai/workflow/templates/02-tasks.md": "ce475c1fb98d2d44b22b940199ba9e467690cdd7c9484f0670b7437857cec74e",
-    ".ai/workflow/templates/03-decisions.md": "74af5ea8bed3990308a5a3e7fa0deb47634fbf6033694c1fa86b91839a1ef6a5",
+    ".ai/workflow/templates/03-decisions.md": "540fac1e956e19888563655a7c445ce14f44b08d62d3d3beb86bd1a18b03c577",
     ".ai/workflow/templates/04-implementation-summary.md": "3e4975102f576779d91e0b5a7e5776f054ed652a300b05089e606125c0de074f",
-    ".ai/workflow/templates/05-review-findings.md": "1a00a1ddb35c30058771437b27b242afbe3cb47ada3b4454a824594dfc79a1e0",
+    ".ai/workflow/templates/05-review-findings.md": "7e81fea075382268b4a33f44ecd4bd98d53aae8d35c5e109136d5b5cdd1aad25",
     ".ai/workflow/templates/06-handoff.md": "47023d4aaabf4b1ecd6b309f7572b20f84ed3494d686d92e2fc8af5ac66d7a7a",
     ".ai/runs/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
