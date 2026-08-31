@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
   projectTaskSummary,
+  projectTaskListSummary,
   paginateSignals,
   TASKS_GET_INCLUDE_VALUES,
+  PROJECT_TASKS_INCLUDE_VALUES,
   SIGNALS_DEFAULT_LIMIT,
   SIGNALS_BACKEND_FETCH_LIMIT,
   type GetTaskResponse,
+  type ListProjectTasksResponse,
   type RawSignal,
 } from "../src/read.js";
 import { serializeResult } from "../src/server.js";
@@ -277,6 +280,305 @@ describe("projectTaskSummary", () => {
   it("TASKS_GET_INCLUDE_VALUES excludes instructions (task_start's own per-state prose, not a task field)", () => {
     expect(TASKS_GET_INCLUDE_VALUES).not.toContain("instructions");
     expect(TASKS_GET_INCLUDE_VALUES).toEqual(["description", "comments", "artifacts", "task"]);
+  });
+});
+
+// ── project_tasks: projectTaskListSummary (task 3653962f) ───────────────
+//
+// project_tasks is a browse-scoped listing verb: a 40-row page where
+// several rows carry multi-kB descriptions/templateData used to return
+// every row's full backend shape. This projects each row down to a
+// summary the same way projectTaskSummary already does for a single
+// tasks_get call, reusing the same core field set (see read.ts's shared
+// projectTaskCore), plus two list-only fields (externalRef, createdAt).
+
+function listResponse(tasks: ListProjectTasksResponse["tasks"], nextCursor: string | null = null): ListProjectTasksResponse {
+  return { tasks, nextCursor };
+}
+
+describe("projectTaskListSummary", () => {
+  it("PROJECT_TASKS_INCLUDE_VALUES is description/templateData/task (no comments/artifacts -- no per-row use case)", () => {
+    expect(PROJECT_TASKS_INCLUDE_VALUES).toEqual(["description", "templateData", "task"]);
+  });
+
+  it("defaults every row to id + title only when nothing else is present, nextCursor passed through", () => {
+    const response = listResponse([{ id: "t1", title: "Fix the login redirect loop" }], "next-id");
+    const result = projectTaskListSummary(response);
+    expect(result).toEqual({ tasks: [{ id: "t1", title: "Fix the login redirect loop" }], nextCursor: "next-id" });
+  });
+
+  it("row summary carries status/priority/labels/externalRef/createdAt/claims/blockedBy/prUrl, never description/templateData/comments/artifacts by default", () => {
+    const response = listResponse([
+      {
+        id: "t1",
+        title: "Fix the login redirect loop",
+        status: "in_progress",
+        priority: "HIGH",
+        labels: ["bug", "auth"],
+        externalRef: "ext-42",
+        createdAt: "2026-08-01T00:00:00.000Z",
+        prUrl: "https://github.com/o/r/pull/42",
+        claimedByUser: { id: "u1", login: "lan", name: "Lan" },
+        blockedBy: [{ id: "b1", title: "Add auth middleware", status: "done" }],
+        description: "a very long description that should not be echoed back by default",
+        templateData: { taskType: "bugfix" },
+      },
+    ]);
+    const result = projectTaskListSummary(response) as unknown as {
+      tasks: Record<string, unknown>[];
+    };
+    const row = result.tasks[0]!;
+    expect(row).toEqual({
+      id: "t1",
+      title: "Fix the login redirect loop",
+      status: "in_progress",
+      priority: "HIGH",
+      labels: ["bug", "auth"],
+      externalRef: "ext-42",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      claims: { work: "Lan" },
+      blockedBy: [{ id: "b1", title: "Add auth middleware", status: "done" }],
+      prUrl: "https://github.com/o/r/pull/42",
+    });
+    // Acceptance criterion 3: the exact key set of a summary row carries no
+    // description, no templateData, no metadata, no timestamps other than
+    // createdAt.
+    expect(Object.keys(row).sort()).toEqual(
+      ["blockedBy", "claims", "createdAt", "externalRef", "id", "labels", "priority", "prUrl", "status", "title"].sort(),
+    );
+    expect(row.description).toBeUndefined();
+    expect(row.templateData).toBeUndefined();
+  });
+
+  it('include:["description"] adds description back to every row, other rows unaffected', () => {
+    const response = listResponse([
+      { id: "t1", title: "A", description: "desc-1" },
+      { id: "t2", title: "B" },
+    ]);
+    const result = projectTaskListSummary(response, ["description"]) as {
+      tasks: { id: string; description?: string }[];
+    };
+    expect(result.tasks[0]?.description).toBe("desc-1");
+    expect(result.tasks[1]?.description).toBeUndefined();
+  });
+
+  it('include:["templateData"] adds templateData back to every row', () => {
+    const response = listResponse([{ id: "t1", title: "A", templateData: { taskType: "feature" } }]);
+    const result = projectTaskListSummary(response, ["templateData"]) as unknown as {
+      tasks: { templateData?: Record<string, unknown> }[];
+    };
+    expect(result.tasks[0]?.templateData).toEqual({ taskType: "feature" });
+  });
+
+  it('include:["task"] returns the raw response unchanged, full rows, nextCursor untouched', () => {
+    const response = listResponse(
+      [{ id: "t1", title: "A", description: "full body", templateData: { x: 1 } }],
+      "cursor-9",
+    );
+    const result = projectTaskListSummary(response, ["task"]);
+    expect(result).toBe(response);
+  });
+
+  it("a malformed body (no tasks array) is returned raw rather than crashing on a dereference", () => {
+    const malformed = { nextCursor: null } as unknown as ListProjectTasksResponse;
+    expect(projectTaskListSummary(malformed)).toBe(malformed);
+  });
+
+  // ── review round 1, LOW: per-row guard mirrors the envelope guard above --
+  // a malformed row INSIDE an otherwise well-formed envelope must not crash
+  // or silently collapse to {} ───────────────────────────────────────────
+
+  it("a malformed row (missing id) inside a well-formed envelope passes through unchanged, not {}", () => {
+    const response = listResponse([
+      { id: "t1", title: "Fine" },
+      // Carries `description` and an arbitrary unknown field with no `id`
+      // and no `include` requested on this call -- projectTaskCore would
+      // never copy either field over without an id-guard short-circuit
+      // (description is include-gated, and unknownField is not part of the
+      // projection at all), so this row genuinely discriminates the guard:
+      // present without it, dropped -- not merely coincidentally identical
+      // -- were the guard removed.
+      {
+        title: "No id here",
+        description: "raw description, should survive verbatim",
+        unknownField: "should also survive verbatim",
+      } as unknown as ListProjectTasksResponse["tasks"][number],
+    ]);
+    const result = projectTaskListSummary(response) as unknown as {
+      tasks: Record<string, unknown>[];
+    };
+    expect(result.tasks[0]).toEqual({ id: "t1", title: "Fine" });
+    // Passed through unchanged (every field survives, including ones the
+    // projection would otherwise drop), not projected down and not thrown.
+    expect(result.tasks[1]).toEqual({
+      title: "No id here",
+      description: "raw description, should survive verbatim",
+      unknownField: "should also survive verbatim",
+    });
+  });
+
+  it("a null row inside the tasks array does not throw", () => {
+    const response = listResponse([
+      { id: "t1", title: "Fine" },
+      null as unknown as ListProjectTasksResponse["tasks"][number],
+    ]);
+    expect(() => projectTaskListSummary(response)).not.toThrow();
+    const result = projectTaskListSummary(response) as unknown as { tasks: unknown[] };
+    expect(result.tasks[0]).toEqual({ id: "t1", title: "Fine" });
+    expect(result.tasks[1]).toBeNull();
+  });
+
+  it('include:["description", "templateData"] together adds both fields back to every row in one call', () => {
+    const response = listResponse([
+      { id: "t1", title: "A", description: "the spec", templateData: { taskType: "feature" } },
+    ]);
+    const result = projectTaskListSummary(response, ["description", "templateData"]) as unknown as {
+      tasks: { description?: string; templateData?: Record<string, unknown> }[];
+    };
+    expect(result.tasks[0]?.description).toBe("the spec");
+    expect(result.tasks[0]?.templateData).toEqual({ taskType: "feature" });
+  });
+
+  it("per-row clamp: a row with more than 10 labels/blockedBy gets totalLabels/totalBlockedBy, same clamp tasks_get applies per-row", () => {
+    const response = listResponse([
+      {
+        id: "t1",
+        title: "Over the clamp",
+        labels: Array.from({ length: 15 }, (_, i) => `label-${i}`),
+        blockedBy: Array.from({ length: 15 }, (_, i) => ({ id: `b${i}`, title: `Blocker ${i}`, status: "open" })),
+      },
+    ]);
+    const result = projectTaskListSummary(response) as unknown as {
+      tasks: { labels?: string[]; totalLabels?: number; blockedBy?: unknown[]; totalBlockedBy?: number }[];
+    };
+    const row = result.tasks[0]!;
+    expect(row.labels?.length).toBe(10);
+    expect(row.totalLabels).toBe(15);
+    expect(row.blockedBy?.length).toBe(10);
+    expect(row.totalBlockedBy).toBe(15);
+  });
+
+  // ── review round 1, MEDIUM: WORST CASE per-row ceiling, mirroring
+  // projectTaskSummary's own WORST CASE test above ────────────────────────
+  //
+  // Per-row ceiling derived from the clamps projectTaskCore applies (see
+  // their doc comments above): title and externalRef stay at their real,
+  // backend-enforced 255-char maxima (createTaskSchema in backend/src/
+  // routes/tasks.ts) -- genuinely unclamped LOCALLY, but not unbounded;
+  // labels and blockedBy are each capped to LABELS_SUMMARY_CLAMP /
+  // BLOCKED_BY_SUMMARY_CLAMP (10) entries of at most LABEL_CHAR_BUDGET /
+  // BLOCKED_BY_TITLE_CHAR_BUDGET (60) chars; both claim labels are capped
+  // to CLAIM_CHAR_BUDGET (60) chars; prUrl is capped to PRURL_CHAR_BUDGET
+  // (100) chars. Measured via serializeResult (the actual wire format,
+  // JSON.stringify(_, null, 2)): one such row, envelope included, is 3342
+  // bytes; each additional row adds exactly 3301 bytes (measured directly,
+  // not derived). PER_ROW_CEILING below (3400) leaves ~100 bytes of
+  // headroom for id-string-length/pretty-print drift without hiding a real
+  // clamp regression -- a widened clamp (e.g. LABELS_SUMMARY_CLAMP raised,
+  // or PRURL_CHAR_BUDGET dropped) pushes a row well past this ceiling, not
+  // by a rounding error.
+  const PER_ROW_CEILING = 3400;
+  const FORTY_ROW_CEILING = 40 * PER_ROW_CEILING;
+
+  function clampMaxedListRow(i: number): ListProjectTasksResponse["tasks"][number] {
+    const longClaimName = "Someone With An Extremely Long Resolved Display Name For Testing Purposes";
+    const longPrUrl = `https://github.com/${"owner-name-".repeat(10)}/pull/999999999`;
+    return {
+      id: `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`,
+      title: "x".repeat(255),
+      status: "in_progress",
+      priority: "CRITICAL",
+      labels: Array.from({ length: 20 }, (_, j) => `label-name-number-${j}-quite-long-indeed-yes`),
+      externalRef: "e".repeat(255),
+      createdAt: "2026-08-01T00:00:00.000Z",
+      prUrl: longPrUrl,
+      claimedByUser: { id: "u1", login: "someone", name: longClaimName },
+      reviewClaimedByUser: { id: "u2", login: "reviewer", name: longClaimName },
+      blockedBy: Array.from({ length: 20 }, (_, j) => ({
+        id: `blocker-id-${j}`,
+        title: `Blocker task title number ${j} that is fairly long indeed to test the clamp`,
+        status: "open",
+      })),
+    };
+  }
+
+  it("WORST CASE (adversarial input, every per-row clamp active): a 40-row page of clamp-maxed rows stays within a fixed per-row/total ceiling", () => {
+    const tasks = Array.from({ length: 40 }, (_, i) => clampMaxedListRow(i));
+    const response = listResponse(tasks, null);
+    const result = projectTaskListSummary(response) as unknown as {
+      tasks: {
+        labels?: string[];
+        totalLabels?: number;
+        blockedBy?: unknown[];
+        totalBlockedBy?: number;
+        claims?: { work?: string; review?: string };
+        prUrl?: string;
+      }[];
+    };
+    const row = result.tasks[0]!;
+    // The clamps under test actually fired on this row, not just on the
+    // single-task WORST CASE above: same clampEntries technique, same
+    // constants, invoked per row via the shared projectTaskCore.
+    expect(row.labels?.length).toBe(10);
+    expect(row.totalLabels).toBe(20);
+    expect(row.blockedBy?.length).toBe(10);
+    expect(row.totalBlockedBy).toBe(20);
+    expect(row.claims?.work?.endsWith("...")).toBe(true);
+    expect(row.claims?.review?.endsWith("...")).toBe(true);
+    expect(row.prUrl?.endsWith("...")).toBe(true);
+
+    const size = serializeResult(result).length;
+    // Exact regression pin (fails loudly on any clamp drift), same
+    // discipline as projectTaskSummary's own WORST CASE pin above.
+    expect(size).toBe(132081);
+    expect(size).toBeLessThanOrEqual(FORTY_ROW_CEILING);
+
+    const oneRowResult = projectTaskListSummary(listResponse([clampMaxedListRow(0)], null));
+    const oneRowSize = serializeResult(oneRowResult).length;
+    expect(oneRowSize).toBeLessThanOrEqual(PER_ROW_CEILING);
+  });
+
+  // ── acceptance criterion 1: 40-row fixture with 3kB descriptions/templateData
+  // stays well under 20kB serialized, while include:["task"] does not ──────
+
+  function bigTask(i: number): ListProjectTasksResponse["tasks"][number] {
+    return {
+      id: `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`,
+      title: `Task number ${i}`,
+      status: "open",
+      priority: "MEDIUM",
+      labels: ["mcp", "dx"],
+      externalRef: `ext-${i}`,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      description: "d".repeat(3000),
+      templateData: { taskType: "feature", notes: "n".repeat(2000) },
+    };
+  }
+
+  it("40-row fixture with 3kB descriptions/templateData: default projection stays under 20kB, include:[\"task\"] does not", () => {
+    const tasks = Array.from({ length: 40 }, (_, i) => bigTask(i));
+    const response = listResponse(tasks, null);
+
+    const defaultResult = projectTaskListSummary(response);
+    const defaultSize = JSON.stringify(defaultResult).length;
+    expect(defaultSize).toBeLessThan(20_000);
+
+    const fullResult = projectTaskListSummary(response, ["task"]);
+    const fullSize = JSON.stringify(fullResult).length;
+    // The whole point of include:["task"] is that it is NOT summarized --
+    // demonstrates the default projection is doing real work, not that
+    // both branches coincidentally land under the cap.
+    expect(fullSize).toBeGreaterThan(20_000);
+  });
+
+  it("nextCursor is preserved unchanged by the default projection (task id, or null)", () => {
+    const response = listResponse([{ id: "t1", title: "A" }], "some-task-id");
+    const result = projectTaskListSummary(response) as { nextCursor: string | null };
+    expect(result.nextCursor).toBe("some-task-id");
+
+    const nullResponse = listResponse([{ id: "t1", title: "A" }], null);
+    const nullResult = projectTaskListSummary(nullResponse) as { nextCursor: string | null };
+    expect(nullResult.nextCursor).toBeNull();
   });
 });
 

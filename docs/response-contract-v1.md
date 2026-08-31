@@ -212,7 +212,7 @@ Per-verb defaults without `include`:
 | `task_pickup` | full spec, without `comments` |
 | `task_start` | receipt + per-task slice (`inferredTaskType`, `expectedFinishState` (the work-finish target; on a review claim this is NOT the same edge `gateExpectations` previews, see the budget exception below), `gateExpectations`, `requestChangesGateExpectations` on a review claim, `gateExpectationsSource` when assumed, `transition` on an actual state change) |
 | `tasks_get` (and equivalents) | summary |
-| `project_tasks` | existing summary projection (unchanged) |
+| `project_tasks` | summary rows: an allowlist of id, title, status, priority, labels, externalRef, createdAt, claims (work claim only on this route), blockedBy, prUrl; every other field, description and templateData included, is left off each row by default |
 | `tasks_list` (legacy-only since rc-v1-C007) | existing summary projection (unchanged) |
 
 `verbose: true/false` (the flag `tasks_list` carries) is superseded by
@@ -260,6 +260,7 @@ what every verb accepts today. Per verb, as implemented:
 | Verb | Accepts |
 |---|---|
 | `tasks_get` (and the read-verb summary projection) | `"description"`, `"comments"`, `"artifacts"`, `"task"` |
+| `project_tasks` | `"description"`, `"templateData"`, `"task"` |
 | `task_start` | `"description"`, `"instructions"`, `"comments"`, `"task"` |
 | `task_pickup` | `"comments"`, `"task"` (both resolve to the same full object for this verb) |
 | Every other converted write verb (`task_create`, `task_respec`, `task_finish`, `task_submit_pr`, `task_merge`, `task_abandon`, `task_creator_abandon`, `task_note`, `tasks_comment`) | `"task"` only |
