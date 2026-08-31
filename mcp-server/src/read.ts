@@ -287,19 +287,29 @@ export interface ListProjectTasksResponse {
 
 /**
  * Projects a raw GET /projects/:id/tasks response to summary rows, or (on
- * include:["task"]) returns it unchanged. Defensive guard mirrors
- * projectTaskSummary's own: a malformed body (no `tasks` array) is
- * returned raw rather than crashing on a dereference. `nextCursor` passes
- * through untouched in both branches.
+ * include:["task"]) returns it unchanged. Two independent defensive
+ * guards, not one: the envelope guard below mirrors projectTaskSummary's
+ * own (a malformed body -- no `tasks` array -- is returned raw rather than
+ * crashing on a dereference), and EACH ROW inside the map callback gets
+ * its own guard too (a malformed row -- null, or missing `id` -- passes
+ * through unchanged rather than crashing on `task.id`/`task.title` or
+ * silently serialising to `{}`). `nextCursor` passes through untouched in
+ * both branches.
  */
 export function projectTaskListSummary(
   response: ListProjectTasksResponse,
   include?: readonly string[],
-): ListProjectTasksResponse | { tasks: TaskListSummary[]; nextCursor: string | null } {
+): ListProjectTasksResponse | { tasks: (TaskListSummary | RawTask)[]; nextCursor: string | null } {
   if (include?.includes("task")) return response;
   if (!response || !Array.isArray(response.tasks)) return response;
 
-  const tasks = response.tasks.map((task): TaskListSummary => {
+  const tasks = response.tasks.map((task): TaskListSummary | RawTask => {
+    // Per-row guard (rc-v1-C006/task 3653962f review round 1, LOW): a row
+    // without an id is passed through unchanged rather than dereferenced
+    // (projectTaskCore reads task.id/task.title directly, so a null or
+    // id-less row would otherwise throw, or -- if guarded only at the
+    // envelope level -- get silently projected to a bare {}).
+    if (!task || !task.id) return task;
     const summary: TaskListSummary = projectTaskCore(task);
     if (task.externalRef) summary.externalRef = task.externalRef;
     if (task.createdAt) summary.createdAt = task.createdAt;

@@ -74,11 +74,14 @@ The 9 converted v2 write verbs (`task_create`, `task_respec`, `task_finish`,
 (`{ ok, task: { id, status? }, ... }`, per `docs/response-contract-v1.md`)
 instead of the raw backend body; pass `include: ["task"]` on any of them to
 get the full, pre-contract object back for that call. `tasks_get` returns a
-summary projection with its own `include` vocabulary, and `signals_poll`
-caps and cursors the backend response locally even though it takes no
-`include` parameter of its own (see `docs/response-contract-v1.md`'s
-read-verb section). Every other default-registered tool still returns the
-raw JSON response from the backend as a text block. The 14 pruned, legacy-flag
+summary projection with its own `include` vocabulary, and `project_tasks`
+returns summary rows (description | templateData | task) with its own,
+narrower `include` vocabulary (no `comments`/`artifacts`: a row has no
+per-row use case for either); `signals_poll` caps and cursors the backend
+response locally even though it takes no `include` parameter of its own
+(see `docs/response-contract-v1.md`'s read-verb section). Every other
+default-registered tool still returns the raw JSON response from the
+backend as a text block. The 14 pruned, legacy-flag
 verbs are exempt from these shape rules entirely (see
 `docs/response-contract-v1.md`'s "Legacy-flag exemption"): they exist for
 compatibility only, and most still return the raw backend body they always

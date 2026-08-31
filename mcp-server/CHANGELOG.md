@@ -4,17 +4,22 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
-**CONTRACT CHANGE**: `project_tasks` now returns summary rows by default
-(id, title, status, priority, labels, externalRef, createdAt, claims,
-blockedBy, prUrl), not the full backend task per row. Descriptions and
-templateData are no longer echoed back on every row without asking: pass
-`include: ["description"]` or `include: ["templateData"]` to add one
-field back to every row, or `include: ["task"]` for the full, pre-contract
-rows (the recovery path after context loss), same `include` semantics
-`tasks_get` already uses. `nextCursor` and every existing filter (status,
-priority, labels, unclaimed, limit, sort, cursor) are unchanged. This
-keeps a browse-scoped listing of many long-description tasks well inside
-the tool-result token cap without lowering `limit` (task 3653962f).
+**CONTRACT CHANGE**: `project_tasks` now returns summary rows by default,
+an ALLOWLIST of id, title, status, priority, labels, externalRef,
+createdAt, claims (work claim only: this route's rows never carry a
+review claim), blockedBy, prUrl (plus totalLabels / totalBlockedBy when
+either list is clamped), not the full backend task per row. Every other
+field the backend can return (description and templateData, but also
+blocks, branchName, prNumber, result, dueAt, claimedAt, metadata,
+deliverableRepo, workflowId, updatedAt, ...) is left off each row: pass
+`include: ["description"]` or `include: ["templateData"]` to add one of
+the two individually-gated fields back to every row, or `include: ["task"]`
+for the full, pre-contract rows (the recovery path after context loss),
+same `include` semantics `tasks_get` already uses. `nextCursor` and every
+existing filter (status, priority, labels, unclaimed, limit, sort, cursor)
+are unchanged. The allowlist keeps a browse-scoped listing well inside the
+tool-result token cap regardless of how much description/templateData a
+project's tasks carry; `limit` still governs row count (task 3653962f).
 
 ## 0.14.0
 

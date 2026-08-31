@@ -1,5 +1,15 @@
 # Change log
 
+## 2026-08-31
+
+`mcp-server.md` re-verified against `task 3653962f` (review round 1): added
+`mcp-server/src/read.ts` to `sources:` and a new "Read-verb projection
+layer" paragraph describing `project_tasks`'s summary-row default and its
+own narrower `include` vocabulary, alongside `tasks_get`'s existing
+single-task projection. `timestamp:` bumped. Every claim re-verified
+against the cited source at authoring time; no other doc in this bundle
+touches `read.ts` or the `project_tasks` row shape.
+
 ## 2026-07-16
 
 CI now watches staleness: warn-only `okf-kit check` on every PR

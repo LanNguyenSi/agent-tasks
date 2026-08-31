@@ -1004,7 +1004,7 @@ describe("buildTools", () => {
   // unchanged -- coincidence of this fixture's shape, not evidence the
   // projection is skipped (see the dedicated summary-shape tests below for
   // that).
-  it("project_tasks filters on status: 'backlog' end-to-end and returns backlog tasks unmodified", async () => {
+  it("project_tasks filters on status: 'backlog' end-to-end and returns a summary row for the backlog task", async () => {
     fetchMock.mockResolvedValueOnce(
       ok({ tasks: [{ id: "t1", status: "backlog", title: "drafted by an agent" }], nextCursor: null }),
     );
@@ -1925,6 +1925,14 @@ describe("buildTools", () => {
         project: "00000000-0000-0000-0000-000000000001",
       } as never);
       expect(serializeResult(result).length).toBeLessThan(20_000);
+    });
+
+    it("an empty tasks array end-to-end returns an empty array, and nextCursor materializes to null when the backend body omits it", async () => {
+      fetchMock.mockResolvedValueOnce(ok({ tasks: [] }));
+      const result = await tool("project_tasks").handler({
+        project: "00000000-0000-0000-0000-000000000001",
+      } as never);
+      expect(result).toEqual({ tasks: [], nextCursor: null });
     });
   });
 
