@@ -93,3 +93,9 @@ Benchmark comparison recorded in `BENCHMARK.md`: M1 15/24 → 17/24, M2 flat
 okf-kit Phase 1, with the oracle frontmatter-awareness work pulled forward.
 
 Initial bundle authored: 13 concept docs (architecture, backend, frontend, mcp-server, mcp-bridge, confidence-scorer, governance-merge, workflow-gates, claim-model, release-flow, deploy, reconcile-done-but-open, task-lifecycle) plus `index.md`. OKF Phase-0 pilot for agent-tasks (task `9cdc0436-4599-44f0-825b-c1c4ed6a3b90`). Every claim verified against source at authoring time.
+
+## 2026-08-31: task-lifecycle.md re-verified after the project_tasks summary change (task 3653962f)
+
+- Trigger: this branch edits `mcp-server/src/tools.ts` (a `sources:` entry of task-lifecycle.md), so the doc goes sources-fresh STALE on commit.
+- Method: read the doc's claims that rest on tools.ts (the verb surface list and the per-verb lifecycle semantics) against the branch diff; the diff touches only the `project_tasks` tool (description, include, projection wiring), none of the lifecycle verbs the doc describes.
+- Verdict: no drift; timestamp bumped without content change.
