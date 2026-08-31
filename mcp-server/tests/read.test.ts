@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
   projectTaskSummary,
+  projectTaskListSummary,
   paginateSignals,
   TASKS_GET_INCLUDE_VALUES,
+  PROJECT_TASKS_INCLUDE_VALUES,
   SIGNALS_DEFAULT_LIMIT,
   SIGNALS_BACKEND_FETCH_LIMIT,
   type GetTaskResponse,
+  type ListProjectTasksResponse,
   type RawSignal,
 } from "../src/read.js";
 import { serializeResult } from "../src/server.js";
@@ -277,6 +280,151 @@ describe("projectTaskSummary", () => {
   it("TASKS_GET_INCLUDE_VALUES excludes instructions (task_start's own per-state prose, not a task field)", () => {
     expect(TASKS_GET_INCLUDE_VALUES).not.toContain("instructions");
     expect(TASKS_GET_INCLUDE_VALUES).toEqual(["description", "comments", "artifacts", "task"]);
+  });
+});
+
+// ── project_tasks: projectTaskListSummary (task 3653962f) ───────────────
+//
+// project_tasks is a browse-scoped listing verb: a 40-row page where
+// several rows carry multi-kB descriptions/templateData used to return
+// every row's full backend shape. This projects each row down to a
+// summary the same way projectTaskSummary already does for a single
+// tasks_get call, reusing the same core field set (see read.ts's shared
+// projectTaskCore), plus two list-only fields (externalRef, createdAt).
+
+function listResponse(tasks: ListProjectTasksResponse["tasks"], nextCursor: string | null = null): ListProjectTasksResponse {
+  return { tasks, nextCursor };
+}
+
+describe("projectTaskListSummary", () => {
+  it("PROJECT_TASKS_INCLUDE_VALUES is description/templateData/task (no comments/artifacts -- no per-row use case)", () => {
+    expect(PROJECT_TASKS_INCLUDE_VALUES).toEqual(["description", "templateData", "task"]);
+  });
+
+  it("defaults every row to id + title only when nothing else is present, nextCursor passed through", () => {
+    const response = listResponse([{ id: "t1", title: "Fix the login redirect loop" }], "next-id");
+    const result = projectTaskListSummary(response);
+    expect(result).toEqual({ tasks: [{ id: "t1", title: "Fix the login redirect loop" }], nextCursor: "next-id" });
+  });
+
+  it("row summary carries status/priority/labels/externalRef/createdAt/claims/blockedBy/prUrl, never description/templateData/comments/artifacts by default", () => {
+    const response = listResponse([
+      {
+        id: "t1",
+        title: "Fix the login redirect loop",
+        status: "in_progress",
+        priority: "HIGH",
+        labels: ["bug", "auth"],
+        externalRef: "ext-42",
+        createdAt: "2026-08-01T00:00:00.000Z",
+        prUrl: "https://github.com/o/r/pull/42",
+        claimedByUser: { id: "u1", login: "lan", name: "Lan" },
+        blockedBy: [{ id: "b1", title: "Add auth middleware", status: "done" }],
+        description: "a very long description that should not be echoed back by default",
+        templateData: { taskType: "bugfix" },
+      },
+    ]);
+    const result = projectTaskListSummary(response) as unknown as {
+      tasks: Record<string, unknown>[];
+    };
+    const row = result.tasks[0]!;
+    expect(row).toEqual({
+      id: "t1",
+      title: "Fix the login redirect loop",
+      status: "in_progress",
+      priority: "HIGH",
+      labels: ["bug", "auth"],
+      externalRef: "ext-42",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      claims: { work: "Lan" },
+      blockedBy: [{ id: "b1", title: "Add auth middleware", status: "done" }],
+      prUrl: "https://github.com/o/r/pull/42",
+    });
+    // Acceptance criterion 3: the exact key set of a summary row carries no
+    // description, no templateData, no metadata, no timestamps other than
+    // createdAt.
+    expect(Object.keys(row).sort()).toEqual(
+      ["blockedBy", "claims", "createdAt", "externalRef", "id", "labels", "priority", "prUrl", "status", "title"].sort(),
+    );
+    expect(row.description).toBeUndefined();
+    expect(row.templateData).toBeUndefined();
+  });
+
+  it('include:["description"] adds description back to every row, other rows unaffected', () => {
+    const response = listResponse([
+      { id: "t1", title: "A", description: "desc-1" },
+      { id: "t2", title: "B" },
+    ]);
+    const result = projectTaskListSummary(response, ["description"]) as {
+      tasks: { id: string; description?: string }[];
+    };
+    expect(result.tasks[0]?.description).toBe("desc-1");
+    expect(result.tasks[1]?.description).toBeUndefined();
+  });
+
+  it('include:["templateData"] adds templateData back to every row', () => {
+    const response = listResponse([{ id: "t1", title: "A", templateData: { taskType: "feature" } }]);
+    const result = projectTaskListSummary(response, ["templateData"]) as unknown as {
+      tasks: { templateData?: Record<string, unknown> }[];
+    };
+    expect(result.tasks[0]?.templateData).toEqual({ taskType: "feature" });
+  });
+
+  it('include:["task"] returns the raw response unchanged, full rows, nextCursor untouched', () => {
+    const response = listResponse(
+      [{ id: "t1", title: "A", description: "full body", templateData: { x: 1 } }],
+      "cursor-9",
+    );
+    const result = projectTaskListSummary(response, ["task"]);
+    expect(result).toBe(response);
+  });
+
+  it("a malformed body (no tasks array) is returned raw rather than crashing on a dereference", () => {
+    const malformed = { nextCursor: null } as unknown as ListProjectTasksResponse;
+    expect(projectTaskListSummary(malformed)).toBe(malformed);
+  });
+
+  // ── acceptance criterion 1: 40-row fixture with 3kB descriptions/templateData
+  // stays well under 20kB serialized, while include:["task"] does not ──────
+
+  function bigTask(i: number): ListProjectTasksResponse["tasks"][number] {
+    return {
+      id: `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`,
+      title: `Task number ${i}`,
+      status: "open",
+      priority: "MEDIUM",
+      labels: ["mcp", "dx"],
+      externalRef: `ext-${i}`,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      description: "d".repeat(3000),
+      templateData: { taskType: "feature", notes: "n".repeat(2000) },
+    };
+  }
+
+  it("40-row fixture with 3kB descriptions/templateData: default projection stays under 20kB, include:[\"task\"] does not", () => {
+    const tasks = Array.from({ length: 40 }, (_, i) => bigTask(i));
+    const response = listResponse(tasks, null);
+
+    const defaultResult = projectTaskListSummary(response);
+    const defaultSize = JSON.stringify(defaultResult).length;
+    expect(defaultSize).toBeLessThan(20_000);
+
+    const fullResult = projectTaskListSummary(response, ["task"]);
+    const fullSize = JSON.stringify(fullResult).length;
+    // The whole point of include:["task"] is that it is NOT summarized --
+    // demonstrates the default projection is doing real work, not that
+    // both branches coincidentally land under the cap.
+    expect(fullSize).toBeGreaterThan(20_000);
+  });
+
+  it("nextCursor is preserved unchanged by the default projection (task id, or null)", () => {
+    const response = listResponse([{ id: "t1", title: "A" }], "some-task-id");
+    const result = projectTaskListSummary(response) as { nextCursor: string | null };
+    expect(result.nextCursor).toBe("some-task-id");
+
+    const nullResponse = listResponse([{ id: "t1", title: "A" }], null);
+    const nullResult = projectTaskListSummary(nullResponse) as { nextCursor: string | null };
+    expect(nullResult.nextCursor).toBeNull();
   });
 });
 

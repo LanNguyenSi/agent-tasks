@@ -997,9 +997,13 @@ describe("buildTools", () => {
 
   // v1 backlog routing: project_tasks's status filter accepts "backlog" and
   // forwards it end-to-end through the mcp-server layer (zod input parse ->
-  // client -> backend request), and a "backlog" status on the returned task
-  // round-trips through unmodified (no receipt/summary projection applies
-  // to this raw-passthrough verb).
+  // client -> backend request). task 3653962f: project_tasks now projects
+  // every row to a summary by default (see the "returns summary rows"
+  // describe block below), but this fixture carries no field outside the
+  // summary's own set (id/title/status), so the row happens to round-trip
+  // unchanged -- coincidence of this fixture's shape, not evidence the
+  // projection is skipped (see the dedicated summary-shape tests below for
+  // that).
   it("project_tasks filters on status: 'backlog' end-to-end and returns backlog tasks unmodified", async () => {
     fetchMock.mockResolvedValueOnce(
       ok({ tasks: [{ id: "t1", status: "backlog", title: "drafted by an agent" }], nextCursor: null }),
@@ -1786,6 +1790,143 @@ describe("buildTools", () => {
   });
 
   // ── tasks_get: summary default + include (rc-v1-C006) ───────────────────
+
+  // ── project_tasks: returns summary rows by default (task 3653962f) ────
+
+  describe("project_tasks returns summary rows", () => {
+    it("returns a summary row per task by default, not the full row, and never echoes description/templateData", async () => {
+      fetchMock.mockResolvedValueOnce(
+        ok({
+          tasks: [
+            {
+              id: "t1",
+              title: "Fix the bug",
+              status: "in_progress",
+              priority: "HIGH",
+              labels: ["bug"],
+              externalRef: "ext-1",
+              createdAt: "2026-08-01T00:00:00.000Z",
+              prUrl: "https://github.com/o/r/pull/9",
+              claimedByUser: { id: "u1", name: "Lan" },
+              blockedBy: [{ id: "b1", title: "Blocker", status: "done" }],
+              description: "SECRET description",
+              templateData: { taskType: "bugfix", notes: "SECRET template notes" },
+            },
+          ],
+          nextCursor: null,
+        }),
+      );
+      const result = await tool("project_tasks").handler({
+        project: "00000000-0000-0000-0000-000000000001",
+      } as never);
+      expect(result).toEqual({
+        tasks: [
+          {
+            id: "t1",
+            title: "Fix the bug",
+            status: "in_progress",
+            priority: "HIGH",
+            labels: ["bug"],
+            externalRef: "ext-1",
+            createdAt: "2026-08-01T00:00:00.000Z",
+            claims: { work: "Lan" },
+            blockedBy: [{ id: "b1", title: "Blocker", status: "done" }],
+            prUrl: "https://github.com/o/r/pull/9",
+          },
+        ],
+        nextCursor: null,
+      });
+      expect(JSON.stringify(result)).not.toContain("SECRET");
+    });
+
+    it.each(["description", "templateData"] as const)(
+      'include:["%s"] adds back only that field, per row',
+      async (field) => {
+        fetchMock.mockResolvedValueOnce(
+          ok({
+            tasks: [
+              {
+                id: "t1",
+                title: "Fix the bug",
+                description: "the spec",
+                templateData: { taskType: "feature" },
+              },
+            ],
+            nextCursor: null,
+          }),
+        );
+        const result = (await tool("project_tasks").handler({
+          project: "00000000-0000-0000-0000-000000000001",
+          include: [field],
+        } as never)) as { tasks: Record<string, unknown>[] };
+        expect(result.tasks[0]?.[field]).toBeDefined();
+        for (const other of ["description", "templateData"] as const) {
+          if (other !== field) expect(result.tasks[0]).not.toHaveProperty(other);
+        }
+      },
+    );
+
+    it('include:["task"] returns the full, pre-contract { tasks, nextCursor } object unchanged', async () => {
+      const backendBody = {
+        tasks: [{ id: "t1", title: "Fix the bug", status: "open", description: "d" }],
+        nextCursor: "cursor-1",
+      };
+      fetchMock.mockResolvedValueOnce(ok(backendBody));
+      const result = await tool("project_tasks").handler({
+        project: "00000000-0000-0000-0000-000000000001",
+        include: ["task"],
+      } as never);
+      expect(result).toEqual(backendBody);
+    });
+
+    it("include schema accepts description/templateData/task and rejects an unknown value with a schema validation error", () => {
+      const shape = tool("project_tasks").inputShape;
+      for (const value of ["description", "templateData", "task"]) {
+        const accepted = z.object(shape).safeParse({
+          project: "00000000-0000-0000-0000-000000000001",
+          include: [value],
+        });
+        expect(accepted.success, `project_tasks include:["${value}"] should pass schema validation`).toBe(true);
+      }
+      const rejected = z.object(shape).safeParse({
+        project: "00000000-0000-0000-0000-000000000001",
+        include: ["comments"],
+      });
+      expect(
+        rejected.success,
+        'project_tasks include:["comments"] should fail schema validation (not part of project_tasks\'s vocabulary)',
+      ).toBe(false);
+    });
+
+    it("nextCursor is preserved unchanged through the default projection", async () => {
+      fetchMock.mockResolvedValueOnce(
+        ok({ tasks: [{ id: "t1", title: "A" }], nextCursor: "some-task-id" }),
+      );
+      const result = (await tool("project_tasks").handler({
+        project: "00000000-0000-0000-0000-000000000001",
+      } as never)) as { nextCursor: string | null };
+      expect(result.nextCursor).toBe("some-task-id");
+    });
+
+    it("SIZE BOUND: a 40-row page with 3kB descriptions/templateData per row stays under 20kB serialized by default", async () => {
+      const tasks = Array.from({ length: 40 }, (_, i) => ({
+        id: `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`,
+        title: `Task number ${i}`,
+        status: "open",
+        priority: "MEDIUM",
+        labels: ["mcp", "dx"],
+        externalRef: `ext-${i}`,
+        createdAt: "2026-08-01T00:00:00.000Z",
+        description: "d".repeat(3000),
+        templateData: { taskType: "feature", notes: "n".repeat(2000) },
+      }));
+      fetchMock.mockResolvedValueOnce(ok({ tasks, nextCursor: null }));
+      const result = await tool("project_tasks").handler({
+        project: "00000000-0000-0000-0000-000000000001",
+      } as never);
+      expect(serializeResult(result).length).toBeLessThan(20_000);
+    });
+  });
 
   describe("tasks_get", () => {
     const GET_TASK_ID = "33333333-3333-3333-3333-333333333333";

@@ -30,12 +30,15 @@ import {
 } from "./receipt.js";
 import {
   projectTaskSummary,
+  projectTaskListSummary,
   paginateSignals,
   TASKS_GET_INCLUDE_VALUES,
+  PROJECT_TASKS_INCLUDE_VALUES,
   SIGNALS_DEFAULT_LIMIT,
   SIGNALS_MAX_LIMIT,
   SIGNALS_BACKEND_FETCH_LIMIT,
   type GetTaskResponse,
+  type ListProjectTasksResponse,
   type RawSignal,
 } from "./read.js";
 
@@ -118,6 +121,22 @@ const readIncludeSchema = z
   .optional()
   .describe(
     'Default response is a summary (id, title, status, priority, labels, claims, blockedBy, prUrl), not the full task. Pass one or more of "description", "comments", "artifacts" to add just that field back, or "task" for the full, pre-contract object (recovery path after context loss).',
+  );
+
+// project_tasks's own include enum (task 3653962f), narrower than
+// tasks_get's readIncludeSchema above: no "comments"/"artifacts" (no
+// per-row use case for a browse-scoped listing verb), but adds
+// "templateData" -- the one full-row field a project_tasks caller
+// plausibly wants back per-row without paying for include:["task"]'s full
+// raw rows. Default response is a summary ROW (id, title, status,
+// priority, labels, externalRef, createdAt, claims, blockedBy, prUrl) --
+// see read.ts's projectTaskListSummary.
+const projectTasksIncludeSchema = z
+  .array(z.enum(PROJECT_TASKS_INCLUDE_VALUES))
+  .max(PROJECT_TASKS_INCLUDE_VALUES.length)
+  .optional()
+  .describe(
+    'Default response is summary rows (id, title, status, priority, labels, externalRef, createdAt, claims, blockedBy, prUrl), not the full tasks. Pass "description" or "templateData" to add just that field back to every row, or "task" for the full, pre-contract rows (recovery path after context loss).',
   );
 
 // Choke point for every backend call: maps a thrown AgentTasksApiError to
@@ -683,7 +702,8 @@ export function buildTools(
         "`project` accepts a slug ('agent-tasks') or a UUID; slugs are resolved mcp-server-side (TTL-cached, ~15 min, rc-v1-C006), no separate lookup call needed. An unresolvable slug is an unknown_project_slug teaching error whose recipe asks the operator for the correct slug or id (or, with AGENT_TASKS_MCP_LEGACY=1 set, call projects_list). " +
         "Filters (status, priority, labels, unclaimed) combine with AND semantics; status and priority accept either a single value or an array. limit defaults to unbounded on the backend, but clamps to 500 if supplied — pass an explicit limit when calling from an LLM harness so the response stays inside the tool-result token cap. " +
         "DEFAULT sort is `createdAt:desc` (newest tasks first) — pass `sort: \"createdAt:asc\"` to reverse it. Combined with a small `limit`, the default lets you fetch the N newest open tasks in a single call without blowing the tool-result token cap. " +
-        "The response carries `nextCursor` (a task id, or null once the last page is reached) — pass it back as `cursor` to page forward; combined with `sort` + `id` as a tiebreaker, page order is stable even when many tasks share the same createdAt timestamp.",
+        "The response carries `nextCursor` (a task id, or null once the last page is reached) — pass it back as `cursor` to page forward; combined with `sort` + `id` as a tiebreaker, page order is stable even when many tasks share the same createdAt timestamp. " +
+        "Rows are a SUMMARY by default (id, title, status, priority, labels, externalRef, createdAt, claims, blockedBy, prUrl): descriptions and templateData are NOT echoed back, so `limit` alone is no longer the only lever against the token cap, a listing of tasks with long descriptions stays small without lowering `limit`. Pass include:[\"description\"] or include:[\"templateData\"] to add just that field back to every row, or include:[\"task\"] for the full, pre-contract rows.",
       inputShape: {
         project: z
           .string()
@@ -720,10 +740,11 @@ export function buildTools(
           .describe(
             "Task id to page forward from — pass the previous call's `nextCursor`. Omit for the first page.",
           ),
+        include: projectTasksIncludeSchema,
       },
-      handler: async ({ project, status, priority, labels, unclaimed, limit, sort, cursor }) => {
+      handler: async ({ project, status, priority, labels, unclaimed, limit, sort, cursor, include }) => {
         try {
-          return await wrap(() =>
+          const response = await wrap(() =>
             client.listProjectTasks(project, {
               status,
               priority,
@@ -734,6 +755,7 @@ export function buildTools(
               cursor,
             }),
           );
+          return projectTaskListSummary(response as ListProjectTasksResponse, include);
         } catch (err) {
           // Same rc-v1-C006 mapping as task_create's own projectSlug path:
           // client.ts's resolver throws ProjectSlugNotFoundError (not an

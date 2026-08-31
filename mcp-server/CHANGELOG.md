@@ -2,6 +2,20 @@
 
 All notable changes to `@agent-tasks/mcp-server` are documented here.
 
+## Unreleased
+
+**CONTRACT CHANGE**: `project_tasks` now returns summary rows by default
+(id, title, status, priority, labels, externalRef, createdAt, claims,
+blockedBy, prUrl), not the full backend task per row. Descriptions and
+templateData are no longer echoed back on every row without asking: pass
+`include: ["description"]` or `include: ["templateData"]` to add one
+field back to every row, or `include: ["task"]` for the full, pre-contract
+rows (the recovery path after context loss), same `include` semantics
+`tasks_get` already uses. `nextCursor` and every existing filter (status,
+priority, labels, unclaimed, limit, sort, cursor) are unchanged. This
+keeps a browse-scoped listing of many long-description tasks well inside
+the tool-result token cap without lowering `limit` (task 3653962f).
+
 ## 0.14.0
 
 **Backlog status v1 on the MCP surface** (PR #477): `project_tasks` and

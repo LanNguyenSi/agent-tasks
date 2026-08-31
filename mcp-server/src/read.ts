@@ -57,6 +57,11 @@ export interface RawTask {
   reviewClaimedByUser?: RawClaimUser | null;
   reviewClaimedByAgent?: RawClaimAgent | null;
   blockedBy?: RawBlockedByEntry[];
+  // project_tasks-only fields (task 3653962f): not read by tasks_get's own
+  // projection, only by projectTaskListSummary below.
+  externalRef?: string | null;
+  createdAt?: string;
+  templateData?: Record<string, unknown> | null;
 }
 
 /** The shape client.getTask() resolves to: `{ task }`, matching GET
@@ -167,19 +172,15 @@ export interface TaskSummary {
 }
 
 /**
- * Projects a raw GET /tasks/:id response to the summary shape, or (on
- * include:["task"]) returns it unchanged. Defensive guard mirrors
- * receipt.ts's hasTaskId: a malformed body (no task.id) is returned raw
- * rather than crashing on a dereference.
+ * Builds the field set every summary projection shares (id/title/status/
+ * priority/labels/claims/blockedBy/prUrl), independent of which verb is
+ * calling it or which include-gated extras that verb layers on top.
+ * Factored out so tasks_get (projectTaskSummary) and project_tasks
+ * (projectTaskListSummary, task 3653962f) project the SAME core fields
+ * the SAME way instead of maintaining two copies of this logic that could
+ * drift apart.
  */
-export function projectTaskSummary(
-  response: GetTaskResponse,
-  include?: readonly string[],
-): GetTaskResponse | { task: TaskSummary } {
-  if (include?.includes("task")) return response;
-  if (!response?.task?.id) return response;
-
-  const task = response.task;
+function projectTaskCore(task: RawTask): TaskSummary {
   const summary: TaskSummary = { id: task.id, title: task.title };
   if (task.status !== undefined) summary.status = task.status;
   if (task.priority !== undefined) summary.priority = task.priority;
@@ -217,11 +218,97 @@ export function projectTaskSummary(
     summary.prUrl = clampEntries([task.prUrl], { max: 1, entryChars: PRURL_CHAR_BUDGET })[0];
   }
 
+  return summary;
+}
+
+/**
+ * Projects a raw GET /tasks/:id response to the summary shape, or (on
+ * include:["task"]) returns it unchanged. Defensive guard mirrors
+ * receipt.ts's hasTaskId: a malformed body (no task.id) is returned raw
+ * rather than crashing on a dereference.
+ */
+export function projectTaskSummary(
+  response: GetTaskResponse,
+  include?: readonly string[],
+): GetTaskResponse | { task: TaskSummary } {
+  if (include?.includes("task")) return response;
+  if (!response?.task?.id) return response;
+
+  const task = response.task;
+  const summary = projectTaskCore(task);
+
   if (include?.includes("description") && task.description) summary.description = task.description;
   if (include?.includes("comments") && task.comments) summary.comments = task.comments;
   if (include?.includes("artifacts") && task.artifacts) summary.artifacts = task.artifacts;
 
   return { task: summary };
+}
+
+// ── project_tasks: summary-rows-by-default list projection (task 3653962f)
+//
+// GET /projects/:id/tasks returns `{ tasks: RawTask[], nextCursor }` with
+// every row carrying the FULL backend task shape (description,
+// templateData, timestamps, claim relations, ...). A 40-row listing where
+// several rows carry multi-kB descriptions/templateData blows well past a
+// comfortable tool-result size for a browse-scoped verb whose whole point
+// is "what is open in project X", so each row is now projected down to a
+// summary the same way tasks_get's single-task projection already is
+// (shared core: projectTaskCore above), plus two list-specific fields
+// (externalRef, createdAt) that are useful for browsing/dedup identification
+// and cheap (short, bounded-ish strings) to carry on every row.
+// `nextCursor` is untouched -- it addresses full backend task ids, not
+// projected rows, so no interaction with the projection.
+
+/** project_tasks's own include vocabulary. Narrower than tasks_get's
+ *  (TASKS_GET_INCLUDE_VALUES): no "comments"/"artifacts" -- a project_tasks
+ *  row has no per-row comments/artifacts use case the way a single
+ *  tasks_get call does -- but adds "templateData", the one full-row field
+ *  a project_tasks caller plausibly wants back without paying for
+ *  include:["task"]'s full raw rows. */
+export const PROJECT_TASKS_INCLUDE_VALUES = ["description", "templateData", "task"] as const;
+export type ProjectTasksIncludeValue = (typeof PROJECT_TASKS_INCLUDE_VALUES)[number];
+
+/** project_tasks's default row shape: projectTaskCore's fields plus
+ *  externalRef/createdAt (list-only; tasks_get's TaskSummary does not
+ *  carry either), plus the two include-gated additions this verb accepts. */
+export interface TaskListSummary extends TaskSummary {
+  externalRef?: string;
+  createdAt?: string;
+  templateData?: Record<string, unknown>;
+}
+
+/** The shape client.listProjectTasks() resolves to: `{ tasks, nextCursor }`,
+ *  matching GET /projects/:id/tasks's own response envelope verbatim.
+ *  include:["task"] returns this unchanged. */
+export interface ListProjectTasksResponse {
+  tasks: RawTask[];
+  nextCursor: string | null;
+}
+
+/**
+ * Projects a raw GET /projects/:id/tasks response to summary rows, or (on
+ * include:["task"]) returns it unchanged. Defensive guard mirrors
+ * projectTaskSummary's own: a malformed body (no `tasks` array) is
+ * returned raw rather than crashing on a dereference. `nextCursor` passes
+ * through untouched in both branches.
+ */
+export function projectTaskListSummary(
+  response: ListProjectTasksResponse,
+  include?: readonly string[],
+): ListProjectTasksResponse | { tasks: TaskListSummary[]; nextCursor: string | null } {
+  if (include?.includes("task")) return response;
+  if (!response || !Array.isArray(response.tasks)) return response;
+
+  const tasks = response.tasks.map((task): TaskListSummary => {
+    const summary: TaskListSummary = projectTaskCore(task);
+    if (task.externalRef) summary.externalRef = task.externalRef;
+    if (task.createdAt) summary.createdAt = task.createdAt;
+    if (include?.includes("description") && task.description) summary.description = task.description;
+    if (include?.includes("templateData") && task.templateData) summary.templateData = task.templateData;
+    return summary;
+  });
+
+  return { tasks, nextCursor: response.nextCursor ?? null };
 }
 
 // ── signals_poll: mcp-server-side cap + cursor ──────────────────────────

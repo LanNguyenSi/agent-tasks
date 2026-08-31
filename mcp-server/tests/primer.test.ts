@@ -234,6 +234,7 @@ describe("HANDSHAKE_PRIMER's converted-verb list is grounded in buildTools, not 
     derived.delete("task_pickup");
     derived.delete("task_start");
     derived.delete("tasks_get");
+    derived.delete("project_tasks");
     expect(derived).toEqual(new Set(sentenceConvertedVerbs()));
   });
 
@@ -242,6 +243,17 @@ describe("HANDSHAKE_PRIMER's converted-verb list is grounded in buildTools, not 
     expect(derived.has("tasks_get")).toBe(true);
     expect(HANDSHAKE_PRIMER).toMatch(/tasks_get returns a summary by default and accepts include/i);
     expect(sentenceConvertedVerbs()).not.toContain("tasks_get");
+  });
+
+  // task 3653962f: project_tasks's own list-summary-by-default projection,
+  // named in its own primer clause the same way tasks_get's is above, not
+  // folded into the write-verb parenthetical list (it is a browse-scoped
+  // read verb, not a write verb).
+  it("project_tasks (task 3653962f's list-summary include addition) actually accepts include in buildTools and is named in its own primer clause (not folded into the write-verb parenthetical list)", () => {
+    const derived = includeAcceptingVerbNames();
+    expect(derived.has("project_tasks")).toBe(true);
+    expect(HANDSHAKE_PRIMER).toMatch(/project_tasks returns summary rows by default and accepts include/i);
+    expect(sentenceConvertedVerbs()).not.toContain("project_tasks");
   });
 });
 
