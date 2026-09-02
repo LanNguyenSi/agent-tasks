@@ -3,7 +3,7 @@ type: runbook
 title: "Cutting a release: three tag axes, one publish workflow"
 description: "v* triggers a GitHub Release; mcp-server-v*/mcp-bridge-v* both drive publish-npm.yml, which requires mcp-server to already be published before mcp-bridge."
 tags: [release, ci, npm, tags]
-timestamp: 2026-08-21T09:00:00Z
+timestamp: 2026-09-02T05:45:02Z
 sources:
   - .github/workflows/release.yml
   - .github/workflows/publish-npm.yml
@@ -13,7 +13,7 @@ sources:
 
 Three independent tag axes, two workflow files:
 
-- **`v*`** (root release) → `.github/workflows/release.yml`: runs the shared `ci.yml` first (`workflow_call`), then extracts the version from the tag (`${GITHUB_REF_NAME#v}`), pulls the matching `## [x.y.z]` section out of `CHANGELOG.md` (`awk`), and publishes it as a GitHub Release via `softprops/action-gh-release@v2`. No npm publish happens here.
+- **`v*`** (root release) → `.github/workflows/release.yml`: runs the shared `ci.yml` first (`workflow_call`), then extracts the version from the tag (`${GITHUB_REF_NAME#v}`), pulls the matching `## [x.y.z]` section out of `CHANGELOG.md` (`awk`), and publishes it as a GitHub Release via `softprops/action-gh-release@v3`. No npm publish happens here.
 - **`mcp-server-v*`** and **`mcp-bridge-v*`** → the *same* single workflow, `.github/workflows/publish-npm.yml`, which branches on the tag prefix (`case "$tag" in mcp-server-v*) ... mcp-bridge-v*) ... esac`) to pick the npm workspace and the expected version.
 
 **`publish-npm.yml` steps** (in order): checkout, Node 22 + npm registry setup, `npm ci`, verify `<workspace>/package.json#version` equals the tag-derived version (fails the job otherwise), then, **only for the `mcp-bridge` workspace**, a preflight that reads `mcp-bridge/package.json#dependencies["@agent-tasks/mcp-server"]` (an exact pin, e.g. `"0.14.0"`, no `^`) and runs `npm view "@agent-tasks/mcp-server@<pinned>" version`; if that lookup fails the job aborts with "Publish mcp-server first (tag: mcp-server-v<pinned>)." Then build (`mcp-server` always built first, then the target workspace) and `npm publish --workspace=<target> --access public --provenance`.
