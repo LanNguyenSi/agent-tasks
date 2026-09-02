@@ -1,5 +1,31 @@
 # Change log
 
+## 2026-09-02
+
+Fleet parity sweep: pinned `.github/workflows/okf-staleness.yml` to
+`okf-kit@0.9.0` (from `0.6.0`), matching the other bundle repos (orchestrator
+decision D-004: 0.8.0 and 0.9.0 report identical findings here). Cleared all
+11 pre-existing `sources-fresh` STALE warnings by re-verifying every flagged
+doc's claims against the current source, not just re-stamping: `backend.md`,
+`claim-model.md`, `governance-merge.md`, and `reconcile-done-but-open.md`
+had no citation drift, only the timestamp needed bumping.
+`confidence-scorer.md` and `frontend.md` had a stale line-count citation for
+`frontend/src/lib/confidence.ts` (1239 -> 1290 lines, `#494`'s
+keystone-blocking warning helper), and `frontend.md` also had a stale line
+count for `dashboard/page.tsx` (736 -> 739 lines, `#496`'s label editor).
+`workflow-gates.md` had eight stale line-number citations into
+`backend/src/routes/tasks.ts`: four shifted by the `#497` label-audit
+insertion (`POST /tasks/:id/claim` gate call 6400 -> 6421; the v1
+`/tasks/:id/transition` route 6635 -> 6656; its `isProjectAdmin` check 6666
+-> 6687; its `task.transitioned.forced` audit call 6871 -> 6893) and four
+were a pre-existing off-by-4 drift unrelated to this sweep's trigger, caught
+only by opening the cited spans by hand (the cross-repo `prUrl` guard's four
+call sites: `task_finish` 3356 -> 3360, `submit-pr` 3712 -> 3716, the PATCH
+agent lane 4706 -> 4710, the PATCH human lane 4778 -> 4782); the doc's
+line-count footnote was bumped from 7205 to the current 7226. `okf-kit check
+--json docs/okf` on the committed tree: 0 errors, 0 warnings, 0 notices.
+Task: agent-tasks `44ee799a`.
+
 ## 2026-08-31
 
 `mcp-server.md` re-verified against `task 3653962f` (review round 1): added

@@ -3,7 +3,7 @@ type: invariant
 title: "Claim model: task_pickup resolution order, backlog filtering, and single-active-claim"
 description: "Signals, then review, then open work, then idle; backlog is invisible to pickup; priority desc/createdAt asc; blockedBy filtering; one active claim per agent enforced in both pickup and start; status is an unconstrained free String; backlog tasks require human promotion before agent claim."
 tags: [claim, pickup, status, dependencies, backlog]
-timestamp: 2026-08-21T09:00:00Z
+timestamp: 2026-09-02T04:50:50Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/prisma/schema.prisma
