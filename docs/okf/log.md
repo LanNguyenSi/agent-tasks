@@ -2,6 +2,15 @@
 
 ## 2026-09-02
 
+Post-merge re-verification (2026-09-02T05:46:00Z) after the Node-24 GitHub Actions bump
+(#502): `deploy.md` and `release-flow.md` went STALE against `ci.yml`,
+`docker-smoke.yml`, `release.yml` and `publish-npm.yml`, whose only change
+was the `uses:` majors (`actions/checkout` v4 to v5, `actions/setup-node`
+v4 to v5, `softprops/action-gh-release` v2 to v3; no step, trigger or line
+moved). Both docs re-read against the four workflows: the one claim naming
+a major (`release-flow.md`, the GitHub Release step) now says `@v3`,
+everything else holds; both re-stamped.
+
 Fleet parity sweep: pinned `.github/workflows/okf-staleness.yml` to
 `okf-kit@0.9.0` (from `0.6.0`), matching the other bundle repos (measured: 0.8.0 and 0.9.0 report identical findings here). Cleared all
 11 pre-existing `sources-fresh` STALE warnings by re-verifying every flagged
