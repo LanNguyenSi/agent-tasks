@@ -3,8 +3,7 @@
 ## 2026-09-02
 
 Fleet parity sweep: pinned `.github/workflows/okf-staleness.yml` to
-`okf-kit@0.9.0` (from `0.6.0`), matching the other bundle repos (orchestrator
-decision D-004: 0.8.0 and 0.9.0 report identical findings here). Cleared all
+`okf-kit@0.9.0` (from `0.6.0`), matching the other bundle repos (measured: 0.8.0 and 0.9.0 report identical findings here). Cleared all
 11 pre-existing `sources-fresh` STALE warnings by re-verifying every flagged
 doc's claims against the current source, not just re-stamping: `backend.md`,
 `claim-model.md`, `governance-merge.md`, and `reconcile-done-but-open.md`
