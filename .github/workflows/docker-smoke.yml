@@ -54,7 +54,7 @@ jobs:
     # stays generous on purpose. Re-tune from real CI wall times if needed.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Docker prod-image smoke test
         run: bash tools/frontend-docker-smoke.sh
