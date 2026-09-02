@@ -14,8 +14,8 @@ name: OKF staleness
 on:
   pull_request:
     # The one repo-specific line in the canonical pattern: set this to the
-    # target repo's default branch when porting (all five currently use
-    # master); a wrong name here means the watch silently never runs.
+    # target repo's default branch when porting; a wrong name here means
+    # the watch silently never runs.
     branches: [master]
 
 permissions:
