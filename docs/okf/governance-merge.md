@@ -3,7 +3,7 @@ type: invariant
 title: "Governance modes and the two merge paths"
 description: "governanceMode (AUTONOMOUS / AWAITS_CONFIRMATION / REQUIRES_DISTINCT_REVIEWER) drives self-merge and review gates; the GitHub webhook and the REST merge verb pick different post-merge statuses."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-08-21T09:00:00Z
+timestamp: 2026-09-02T04:50:50Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
