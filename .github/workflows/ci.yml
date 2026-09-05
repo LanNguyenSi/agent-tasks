@@ -50,7 +50,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Verify native deps load
         # Smoke-test better-sqlite3 (transitive via @lannguyensi/evidence-ledger)
@@ -102,7 +102,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Type check
         run: npm run typecheck --workspace=frontend
@@ -125,7 +125,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: npm run typecheck --workspace=mcp-server
       - run: npm run typecheck:test --workspace=mcp-server
       - run: npm run test --workspace=mcp-server
@@ -150,7 +150,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: npm run build --workspace=mcp-server
       - run: npm run typecheck --workspace=mcp-bridge
       - run: npm run typecheck:test --workspace=mcp-bridge
@@ -166,7 +166,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: npm run typecheck --workspace=@agent-tasks/cli
       - run: npm run typecheck:test --workspace=@agent-tasks/cli
       - run: npm run test --workspace=@agent-tasks/cli
