@@ -53,6 +53,10 @@ work out of being finished in our default deployment shape.
 
 ## Consequences
 
+The later external-receipt consumer contract is documented in
+[`grounding-receipt-contract.md`](../grounding-receipt-contract.md). It is
+additive and has no caller in this decision's legacy gate.
+
 - Power users in single-host setups (everything on one laptop, or
   backend + agents on the same VPS) can opt in per project via
   `PATCH /api/projects/:id { "requireGroundingForDebug": true }` and
