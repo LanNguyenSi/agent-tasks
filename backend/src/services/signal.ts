@@ -10,6 +10,7 @@
  * notification-webhook service (best-effort, void). See
  * docs/notification-webhooks.md.
  */
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { deliverSignalWebhook } from "./notification-webhook.js";
 
@@ -98,7 +99,7 @@ export async function createSignals(inputs: CreateSignalInput[]) {
  * POST if configured. Swallows any unexpected error so the originating
  * `createSignal` call cannot fail.
  */
-async function maybeDeliverSignalWebhook(signal: {
+export async function maybeDeliverSignalWebhook(signal: {
   id: string;
   type: string;
   taskId: string;
@@ -107,9 +108,9 @@ async function maybeDeliverSignalWebhook(signal: {
   recipientUserId: string | null;
   context: unknown;
   createdAt: Date;
-}): Promise<void> {
+}, db: Pick<Prisma.TransactionClient, "project"> = prisma): Promise<void> {
   try {
-    const project = await prisma.project.findUnique({
+    const project = await db.project.findUnique({
       where: { id: signal.projectId },
       select: {
         slug: true,

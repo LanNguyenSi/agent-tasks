@@ -8,6 +8,12 @@ import { fetchCheckRunStatus } from "./github-checks.js";
 import { GroundingDecisionError } from "./grounding-transaction.js";
 
 export async function completionGates(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, target: GroundingTarget, definition: unknown, authority: GroundingAuthority, remote: boolean, headProvider: GroundingHeadProvider) {
+  return evaluateCompletionGates(db, task, actor, target, definition, authority, remote, headProvider, "allowAgentPrCreate");
+}
+export async function taskMergeCompletionGates(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, target: GroundingTarget, definition: unknown, authority: GroundingAuthority, remote: boolean, headProvider: GroundingHeadProvider) {
+  return evaluateCompletionGates(db, task, actor, target, definition, authority, remote, headProvider, "allowAgentPrMerge");
+}
+async function evaluateCompletionGates(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, target: GroundingTarget, definition: unknown, authority: GroundingAuthority, remote: boolean, headProvider: GroundingHeadProvider, consent: "allowAgentPrCreate" | "allowAgentPrMerge") {
   const parsed = z.object({ transitions: z.array(z.object({ from: z.string(), to: z.string(), requiredRole: z.enum(["ADMIN", "HUMAN_MEMBER", "REVIEWER", "any"]).optional(), requires: z.array(z.string()).optional() })) }).safeParse(definition);
   if (!parsed.success) unavailable();
   const edge = parsed.data.transitions.find(t => t.from === target.from && t.to === target.to);
@@ -20,7 +26,7 @@ export async function completionGates(db: Prisma.TransactionClient, task: Ground
   const rules = (edge.requires ?? []).filter(r => !skipped.includes(r) && !(remote && r === "prMerged"));
   let githubToken: string | null = null;
   if (rules.some(r => GITHUB_BACKED_RULES.has(r as TransitionRule))) {
-    const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrCreate", { preferUserId: actor.userId, db });
+    const delegate = await findDelegationUser(task.project.teamId, consent, { preferUserId: actor.userId, db });
     githubToken = delegate?.githubAccessToken ?? null;
   }
   let ciHeadSha: string | null = null;

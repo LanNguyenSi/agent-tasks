@@ -43,6 +43,26 @@ export interface GroundingAuthority {
 }
 export const groundingAuthority: GroundingAuthority = { canWrite: requireProjectWrite, hasRole: hasProjectRole };
 
+/** Standalone task_merge is a project write, independent of claim ownership. */
+export async function requireTaskMergeActor(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, authority: GroundingAuthority = groundingAuthority) {
+  if (actor.type === "agent" && !actor.scopes.includes("github:pr_merge")) throw new GroundingAccessError("forbidden", 403);
+  if (!await authority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);
+}
+
+/** Installed standalone route policy; never selected by a receipt-supplied flag. */
+export async function resolveTaskMergeTarget(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, authority: GroundingAuthority = groundingAuthority): Promise<{ target: GroundingTarget; definition: unknown }> {
+  await requireTaskMergeActor(db, task, actor, authority);
+  if (task.status !== "review") throw new GroundingAccessError("bad_state", 409);
+  if (!checkSelfMergeGate(task, actor, task.project).allowed || !checkReviewApprovalGate(task, actor, task.project).allowed) throw new GroundingAccessError("forbidden", 403);
+  const { definition, def, workflowId } = await groundingWorkflow(db, task);
+  const candidates = def.transitions.filter(t => t.from === task.status && isTerminalState(def, t.to));
+  if (candidates.length !== 1) throw new GroundingAccessError("bad_state", 409);
+  const edge = candidates[0]!;
+  if (edge.requiredRole && !await authority.hasRole(actor, task.projectId, edge.requiredRole as ProjectRole, db)) throw new GroundingAccessError("forbidden", 403);
+  if (!await findDelegationUser(task.project.teamId, "allowAgentPrMerge", { preferUserId: actor.userId, db })) throw new GroundingAccessError("forbidden", 403);
+  return { target: { workflowId, from: task.status, to: edge.to, action: "merge" }, definition };
+}
+
 export async function resolveGroundingTarget(
   db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, intent: GroundingIntent,
   authority: GroundingAuthority = groundingAuthority,
@@ -129,9 +149,11 @@ export interface GroundingHeadInput {
 export type GroundingHeadProvider = (input: GroundingHeadInput) => Promise<string>;
 
 /** Uncached, bounded read using the same delegation consent as existing GitHub-backed gates. */
-export const fetchGroundingHead: GroundingHeadProvider = async ({ actor, teamId, repo, prNumber, db }) => {
+export const fetchGroundingHead: GroundingHeadProvider = input => fetchHeadWithConsent(input, "allowAgentPrCreate");
+export const fetchTaskMergeHead: GroundingHeadProvider = input => fetchHeadWithConsent(input, "allowAgentPrMerge");
+async function fetchHeadWithConsent({ actor, teamId, repo, prNumber, db }: GroundingHeadInput, consent: "allowAgentPrCreate" | "allowAgentPrMerge"): Promise<string> {
   try {
-    const delegate = await findDelegationUser(teamId, "allowAgentPrCreate", { preferUserId: actor.userId, ...(db ? { db } : {}) });
+    const delegate = await findDelegationUser(teamId, consent, { preferUserId: actor.userId, ...(db ? { db } : {}) });
     if (!delegate) unavailable();
     const response = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
       headers: { Authorization: `Bearer ${delegate.githubAccessToken}`, Accept: "application/vnd.github+json", "Cache-Control": "no-cache" },
@@ -159,7 +181,7 @@ export const fetchGroundingHead: GroundingHeadProvider = async ({ actor, teamId,
     if (!parsed.success) unavailable();
     return parsed.data.head.sha;
   } catch { return unavailable(); }
-};
+}
 
 export async function projectGroundingContext(
   task: GroundingTask, binding: GroundingBinding, target: GroundingTarget, definition: unknown,

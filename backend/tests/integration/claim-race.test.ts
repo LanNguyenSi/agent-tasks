@@ -38,6 +38,9 @@ const prismaMocks = vi.hoisted(() => ({
   taskUpdateMany: vi.fn(),
   workflowFindFirst: vi.fn(),
 }));
+const groundingRouteContextMock = vi.hoisted(() => ({
+  error: null as Error | null,
+}));
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
@@ -99,8 +102,29 @@ vi.mock("../../src/services/grounding-client.js", () => ({
   __resetGroundingClientCacheForTests: () => {},
 }));
 
+// Direct route mutations use the shared grounding transaction adapter. The
+// route-level CAS test supplies the transaction client explicitly; production
+// must never fall back to an incomplete Prisma mock.
+vi.mock("../../src/services/grounding-route-context.js", () => ({
+  mutateGroundingRouteContext: async (_client: unknown, input: {
+    mutate: (db: { task: { updateMany: typeof prismaMocks.taskUpdateMany } }, task: never) => Promise<{ value: unknown; changed: boolean }>;
+  }) => {
+    if (groundingRouteContextMock.error) throw groundingRouteContextMock.error;
+    const task = await prismaMocks.taskFindUnique.mock.results.map(result => result.value).reverse().find(Boolean) as never;
+    return input.mutate({ task: { updateMany: prismaMocks.taskUpdateMany } }, task);
+  },
+  presentGroundingRouteContext: async (_client: unknown, input: { present: (task: never, context: { mode: "UNPROVISIONED" }) => Promise<unknown> }) => ({
+    task: {} as never,
+    context: { mode: "UNPROVISIONED" },
+    value: await input.present({} as never, { mode: "UNPROVISIONED" }),
+  }),
+  buildExternalGroundingHint: (taskId: string) => ({ taskId, kind: "external_grounding_v1" }),
+  selectGroundingRouteContext: vi.fn().mockResolvedValue({ mode: "UNPROVISIONED" }),
+}));
+
 // ── Import taskRouter AFTER all vi.mock declarations ─────────────────────────
 import { taskRouter } from "../../src/routes/tasks.js";
+import { GroundingAccessError } from "../../src/services/grounding-context.js";
 
 // ── Actor definitions ─────────────────────────────────────────────────────────
 //
@@ -182,6 +206,7 @@ const openTask = {
 describe("POST /tasks/:id/claim — parallel-claims CAS exclusion", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    groundingRouteContextMock.error = null;
 
     // Initial fetches (both requests): unclaimed open task.
     // Persistent fallback (mockResolvedValue) serves the winner's re-fetch
@@ -254,5 +279,16 @@ describe("POST /tasks/:id/claim — parallel-claims CAS exclusion", () => {
     const winningCallArgs = prismaMocks.taskUpdateMany.mock.calls[0][0];
     expect(winningCallArgs.data.status).toBe("in_progress");
     expect(winningCallArgs.data.claimedByAgentId).not.toBeNull();
+  });
+
+  it("preserves the legacy conflict envelope when the locked revalidation rejects a stale claim", async () => {
+    groundingRouteContextMock.error = new GroundingAccessError("bad_state", 409);
+    const res = await makeApp(AGENT_1).request("/tasks/task-1/claim", { method: "POST" });
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "conflict",
+      message: "Task state changed before the request completed",
+    });
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
   });
 });

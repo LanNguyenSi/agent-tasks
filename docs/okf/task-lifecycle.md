@@ -3,9 +3,10 @@ type: overview
 title: "The v2 verb surface and the happy-path task lifecycle"
 description: "task_create, task_pickup, task_start, task_finish, task_merge, task_abandon, the polymorphic MCP-oriented verbs layered over the classic REST CRUD, plus lazy debugFlavor classification and the backlog status for agent-created work."
 tags: [task-lifecycle, mcp, verbs, overview, backlog]
-timestamp: 2026-08-31T16:22:23Z
+timestamp: 2026-09-08T08:12:00Z
 sources:
   - backend/src/routes/tasks.ts
+  - backend/src/services/grounding-route-context.ts
   - mcp-server/src/tools.ts
 ---
 
@@ -27,6 +28,18 @@ ADR-0008 introduced a small, polymorphic "verb" surface on top of the classic RE
 
 **`task_respec` backlog draft space**: `POST /tasks/:id/respec` (spec update/clarification) is normally creator-only once a task reaches `open` status, to prevent spec-drift from confusing agents mid-claim. In backlog, `task_respec` is allowed for any caller (agent or human), since backlog is an unreviewed draft space: an agent can clarify their own backlog proposal, and a human can update the spec before promoting to `open`. Once promoted out of backlog, respec reverts to creator-only.
 
-**`debugFlavor` lazy classification**: a task's `metadata.debugFlavor` (boolean) can be set explicitly at `task_create` time (skips the heuristic entirely) or is otherwise left unset and classified lazily, the *first* `task_pickup` or `task_start` call that touches the task runs `deriveDebugFlavor`, which calls the pure `detectDebugFlavor` heuristic (title/description/labels) and persists the result into `metadata`. `isFresh` (metadata had no `debugFlavor` yet) gates whether the write happens; `?reclassify=true` forces a re-run and, if the result differs from what was persisted, emits a `task.debugFlavor.reclassified` audit event. A `true` result triggers a grounding-session hint (`groundingHint` in the response) via `GroundingClient`, reconstructed from persisted `groundingSessionState` on subsequent calls rather than re-started.
+**`debugFlavor` lazy classification**: a task's `metadata.debugFlavor` (boolean) can be set explicitly at `task_create` time (skips the heuristic entirely) or is otherwise left unset and classified lazily, the *first* `task_pickup` or `task_start` call that touches the task runs `deriveDebugFlavor`, which calls the pure `detectDebugFlavor` heuristic (title/description/labels) and persists the result into `metadata`. `isFresh` (metadata had no `debugFlavor` yet) gates whether the write happens; `?reclassify=true` forces a re-run and, if the result differs from what was persisted, emits a `task.debugFlavor.reclassified` audit event. For an unprovisioned or explicitly legacy task, a `true` result may trigger the legacy grounding-session hint through `GroundingClient`.
+
+**Provisioned grounding presentation**: pickup/start select grounding mode from
+the protected cohort and binding, never from task metadata. An `EXTERNAL_V1`
+task receives session-free REST attempt guidance (`/api/tasks/:id/grounding-attempts`
+and its receipt route) plus the `Idempotency-Key` completion requirement. It
+does not create, reconstruct, or expose a backend wrapper session; forged
+debug/session metadata cannot select this mode. Selection and legacy initializer
+presentation share the enrollment lock so a server enrollment cannot interleave
+with that bounded legacy initialization. Explicit `LEGACY_LOCAL` and `OFF` stay
+distinct from historical unprovisioned behavior. Work guidance issues a `finish`
+attempt; review pickup and start issue an `approve` attempt, including an
+idempotent review-start reply.
 
 Related: `claim-model.md`, `workflow-gates.md`, `governance-merge.md`, `mcp-server.md`, `reconcile-done-but-open.md`.

@@ -37,6 +37,14 @@ import {
   type GroundingClient,
   type GroundingStartResult,
 } from "../services/grounding-client.js";
+import {
+  buildExternalGroundingHint,
+  mutateGroundingRouteContext,
+  presentGroundingRouteContext,
+  type ExternalGroundingHint,
+  type GroundingRouteContext,
+} from "../services/grounding-route-context.js";
+import { GroundingAccessError } from "../services/grounding-context.js";
 
 // Signals that become meaningless once the underlying task is `done`.
 // Outcome-notification signals (`task_approved`, `changes_requested`,
@@ -131,6 +139,14 @@ import { httpUrl } from "../lib/url-guard.js";
 const RESOLVED_BLOCKER_STATUSES: string[] = ["done", "abandoned"];
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
+taskRouter.onError((error, c) => {
+  if (error instanceof GroundingAccessError) {
+    if (error.code === "not_found") return notFound(c);
+    if (error.code === "forbidden") return forbidden(c);
+    return conflict(c, "Task state changed before the request completed");
+  }
+  throw error;
+});
 
 /**
  * Case-insensitive hex/UUID-fragment gate for the id-prefix search branch
@@ -1574,6 +1590,7 @@ async function deriveDebugFlavor<T extends {
   project: { slug: string };
 }>(
   task: T,
+  routeContext: GroundingRouteContext,
   client?: GroundingClient,
   forceReclassify?: boolean,
 ): Promise<{
@@ -1584,7 +1601,7 @@ async function deriveDebugFlavor<T extends {
   // use this to emit the task.debugFlavor.reclassified audit event.
   reclassified: boolean;
   mergedMetadata: TaskMetadata;
-  groundingHint: GroundingHint | null;
+  groundingHint: GroundingHint | ExternalGroundingHint | null;
 }> {
   const meta = readMetadata(task.metadata);
   const isFresh = meta.debugFlavor === undefined;
@@ -1608,6 +1625,21 @@ async function deriveDebugFlavor<T extends {
   if (reclassified && !debugFlavor) {
     delete mergedMetadata.groundingSessionState;
     delete mergedMetadata.groundingSessionId;
+  }
+
+  // External enrollment is authoritative. It deliberately precedes the
+  // debug-flavor return so an externally provisioned task always receives the
+  // REST attempt guidance, including a task whose old metadata says
+  // `debugFlavor: false`. Do not reconstruct, persist, or create a local
+  // wrapper session for this lane.
+  if (routeContext.mode === "EXTERNAL_V1") {
+    return {
+      debugFlavor,
+      isFresh,
+      reclassified,
+      mergedMetadata,
+      groundingHint: buildExternalGroundingHint(task.id),
+    };
   }
 
   if (!debugFlavor) {
@@ -1778,7 +1810,18 @@ taskRouter.post("/tasks/pickup", async (c) => {
     },
   });
   if (reviewTask) {
-    return c.json({ kind: "review", task: reviewTask });
+    const presentation = await presentGroundingRouteContext(prisma, {
+      taskId: reviewTask.id,
+      projectId: reviewTask.projectId,
+      present: async (lockedTask, routeContext) => routeContext.mode === "EXTERNAL_V1"
+        ? buildExternalGroundingHint(lockedTask.id, "approve")
+        : null,
+    });
+    return c.json({
+      kind: "review",
+      task: reviewTask,
+      ...(presentation.value ? { groundingHint: presentation.value } : {}),
+    });
   }
 
   // ── 3. Work pickup ────────────────────────────────────────────────────────
@@ -1808,17 +1851,28 @@ taskRouter.post("/tasks/pickup", async (c) => {
     // ?reclassify=true opt-in: re-run the classifier regardless of whether
     // debugFlavor is already persisted and write the result unconditionally.
     const reclassify = c.req.query("reclassify") === "true";
-    const { isFresh, reclassified, mergedMetadata, groundingHint } = await deriveDebugFlavor(
-      workTask,
-      getGroundingClient(),
-      reclassify,
-    );
-    if (isFresh || reclassify) {
-      await prisma.task.update({
-        where: { id: workTask.id },
-        data: { metadata: mergedMetadata as Prisma.InputJsonValue },
-      });
-    }
+    const presentation = await presentGroundingRouteContext(prisma, {
+      taskId: workTask.id,
+      projectId: workTask.projectId,
+
+      present: (lockedTask, routeContext) => deriveDebugFlavor(
+        lockedTask,
+        routeContext,
+        routeContext.mode === "EXTERNAL_V1" || routeContext.mode === "OFF"
+          ? undefined
+          : getGroundingClient(),
+        reclassify,
+      ),
+      persist: async (db, lockedTask, flavor) => {
+        if (flavor.isFresh || reclassify) {
+          await db.task.update({
+            where: { id: lockedTask.id },
+            data: { metadata: flavor.mergedMetadata as Prisma.InputJsonValue },
+          });
+        }
+      },
+    });
+    const { reclassified, mergedMetadata, groundingHint } = presentation.value;
     if (reclassified) {
       void logAuditEvent({
         action: "task.debugFlavor.reclassified",
@@ -2083,27 +2137,60 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       return _exhaustive;
     }
 
-    const flavor = await deriveDebugFlavor(task, getGroundingClient(), reclassify);
+    const presentation = await presentGroundingRouteContext(prisma, {
+      taskId: task.id,
+      projectId: task.projectId,
+
+      present: (lockedTask, routeContext) => deriveDebugFlavor(
+        lockedTask,
+        routeContext,
+        routeContext.mode === "EXTERNAL_V1" || routeContext.mode === "OFF"
+          ? undefined
+          : getGroundingClient(),
+        reclassify,
+      ),
+      persist: async (db, lockedTask, flavor) => {
+        if (flavor.isFresh || reclassify) {
+          await db.task.update({
+            where: { id: lockedTask.id },
+            data: { metadata: flavor.mergedMetadata as Prisma.InputJsonValue },
+          });
+        }
+      },
+    });
+    const flavor = presentation.value;
     // Atomic compare-and-swap: only claim if the row is still unclaimed. The
     // `task.claimedBy*` null-check above is a fast path, but two actors can
     // both pass it before either writes (TOCTOU). Guarding on
     // `claimedBy* IS NULL` makes exactly one writer win; the loser sees
     // count===0 and gets a 409.
-    const claimResult = await prisma.task.updateMany({
-      where: { id: task.id, claimedByUserId: null, claimedByAgentId: null },
-      data: {
-        claimedByUserId: actor.type === "human" ? actor.userId : null,
-        claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
-        claimedAt: new Date(),
-        status: startTarget,
-        ...(willPersistBranchName ? { branchName: providedBranchName } : {}),
-        // Include metadata when it is fresh (first classification) OR when the
-        // caller requested a forced reclassification (reclassify=true).
-        ...(flavor.isFresh || reclassify
-          ? { metadata: flavor.mergedMetadata as Prisma.InputJsonValue }
-          : {}),
+    const claimMutation = await mutateGroundingRouteContext(prisma, {
+      taskId: task.id,
+      projectId: task.projectId,
+      actor,
+      reason: "task_start_work_claim",
+
+      revalidate: async (db, lockedTask) => {
+        if (!(await requireProjectWrite(actor, lockedTask.projectId, db)))
+          throw new GroundingAccessError("forbidden", 403);
+        if (lockedTask.status !== task.status || lockedTask.claimedByUserId || lockedTask.claimedByAgentId)
+          throw new GroundingAccessError("bad_state", 409);
+      },
+      mutate: async (db, lockedTask) => {
+        const value = await db.task.updateMany({
+          where: { id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null },
+          data: {
+            claimedByUserId: actor.type === "human" ? actor.userId : null,
+            claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
+            claimedAt: new Date(), status: startTarget,
+            ...(willPersistBranchName ? { branchName: providedBranchName } : {}),
+            ...(flavor.isFresh || reclassify ? { metadata: flavor.mergedMetadata as Prisma.InputJsonValue } : {}),
+          },
+        });
+        return { value, changed: value.count === 1 };
       },
     });
+    const claimResult = claimMutation.value;
     if (claimResult.count === 0) {
       return conflict(c, "Task is already claimed");
     }
@@ -2201,14 +2288,22 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       // The null-check above is a fast path; two reviewers can both pass it
       // before either writes (TOCTOU). Guarding on `reviewClaimedBy* IS NULL`
       // makes exactly one writer win; the loser sees count===0 and gets a 409.
-      const claimResult = await prisma.task.updateMany({
-        where: { id: task.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
-        data: {
-          reviewClaimedByUserId: actor.type === "human" ? actor.userId : null,
-          reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
-          reviewClaimedAt: new Date(),
+      const reviewMutation = await mutateGroundingRouteContext(prisma, {
+        taskId: task.id, projectId: task.projectId, actor, reason: "task_start_review_claim",
+        revalidate: async (db, lockedTask) => {
+          if (!(await requireProjectWrite(actor, lockedTask.projectId, db))) throw new GroundingAccessError("forbidden", 403);
+          if (lockedTask.status !== task.status || lockedTask.reviewClaimedByUserId || lockedTask.reviewClaimedByAgentId)
+            throw new GroundingAccessError("bad_state", 409);
+        },
+        mutate: async (db, lockedTask) => {
+          const value = await db.task.updateMany({
+            where: { id: lockedTask.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
+            data: { reviewClaimedByUserId: actor.type === "human" ? actor.userId : null, reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null, reviewClaimedAt: new Date() },
+          });
+          return { value, changed: value.count === 1 };
         },
       });
+      const claimResult = reviewMutation.value;
       if (claimResult.count === 0) {
         return conflict(c, "Task is already being reviewed by another reviewer");
       }
@@ -2262,6 +2357,13 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     // preview needs one key per outcome.
     const approveTo = approveTarget(effectiveDefinition, task.status) ?? "done";
     const requestChangesTo = requestChangesTarget(effectiveDefinition, task.status) ?? task.status;
+    const presentation = await presentGroundingRouteContext(prisma, {
+      taskId: updated.id,
+      projectId: updated.projectId,
+      present: async (lockedTask, routeContext) => routeContext.mode === "EXTERNAL_V1"
+        ? buildExternalGroundingHint(lockedTask.id, "approve")
+        : null,
+    });
 
     return c.json({
       kind: "review",
@@ -2281,6 +2383,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       // uniform start-receipt contract.
       previousStatus: task.status,
       project: task.project,
+      ...(presentation.value ? { groundingHint: presentation.value } : {}),
     });
   }
 
@@ -4084,18 +4187,23 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
   // (defense-in-depth; the creator field cannot legitimately change out from
   // under us, but guarding it in the CAS costs nothing and keeps this write
   // path self-contained).
-  const abandonResult = await prisma.task.updateMany({
-    where: {
-      id: task.id,
-      status: { in: ["open", "backlog"] },
-      claimedByUserId: null,
-      claimedByAgentId: null,
-      reviewClaimedByUserId: null,
-      reviewClaimedByAgentId: null,
-      createdByAgentId: actor.tokenId,
+  const abandonMutation = await mutateGroundingRouteContext(prisma, {
+    taskId: task.id, projectId: task.projectId, actor, reason: "creator_abandon",
+    revalidate: async (db, lockedTask) => {
+      if (!(await hasProjectAccess(actor, lockedTask.projectId, db)) || lockedTask.createdByAgentId !== actor.tokenId)
+        throw new GroundingAccessError("forbidden", 403);
+      if ((lockedTask.status !== "open" && lockedTask.status !== "backlog") || lockedTask.claimedByUserId || lockedTask.claimedByAgentId || lockedTask.reviewClaimedByUserId || lockedTask.reviewClaimedByAgentId)
+        throw new GroundingAccessError("bad_state", 409);
     },
-    data: { status: "abandoned", updatedAt: new Date() },
+    mutate: async (db, lockedTask) => {
+      const value = await db.task.updateMany({
+        where: { id: lockedTask.id, status: { in: ["open", "backlog"] }, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, createdByAgentId: actor.tokenId },
+        data: { status: "abandoned", updatedAt: new Date() },
+      });
+      return { value, changed: value.count === 1 };
+    },
   });
+  const abandonResult = abandonMutation.value;
   if (abandonResult.count === 0) {
     return conflict(c, CREATOR_ABANDON_STATE_CONFLICT_MESSAGE);
   }
@@ -5066,29 +5174,45 @@ taskRouter.patch("/tasks/:id", async (c) => {
 
   let updated;
   try {
-    updated = await prisma.task.update({
-      where: { id: task.id },
-      data: {
-        ...(body.title !== undefined ? { title: body.title } : {}),
-        ...(body.description !== undefined ? { description: body.description } : {}),
-        ...(body.priority !== undefined ? { priority: body.priority } : {}),
-        ...(body.status !== undefined ? { status: body.status } : {}),
-        ...(body.dueAt !== undefined ? { dueAt: body.dueAt ? new Date(body.dueAt) : null } : {}),
-        ...(body.branchName !== undefined ? { branchName: body.branchName } : {}),
-        ...(body.prUrl !== undefined ? { prUrl: body.prUrl } : {}),
-        ...(body.prNumber !== undefined ? { prNumber: body.prNumber } : {}),
-        ...(body.result !== undefined ? { result: body.result } : {}),
-        ...(body.templateData !== undefined
-          ? { templateData: body.templateData === null ? Prisma.JsonNull : body.templateData }
-          : {}),
-        ...(body.externalRef !== undefined ? { externalRef: body.externalRef } : {}),
-        ...(body.labels !== undefined ? { labels: body.labels } : {}),
-        ...(body.deliverableRepo !== undefined ? { deliverableRepo: body.deliverableRepo } : {}),
-        ...statusClaimPatch,
-        updatedAt: new Date(),
-      },
-      include: taskInclude,
-    });
+    const patchData = {
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(body.description !== undefined ? { description: body.description } : {}),
+      ...(body.priority !== undefined ? { priority: body.priority } : {}),
+      ...(body.status !== undefined ? { status: body.status } : {}),
+      ...(body.dueAt !== undefined ? { dueAt: body.dueAt ? new Date(body.dueAt) : null } : {}),
+      ...(body.branchName !== undefined ? { branchName: body.branchName } : {}),
+      ...(body.prUrl !== undefined ? { prUrl: body.prUrl } : {}),
+      ...(body.prNumber !== undefined ? { prNumber: body.prNumber } : {}),
+      ...(body.result !== undefined ? { result: body.result } : {}),
+      ...(body.templateData !== undefined ? { templateData: body.templateData === null ? Prisma.JsonNull : body.templateData } : {}),
+      ...(body.externalRef !== undefined ? { externalRef: body.externalRef } : {}),
+      ...(body.labels !== undefined ? { labels: body.labels } : {}),
+      ...(body.deliverableRepo !== undefined ? { deliverableRepo: body.deliverableRepo } : {}),
+      ...statusClaimPatch,
+      updatedAt: new Date(),
+    };
+    if (isUnabandonTransition) {
+      const reopenMutation = await mutateGroundingRouteContext(prisma, {
+        taskId: task.id, projectId: task.projectId, actor, reason: "patch_unabandon",
+        revalidate: async (db, lockedTask) => {
+          if (!(await hasProjectRole(actor, lockedTask.projectId, "ADMIN", db))) throw new GroundingAccessError("forbidden", 403);
+          if (lockedTask.status !== "abandoned" || lockedTask.claimedByUserId || lockedTask.claimedByAgentId || lockedTask.reviewClaimedByUserId || lockedTask.reviewClaimedByAgentId)
+            throw new GroundingAccessError("bad_state", 409);
+        },
+        mutate: async (db, lockedTask) => {
+          const value = await db.task.updateMany({
+            where: { id: lockedTask.id, status: "abandoned", claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
+            data: patchData,
+          });
+          return { value, changed: value.count === 1 };
+        },
+      });
+      if (!reopenMutation.changed) return conflict(c, "Task is no longer abandoned");
+      updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
+      if (!updated) return notFound(c);
+    } else {
+      updated = await prisma.task.update({ where: { id: task.id }, data: patchData, include: taskInclude });
+    }
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
       return conflict(c, `A task with externalRef "${body.externalRef}" already exists in this project`);
@@ -6461,15 +6585,21 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
   // path, but two actors can both pass it before either writes (TOCTOU).
   // Guarding the write on `claimedBy* IS NULL` makes exactly one writer win;
   // the loser sees count===0 and gets a 409.
-  const claimResult = await prisma.task.updateMany({
-    where: { id: task.id, claimedByUserId: null, claimedByAgentId: null },
-    data: {
-      claimedByUserId: actor.type === "human" ? actor.userId : null,
-      claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
-      claimedAt: new Date(),
-      status: startTarget,
+  const claimMutation = await mutateGroundingRouteContext(prisma, {
+    taskId: task.id, projectId: task.projectId, actor, reason: "legacy_claim",
+    revalidate: async (db, lockedTask) => {
+      if (!(await requireProjectWrite(actor, lockedTask.projectId, db))) throw new GroundingAccessError("forbidden", 403);
+      if (lockedTask.status !== task.status || lockedTask.claimedByUserId || lockedTask.claimedByAgentId) throw new GroundingAccessError("bad_state", 409);
+    },
+    mutate: async (db, lockedTask) => {
+      const value = await db.task.updateMany({
+        where: { id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null },
+        data: { claimedByUserId: actor.type === "human" ? actor.userId : null, claimedByAgentId: actor.type === "agent" ? actor.tokenId : null, claimedAt: new Date(), status: startTarget },
+      });
+      return { value, changed: value.count === 1 };
     },
   });
+  const claimResult = claimMutation.value;
   if (claimResult.count === 0) {
     return conflict(c, "Task is already claimed");
   }
@@ -6514,16 +6644,24 @@ taskRouter.post("/tasks/:id/release", async (c) => {
 
   const effectiveDef = await resolveEffectiveDefinition(task, prisma);
 
-  const updated = await prisma.task.update({
-    where: { id: task.id },
-    data: {
-      claimedByUserId: null,
-      claimedByAgentId: null,
-      claimedAt: null,
-      status: effectiveDef.initialState,
+  const releaseMutation = await mutateGroundingRouteContext(prisma, {
+    taskId: task.id, projectId: task.projectId, actor, reason: "legacy_release",
+    revalidate: async (db, lockedTask) => {
+      if (!(await hasProjectAccess(actor, lockedTask.projectId, db))) throw new GroundingAccessError("forbidden", 403);
+      const held = actor.type === "human" ? lockedTask.claimedByUserId === actor.userId : lockedTask.claimedByAgentId === actor.tokenId;
+      if (!held || lockedTask.status !== task.status) throw new GroundingAccessError("bad_state", 409);
     },
-    include: taskInclude,
+    mutate: async (db, lockedTask) => {
+      const value = await db.task.updateMany({
+        where: actor.type === "human" ? { id: lockedTask.id, claimedByUserId: actor.userId } : { id: lockedTask.id, claimedByAgentId: actor.tokenId },
+        data: { claimedByUserId: null, claimedByAgentId: null, claimedAt: null, status: effectiveDef.initialState },
+      });
+      return { value, changed: value.count === 1 };
+    },
   });
+  if (!releaseMutation.changed) return conflict(c, "Your claim on this task is no longer held");
+  const updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
+  if (!updated) return notFound(c);
 
   void logAuditEvent({
     action: "task.released",
@@ -6580,22 +6718,29 @@ taskRouter.post(
       return c.json({ error: "bad_request", message: "nothing to release" }, 400);
     }
 
-    const released = { workClaim: false, reviewClaim: false };
-
-    if (body.releaseWorkClaim) {
+    const initialWorkHolder = task.claimedByUserId
+      ? { type: "human" as const, id: task.claimedByUserId }
+      : task.claimedByAgentId ? { type: "agent" as const, id: task.claimedByAgentId } : null;
+    const initialReviewHolder = task.reviewClaimedByUserId
+      ? { type: "human" as const, id: task.reviewClaimedByUserId }
+      : task.reviewClaimedByAgentId ? { type: "agent" as const, id: task.reviewClaimedByAgentId } : null;
+    const adminMutation = await mutateGroundingRouteContext(prisma, {
+      taskId: task.id, projectId: task.projectId, actor, reason: "admin_release",
+      revalidate: async (db, lockedTask) => {
+        if (!(await hasProjectRole(actor, lockedTask.projectId, "ADMIN", db))) throw new GroundingAccessError("forbidden", 403);
+      },
+      mutate: async (db, _lockedTask) => {
+        const released = { workClaim: false, reviewClaim: false };
+        if (body.releaseWorkClaim) {
       // priorHolder is the claim observed at load time. Only attempt a release
       // when a claim actually exists in the snapshot, and PIN the CAS guard to
       // that exact holder: if the claim changed hands (holder released, another
       // actor re-claimed) between this snapshot and the write, the pinned where
       // matches nothing (count 0), so we neither clobber the new claimant nor
       // log a stale priorHolder. An "any claim present" guard would do both.
-      const priorHolder = task.claimedByUserId
-        ? { type: "human" as const, id: task.claimedByUserId }
-        : task.claimedByAgentId
-          ? { type: "agent" as const, id: task.claimedByAgentId }
-          : null;
+      const priorHolder = initialWorkHolder;
       if (priorHolder) {
-        const result = await prisma.task.updateMany({
+        const result = await db.task.updateMany({
           where:
             priorHolder.type === "human"
               ? { id: task.id, claimedByUserId: priorHolder.id }
@@ -6604,25 +6749,14 @@ taskRouter.post(
         });
         if (result.count > 0) {
           released.workClaim = true;
-          void logAuditEvent({
-            action: "task.claim_released_by_admin",
-            actorId: actor.userId,
-            projectId: task.projectId,
-            taskId: task.id,
-            payload: { priorHolder, reason: body.reason ?? null },
-          });
         }
       }
     }
 
     if (body.releaseReviewClaim) {
-      const priorHolder = task.reviewClaimedByUserId
-        ? { type: "human" as const, id: task.reviewClaimedByUserId }
-        : task.reviewClaimedByAgentId
-          ? { type: "agent" as const, id: task.reviewClaimedByAgentId }
-          : null;
+      const priorHolder = initialReviewHolder;
       if (priorHolder) {
-        const result = await prisma.task.updateMany({
+        const result = await db.task.updateMany({
           where:
             priorHolder.type === "human"
               ? { id: task.id, reviewClaimedByUserId: priorHolder.id }
@@ -6631,15 +6765,18 @@ taskRouter.post(
         });
         if (result.count > 0) {
           released.reviewClaim = true;
-          void logAuditEvent({
-            action: "task.review_claim_released_by_admin",
-            actorId: actor.userId,
-            projectId: task.projectId,
-            taskId: task.id,
-            payload: { priorHolder, reason: body.reason ?? null },
-          });
         }
       }
+    }
+        return { value: released, changed: released.workClaim || released.reviewClaim };
+      },
+    });
+    const released = adminMutation.value;
+    if (released.workClaim && initialWorkHolder) {
+      void logAuditEvent({ action: "task.claim_released_by_admin", actorId: actor.userId, projectId: task.projectId, taskId: task.id, payload: { priorHolder: initialWorkHolder, reason: body.reason ?? null } });
+    }
+    if (released.reviewClaim && initialReviewHolder) {
+      void logAuditEvent({ action: "task.review_claim_released_by_admin", actorId: actor.userId, projectId: task.projectId, taskId: task.id, payload: { priorHolder: initialReviewHolder, reason: body.reason ?? null } });
     }
 
     // updateMany cannot use `include`, so re-fetch the (possibly) freshly
@@ -7135,14 +7272,21 @@ taskRouter.post("/tasks/:id/review/claim", async (c) => {
   // null-check above is a fast path; two reviewers can both pass it before
   // either writes (TOCTOU). Guarding on `reviewClaimedBy* IS NULL` makes
   // exactly one writer win; the loser sees count===0 and gets a 409.
-  const claimResult = await prisma.task.updateMany({
-    where: { id: task.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
-    data: {
-      reviewClaimedByUserId: actor.type === "human" ? actor.userId : null,
-      reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
-      reviewClaimedAt: new Date(),
+  const reviewMutation = await mutateGroundingRouteContext(prisma, {
+    taskId: task.id, projectId: task.projectId, actor, reason: "legacy_review_claim",
+    revalidate: async (db, lockedTask) => {
+      if (!(await requireProjectWrite(actor, lockedTask.projectId, db))) throw new GroundingAccessError("forbidden", 403);
+      if (lockedTask.status !== task.status || lockedTask.reviewClaimedByUserId || lockedTask.reviewClaimedByAgentId) throw new GroundingAccessError("bad_state", 409);
+    },
+    mutate: async (db, lockedTask) => {
+      const value = await db.task.updateMany({
+        where: { id: lockedTask.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
+        data: { reviewClaimedByUserId: actor.type === "human" ? actor.userId : null, reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null, reviewClaimedAt: new Date() },
+      });
+      return { value, changed: value.count === 1 };
     },
   });
+  const claimResult = reviewMutation.value;
   if (claimResult.count === 0) {
     return conflict(c, "Task is already being reviewed by another reviewer");
   }
@@ -7192,17 +7336,22 @@ taskRouter.post("/tasks/:id/review/release", async (c) => {
   // Atomic: only clear the lock if this actor still holds it, so a stale
   // release cannot wipe a lock another reviewer acquired in the meantime
   // (the isCurrentReviewer check above is a fast path with a TOCTOU window).
-  const releaseResult = await prisma.task.updateMany({
-    where:
-      actor.type === "human"
-        ? { id: task.id, reviewClaimedByUserId: actor.userId }
-        : { id: task.id, reviewClaimedByAgentId: actor.tokenId },
-    data: {
-      reviewClaimedByUserId: null,
-      reviewClaimedByAgentId: null,
-      reviewClaimedAt: null,
+  const releaseMutation = await mutateGroundingRouteContext(prisma, {
+    taskId: task.id, projectId: task.projectId, actor, reason: "legacy_review_release",
+    revalidate: async (db, lockedTask) => {
+      if (!(await hasProjectAccess(actor, lockedTask.projectId, db))) throw new GroundingAccessError("forbidden", 403);
+      const held = actor.type === "human" ? lockedTask.reviewClaimedByUserId === actor.userId : lockedTask.reviewClaimedByAgentId === actor.tokenId;
+      if (!held) throw new GroundingAccessError("bad_state", 409);
+    },
+    mutate: async (db, lockedTask) => {
+      const value = await db.task.updateMany({
+        where: actor.type === "human" ? { id: lockedTask.id, reviewClaimedByUserId: actor.userId } : { id: lockedTask.id, reviewClaimedByAgentId: actor.tokenId },
+        data: { reviewClaimedByUserId: null, reviewClaimedByAgentId: null, reviewClaimedAt: null },
+      });
+      return { value, changed: value.count === 1 };
     },
   });
+  const releaseResult = releaseMutation.value;
   if (releaseResult.count === 0) {
     return conflict(c, "Review lock is no longer held by you");
   }

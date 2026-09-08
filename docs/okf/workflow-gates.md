@@ -3,11 +3,12 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-09-08T06:41:06Z
+timestamp: 2026-09-08T08:12:00Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
   - backend/src/services/grounding-context-mutation.ts
+  - backend/src/routes/grounding-task-completion.ts
   - backend/src/services/transition-rules.ts
   - backend/src/services/gates/pr-repo-matches-project.ts
   - backend/src/services/workflow-templates.ts
@@ -48,5 +49,8 @@ skips retain their existing meaning and are recorded in the decision audit;
 remote foreign merges are refused. An explicit human-admin grounding override
 with a reason does not bypass these other gates. Persisted cohort mode alone
 selects external, legacy-local or OFF; external errors never fall back.
-These services are dormant from existing completion routers; see the
+The per-app provisioned completion router now invokes these services before
+completion/disposition effects. It preserves the semantic finish/approve/merge
+edge and requires canonical transport plus a durable operation key; the
+historical unprovisioned handlers remain separate. See the
 [shared receipt consumer contract](../grounding-receipt-contract.md).

@@ -69,6 +69,22 @@ vi.mock("../../src/services/github-delegation.js", () => ({
   findDelegationUser: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock("../../src/services/grounding-route-context.js", () => ({
+  mutateGroundingRouteContext: async (_client: unknown, input: {
+    mutate: (db: { task: { updateMany: typeof prismaMocks.taskUpdateMany } }, task: never) => Promise<{ value: unknown; changed: boolean }>;
+  }) => {
+    const task = await prismaMocks.taskFindUnique.mock.results.map(result => result.value).reverse().find(Boolean) as never;
+    return input.mutate({ task: { updateMany: prismaMocks.taskUpdateMany } }, task);
+  },
+  presentGroundingRouteContext: async (_client: unknown, input: { present: (task: never, context: { mode: "UNPROVISIONED" }) => Promise<unknown> }) => ({
+    task: {} as never,
+    context: { mode: "UNPROVISIONED" },
+    value: await input.present({} as never, { mode: "UNPROVISIONED" }),
+  }),
+  buildExternalGroundingHint: (taskId: string) => ({ taskId, kind: "external_grounding_v1" }),
+  selectGroundingRouteContext: vi.fn().mockResolvedValue({ mode: "UNPROVISIONED" }),
+}));
+
 vi.mock("../../src/config/index.js", () => ({
   config: {
     NODE_ENV: "test",

@@ -2,6 +2,12 @@
 
 ## 2026-09-08
 
+Documented the provisioned grounding completion transport, session-free external
+pickup/start guidance, canonical operation keys, durable recovery, and direct
+claim-context invalidation. Recorded that server-only enrollment must quiesce
+active legacy requests and that remaining positive, indirect, webhook, MCP, and
+rollout-qualification surfaces are staged separately.
+
 Bound required shared-service CI results to the freshly authorized decision,
 receipt and reservation head while preserving the existing classifier/cache
 policy. Corrected `claim-model.md` to distinguish free database storage from

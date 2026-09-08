@@ -18,6 +18,8 @@ export async function mutateGroundingContext<T>(client: PrismaClient, input: {
   audit: { actor: Actor; reason: string };
   selectAndAuthorize: (db: Prisma.TransactionClient) => Promise<readonly string[]>;
   mutate: (db: Prisma.TransactionClient, tasks: readonly GroundingTask[]) => Promise<T>;
+  /** A CAS/no-op result must commit without superseding an active attempt. */
+  didMutate?: (result: T) => boolean;
 }): Promise<T> {
   return groundingTransaction(client, async db => {
     if (!input.projectIds.length || !z.string().trim().min(1).max(2000).safeParse(input.audit.reason).success) mismatch();
@@ -27,10 +29,12 @@ export async function mutateGroundingContext<T>(client: PrismaClient, input: {
     for (const id of ids) tasks.push(await lockGroundingTaskUnderProject(db, id, input.projectIds));
     for (const task of tasks) await assertNoGroundingReservation(db, task.id);
     const result = await input.mutate(db, tasks);
-    for (const task of tasks) await invalidateGroundingContext(db, task.id);
-    for (const projectId of [...new Set(input.projectIds)].sort()) await logGroundingContextMutation(db, {
-      projectId, actorType: input.audit.actor.type, actorId: groundingActorId(input.audit.actor), reason: input.audit.reason.trim(), taskIds: tasks.filter(t => t.projectId === projectId).map(t => t.id),
-    });
+    if (input.didMutate?.(result) ?? true) {
+      for (const task of tasks) await invalidateGroundingContext(db, task.id);
+      for (const projectId of [...new Set(input.projectIds)].sort()) await logGroundingContextMutation(db, {
+        projectId, actorType: input.audit.actor.type, actorId: groundingActorId(input.audit.actor), reason: input.audit.reason.trim(), taskIds: tasks.filter(t => t.projectId === projectId).map(t => t.id),
+      });
+    }
     return result;
   });
 }
