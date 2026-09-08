@@ -22,16 +22,17 @@ export async function completionFixture(store: Awaited<ReturnType<typeof complet
   await db.project.create({ data: { id: projectId, teamId: ids.team, name: "Test", slug: randomUUID(), githubRepo: "acme/repo" } });
   await db.task.create({ data: { id: taskId, projectId, title: "Exact task", description: "Original", templateData: { goal: "Exact" }, status: "in_progress", claimedByAgentId: ids.agent, createdByAgentId: ids.agent, prNumber: 42, prUrl: "https://github.com/acme/repo/pull/42", branchName: "branch" } });
   const f = { db, taskId, projectId, now: epoch, head: headSha, issuer: testIssuer([projectId]), proof: { repo: "acme/repo", prNumber: 42, headSha, merged: false, mergeCommitSha: null } as MergeProof };
+  const deliverSignal = vi.fn(async () => {});
   const ledger = { getLedgerSummary: vi.fn(async () => ({ entryCount: 1 })) };
   const merge = vi.fn<GroundingMergeProvider["merge"]>(async () => { f.proof = { ...f.proof, merged: true, mergeCommitSha: "b".repeat(40) }; });
   const read = vi.fn<GroundingMergeProvider["read"]>(async () => ({ ...f.proof }));
   const head = vi.fn(async () => f.head);
-  const deps = (client: PrismaClient = db) => ({ db: client, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, headProvider: head, legacyClient: ledger, mergeProvider: { merge, read } });
+  const deps = (client: PrismaClient = db) => ({ db: client, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, deliverSignal, headProvider: head, legacyClient: ledger, mergeProvider: { merge, read } });
   const attempts = new GroundingAttemptsService(deps());
   const make = (client = db) => new GroundingFinalizationService(deps(client));
   if (mode === "EXTERNAL_V1") await attempts.provision({ taskId, projectId, subjectMode: "CODE_HEAD" });
   else await provisionGroundingCohort(db, { taskId, projectId, cohort: mode === "OFF" ? { mode, protected: false, provenance: "test-server", legacySessionId: null, legacyPhase: null } : { mode, protected: true, provenance: "test-server", legacySessionId: "legacy.session", legacyPhase: "claim-evaluation" } });
-  return Object.assign(f, { attempts, service: make(), make, headProvider: head, merge, read, ledger,
+  return Object.assign(f, { attempts, service: make(), make, headProvider: head, merge, read, ledger, deliverSignal,
     async evidence(intent: "finish" | "approve" | "merge" = "finish", actor = completionActor) {
       const challenge = await attempts.issue(taskId, actor, intent);
       const receipt = f.issuer.receipt(challenge);

@@ -3,7 +3,7 @@ type: module
 title: "backend: Hono API + Prisma"
 description: "Route layout, service/gate split, and the token-hash auth middleware behind every request."
 tags: [backend, hono, prisma, auth, routes]
-timestamp: 2026-09-08T06:41:06Z
+timestamp: 2026-09-08T10:24:00Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -15,6 +15,10 @@ sources:
   - backend/src/services/gates
   - backend/src/config/index.ts
   - backend/src/routes/grounding.ts
+  - backend/src/routes/grounding-task-completion.ts
+  - backend/src/services/grounding-attempts.ts
+  - backend/src/services/grounding-context.ts
+  - backend/src/services/grounding-merge-provider.ts
   - backend/prisma/schema.prisma
   - backend/src/repositories/team-repository.ts
 ---
@@ -27,9 +31,22 @@ Framework is **Hono** (`hono@^4.12.21`), not Express, `backend/src/app.ts` build
 
 **Services** (`backend/src/services/`): one file per concern, `confidence-gate.ts` (scorer enforcement), `review-gate.ts` + `self-merge-notice.ts` (distinct-reviewer/self-merge), `github-merge.ts`/`github-checks.ts`/`github-webhook.ts` (PR lifecycle), `transition-rules.ts` (the four declarative gates), `signal.ts`/`task-signal.ts`/`review-signal.ts` (async notifications), `scopes.ts` (canonical agent-token scope list), `audit.ts` (append-only audit log), `workflow-templates.ts`/`default-workflow.ts` (workflow engine).
 
-**Grounding receipts** (`backend/src/services/grounding-receipt.ts`): an offline verifier accepts explicit trust, expected context and clock inputs, then checks canonical receipt bytes, Ed25519 authentication, scopes, bindings, freshness and assessment outcome. Its passing result is documentary evidence; the grounding receipt-ingest route invokes it transactionally, while completion routes and transition gates do not call it yet. The runtime imports only `node:crypto`. See [the receipt contract](../grounding-receipt-contract.md) for the API and pinned fixture sync/check procedure.
+**Grounding receipts** (`backend/src/services/grounding-receipt.ts`): an offline verifier accepts explicit trust, expected context and clock inputs, then checks canonical receipt bytes, Ed25519 authentication, scopes, bindings, freshness and assessment outcome. Its passing result is documentary evidence. The provisioned completion router invokes the shared finalization service before task/claim/remote effects; historical unprovisioned task handlers remain the compatibility path. The runtime imports only `node:crypto`. See [the receipt contract](../grounding-receipt-contract.md) for the API and pinned fixture sync/check procedure.
 
-**Protected grounding attempts** (`grounding-attempts.ts`, `grounding-context.ts`, `routes/grounding.ts`): explicitly injected dormant service with protected server provisioning, server-derived workflow/context challenges, fresh authorized GitHub-head reads and atomic receipt nomination/ingest. Separate Prisma Binding/Attempt/Receipt/Finalization tables hold protected state; task metadata cannot enroll or downgrade it. `app.ts` mounts the authenticated attempt/receipt routes, but its default has no configured service. Issuance supersedes older attempts and ingest preserves immutable evidence with exact retries. Neither route changes task status, claims or PRs; unresolved shared-service reservations now block issuance/upload with 409. Project-access and GitHub-delegation helpers accept an optional transaction client so these reads share the protected transaction; existing callers retain their singleton default. Exact byte projection, limits and error behavior are documented in [the receipt contract](../grounding-receipt-contract.md).
+**Protected grounding attempts** (`grounding-attempts.ts`, `grounding-context.ts`, `routes/grounding.ts`): explicitly injected dormant service with protected server provisioning, server-derived workflow/context challenges, fresh authorized GitHub-head reads and atomic receipt nomination/ingest. Separate Prisma Binding/Attempt/Receipt/Finalization tables hold protected state; task metadata cannot enroll or downgrade it. `app.ts` mounts the authenticated attempt/receipt routes, but its default has no configured service. Issuance supersedes older attempts and ingest preserves immutable evidence with exact retries. Neither route changes task status, claims or PRs; unresolved shared-service reservations now block issuance/upload with 409.
+
+Finish/approve issuance keeps the established transition scope and claimant
+rules. The installed REST task-merge path instead binds the validated merge
+intent to the persisted attempt and actor, then applies the standalone
+review-only merge authorization at issue and receipt ingest. It requires project
+write access, agent merge scope and merge delegation consent, and retains the
+existing required-role, self-merge and distinct-reviewer gates without creating
+a universal claim rule. Its head/CI reads use merge delegation consent, while
+generic finish/approve reads keep PR-create consent. Project-access and
+delegation helpers accept an optional transaction client so these reads share
+the protected transaction; existing callers retain their singleton default.
+Exact byte projection, limits and error behavior are documented in [the receipt
+contract](../grounding-receipt-contract.md).
 
 **Gate registry** (`backend/src/services/gates/`): a small discovery-only registry (`types.ts` `GateCode` enum: `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) so a project can introspect *which* gates would fire before calling a verb (`GET /api/projects/:id/effective-gates`, MCP `projects_get_effective_gates`). Enforcement itself still lives inline in the route handlers, not in this registry.
 
@@ -45,5 +62,16 @@ claims one durable dispatch and uses read-only recovery after uncertain effects.
 Undispatched reservations can be audited-cancelled. The shared context mutation
 helper locks parent projects then sorted tasks, rejects unresolved reservations
 and commits actual writes, invalidation and audit together. Current completion
-routers and other context writers are not wired to these APIs. Full API and
-failure semantics: [receipt contract](../grounding-receipt-contract.md).
+routers for historical unprovisioned behavior and other context writers remain
+separate from these APIs. Full API and
+failure semantics: [receipt contract](../grounding-receipt-contract.md). `app.ts`
+mounts `grounding-task-completion.ts` before `tasks.ts`; its optional third
+`createApp` dependency is scoped to that app instance. A provisioned request
+requires a JSON body and `Idempotency-Key`, normalizes omitted `autoMerge:false`
+and `mergeMethod:"squash"`, checks durable operation history before current
+claim/state dispatch, and replays only an identical authorized operation.
+Its persisted route-effect plan supplies the historical task projection while
+task, receipt, operation, audit, comments and signal rows commit together.
+Replay does not recreate those rows. Webhook delivery and the optional
+calibration observer run after a new commit as best-effort work, so they are not
+an exactly-once delivery guarantee.

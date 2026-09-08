@@ -1,6 +1,8 @@
+import type { Prisma } from "@prisma/client";
+import { readGroundingRoutePlan } from "./grounding-route-effects.js";
 import { logGroundingDecision } from "./audit.js";
 import type { Actor } from "../types/auth.js";
-import { GroundingCompletionService, groundingDecisionDigest, type GroundingCompletionDependencies, type GroundingDecision } from "./grounding-completion.js";
+import { GroundingCompletionService, groundingDecisionDigest, type GroundingCompletionDependencies, type GroundingAfterCommit, type GroundingDecision } from "./grounding-completion.js";
 import { operationAccess, findOperation, operationRequest, type OperationInput } from "./grounding-operations.js";
 import { lockGroundingTask, invalidateGroundingContext, GroundingDecisionError } from "./grounding-transaction.js";
 import { canonicalGroundingJson, groundingWorkflow, projectGroundingContext, GroundingAccessError, mismatch } from "./grounding-context.js";
@@ -12,35 +14,48 @@ export class GroundingFinalizationService extends GroundingCompletionService {
   constructor(deps: GroundingCompletionDependencies & { mergeProvider?: GroundingMergeProvider }) {
     super(deps); this.provider = deps.mergeProvider ?? githubGroundingMergeProvider;
   }
-  async dispatchMerge(taskId: string, actor: Actor, key: string) {
+  async dispatchMerge(taskId: string, actor: Actor, key: string, afterCommit?: GroundingAfterCommit) {
     const dispatch = await this.transaction(async db => {
       const task = await lockGroundingTask(db, taskId); await operationAccess(db, task, actor, this.authority);
       const operation = await findOperation(db, taskId, key, actor);
       if (!operation || operation.mergeMethod === null) mismatch();
+      const request = operationRequest(operation.request as OperationInput);
+      await this.requestAccess(db, task, actor, request);
       if (operation.state === "COMPLETED" || operation.state === "CANCELLED") return { historical: operation.result };
       const cohort = await db.groundingCohort.findUnique({ where: { taskId } });
       if (cohort?.reservationId !== operation.id) mismatch();
       if (operation.state === "DISPATCHED") return { pending: true };
-      const request = operationRequest(operation.request as OperationInput);
-      const decision = await this.decide(db, task, actor, request);
-      if (canonicalGroundingJson(decision) !== canonicalGroundingJson(operation.decision)) mismatch();
+      const decision = await this.decide(db, task, actor, request, true);
+      const { routePlan: _routePlan, ...reservedDecision } = operation.decision as unknown as GroundingDecision;
+      if (canonicalGroundingJson(decision) !== canonicalGroundingJson(reservedDecision)) mismatch();
       const token = await groundingMergeConsent(db, actor, task.project.teamId);
       const identity = mergeIdentitySchema.parse({ repo: operation.repo, prNumber: operation.prNumber, headSha: operation.headSha, method: operation.mergeMethod });
-      const currentHead = await this.head({ actor, teamId: task.project.teamId, repo: identity.repo, prNumber: identity.prNumber, db });
+      const currentHead = await this.requestHead(request)({ actor, teamId: task.project.teamId, repo: identity.repo, prNumber: identity.prNumber, db });
       if (currentHead !== identity.headSha || (decision.ciHeadSha !== null && decision.ciHeadSha !== currentHead)) mismatch();
-      const changed = await db.groundingOperation.updateMany({ where: { id: operation.id, state: "RESERVED" }, data: { state: "DISPATCHED", dispatchedAt: new Date(this.time() * 1000) } });
+      let alreadyMerged = false;
+      let dispatchDecision: Prisma.InputJsonValue | undefined;
+      if (_routePlan?.kind === "task_merge") {
+        const routePlan = readGroundingRoutePlan(_routePlan);
+        // Observe the exact PR before committing dispatch; an unavailable or mismatching read cannot authorize a write.
+        const before = await this.provider.read(identity, token);
+        if (before.repo !== identity.repo || before.prNumber !== identity.prNumber || before.headSha !== identity.headSha) mismatch();
+        alreadyMerged = matchesGroundingMerge(identity, before);
+        if (before.merged && !alreadyMerged) mismatch();
+        dispatchDecision = { ...reservedDecision, routePlan: { ...routePlan, alreadyMerged } } as unknown as Prisma.InputJsonValue;
+      }
+      const changed = await db.groundingOperation.updateMany({ where: { id: operation.id, state: "RESERVED" }, data: { state: "DISPATCHED", dispatchedAt: new Date(this.time() * 1000), ...(dispatchDecision ? { decision: dispatchDecision } : {}) } });
       if (changed.count !== 1) mismatch();
       await db.groundingFinalization.updateMany({ where: { operationId: operation.id }, data: { state: "DISPATCHED" } });
       // The authorization sample is fresh through the last awaited dispatch write.
       if (decision.expiresAt !== null && this.time() >= decision.expiresAt) throw new GroundingDecisionError("grounding_finalization_pending");
-      return { identity, token };
+      return { identity, token, alreadyMerged };
     });
     if ("historical" in dispatch) return dispatch.historical;
-    if (!dispatch.identity) return this.recoverMerge(taskId, actor, key);
-    try { await this.provider.merge(dispatch.identity, dispatch.token); }
+    if (!dispatch.identity) return this.recoverMerge(taskId, actor, key, afterCommit);
+    try { if (!dispatch.alreadyMerged) await this.provider.merge(dispatch.identity, dispatch.token); }
     catch { return { state: "DISPATCHED", pending: true }; }
     // Any DB/read failure leaves the durable reservation available to read-only recovery.
-    return this.recoverMerge(taskId, actor, key);
+    return this.recoverMerge(taskId, actor, key, afterCommit);
   }
 
   /** Cancel only a provably undispatched decision; uncertain dispatch is never unlocked. */
@@ -51,6 +66,7 @@ export class GroundingFinalizationService extends GroundingCompletionService {
       const task = await lockGroundingTask(db, taskId); await operationAccess(db, task, actor, this.authority);
       const operation = await findOperation(db, taskId, key, actor);
       if (!operation || operation.mergeMethod === null) mismatch();
+      await this.requestAccess(db, task, actor, operationRequest(operation.request as OperationInput));
       if (operation.state === "CANCELLED") {
         const result = operation.result as { reason?: unknown };
         if (result.reason !== normalized) throw new GroundingDecisionError("grounding_operation_conflict");
@@ -70,11 +86,12 @@ export class GroundingFinalizationService extends GroundingCompletionService {
     });
   }
 
-  async recoverMerge(taskId: string, actor: Actor, key: string) {
+  async recoverMerge(taskId: string, actor: Actor, key: string, afterCommit?: GroundingAfterCommit) {
     const recovery = await this.transaction(async db => {
       const task = await lockGroundingTask(db, taskId); await operationAccess(db, task, actor, this.authority);
       const operation = await findOperation(db, taskId, key, actor);
       if (!operation || operation.mergeMethod === null) mismatch();
+      await this.requestAccess(db, task, actor, operationRequest(operation.request as OperationInput));
       if (operation.state === "COMPLETED" || operation.state === "CANCELLED") return { historical: operation.result };
       if (operation.state !== "DISPATCHED") throw new GroundingDecisionError("grounding_finalization_pending");
       const cohort = await db.groundingCohort.findUnique({ where: { taskId } });
@@ -88,11 +105,12 @@ export class GroundingFinalizationService extends GroundingCompletionService {
     try { proof = await this.provider.read(recovery.identity, recovery.token); }
     catch { return { state: "DISPATCHED", pending: true }; }
     if (!matchesGroundingMerge(recovery.identity, proof)) return { state: "DISPATCHED", pending: true };
-    return this.transaction(async db => {
+    const commit = await this.transaction(async db => {
       const task = await lockGroundingTask(db, taskId); await operationAccess(db, task, actor, this.authority);
       const operation = await findOperation(db, taskId, key, actor);
       if (!operation || operation.id !== recovery.operationId) mismatch();
-      if (operation.state === "COMPLETED" || operation.state === "CANCELLED") return operation.result;
+      await this.requestAccess(db, task, actor, operationRequest(operation.request as OperationInput));
+      if (operation.state === "COMPLETED" || operation.state === "CANCELLED") return { result: operation.result, signals: [], fresh: false };
       const cohort = await db.groundingCohort.findUnique({ where: { taskId } });
       if (operation.state !== "DISPATCHED" || cohort?.reservationId !== operation.id) mismatch();
       const decision = operation.decision as unknown as GroundingDecision;
@@ -110,5 +128,6 @@ export class GroundingFinalizationService extends GroundingCompletionService {
       }
       return this.applyDecision(db, task, operation, proof.mergeCommitSha!);
     });
+    return this.committed(commit, afterCommit);
   }
 }

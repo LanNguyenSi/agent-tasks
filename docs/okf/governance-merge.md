@@ -3,13 +3,17 @@ type: invariant
 title: "Governance modes and the two merge paths"
 description: "governanceMode (AUTONOMOUS / AWAITS_CONFIRMATION / REQUIRES_DISTINCT_REVIEWER) drives self-merge and review gates; the GitHub webhook and the REST merge verb pick different post-merge statuses."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-09-02T04:50:50Z
+timestamp: 2026-09-08T10:24:00Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
   - backend/src/services/github-webhook.ts
   - backend/src/routes/tasks.ts
   - backend/src/routes/github.ts
+  - backend/src/routes/grounding-task-completion.ts
+  - backend/src/services/grounding-finalization.ts
+  - backend/src/services/grounding-context.ts
+  - backend/src/services/grounding-merge-provider.ts
 ---
 
 The current model is a single three-valued `governanceMode` enum (`backend/src/lib/governance-mode.ts`); the two booleans `soloMode`/`requireDistinctReviewer` are legacy. They still exist as columns and are kept in sync for back-compat readers, but `resolveGovernanceMode(project)` prefers the explicit `governanceMode` column and only falls back to deriving it from the legacy flags when that column is null:
@@ -31,5 +35,32 @@ The current model is a single three-valued `governanceMode` enum (`backend/src/l
 - **Mode B** (review-finish or self-approve autoMerge, review→done): allowed under any governance mode, but still runs `checkSelfMergeGate`, so a `REQUIRES_DISTINCT_REVIEWER` project blocks the claimant from also being the merger even via Mode B.
 
 `POST /api/tasks/:id/merge` itself is idempotent: it accepts `status === "review"` or `status === "done"` (any other status is a `409 bad_state`); on a `done` retry the distinct-reviewer approval check is skipped (`checkReviewApprovalGate` only runs while `status === "review"`), while `checkSelfMergeGate` still runs unconditionally, it just no-ops because the first merge cleared the claimant fields and the gate does nothing outside `REQUIRES_DISTINCT_REVIEWER`; `performPrMerge` detects an already-merged PR (`alreadyMerged: true`) rather than erroring.
+
+**Provisioned merge transport**: any provisioned-cohort task is intercepted
+before this historical route by the grounding completion router. Its merge
+operation has an `Idempotency-Key`, canonical `mergeMethod` (default `squash`),
+and a durable reservation for the authoritative repository, PR and source head.
+The service rechecks governance, consent, CI and exact source-head binding at
+reservation and dispatch. A first request from a terminal task cannot create a
+merge operation; an existing durable operation may only recover from exact
+merged proof. The task-merge response records whether that exact merge was
+already observed before dispatch; this does not grant authority from a stored
+merge SHA alone.
+
+For a fresh standalone provisioned merge, the authoritative task must be in a
+review state with one terminal workflow edge. The actor needs project write
+access, `github:pr_merge` when it is an agent, and merge delegation consent.
+This preserves the ordinary required-role, self-merge and distinct-reviewer
+gates. It does not impose a general claim requirement when the current
+governance mode permits a non-claimant merger. The route's merge intent is
+validated at attempt issue and recovered from the stored attempt at receipt
+ingest; it is not caller-controlled policy data. Head and CI reads use merge
+delegation consent, rather than PR-create consent. Finish/approve and generic
+completion APIs retain their existing transition-scope and claim rules.
+
+The review-only rule governs a new operation. A matching persisted operation
+can replay or recover after claims or review status have changed, while current
+project access, merge scope, consent, CI and exact merge proof are still
+checked before any effect.
 
 Related: `claim-model.md`, `workflow-gates.md`, `reconcile-done-but-open.md`, `backend.md`.

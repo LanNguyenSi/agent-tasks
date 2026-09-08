@@ -12,18 +12,20 @@ import { GroundingAccessError } from "../../src/services/grounding-context.js";
 import { actor, ids, taskFixture } from "../helpers/grounding-fixtures.js";
 
 let service: GroundingAttemptsService;
-let authorize: MockInstance<GroundingAttemptsService["authorize"]>;
-let issue: MockInstance<GroundingAttemptsService["issue"]>;
-let ingest: MockInstance<GroundingAttemptsService["ingest"]>;
+let authorize: MockInstance<GroundingAttemptsService["authorizeRouteIssue"]>;
+let authorizeReceipt: MockInstance<GroundingAttemptsService["authorizeRouteReceipt"]>;
+let issue: MockInstance<GroundingAttemptsService["issueForRoute"]>;
+let ingest: MockInstance<GroundingAttemptsService["ingestForRoute"]>;
 const path = `/api/tasks/${ids.task}/grounding-attempts`;
 const receiptPath = `${path}/${ids.project}/receipt`;
 const request = (body: unknown, route = path, authorization: string | null = "Bearer test") => new Request(`http://localhost${route}`, { method: "POST", headers: { "Content-Type": "application/json", ...(authorization ? { Authorization: authorization } : {}) }, body: typeof body === "string" ? body : JSON.stringify(body) });
 beforeEach(() => {
   mocks.token.mockResolvedValue({ id: ids.agent, teamId: ids.team, createdById: ids.user, scopes: actor.scopes, revokedAt: null, expiresAt: null });
   service = new GroundingAttemptsService({ db: {} as PrismaClient, config: { audience: "consumer.test", trust: () => [] } });
-  authorize = vi.spyOn(service, "authorize").mockResolvedValue();
-  issue = vi.spyOn(service, "issue").mockResolvedValue({ test: true } as never);
-  ingest = vi.spyOn(service, "ingest").mockResolvedValue({ test: true } as never);
+  authorize = vi.spyOn(service, "authorizeRouteIssue").mockResolvedValue();
+  authorizeReceipt = vi.spyOn(service, "authorizeRouteReceipt").mockResolvedValue();
+  issue = vi.spyOn(service, "issueForRoute").mockResolvedValue({ test: true } as never);
+  ingest = vi.spyOn(service, "ingestForRoute").mockResolvedValue({ test: true } as never);
 });
 
 describe("mounted grounding routes", () => {
@@ -51,14 +53,14 @@ describe("mounted grounding routes", () => {
     expect((await createApp("", service).fetch(request(body, receiptPath))).status).toBe(400); expect(ingest).not.toHaveBeenCalled();
   });
   it("project authorization precedes malformed body diagnostics", async () => {
-    authorize.mockRejectedValue(new GroundingAccessError("forbidden", 403));
+    authorizeReceipt.mockRejectedValue(new GroundingAccessError("forbidden", 403));
     const response = await createApp("", service).fetch(request("not json", receiptPath));
     expect(response.status).toBe(403); expect(await response.json()).toEqual({ error: "forbidden" }); expect(ingest).not.toHaveBeenCalled();
   });
   it("uses actual service scope/project/claim checks through the mounted route", async () => {
     authorize.mockRestore();
     const task = taskFixture(); const canWrite = vi.fn(async () => true);
-    const db = { $transaction: async (fn: (client: unknown) => unknown) => fn(db), task: { findUnique: async () => task } };
+    const db = { $transaction: async (fn: (client: unknown) => unknown) => fn(db), $queryRaw: async () => [{ id: task.projectId }], task: { findUnique: async () => task } };
     const real = new GroundingAttemptsService({ db: db as unknown as PrismaClient, config: { audience: "consumer.test", trust: () => [] }, authority: { canWrite, hasRole: async () => true } });
     const app = createApp("", real);
     mocks.token.mockResolvedValue({ id: ids.agent, teamId: ids.team, createdById: ids.user, scopes: [], revokedAt: null, expiresAt: null });

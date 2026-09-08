@@ -120,6 +120,19 @@ vi.mock("../../src/services/debug-flavor.js", () => ({
   deriveDebugFlavor: groundingMocks.deriveDebugFlavor,
 }));
 
+vi.mock("../../src/services/grounding-route-context.js", () => ({
+  selectGroundingRouteContext: vi.fn().mockResolvedValue({ mode: "UNPROVISIONED" }),
+  presentGroundingRouteContext: async (_client: unknown, input: { present: (task: never, context: { mode: "UNPROVISIONED" }) => Promise<unknown>; persist?: (db: { task: { update: typeof prismaMocks.taskUpdate } }, task: never, value: unknown) => Promise<void> }) => {
+    const task = await prismaMocks.taskFindUnique.mock.results.map(result => result.value).reverse().find(Boolean) as never;
+    const context = { mode: "UNPROVISIONED" as const };
+    const value = await input.present(task, context);
+    await input.persist?.({ task: { update: prismaMocks.taskUpdate } }, task, value);
+    return { task, context, value };
+  },
+  mutateGroundingRouteContext: async (_client: unknown, input: { mutate: (db: { task: { updateMany: typeof prismaMocks.taskUpdateMany } }, task: never) => Promise<{ value: unknown; changed: boolean }> }) => input.mutate({ task: { updateMany: prismaMocks.taskUpdateMany } }, await prismaMocks.taskFindUnique.mock.results.map(result => result.value).reverse().find(Boolean) as never),
+  buildExternalGroundingHint: (taskId: string) => ({ kind: "external_grounding_v1", taskId }),
+}));
+
 import { taskRouter } from "../../src/routes/tasks.js";
 
 const AGENT_AUTHOR = {

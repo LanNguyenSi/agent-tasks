@@ -3,11 +3,13 @@ type: runbook
 title: "Reconciling a task whose PR merged but the record is stuck open"
 description: "task_start, ensure branchName, task_finish with prUrl, task_merge, relies on task_merge's alreadyMerged idempotency to bring a stale task record in line with GitHub reality."
 tags: [reconcile, task-lifecycle, idempotency, runbook]
-timestamp: 2026-09-02T04:50:50Z
+timestamp: 2026-09-08T08:12:00Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/default-workflow.ts
   - backend/src/services/github-merge.ts
+  - backend/src/routes/grounding-task-completion.ts
+  - backend/src/services/grounding-finalization.ts
 ---
 
 Symptom: a task's PR is already merged on GitHub, but the task row in agent-tasks is still `open` (or `review`), tracking fell behind reality (e.g. a human merged the PR outside the tool, or a prior agent session died before calling the finish verbs).
@@ -21,5 +23,12 @@ Symptom: a task's PR is already merged on GitHub, but the task row in agent-task
 4. `task_merge` (`POST /tasks/:id/merge`), requires status `review` or `done` (409 otherwise); runs the self-merge/distinct-reviewer gates (see `governance-merge.md`), then calls `performPrMerge`. Because the PR is already merged on GitHub, `performPrMerge` detects this and returns `{ ok: true, alreadyMerged: true, sha: null }` instead of erroring, the task is still transitioned to `done` and `autoMergeSha` recorded. This is what makes the whole flow idempotent: re-running `task_merge` against an already-`done` task is a safe no-op retry: the distinct-reviewer approval check is skipped (it only runs while `status === "review"`), and the self-merge gate still runs but no-ops because the first merge cleared the claimant fields (see `governance-merge.md`).
 
 `task_finish { autoMerge: true }` has its own narrower recovery path for the specific case of a call that merged the PR but crashed before persisting the transition (`task.status === "in_progress" && task.autoMergeSha` set), it re-verifies `prMerged` and completes the transition without re-invoking the merge API. That path is internal to `task_finish`'s autoMerge branches, not a general-purpose reconciliation entry point.
+
+For an externally provisioned task, use the same `Idempotency-Key` and canonical
+JSON request to resume a durable grounding operation. The completion service
+recovers only from exact repository, PR, source-head and merged-state proof; it
+does not create a first merge operation from a terminal task or from a bare
+`autoMergeSha`. If the supplied inline PR differs from the task's bound PR, bind
+the authoritative PR first and obtain fresh assessment context.
 
 Related: `task-lifecycle.md`, `claim-model.md`, `governance-merge.md`.

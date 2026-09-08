@@ -155,6 +155,54 @@ vi.mock("../../src/services/grounding-client.js", () => ({
   __resetGroundingClientCacheForTests: () => {},
 }));
 
+const groundingRouteContextMock = vi.hoisted(() => ({
+  select: vi.fn().mockResolvedValue({ mode: "UNPROVISIONED" }),
+}));
+vi.mock("../../src/services/grounding-route-context.js", () => {
+  const latestTask = async () => {
+    const calls = [
+      ...prismaMocks.taskFindFirst.mock.results.map((result, index) => ({ result, order: prismaMocks.taskFindFirst.mock.invocationCallOrder[index] ?? 0 })),
+      ...prismaMocks.taskFindUnique.mock.results.map((result, index) => ({ result, order: prismaMocks.taskFindUnique.mock.invocationCallOrder[index] ?? 0 })),
+    ].sort((a, b) => b.order - a.order);
+    for (const call of calls) {
+      const value = await call.result.value;
+      if (value?.id && value?.projectId) return value;
+    }
+    return null;
+  };
+  return {
+  selectGroundingRouteContext: groundingRouteContextMock.select,
+  presentGroundingRouteContext: async (_client: unknown, input: {
+    present: (task: never, context: { mode: "UNPROVISIONED" | "EXTERNAL_V1" | "OFF" | "LEGACY_LOCAL" }) => Promise<unknown>;
+    persist?: (db: { task: { update: typeof prismaMocks.taskUpdate } }, task: never, value: unknown) => Promise<void>;
+  }) => {
+    const context = await groundingRouteContextMock.select();
+    const task = await latestTask() as never;
+    const value = await input.present(task, context);
+    await input.persist?.({ task: { update: prismaMocks.taskUpdate } }, task, value);
+    return { task, context, value };
+  },
+  mutateGroundingRouteContext: async (_client: unknown, input: {
+    mutate: (db: { task: { updateMany: typeof prismaMocks.taskUpdateMany } }, task: never) => Promise<{ value: unknown; changed: boolean }>;
+  }) => {
+    const task = await latestTask() as never;
+    return input.mutate({ task: { updateMany: prismaMocks.taskUpdateMany } }, task);
+  },
+  buildExternalGroundingHint: (taskId: string, intent: "finish" | "approve" | "merge" = "finish") => ({
+    kind: "external_grounding_v1",
+    taskId,
+    attempts: {
+      issue: { url: `/api/tasks/${encodeURIComponent(taskId)}/grounding-attempts`, body: { intent } },
+      receipt: {
+        url: `/api/tasks/${encodeURIComponent(taskId)}/grounding-attempts/:attemptId/receipt`,
+        body: { session: { id: "<producer-session-id>", revision: 1 }, receipt: "<signed-receipt>" },
+      },
+    },
+    completion: { requiredHeader: "Idempotency-Key" },
+  }),
+  };
+});
+
 import { taskRouter } from "../../src/routes/tasks.js";
 import { logAuditEvent } from "../../src/services/audit.js";
 import { calculateConfidence } from "../../src/lib/confidence.js";
@@ -278,6 +326,8 @@ beforeEach(() => {
   groundingClientMock.start.mockResolvedValue(null);
   groundingClientMock.getLedgerSummary.mockReset();
   groundingClientMock.getLedgerSummary.mockResolvedValue({ entryCount: 0 });
+  groundingRouteContextMock.select.mockReset();
+  groundingRouteContextMock.select.mockResolvedValue({ mode: "UNPROVISIONED" });
 });
 
 // ── /tasks/pickup ────────────────────────────────────────────────────────────
@@ -1628,7 +1678,7 @@ describe("PATCH /tasks/:id — unabandon: abandoned -> initialState is the one r
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("open");
     expect(logAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -4617,6 +4667,137 @@ describe("POST /tasks/:id/transition — backlog negative control (T-002 AC7, no
 });
 
 describe("debug-flavor detection on pickup + start", () => {
+  it("external pickup returns route guidance without creating or echoing a wrapper session", async () => {
+    groundingRouteContextMock.select.mockResolvedValueOnce({ mode: "EXTERNAL_V1" });
+    groundingClientMock.start.mockImplementation(() => {
+      throw new Error("external pickup must not call the legacy wrapper");
+    });
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        ...baseTask,
+        title: "ordinary task",
+        labels: [],
+        metadata: {
+          debugFlavor: false,
+          groundingSessionId: "forged-wrapper-session",
+          groundingSessionState: { current_phase: "forged" },
+        },
+      });
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      groundingHint?: {
+        kind: string;
+        taskId: string;
+        attempts: { issue: { url: string }; receipt: { url: string } };
+        completion: { requiredHeader: string };
+      };
+    };
+    expect(body.groundingHint).toEqual({
+      kind: "external_grounding_v1",
+      taskId: "task-1",
+      attempts: {
+        issue: { url: "/api/tasks/task-1/grounding-attempts", body: { intent: "finish" } },
+        receipt: {
+          url: "/api/tasks/task-1/grounding-attempts/:attemptId/receipt",
+          body: { session: { id: "<producer-session-id>", revision: 1 }, receipt: "<signed-receipt>" },
+        },
+      },
+      completion: { requiredHeader: "Idempotency-Key" },
+    });
+    expect(JSON.stringify(body.groundingHint)).not.toContain("forged-wrapper-session");
+    expect(groundingClientMock.start).not.toHaveBeenCalled();
+  });
+
+  it("external review pickup returns approve guidance without a wrapper session", async () => {
+    groundingRouteContextMock.select.mockResolvedValueOnce({ mode: "EXTERNAL_V1" });
+    groundingClientMock.start.mockImplementation(() => {
+      throw new Error("external review pickup must not call the legacy wrapper");
+    });
+    prismaMocks.taskFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        ...baseTask,
+        status: "review",
+        metadata: {
+          debugFlavor: true,
+          groundingSessionId: "forged-review-wrapper-session",
+          groundingSessionState: { current_phase: "forged" },
+        },
+      });
+    prismaMocks.signalFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/pickup", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      kind: string;
+      groundingHint?: { attempts: { issue: { body: { intent: string } } } };
+    };
+    expect(body.kind).toBe("review");
+    expect(body.groundingHint?.attempts.issue.body.intent).toBe("approve");
+    expect(JSON.stringify(body.groundingHint)).not.toContain("forged-review-wrapper-session");
+    expect(groundingClientMock.start).not.toHaveBeenCalled();
+  });
+
+  it("external start returns route guidance without creating a wrapper session", async () => {
+    groundingRouteContextMock.select.mockResolvedValueOnce({ mode: "EXTERNAL_V1" });
+    groundingClientMock.start.mockImplementation(() => {
+      throw new Error("external start must not call the legacy wrapper");
+    });
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      title: "ordinary task",
+      status: "open",
+      labels: [],
+      metadata: { debugFlavor: false, groundingSessionId: "forged-wrapper-session" },
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskFindMany.mockResolvedValueOnce([]);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { groundingHint?: { kind: string; taskId: string } };
+    expect(body.groundingHint).toMatchObject({ kind: "external_grounding_v1", taskId: "task-1" });
+    expect(JSON.stringify(body.groundingHint)).not.toContain("forged-wrapper-session");
+    expect(groundingClientMock.start).not.toHaveBeenCalled();
+  });
+
+  it("idempotent external review start returns approve guidance without a wrapper session", async () => {
+    groundingRouteContextMock.select.mockResolvedValueOnce({ mode: "EXTERNAL_V1" });
+    groundingClientMock.start.mockImplementation(() => {
+      throw new Error("external review start must not call the legacy wrapper");
+    });
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "review",
+      reviewClaimedByAgentId: "agent-1",
+      metadata: {
+        debugFlavor: true,
+        groundingSessionId: "forged-review-wrapper-session",
+        groundingSessionState: { current_phase: "forged" },
+      },
+    });
+    prismaMocks.taskFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp().request("/tasks/task-1/start", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      kind: string;
+      groundingHint?: { attempts: { issue: { body: { intent: string } } } };
+    };
+    expect(body.kind).toBe("review");
+    expect(body.groundingHint?.attempts.issue.body.intent).toBe("approve");
+    expect(JSON.stringify(body.groundingHint)).not.toContain("forged-review-wrapper-session");
+    expect(groundingClientMock.start).not.toHaveBeenCalled();
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("pickup attaches groundingHint and persists metadata.debugFlavor on a debug-flavored work task", async () => {
     prismaMocks.taskFindFirst
       .mockResolvedValueOnce(null) // hard-limit ok

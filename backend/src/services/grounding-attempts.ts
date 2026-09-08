@@ -9,6 +9,7 @@ import { verifyGroundingReceipt, GroundingReceiptVerificationError, type Groundi
 import {
   GROUNDING_POLICY, GroundingAccessError, fetchGroundingHead, groundingAuthority, groundingIntentSchema,
   mismatch, projectGroundingContext, resolveGroundingTarget, unavailable,
+  resolveTaskMergeTarget, fetchTaskMergeHead,
   type GroundingAuthority, type GroundingHeadProvider, type GroundingIntent, type GroundingTarget, type GroundingTask,
 } from "./grounding-context.js";
 
@@ -38,10 +39,12 @@ function actorId(actor: Actor): string { return actor.type === "agent" ? actor.t
 export class GroundingAttemptsService {
   private readonly now: () => number;
   private readonly head: GroundingHeadProvider;
+  private readonly taskMergeHead: GroundingHeadProvider;
   private readonly authority: GroundingAuthority;
   constructor(private readonly deps: GroundingAttemptsDependencies) {
     this.now = deps.now ?? (() => Math.floor(Date.now() / 1000));
     this.head = deps.headProvider ?? fetchGroundingHead;
+    this.taskMergeHead = deps.headProvider ?? fetchTaskMergeHead;
     this.authority = deps.authority ?? groundingAuthority;
   }
 
@@ -74,12 +77,47 @@ export class GroundingAttemptsService {
     });
   }
 
-  private async lockAuthorized(db: Prisma.TransactionClient, taskId: string, actor: Actor): Promise<GroundingTask> {
+  private async authorizePolicy(task: GroundingTask, actor: Actor, db: Prisma.TransactionClient, intent?: GroundingIntent, taskRoute = false) {
+    if (taskRoute && intent === "merge" && task.status === "review") await resolveTaskMergeTarget(db, task, actor, this.authority);
+    else await this.authorizeTask(task, actor, db);
+  }
+
+  /** Pre-parse admission grants only one of the installed route capabilities. */
+  async authorizeRouteIssue(taskId: string, actor: Actor): Promise<void> {
+    return this.transaction(async db => {
+      const task = await this.lock(db, taskId);
+      try { await this.authorizeTask(task, actor, db); }
+      catch (error) {
+        if (!(error instanceof GroundingAccessError) || error.code !== "forbidden") throw error;
+        await resolveTaskMergeTarget(db, task, actor, this.authority);
+      }
+    });
+  }
+
+  private async receiptIntent(db: Prisma.TransactionClient, taskId: string, attemptId: string, actor: Actor): Promise<GroundingIntent> {
+    const task = await this.lock(db, taskId);
+    if (!await this.authority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);
+    const attempt = await db.groundingAttempt.findUnique({ where: { id: attemptId } });
+    if (!attempt || attempt.taskId !== taskId) mismatch();
+    if (attempt.actorType !== actor.type || attempt.actorId !== actorId(actor)) throw new GroundingAccessError("forbidden", 403);
+    const intent = groundingIntentSchema.safeParse(attempt.intent);
+    if (!intent.success) unavailable();
+    return intent.data;
+  }
+
+  async authorizeRouteReceipt(taskId: string, attemptId: string, actor: Actor): Promise<void> {
+    return this.transaction(async db => {
+      const intent = await this.receiptIntent(db, taskId, attemptId, actor);
+      await this.lockAuthorized(db, taskId, actor, intent, true);
+    });
+  }
+
+  private async lockAuthorized(db: Prisma.TransactionClient, taskId: string, actor: Actor, intent?: GroundingIntent, taskRoute = false): Promise<GroundingTask> {
     const before = await db.task.findUnique({ where: { id: taskId }, include: { project: true } });
     if (!before) throw new GroundingAccessError("not_found", 404);
-    await this.authorizeTask(before, actor, db);
+    await this.authorizePolicy(before, actor, db, intent, taskRoute);
     const task = await this.lock(db, taskId);
-    await this.authorizeTask(task, actor, db);
+    await this.authorizePolicy(task, actor, db, intent, taskRoute);
     await assertNoGroundingReservation(db, task.id);
     return task;
   }
@@ -105,22 +143,29 @@ export class GroundingAttemptsService {
     });
   }
 
-  private async context(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, intent: GroundingIntent) {
-    const resolved = await resolveGroundingTarget(db, task, actor, intent, this.authority);
+  private async context(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, intent: GroundingIntent, taskRoute = false) {
+    const standalone = taskRoute && intent === "merge" && task.status === "review";
+    const resolved = standalone ? await resolveTaskMergeTarget(db, task, actor, this.authority) : await resolveGroundingTarget(db, task, actor, intent, this.authority);
     const binding = await db.groundingBinding.findUnique({ where: { taskId: task.id } });
     if (!binding) throw new GroundingAccessError("grounding_not_provisioned", 409);
     await requireGroundingCohort(db, task.id, task.projectId);
     const settings = this.settings(task.projectId);
     if (binding.audience !== settings.audience) unavailable();
-    const context = await projectGroundingContext(task, binding, resolved.target, resolved.definition, actor, this.head, db);
+    const context = await projectGroundingContext(task, binding, resolved.target, resolved.definition, actor, standalone ? this.taskMergeHead : this.head, db);
     return { binding, settings, ...resolved, ...context };
   }
 
   async issue(taskId: string, actor: Actor, intent: GroundingIntent) {
+    return this.issueWithPolicy(taskId, actor, intent, false);
+  }
+  async issueForRoute(taskId: string, actor: Actor, intent: GroundingIntent) {
+    return this.issueWithPolicy(taskId, actor, intent, true);
+  }
+  private async issueWithPolicy(taskId: string, actor: Actor, intent: GroundingIntent, taskRoute: boolean) {
     if (!groundingIntentSchema.safeParse(intent).success) throw new GroundingAccessError("bad_state", 409);
     return this.transaction(async db => {
-      const task = await this.lockAuthorized(db, taskId, actor);
-      const context = await this.context(db, task, actor, intent);
+      const task = await this.lockAuthorized(db, taskId, actor, intent, taskRoute);
+      const context = await this.context(db, task, actor, intent, taskRoute);
       const now = this.time();
       const revision = context.binding.contextRevision + (context.binding.contextDigest !== null && context.binding.contextDigest !== context.digest ? 1 : 0);
       if (revision > 2147483647) unavailable();
@@ -142,19 +187,26 @@ export class GroundingAttemptsService {
   }
 
   async ingest(taskId: string, attemptId: string, actor: Actor, session: GroundingSession, input: Uint8Array | string) {
+    return this.ingestWithPolicy(taskId, attemptId, actor, session, input, false);
+  }
+  async ingestForRoute(taskId: string, attemptId: string, actor: Actor, session: GroundingSession, input: Uint8Array | string) {
+    return this.ingestWithPolicy(taskId, attemptId, actor, session, input, true);
+  }
+  private async ingestWithPolicy(taskId: string, attemptId: string, actor: Actor, session: GroundingSession, input: Uint8Array | string, taskRoute: boolean) {
     if (!uuid.safeParse(attemptId).success || !groundingSessionSchema.safeParse(session).success) invalid();
     const wire = typeof input === "string" ? Buffer.from(input, "utf8") : Buffer.from(input);
     if (wire.length > 32768) invalid();
     // A string transport must not replace malformed UTF-16 with different signed bytes.
     if (typeof input === "string" && wire.toString("utf8") !== input) invalid();
     return this.transaction(async db => {
-      const task = await this.lockAuthorized(db, taskId, actor);
+      const persistedIntent = taskRoute ? await this.receiptIntent(db, taskId, attemptId, actor) : undefined;
+      const task = await this.lockAuthorized(db, taskId, actor, persistedIntent, taskRoute);
       const attempt = await db.groundingAttempt.findUnique({ where: { id: attemptId }, include: { receipt: true } });
       if (!attempt || attempt.taskId !== task.id) mismatch();
       if (attempt.actorType !== actor.type || attempt.actorId !== actorId(actor)) throw new GroundingAccessError("forbidden", 403);
       const intent = groundingIntentSchema.safeParse(attempt.intent);
       if (!intent.success) unavailable();
-      const context = await this.context(db, task, actor, intent.data);
+      const context = await this.context(db, task, actor, intent.data, taskRoute);
       if (context.binding.activeAttemptId !== attempt.id || attempt.state !== "ACTIVE") stale();
       if (context.binding.contextRevision !== attempt.contextRevision || context.digest !== attempt.contextDigest || !context.bytes.equals(attempt.contextBytes)) mismatch();
       if (this.time() >= attempt.expiresAt.getTime() / 1000) stale();

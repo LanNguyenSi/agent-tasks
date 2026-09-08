@@ -51,18 +51,18 @@ export function createGroundingRouter(service?: GroundingAttemptsService) {
   });
   router.post("/tasks/:id/grounding-attempts", async c => {
     if (!service) return c.json({ error: "grounding_verification_unavailable" }, 503);
-    await service.authorize(c.req.param("id"), c.get("actor"));
+    await service.authorizeRouteIssue(c.req.param("id"), c.get("actor"));
     const parsed = issueSchema.safeParse(await boundedJson(c.req.raw, 1024));
     if (!parsed.success) throw new GroundingReceiptVerificationError("grounding_receipt_invalid");
-    return c.json(await service.issue(c.req.param("id"), c.get("actor"), parsed.data.intent), 201);
+    return c.json(await service.issueForRoute(c.req.param("id"), c.get("actor"), parsed.data.intent), 201);
   });
   router.post("/tasks/:id/grounding-attempts/:attemptId/receipt", async c => {
     if (!service) return c.json({ error: "grounding_verification_unavailable" }, 503);
-    await service.authorize(c.req.param("id"), c.get("actor"));
+    await service.authorizeRouteReceipt(c.req.param("id"), c.req.param("attemptId"), c.get("actor"));
     // JSON string escaping expands each receipt byte by at most six bytes.
     const parsed = ingestSchema.safeParse(await boundedJson(c.req.raw, 200000));
     if (!parsed.success) throw new GroundingReceiptVerificationError("grounding_receipt_invalid");
-    return c.json(await service.ingest(c.req.param("id"), c.req.param("attemptId"), c.get("actor"), parsed.data.session, parsed.data.receipt));
+    return c.json(await service.ingestForRoute(c.req.param("id"), c.req.param("attemptId"), c.get("actor"), parsed.data.session, parsed.data.receipt));
   });
   return router;
 }

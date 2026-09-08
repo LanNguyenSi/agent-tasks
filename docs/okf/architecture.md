@@ -3,10 +3,11 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-08T05:10:10Z
+timestamp: 2026-09-08T08:12:00Z
 sources:
   - package.json
   - backend/src/app.ts
+  - backend/src/routes/grounding-task-completion.ts
   - backend/src/server.ts
   - backend/src/routes/docs.ts
   - docker-compose.prod.yml
@@ -21,6 +22,15 @@ npm workspaces monorepo (`package.json` workspaces: `backend`, `frontend`, `mcp-
 4. **mcp-bridge** (`@agent-tasks/mcp-bridge`), a thin CLI wrapper around mcp-server that resolves the bearer token (env var, OS keychain, or file) before handing off to the same stdio runtime. See `mcp-bridge.md`.
 
 All state lives in one PostgreSQL database (Prisma schema at `backend/prisma/schema.prisma`); nothing else is a system of record. Prod topology (`docker-compose.prod.yml`) is `db` → one-shot `migrate` (Prisma `db push`) → `backend` and `frontend`, both behind a shared external `traefik` network; see `deploy.md`.
+
+**Grounding composition**: the backend's optional per-app grounding completion
+dependency is mounted before the historical task router. It handles only
+authoritatively provisioned task finish, merge and abandon requests; absent
+enrollment selects the historical compatibility routes. Invalid enrollment,
+orphan binding, unavailable trusted service, and database errors fail closed.
+The server has no public enrollment endpoint. Before server-only enrollment of
+legacy work, active legacy requests must be quiesced; the system does not claim
+safe live legacy-to-external conversion.
 
 **Actor/auth model**: every request is one of two actor shapes, resolved by `backend/src/middleware/auth.ts` (`backend.md`), a `HumanActor` (browser session cookie, or a session JWT passed as a Bearer token for server-to-server callers) or an `AgentActor` (a SHA-256-hashed `AgentToken` presented as `Authorization: Bearer <raw>`, carrying a `teamId` and a list of `scopes` from `backend/src/services/scopes.ts` that gate individual verbs). The mcp-server/mcp-bridge path is always an `AgentActor`; the frontend is always a `HumanActor`.
 

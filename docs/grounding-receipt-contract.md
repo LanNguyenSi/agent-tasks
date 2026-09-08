@@ -47,7 +47,25 @@ The verifier reads no environment variables or key files, imports no wrapper/led
 | `POST /api/tasks/:id/grounding-attempts` | `{"intent":"finish"}`; intent is `finish`, `approve`, or `merge` | Challenge with `audience`, `projectId`, `taskId`, `attemptId`, `nonce`, `contextRevision`, `target`, `subject`, `policy`, `createdAt`, `expiresAt` |
 | `POST /api/tasks/:id/grounding-attempts/:attemptId/receipt` | `{"session":{"id":"producer-session","revision":1},"receipt":"<original receipt JSON bytes as a JSON string>"}` | `receiptId`, passing `agent_asserted` evidence and `replayed` |
 
-Authentication, project write access, `tasks:transition` for agents and current claim ownership are required. The server derives the effective workflow row (task-specific, then the sole project default, then built-in with null ID) and the target from the existing finish/approval helpers. The derived edge must exist and be unambiguous; malformed definitions, multiple defaults, absent edges and divergence from existing finish semantics fail closed. Approval requires the current review claim or the existing permitted self-approval path; distinct-reviewer, review-lock conflicts and workflow roles remain applicable. `merge` requires a terminal outgoing edge and existing self-merge permission. These routes authorize an attempt only: they do not evaluate completion prerequisites such as CI, transition task status, release claims, merge a PR or reserve finalization.
+Finish and approve attempts, and the generic service APIs, retain their existing
+project-write, `tasks:transition`, claim, review-lock, distinct-reviewer and
+workflow-role checks. The server derives their effective workflow row
+(task-specific, then the sole project default, then built-in with null ID) and
+target from the established finish/approval helpers. The derived edge must exist
+and be unambiguous; malformed definitions, multiple defaults, absent edges and
+divergence from those semantics fail closed.
+
+The REST task-merge route has a separate server-owned authorization path. Its
+validated `merge` intent can issue and ingest an attempt for a fresh task in a
+review state with a single terminal workflow edge. It requires project write
+access and `github:pr_merge` for an agent, and preserves required workflow
+roles plus the existing self-merge and distinct-reviewer gates. It does not add
+a universal work or review claim requirement when those gates permit a
+non-claimant merger. The receipt route recovers this policy from the persisted
+attempt's intent and actor under the authoritative task lock; callers cannot
+supply a policy switch or substitute an actor or intent. These routes authorize
+an attempt only: they do not evaluate completion prerequisites such as CI,
+transition task status, release claims, merge a PR or reserve finalization.
 
 Challenge bodies are limited to 1,024 actual streamed bytes; upload bodies to 200,000 bytes, allowing JSON string escaping overhead around the C01 limit of 32,768 receipt bytes. Invalid UTF-8, malformed JSON, unknown request fields and invalid nomination shapes fail with `400 grounding_receipt_invalid`. Receipt JSON is passed to the unchanged strict C01 parser as original UTF-8 bytes. The session nomination has no independent authority: it is staged and read inside the locked transaction, then C01 authenticates the signed matching tuple against independent server context and trust. Failure rolls the entire nomination back.
 
@@ -70,7 +88,17 @@ The subject digest is lowercase SHA-256 over UTF-8 bytes of the following JSON p
 
 Metadata, debug suggestions, comments, labels, priority, result text and display/audit timestamps do not enter this projection. Changing any projected value requires a new context. A first challenge uses revision 1; later issuance increments the protected revision when its projection bytes differ from the last issued projection. Issuance without a projection change retains the revision but always creates a fresh attempt and nonce. Upload rederives the current bytes and rejects divergence, including on an exact retry. This is local revalidation, not the later integration of every context writer: changes which are reverted between observations are not detected by this milestone, and unchanged existing writers do not yet all participate in the mutation protocol below.
 
-`CODE_HEAD` requires a positive registered PR number and the exact canonical GitHub PR URL for the registered effective repository. Head lookup uses the existing `allowAgentPrCreate` read consent and actor-preferred GitHub delegation. Each read uses the fixed GitHub API destination with caching disabled, redirects rejected, a five-second abort deadline, and a 256-KiB response ceiling. The returned PR number, repository identity, URL and 40-character lowercase hexadecimal head must match. A missing delegate, inaccessible/mismatched PR, failed or timed-out provider has no fallback. The head is a sampled remote snapshot, not a transaction with GitHub.
+`CODE_HEAD` requires a positive registered PR number and the exact canonical
+GitHub PR URL for the registered effective repository. Finish/approve and
+generic attempt reads use the existing `allowAgentPrCreate` delegation consent.
+The REST standalone task-merge route uses `allowAgentPrMerge` for its head and
+CI reads, matching its merge authority; create consent is not a substitute.
+Each read uses the fixed GitHub API destination with caching disabled, redirects
+rejected, a five-second abort deadline, and a 256-KiB response ceiling. The
+returned PR number, repository identity, URL and 40-character lowercase
+hexadecimal head must match. A missing delegate, inaccessible/mismatched PR,
+failed or timed-out provider has no fallback. The head is a sampled remote
+snapshot, not a transaction with GitHub.
 
 ## Atomicity and persisted identity
 
@@ -82,8 +110,7 @@ The transaction has a 20-second lifetime and 10-second acquisition bound, with a
 
 ## Shared completion and finalization services
 
-These are server service APIs, with no completion router wiring or production
-enrollment. `GroundingAttemptsService.provision` atomically creates/checks an
+These are server service APIs. `GroundingAttemptsService.provision` atomically creates/checks an
 `EXTERNAL_V1` cohort and protected binding. `provisionGroundingCohort` explicitly
 provisions `LEGACY_LOCAL` or `OFF`, with a bounded server provenance token.
 A missing or inconsistent cohort blocks the new service; neither task metadata,
@@ -93,6 +120,39 @@ Legacy enrollment pins a session ID and phase snapshot from a trusted server;
 protected legacy completion uses that session's actual ledger entry count and
 the existing at-or-past-claim-evaluation phase allowlist. Updates to those
 references must use the context mutation protocol. Generic metadata is not read.
+
+## Provisioned completion transport
+
+`createApp` mounts a per-app grounding completion router before the historical
+task router. It handles `POST /api/tasks/:id/finish`, `/merge`, and `/abandon`
+only when authoritative cohort selection finds a provisioned cohort. An absent
+cohort and binding is the separate historical `UNPROVISIONED` case; an invalid
+cohort, orphan binding, database failure, or missing trusted configured service
+fails closed and never enters the compatibility handler. Server-only enrollment
+must quiesce active legacy requests before enrolling them; live conversion is
+not a concurrency guarantee.
+
+Provisioned requests require an `Idempotency-Key` and a JSON object body. The
+key identifies one logical operation for its actor. The finish body defaults
+`autoMerge` to `false` and `mergeMethod` to `squash`; omitted defaults and
+their explicit equivalents have the same canonical transport identity. Merge
+accepts its `mergeMethod` with the same default, and abandon accepts an empty
+object. History is checked with the canonical transport before mutable
+claim/status dispatch: an identical authorized retry returns its durable result,
+while a changed transport or actor conflicts. A new logical operation needs a
+new key.
+
+The completion router preserves semantic workflow actions: normal work uses
+`finish`, review and permitted self-approval use `approve`, and task merge uses
+`merge`. Inline PR input must equal the task's authoritative pre-bound PR before
+assessment. A first merge request from a terminal task is denied; only an
+existing durable operation may recover an interrupted dispatch. A bare stored
+merge SHA is not authority to create that operation.
+
+External pickup and start guidance uses that same semantic attempt intent:
+`finish` for work, `approve` for review, and `merge` for a merge operation. The
+guidance contains only REST references and producer session fields; it never
+contains a backend wrapper-session reference.
 
 `GroundingCompletionService.complete(taskId, actor, key, request)` accepts
 `action: finish | approve`. The service selects the semantic workflow edge,
@@ -104,6 +164,14 @@ trust and time, and atomically persists receipt consumption, task changes, an
 immutable operation result and mandatory audit. Expiry during awaited local
 writes aborts the whole transaction. A missing active receipt returns
 `grounding_required`; expired or superseded evidence remains stale.
+
+For provisioned lifecycle routes, the selected operation also stores a typed
+route-effect plan and the task projection used for its response. Task, receipt,
+operation, route audit, signal rows, comments and signal acknowledgement commit
+together. Historical replay returns that stored result and does not recreate
+those durable effects. Outbound signal webhooks and the optional calibration
+observer run after commit on the newly committed invocation only; their
+best-effort delivery is not crash-proof exactly-once behavior.
 
 Requests have a bounded `key` (1–128 token characters), optional bounded result,
 reason and `overrideReason`, and a merge method (`squash` by default). Unknown
@@ -150,6 +218,14 @@ Merge refuses foreign deliverables and requires `github:pr_merge` for agents
 and an eligible `allowAgentPrMerge` delegate. Required CI/rules still run;
 `prMerged` is discharged only by the later exact merged proof.
 
+A fresh standalone merge remains review-only and must satisfy that route's
+terminal edge and governance gates. Once its operation is durably reserved,
+dispatch and recovery use the stored task-merge identity: they still recheck
+current project access, merge scope, merge consent, CI and exact source-head
+proof, but do not reinterpret a historical operation as a new claim or review
+admission. A completed replay is likewise operation-bound and never repeats
+its durable effects.
+
 Dispatch rechecks current authority, gates, context, head, trust and receipt
 freshness before a durable RESERVED-to-DISPATCHED compare-and-set. Only the
 winner issues a remote write, outside the database transaction. The GitHub
@@ -195,5 +271,12 @@ parent-before-task protocol; unchanged existing routers are not yet covered.
 The new boundary reports reservation conflicts as
 `409 grounding_finalization_pending`, including on existing C02 routes.
 Changed-key identity returns `409 grounding_operation_conflict`; failed shared
-transition preconditions return `409 precondition_failed`. Existing completion
-route error shapes and legacy behavior are unchanged.
+transition preconditions return `409 precondition_failed`. Historical
+`UNPROVISIONED` completion route error shapes and behavior are unchanged;
+provisioned completion requests use their documented transport and grounding
+error responses.
+
+The staged boundary does not activate production enrollment. Other positive
+status writers, indirect workflow/team writers, GitHub/webhook writers, public
+MCP routing, and issuer/rollout qualification remain separate work. They must
+join the same context and authorization rules before productive activation.
