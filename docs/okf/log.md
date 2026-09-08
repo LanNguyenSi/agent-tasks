@@ -2,6 +2,12 @@
 
 ## 2026-09-08
 
+Bound required shared-service CI results to the freshly authorized decision,
+receipt and reservation head while preserving the existing classifier/cache
+policy. Corrected `claim-model.md` to distinguish free database storage from
+the workflow API's fixed state vocabulary and added its workflow-route source.
+
+
 Added dormant shared completion/finalization services: explicit cohort policy,
 immutable operation results, atomic receipt consumption and mandatory audit,
 head-bound remote reservation/dispatch/recovery, undispatched cancellation and

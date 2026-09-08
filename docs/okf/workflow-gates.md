@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-09-08T06:15:34Z
+timestamp: 2026-09-08T06:41:06Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -40,7 +40,10 @@ Related: `claim-model.md`, `governance-merge.md`, `task-lifecycle.md`.
 **Shared grounding service boundary** (`grounding-completion.ts`,
 `grounding-completion-gates.ts`, `grounding-finalization.ts`): selects the
 semantic edge and retains current access/claim, role, review and CI checks.
-Unknown rules fail closed at this boundary. Local foreign-deliverable rule
+Required CI retains the existing classification/cache policy and additionally
+binds the reported CI SHA to the freshly observed decision, receipt and reserved
+head. Cached prior-head green results block until normal refresh. Unknown rules
+fail closed at this boundary. Local foreign-deliverable rule
 skips retain their existing meaning and are recorded in the decision audit;
 remote foreign merges are refused. An explicit human-admin grounding override
 with a reason does not bypass these other gates. Persisted cohort mode alone

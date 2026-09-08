@@ -141,6 +141,11 @@ persists the operation, exact repository/PR/source head/method, local context
 snapshot and selected decision. Receipt-backed reservations retain the required
 same-task receipt foreign key. A single cohort reservation pointer blocks
 competing operations, C02 issuance/uploads and participating context mutations.
+Required CI uses the existing check-run classification and cache policy, but its
+reported SHA must equal a fresh authorized head sample. That CI head is stored
+in the decision and must also match receipt reprojection, reservation and final
+dispatch head samples. A cached result for an earlier head blocks until normal
+cache refresh; neither grounding override nor OFF mode skips required CI.
 Merge refuses foreign deliverables and requires `github:pr_merge` for agents
 and an eligible `allowAgentPrMerge` delegate. Required CI/rules still run;
 `prMerged` is discharged only by the later exact merged proof.

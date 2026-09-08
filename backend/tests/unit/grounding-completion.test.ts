@@ -174,3 +174,32 @@ it("context audit database failure rolls back the actual mutation and all invali
   } finally { await f.db.$executeRawUnsafe(`DROP TRIGGER fail_context_audit ON audit_logs`); await f.db.$executeRawUnsafe(`DROP FUNCTION fail_context_audit()`); }
   expect(await f.snapshot()).toEqual(before);
 });
+
+it.each(["creator", "creator-scope", "reviewer", "reopen-admin", "abandon-scope", "release-scope"] as const)("N-16 directly rejects %s authority without changing any decision rows", async denial => {
+  await f.evidence();
+  let requester: typeof actor | { type: "human"; userId: string } = actor;
+  let action: "creator_abandon" | "request_changes" | "reopen" | "abandon" | "release";
+  if (denial === "creator" || denial === "creator-scope") {
+    action = "creator_abandon";
+    const other = await f.db.agentToken.create({ data: { teamId: ids.team, createdById: ids.user, name: "Other creator", tokenHash: f.taskId, scopes: actor.scopes } });
+    await f.db.task.update({ where: { id: f.taskId }, data: { status: "open", claimedByAgentId: null, createdByAgentId: denial === "creator" ? other.id : ids.agent } });
+    if (denial === "creator-scope") requester = { ...actor, scopes: actor.scopes.filter(scope => scope !== "tasks:update") };
+  } else if (denial === "reviewer") {
+    action = "request_changes";
+    await f.db.task.update({ where: { id: f.taskId }, data: { status: "review", reviewClaimedByUserId: ids.user } });
+  } else if (denial === "reopen-admin") {
+    action = "reopen"; requester = { type: "human", userId: ids.user };
+    await f.db.task.update({ where: { id: f.taskId }, data: { status: "abandoned", claimedByAgentId: null } });
+    await f.db.teamMember.update({ where: { teamId_userId: { teamId: ids.team, userId: ids.user } }, data: { role: "HUMAN_MEMBER" } });
+  } else {
+    action = denial === "abandon-scope" ? "abandon" : "release";
+    requester = { ...actor, scopes: actor.scopes.filter(scope => scope !== "tasks:claim") };
+  }
+  const before = await f.snapshot();
+  try {
+    await expect(f.service.dispose(f.taskId, requester, "denied", { action })).rejects.toMatchObject({ code: "forbidden" });
+    expect(await f.snapshot()).toEqual(before);
+  } finally {
+    if (denial === "reopen-admin") await f.db.teamMember.update({ where: { teamId_userId: { teamId: ids.team, userId: ids.user } }, data: { role: "ADMIN" } });
+  }
+});

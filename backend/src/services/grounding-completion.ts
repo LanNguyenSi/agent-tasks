@@ -24,7 +24,7 @@ export interface GroundingDecision {
   action: OperationRequest["action"]; mode: string; protected: boolean; from: string; to: string;
   target: GroundingTarget | null; data: { status: string; result?: string; claimedByUserId?: null; claimedByAgentId?: null; claimedAt?: null; reviewClaimedByUserId?: null; reviewClaimedByAgentId?: null; reviewClaimedAt?: null };
   localDigest: string; contextDigest: string; receiptId: string | null; attemptId: string | null; contextRevision: number | null;
-  expiresAt: number | null; overrideReason: string | null; reason: string | null; skippedRules: string[];
+  expiresAt: number | null; overrideReason: string | null; reason: string | null; skippedRules: string[]; ciHeadSha: string | null;
 }
 export const clearWork = { claimedByUserId: null, claimedByAgentId: null, claimedAt: null };
 export const clearReview = { reviewClaimedByUserId: null, reviewClaimedByAgentId: null, reviewClaimedAt: null };
@@ -60,10 +60,11 @@ export class GroundingCompletionService {
     let target: GroundingTarget | null = null;
     let data: GroundingDecision["data"] = { status: task.status };
     let skippedRules: string[] = [];
+    let ciHeadSha: string | null = null;
     if (success) {
       const resolved = await resolveGroundingTarget(db, task, actor, request.action as "finish" | "approve" | "merge", this.authority);
       target = resolved.target;
-      skippedRules = await completionGates(db, task, actor, target, definition, this.authority, request.action === "merge");
+      ({ skippedRules, ciHeadSha } = await completionGates(db, task, actor, target, definition, this.authority, request.action === "merge", this.head));
       data = { status: target.to, ...clearReview, ...(isTerminalState(def, target.to) ? clearWork : {}), ...(request.result !== null ? { result: request.result } : {}) };
     } else if (request.action === "request_changes") {
       if (!isReviewState(def, task.status)) badState();
@@ -71,7 +72,7 @@ export class GroundingCompletionService {
       const to = requestChangesTarget(def, task.status);
       if (!to || isTerminalState(def, to) || isReviewState(def, to)) badState();
       const edge = { workflowId, from: task.status, to, action: "approve" as const };
-      skippedRules = await completionGates(db, task, actor, edge, definition, this.authority, false);
+      ({ skippedRules, ciHeadSha } = await completionGates(db, task, actor, edge, definition, this.authority, false, this.head));
       data = { status: to, ...clearReview };
     } else if (request.action === "creator_abandon") {
       if (actor.type !== "agent" || task.createdByAgentId !== actor.tokenId) forbidden();
@@ -93,7 +94,7 @@ export class GroundingCompletionService {
     }
     const decision: GroundingDecision = { action: request.action, mode: cohort.mode, protected: cohort.protected, from: task.status, to: data.status,
       target, data, localDigest: groundingDecisionDigest(task, cohort, definition, target), contextDigest: groundingDecisionDigest(task, cohort, definition, target),
-      receiptId: null, attemptId: null, contextRevision: null, expiresAt: null, overrideReason: request.overrideReason, reason: request.reason, skippedRules };
+      receiptId: null, attemptId: null, contextRevision: null, expiresAt: null, overrideReason: request.overrideReason, reason: request.reason, skippedRules, ciHeadSha };
     if (!success || request.overrideReason !== null || !cohort.protected) return decision;
     if (cohort.mode === "LEGACY_LOCAL") {
       this.legacy ??= getGroundingClient();
@@ -113,6 +114,8 @@ export class GroundingCompletionService {
     if (attempt.actorType !== actor.type || attempt.actorId !== groundingActorId(actor)) forbidden();
     const projected = await projectGroundingContext(task, binding, target, definition, actor, this.head, db);
     if (binding.contextRevision !== attempt.contextRevision || projected.digest !== attempt.contextDigest || !projected.bytes.equals(attempt.contextBytes)) mismatch();
+    if (ciHeadSha !== null && binding.subjectMode === "CODE_HEAD" && JSON.parse(projected.bytes.toString("utf8")).deliverable.headSha !== ciHeadSha)
+      throw new GroundingDecisionError("precondition_failed");
     if (!attempt.sessionId || !attempt.sessionRevision) unavailable();
     const evidence = verifyGroundingReceipt(attempt.receipt.wireBytes, { trust: settings.trust, now: this.time(), expected: {
       audience: binding.audience, projectId: task.projectId, taskId: task.id, attemptId: attempt.id, nonce: attempt.nonce,
@@ -144,7 +147,7 @@ export class GroundingCompletionService {
     } else await invalidateGroundingContext(db, task.id);
     const result = { operationId: operation.id, taskId: task.id, action: decision.action, status: decision.to, mode: decision.mode, receiptId: decision.receiptId, mergeCommitSha: mergeCommitSha ?? null, overrideReason: decision.overrideReason };
     await logGroundingDecision(db, { taskId: task.id, projectId: task.projectId, actorType: operation.actorType, actorId: operation.actorId, operationId: operation.id,
-      action: decision.overrideReason !== null ? "task.grounding.overridden" : ["finish", "approve", "merge"].includes(decision.action) ? "task.grounding.completed" : "task.grounding.disposed", decision: { ...result, from: decision.from, reason: decision.reason, skippedRules: decision.skippedRules } });
+      action: decision.overrideReason !== null ? "task.grounding.overridden" : ["finish", "approve", "merge"].includes(decision.action) ? "task.grounding.completed" : "task.grounding.disposed", decision: { ...result, from: decision.from, reason: decision.reason, skippedRules: decision.skippedRules, ciHeadSha: decision.ciHeadSha } });
     await db.groundingOperation.update({ where: { id: operation.id }, data: { state: "COMPLETED", result, completedAt: new Date(this.time() * 1000) } });
     await db.groundingFinalization.updateMany({ where: { operationId: operation.id }, data: { state: "CONSUMED", result, completedAt: new Date(this.time() * 1000) } });
     if (operation.state === "DISPATCHED") await db.groundingCohort.update({ where: { taskId: task.id }, data: { reservationId: null } });
@@ -187,6 +190,7 @@ export class GroundingCompletionService {
       const repo = task.deliverableRepo ?? task.project.githubRepo;
       if (!repo || task.prUrl !== `https://github.com/${repo}/pull/${task.prNumber}`) unavailable();
       const remote = mergeIdentitySchema.parse({ repo, prNumber: task.prNumber, headSha: await this.head({ actor, teamId: task.project.teamId, repo, prNumber: task.prNumber!, db }), method: request.method });
+      if (decision.ciHeadSha !== null && decision.ciHeadSha !== remote.headSha) throw new GroundingDecisionError("precondition_failed");
       if (decision.attemptId) {
         const attempt = await db.groundingAttempt.findUniqueOrThrow({ where: { id: decision.attemptId } });
         const context = JSON.parse(attempt.contextBytes.toString("utf8"));

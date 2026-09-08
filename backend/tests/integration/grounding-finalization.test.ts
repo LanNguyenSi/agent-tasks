@@ -1,17 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { beforeAll, afterAll, beforeEach, it, expect, vi } from "vitest";
+import { beforeAll, afterAll, beforeEach, afterEach, it, expect, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 import { completionStore, completionFixture, completionActor as actor } from "../helpers/grounding-completion-fixtures.js";
 import { barrier } from "../helpers/grounding-postgres.js";
 import { epoch, ids, session } from "../helpers/grounding-fixtures.js";
 import { mutateGroundingContext } from "../../src/services/grounding-context-mutation.js";
+import { defaultWorkflowDefinition } from "../../src/services/default-workflow.js";
+import { fetchCheckRunStatus, _clearCheckCache } from "../../src/services/github-checks.js";
 import * as audit from "../../src/services/audit.js";
 
 let store: Awaited<ReturnType<typeof completionStore>>;
 let f: Awaited<ReturnType<typeof completionFixture>>;
 beforeAll(async () => { store = await completionStore(); }, 60000);
 afterAll(async () => { if (store) await store.close(); });
-beforeEach(async () => { f = await completionFixture(store); });
+beforeEach(async () => { vi.stubEnv("REDIS_URL", ""); f = await completionFixture(store); });
+afterEach(async () => { await _clearCheckCache(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 async function reserve() { await f.evidence("merge"); return f.service.reserveMerge(f.taskId, actor, "merge"); }
 
 it("N-11 concurrent local consumers commit one operation, one receipt use and one audit across connections", async () => {
@@ -177,4 +180,104 @@ it("cancellation requires originating actor, current access and reason; audit fa
   try { await expect(f.service.cancelMerge(f.taskId, actor, "merge", "cancel")).rejects.toMatchObject({ code: "grounding_verification_unavailable" }); }
   finally { hook.mockRestore(); }
   expect(await f.snapshot()).toEqual(before);
+});
+
+/** Exercise the real PR/check caches and classifier; only HTTP transport is injected. */
+async function configureCi() {
+  await _clearCheckCache();
+  const definition = defaultWorkflowDefinition();
+  for (const edge of definition.transitions) edge.requires = ["ciGreen", "prPresent", "branchPresent"];
+  await f.db.workflow.create({ data: { projectId: f.projectId, name: "CI binding", isDefault: true, definition: definition as unknown as Prisma.InputJsonValue } });
+  const conclusions: Record<string, string> = { [f.head]: "success" };
+  const fetcher = vi.fn(async (url: string | URL | Request) => {
+    const path = String(url);
+    if (path.includes("/check-runs")) {
+      const sha = path.split("/commits/")[1]?.split("/")[0];
+      return Response.json({ total_count: 1, check_runs: [{ status: "completed", conclusion: conclusions[sha ?? ""] ?? "failure" }] });
+    }
+    if (path.endsWith("/pulls/42")) return Response.json({ head: { sha: f.head }, state: "open", merged: false });
+    throw new Error(`Unexpected test request: ${path}`);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  return { conclusions, fetcher, prime: () => fetchCheckRunStatus("acme", "repo", 42, "test-only") };
+}
+
+it.each(["finish", "merge"] as const)("CI-F01 cached prior-head green cannot authorize current-head failing %s", async intent => {
+  const ci = await configureCi(); const oldHead = f.head;
+  await expect(ci.prime()).resolves.toMatchObject({ sha: oldHead, state: "success" });
+  f.head = "c".repeat(40); f.proof.headSha = f.head; ci.conclusions[f.head] = "failure";
+  await f.evidence(intent); const before = await f.snapshot();
+  const complete = (key: string) => intent === "merge" ? f.service.reserveMerge(f.taskId, actor, key) : f.service.complete(f.taskId, actor, key, { action: "finish" });
+  await expect(complete("ci-head")).rejects.toMatchObject({ code: "precondition_failed" });
+  expect(f.merge).not.toHaveBeenCalled(); expect(await f.snapshot()).toEqual(before);
+  expect(ci.fetcher.mock.calls.some(([url]) => String(url).includes(`/commits/${f.head}/`))).toBe(false);
+  // Model normal cache expiry; no production path calls this test-only helper.
+  await _clearCheckCache();
+  await expect(complete("ci-refreshed")).rejects.toMatchObject({ code: "precondition_failed" });
+  expect(ci.fetcher.mock.calls.some(([url]) => String(url).includes(`/commits/${f.head}/`))).toBe(true);
+  expect(f.merge).not.toHaveBeenCalled(); expect(await f.snapshot()).toEqual(before);
+});
+
+it.each(["finish", "merge"] as const)("CI-F01 matching-head successful checks authorize exactly that %s decision", async intent => {
+  f.head = "c".repeat(40); f.proof.headSha = f.head;
+  const ci = await configureCi(); await f.evidence(intent);
+  if (intent === "finish") {
+    await expect(f.service.complete(f.taskId, actor, "ci-matching", { action: "finish" })).resolves.toMatchObject({ status: "review" });
+    expect((await f.snapshot()).operations[0].decision).toMatchObject({ ciHeadSha: f.head });
+    expect(f.merge).not.toHaveBeenCalled();
+    expect(ci.fetcher.mock.calls.some(([url]) => String(url).includes(`/commits/${f.head}/check-runs`))).toBe(true);
+    return;
+  }
+  await expect(f.service.reserveMerge(f.taskId, actor, "ci-matching")).resolves.toMatchObject({ state: "RESERVED" });
+  expect((await f.snapshot()).operations[0].decision).toMatchObject({ ciHeadSha: f.head });
+  await expect(f.service.dispatchMerge(f.taskId, actor, "ci-matching")).resolves.toMatchObject({ status: "done" });
+  expect(f.merge).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ headSha: f.head }), "test-only");
+  expect(ci.fetcher.mock.calls.filter(([url]) => String(url).includes(`/commits/${f.head}/check-runs`))).toHaveLength(1);
+});
+
+it.each(["OFF", "LEGACY_LOCAL", "override"] as const)("CI-F01 %s still rejects cached CI for a different authoritative head", async mode => {
+  if (mode !== "override") f = await completionFixture(store, mode);
+  const ci = await configureCi(); await ci.prime(); f.head = "c".repeat(40);
+  const requester = mode === "override" ? { type: "human" as const, userId: ids.user } : actor;
+  if (mode === "override") await f.db.task.update({ where: { id: f.taskId }, data: { claimedByAgentId: null, claimedByUserId: ids.user } });
+  const before = await f.snapshot();
+  await expect(f.service.reserveMerge(f.taskId, requester, "ci-mode", mode === "override" ? { overrideReason: "grounding only" } : {})).rejects.toMatchObject({ code: "precondition_failed" });
+  expect(f.merge).not.toHaveBeenCalled(); expect(await f.snapshot()).toEqual(before);
+});
+
+it("CI-F01 CI sample must also match a later receipt projection head", async () => {
+  const ci = await configureCi(); const oldHead = f.head; await ci.prime();
+  f.head = "c".repeat(40); await f.evidence("merge");
+  // CI observes old head A; the later fresh receipt projection observes C.
+  f.headProvider.mockResolvedValueOnce(oldHead);
+  const before = await f.snapshot();
+  await expect(f.service.reserveMerge(f.taskId, actor, "ci-projection")).rejects.toMatchObject({ code: "precondition_failed" });
+  expect(f.merge).not.toHaveBeenCalled(); expect(await f.snapshot()).toEqual(before);
+});
+
+it("CI-F01 receipt-free reservation rejects head movement after the CI sample", async () => {
+  f = await completionFixture(store, "OFF"); await configureCi();
+  f.headProvider.mockResolvedValueOnce(f.head).mockResolvedValueOnce("c".repeat(40));
+  const before = await f.snapshot();
+  await expect(f.service.reserveMerge(f.taskId, actor, "ci-reserve-drift")).rejects.toMatchObject({ code: "precondition_failed" });
+  expect(f.merge).not.toHaveBeenCalled(); expect(await f.snapshot()).toEqual(before);
+});
+
+it("CI-F01 dispatch rejects cached old CI after the authoritative head moves", async () => {
+  await configureCi(); await f.evidence("merge"); await f.service.reserveMerge(f.taskId, actor, "ci-dispatch-drift");
+  f.head = "c".repeat(40); const before = await f.snapshot();
+  await expect(f.service.dispatchMerge(f.taskId, actor, "ci-dispatch-drift")).rejects.toMatchObject({ code: "precondition_failed" });
+  expect(f.merge).not.toHaveBeenCalled(); expect(await f.snapshot()).toEqual(before);
+});
+
+it.each(["OFF", "override"] as const)("CI-F01 %s final dispatch sample must still match its CI head", async mode => {
+  if (mode === "OFF") f = await completionFixture(store, mode);
+  await configureCi();
+  const requester = mode === "override" ? { type: "human" as const, userId: ids.user } : actor;
+  if (mode === "override") await f.db.task.update({ where: { id: f.taskId }, data: { claimedByAgentId: null, claimedByUserId: ids.user } });
+  await f.service.reserveMerge(f.taskId, requester, "ci-last-sample", mode === "override" ? { overrideReason: "grounding only" } : {});
+  f.headProvider.mockResolvedValueOnce(f.head).mockResolvedValueOnce("c".repeat(40));
+  const before = await f.snapshot();
+  await expect(f.service.dispatchMerge(f.taskId, requester, "ci-last-sample")).rejects.toMatchObject({ code: "grounding_receipt_mismatch" });
+  expect(f.merge).not.toHaveBeenCalled(); expect(await f.snapshot()).toEqual(before);
 });

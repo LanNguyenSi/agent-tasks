@@ -27,7 +27,7 @@ export class GroundingFinalizationService extends GroundingCompletionService {
       const token = await groundingMergeConsent(db, actor, task.project.teamId);
       const identity = mergeIdentitySchema.parse({ repo: operation.repo, prNumber: operation.prNumber, headSha: operation.headSha, method: operation.mergeMethod });
       const currentHead = await this.head({ actor, teamId: task.project.teamId, repo: identity.repo, prNumber: identity.prNumber, db });
-      if (currentHead !== identity.headSha) mismatch();
+      if (currentHead !== identity.headSha || (decision.ciHeadSha !== null && decision.ciHeadSha !== currentHead)) mismatch();
       const changed = await db.groundingOperation.updateMany({ where: { id: operation.id, state: "RESERVED" }, data: { state: "DISPATCHED", dispatchedAt: new Date(this.time() * 1000) } });
       if (changed.count !== 1) mismatch();
       await db.groundingFinalization.updateMany({ where: { operationId: operation.id }, data: { state: "DISPATCHED" } });
