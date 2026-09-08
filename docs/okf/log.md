@@ -1,5 +1,31 @@
 # Change log
 
+## 2026-09-08
+
+Fleet sync to okf-kit 0.10.0 (agent-tasks PR #507) surfaced `sources-fresh`
+STALE on `deploy.md` (`.github/workflows/ci.yml` changed after the stamp)
+and `release-flow.md` (`.github/workflows/publish-npm.yml` and
+`.github/workflows/ci.yml` changed after the stamp), plus
+`sources-fresh-future` FUTURE-DATED on `architecture.md`, `auth.md`,
+`mcp-bridge.md`, `mcp-server.md` (each doc's hand-written `timestamp:` sat
+after its own last commit by more than the skew allowance). Re-read all
+six docs' claims against their `sources:` at HEAD (master `55f4bde`, the
+PR #508 squash). `auth.md` and `mcp-bridge.md` share the
+`mcp-bridge/src/token-store.ts:112-168` citation (the `MultiSourceStore`
+`get`/`set`/`clear` trio): still points at the quoted text, anchor
+unmoved. `mcp-server.md`'s citations into `mcp-server/src/tools.ts:706`,
+`mcp-server/src/read.ts:268`, and `mcp-server/src/read.ts:299-321` also
+still match, no anchor moved. `deploy.md`, `release-flow.md`, and
+`architecture.md` carry no line-anchored citations; their `ci.yml` job
+list, `publish-npm.yml` steps, and compose/workspace file references were
+re-read against the current tree with no drift found. All six
+`timestamp:` fields bumped to the verification instant. Open: outside
+this task's citation scope, `mcp-server.md`'s prose claim that
+`SERVER_VERSION`/`package.json#version` read `"0.13.0"` no longer holds
+(`mcp-server/src/server.ts:9` and `mcp-server/package.json:3` both now
+read `"0.14.0"`); left unedited per the no-content-change rule and
+flagged for the operator. Task: agent-tasks `8a1c4c52`.
+
 ## 2026-09-02
 
 Post-merge re-verification (2026-09-02T05:46:00Z) after the Node-24 GitHub Actions bump
