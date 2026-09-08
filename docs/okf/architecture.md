@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-08T04:53:13Z
+timestamp: 2026-09-08T05:10:10Z
 sources:
   - package.json
   - backend/src/app.ts
@@ -15,7 +15,7 @@ sources:
 
 npm workspaces monorepo (`package.json` workspaces: `backend`, `frontend`, `mcp-server`, `mcp-bridge`, `cli`). This doc covers the four deployables; `@agent-tasks/cli` is a fifth workspace (a standalone REST CLI client) not detailed here.
 
-1. **backend** (`@agent-tasks/backend`), a Hono HTTP API (`backend/src/app.ts`, served via `@hono/node-server` in `backend/src/server.ts`), Prisma ORM against PostgreSQL. All API routes mount under `/api`; the Swagger UI page is the one exception, served at `/docs` (`backend/src/app.ts:93`, `backend/src/routes/docs.ts:1866`; see `backend.md`). Owns all state.
+1. **backend** (`@agent-tasks/backend`), a Hono HTTP API (`backend/src/app.ts`, served via `@hono/node-server` in `backend/src/server.ts`), Prisma ORM against PostgreSQL. All API routes mount under `/api`; the Swagger UI page is the one exception, served at `/docs` (`backend/src/app.ts:95`, `backend/src/routes/docs.ts:1866`; see `backend.md`). Owns all state.
 2. **frontend** (`@agent-tasks/frontend`), Next.js 15 app (`frontend/package.json` pins `next@^15`), the human-facing UI. Talks to the backend over HTTP; has a couple of its own `app/api/*` route handlers only for GitHub OAuth redirects (`frontend/src/app/api/auth/github/*`).
 3. **mcp-server** (`@agent-tasks/mcp-server`), stdio MCP server wrapping the backend REST API with a fixed `Authorization: Bearer` token. Published to npm. See `mcp-server.md`.
 4. **mcp-bridge** (`@agent-tasks/mcp-bridge`), a thin CLI wrapper around mcp-server that resolves the bearer token (env var, OS keychain, or file) before handing off to the same stdio runtime. See `mcp-bridge.md`.

@@ -2,6 +2,16 @@
 
 ## 2026-09-08
 
+Added the dormant protected grounding-attempt and receipt-ingest service, additive
+relational storage and exact task-context projection. Updated `backend.md` to
+describe the authenticated app routes and C01 invocation while keeping completion
+gates and activation outside this change. Project-access and GitHub-delegation
+helpers now accept an optional transaction client with unchanged default callers.
+Re-read `architecture.md`, `claim-model.md`, `auth.md` and `workflow-gates.md`:
+app wiring and additive Prisma storage preserve their deployment, claim, token
+and completion-gate behavior. Corrected the shifted app route citation and
+re-stamped these affected source scopes.
+
 Fleet sync to okf-kit 0.10.0 (agent-tasks PR #507) surfaced `sources-fresh`
 STALE on `deploy.md` (`.github/workflows/ci.yml` changed after the stamp)
 and `release-flow.md` (`.github/workflows/publish-npm.yml` and

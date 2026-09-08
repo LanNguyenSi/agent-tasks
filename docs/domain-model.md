@@ -92,3 +92,11 @@ For the same picture in mermaid, see [`../diagrams/domain-overview.mmd`](../diag
 - [`events.md`](events.md), full audit-event + signal-type catalog.
 - [`workflow-preconditions.md`](workflow-preconditions.md), precondition rule reference (`branchPresent`, `prPresent`, `prMerged`, `ciGreen`).
 - ADR 0010, governance-mode consolidation (legacy boolean flags to single enum).
+
+## Protected grounding state
+
+`GroundingBinding` is server-provisioned, keyed to an existing task and project. It owns the consumer audience, protected subject mode, pinned policy, observed context revision/digest and active attempt pointer. Generic task metadata has no authority over this state.
+
+`GroundingAttempt` stores the exact canonical context bytes, server-derived workflow target, nonce, owner, lifetime and active/superseded/consumed state. The producer session tuple is nominated only inside a successful receipt-ingest transaction. `GroundingReceipt` stores one immutable accepted original wire representation and its documentary `agent_asserted` evidence per attempt. Composite foreign keys preserve task identity across these records. `GroundingFinalization` reserves a separate relational shape for later completion consumers; this release never writes it.
+
+These additive tables leave `Project.requireGroundingForDebug` defaulting to false. Attempt issuance and receipt ingest do not change task status, claims or merge state. See [the grounding receipt contract](grounding-receipt-contract.md) for exact context bytes, API inputs, uniqueness and retry behavior.

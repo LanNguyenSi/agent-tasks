@@ -18,6 +18,7 @@
  *
  * Returns null when neither path produces a candidate.
  */
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 
 export type DelegationPermission = "allowAgentPrCreate" | "allowAgentPrMerge" | "allowAgentPrComment";
@@ -30,6 +31,8 @@ export interface DelegationUser {
 
 export interface DelegationOptions {
   preferUserId?: string;
+  /** Keep authorization reads on the caller's transaction when one is supplied. */
+  db?: Pick<Prisma.TransactionClient, "teamMember">;
 }
 
 const userSelect = {
@@ -72,8 +75,9 @@ export async function findDelegationUser(
   permission: DelegationPermission,
   opts: DelegationOptions = {},
 ): Promise<DelegationUser | null> {
+  const db = opts.db ?? prisma;
   if (opts.preferUserId) {
-    const preferred = await prisma.teamMember.findUnique({
+    const preferred = await db.teamMember.findUnique({
       where: { teamId_userId: { teamId, userId: opts.preferUserId } },
       include: { user: { select: userSelect } },
     });
@@ -81,7 +85,7 @@ export async function findDelegationUser(
     if (eligible) return eligible;
   }
 
-  const members = await prisma.teamMember.findMany({
+  const members = await db.teamMember.findMany({
     where: { teamId },
     include: { user: { select: userSelect } },
     orderBy: { role: "asc" }, // ADMIN first
