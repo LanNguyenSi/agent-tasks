@@ -236,12 +236,20 @@ describe("protected issuance and atomic receipt persistence (PostgreSQL)", () =>
 describe("real controlled PostgreSQL interleavings", () => {
   it("concurrent issue serializes, retries CAS and leaves exactly one authoritative active attempt", async () => {
     const gate = barrier(); const other = await separate(); const observer = store.connect();
+    const retryErrors: { code: string; sqlstate: unknown }[] = [];
+    const transact = other.client.$transaction.bind(other.client);
+    vi.spyOn(other.client, "$transaction").mockImplementation(((...args: unknown[]) =>
+      Reflect.apply(transact, other.client, args).catch((error: unknown) => {
+        if (error instanceof Prisma.PrismaClientKnownRequestError) retryErrors.push({ code: error.code, sqlstate: error.meta?.code });
+        throw error;
+      })) as PrismaClient["$transaction"]);
     provider.mockImplementationOnce(async () => { await gate.wait(); return head; });
     const first = service.issue(taskId, actor, "finish"); await gate.reached;
     const second = other.service.issue(taskId, actor, "finish");
     try { await waitForLock(observer, other.pid); } finally { gate.release(); }
     const [a, b] = await Promise.all([first, second]);
     expect(a.attemptId).not.toBe(b.attemptId);
+    expect(retryErrors).toContainEqual({ code: "P2010", sqlstate: "40001" });
     expect(await db.groundingAttempt.count({ where: { taskId, state: "ACTIVE" } })).toBe(1);
     expect(await db.groundingAttempt.findUnique({ where: { id: a.attemptId } })).toMatchObject({ state: "SUPERSEDED" });
     expect(await db.groundingBinding.findUnique({ where: { taskId } })).toMatchObject({ activeAttemptId: b.attemptId });

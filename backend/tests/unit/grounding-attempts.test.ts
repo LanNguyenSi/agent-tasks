@@ -33,6 +33,12 @@ describe("grounding attempts fail-closed service boundary", () => {
     await expect(service.issue(ids.task, actor, "finish")).rejects.toMatchObject({ code: "grounding_verification_unavailable" });
     expect(mock.$transaction).toHaveBeenCalledTimes(3);
   });
+  it.each(["40001", "40P01", "42501"])("retries only recognized raw SQL conflict %s", async sqlstate => {
+    const { service, mock } = setup();
+    mock.$transaction.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("raw failure", { code: "P2010", meta: { code: sqlstate }, clientVersion: "test" }));
+    await expect(service.issue(ids.task, actor, "finish")).rejects.toMatchObject({ code: "grounding_verification_unavailable" });
+    expect(mock.$transaction).toHaveBeenCalledTimes(sqlstate === "42501" ? 1 : 3);
+  });
   it("scope/project/claim denial precedes locks, provider and attempt diagnostics", async () => {
     for (const mode of ["scope", "project", "claim"] as const) {
       const { service, mock, task, authority, headProvider } = setup();
