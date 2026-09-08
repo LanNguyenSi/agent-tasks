@@ -1,5 +1,8 @@
-import { createHash, createPublicKey, randomBytes, randomUUID } from "node:crypto";
-import { Prisma, type GroundingAttempt, type GroundingBinding, type PrismaClient } from "@prisma/client";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { type Prisma, type GroundingAttempt, type GroundingBinding, type PrismaClient } from "@prisma/client";
+import { groundingSettings, groundingTime } from "./grounding-verification.js";
+import { provisionGroundingCohortInTransaction, requireGroundingCohort } from "./grounding-cohort.js";
+import { groundingTransaction, lockGroundingTask, assertNoGroundingReservation } from "./grounding-transaction.js";
 import { z } from "zod";
 import type { Actor } from "../types/auth.js";
 import { verifyGroundingReceipt, GroundingReceiptVerificationError, type GroundingReceiptTrustEntry } from "./grounding-receipt.js";
@@ -30,10 +33,7 @@ export interface GroundingAttemptsDependencies {
 function stale(): never { throw new GroundingReceiptVerificationError("grounding_receipt_stale"); }
 function invalid(): never { throw new GroundingReceiptVerificationError("grounding_receipt_invalid"); }
 function actorId(actor: Actor): string { return actor.type === "agent" ? actor.tokenId : actor.userId; }
-const trustSchema = z.array(z.object({
-  issuer: token, kid: token, publicKeyPem: z.string().regex(/^-----BEGIN PUBLIC KEY-----\r?\n(?:[A-Za-z0-9+/=]+\r?\n)+-----END PUBLIC KEY-----\r?\n?$/),
-  profileDigest: z.string().regex(/^[0-9a-f]{64}$/), projectIds: z.array(uuid).min(1), audiences: z.array(token).min(1), revoked: z.boolean().optional(),
-}).strict());
+
 
 export class GroundingAttemptsService {
   private readonly now: () => number;
@@ -45,52 +45,15 @@ export class GroundingAttemptsService {
     this.authority = deps.authority ?? groundingAuthority;
   }
 
-  private settings(projectId: string) {
-    try {
-      const audience = token.parse(this.deps.config.audience);
-      const seconds = z.number().int().positive().max(86400).parse(this.deps.config.challengeSeconds ?? 900);
-      const trust = trustSchema.parse(this.deps.config.trust());
-      const seen = new Set<string>();
-      for (const entry of trust) {
-        const id = `${entry.issuer}\u0000${entry.kid}`;
-        if (seen.has(id)) unavailable();
-        seen.add(id);
-        const key = createPublicKey(entry.publicKeyPem);
-        if (key.type !== "public" || key.asymmetricKeyType !== "ed25519") unavailable();
-      }
-      if (!trust.some(t => !t.revoked && t.projectIds.includes(projectId) && t.audiences.includes(audience) && t.profileDigest === GROUNDING_POLICY.sha256)) unavailable();
-      return { audience, seconds, trust };
-    } catch { return unavailable(); }
-  }
-
-  private time(): number {
-    const now = this.now();
-    if (!Number.isSafeInteger(now) || now < 0 || now > 8640000000000 - 86400) unavailable();
-    return now;
-  }
+  private settings(projectId: string) { return groundingSettings(this.deps.config, projectId); }
+  private time() { return groundingTime(this.now); }
 
   private async transaction<T>(operation: (db: Prisma.TransactionClient) => Promise<T>): Promise<T> {
-    for (let retry = 0; retry < 3; retry++) {
-      try {
-        return await this.deps.db.$transaction(operation, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 20000 });
-      } catch (error) {
-        if (error instanceof GroundingAccessError || error instanceof GroundingReceiptVerificationError) throw error;
-        if (error instanceof Prisma.PrismaClientKnownRequestError && retry < 2 &&
-            (error.code === "P2034" || (error.code === "P2010" && ["40001", "40P01"].includes(String(error.meta?.code))))) continue;
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") mismatch();
-        return unavailable();
-      }
-    }
-    return unavailable();
+    return groundingTransaction(this.deps.db, operation);
   }
 
   private async lock(db: Prisma.TransactionClient, taskId: string): Promise<GroundingTask> {
-    if (!uuid.safeParse(taskId).success) throw new GroundingAccessError("not_found", 404);
-    await db.$queryRaw`SELECT id FROM tasks WHERE id = ${taskId} FOR UPDATE`;
-    const task = await db.task.findUnique({ where: { id: taskId }, include: { project: true } });
-    if (!task) throw new GroundingAccessError("not_found", 404);
-    await db.$queryRaw`SELECT "taskId" FROM grounding_bindings WHERE "taskId" = ${taskId} FOR UPDATE`;
-    return task;
+    return lockGroundingTask(db, taskId);
   }
 
   private async authorizeTask(task: GroundingTask, actor: Actor, db: Prisma.TransactionClient): Promise<void> {
@@ -117,6 +80,7 @@ export class GroundingAttemptsService {
     await this.authorizeTask(before, actor, db);
     const task = await this.lock(db, taskId);
     await this.authorizeTask(task, actor, db);
+    await assertNoGroundingReservation(db, task.id);
     return task;
   }
 
@@ -127,6 +91,7 @@ export class GroundingAttemptsService {
       const task = await this.lock(db, input.taskId);
       if (task.projectId !== input.projectId) mismatch();
       const settings = this.settings(task.projectId);
+      await provisionGroundingCohortInTransaction(db, task.id, task.projectId, { mode: "EXTERNAL_V1", protected: true, provenance: "external-binding:v1", legacySessionId: null, legacyPhase: null });
       const existing = await db.groundingBinding.findUnique({ where: { taskId: task.id } });
       if (existing) {
         if (existing.projectId !== input.projectId || existing.audience !== settings.audience || existing.subjectMode !== input.subjectMode || !existing.protected ||
@@ -144,6 +109,7 @@ export class GroundingAttemptsService {
     const resolved = await resolveGroundingTarget(db, task, actor, intent, this.authority);
     const binding = await db.groundingBinding.findUnique({ where: { taskId: task.id } });
     if (!binding) throw new GroundingAccessError("grounding_not_provisioned", 409);
+    await requireGroundingCohort(db, task.id, task.projectId);
     const settings = this.settings(task.projectId);
     if (binding.audience !== settings.audience) unavailable();
     const context = await projectGroundingContext(task, binding, resolved.target, resolved.definition, actor, this.head, db);

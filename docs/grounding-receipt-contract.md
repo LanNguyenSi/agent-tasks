@@ -68,7 +68,7 @@ The subject digest is lowercase SHA-256 over UTF-8 bytes of the following JSON p
 | `claims` | `{workUserId, workAgentId, reviewUserId, reviewAgentId}` from the task |
 | `deliverable` | `{repo, prNumber, prUrl, branchName, headSha}`; repo is `task.deliverableRepo ?? project.githubRepo`, head is null only for `TASK_SPEC` |
 
-Metadata, debug suggestions, comments, labels, priority, result text and display/audit timestamps do not enter this projection. Changing any projected value requires a new context. A first challenge uses revision 1; later issuance increments the protected revision when its projection bytes differ from the last issued projection. Issuance without a projection change retains the revision but always creates a fresh attempt and nonce. Upload rederives the current bytes and rejects divergence, including on an exact retry. This is local revalidation, not the later integration of every context writer: changes which are reverted between observations are not detected by this milestone, and this service installs no completion gate.
+Metadata, debug suggestions, comments, labels, priority, result text and display/audit timestamps do not enter this projection. Changing any projected value requires a new context. A first challenge uses revision 1; later issuance increments the protected revision when its projection bytes differ from the last issued projection. Issuance without a projection change retains the revision but always creates a fresh attempt and nonce. Upload rederives the current bytes and rejects divergence, including on an exact retry. This is local revalidation, not the later integration of every context writer: changes which are reverted between observations are not detected by this milestone, and unchanged existing writers do not yet all participate in the mutation protocol below.
 
 `CODE_HEAD` requires a positive registered PR number and the exact canonical GitHub PR URL for the registered effective repository. Head lookup uses the existing `allowAgentPrCreate` read consent and actor-preferred GitHub delegation. Each read uses the fixed GitHub API destination with caching disabled, redirects rejected, a five-second abort deadline, and a 256-KiB response ceiling. The returned PR number, repository identity, URL and 40-character lowercase hexadecimal head must match. A missing delegate, inaccessible/mismatched PR, failed or timed-out provider has no fallback. The head is a sampled remote snapshot, not a transaction with GitHub.
 
@@ -76,6 +76,119 @@ Metadata, debug suggestions, comments, labels, priority, result text and display
 
 Binding, Attempt, Receipt and Finalization are separate relational tables. Same-task composite foreign keys prevent an active pointer, receipt or finalization from referencing another task's attempt. Nonce, receipt ID, one receipt per attempt and one finalization per attempt/receipt are unique in PostgreSQL. `Binding.activeAttemptId` is the authoritative single active attempt pointer. The service has no receipt update/delete operation: it preserves original wire bytes, their digest, the accepted session tuple and documentary evidence.
 
-Issuance and ingest serialize on the task and binding rows in a serializable transaction. Project-access, workflow-role and GitHub-delegation reads use that same transaction client, including with a one-connection pool. Existing callers of these helpers retain their default singleton client. Issuance supersedes prior active attempts and installs a new pointer with compare-and-set in the same commit. Ingest requires the active pointer, current context, authorized actor, fresh clock and usable current trust; it stages nomination, invokes C01 and creates the receipt atomically. Concurrent identical uploads yield one creation and one replay; differing bytes or session tuples conflict. Exact retries after reconnect return the persisted receipt only after full revalidation; expiry, supersession or revocation cannot be bypassed by a retry shortcut. Receipt storage and uniqueness failures roll back nomination and fail closed.
+Issuance and ingest serialize on the project, task, binding and cohort rows in a serializable transaction. Project-access, workflow-role and GitHub-delegation reads use that same transaction client, including with a one-connection pool. Existing callers of these helpers retain their default singleton client. Issuance supersedes prior active attempts and installs a new pointer with compare-and-set in the same commit. Ingest requires the active pointer, current context, authorized actor, fresh clock and usable current trust; it stages nomination, invokes C01 and creates the receipt atomically. Concurrent identical uploads yield one creation and one replay; differing bytes or session tuples conflict. Exact retries after reconnect return the persisted receipt only after full revalidation; expiry, supersession or revocation cannot be bypassed by a retry shortcut. Receipt storage and uniqueness failures roll back nomination and fail closed.
 
-The transaction has a 20-second lifetime and 10-second acquisition bound, with at most three serializable attempts. The authorized head read occurs inside this bound: a slow provider can hold that task's lock until its deadline. Provider failure writes no protected state. This trades local ordering for bounded lock occupancy and promises no cross-system atomicity. Finalization is storage only in this release; it has no reservation or execution behavior. Issuer isolation and rollout qualification remain separate prerequisites.
+The transaction has a 20-second lifetime and 10-second acquisition bound, with at most three serializable attempts. The authorized head read occurs inside this bound: a slow provider can hold that task's lock until its deadline. Provider failure writes no protected state. This trades local ordering for bounded lock occupancy and promises no cross-system atomicity. Shared completion/finalization uses the same transaction protocol described below. Issuer isolation and rollout qualification remain separate prerequisites.
+
+## Shared completion and finalization services
+
+These are server service APIs, with no completion router wiring or production
+enrollment. `GroundingAttemptsService.provision` atomically creates/checks an
+`EXTERNAL_V1` cohort and protected binding. `provisionGroundingCohort` explicitly
+provisions `LEGACY_LOCAL` or `OFF`, with a bounded server provenance token.
+A missing or inconsistent cohort blocks the new service; neither task metadata,
+project flags nor external verification failure selects a fallback mode.
+External cohorts remain protected. OFF requires `protected: false`.
+Legacy enrollment pins a session ID and phase snapshot from a trusted server;
+protected legacy completion uses that session's actual ledger entry count and
+the existing at-or-past-claim-evaluation phase allowlist. Updates to those
+references must use the context mutation protocol. Generic metadata is not read.
+
+`GroundingCompletionService.complete(taskId, actor, key, request)` accepts
+`action: finish | approve`. The service selects the semantic workflow edge,
+checks project write authority, agent transition scope, claims, workflow roles,
+review governance and transition rules, then owns the task/claim effect.
+A review handoff retains the work claimant; terminal completion clears both
+claims. External completion reprojects current context, invokes C01 with current
+trust and time, and atomically persists receipt consumption, task changes, an
+immutable operation result and mandatory audit. Expiry during awaited local
+writes aborts the whole transaction. A missing active receipt returns
+`grounding_required`; expired or superseded evidence remains stale.
+
+Requests have a bounded `key` (1–128 token characters), optional bounded result,
+reason and `overrideReason`, and a merge method (`squash` by default). Unknown
+request fields fail. The task/key pair is unique; actor type/ID, normalized
+caller request fingerprint and the initially selected server decision are
+immutable. Identical completed retries from the same actor with current project
+write access return the original result before checking the released claim,
+new workflow state, receipt expiry or current trust. A different request with
+that key conflicts. No second transition, receipt consumption or audit occurs.
+
+A nonblank `overrideReason` is a separate grounding-only decision requiring a
+human project admin. It still requires the ordinary state, claim, review,
+transition-rule and merge-consent checks. Receipt-free legacy, OFF, override and
+non-success decisions never manufacture producer receipts. Accepted overrides
+carry their reason in the operation and mandatory audit.
+
+`dispose` accepts only `request_changes`, `abandon`, `release`,
+`creator_abandon` or `reopen`. Request-changes requires the review holder, clears
+the review claim and retains the author on the semantic return-to-work edge.
+Abandon requires a current work/review claim and resets work to the initial
+state; a work author cannot abandon while awaiting review. Release requires the
+work holder and refuses to orphan a reviewer. Creator-abandon requires an agent
+creator with `tasks:update` on open/backlog and fully unclaimed work, and writes
+`abandoned`. Reopen requires a human project admin and an unclaimed abandoned
+task, and selects only the effective initial state. Other claim dispositions
+require `tasks:claim`; request-changes uses `tasks:transition`. These accepted
+non-success decisions are audited, supersede active attempts and increment the
+context revision. They cannot be used to choose a success target.
+
+## Remote reservation, dispatch and recovery
+
+`GroundingFinalizationService` extends the shared completion service with
+`reserveMerge`, `dispatchMerge`, `recoverMerge` and `cancelMerge`. Reservation
+persists the operation, exact repository/PR/source head/method, local context
+snapshot and selected decision. Receipt-backed reservations retain the required
+same-task receipt foreign key. A single cohort reservation pointer blocks
+competing operations, C02 issuance/uploads and participating context mutations.
+Merge refuses foreign deliverables and requires `github:pr_merge` for agents
+and an eligible `allowAgentPrMerge` delegate. Required CI/rules still run;
+`prMerged` is discharged only by the later exact merged proof.
+
+Dispatch rechecks current authority, gates, context, head, trust and receipt
+freshness before a durable RESERVED-to-DISPATCHED compare-and-set. Only the
+winner issues a remote write, outside the database transaction. The GitHub
+adapter sends `PUT /repos/{repo}/pulls/{number}/merge` with the expected source
+`sha`, on a fixed GitHub API host, with redirects disabled, a five-second abort
+deadline and 256-KiB body bound. The resulting merge commit is separate from the
+source head. Trust is sampled in this process; this does not provide atomic
+configuration revocation across instances or a transaction with GitHub.
+
+A timeout or uncertain dispatch remains DISPATCHED. Retries/recovery perform
+reads only and require the exact repository, PR number, merged state and source
+`head.sha`, plus a valid separate merge commit. An open PR, wrong head, missing
+proof or read failure does not unlock the reservation or cause another merge.
+Matching recovery applies the stored decision and consumes evidence once even
+after its TTL, with task/claim/audit changes in one transaction. It also compares
+the original local snapshot and receipt projection, without requiring renewed
+TTL/trust, so a nonparticipating writer cannot substitute new work or claims
+under the old decision. Such drift remains unresolved. A crash after dispatch
+claim but before network send is conservatively uncertain too.
+
+`cancelMerge(taskId, actor, key, reason)` provides recovery only for RESERVED,
+provably undispatched operations. It requires the originating actor's current
+project write access and a bounded nonblank reason, then atomically marks
+CANCELLED, invalidates the attempt, clears the reservation and writes mandatory
+audit. Repeating the same cancellation returns its stored result; changing its
+reason conflicts. A dispatch/cancel race has one serialized winner. DISPATCHED
+operations cannot be cancelled, even if their PR currently appears open.
+A new operation after cancellation requires a new challenge/evidence decision.
+
+## Context mutation protocol
+
+`mutateGroundingContext(db, {projectIds, audit, selectAndAuthorize, mutate})`
+accepts trusted server callbacks only. It first locks all parent projects in
+sorted order, then selects and authorizes the affected scope inside that
+serializable transaction, then locks task/binding/cohort rows in sorted task
+order. Every selected reservation is checked before any callback write.
+The callback uses only the supplied transaction, mutates only its selected
+scope and performs no remote effects. Context invalidation and an attributed
+mandatory audit commit with its actual writes, or all roll back. Enrollment,
+project-wide policy/workflow writers and reassignment must join this common
+parent-before-task protocol; unchanged existing routers are not yet covered.
+
+The new boundary reports reservation conflicts as
+`409 grounding_finalization_pending`, including on existing C02 routes.
+Changed-key identity returns `409 grounding_operation_conflict`; failed shared
+transition preconditions return `409 precondition_failed`. Existing completion
+route error shapes and legacy behavior are unchanged.

@@ -2,6 +2,16 @@
 
 ## 2026-09-08
 
+Added dormant shared completion/finalization services: explicit cohort policy,
+immutable operation results, atomic receipt consumption and mandatory audit,
+head-bound remote reservation/dispatch/recovery, undispatched cancellation and
+a transaction context-writer protocol. Existing completion routers remain
+unwired; C02 issue/upload now honor the reservation. Updated receipt, domain,
+events, backend and workflow-gate documentation. Rechecked the unchanged
+auth and claim-model source claims against the additive Prisma change and
+restamped their source scopes.
+
+
 Added the dormant protected grounding-attempt and receipt-ingest service, additive
 relational storage and exact task-context projection. Updated `backend.md` to
 describe the authenticated app routes and C01 invocation while keeping completion

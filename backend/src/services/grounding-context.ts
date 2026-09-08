@@ -19,7 +19,7 @@ export const groundingIntentSchema = z.enum(["finish", "approve", "merge"]);
 export type GroundingIntent = z.infer<typeof groundingIntentSchema>;
 export type GroundingTarget = GroundingReceiptExpectedContext["target"];
 export class GroundingAccessError extends Error {
-  constructor(readonly code: "forbidden" | "not_found" | "bad_state" | "grounding_not_provisioned", readonly status: 403 | 404 | 409) {
+  constructor(readonly code: "forbidden" | "not_found" | "bad_state" | "grounding_not_provisioned" | "grounding_finalization_pending" | "grounding_operation_conflict" | "precondition_failed", readonly status: 403 | 404 | 409) {
     super(code);
   }
 }
@@ -51,17 +51,7 @@ export async function resolveGroundingTarget(
     throw new GroundingAccessError("forbidden", 403);
   if (!await authority.canWrite(actor, task.projectId, db))
     throw new GroundingAccessError("forbidden", 403);
-  const workflows = await db.workflow.findMany({
-    where: task.workflowId ? { id: task.workflowId, projectId: task.projectId } : { projectId: task.projectId, isDefault: true },
-  });
-  if (workflows.length > 1 || (task.workflowId && workflows.length !== 1)) unavailable();
-  const definition: unknown = workflows[0]?.definition ?? defaultWorkflowDefinition();
-  const parsed = definitionSchema.safeParse(definition);
-  if (!parsed.success) unavailable();
-  const def = parsed.data;
-  if (new Set(def.states.map(s => s.name)).size !== def.states.length ||
-      !def.states.some(s => s.name === def.initialState) ||
-      def.transitions.some(t => !def.states.some(s => s.name === t.from) || !def.states.some(s => s.name === t.to))) unavailable();
+  const { definition, def, workflowId } = await groundingWorkflow(db, task);
   const holdsWork = actor.type === "human" ? task.claimedByUserId === actor.userId : task.claimedByAgentId === actor.tokenId;
   const holdsReview = actor.type === "human" ? task.reviewClaimedByUserId === actor.userId : task.reviewClaimedByAgentId === actor.tokenId;
   const review = isReviewState(def, task.status);
@@ -87,7 +77,22 @@ export async function resolveGroundingTarget(
   if (edge.to !== existingTarget) throw new GroundingAccessError("bad_state", 409);
   if (edge.requiredRole && !await authority.hasRole(actor, task.projectId, edge.requiredRole as ProjectRole, db))
     throw new GroundingAccessError("forbidden", 403);
-  return { target: { workflowId: workflows[0]?.id ?? null, from: task.status, to: edge.to, action: intent }, definition };
+  return { target: { workflowId, from: task.status, to: edge.to, action: intent }, definition };
+}
+
+export async function groundingWorkflow(db: Prisma.TransactionClient, task: GroundingTask) {
+  const workflows = await db.workflow.findMany({
+    where: task.workflowId ? { id: task.workflowId, projectId: task.projectId } : { projectId: task.projectId, isDefault: true },
+  });
+  if (workflows.length > 1 || (task.workflowId && workflows.length !== 1)) unavailable();
+  const definition: unknown = workflows[0]?.definition ?? defaultWorkflowDefinition();
+  const parsed = definitionSchema.safeParse(definition);
+  if (!parsed.success) unavailable();
+  const def = parsed.data;
+  if (new Set(def.states.map(s => s.name)).size !== def.states.length ||
+      !def.states.some(s => s.name === def.initialState) ||
+      def.transitions.some(t => !def.states.some(s => s.name === t.from) || !def.states.some(s => s.name === t.to))) unavailable();
+  return { definition, def, workflowId: workflows[0]?.id ?? null };
 }
 
 /** JSON values sorted by UTF-16 code units; arrays and Unicode scalars retain their exact value. */
