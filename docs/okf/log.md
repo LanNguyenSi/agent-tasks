@@ -1,5 +1,64 @@
 # Change log
 
+## 2026-09-08
+
+Fleet sync to okf-kit 0.10.0 (agent-tasks PR #507) surfaced `sources-fresh`
+STALE on `deploy.md` (`.github/workflows/ci.yml` changed after the stamp)
+and `release-flow.md` (`.github/workflows/publish-npm.yml` and
+`.github/workflows/ci.yml` changed after the stamp), plus
+`sources-fresh-future` FUTURE-DATED on `architecture.md`, `auth.md`,
+`mcp-bridge.md`, `mcp-server.md` (each doc's hand-written `timestamp:` sat
+after its own last commit by more than the skew allowance). Re-read all
+six docs' claims against their `sources:` at HEAD (master `55f4bde`, the
+PR #508 squash). `auth.md` and `mcp-bridge.md` share the
+`mcp-bridge/src/token-store.ts:112-168` citation (the `MultiSourceStore`
+`get`/`set`/`clear` trio): still points at the quoted text, anchor
+unmoved. `mcp-server.md`'s citations into `mcp-server/src/tools.ts:706`,
+`mcp-server/src/read.ts:268`, and `mcp-server/src/read.ts:299-321` also
+still match, no anchor moved. `deploy.md`, `release-flow.md`, and
+`architecture.md` carry no line-anchored citations; their `ci.yml` job
+list, `publish-npm.yml` steps, and compose/workspace file references were
+re-read against the current tree with no drift found. All six
+`timestamp:` fields bumped to the verification instant. Follow-up pass:
+`mcp-server.md`'s `SERVER_VERSION`/`package.json#version` citation had
+drifted to a stale value, `"0.13.0"`, corrected to the current
+`"0.14.0"` and anchored to `mcp-server/src/server.ts:9` and
+`mcp-server/package.json:3`; the historical sentence describing
+rc-v1-C008's bump to 0.13.0 is left as-is, since it describes a past
+release rather than the current value. `timestamp:` re-bumped to the
+follow-up verification instant.
+
+Review-round-2 corrections (reviewer found the re-stamp had preserved
+claims the cited sources contradict): `mcp-server.md`'s
+`backlog_not_promoted` bullet said `allowedNext: ["tasks_get",
+"task_creator_abandon"]`; the code at `mcp-server/src/errors.ts:764`
+reads `["task_respec", "task_creator_abandon"]`, corrected, and the
+parenthetical now gives the code's own rationale from
+`mcp-server/src/errors.ts:752-757` (the two verbs an agent can still call
+while it waits). The same doc's two "Teaching hint:" paraphrases are now
+quoted verbatim from the code's `recipe` field (not `hint`), anchored to
+`mcp-server/src/errors.ts:747` (`backlog_routing_enforced`) and `:763`
+(`backlog_not_promoted`). `mcp-server.md`'s version-constant paragraph
+gained a closing clause naming the current `0.14.0` cut, commit
+`a1a4b9a` (PR #478, `mcp-server/CHANGELOG.md`'s `## 0.14.0`,
+2026-08-20), since the paragraph previously stopped at the 0.13.0
+rc-v1-C008 cut. `architecture.md`'s component-1 sentence "All routes
+mount under `/api`" is narrowed to "All API routes mount under `/api`;
+the Swagger UI page is the one exception, served at `/docs`", anchored
+to `backend/src/app.ts:93` and `backend/src/routes/docs.ts:1866`
+(`docsRouter` mounts at `/` in `app.ts`, then registers `/docs` inside
+itself, outside the `/api` prefix). `deploy.md`'s trigger sentence now
+names the `paths-ignore` skip for `**.md`/`docs/**` pushes and PRs
+(`ci.yml:6-11`, `:14-19`) and the frontend job's `node-version: [22,
+26]` matrix (`ci.yml:93-95`), dropping the "five independent jobs"
+overstatement for the frontend leg; the "Nothing in
+`.github/workflows/` ..." sentence keeps its wording but its `sources:`
+now lists all seven workflow files under `.github/workflows/`
+(previously only `ci.yml` and `docker-smoke.yml`), so a new
+deploy-capable workflow trips `sources-fresh`. Re-stamped
+`architecture.md`, `deploy.md`, and `mcp-server.md`. Task: agent-tasks
+`8a1c4c52`.
+
 ## 2026-09-02
 
 Post-merge re-verification (2026-09-02T05:46:00Z) after the Node-24 GitHub Actions bump
