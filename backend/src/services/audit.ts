@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 /**
  * Audit Log Service
  *
@@ -270,4 +271,26 @@ export async function getAuditLogs(opts: {
     take: opts.limit ?? 50,
     skip: opts.offset ?? 0,
   });
+}
+
+/** Mandatory decision audit: failure aborts the caller's transaction. */
+export async function logGroundingDecision(db: Prisma.TransactionClient, input: {
+  taskId: string; projectId: string; actorType: string; actorId: string; operationId: string;
+  action: "task.grounding.completed" | "task.grounding.overridden" | "task.grounding.disposed" | "task.grounding.cancelled";
+  decision: Prisma.InputJsonValue;
+}) {
+  await db.auditLog.create({ data: {
+    taskId: input.taskId, projectId: input.projectId,
+    actorId: input.actorType === "human" ? input.actorId : null, action: input.action,
+    payload: { operationId: input.operationId, actorType: input.actorType, actorId: input.actorId, decision: input.decision },
+  } });
+}
+
+/** Context invalidation and its attribution commit with the actual writer. */
+export async function logGroundingContextMutation(db: Prisma.TransactionClient, input: {
+  projectId: string; actorType: string; actorId: string; taskIds: string[]; reason: string;
+}) {
+  await db.auditLog.create({ data: { projectId: input.projectId, actorId: input.actorType === "human" ? input.actorId : null,
+    action: "project.grounding.context_mutated", payload: { actorType: input.actorType, actorId: input.actorId, taskIds: input.taskIds, reason: input.reason },
+  } });
 }

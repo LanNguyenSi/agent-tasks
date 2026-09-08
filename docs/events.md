@@ -107,3 +107,21 @@ The audit layer covers backend state changes. The following are intentionally no
 - [`signal-payload-design.md`](signal-payload-design.md), full payload shapes for each signal type.
 - [`review-notification-policy.md`](review-notification-policy.md), who exactly receives `review_needed` and when.
 - [`review-automation-policy.md`](review-automation-policy.md), webhook event to side-effect matrix.
+
+## Shared grounding decisions
+
+The dormant shared completion services write these events inside the same
+transaction as their task, evidence or reservation effect. A failed audit write
+aborts that transaction; existing `logAuditEvent` callers retain their current
+best-effort behavior.
+
+| Event | Effect and attribution |
+| --- | --- |
+| `task.grounding.completed` | Successful local or recovered remote decision; operation ID, actor type/ID, source/target, mode, receipt ID and separate merge commit |
+| `task.grounding.overridden` | Human project-admin grounding override, with required reason and the successful decision |
+| `task.grounding.disposed` | Concrete non-success disposition, reason and invalidation, without a passing receipt claim |
+| `task.grounding.cancelled` | Reasoned cancellation of a provably undispatched reservation; invalidates its attempt |
+| `project.grounding.context_mutated` | Context writer's actor type/ID, bounded reason and selected task IDs, committed with actual mutation and invalidation |
+
+Task events attribute human actors through the user foreign key; agent token
+identity stays in the payload. Exact historical retries add no event.

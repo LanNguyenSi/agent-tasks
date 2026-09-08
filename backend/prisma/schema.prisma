@@ -437,6 +437,8 @@ model Task {
   @@index([projectId, status])
   @@index([labels], type: Gin)
   groundingBinding GroundingBinding?
+  groundingCohort GroundingCohort?
+  groundingOperations GroundingOperation[]
 
   @@unique([id, projectId])
   @@map("tasks")
@@ -850,8 +852,10 @@ model GroundingReceipt {
   @@map("grounding_receipts")
 }
 
-// Storage for a later completion/merge consumer; this release never creates a reservation.
+// Receipt-backed consumption/reservation detail. Non-external decisions use GroundingOperation.
 model GroundingFinalization {
+  operationId     String? @unique
+  operation       GroundingOperation? @relation(fields: [taskId, operationId], references: [taskId, id], onDelete: Restrict)
   id              String @id @default(uuid())
   taskId          String
   attemptId       String @unique
@@ -871,5 +875,69 @@ model GroundingFinalization {
 
   @@index([taskId, state])
   @@unique([taskId, attemptId, receiptId])
+  @@unique([taskId, operationId])
   @@map("grounding_finalizations")
+}
+
+// Explicit server-owned enrollment. Absence is never an OFF policy.
+enum GroundingCohortMode {
+  EXTERNAL_V1
+  LEGACY_LOCAL
+  OFF
+}
+
+model GroundingCohort {
+  taskId          String @id
+  projectId       String
+  mode            GroundingCohortMode
+  protected       Boolean
+  provenance      String
+  legacySessionId String?
+  legacyPhase     String?
+  reservationId   String? @unique
+  createdAt       DateTime @default(now())
+
+  task        Task @relation(fields: [taskId, projectId], references: [id, projectId], onDelete: Restrict)
+  reservation GroundingOperation? @relation("GroundingReservation", fields: [taskId, reservationId], references: [taskId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([taskId, projectId])
+  @@unique([taskId, reservationId])
+  @@map("grounding_cohorts")
+}
+
+enum GroundingOperationState {
+  RESERVED
+  DISPATCHED
+  COMPLETED
+  CANCELLED
+}
+
+// Request/decision/actor fields are immutable through the service API.
+model GroundingOperation {
+  id          String @id @default(uuid())
+  taskId      String
+  key         String
+  actorType   String
+  actorId     String
+  fingerprint String
+  request     Json
+  decision    Json
+  state       GroundingOperationState
+  result      Json?
+  repo        String?
+  prNumber    Int?
+  headSha     String?
+  mergeMethod String?
+  createdAt   DateTime @default(now())
+  dispatchedAt DateTime?
+  completedAt DateTime?
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  reservedFor GroundingCohort? @relation("GroundingReservation")
+  finalization GroundingFinalization?
+
+  @@unique([taskId, key])
+  @@unique([taskId, id])
+  @@index([taskId, state])
+  @@map("grounding_operations")
 }

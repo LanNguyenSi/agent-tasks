@@ -3,8 +3,11 @@ type: module
 title: "backend: Hono API + Prisma"
 description: "Route layout, service/gate split, and the token-hash auth middleware behind every request."
 tags: [backend, hono, prisma, auth, routes]
-timestamp: 2026-09-08T05:10:10Z
+timestamp: 2026-09-08T06:41:06Z
 sources:
+  - backend/src/services/grounding-completion.ts
+  - backend/src/services/grounding-finalization.ts
+  - backend/src/services/grounding-context-mutation.ts
   - backend/src/app.ts
   - backend/src/routes/tasks.ts
   - backend/src/middleware/auth.ts
@@ -26,10 +29,21 @@ Framework is **Hono** (`hono@^4.12.21`), not Express, `backend/src/app.ts` build
 
 **Grounding receipts** (`backend/src/services/grounding-receipt.ts`): an offline verifier accepts explicit trust, expected context and clock inputs, then checks canonical receipt bytes, Ed25519 authentication, scopes, bindings, freshness and assessment outcome. Its passing result is documentary evidence; the grounding receipt-ingest route invokes it transactionally, while completion routes and transition gates do not call it yet. The runtime imports only `node:crypto`. See [the receipt contract](../grounding-receipt-contract.md) for the API and pinned fixture sync/check procedure.
 
-**Protected grounding attempts** (`grounding-attempts.ts`, `grounding-context.ts`, `routes/grounding.ts`): explicitly injected dormant service with protected server provisioning, server-derived workflow/context challenges, fresh authorized GitHub-head reads and atomic receipt nomination/ingest. Separate Prisma Binding/Attempt/Receipt/Finalization tables hold protected state; task metadata cannot enroll or downgrade it. `app.ts` mounts the authenticated attempt/receipt routes, but its default has no configured service. Issuance supersedes older attempts and ingest preserves immutable evidence with exact retries. Neither route changes task status, claims or PRs; finalization has no writer yet. Project-access and GitHub-delegation helpers accept an optional transaction client so these reads share the protected transaction; existing callers retain their singleton default. Exact byte projection, limits and error behavior are documented in [the receipt contract](../grounding-receipt-contract.md).
+**Protected grounding attempts** (`grounding-attempts.ts`, `grounding-context.ts`, `routes/grounding.ts`): explicitly injected dormant service with protected server provisioning, server-derived workflow/context challenges, fresh authorized GitHub-head reads and atomic receipt nomination/ingest. Separate Prisma Binding/Attempt/Receipt/Finalization tables hold protected state; task metadata cannot enroll or downgrade it. `app.ts` mounts the authenticated attempt/receipt routes, but its default has no configured service. Issuance supersedes older attempts and ingest preserves immutable evidence with exact retries. Neither route changes task status, claims or PRs; unresolved shared-service reservations now block issuance/upload with 409. Project-access and GitHub-delegation helpers accept an optional transaction client so these reads share the protected transaction; existing callers retain their singleton default. Exact byte projection, limits and error behavior are documented in [the receipt contract](../grounding-receipt-contract.md).
 
 **Gate registry** (`backend/src/services/gates/`): a small discovery-only registry (`types.ts` `GateCode` enum: `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) so a project can introspect *which* gates would fire before calling a verb (`GET /api/projects/:id/effective-gates`, MCP `projects_get_effective_gates`). Enforcement itself still lives inline in the route handlers, not in this registry.
 
 **Auth middleware** (`backend/src/middleware/auth.ts`): `authMiddleware` reads `Authorization: Bearer <token>`, SHA-256-hashes it (`hashToken`, `createHash("sha256")`) and looks up `AgentToken.tokenHash` (unique). A hit yields an `AgentActor{ tokenId, teamId, scopes, userId }` (also checks `revokedAt`/`expiresAt`, updates `lastUsedAt`). A miss falls through to `verifySessionToken` (session JWT, e.g. server-to-server callers with no cookie jar) → `HumanActor`. No bearer header falls back to the session cookie (`extractSessionCookie`). `requireScope(scope)` is the per-route scope gate; `hashToken` is exported for reuse.
 
 Related: `architecture.md`, `claim-model.md`, `workflow-gates.md`, `governance-merge.md`, `confidence-scorer.md`.
+
+**Shared grounding completion** (`grounding-completion.ts`, `grounding-finalization.ts`):
+server-only APIs use explicit persisted cohorts and immutable operations, own
+concrete task/claim effects and mandatory transactional audit, and consume
+external receipts atomically. The remote path reserves an exact source head,
+claims one durable dispatch and uses read-only recovery after uncertain effects.
+Undispatched reservations can be audited-cancelled. The shared context mutation
+helper locks parent projects then sorted tasks, rejects unresolved reservations
+and commits actual writes, invalidation and audit together. Current completion
+routers and other context writers are not wired to these APIs. Full API and
+failure semantics: [receipt contract](../grounding-receipt-contract.md).

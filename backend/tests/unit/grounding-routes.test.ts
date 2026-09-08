@@ -7,6 +7,7 @@ vi.mock("../../src/services/team-access.js", () => ({ requireProjectWrite: vi.fn
 vi.mock("../../src/services/github-delegation.js", () => ({ findDelegationUser: vi.fn() }));
 import { createApp } from "../../src/app.js";
 import { GroundingAttemptsService } from "../../src/services/grounding-attempts.js";
+import { GroundingDecisionError } from "../../src/services/grounding-transaction.js";
 import { GroundingAccessError } from "../../src/services/grounding-context.js";
 import { actor, ids, taskFixture } from "../helpers/grounding-fixtures.js";
 
@@ -78,4 +79,13 @@ describe("mounted grounding routes", () => {
     expect((await app.fetch(request({}, `/api/tasks/${ids.task}/grounding-binding`))).status).toBe(404);
     expect((await app.fetch(request({}, `${path}/provision`))).status).toBe(404);
   });
+});
+
+it("mounted C02 endpoints preserve reservation collision as 409", async () => {
+  issue.mockRejectedValue(new GroundingDecisionError("grounding_finalization_pending"));
+  ingest.mockRejectedValue(new GroundingDecisionError("grounding_finalization_pending"));
+  const app = createApp("", service);
+  for (const response of [await app.fetch(request({ intent: "finish" })), await app.fetch(request({ session: { id: "s", revision: 1 }, receipt: "{}" }, receiptPath))]) {
+    expect(response.status).toBe(409); expect(await response.json()).toEqual({ error: "grounding_finalization_pending" });
+  }
 });
