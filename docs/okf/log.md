@@ -26,7 +26,38 @@ drifted to a stale value, `"0.13.0"`, corrected to the current
 `mcp-server/package.json:3`; the historical sentence describing
 rc-v1-C008's bump to 0.13.0 is left as-is, since it describes a past
 release rather than the current value. `timestamp:` re-bumped to the
-follow-up verification instant. Task: agent-tasks `8a1c4c52`.
+follow-up verification instant.
+
+Review-round-2 corrections (reviewer found the re-stamp had preserved
+claims the cited sources contradict): `mcp-server.md`'s
+`backlog_not_promoted` bullet said `allowedNext: ["tasks_get",
+"task_creator_abandon"]`; the code at `mcp-server/src/errors.ts:764`
+reads `["task_respec", "task_creator_abandon"]`, corrected, and the
+parenthetical now gives the code's own rationale from
+`mcp-server/src/errors.ts:752-757` (the two verbs an agent can still call
+while it waits). The same doc's two "Teaching hint:" paraphrases are now
+quoted verbatim from the code's `recipe` field (not `hint`), anchored to
+`mcp-server/src/errors.ts:747` (`backlog_routing_enforced`) and `:763`
+(`backlog_not_promoted`). `mcp-server.md`'s version-constant paragraph
+gained a closing clause naming the current `0.14.0` cut, commit
+`a1a4b9a` (PR #478, `mcp-server/CHANGELOG.md`'s `## 0.14.0`,
+2026-08-20), since the paragraph previously stopped at the 0.13.0
+rc-v1-C008 cut. `architecture.md`'s component-1 sentence "All routes
+mount under `/api`" is narrowed to "All API routes mount under `/api`;
+the Swagger UI page is the one exception, served at `/docs`", anchored
+to `backend/src/app.ts:93` and `backend/src/routes/docs.ts:1866`
+(`docsRouter` mounts at `/` in `app.ts`, then registers `/docs` inside
+itself, outside the `/api` prefix). `deploy.md`'s trigger sentence now
+names the `paths-ignore` skip for `**.md`/`docs/**` pushes and PRs
+(`ci.yml:6-11`, `:14-19`) and the frontend job's `node-version: [22,
+26]` matrix (`ci.yml:93-95`), dropping the "five independent jobs"
+overstatement for the frontend leg; the "Nothing in
+`.github/workflows/` ..." sentence keeps its wording but its `sources:`
+now lists all seven workflow files under `.github/workflows/`
+(previously only `ci.yml` and `docker-smoke.yml`), so a new
+deploy-capable workflow trips `sources-fresh`. Re-stamped
+`architecture.md`, `deploy.md`, and `mcp-server.md`. Task: agent-tasks
+`8a1c4c52`.
 
 ## 2026-09-02
 

@@ -3,7 +3,7 @@ type: module
 title: "mcp-server: stdio MCP wrapper over the REST API"
 description: "Publishes the v2 verb surface as MCP tools over a fixed bearer token; teaching errors for backlog-routed creates and backlog-guarded claims; SERVER_VERSION is a hand-maintained constant, not derived from package.json."
 tags: [mcp, stdio, npm-package, backlog, teaching]
-timestamp: 2026-09-08T04:42:45Z
+timestamp: 2026-09-08T04:53:13Z
 sources:
   - mcp-server/src/index.ts
   - mcp-server/src/server.ts
@@ -14,6 +14,7 @@ sources:
   - mcp-server/src/primer.ts
   - mcp-server/package.json
   - mcp-server/tests/server-version.test.ts
+  - mcp-server/CHANGELOG.md
 ---
 
 Published as `@agent-tasks/mcp-server` (npm, public). Entry point `mcp-server/src/index.ts` reads `AGENT_TASKS_TOKEN` (required, throws if absent), `AGENT_TASKS_BASE_URL` (optional, default `https://agent-tasks.opentriologue.ai`, `DEFAULT_BASE_URL` in `server.ts`), and `AGENT_TASKS_MCP_LEGACY` (optional, `"1"` to register the pruned v1 verb set, see below), then calls `runStdioServer`.
@@ -24,12 +25,12 @@ Published as `@agent-tasks/mcp-server` (npm, public). Entry point `mcp-server/sr
 
 **Read-verb projection layer** (`read.ts`, task 3653962f): `tasks_get` and `project_tasks` are the two default-registered tools whose responses are projected mcp-server-side before going out, both through the shared `projectTaskCore` helper. `tasks_get` returns a single-task summary (`projectTaskSummary`). `project_tasks` returns summary ROWS by default: an allowlist of id, title, status, priority, labels, externalRef, createdAt, claims (work claim only, `taskListInclude` in `backend/src/routes/tasks.ts` omits the review-claim relations on this route), blockedBy, prUrl, never the full backend row, so a page of tasks with long descriptions/templateData stays small without lowering `limit` (mcp-server/src/tools.ts:706#"or include:[\"task\"] for the full, pre-contract rows.\","). Its own `include` vocabulary is narrower than `tasks_get`'s: `"description"`, `"templateData"`, `"task"`, no `"comments"`/`"artifacts"` (mcp-server/src/read.ts:268#"as const;"). Both `projectTaskSummary` and `projectTaskListSummary` guard against a malformed body (missing task(s)) at the envelope level, and `projectTaskListSummary` additionally guards each row individually: a row with no `id` (or a null row) passes through unchanged rather than crashing or silently collapsing to `{}` (mcp-server/src/read.ts:299-321#"return { tasks, nextCursor: response.nextCursor ?? null };"). `signals_poll`'s own cap+cursor logic lives in the same file but is unrelated to this projection.
 
-**Teaching errors and backlog workflow hints**: `errors.ts` maps backend error codes to MCP-layer teaching errors that include hints and allowed-next actions. Two backlog-specific codes are taught:
-  - `backlog_routing_enforced`: returned by `task_create` when an agent tries to explicitly request a non-backlog initial status. Teaching hint: "Agent creates are routed to backlog for operator review; status must be omitted or explicitly 'backlog'."
-  - `backlog_not_promoted`: returned by `task_start` or legacy `claim` when the task is still in backlog status. Teaching hint: "awaits operator promotion", with `allowedNext: ["tasks_get", "task_creator_abandon"]` (the agent can check the task state or withdraw it if it was their own creation).
+**Teaching errors and backlog workflow hints**: `errors.ts` maps backend error codes to MCP-layer teaching errors that include a `recipe` string and allowed-next actions. Two backlog-specific codes are taught:
+  - `backlog_routing_enforced`: returned by `task_create` when an agent tries to explicitly request a non-backlog initial status. `recipe`: "omit status (or pass status: \"backlog\") on task_create; agent-created tasks always land in backlog and wait for an operator to promote them to open" (`mcp-server/src/errors.ts:747`).
+  - `backlog_not_promoted`: returned by `task_start` or legacy `claim` when the task is still in backlog status. `recipe`: "this task awaits operator promotion from backlog to open; call task_respec to refine it while it waits, or task_creator_abandon to withdraw it if you created it" (`mcp-server/src/errors.ts:763`), with `allowedNext: ["task_respec", "task_creator_abandon"]` (`mcp-server/src/errors.ts:764`, the two verbs an agent can still call while it waits: refine via `task_respec`, or withdraw via `task_creator_abandon`).
 
 The `workflow_primer` tool (`primer.ts`, a local-only tool that returns a fixed string with no backend call) documents the full backlog workflow under a "Backlog routing (v1)" section: how agent creates are routed, why backlog tasks don't appear in `task_pickup`, and the human promote/discard surface in the dashboard UI.
 
-**Version constant guard**: `SERVER_VERSION` in `server.ts` (`"0.14.0"`, `mcp-server/src/server.ts:9`) is a separate literal from `mcp-server/package.json#version` (also `"0.14.0"`, `mcp-server/package.json:3`). `mcp-server/tests/server-version.test.ts` asserts the two stay equal, the same drift-guard pattern `mcp-bridge.md`'s own version constant test uses. Bumping the package version for a release still requires manually bumping `SERVER_VERSION` in the same change (the guard is a test, not an auto-sync), but a forgotten bump now fails the suite loudly instead of shipping a stale handshake version silently. rc-v1-C002 through C007 all landed without a version/CHANGELOG bump (deliberate); rc-v1-C008 bumped both constants to 0.13.0 and wrote the whole series' CHANGELOG in one release cut.
+**Version constant guard**: `SERVER_VERSION` in `server.ts` (`"0.14.0"`, `mcp-server/src/server.ts:9`) is a separate literal from `mcp-server/package.json#version` (also `"0.14.0"`, `mcp-server/package.json:3`). `mcp-server/tests/server-version.test.ts` asserts the two stay equal, the same drift-guard pattern `mcp-bridge.md`'s own version constant test uses. Bumping the package version for a release still requires manually bumping `SERVER_VERSION` in the same change (the guard is a test, not an auto-sync), but a forgotten bump now fails the suite loudly instead of shipping a stale handshake version silently. rc-v1-C002 through C007 all landed without a version/CHANGELOG bump (deliberate); rc-v1-C008 bumped both constants to 0.13.0 and wrote the whole series' CHANGELOG in one release cut. The current 0.14.0 was cut later by commit `a1a4b9a` (PR #478, "chore(release): mcp-server 0.14.0, mcp-bridge 0.8.1, service 0.29.0 changelog cut", 2026-08-20), `mcp-server/CHANGELOG.md`'s `## 0.14.0` entry.
 
 Related: `mcp-bridge.md`, `task-lifecycle.md`, `release-flow.md`, `architecture.md`.
