@@ -19,12 +19,14 @@ still match, no anchor moved. `deploy.md`, `release-flow.md`, and
 `architecture.md` carry no line-anchored citations; their `ci.yml` job
 list, `publish-npm.yml` steps, and compose/workspace file references were
 re-read against the current tree with no drift found. All six
-`timestamp:` fields bumped to the verification instant. Open: outside
-this task's citation scope, `mcp-server.md`'s prose claim that
-`SERVER_VERSION`/`package.json#version` read `"0.13.0"` no longer holds
-(`mcp-server/src/server.ts:9` and `mcp-server/package.json:3` both now
-read `"0.14.0"`); left unedited per the no-content-change rule and
-flagged for the operator. Task: agent-tasks `8a1c4c52`.
+`timestamp:` fields bumped to the verification instant. Follow-up pass:
+`mcp-server.md`'s `SERVER_VERSION`/`package.json#version` citation had
+drifted to a stale value, `"0.13.0"`, corrected to the current
+`"0.14.0"` and anchored to `mcp-server/src/server.ts:9` and
+`mcp-server/package.json:3`; the historical sentence describing
+rc-v1-C008's bump to 0.13.0 is left as-is, since it describes a past
+release rather than the current value. `timestamp:` re-bumped to the
+follow-up verification instant. Task: agent-tasks `8a1c4c52`.
 
 ## 2026-09-02
 
