@@ -1,16 +1,18 @@
 import { prisma } from "../lib/prisma.js";
-import type { ProjectMemberRole } from "@prisma/client";
+import type { Prisma, ProjectMemberRole } from "@prisma/client";
 
-export async function getProjectTeamId(projectId: string): Promise<string | null> {
-  const project = await prisma.project.findUnique({
+export type ProjectAccessDatabase = Pick<Prisma.TransactionClient, "project" | "teamMember" | "projectMember">;
+
+export async function getProjectTeamId(projectId: string, db: ProjectAccessDatabase = prisma): Promise<string | null> {
+  const project = await db.project.findUnique({
     where: { id: projectId },
     select: { teamId: true },
   });
   return project?.teamId ?? null;
 }
 
-export async function getUserRoleInTeam(teamId: string, userId: string): Promise<"ADMIN" | "HUMAN_MEMBER" | "REVIEWER" | null> {
-  const membership = await prisma.teamMember.findUnique({
+export async function getUserRoleInTeam(teamId: string, userId: string, db: ProjectAccessDatabase = prisma): Promise<"ADMIN" | "HUMAN_MEMBER" | "REVIEWER" | null> {
+  const membership = await db.teamMember.findUnique({
     where: { teamId_userId: { teamId, userId } },
     select: { role: true },
   });
@@ -27,8 +29,9 @@ export async function getUserRoleInTeam(teamId: string, userId: string): Promise
 export async function getUserRoleInProject(
   projectId: string,
   userId: string,
+  db: ProjectAccessDatabase = prisma,
 ): Promise<ProjectMemberRole | null> {
-  const member = await prisma.projectMember.findUnique({
+  const member = await db.projectMember.findUnique({
     where: { projectId_userId: { projectId, userId } },
     select: { role: true },
   });

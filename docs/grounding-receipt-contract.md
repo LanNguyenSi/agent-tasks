@@ -35,3 +35,47 @@ node scripts/grounding-receipt-contract.mjs sync --producer /path/to/agent-groun
 Both commands accept `--target /path/to/fixture-dir`. Sync prepares and validates a unique temporary corpus before replacement. An existing target must be an empty directory or an intact previous corpus; unrelated directories and symlinks are rejected. To recover a damaged corpus, sync to a fresh destination and review the replacement. Changing the pinned version requires reviewing the literal constants and vendored bytes together. The executable has no pin override; helpers accept an injected pin for portable temporary-Git-repository tests.
 
 The verifier reads no environment variables or key files, imports no wrapper/ledger/harness key, fetches no keys, and makes no network requests. The consumer tests use the vendored corpus and temporary local Git repositories; they require no producer checkout. Issuer isolation and rollout qualification remain separate work.
+
+## Protected attempts and receipt ingest
+
+`GroundingAttemptsService` adds dormant consumer storage and two authenticated routes. `createApp(corsOrigins, groundingService?)` requires explicit service injection; the default returns `503 grounding_verification_unavailable`. There is no HTTP enrollment endpoint. The server-only `provision({taskId, projectId, subjectMode})` method requires an existing matching task, an explicit audience, a supported pinned policy and a usable independently configured trust store. Repeating identical provisioning is idempotent; conflicting provisioning fails. It never reads task metadata, changes the legacy `requireGroundingForDebug` default, or creates protection from `debugFlavor`.
+
+`subjectMode` is a protected configuration choice: `CODE_HEAD` requires a registered PR and a fresh authorized GitHub head; `TASK_SPEC` asserts only the task specification, including when explicitly chosen for a task in a code repository. A caller cannot select or downgrade this mode through either route.
+
+| Route | Strict JSON request | Successful response |
+| --- | --- | --- |
+| `POST /api/tasks/:id/grounding-attempts` | `{"intent":"finish"}`; intent is `finish`, `approve`, or `merge` | Challenge with `audience`, `projectId`, `taskId`, `attemptId`, `nonce`, `contextRevision`, `target`, `subject`, `policy`, `createdAt`, `expiresAt` |
+| `POST /api/tasks/:id/grounding-attempts/:attemptId/receipt` | `{"session":{"id":"producer-session","revision":1},"receipt":"<original receipt JSON bytes as a JSON string>"}` | `receiptId`, passing `agent_asserted` evidence and `replayed` |
+
+Authentication, project write access, `tasks:transition` for agents and current claim ownership are required. The server derives the effective workflow row (task-specific, then the sole project default, then built-in with null ID) and the target from the existing finish/approval helpers. The derived edge must exist and be unambiguous; malformed definitions, multiple defaults, absent edges and divergence from existing finish semantics fail closed. Approval requires the current review claim or the existing permitted self-approval path; distinct-reviewer, review-lock conflicts and workflow roles remain applicable. `merge` requires a terminal outgoing edge and existing self-merge permission. These routes authorize an attempt only: they do not evaluate completion prerequisites such as CI, transition task status, release claims, merge a PR or reserve finalization.
+
+Challenge bodies are limited to 1,024 actual streamed bytes; upload bodies to 200,000 bytes, allowing JSON string escaping overhead around the C01 limit of 32,768 receipt bytes. Invalid UTF-8, malformed JSON, unknown request fields and invalid nomination shapes fail with `400 grounding_receipt_invalid`. Receipt JSON is passed to the unchanged strict C01 parser as original UTF-8 bytes. The session nomination has no independent authority: it is staged and read inside the locked transaction, then C01 authenticates the signed matching tuple against independent server context and trust. Failure rolls the entire nomination back.
+
+## Exact task-context/v1 projection
+
+The subject digest is lowercase SHA-256 over UTF-8 bytes of the following JSON projection. All listed fields are present; database null stays JSON null. Arbitrary JSON object keys are recursively sorted by ascending UTF-16 code-unit order. Arrays retain order. Scalars use ECMAScript `JSON.stringify` encoding (including `-0` as `0`); Unicode is neither normalized nor trimmed, line endings remain exact, and lone surrogates or non-finite numbers fail closed. There is no whitespace or trailing newline. Object ordering is implemented directly so integer-like keys also follow this lexical order.
+
+| Field | Server source |
+| --- | --- |
+| `version` | Literal `task-context/v1` |
+| `audience`, `projectId`, `taskId` | Protected binding audience and current task identity |
+| `title`, `description`, `templateData` | Exact persisted task values |
+| `protection` | `{protected, subjectMode}` from the protected binding |
+| `policy` | `{id, revision, sha256}` from the protected binding, checked against the supported profile |
+| `project` | `{teamId, githubRepo, taskTemplate, governanceMode}`; governance mode uses the existing legacy-compatible resolver |
+| `workflow` | `{id, definition}` with effective row ID and the entire exact effective definition; null ID only for the built-in definition |
+| `target` | `{workflowId, from, to, action}`; action is the validated intent token |
+| `claims` | `{workUserId, workAgentId, reviewUserId, reviewAgentId}` from the task |
+| `deliverable` | `{repo, prNumber, prUrl, branchName, headSha}`; repo is `task.deliverableRepo ?? project.githubRepo`, head is null only for `TASK_SPEC` |
+
+Metadata, debug suggestions, comments, labels, priority, result text and display/audit timestamps do not enter this projection. Changing any projected value requires a new context. A first challenge uses revision 1; later issuance increments the protected revision when its projection bytes differ from the last issued projection. Issuance without a projection change retains the revision but always creates a fresh attempt and nonce. Upload rederives the current bytes and rejects divergence, including on an exact retry. This is local revalidation, not the later integration of every context writer: changes which are reverted between observations are not detected by this milestone, and this service installs no completion gate.
+
+`CODE_HEAD` requires a positive registered PR number and the exact canonical GitHub PR URL for the registered effective repository. Head lookup uses the existing `allowAgentPrCreate` read consent and actor-preferred GitHub delegation. Each read uses the fixed GitHub API destination with caching disabled, redirects rejected, a five-second abort deadline, and a 256-KiB response ceiling. The returned PR number, repository identity, URL and 40-character lowercase hexadecimal head must match. A missing delegate, inaccessible/mismatched PR, failed or timed-out provider has no fallback. The head is a sampled remote snapshot, not a transaction with GitHub.
+
+## Atomicity and persisted identity
+
+Binding, Attempt, Receipt and Finalization are separate relational tables. Same-task composite foreign keys prevent an active pointer, receipt or finalization from referencing another task's attempt. Nonce, receipt ID, one receipt per attempt and one finalization per attempt/receipt are unique in PostgreSQL. `Binding.activeAttemptId` is the authoritative single active attempt pointer. The service has no receipt update/delete operation: it preserves original wire bytes, their digest, the accepted session tuple and documentary evidence.
+
+Issuance and ingest serialize on the task and binding rows in a serializable transaction. Issuance supersedes prior active attempts and installs a new pointer with compare-and-set in the same commit. Ingest requires the active pointer, current context, authorized actor, fresh clock and usable current trust; it stages nomination, invokes C01 and creates the receipt atomically. Concurrent identical uploads yield one creation and one replay; differing bytes or session tuples conflict. Exact retries after reconnect return the persisted receipt only after full revalidation; expiry, supersession or revocation cannot be bypassed by a retry shortcut. Receipt storage and uniqueness failures roll back nomination and fail closed.
+
+The transaction has a 20-second lifetime and 10-second acquisition bound, with at most three serializable attempts. The authorized head read occurs inside this bound: a slow provider can hold that task's lock until its deadline. Provider failure writes no protected state. This trades local ordering for bounded lock occupancy and promises no cross-system atomicity. Finalization is storage only in this release; it has no reservation or execution behavior. Issuer isolation and rollout qualification remain separate prerequisites.

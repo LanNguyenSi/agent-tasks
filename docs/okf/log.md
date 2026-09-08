@@ -2,6 +2,13 @@
 
 ## 2026-09-08
 
+Added the dormant protected grounding-attempt and receipt-ingest service, additive
+relational storage and exact task-context projection. Updated `backend.md` to
+describe the authenticated app routes and C01 invocation while keeping completion
+gates and activation outside this change. Re-read `architecture.md` and
+`claim-model.md`: app wiring and additive Prisma storage leave their existing
+deployment and claim behavior unchanged; re-stamped the affected source scopes.
+
 Fleet sync to okf-kit 0.10.0 (agent-tasks PR #507) surfaced `sources-fresh`
 STALE on `deploy.md` (`.github/workflows/ci.yml` changed after the stamp)
 and `release-flow.md` (`.github/workflows/publish-npm.yml` and

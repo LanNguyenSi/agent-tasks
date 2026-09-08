@@ -3,6 +3,7 @@ import {
   getProjectTeamId,
   getUserRoleInTeam,
   getUserRoleInProject,
+  type ProjectAccessDatabase,
 } from "../repositories/team-repository.js";
 import { prisma } from "../lib/prisma.js";
 import type { ProjectMemberRole } from "@prisma/client";
@@ -102,8 +103,8 @@ export async function resolveTeamId(
   };
 }
 
-export async function hasProjectAccess(actor: Actor, projectId: string): Promise<boolean> {
-  const teamId = await getProjectTeamId(projectId);
+export async function hasProjectAccess(actor: Actor, projectId: string, db: ProjectAccessDatabase = prisma): Promise<boolean> {
+  const teamId = await getProjectTeamId(projectId, db);
   if (!teamId) return false;
 
   if (actor.type === "agent") {
@@ -112,12 +113,12 @@ export async function hasProjectAccess(actor: Actor, projectId: string): Promise
     // the token's team doesn't own the project. Honors the same
     // attribution principle as github-delegation: the agent acts as its
     // creator's user.
-    return (await getUserRoleInProject(projectId, actor.userId)) !== null;
+    return (await getUserRoleInProject(projectId, actor.userId, db)) !== null;
   }
 
-  const teamRole = await getUserRoleInTeam(teamId, actor.userId);
+  const teamRole = await getUserRoleInTeam(teamId, actor.userId, db);
   if (teamRole !== null) return true;
-  return (await getUserRoleInProject(projectId, actor.userId)) !== null;
+  return (await getUserRoleInProject(projectId, actor.userId, db)) !== null;
 }
 
 /**
@@ -223,17 +224,18 @@ export async function hasProjectRole(
   actor: Actor,
   projectId: string,
   role: ProjectRole,
+  db: ProjectAccessDatabase = prisma,
 ): Promise<boolean> {
   if (role === "any") {
-    return hasProjectAccess(actor, projectId);
+    return hasProjectAccess(actor, projectId, db);
   }
   if (actor.type !== "human") return false;
-  const teamId = await getProjectTeamId(projectId);
+  const teamId = await getProjectTeamId(projectId, db);
   if (!teamId) return false;
-  const userRole = await getUserRoleInTeam(teamId, actor.userId);
+  const userRole = await getUserRoleInTeam(teamId, actor.userId, db);
   if (userRole === role) return true;
 
-  const projectRole = await getUserRoleInProject(projectId, actor.userId);
+  const projectRole = await getUserRoleInProject(projectId, actor.userId, db);
   if (projectRole === null) return false;
 
   if (role === "ADMIN") return projectRole === "PROJECT_ADMIN";
@@ -273,22 +275,22 @@ export async function isProjectAdmin(actor: Actor, projectId: string): Promise<b
  * Fails closed: any principal without access, and any human whose only
  * grant is a PROJECT_VIEWER per-project membership, returns false.
  */
-export async function requireProjectWrite(actor: Actor, projectId: string): Promise<boolean> {
+export async function requireProjectWrite(actor: Actor, projectId: string, db: ProjectAccessDatabase = prisma): Promise<boolean> {
   // Must hold at least baseline access first (fail closed on no access).
-  if (!(await hasProjectAccess(actor, projectId))) return false;
+  if (!(await hasProjectAccess(actor, projectId, db))) return false;
 
   // Agents that cleared access are write-capable (scope-gated elsewhere).
   if (actor.type !== "human") return true;
 
-  const teamId = await getProjectTeamId(projectId);
+  const teamId = await getProjectTeamId(projectId, db);
   if (!teamId) return false;
 
   // Any concrete team role is write-capable.
-  if ((await getUserRoleInTeam(teamId, actor.userId)) !== null) return true;
+  if ((await getUserRoleInTeam(teamId, actor.userId, db)) !== null) return true;
 
   // Otherwise the access came via a per-project grant. PROJECT_VIEWER is
   // read-only; only the write tiers may mutate.
-  const projectRole = await getUserRoleInProject(projectId, actor.userId);
+  const projectRole = await getUserRoleInProject(projectId, actor.userId, db);
   return projectRole === "PROJECT_ADMIN" || projectRole === "PROJECT_CONTRIBUTOR";
 }
 

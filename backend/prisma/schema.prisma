@@ -436,6 +436,9 @@ model Task {
   @@index([claimedByAgentId])
   @@index([projectId, status])
   @@index([labels], type: Gin)
+  groundingBinding GroundingBinding?
+
+  @@unique([id, projectId])
   @@map("tasks")
 }
 
@@ -766,4 +769,107 @@ model WebhookDelivery {
 
   @@index([createdAt]) // supports a future TTL sweep
   @@map("webhook_deliveries")
+}
+
+// Protected grounding state is provisioned by the server service, never task metadata.
+model GroundingBinding {
+  taskId          String @id
+  projectId       String
+  audience        String
+  protected       Boolean @default(true)
+  subjectMode     GroundingSubjectMode
+  policyId        String
+  policyRevision  String
+  policySha256    String
+  contextRevision Int @default(1)
+  contextDigest   String?
+  activeAttemptId String? @unique
+  createdAt       DateTime @default(now())
+
+  task          Task @relation(fields: [taskId, projectId], references: [id, projectId], onDelete: Restrict)
+  attempts      GroundingAttempt[] @relation("BindingAttempts")
+  activeAttempt GroundingAttempt? @relation("ActiveGroundingAttempt", fields: [taskId, activeAttemptId], references: [taskId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([taskId, projectId])
+  @@unique([taskId, activeAttemptId])
+  @@map("grounding_bindings")
+}
+
+enum GroundingSubjectMode {
+  TASK_SPEC
+  CODE_HEAD
+}
+
+enum GroundingAttemptState {
+  ACTIVE
+  SUPERSEDED
+  CONSUMED
+}
+
+model GroundingAttempt {
+  id              String @id @default(uuid())
+  taskId          String
+  contextRevision Int
+  contextDigest   String
+  contextBytes    Bytes
+  target          Json
+  intent          String
+  nonce           String @unique
+  state           GroundingAttemptState @default(ACTIVE)
+  actorType       String
+  actorId         String
+  sessionId       String?
+  sessionRevision Int?
+  createdAt       DateTime
+  expiresAt       DateTime
+
+  binding   GroundingBinding @relation("BindingAttempts", fields: [taskId], references: [taskId], onDelete: Restrict)
+  activeFor GroundingBinding? @relation("ActiveGroundingAttempt")
+  receipt   GroundingReceipt?
+
+  @@unique([taskId, id])
+  @@index([taskId, state])
+  @@map("grounding_attempts")
+}
+
+// Accepted bytes and nomination are create-only in the service. There is no public update/delete surface.
+model GroundingReceipt {
+  id          String @id
+  taskId      String
+  attemptId   String @unique
+  wireBytes   Bytes
+  wireSha256  String
+  evidence    Json
+  acceptedAt  DateTime @default(now())
+
+  attempt      GroundingAttempt @relation(fields: [taskId, attemptId], references: [taskId, id], onDelete: Restrict)
+  finalization GroundingFinalization?
+
+  @@unique([taskId, attemptId])
+  @@unique([taskId, attemptId, id])
+  @@map("grounding_receipts")
+}
+
+// Storage for a later completion/merge consumer; this release never creates a reservation.
+model GroundingFinalization {
+  id              String @id @default(uuid())
+  taskId          String
+  attemptId       String @unique
+  receiptId       String @unique
+  contextRevision Int
+  contextDigest   String
+  target          Json
+  repo            String?
+  prNumber        Int?
+  headSha         String?
+  state           String
+  result          Json?
+  createdAt       DateTime @default(now())
+  completedAt     DateTime?
+
+  receipt GroundingReceipt @relation(fields: [taskId, attemptId, receiptId], references: [taskId, attemptId, id], onDelete: Restrict)
+
+  @@index([taskId, state])
+  @@unique([taskId, attemptId, receiptId])
+  @@map("grounding_finalizations")
 }

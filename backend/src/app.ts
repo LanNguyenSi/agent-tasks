@@ -1,3 +1,5 @@
+import { createGroundingRouter } from "./routes/grounding.js";
+import type { GroundingAttemptsService } from "./services/grounding-attempts.js";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { requestContextMiddleware } from "./middleware/request-context.js";
@@ -23,7 +25,7 @@ import { jsonBodyLimit } from "./middleware/json-body-limit.js";
 import { appErrorHandler } from "./lib/error-handler.js";
 import type { AppVariables } from "./types/hono.js";
 
-export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }> {
+export function createApp(corsOrigins: string, grounding?: GroundingAttemptsService): Hono<{ Variables: AppVariables }> {
   const app = new Hono<{ Variables: AppVariables }>();
 
   // Structured logger w/ AsyncLocalStorage-backed per-request context.
@@ -133,6 +135,7 @@ export function createApp(corsOrigins: string): Hono<{ Variables: AppVariables }
   app.route("/api", projectInviteAdminRouter);
   app.route("/api/invites", inviteAcceptRouter);
   app.route("/api/admin", sharesAdminRouter);
+  app.route("/api", createGroundingRouter(grounding));
   app.route("/api", taskRouter);
   app.route("/api", workflowRouter);
   app.route("/api", boardRouter);
