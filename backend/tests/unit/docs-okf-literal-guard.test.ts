@@ -21,6 +21,7 @@ import {
   matchAllowlistEntry,
   parseFrontmatterSources,
   slugAnchor,
+  stripFrontmatter,
 } from "../helpers/okf-literal-guard.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -66,6 +67,16 @@ function scanBundle(): {
     const text = fs.readFileSync(path.join(OKF_DIR, doc), "utf8");
     const sources = parseFrontmatterSources(text);
     const blocks = extractBlocks(text);
+    // Baseline for the spans-seen self-check (T-007 round 3, D-030 finding
+    // 3): counted over the raw per-file body (stripFrontmatter only, no
+    // extractBlocks), so a regression in extractBlocks' block-splitting
+    // (e.g. dropping the file's last block) still leaves this baseline
+    // unchanged and the comparison below fails loudly. This does not
+    // insulate against a stripFrontmatter regression itself (both this
+    // baseline and extractBlocks call it); none of the bundle's frontmatter
+    // blocks currently contain a backtick span, so stripping the fence is
+    // the right cut point rather than the first body line.
+    const rawSpansPresent = countSpans(stripFrontmatter(text));
     // log.md narrates history (old, now-superseded values, e.g. the
     // pre-fix SERVER_VERSION and allowedNext); T-001 exempted it from the
     // bare-citation ratchet the same way. Its counts are gathered but
@@ -76,7 +87,7 @@ function scanBundle(): {
     let skipped = 0;
     let allowlistedCount = 0;
     let spansSeen = 0;
-    let spansPresent = 0;
+    const spansPresent = rawSpansPresent;
     const unallowlistedFindings: DocScan["unallowlistedFindings"] = [];
     for (const block of blocks) {
       // Computed for EVERY block, cited or not, so the spans-seen self-check
@@ -84,7 +95,6 @@ function scanBundle(): {
       // with and without citations alike).
       const analysis = analyzeBlock(block, sources);
       spansSeen += analysis.spansSeen;
-      spansPresent += countSpans(analysis.block);
       if (analysis.citations.length === 0) continue;
       const result = checkBlock(analysis, readLines);
       checked += result.checkedCount;
@@ -435,5 +445,22 @@ describe("okf-literal-guard fixtures", () => {
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].reason).toBe("unreadable-citation");
     fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("rejects a `..`-escaping citation path as unreadable instead of reading outside the root", () => {
+    const root = makeFixtureRoot();
+    // A real, readable file that sits OUTSIDE root (root's own parent
+    // directory), standing in for something like /etc/passwd: if the
+    // reader ever resolved this path without a containment check it would
+    // open and "check" it.
+    const outside = path.join(path.dirname(root), `secret-${path.basename(root)}.txt`);
+    fs.writeFileSync(outside, 'export const VERSION = "1.2.3";\n');
+    const relEscape = `../${path.basename(outside)}`;
+    const doc = `The constant is \`VERSION = "1.2.3"\` (\`${relEscape}:1\`), a path escaping the root.`;
+    const [{ result }] = analyzeAndCheck(root, doc);
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].reason).toBe("unreadable-citation");
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { force: true });
   });
 });

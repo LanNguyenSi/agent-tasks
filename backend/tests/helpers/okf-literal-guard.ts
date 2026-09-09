@@ -237,10 +237,20 @@ export type LineReader = (
 /** A line reader rooted at `root`, caching each file's lines once. */
 export function createFileLineReader(root: string): LineReader {
   const cache = new Map<string, string[]>();
+  const resolvedRoot = path.resolve(root);
   return (relPath, start, end) => {
     let lines = cache.get(relPath);
     if (!lines) {
-      const abs = path.join(root, relPath);
+      const abs = path.resolve(resolvedRoot, relPath);
+      // Reject a citation path that escapes the repo root via `..`
+      // segments (e.g. `../../../../etc/passwd:1`) before it is ever
+      // opened: `CITATION_RE` permits `.`/`-`/`/` in the path component,
+      // so a `..` segment is syntactically a valid citation and must be
+      // rejected here instead, reported as "unreadable-citation".
+      if (abs !== resolvedRoot && !abs.startsWith(resolvedRoot + path.sep)) {
+        cache.set(relPath, []);
+        return null;
+      }
       if (!fs.existsSync(abs)) {
         cache.set(relPath, []);
         return null;
