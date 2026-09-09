@@ -237,10 +237,19 @@ export type LineReader = (
   end: number,
 ) => string | null;
 
+/** `fs.realpathSync`, falling back to the input path when the path does not resolve (e.g. was removed mid-run). */
+function realpathOrSelf(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
 /** A line reader rooted at `root`, caching each file's lines once. */
 export function createFileLineReader(root: string): LineReader {
   const cache = new Map<string, string[]>();
-  const resolvedRoot = path.resolve(root);
+  const resolvedRoot = realpathOrSelf(path.resolve(root));
   return (relPath, start, end) => {
     let lines = cache.get(relPath);
     if (!lines) {
@@ -249,7 +258,9 @@ export function createFileLineReader(root: string): LineReader {
       // segments (e.g. `../../../../etc/passwd:1`) before it is ever
       // opened: `CITATION_RE` permits `.`/`-`/`/` in the path component,
       // so a `..` segment is syntactically a valid citation and must be
-      // rejected here instead, reported as "unreadable-citation".
+      // rejected here instead, reported as "unreadable-citation". This
+      // first check is lexical (no symlink can be resolved for a path
+      // that does not exist), so it runs before the existence check below.
       if (abs !== resolvedRoot && !abs.startsWith(resolvedRoot + path.sep)) {
         cache.set(relPath, []);
         return null;
@@ -258,7 +269,30 @@ export function createFileLineReader(root: string): LineReader {
         cache.set(relPath, []);
         return null;
       }
-      lines = fs.readFileSync(abs, "utf8").split("\n");
+      // Resolve every symlink component before the FINAL containment
+      // test: a path that is lexically inside root (the check above) can
+      // still be a symlink -- planted inside docs/okf's own tree -- whose
+      // real target sits outside root. `fs.realpathSync` follows the
+      // whole chain, so the containment check below runs against the file
+      // that is actually read, not the lexical path a citation names. A
+      // symlink whose real target sits back inside root (or root itself)
+      // still reads normally.
+      const real = realpathOrSelf(abs);
+      if (real !== resolvedRoot && !real.startsWith(resolvedRoot + path.sep)) {
+        cache.set(relPath, []);
+        return null;
+      }
+      // A citation naming a directory (e.g. `docs/okf:1`) passes every
+      // check above -- `CITATION_RE` does not require an extension, and a
+      // directory can sit lexically and really inside root -- but
+      // `readFileSync` throws EISDIR on it. Caught here and reported the
+      // same way as any other unresolvable citation.
+      try {
+        lines = fs.readFileSync(real, "utf8").split("\n");
+      } catch {
+        cache.set(relPath, []);
+        return null;
+      }
       cache.set(relPath, lines);
     }
     if (lines.length === 0) return null;

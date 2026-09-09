@@ -457,14 +457,21 @@ describe("okf-literal-guard fixtures", () => {
       path.dirname(root),
       `secret-${path.basename(root)}.txt`,
     );
-    fs.writeFileSync(outside, 'export const VERSION = "1.2.3";\n');
-    const relEscape = `../${path.basename(outside)}`;
-    const doc = `The constant is \`VERSION = "1.2.3"\` (\`${relEscape}:1\`), a path escaping the root.`;
-    const [{ result }] = analyzeAndCheck(root, doc);
-    expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].reason).toBe("unreadable-citation");
-    fs.rmSync(root, { recursive: true, force: true });
-    fs.rmSync(outside, { force: true });
+    try {
+      fs.writeFileSync(outside, 'export const VERSION = "1.2.3";\n');
+      const relEscape = `../${path.basename(outside)}`;
+      const doc = `The constant is \`VERSION = "1.2.3"\` (\`${relEscape}:1\`), a path escaping the root.`;
+      const [{ result }] = analyzeAndCheck(root, doc);
+      expect(result.findings).toHaveLength(1);
+      expect(result.findings[0].reason).toBe("unreadable-citation");
+    } finally {
+      // try/finally (T-010 round 3, D-029 residual): both cleanups run
+      // even when an assertion above throws, so a failing run does not
+      // leave `outside` (a loose file, not under `root`'s own mkdtemp
+      // directory) behind in the shared temp root.
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { force: true });
+    }
   });
 
   it("rejects a sibling directory sharing the root's path prefix (`<root>-other`) as unreadable", () => {
@@ -474,17 +481,84 @@ describe("okf-literal-guard fixtures", () => {
     // would be opened and "checked".
     const root = makeFixtureRoot();
     const sibling = `${root}-other`;
-    fs.mkdirSync(sibling, { recursive: true });
-    fs.writeFileSync(
-      path.join(sibling, "x.ts"),
-      'export const VERSION = "1.2.3";\n',
+    try {
+      fs.mkdirSync(sibling, { recursive: true });
+      fs.writeFileSync(
+        path.join(sibling, "x.ts"),
+        'export const VERSION = "1.2.3";\n',
+      );
+      const relSibling = `../${path.basename(sibling)}/x.ts`;
+      const doc = `The constant is \`VERSION = "1.2.3"\` (\`${relSibling}:1\`), a sibling-prefix path.`;
+      const [{ result }] = analyzeAndCheck(root, doc);
+      expect(result.findings).toHaveLength(1);
+      expect(result.findings[0].reason).toBe("unreadable-citation");
+    } finally {
+      // try/finally (T-010 round 3, D-029 residual): see above.
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(sibling, { recursive: true, force: true });
+    }
+  });
+
+  // T-010 (agent-tasks tracker 5e95e4bd): a citation path can be lexically
+  // inside root (passes the `..`-escape check above) while being an
+  // in-root symlink whose REAL target sits outside root -- the escape the
+  // pre-T-010 `path.resolve`-only containment test could not see.
+  it("rejects an in-root symlink whose real target sits outside the root as unreadable", () => {
+    const root = makeFixtureRoot();
+    const outside = path.join(
+      path.dirname(root),
+      `secret-target-${path.basename(root)}.txt`,
     );
-    const relSibling = `../${path.basename(sibling)}/x.ts`;
-    const doc = `The constant is \`VERSION = "1.2.3"\` (\`${relSibling}:1\`), a sibling-prefix path.`;
+    try {
+      fs.writeFileSync(outside, 'export const VERSION = "1.2.3";\n');
+      fs.mkdirSync(path.join(root, "src"), { recursive: true });
+      const link = path.join(root, "src", "escape.ts");
+      fs.symlinkSync(outside, link);
+      const doc =
+        'The constant is `VERSION = "1.2.3"` (`src/escape.ts:1`), read through an in-root symlink pointing outside the root.';
+      const [{ result }] = analyzeAndCheck(root, doc);
+      expect(result.findings).toHaveLength(1);
+      expect(result.findings[0].reason).toBe("unreadable-citation");
+    } finally {
+      // try/finally (T-010 round 3, D-029 residual): `outside` sits in
+      // root's parent (the shared temp root), not under root's own
+      // mkdtemp directory, so it needs its own guaranteed cleanup.
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { force: true });
+    }
+  });
+
+  // Negative control for the fix above: an in-root symlink whose real
+  // target is ALSO in-root must still read normally -- the escape check
+  // must compare realpaths against each other, not merely require the
+  // lexical path to differ from a real one.
+  it("still reads through an in-root symlink whose real target is also in-root", () => {
+    const root = makeFixtureRoot();
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    const target = path.join(root, "src", "real.ts");
+    fs.writeFileSync(target, 'export const VERSION = "1.2.3";\n');
+    const link = path.join(root, "src", "alias.ts");
+    fs.symlinkSync(target, link);
+    const doc =
+      'The constant is `VERSION = "1.2.3"` (`src/alias.ts:1`), read through an in-root symlink pointing at another in-root file.';
+    const [{ result }] = analyzeAndCheck(root, doc);
+    expect(result.findings).toHaveLength(0);
+    expect(result.checkedCount).toBe(1);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  // T-010 round 2: a citation naming a directory (`CITATION_RE` does not
+  // require an extension, and a directory can be lexically and really
+  // inside root) reached `fs.readFileSync` uncaught and threw EISDIR
+  // before the fix above.
+  it("rejects a citation naming a directory as unreadable instead of throwing EISDIR", () => {
+    const root = makeFixtureRoot();
+    fs.mkdirSync(path.join(root, "src", "subdir"), { recursive: true });
+    const doc =
+      'The constant is `VERSION = "1.2.3"` (`src/subdir:1`), citing a directory, not a file.';
     const [{ result }] = analyzeAndCheck(root, doc);
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].reason).toBe("unreadable-citation");
     fs.rmSync(root, { recursive: true, force: true });
-    fs.rmSync(sibling, { recursive: true, force: true });
   });
 });

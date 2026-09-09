@@ -8,26 +8,32 @@ name: OKF literal guard
 # not inside it, because ci.yml's `paths-ignore` (`**.md`, `docs/**`) skips
 # its backend job entirely on a docs-only PR -- the exact shape batch-43
 # (PR #509) shipped a citation drift in -- so the guard would otherwise
-# never run where it matters most. Whether this check becomes REQUIRED in
-# branch protection is an operator decision (a path-filtered required check
-# blocks a PR that never triggers it); noted, not decided, here.
+# never run where it matters most.
+#
+# Required-status decision (agent-tasks tracker 5e95e4bd): this job carries
+# no `paths:` filter and runs on every `pull_request` and every `push` to
+# master under the stable name "docs/okf literal guard", so it is safe to
+# add to branch protection's required-status list -- a required check that
+# never triggers on some PRs would block them forever, which an
+# always-running trigger cannot do. Who pays: one repo-root `npm ci` (all
+# workspaces) plus a sub-second test run on every PR; and, because the
+# guard checks the whole docs/okf bundle on every run, any PR that shifts a
+# cited source line (a pure source edit with no docs change) turns this
+# check red and, once it is required, cannot merge until the citation is
+# re-verified and re-stamped. That is the guard working as designed: a
+# path filter is exactly what would hide such drift. An earlier revision
+# kept a `paths:` filter plus a skip-shim job that reconstructed "does this
+# PR affect the guard" from a hand-maintained pattern over a git diff; it
+# was removed after review found it silently skipping relevant PRs (the
+# CHANGELOG entry for task 5e95e4bd carries the measured cases). The
+# branch-protection edit itself (adding "docs/okf literal guard" to
+# master's required-status list) is an operator step, not made by this
+# task.
 
 on:
   pull_request:
-    paths:
-      - "docs/okf/**"
-      - "backend/tests/helpers/okf-literal-guard.ts"
-      - "backend/tests/unit/docs-okf-literal-guard.test.ts"
-      - "backend/tests/fixtures/okf-literal-guard/**"
-      - ".github/workflows/okf-literal-guard.yml"
   push:
     branches: [master]
-    paths:
-      - "docs/okf/**"
-      - "backend/tests/helpers/okf-literal-guard.ts"
-      - "backend/tests/unit/docs-okf-literal-guard.test.ts"
-      - "backend/tests/fixtures/okf-literal-guard/**"
-      - ".github/workflows/okf-literal-guard.yml"
 
 permissions:
   contents: read
@@ -39,6 +45,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -48,5 +55,5 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Run the guard test
-        run: npx vitest run tests/unit/docs-okf-literal-guard.test.ts
+        run: npx vitest run tests/unit/docs-okf-literal-guard
         working-directory: backend
