@@ -15,17 +15,20 @@ name: OKF literal guard
 # master under the stable name "docs/okf literal guard", so it is safe to
 # add to branch protection's required-status list -- a required check that
 # never triggers on some PRs would block them forever, which an
-# always-running trigger cannot do. Who pays: one backend `npm ci` on every
-# PR. An earlier revision instead kept a `paths:` filter and added a
-# skip-shim job to reconstruct "does this PR affect the guard" from a
-# hand-maintained pattern over a git diff, so the check could still report
-# success when nothing relevant changed. Two review rounds each found a new
-# way that shim silently skipped a relevant PR (a SIGPIPE on a large
-# changed-file list; a rename reported by destination only; a non-ASCII
-# path C-quoted by git) and a new gap in its hand-maintained pattern; it was
-# removed rather than patched a third time. The branch-protection edit
-# itself (adding "docs/okf literal guard" to master's required-status list)
-# is an operator step, not made by this task.
+# always-running trigger cannot do. Who pays: one repo-root `npm ci` (all
+# workspaces) plus a sub-second test run on every PR; and, because the
+# guard checks the whole docs/okf bundle on every run, any PR that shifts a
+# cited source line (a pure source edit with no docs change) turns this
+# check red and, once it is required, cannot merge until the citation is
+# re-verified and re-stamped. That is the guard working as designed: a
+# path filter is exactly what would hide such drift. An earlier revision
+# kept a `paths:` filter plus a skip-shim job that reconstructed "does this
+# PR affect the guard" from a hand-maintained pattern over a git diff; it
+# was removed after review found it silently skipping relevant PRs (the
+# CHANGELOG entry for task 5e95e4bd carries the measured cases). The
+# branch-protection edit itself (adding "docs/okf literal guard" to
+# master's required-status list) is an operator step, not made by this
+# task.
 
 on:
   pull_request:
