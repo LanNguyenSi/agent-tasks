@@ -1,0 +1,52 @@
+name: OKF literal guard
+
+# Blocking check for T-007 (agent-tasks tracker 3feb590f, batch45 D-018):
+# guards docs/okf's quoted VALUE literals (semver, quoted string, JSON-shaped
+# bracket/brace, key: value) against the source lines their nearby line
+# citations point at (backend/tests/unit/docs-okf-literal-guard.test.ts;
+# design in docs/okf/index.md's Maintenance section). Runs beside ci.yml,
+# not inside it, because ci.yml's `paths-ignore` (`**.md`, `docs/**`) skips
+# its backend job entirely on a docs-only PR -- the exact shape batch-43
+# (PR #509) shipped a citation drift in -- so the guard would otherwise
+# never run where it matters most. Whether this check becomes REQUIRED in
+# branch protection is an operator decision (a path-filtered required check
+# blocks a PR that never triggers it); noted, not decided, here.
+
+on:
+  pull_request:
+    paths:
+      - "docs/okf/**"
+      - "backend/tests/helpers/okf-literal-guard.ts"
+      - "backend/tests/unit/docs-okf-literal-guard.test.ts"
+      - "backend/tests/fixtures/okf-literal-guard/**"
+      - ".github/workflows/okf-literal-guard.yml"
+  push:
+    branches: [master]
+    paths:
+      - "docs/okf/**"
+      - "backend/tests/helpers/okf-literal-guard.ts"
+      - "backend/tests/unit/docs-okf-literal-guard.test.ts"
+      - "backend/tests/fixtures/okf-literal-guard/**"
+      - ".github/workflows/okf-literal-guard.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  literal-guard:
+    name: docs/okf literal guard
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run the guard test
+        run: npx vitest run tests/unit/docs-okf-literal-guard.test.ts
+        working-directory: backend

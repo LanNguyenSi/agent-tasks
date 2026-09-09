@@ -3,12 +3,12 @@
     "doc": "deploy.md",
     "anchor": "there-is-no-deploy-automation-in-this-repo",
     "literal": "test:coverage",
-    "reason": "Names the backend/frontend test-step id (present in ci.yml, package.json scripts), not a claim about ci.yml:6-11/14-19 (paths-ignore) or ci.yml:93-95 (frontend matrix), the only citations within 30 words of it in this paragraph; the step lines themselves are not cited here."
+    "reason": "Names the backend/frontend test-step id (present in ci.yml, package.json scripts), not a claim about ci.yml:6-11/14-19 (paths-ignore) or ci.yml:93-95 (frontend matrix), the only citations within 30 words of it in this paragraph; the step lines themselves are not cited here. A precise citation, ci.yml:84 (`run: npm run test:coverage --workspace=backend`, verified at head), would retire this entry."
   },
   {
     "doc": "deploy.md",
     "anchor": "there-is-no-deploy-automation-in-this-repo",
     "literal": "needs: mcp-server",
-    "reason": "Names the mcp-bridge job's actual needs: key (ci.yml:146, true today), not a claim about ci.yml:93-95 (the frontend matrix), the only citation within 30 words of it in this five-job enumeration; the needs: line itself is not cited here."
+    "reason": "Names the mcp-bridge job's actual needs: key (ci.yml:146, true today), not a claim about ci.yml:93-95 (the frontend matrix), the only citation within 30 words of it in this five-job enumeration; the needs: line itself is not cited here. A precise citation, ci.yml:146 (`needs: mcp-server`, verified at head), would retire this entry."
   }
 ]

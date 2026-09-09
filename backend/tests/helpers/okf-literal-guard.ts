@@ -26,16 +26,24 @@ const CITATION_RE =
 const KEYVAL_RE = /^([A-Za-z_]\w*)\s*:\s*(\S.*)$/;
 const QUOTED_RE = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g;
 const SEMVER_RE = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?(?:\+[0-9A-Za-z.]+)?\b/g;
-const SPAN_IN_TOKEN_RE = /`([^`]+)`/;
-// Tokenizer for word-distance counting (decision D-011: "code spans count as
-// one word each"). A backtick span may contain internal spaces
-// (`` `allowedNext: ["a", "b"]` ``) and still must be ONE token; it may also
-// be glued to surrounding punctuation with no space ("(`github.ts:352`,").
-// First alternative: optional non-space/non-backtick prefix, a backtick
-// span (content may contain spaces, just no nested backtick), optional
-// non-space suffix -- all one token. Second alternative: any other run of
-// non-space characters.
-const WORD_TOKEN_RE = /[^\s`]*`[^`]*`[^\s]*|\S+/g;
+
+// Backtick-span-or-plain-word unit scanner (T-007 round 2, D-018): a single
+// global pass over the normalized block. Each match is EITHER a complete
+// backtick span (`` `[^`]+` ``, tried first at every position) OR a maximal
+// run of characters that are neither whitespace nor a backtick. Putting the
+// span alternative first, and excluding backtick from the plain-word
+// alternative, is what makes two spans glued together with no whitespace
+// between them (`` `mode: "0.13.0"`/`other: "9.9.9"` ``) resolve as THREE
+// units (span, "/", span) instead of one corrupted token that swallows the
+// second span's opening backtick -- the round-1 bug that silently dropped
+// 61 of 1470 backtick spans bundle-wide and, when the dropped span carried
+// a citation, the citation with it. Every unit advances the word index by
+// one; a backtick span counts as one word regardless of any internal
+// whitespace, since `[^`]+` matches straight through it.
+const UNIT_RE = /`[^`]+`|[^\s`]+/g;
+const SPAN_RE = /`[^`]+`/g;
+
+export type LiteralKind = "keyval" | "quoted" | "json" | "semver";
 
 export interface Citation {
   /** citation text as written in the doc, e.g. "ci.yml" or "mcp-server/src/server.ts" */
@@ -49,6 +57,7 @@ export interface Citation {
 
 export interface LiteralToken {
   text: string;
+  kind: LiteralKind;
   tokenIndex: number;
 }
 
@@ -57,11 +66,15 @@ export interface BlockAnalysis {
   citations: Citation[];
   literals: LiteralToken[];
   bareCount: number;
+  /** Backtick spans the unit scanner actually classified (span/word/bare/literal); compare against countSpans(block) as a parser self-check. */
+  spansSeen: number;
 }
 
 export interface Finding {
   literal: string;
   citations: string[];
+  /** "unreadable-citation": every in-window citation was start<1 or an unresolvable file/line. "literal-mismatch": at least one citation read cleanly but none matched. */
+  reason: "unreadable-citation" | "literal-mismatch";
 }
 
 export interface BlockCheckResult {
@@ -97,6 +110,11 @@ export function extractBlocks(text: string): string[] {
     .filter(Boolean);
 }
 
+/** Independent count of complete backtick spans in a (normalized) block, used as the spansSeen self-check baseline. */
+export function countSpans(block: string): number {
+  return (block.match(SPAN_RE) ?? []).length;
+}
+
 function tryJsonLiteral(s: string): boolean {
   try {
     const v = JSON.parse(s);
@@ -118,14 +136,19 @@ function tryJsonLiteral(s: string): boolean {
  * semver. Returns [] for a bare identifier (`fooBar`, `foo()`, `Foo.bar`,
  * a bare filename) -- that class is never checked.
  */
-export function extractLiteralsFromSpan(spanContent: string): string[] {
+export function extractLiteralsFromSpan(
+  spanContent: string,
+): { text: string; kind: LiteralKind }[] {
   const kv = spanContent.match(KEYVAL_RE);
-  if (kv) return [spanContent];
+  if (kv) return [{ text: spanContent, kind: "keyval" }];
   const quoted = [...spanContent.matchAll(QUOTED_RE)];
-  if (quoted.length) return quoted.map((m) => m[0]);
-  if (tryJsonLiteral(spanContent.trim())) return [spanContent.trim()];
+  if (quoted.length)
+    return quoted.map((m) => ({ text: m[0], kind: "quoted" as const }));
+  if (tryJsonLiteral(spanContent.trim()))
+    return [{ text: spanContent.trim(), kind: "json" }];
   const semver = [...spanContent.matchAll(SEMVER_RE)];
-  if (semver.length) return semver.map((m) => m[0]);
+  if (semver.length)
+    return semver.map((m) => ({ text: m[0], kind: "semver" as const }));
   return [];
 }
 
@@ -140,24 +163,26 @@ export function resolveCitationPath(
 }
 
 /**
- * Splits a normalized (whitespace-collapsed) block on whitespace, then, for
- * each token, looks for an EMBEDDED backtick span rather than requiring the
- * whole token to be one -- a citation glued to surrounding punctuation
- * ("(`github.ts:352`," has no whitespace to split it from the paren/comma)
- * still resolves correctly this way. Every whitespace-delimited token,
- * backtick-bearing or not, advances the word index by one.
+ * Single global scan of the normalized block for backtick-span-or-word
+ * units (see UNIT_RE above). Every unit advances the word index; a
+ * classified backtick span (citation or literal) increments spansSeen so
+ * the caller can assert it against countSpans(block) -- any future parser
+ * gap that drops a span again fails that assertion loudly instead of
+ * silently undercounting.
  */
 export function analyzeBlock(block: string, sources: string[]): BlockAnalysis {
   const normalized = block.replace(/\s+/g, " ").trim();
-  const tokens = normalized.match(WORD_TOKEN_RE) ?? [];
+  const units = normalized.match(UNIT_RE) ?? [];
   const citations: Citation[] = [];
   const literals: LiteralToken[] = [];
   let bareCount = 0;
+  let spansSeen = 0;
 
-  tokens.forEach((tok, tokenIndex) => {
-    const m = tok.match(SPAN_IN_TOKEN_RE);
-    if (!m) return;
-    const spanContent = m[1];
+  units.forEach((unit, tokenIndex) => {
+    const isSpan = unit.length >= 2 && unit[0] === "`" && unit[unit.length - 1] === "`";
+    if (!isSpan) return;
+    spansSeen++;
+    const spanContent = unit.slice(1, -1);
     const cm = spanContent.match(CITATION_RE);
     if (cm) {
       citations.push({
@@ -171,17 +196,36 @@ export function analyzeBlock(block: string, sources: string[]): BlockAnalysis {
     }
     const lits = extractLiteralsFromSpan(spanContent);
     if (lits.length) {
-      for (const text of lits) literals.push({ text, tokenIndex });
+      for (const { text, kind } of lits) literals.push({ text, kind, tokenIndex });
     } else {
       bareCount++;
     }
   });
 
-  return { block: normalized, citations, literals, bareCount };
+  return { block: normalized, citations, literals, bareCount, spansSeen };
 }
 
 function normalizeForCompare(s: string): string {
   return s.replace(/\s+/g, " ").trim();
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Whether a normalized literal occurs in a normalized haystack. Plain
+ * substring `includes()` for everything except semver: a bare semver needs
+ * a non-word boundary on both sides so a doc claiming `0.14.0` is not
+ * silently validated by a cited line that actually says `0.14.0-rc1` (a
+ * strict superset string). Every other literal kind (quoted string,
+ * key: value, JSON) keeps the substring check and its documented
+ * false-negative direction (docs/okf/index.md Maintenance).
+ */
+function literalMatches(litN: string, kind: LiteralKind, hay: string): boolean {
+  if (kind !== "semver") return hay.includes(litN);
+  const re = new RegExp(`(?<![\\w.-])${escapeRegExp(litN)}(?![\\w.-])`);
+  return re.test(hay);
 }
 
 export type LineReader = (
@@ -214,6 +258,13 @@ export function createFileLineReader(root: string): LineReader {
  * WORD_WINDOW words on either side. A literal with no citation in-window is
  * not checked at all (skippedBeyondWindowCount); a literal with a citation
  * in-window whose cited lines do not contain the literal text is a finding.
+ * A citation with start < 1 is rejected before it ever reaches the line
+ * reader: createFileLineReader's `lines.slice(start - 1, end)` would wrap
+ * negatively for start === 0 and can accidentally "verify" against the
+ * file's last line. A finding whose in-window citations were ALL
+ * unreadable (start < 1, or the file/line does not resolve) is reported
+ * with reason "unreadable-citation" rather than "literal-mismatch" -- a
+ * missing file is not the same defect as a wrong value.
  */
 export function checkBlock(
   analysis: BlockAnalysis,
@@ -233,14 +284,22 @@ export function checkBlock(
     }
     checkedCount++;
     const litN = normalizeForCompare(lit.text);
-    const ok = inWindow.some((c) => {
+    let readableCount = 0;
+    let matched = false;
+    for (const c of inWindow) {
+      if (c.start < 1) continue;
       const snippet = readLines(c.path, c.start, c.end);
-      return snippet !== null && normalizeForCompare(snippet).includes(litN);
-    });
-    if (!ok) {
+      if (snippet === null) continue;
+      readableCount++;
+      if (literalMatches(litN, lit.kind, normalizeForCompare(snippet))) {
+        matched = true;
+      }
+    }
+    if (!matched) {
       findings.push({
         literal: lit.text,
         citations: inWindow.map((c) => `${c.rawPath}:${c.start}-${c.end}`),
+        reason: readableCount === 0 ? "unreadable-citation" : "literal-mismatch",
       });
     }
   }
@@ -274,13 +333,23 @@ export interface AllowlistEntry {
   reason: string;
 }
 
+/** The single allowlist-match predicate: returns the matching entry, or undefined. */
+export function matchAllowlistEntry(
+  allowlist: AllowlistEntry[],
+  doc: string,
+  anchor: string,
+  literal: string,
+): AllowlistEntry | undefined {
+  return allowlist.find(
+    (e) => e.doc === doc && e.anchor === anchor && e.literal === literal,
+  );
+}
+
 export function isAllowlisted(
   allowlist: AllowlistEntry[],
   doc: string,
   anchor: string,
   literal: string,
 ): boolean {
-  return allowlist.some(
-    (e) => e.doc === doc && e.anchor === anchor && e.literal === literal,
-  );
+  return matchAllowlistEntry(allowlist, doc, anchor, literal) !== undefined;
 }
