@@ -121,13 +121,22 @@ describe("okf-literal-guard.yml Detect step (T-010 round 2)", () => {
     () => {
       const dir = makeRepo();
       const base = commitFiles(dir, fillerFiles("irrelevant", FILLER_COUNT), "base");
+      // Filler prefix sorts AFTER "mcp-server" (`git diff --name-only`
+      // lists paths in sorted tree order), so the relevant file lands
+      // FIRST in the changed-file list: the position `grep -q` finds a
+      // match at soonest, closing the read end while the most output is
+      // still queued behind it -- the exact ordering the SIGPIPE bug
+      // needs to actually manifest. A relevant file sorted to the END of
+      // the list would let this case pass even with the buggy piped form
+      // (the writer finishes before the reader closes early), so it would
+      // not discriminate the mutant this test exists to catch.
       const head = commitFiles(
         dir,
         {
-          ...fillerFiles("irrelevant2", FILLER_COUNT),
           "mcp-server/src/errors.ts": "export {};\n",
+          ...fillerFiles("zzz-filler", FILLER_COUNT),
         },
-        "head with relevant file amid a large diff",
+        "head with relevant file sorted first, amid a large diff",
       );
       const diffSize = git(["diff", "--name-only", base, head], dir).length;
       expect(diffSize).toBeGreaterThan(64 * 1024);
