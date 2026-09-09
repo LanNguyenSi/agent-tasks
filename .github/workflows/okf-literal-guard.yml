@@ -10,40 +10,22 @@ name: OKF literal guard
 # (PR #509) shipped a citation drift in -- so the guard would otherwise
 # never run where it matters most.
 #
-# T-010 (agent-tasks tracker 5e95e4bd, D-006): required-status decision.
-# A path-filtered check (the `on.pull_request.paths` this workflow used to
-# carry) cannot be made a REQUIRED branch-protection check as-is: GitHub
-# never reports a status for a PR whose diff does not match the filter, so
-# a required check that never triggers blocks every such PR forever. Two
-# options were weighed, both scoped to this one workflow file so neither
-# needs a second workflow:
-#
-# - (a) Required, with a skip-shim (ADOPTED here): drop the `paths:`
-#   filter so the workflow triggers on every PR and every push to master,
-#   and let the job itself decide (the "Detect docs/okf-relevant changes"
-#   step below) whether the guard actually needs to run. When nothing
-#   relevant changed, the later steps are skipped via `if:` and the job
-#   still reports success under its stable name ("docs/okf literal
-#   guard") -- so branch protection can require that name without ever
-#   blocking an unrelated PR. Who pays: every PR now spends a few seconds
-#   on a checkout + one `git diff` even when nothing relevant changed
-#   (cheap: no `npm ci`, no vitest run on that path); in exchange, the
-#   guard is enforceable, not merely advisory, so a docs/okf drift like
-#   batch-43's cannot be merged past a reviewer who does not re-run it by
-#   hand.
-# - (b) Advisory (rejected as the default, kept as the fallback): keep the
-#   `paths:` filter as it originally shipped and leave this check off
-#   branch protection's required list. Who pays: nothing extra on every
-#   PR, but the guard is opt-in -- a reviewer who does not notice a green
-#   check is missing (because the workflow never triggered) can still
-#   merge a citation drift, which is the exact gap T-007/T-010 exist to
-#   close. Falls back to this only if the skip-shim's own diff step is
-#   found to misbehave (see the "Detect" step's comment for the one input
-#   it treats conservatively).
-#
-# The branch-protection edit itself (adding "docs/okf literal guard" to
-# the required-checks list) is an operator step, not made by this task;
-# see the PR body/handoff for the exact change.
+# Required-status decision (agent-tasks tracker 5e95e4bd): this job carries
+# no `paths:` filter and runs on every `pull_request` and every `push` to
+# master under the stable name "docs/okf literal guard", so it is safe to
+# add to branch protection's required-status list -- a required check that
+# never triggers on some PRs would block them forever, which an
+# always-running trigger cannot do. Who pays: one backend `npm ci` on every
+# PR. An earlier revision instead kept a `paths:` filter and added a
+# skip-shim job to reconstruct "does this PR affect the guard" from a
+# hand-maintained pattern over a git diff, so the check could still report
+# success when nothing relevant changed. Two review rounds each found a new
+# way that shim silently skipped a relevant PR (a SIGPIPE on a large
+# changed-file list; a rename reported by destination only; a non-ASCII
+# path C-quoted by git) and a new gap in its hand-maintained pattern; it was
+# removed rather than patched a third time. The branch-protection edit
+# itself (adding "docs/okf literal guard" to master's required-status list)
+# is an operator step, not made by this task.
 
 on:
   pull_request:
@@ -60,80 +42,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      # Skip-shim (D-006 T-010, option a): computes whether this push/PR
-      # actually touches anything the guard cares about, so the later
-      # steps can be skipped with success instead of the whole workflow
-      # never triggering (see the header comment). Conservative on the
-      # two cases it cannot diff cleanly: a base or head SHA this checkout
-      # does not have (e.g. a force-push rewriting history, `before` being
-      # the all-zero SHA on a branch's first push, or an unresolvable head)
-      # is treated as "relevant", i.e. it runs the guard rather than risk a
-      # false skip; the `git diff` call itself failing for any other reason
-      # falls back the same way.
-      #
-      # Round 2 (D-006 residual): PATTERN's roots are derived from the
-      # source paths docs/okf actually cites (see index.md's Maintenance
-      # section and backend/tests/unit/docs-okf-literal-guard-pattern-coverage.test.ts,
-      # which fails if a future citation lands outside every listed root),
-      # not just the guard's own files -- a PR editing only a cited source
-      # file must still trip the guard. The match itself reads the full
-      # changed-file list from a captured variable through a herestring
-      # (`<<<`), never through a pipe into `grep`: a pipe's reader (`grep
-      # -q`) can exit at the first match and close the pipe before the
-      # writer has finished, and under `pipefail` that SIGPIPE turns a real
-      # match into a false `relevant=false` once the diff is large enough
-      # to not fit in one pipe write (measured: reproducible past a few
-      # thousand changed file names on a real `ubuntu-latest` bash 5;
-      # `backend/tests/unit/docs-okf-literal-guard-detect-step.test.ts`
-      # pins this with a >64KB name list). Piping the captured variable
-      # through `printf` first does not fix it: `printf` is itself a
-      # separate, non-last pipeline stage and is just as exposed to the
-      # same SIGPIPE.
-      - name: Detect docs/okf-relevant changes
-        id: filter
-        run: |
-          set -eo pipefail
-          PATTERN='^(docs/okf/|backend/src/|backend/tests/helpers/okf-literal-guard\.ts$|backend/tests/unit/docs-okf-literal-guard[^/]*\.test\.ts$|backend/tests/fixtures/okf-literal-guard/|backend/tests/types/js-yaml\.d\.ts$|mcp-server/src/|mcp-server/package\.json$|mcp-bridge/src/|frontend/src/|\.github/workflows/ci\.yml$|\.github/workflows/okf-literal-guard\.yml$)'
-          if [ "${EVENT_NAME}" = "pull_request" ]; then
-            BASE_SHA="${PR_BASE_SHA}"
-            HEAD_SHA="${PR_HEAD_SHA}"
-          else
-            BASE_SHA="${PUSH_BEFORE_SHA}"
-            HEAD_SHA="${GITHUB_SHA}"
-          fi
-          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || [ -z "$HEAD_SHA" ] || ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if ! CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if grep -Eq "$PATTERN" <<< "$CHANGED"; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "relevant=false" >> "$GITHUB_OUTPUT"
-          fi
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
 
       - uses: actions/setup-node@v5
-        if: steps.filter.outputs.relevant == 'true'
         with:
           node-version: 22
           cache: npm
 
       - name: Install dependencies
-        if: steps.filter.outputs.relevant == 'true'
         run: npm ci --no-audit --no-fund
 
       - name: Run the guard test
-        if: steps.filter.outputs.relevant == 'true'
-        run: npx vitest run tests/unit/docs-okf-literal-guard.test.ts tests/unit/docs-okf-literal-guard-detect-step.test.ts tests/unit/docs-okf-literal-guard-pattern-coverage.test.ts
+        run: npx vitest run tests/unit/docs-okf-literal-guard
         working-directory: backend
