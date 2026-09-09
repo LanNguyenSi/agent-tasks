@@ -175,6 +175,10 @@ describe("grounding route context (PostgreSQL)", () => {
 
   it("invalidates claim acquire/release/reopen, preserves a no-op retry, and blocks both behind a reservation", async () => {
     const input = await taskFixture();
+    const project = await store.db.project.findUniqueOrThrow({ where: { id: input.projectId } });
+    routeActor.teamId = project.teamId;
+    await store.db.user.create({ data: { id: routeActor.userId, login: "route-context" } });
+    await store.db.agentToken.create({ data: { id: routeActor.tokenId, teamId: project.teamId, createdById: routeActor.userId, name: "Route context", tokenHash: "route-context", scopes: routeActor.scopes } });
     const activeAttemptId = await provisionActiveAttempt(input);
 
     await expect(mutateGroundingRouteContext(store.db, {

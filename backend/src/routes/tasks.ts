@@ -1,3 +1,4 @@
+import { authorizeDirectSubmission, mutateDirectTask } from "../services/grounding-direct-mutations.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
@@ -39,6 +40,7 @@ import {
 } from "../services/grounding-client.js";
 import {
   buildExternalGroundingHint,
+  selectGroundingRouteContext,
   mutateGroundingRouteContext,
   presentGroundingRouteContext,
   type ExternalGroundingHint,
@@ -3734,7 +3736,7 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
     where: { id: c.req.param("id") },
     include: {
       workflow: true,
-      project: { select: { id: true, name: true, slug: true, teamId: true, githubRepo: true } },
+      project: true,
     },
   });
   if (!task) return notFound(c);
@@ -3827,6 +3829,9 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
     );
   }
 
+  const groundingMode = await selectGroundingRouteContext(prisma, { taskId: task.id, projectId: task.projectId });
+  if (groundingMode.mode !== "UNPROVISIONED") await authorizeDirectSubmission(prisma, task.id, actor);
+
   // Authorship verification (defense-in-depth, ADR-0010 §7 follow-up):
   // Check that the PR was created by the delegation user. A compromised
   // agent token in the correct repo could otherwise submit someone else's
@@ -3909,6 +3914,11 @@ taskRouter.post("/tasks/:id/submit-pr", async (c) => {
         }
       }
     }
+  }
+
+  if (groundingMode.mode !== "UNPROVISIONED") {
+    const result = await mutateDirectTask(prisma, task, actor, "submit-pr", { branchName, prUrl, prNumber });
+    return c.json({ kind: "submit_pr", ...result });
   }
 
   const previousBranchName = task.branchName;

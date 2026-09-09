@@ -1,3 +1,5 @@
+import { lockGroundingAuthority } from "./grounding-direct-authority.js";
+import { prisma } from "../lib/prisma.js";
 import { createHash } from "node:crypto";
 import type { GroundingBinding, Prisma, Project, Task } from "@prisma/client";
 import { z } from "zod";
@@ -19,7 +21,7 @@ export const groundingIntentSchema = z.enum(["finish", "approve", "merge"]);
 export type GroundingIntent = z.infer<typeof groundingIntentSchema>;
 export type GroundingTarget = GroundingReceiptExpectedContext["target"];
 export class GroundingAccessError extends Error {
-  constructor(readonly code: "forbidden" | "not_found" | "bad_state" | "grounding_not_provisioned" | "grounding_finalization_pending" | "grounding_operation_conflict" | "precondition_failed", readonly status: 403 | 404 | 409) {
+  constructor(readonly code: "forbidden" | "not_found" | "bad_state" | "grounding_not_provisioned" | "grounding_finalization_pending" | "grounding_operation_conflict" | "precondition_failed" | "grounding_history_retained", readonly status: 403 | 404 | 409) {
     super(code);
   }
 }
@@ -41,7 +43,16 @@ export interface GroundingAuthority {
   canWrite: typeof requireProjectWrite;
   hasRole: typeof hasProjectRole;
 }
-export const groundingAuthority: GroundingAuthority = { canWrite: requireProjectWrite, hasRole: hasProjectRole };
+export const groundingAuthority: GroundingAuthority = {
+  canWrite: async (actor, projectId, db = prisma) => {
+    await lockGroundingAuthority(db as Prisma.TransactionClient, actor, projectId);
+    return requireProjectWrite(actor, projectId, db);
+  },
+  hasRole: async (actor, projectId, role, db = prisma) => {
+    await lockGroundingAuthority(db as Prisma.TransactionClient, actor, projectId);
+    return hasProjectRole(actor, projectId, role, db);
+  },
+};
 
 /** Standalone task_merge is a project write, independent of claim ownership. */
 export async function requireTaskMergeActor(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, authority: GroundingAuthority = groundingAuthority) {

@@ -17,17 +17,33 @@ const { prismaMocks, mockLogAuditEvent } = vi.hoisted(() => ({
     projectFindUnique: vi.fn(),
     projectUpdate: vi.fn(),
     projectCreate: vi.fn(),
+    projectFindMany: vi.fn().mockResolvedValue([]),
+    queryRaw: vi.fn().mockResolvedValue([{ id: "11111111-1111-1111-1111-111111111111" }]),
+    transaction: vi.fn(),
   },
   mockLogAuditEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
+    $transaction: async (run: (db: unknown) => Promise<unknown>) => run({
+      $queryRaw: prismaMocks.queryRaw,
+      project: {
+        findUnique: prismaMocks.projectFindUnique,
+        update: prismaMocks.projectUpdate,
+        findMany: prismaMocks.projectFindMany,
+      },
+      task: { findMany: prismaMocks.projectFindMany },
+      groundingCohort: { findUnique: vi.fn().mockResolvedValue(null) },
+      groundingAttempt: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      groundingBinding: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    }),
     project: {
       findUnique: prismaMocks.projectFindUnique,
       update: prismaMocks.projectUpdate,
       create: prismaMocks.projectCreate,
-      findMany: vi.fn(),
+      findMany: prismaMocks.projectFindMany,
     },
     teamMember: { findUnique: vi.fn() },
   },
@@ -39,6 +55,8 @@ vi.mock("../../src/services/audit.js", () => ({
 
 vi.mock("../../src/services/team-access.js", () => ({
   isProjectAdmin: vi.fn().mockResolvedValue(true),
+  hasProjectRole: vi.fn().mockResolvedValue(true),
+  requireProjectWrite: vi.fn().mockResolvedValue(true),
   hasProjectAccess: vi.fn().mockResolvedValue(true),
   getProjectMembership: vi.fn().mockResolvedValue({ source: "team" }),
   resolveTeamId: vi.fn().mockResolvedValue({ ok: true, teamId: "team-A" }),
@@ -69,7 +87,7 @@ function makeApp() {
 }
 
 const baseProject = {
-  id: "proj-1",
+  id: "11111111-1111-1111-1111-111111111111",
   teamId: "team-A",
   name: "Test Project",
   slug: "test",
@@ -108,7 +126,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
       notificationWebhookUrl: "https://hooks.example/inbox",
     });
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ notificationWebhookUrl: "https://hooks.example/inbox" }),
@@ -116,7 +134,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
 
     expect(res.status).toBe(200);
     expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
-      where: { id: "proj-1" },
+      where: { id: "11111111-1111-1111-1111-111111111111" },
       data: expect.objectContaining({
         notificationWebhookUrl: "https://hooks.example/inbox",
       }),
@@ -133,7 +151,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
       notificationWebhookUrl: null,
     });
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ notificationWebhookUrl: "" }),
@@ -141,7 +159,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
 
     expect(res.status).toBe(200);
     expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
-      where: { id: "proj-1" },
+      where: { id: "11111111-1111-1111-1111-111111111111" },
       data: expect.objectContaining({ notificationWebhookUrl: null }),
     });
   });
@@ -156,7 +174,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
       notificationWebhookUrl: "https://new.example",
     });
 
-    await makeApp().request("/projects/proj-1", {
+    await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ notificationWebhookUrl: "https://new.example" }),
@@ -187,7 +205,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
       notificationWebhookSecret: "new-secret",
     });
 
-    await makeApp().request("/projects/proj-1", {
+    await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ notificationWebhookSecret: "new-secret" }),
@@ -218,7 +236,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
       notificationWebhookSecret: "same",
     });
 
-    await makeApp().request("/projects/proj-1", {
+    await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ notificationWebhookSecret: "same" }),
@@ -230,7 +248,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
   it("rejects a malformed webhook URL with 400 before touching the DB", async () => {
     prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ notificationWebhookUrl: "not-a-url" }),
@@ -249,7 +267,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
     async (badUrl) => {
       prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
 
-      const res = await makeApp().request("/projects/proj-1", {
+      const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ notificationWebhookUrl: badUrl }),
@@ -270,7 +288,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
       notificationWebhookUrl: null,
     });
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ notificationWebhookUrl: "" }),
@@ -278,7 +296,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
 
     expect(res.status).toBe(200);
     expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
-      where: { id: "proj-1" },
+      where: { id: "11111111-1111-1111-1111-111111111111" },
       data: expect.objectContaining({ notificationWebhookUrl: null }),
     });
   });
@@ -293,7 +311,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
       notificationWebhookUrl: null,
     });
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ notificationWebhookUrl: null }),
@@ -301,7 +319,7 @@ describe("PATCH /projects/:id — notification webhook fields", () => {
 
     expect(res.status).toBe(200);
     expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
-      where: { id: "proj-1" },
+      where: { id: "11111111-1111-1111-1111-111111111111" },
       data: expect.objectContaining({ notificationWebhookUrl: null }),
     });
   });
@@ -312,7 +330,7 @@ describe("PATCH /projects/:id — enforcementMode (scorer-v2 T5)", () => {
     prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
     prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, enforcementMode: "OFF" });
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enforcementMode: "OFF" }),
@@ -320,7 +338,7 @@ describe("PATCH /projects/:id — enforcementMode (scorer-v2 T5)", () => {
 
     expect(res.status).toBe(200);
     expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
-      where: { id: "proj-1" },
+      where: { id: "11111111-1111-1111-1111-111111111111" },
       data: expect.objectContaining({ enforcementMode: "OFF" }),
     });
   });
@@ -328,7 +346,7 @@ describe("PATCH /projects/:id — enforcementMode (scorer-v2 T5)", () => {
   it("rejects a flip TO BLOCK without acknowledgeShadowReport (400, no DB write)", async () => {
     prismaMocks.projectFindUnique.mockResolvedValue(baseProject); // resolves to WARN
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enforcementMode: "BLOCK" }),
@@ -345,7 +363,7 @@ describe("PATCH /projects/:id — enforcementMode (scorer-v2 T5)", () => {
     prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
     prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, enforcementMode: "BLOCK" });
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enforcementMode: "BLOCK", acknowledgeShadowReport: true }),
@@ -361,7 +379,7 @@ describe("PATCH /projects/:id — enforcementMode (scorer-v2 T5)", () => {
     prismaMocks.projectFindUnique.mockResolvedValue({ ...baseProject, enforcementMode: "BLOCK" });
     prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, enforcementMode: "BLOCK" });
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enforcementMode: "BLOCK" }),
@@ -374,7 +392,7 @@ describe("PATCH /projects/:id — enforcementMode (scorer-v2 T5)", () => {
     prismaMocks.projectFindUnique.mockResolvedValue(baseProject); // null/WARN
     prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, enforcementMode: "OFF" });
 
-    await makeApp().request("/projects/proj-1", {
+    await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enforcementMode: "OFF" }),
@@ -398,7 +416,7 @@ describe("PATCH /projects/:id — aiHelpersEnabled (M4, task fc4f2dc7, review ro
     prismaMocks.projectFindUnique.mockResolvedValue(baseProject); // false by default
     prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, aiHelpersEnabled: true });
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ aiHelpersEnabled: true }),
@@ -406,7 +424,7 @@ describe("PATCH /projects/:id — aiHelpersEnabled (M4, task fc4f2dc7, review ro
 
     expect(res.status).toBe(200);
     expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
-      where: { id: "proj-1" },
+      where: { id: "11111111-1111-1111-1111-111111111111" },
       data: expect.objectContaining({ aiHelpersEnabled: true }),
     });
   });
@@ -415,7 +433,7 @@ describe("PATCH /projects/:id — aiHelpersEnabled (M4, task fc4f2dc7, review ro
     prismaMocks.projectFindUnique.mockResolvedValue(baseProject); // false
     prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, aiHelpersEnabled: true });
 
-    await makeApp().request("/projects/proj-1", {
+    await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ aiHelpersEnabled: true }),
@@ -437,7 +455,7 @@ describe("PATCH /projects/:id — aiHelpersEnabled (M4, task fc4f2dc7, review ro
     prismaMocks.projectFindUnique.mockResolvedValue({ ...baseProject, aiHelpersEnabled: true });
     prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, aiHelpersEnabled: true });
 
-    await makeApp().request("/projects/proj-1", {
+    await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ aiHelpersEnabled: true }),
@@ -450,7 +468,7 @@ describe("PATCH /projects/:id — aiHelpersEnabled (M4, task fc4f2dc7, review ro
     prismaMocks.projectFindUnique.mockResolvedValue({ ...baseProject, aiHelpersEnabled: true });
     prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, aiHelpersEnabled: false });
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ aiHelpersEnabled: false }),
@@ -458,7 +476,7 @@ describe("PATCH /projects/:id — aiHelpersEnabled (M4, task fc4f2dc7, review ro
 
     expect(res.status).toBe(200);
     expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
-      where: { id: "proj-1" },
+      where: { id: "11111111-1111-1111-1111-111111111111" },
       data: expect.objectContaining({ aiHelpersEnabled: false }),
     });
     expect(mockLogAuditEvent).toHaveBeenCalledWith(
@@ -482,7 +500,7 @@ describe("PATCH /projects/:id — taskTypeThresholds (M2, task b8629b99)", () =>
       taskTypeThresholds: { security: 90, docs: 60 },
     });
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ taskTypeThresholds: { security: 90, docs: 60 } }),
@@ -490,7 +508,7 @@ describe("PATCH /projects/:id — taskTypeThresholds (M2, task b8629b99)", () =>
 
     expect(res.status).toBe(200);
     expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
-      where: { id: "proj-1" },
+      where: { id: "11111111-1111-1111-1111-111111111111" },
       data: expect.objectContaining({ taskTypeThresholds: { security: 90, docs: 60 } }),
     });
   });
@@ -498,7 +516,7 @@ describe("PATCH /projects/:id — taskTypeThresholds (M2, task b8629b99)", () =>
   it("rejects an unknown taskType key with 400 and does not write", async () => {
     prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ taskTypeThresholds: { chore: 50 } }),
@@ -511,7 +529,7 @@ describe("PATCH /projects/:id — taskTypeThresholds (M2, task b8629b99)", () =>
   it("rejects an out-of-range value with 400 and does not write", async () => {
     prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ taskTypeThresholds: { security: 150 } }),
@@ -528,7 +546,7 @@ describe("PATCH /projects/:id — taskTypeThresholds (M2, task b8629b99)", () =>
     });
     prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, taskTypeThresholds: null });
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ taskTypeThresholds: null }),
@@ -547,7 +565,7 @@ describe("PATCH /projects/:id — taskTypeThresholds (M2, task b8629b99)", () =>
     prismaMocks.projectFindUnique.mockResolvedValue(baseProject); // no taskTypeThresholds set
     prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, taskTypeThresholds: { security: 90 } });
 
-    await makeApp().request("/projects/proj-1", {
+    await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ taskTypeThresholds: { security: 90 } }),
@@ -572,7 +590,7 @@ describe("PATCH /projects/:id — taskTypeThresholds (M2, task b8629b99)", () =>
     });
     prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, taskTypeThresholds: { security: 90 } });
 
-    await makeApp().request("/projects/proj-1", {
+    await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ taskTypeThresholds: { security: 90 } }),
@@ -594,7 +612,7 @@ describe("PATCH /projects/:id — taskTypeThresholds (M2, task b8629b99)", () =>
       taskTypeThresholds: { docs: 60, security: 90 },
     });
 
-    await makeApp().request("/projects/proj-1", {
+    await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       // Same entries, reordered keys.
@@ -613,7 +631,7 @@ describe("GET /projects/:id — secret redaction", () => {
       notificationWebhookSecret: "super-secret",
     });
 
-    const res = await makeApp().request("/projects/proj-1");
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { project: Record<string, unknown> };
 
@@ -630,7 +648,7 @@ describe("GET /projects/:id — secret redaction", () => {
       notificationWebhookSecret: null,
     });
 
-    const res = await makeApp().request("/projects/proj-1");
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111");
     const body = (await res.json()) as { project: Record<string, unknown> };
     expect(body.project.hasNotificationWebhookSecret).toBe(false);
   });
@@ -648,7 +666,7 @@ describe("GET /projects/:id — accessRole", () => {
       role: "PROJECT_ADMIN",
     });
 
-    const res = await makeApp().request("/projects/proj-1");
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { project: Record<string, unknown> };
     expect(body.project.accessSource).toBe("project");
@@ -662,7 +680,7 @@ describe("GET /projects/:id — accessRole", () => {
       role: "PROJECT_VIEWER",
     });
 
-    const res = await makeApp().request("/projects/proj-1");
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { project: Record<string, unknown> };
     expect(body.project.accessSource).toBe("project");
@@ -673,7 +691,7 @@ describe("GET /projects/:id — accessRole", () => {
     prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
     vi.mocked(getProjectMembership).mockResolvedValueOnce({ source: "team", role: null });
 
-    const res = await makeApp().request("/projects/proj-1");
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { project: Record<string, unknown> };
     expect(body.project.accessSource).toBe("team");
@@ -690,7 +708,7 @@ describe("PATCH response — also redacts", () => {
       notificationWebhookSecret: "freshly-set",
     });
 
-    const res = await makeApp().request("/projects/proj-1", {
+    const res = await makeApp().request("/projects/11111111-1111-1111-1111-111111111111", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({

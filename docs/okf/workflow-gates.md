@@ -9,6 +9,8 @@ sources:
   - backend/src/services/grounding-finalization.ts
   - backend/src/services/grounding-context-mutation.ts
   - backend/src/routes/grounding-task-completion.ts
+  - backend/src/routes/grounding-direct-tasks.ts
+  - backend/src/services/grounding-direct-context.ts
   - backend/src/services/transition-rules.ts
   - backend/src/services/gates/pr-repo-matches-project.ts
   - backend/src/services/workflow-templates.ts
@@ -31,6 +33,8 @@ sources:
 `Task.workflowId` can only be set at task-create time: `updateTaskSchema` (the PATCH body schema) has no `workflowId` field at all, so a PATCH payload naming one has it silently stripped/ignored by Zod (`z.object()` strips unrecognized keys by default — this is not a rejected/400 request), not persisted. A task already created under the default workflow therefore cannot be migrated onto this template after the fact; recovery for an already-stuck task stays the admin-only forced `/transition` path described above.
 
 **branchName atomic fold** (`POST /tasks/:id/start`, open→in_progress branch): if the caller supplies `branchName` in the request body AND the task has none yet, it is folded into the *same* gate-evaluation input (`effectiveBranchName = task.branchName ?? providedBranchName ?? null`) and persisted in the *same* `prisma.task.updateMany` compare-and-swap that claims the task (`willPersistBranchName = providedBranchName !== undefined && task.branchName === null`), so a `branchPresent`-gated project can pass its own start-transition gate on the call that claims the work, and a failed gate never leaves a stranded `branchName` write. If the task already has a `branchName`, a supplied value is silently ignored (idempotent re-calls stay safe; overwriting would destroy a pre-existing value).
+
+**Provisioned direct routes**: an enrolled task's direct transition, review and status-PATCH routes are resolved under a locked, persisted route descriptor. The server applies the workflow, role and review gates to that descriptor and rechecks it when a receipt is ingested. A positive decision needs an `Idempotency-Key`; the only direct force path is a human-admin transition with a nonblank reason. This does not relax the existing v2 claim model, and it does not cover indirect workflow, webhook or MCP writers.
 
 **Cross-repo `prUrl` guard** (`checkPrRepoMatchesProject`, `backend/src/services/gates/pr-repo-matches-project.ts`, ADR-0010 §5b): active only when `project.githubRepo` is set. Parses `owner/repo` out of both the `prUrl` payload (`github\.com\/([^/]+)\/([^/]+)\/pull\/`) and `project.githubRepo`, case-insensitive compare; a mismatch is rejected, at `task_finish` (`backend/src/routes/tasks.ts` line 3360), `submit-pr` (line 3716), and both actor branches of `PATCH /tasks/:id` (agent lane line 4710, human lane line 4782), with `400 { error: "cross_repo_pr_rejected", message }`. Prevents an agent token valid for project A from driving a merge against project B's repo via a spoofed PR URL.
 

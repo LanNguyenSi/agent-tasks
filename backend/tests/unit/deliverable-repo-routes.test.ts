@@ -50,6 +50,13 @@ vi.mock("../../src/lib/prisma.js", () => ({
   },
 }));
 
+// These tests exercise historical unprovisioned route behavior; enrollment is
+// covered by the mounted PostgreSQL matrix.
+vi.mock("../../src/services/grounding-route-context.js", async importOriginal => ({
+  ...await importOriginal<typeof import("../../src/services/grounding-route-context.js")>(),
+  selectGroundingRouteContext: vi.fn().mockResolvedValue({ mode: "UNPROVISIONED" }),
+}));
+
 const accessMocks = vi.hoisted(() => ({
   hasProjectAccess: vi.fn().mockResolvedValue(true),
   hasProjectRole: vi.fn().mockResolvedValue(true),

@@ -7,6 +7,8 @@ timestamp: 2026-09-08T08:12:00Z
 sources:
   - package.json
   - backend/src/app.ts
+  - backend/src/routes/grounding-direct-tasks.ts
+  - backend/src/routes/grounding-creation.ts
   - backend/src/routes/grounding-task-completion.ts
   - backend/src/server.ts
   - backend/src/routes/docs.ts
@@ -23,14 +25,17 @@ npm workspaces monorepo (`package.json` workspaces: `backend`, `frontend`, `mcp-
 
 All state lives in one PostgreSQL database (Prisma schema at `backend/prisma/schema.prisma`); nothing else is a system of record. Prod topology (`docker-compose.prod.yml`) is `db` → one-shot `migrate` (Prisma `db push`) → `backend` and `frontend`, both behind a shared external `traefik` network; see `deploy.md`.
 
-**Grounding composition**: the backend's optional per-app grounding completion
-dependency is mounted before the historical task router. It handles only
-authoritatively provisioned task finish, merge and abandon requests; absent
-enrollment selects the historical compatibility routes. Invalid enrollment,
+**Grounding composition**: the backend's optional per-app grounding dependencies
+are mounted before the historical task router. Authoritative provisioning selects
+the completion adapter for finish, merge and abandon, the direct adapter for
+transition, review, PATCH, respec and enrolled deletion checks, and an optional
+server-owned creation-policy adapter for selected new tasks/import rows. Absent
+selection reaches the historical compatibility routes. Invalid enrollment,
 orphan binding, unavailable trusted service, and database errors fail closed.
-The server has no public enrollment endpoint. Before server-only enrollment of
-legacy work, active legacy requests must be quiesced; the system does not claim
-safe live legacy-to-external conversion.
+There is no public enrollment endpoint. The empty creation-policy default does
+not activate enrollment; before server-only enrollment of legacy work, active
+legacy requests must be quiesced. The system does not claim safe live
+legacy-to-external conversion or complete coverage of indirect writers.
 
 **Actor/auth model**: every request is one of two actor shapes, resolved by `backend/src/middleware/auth.ts` (`backend.md`), a `HumanActor` (browser session cookie, or a session JWT passed as a Bearer token for server-to-server callers) or an `AgentActor` (a SHA-256-hashed `AgentToken` presented as `Authorization: Bearer <raw>`, carrying a `teamId` and a list of `scopes` from `backend/src/services/scopes.ts` that gate individual verbs). The mcp-server/mcp-bridge path is always an `AgentActor`; the frontend is always a `HumanActor`.
 

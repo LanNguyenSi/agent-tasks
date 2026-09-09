@@ -1,3 +1,4 @@
+import { lockGroundingAuthority } from "./grounding-direct-authority.js";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { requireGroundingCohort } from "./grounding-cohort.js";
 import { mismatch, unavailable } from "./grounding-context.js";
@@ -147,6 +148,7 @@ export async function mutateGroundingRouteContext<T>(
     mutate: async (db, tasks) => {
       const task = tasks[0];
       if (!task) throw new GroundingAccessError("not_found", 404);
+      await lockGroundingAuthority(db, input.actor, task.projectId);
       await input.revalidate(db, task);
       return input.mutate(db, task);
     },

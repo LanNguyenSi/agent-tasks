@@ -1,3 +1,4 @@
+import { directDescriptorSchema } from "../services/grounding-direct-context.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppVariables } from "../types/hono.js";
@@ -55,6 +56,13 @@ export function createGroundingRouter(service?: GroundingAttemptsService) {
     const parsed = issueSchema.safeParse(await boundedJson(c.req.raw, 1024));
     if (!parsed.success) throw new GroundingReceiptVerificationError("grounding_receipt_invalid");
     return c.json(await service.issueForRoute(c.req.param("id"), c.get("actor"), parsed.data.intent), 201);
+  });
+  router.post("/tasks/:id/grounding-attempts/direct", async c => {
+    if (!service) return c.json({ error: "grounding_verification_unavailable" }, 503);
+    await service.authorizeDirectIssue(c.req.param("id"), c.get("actor"));
+    const parsed = directDescriptorSchema.safeParse(await boundedJson(c.req.raw, 1024));
+    if (!parsed.success) throw new GroundingReceiptVerificationError("grounding_receipt_invalid");
+    return c.json(await service.issueDirect(c.req.param("id"), c.get("actor"), parsed.data), 201);
   });
   router.post("/tasks/:id/grounding-attempts/:attemptId/receipt", async c => {
     if (!service) return c.json({ error: "grounding_verification_unavailable" }, 503);

@@ -69,6 +69,20 @@ transition task status, release claims, merge a PR or reserve finalization.
 
 Challenge bodies are limited to 1,024 actual streamed bytes; upload bodies to 200,000 bytes, allowing JSON string escaping overhead around the C01 limit of 32,768 receipt bytes. Invalid UTF-8, malformed JSON, unknown request fields and invalid nomination shapes fail with `400 grounding_receipt_invalid`. Receipt JSON is passed to the unchanged strict C01 parser as original UTF-8 bytes. The session nomination has no independent authority: it is staged and read inside the locked transaction, then C01 authenticates the signed matching tuple against independent server context and trust. Failure rolls the entire nomination back.
 
+## Direct task-route authority
+
+An authoritatively provisioned task uses the direct adapter before the historical task router for `POST /api/tasks/:id/transition`, `POST /api/tasks/:id/review`, and `PATCH /api/tasks/:id`. A positive direct operation first issues an attempt through strict JSON:
+
+```json
+{"version":1,"endpoint":"transition|patch|review","target":"<workflow-state>"}
+```
+
+The server validates the selector against the currently locked task, workflow, actor, role and review gates, then persists that descriptor on the attempt. Receipt ingest reauthorizes the stored descriptor; it never accepts a caller-selected semantic action or a descriptor from another endpoint. A direct attempt therefore cannot be used by the v2 attempt path, and a v2 attempt cannot complete a direct operation. Direct authorization deliberately does not add a general claim requirement where the installed direct endpoint policy permits the caller.
+
+Positive transition, review approval and status-patch operations require an `Idempotency-Key`. The completion service chooses the workflow-semantic decision and atomically commits the required receipt consumption, task change, operation history, audit and route effects. A direct `force` is limited to a human project administrator on `transition` and needs a nonblank `forceReason`; it remains subject to the ordinary authorization and state checks. Receipt-free override and non-success decisions never create a producer receipt. Request-changes, abandon, backlog discard and similar dispositions are not success targets.
+
+Non-status direct edits use the same locked mutation path. Changes to signed task context invalidate prior attempts atomically; no-op and cosmetic-only edits leave attempts intact. `respec` and `submit-pr` join that path for an enrolled task. This adapter covers only its installed REST endpoints. Indirect writers, GitHub/webhook paths and MCP transport remain separate work.
+
 ## Exact task-context/v1 projection
 
 The subject digest is lowercase SHA-256 over UTF-8 bytes of the following JSON projection. All listed fields are present; database null stays JSON null. Arbitrary JSON object keys are recursively sorted by ascending UTF-16 code-unit order. Arrays retain order. Scalars use ECMAScript `JSON.stringify` encoding (including `-0` as `0`); Unicode is neither normalized nor trimmed, line endings remain exact, and lone surrogates or non-finite numbers fail closed. There is no whitespace or trailing newline. Object ordering is implemented directly so integer-like keys also follow this lexical order.
@@ -276,7 +290,20 @@ transition preconditions return `409 precondition_failed`. Historical
 provisioned completion requests use their documented transport and grounding
 error responses.
 
-The staged boundary does not activate production enrollment. Other positive
-status writers, indirect workflow/team writers, GitHub/webhook writers, public
-MCP routing, and issuer/rollout qualification remain separate work. They must
-join the same context and authorization rules before productive activation.
+The staged boundary does not activate production enrollment. The direct REST
+adapter and the project PATCH path join the mutation protocol, but indirect
+workflow/team writers, GitHub/webhook writers, public MCP routing, and
+issuer/rollout qualification remain separate work. They must join the same
+context and authorization rules before productive activation.
+
+An actual `Project.requireGroundingForDebug` toggle is a project context
+change: it atomically invalidates affected attempts and writes the mandatory
+attributed context audit. Repeating its current value preserves attempts. The
+toggle does not enroll, downgrade or otherwise alter the protected
+binding/cohort.
+
+## Dormant creation policy and retained history
+
+The app may receive a server-owned, readonly per-project creation policy with one explicit `projectId` and `subjectMode` (`TASK_SPEC` or `CODE_HEAD`) entry. Its default is empty: it is not selected from environment, project flags, metadata, labels or other tasks. A selected project creates its initial task, cohort and protected binding in one transaction. Agent creation still enters backlog; a selected request that tries to create a review or terminal task is rejected with grounding guidance rather than manufacturing a protected success. Imports preserve their existing per-row atomic, partial-result behavior. There is no historical administrative import in this contract, and this dormant configuration does not constitute production enrollment or issuer/rollout qualification.
+
+For an enrolled task or project, deletion first checks an unresolved reservation, then rejects retained grounding history with `409 grounding_history_retained`. The rejection preserves the task/project and its history; it is not archival, disposal or an abandon transition. Unenrolled task deletion retains the historical behavior. No project-reassignment feature is introduced.
