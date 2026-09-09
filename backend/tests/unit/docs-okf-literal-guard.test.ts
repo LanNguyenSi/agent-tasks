@@ -410,7 +410,7 @@ describe("okf-literal-guard fixtures", () => {
       'export const SERVER_VERSION = "0.14.0-rc1";\n',
     );
     const doc =
-      'The server is at `0.14.0` (`src/example.ts:1`), a value the source does not actually carry.';
+      "The server is at `0.14.0` (`src/example.ts:1`), a value the source does not actually carry.";
     const [{ result }] = analyzeAndCheck(root, doc);
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].literal).toBe("0.14.0");
@@ -453,7 +453,10 @@ describe("okf-literal-guard fixtures", () => {
     // directory), standing in for something like /etc/passwd: if the
     // reader ever resolved this path without a containment check it would
     // open and "check" it.
-    const outside = path.join(path.dirname(root), `secret-${path.basename(root)}.txt`);
+    const outside = path.join(
+      path.dirname(root),
+      `secret-${path.basename(root)}.txt`,
+    );
     fs.writeFileSync(outside, 'export const VERSION = "1.2.3";\n');
     const relEscape = `../${path.basename(outside)}`;
     const doc = `The constant is \`VERSION = "1.2.3"\` (\`${relEscape}:1\`), a path escaping the root.`;
@@ -462,5 +465,26 @@ describe("okf-literal-guard fixtures", () => {
     expect(result.findings[0].reason).toBe("unreadable-citation");
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(outside, { force: true });
+  });
+
+  it("rejects a sibling directory sharing the root's path prefix (`<root>-other`) as unreadable", () => {
+    // The only input that separates `startsWith(root + sep)` from a bare
+    // `startsWith(root)`: a sibling whose path begins with the root's own
+    // characters. Without the separator in the containment test this file
+    // would be opened and "checked".
+    const root = makeFixtureRoot();
+    const sibling = `${root}-other`;
+    fs.mkdirSync(sibling, { recursive: true });
+    fs.writeFileSync(
+      path.join(sibling, "x.ts"),
+      'export const VERSION = "1.2.3";\n',
+    );
+    const relSibling = `../${path.basename(sibling)}/x.ts`;
+    const doc = `The constant is \`VERSION = "1.2.3"\` (\`${relSibling}:1\`), a sibling-prefix path.`;
+    const [{ result }] = analyzeAndCheck(root, doc);
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].reason).toBe("unreadable-citation");
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(sibling, { recursive: true, force: true });
   });
 });

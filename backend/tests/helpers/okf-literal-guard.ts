@@ -21,8 +21,7 @@ import path from "node:path";
 /** Word-proximity window (decision D-011): tunable, named here and in docs/okf/index.md. */
 export const WORD_WINDOW = 30;
 
-const CITATION_RE =
-  /^([\w./-]+):(\d+)(?:-(\d+))?(?:#"(?:[^"\\]|\\.)*")?$/;
+const CITATION_RE = /^([\w./-]+):(\d+)(?:-(\d+))?(?:#"(?:[^"\\]|\\.)*")?$/;
 const KEYVAL_RE = /^([A-Za-z_]\w*)\s*:\s*(\S.*)$/;
 const QUOTED_RE = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g;
 const SEMVER_RE = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?(?:\+[0-9A-Za-z.]+)?\b/g;
@@ -66,7 +65,7 @@ export interface BlockAnalysis {
   citations: Citation[];
   literals: LiteralToken[];
   bareCount: number;
-  /** Backtick spans the unit scanner actually classified (span/word/bare/literal); compare against countSpans(block) as a parser self-check. */
+  /** Backtick spans the unit scanner actually classified (span/word/bare/literal); the caller compares the per-file sum against countSpans over the raw file body as a parser self-check. */
   spansSeen: number;
 }
 
@@ -166,9 +165,11 @@ export function resolveCitationPath(
  * Single global scan of the normalized block for backtick-span-or-word
  * units (see UNIT_RE above). Every unit advances the word index; a
  * classified backtick span (citation or literal) increments spansSeen so
- * the caller can assert it against countSpans(block) -- any future parser
- * gap that drops a span again fails that assertion loudly instead of
- * silently undercounting.
+ * the caller can assert the per-file sum against countSpans over the raw
+ * file body (frontmatter stripped, no block extraction, so a block-level
+ * drop fails too; the baseline assumes no fenced code blocks in the
+ * bundle): any future parser gap that drops a span fails that assertion
+ * loudly instead of silently undercounting.
  */
 export function analyzeBlock(block: string, sources: string[]): BlockAnalysis {
   const normalized = block.replace(/\s+/g, " ").trim();
@@ -179,7 +180,8 @@ export function analyzeBlock(block: string, sources: string[]): BlockAnalysis {
   let spansSeen = 0;
 
   units.forEach((unit, tokenIndex) => {
-    const isSpan = unit.length >= 2 && unit[0] === "`" && unit[unit.length - 1] === "`";
+    const isSpan =
+      unit.length >= 2 && unit[0] === "`" && unit[unit.length - 1] === "`";
     if (!isSpan) return;
     spansSeen++;
     const spanContent = unit.slice(1, -1);
@@ -196,7 +198,8 @@ export function analyzeBlock(block: string, sources: string[]): BlockAnalysis {
     }
     const lits = extractLiteralsFromSpan(spanContent);
     if (lits.length) {
-      for (const { text, kind } of lits) literals.push({ text, kind, tokenIndex });
+      for (const { text, kind } of lits)
+        literals.push({ text, kind, tokenIndex });
     } else {
       bareCount++;
     }
@@ -309,7 +312,8 @@ export function checkBlock(
       findings.push({
         literal: lit.text,
         citations: inWindow.map((c) => `${c.rawPath}:${c.start}-${c.end}`),
-        reason: readableCount === 0 ? "unreadable-citation" : "literal-mismatch",
+        reason:
+          readableCount === 0 ? "unreadable-citation" : "literal-mismatch",
       });
     }
   }
