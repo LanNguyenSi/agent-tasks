@@ -1,3 +1,6 @@
+import { createGroundingCreationRouter } from "./routes/grounding-creation.js";
+import { prisma } from "./lib/prisma.js";
+import { createGroundingDirectTaskRouter } from "./routes/grounding-direct-tasks.js";
 import { createGroundingTaskCompletionRouter, type GroundingTaskCompletionDependencies } from "./routes/grounding-task-completion.js";
 import { createGroundingRouter } from "./routes/grounding.js";
 import type { GroundingAttemptsService } from "./services/grounding-attempts.js";
@@ -138,6 +141,8 @@ export function createApp(corsOrigins: string, grounding?: GroundingAttemptsServ
   app.route("/api/admin", sharesAdminRouter);
   app.route("/api", createGroundingRouter(grounding));
   app.route("/api", createGroundingTaskCompletionRouter(completion));
+  app.route("/api", createGroundingDirectTaskRouter(completion));
+  app.route("/api", createGroundingCreationRouter(completion?.db ?? prisma, grounding, completion?.creationPolicy));
   app.route("/api", taskRouter);
   app.route("/api", workflowRouter);
   app.route("/api", boardRouter);

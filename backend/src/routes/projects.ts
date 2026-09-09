@@ -1,15 +1,16 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
-import { Prisma } from "@prisma/client";
+import { Prisma, type Project } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
-import { forbidden, notFound } from "../middleware/error.js";
+import { conflict, forbidden, notFound } from "../middleware/error.js";
 import { ensureDefaultBoardForProject } from "../services/board-default.js";
 import { taskTemplateSchema, taskTypeThresholdsSchema } from "../lib/confidence.js";
 import {
   hasProjectAccess,
+  hasProjectRole,
   isProjectAdmin,
   resolveTeamId,
   resolveTeamIdErrorBody,
@@ -22,6 +23,7 @@ import {
   GovernanceMode,
   deriveGovernanceModeFromFlags,
   legacyFlagsFromGovernanceMode,
+  resolveGovernanceMode,
 } from "../lib/governance-mode.js";
 import { resolveEnforcementMode, EnforcementMode } from "../lib/enforcement-mode.js";
 import { describeTaskCreation } from "../lib/task-creation-readiness.js";
@@ -31,8 +33,19 @@ import {
   computeConfidenceTelemetryAggregates,
   CLAIM_EVALUATION_ACTIONS,
 } from "../services/confidence-telemetry.js";
+import { mutateGroundingContext } from "../services/grounding-context-mutation.js";
+import { GroundingAccessError } from "../services/grounding-context.js";
+import { groundingTransaction, lockGroundingProjects, lockGroundingTaskUnderProject, assertNoGroundingReservation, GroundingDecisionError } from "../services/grounding-transaction.js";
 
 export const projectRouter = new Hono<{ Variables: AppVariables }>();
+projectRouter.onError((error, c) => {
+  if (error instanceof GroundingAccessError) {
+    if (error.code === "not_found") return notFound(c);
+    if (error.code === "forbidden") return forbidden(c, "Only team admins can update project settings");
+    return conflict(c, "Project settings changed before the request completed");
+  }
+  throw error;
+});
 
 const createProjectSchema = z.object({
   name: z.string().min(1).max(255),
@@ -457,212 +470,105 @@ projectRouter.get("/projects/:id/telemetry/confidence", async (c) => {
 
 // ── Update project ────────────────────────────────────────────────────────────
 
-projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), async (c) => {
-  const actor = c.get("actor");
+type ProjectPatch = z.infer<typeof updateProjectSchema>;
 
-  if (actor.type === "agent") {
-    return forbidden(c, "Agents cannot update projects");
-  }
-
-  const project = await prisma.project.findUnique({ where: { id: c.req.param("id") } });
-  if (!project) return notFound(c);
-
-  // Project settings carry governance semantics (confidence threshold,
-  // distinct-reviewer gate, task template). Any team member used to be
-  // able to flip these — which means a careless or malicious member could
-  // silently disable the distinct-reviewer gate before self-approving
-  // a task. Require admin on the whole PATCH path, matching the existing
-  // `DELETE /projects/:id` check above.
-  if (!(await isProjectAdmin(actor, project.id))) {
-    return forbidden(c, "Only team admins can update project settings");
-  }
-
-  const body = c.req.valid("json");
-
-  // scorer-v2 (T5): flipping a project TO `BLOCK` is gated on an explicit
-  // acknowledgement that its shadow report was reviewed. `acknowledgeShadowReport`
-  // is a request-only flag, never persisted. Idempotent re-sets of an
-  // already-BLOCK project don't require it.
-  if (body.enforcementMode === "BLOCK" && resolveEnforcementMode(project) !== EnforcementMode.BLOCK && body.acknowledgeShadowReport !== true) {
-    return c.json(
-      {
-        error: "shadow_report_unacknowledged",
-        message:
-          "Flipping enforcementMode to BLOCK requires acknowledgeShadowReport=true. Review the project's shadow report first (npm run shadow:report), then re-send with the acknowledgement. See docs/scorer-v2-enforcement.md.",
-      },
-      400,
-    );
-  }
-
-  // `acknowledgeShadowReport` is a control flag, not a column — keep it out of the write.
-  const {
-    taskTemplate,
-    taskTypeThresholds,
-    notificationWebhookUrl,
-    notificationWebhookSecret,
-    acknowledgeShadowReport: _ack,
-    ...rest
-  } = body;
+function projectPatchData(body: ProjectPatch, project: Project): Prisma.ProjectUpdateInput {
+  const { taskTemplate, taskTypeThresholds, notificationWebhookUrl, notificationWebhookSecret, acknowledgeShadowReport: _ack, ...rest } = body;
   const data: Prisma.ProjectUpdateInput = { ...rest };
-  if (taskTemplate !== undefined) {
-    data.taskTemplate = taskTemplate === null ? Prisma.JsonNull : taskTemplate;
-  }
-  if (taskTypeThresholds !== undefined) {
-    data.taskTypeThresholds = taskTypeThresholds === null ? Prisma.JsonNull : taskTypeThresholds;
-  }
-  // Empty string is the UI's way to clear an optional field — normalize to
-  // null so Prisma writes `NULL` and reads stop returning the old value.
-  if (notificationWebhookUrl !== undefined) {
-    data.notificationWebhookUrl = notificationWebhookUrl === "" ? null : notificationWebhookUrl;
-  }
-  if (notificationWebhookSecret !== undefined) {
-    data.notificationWebhookSecret = notificationWebhookSecret === "" ? null : notificationWebhookSecret;
-  }
-
-  // Governance-mode writes always keep the legacy columns in sync so
-  // dashboards still reading them stay accurate through the deprecation
-  // window. If the client sends both, `governanceMode` wins and the legacy
-  // fields in the payload are overwritten by the derivation.
+  if (taskTemplate !== undefined) data.taskTemplate = taskTemplate === null ? Prisma.JsonNull : taskTemplate;
+  if (taskTypeThresholds !== undefined) data.taskTypeThresholds = taskTypeThresholds === null ? Prisma.JsonNull : taskTypeThresholds;
+  if (notificationWebhookUrl !== undefined) data.notificationWebhookUrl = notificationWebhookUrl === "" ? null : notificationWebhookUrl;
+  if (notificationWebhookSecret !== undefined) data.notificationWebhookSecret = notificationWebhookSecret === "" ? null : notificationWebhookSecret;
   if (body.governanceMode !== undefined) {
     const mode = body.governanceMode as GovernanceMode;
     const legacy = legacyFlagsFromGovernanceMode(mode);
     data.governanceMode = mode;
     data.soloMode = legacy.soloMode;
     data.requireDistinctReviewer = legacy.requireDistinctReviewer;
-  } else if (
-    body.soloMode !== undefined ||
-    body.requireDistinctReviewer !== undefined
-  ) {
-    // Legacy-only write: derive governanceMode so new readers see a
-    // consistent value. Missing legacy flags fall back to the existing
-    // row values.
-    const soloMode = body.soloMode ?? project.soloMode;
-    const requireDistinctReviewer =
-      body.requireDistinctReviewer ?? project.requireDistinctReviewer;
+  } else if (body.soloMode !== undefined || body.requireDistinctReviewer !== undefined) {
     data.governanceMode = deriveGovernanceModeFromFlags({
-      soloMode,
-      requireDistinctReviewer,
+      soloMode: body.soloMode ?? project.soloMode,
+      requireDistinctReviewer: body.requireDistinctReviewer ?? project.requireDistinctReviewer,
     });
   }
+  return data;
+}
 
-  const updated = await prisma.project.update({
-    where: { id: project.id },
-    data,
+/** Fields included in a signed context or consulted by its completion gates. */
+function projectPatchChangesGroundingContext(before: Project, after: Project): boolean {
+  return before.githubRepo !== after.githubRepo ||
+    before.requireGroundingForDebug !== after.requireGroundingForDebug ||
+    canonicalJsonString(before.taskTemplate) !== canonicalJsonString(after.taskTemplate) ||
+    resolveGovernanceMode(before) !== resolveGovernanceMode(after);
+}
+
+function projectPatchAuditChanges(body: ProjectPatch, project: Project): Record<string, unknown> {
+  const changes: Record<string, unknown> = {};
+  if (body.requireDistinctReviewer !== undefined && body.requireDistinctReviewer !== project.requireDistinctReviewer) changes.requireDistinctReviewer = { from: project.requireDistinctReviewer, to: body.requireDistinctReviewer };
+  if (body.confidenceThreshold !== undefined && body.confidenceThreshold !== project.confidenceThreshold) changes.confidenceThreshold = { from: project.confidenceThreshold, to: body.confidenceThreshold };
+  if (body.taskTypeThresholds !== undefined && canonicalJsonString(body.taskTypeThresholds) !== canonicalJsonString(project.taskTypeThresholds)) changes.taskTypeThresholds = { from: project.taskTypeThresholds, to: body.taskTypeThresholds };
+  if (body.enforcementMode !== undefined && body.enforcementMode !== project.enforcementMode) changes.enforcementMode = { from: project.enforcementMode, to: body.enforcementMode };
+  if (body.soloMode !== undefined && body.soloMode !== project.soloMode) changes.soloMode = { from: project.soloMode, to: body.soloMode };
+  if (body.governanceMode !== undefined && body.governanceMode !== project.governanceMode) changes.governanceMode = { from: project.governanceMode, to: body.governanceMode };
+  if (body.requireGroundingForDebug !== undefined && body.requireGroundingForDebug !== project.requireGroundingForDebug) changes.requireGroundingForDebug = { from: project.requireGroundingForDebug, to: body.requireGroundingForDebug };
+  if (body.allowNonCreatorRespec !== undefined && body.allowNonCreatorRespec !== project.allowNonCreatorRespec) changes.allowNonCreatorRespec = { from: project.allowNonCreatorRespec, to: body.allowNonCreatorRespec };
+  if (body.aiHelpersEnabled !== undefined && body.aiHelpersEnabled !== project.aiHelpersEnabled) changes.aiHelpersEnabled = { from: project.aiHelpersEnabled, to: body.aiHelpersEnabled };
+  if (body.notificationWebhookUrl !== undefined) {
+    const nextUrl = body.notificationWebhookUrl === "" ? null : body.notificationWebhookUrl;
+    if (nextUrl !== project.notificationWebhookUrl) changes.notificationWebhookUrl = { from: project.notificationWebhookUrl, to: nextUrl };
+  }
+  if (body.notificationWebhookSecret !== undefined) {
+    const had = !!project.notificationWebhookSecret;
+    const has = body.notificationWebhookSecret !== "" && body.notificationWebhookSecret !== null;
+    if (had !== has || (had && has && body.notificationWebhookSecret !== project.notificationWebhookSecret)) changes.notificationWebhookSecret = { from: had ? "set" : "unset", to: has ? "set" : "unset" };
+  }
+  return changes;
+}
+
+async function lockProjectAdminGrants(db: Prisma.TransactionClient, actor: Extract<Actor, { type: "human" }>, project: Project) {
+  // The Serializable snapshot starts before a queued parent lock is granted.
+  // Locking membership rows makes a concurrent revocation retry that snapshot,
+  // and holds the authorization used below until this mutation commits.
+  await db.$queryRaw`SELECT id FROM team_members WHERE "teamId" = ${project.teamId} AND "userId" = ${actor.userId} FOR SHARE`;
+  await db.$queryRaw`SELECT id FROM project_members WHERE "projectId" = ${project.id} AND "userId" = ${actor.userId} FOR SHARE`;
+}
+
+projectRouter.patch("/projects/:id", zValidator("json", updateProjectSchema), async (c) => {
+  const actor = c.get("actor");
+  if (actor.type === "agent") return forbidden(c, "Agents cannot update projects");
+  const body = c.req.valid("json");
+  const projectId = c.req.param("id");
+  let freshProject: Project | undefined;
+
+  const result = await mutateGroundingContext(prisma, {
+    projectIds: [projectId],
+    audit: { actor, reason: "project_patch_grounding_context" },
+    selectAndAuthorize: async db => {
+      freshProject = await db.project.findUnique({ where: { id: projectId } }) ?? undefined;
+      if (!freshProject) throw new GroundingAccessError("not_found", 404);
+      await lockProjectAdminGrants(db, actor, freshProject);
+      if (!await hasProjectRole(actor, freshProject.id, "ADMIN", db)) throw new GroundingAccessError("forbidden", 403);
+      return (await db.task.findMany({ where: { projectId }, select: { id: true } })).map(task => task.id);
+    },
+    mutate: async db => {
+      const project = freshProject;
+      if (!project) throw new GroundingAccessError("not_found", 404);
+      if (body.enforcementMode === "BLOCK" && resolveEnforcementMode(project) !== EnforcementMode.BLOCK && body.acknowledgeShadowReport !== true) {
+        return { updated: project, changes: {}, groundingChanged: false, unacknowledged: true };
+      }
+      const updated = await db.project.update({ where: { id: project.id }, data: projectPatchData(body, project) });
+      return { updated, changes: projectPatchAuditChanges(body, project), groundingChanged: projectPatchChangesGroundingContext(project, updated), unacknowledged: false };
+    },
+    didMutate: result => result.groundingChanged,
   });
 
-  // Audit the toggle so flipping the governance flag is traceable.
-  // Scoped to the fields that carry real authorization meaning —
-  // cosmetic renames are covered by updatedAt.
-  const governanceChange: Record<string, unknown> = {};
-  if (body.requireDistinctReviewer !== undefined && body.requireDistinctReviewer !== project.requireDistinctReviewer) {
-    governanceChange.requireDistinctReviewer = {
-      from: project.requireDistinctReviewer,
-      to: body.requireDistinctReviewer,
-    };
+  if (result.unacknowledged) {
+    return c.json({ error: "shadow_report_unacknowledged", message: "Flipping enforcementMode to BLOCK requires acknowledgeShadowReport=true. Review the project's shadow report first (npm run shadow:report), then re-send with the acknowledgement. See docs/scorer-v2-enforcement.md." }, 400);
   }
-  if (body.confidenceThreshold !== undefined && body.confidenceThreshold !== project.confidenceThreshold) {
-    governanceChange.confidenceThreshold = {
-      from: project.confidenceThreshold,
-      to: body.confidenceThreshold,
-    };
+  if (Object.keys(result.changes).length > 0) {
+    void logAuditEvent({ action: "project.updated", actorId: actor.userId, projectId, payload: { changes: result.changes } });
   }
-  // M2 (task b8629b99): taskTypeThresholds gates the same claim decision as
-  // confidenceThreshold above, so it is audited the same way. Comparison
-  // uses canonicalJsonString (sorted keys), not a plain JSON.stringify, so
-  // re-sending the same map with its keys in a different order does not
-  // write a spurious audit entry (review round-2 finding 4).
-  if (
-    taskTypeThresholds !== undefined &&
-    canonicalJsonString(taskTypeThresholds) !== canonicalJsonString(project.taskTypeThresholds)
-  ) {
-    governanceChange.taskTypeThresholds = {
-      from: project.taskTypeThresholds,
-      to: taskTypeThresholds,
-    };
-  }
-  if (body.enforcementMode !== undefined && body.enforcementMode !== project.enforcementMode) {
-    governanceChange.enforcementMode = {
-      from: project.enforcementMode,
-      to: body.enforcementMode,
-    };
-  }
-  if (body.soloMode !== undefined && body.soloMode !== project.soloMode) {
-    governanceChange.soloMode = {
-      from: project.soloMode,
-      to: body.soloMode,
-    };
-  }
-  if (body.governanceMode !== undefined && body.governanceMode !== project.governanceMode) {
-    governanceChange.governanceMode = {
-      from: project.governanceMode,
-      to: body.governanceMode,
-    };
-  }
-  if (
-    body.requireGroundingForDebug !== undefined &&
-    body.requireGroundingForDebug !== project.requireGroundingForDebug
-  ) {
-    governanceChange.requireGroundingForDebug = {
-      from: project.requireGroundingForDebug,
-      to: body.requireGroundingForDebug,
-    };
-  }
-  if (
-    body.allowNonCreatorRespec !== undefined &&
-    body.allowNonCreatorRespec !== project.allowNonCreatorRespec
-  ) {
-    governanceChange.allowNonCreatorRespec = {
-      from: project.allowNonCreatorRespec,
-      to: body.allowNonCreatorRespec,
-    };
-  }
-  if (
-    body.aiHelpersEnabled !== undefined &&
-    body.aiHelpersEnabled !== project.aiHelpersEnabled
-  ) {
-    governanceChange.aiHelpersEnabled = {
-      from: project.aiHelpersEnabled,
-      to: body.aiHelpersEnabled,
-    };
-  }
-  // Notification-webhook config is ops-sensitive: a flipped URL changes
-  // where Signals are pushed, and a rotated secret invalidates receivers.
-  // Audit URL transitions in plaintext (operators need to see destinations)
-  // and secret changes as set/cleared/rotated booleans — never log the
-  // raw secret value.
-  if (notificationWebhookUrl !== undefined) {
-    const nextUrl = notificationWebhookUrl === "" ? null : notificationWebhookUrl;
-    if (nextUrl !== project.notificationWebhookUrl) {
-      governanceChange.notificationWebhookUrl = {
-        from: project.notificationWebhookUrl,
-        to: nextUrl,
-      };
-    }
-  }
-  if (notificationWebhookSecret !== undefined) {
-    const had = !!project.notificationWebhookSecret;
-    const has = notificationWebhookSecret !== "" && notificationWebhookSecret !== null;
-    // The plaintext compare below works because we read the raw secret
-    // from the DB above. If notificationWebhookSecret ever moves to a
-    // hashed-at-rest model, this comparison silently breaks (raw input
-    // vs hash will never equal) — switch to a hash compare at that point.
-    if (had !== has || (had && has && notificationWebhookSecret !== project.notificationWebhookSecret)) {
-      governanceChange.notificationWebhookSecret = {
-        from: had ? "set" : "unset",
-        to: has ? "set" : "unset",
-      };
-    }
-  }
-  if (Object.keys(governanceChange).length > 0) {
-    void logAuditEvent({
-      action: "project.updated",
-      actorId: actor.userId,
-      projectId: project.id,
-      payload: { changes: governanceChange },
-    });
-  }
-
-  return c.json({ project: redactProject(updated) });
+  return c.json({ project: redactProject(result.updated) });
 });
 
 // ── Delete project ────────────────────────────────────────────────────────────
@@ -674,23 +580,37 @@ projectRouter.delete("/projects/:id", async (c) => {
     return forbidden(c, "Agents cannot delete projects");
   }
 
-  const project = await prisma.project.findUnique({ where: { id: c.req.param("id") } });
-  if (!project) return notFound(c);
-
-  // Project deletion is destructive; require admin authority. Matches the
-  // PATCH guard that was tightened for governance fields. Prior code only
-  // checked team membership — any HUMAN_MEMBER could delete the project.
-  if (!(await isProjectAdmin(actor, project.id))) {
-    return forbidden(c, "Only project admins can delete projects");
+  const projectId = c.req.param("id");
+  let attachments: { url: string }[] = [];
+  try {
+    await groundingTransaction(prisma, async db => {
+      await lockGroundingProjects(db, [projectId]);
+      const project = await db.project.findUnique({ where: { id: projectId } });
+      if (!project) throw new GroundingAccessError("not_found", 404);
+      await lockProjectAdminGrants(db, actor, project);
+      if (!await hasProjectRole(actor, project.id, "ADMIN", db)) throw new GroundingAccessError("forbidden", 403);
+      const taskIds = (await db.task.findMany({ where: { projectId }, select: { id: true } })).map(task => task.id).sort();
+      for (const taskId of taskIds) await lockGroundingTaskUnderProject(db, taskId, [projectId]);
+      // Reservation denial deliberately precedes immutable-history denial.
+      for (const taskId of taskIds) await assertNoGroundingReservation(db, taskId);
+      const retained = await Promise.all(taskIds.map(async taskId =>
+        (await db.groundingCohort.findUnique({ where: { taskId } })) ||
+        (await db.groundingBinding.findUnique({ where: { taskId } })) ||
+        (await db.groundingOperation.findFirst({ where: { taskId } }))));
+      if (retained.some(Boolean)) throw new GroundingAccessError("bad_state", 409);
+      attachments = await db.taskAttachment.findMany({ where: { task: { projectId } }, select: { url: true } });
+      await db.project.delete({ where: { id: projectId } });
+    });
+  } catch (error) {
+    if (error instanceof GroundingDecisionError && error.code === "grounding_finalization_pending") return c.json({ error: error.code }, 409);
+    if (error instanceof GroundingAccessError) {
+      if (error.code === "not_found") return notFound(c);
+      if (error.code === "forbidden") return forbidden(c, "Only project admins can delete projects");
+      return c.json({ error: "grounding_history_retained" }, 409);
+    }
+    throw error;
   }
-
-  // Reclaim disk for uploaded attachments before the Project->Task->Attachment
-  // cascade drops their rows; the cascade never touches the backing files.
-  const attachments = await prisma.taskAttachment.findMany({
-    where: { task: { projectId: project.id } },
-    select: { url: true },
-  });
-  await prisma.project.delete({ where: { id: project.id } });
+  // Reclaim disk only after the admitted database transaction committed.
   for (const a of attachments) {
     const abs = storedFilePath(a.url);
     if (abs) await unlink(abs).catch(() => {});

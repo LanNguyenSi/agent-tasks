@@ -1,3 +1,5 @@
+import { requireProjectWrite, hasProjectRole } from "./team-access.js";
+import { directDescriptorSchema, readDirectDescriptor, resolveDirectGroundingTarget, type GroundingDirectDescriptor } from "./grounding-direct-context.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { type Prisma, type GroundingAttempt, type GroundingBinding, type PrismaClient } from "@prisma/client";
 import { groundingSettings, groundingTime } from "./grounding-verification.js";
@@ -41,11 +43,13 @@ export class GroundingAttemptsService {
   private readonly head: GroundingHeadProvider;
   private readonly taskMergeHead: GroundingHeadProvider;
   private readonly authority: GroundingAuthority;
+  private readonly admissionAuthority: GroundingAuthority;
   constructor(private readonly deps: GroundingAttemptsDependencies) {
     this.now = deps.now ?? (() => Math.floor(Date.now() / 1000));
     this.head = deps.headProvider ?? fetchGroundingHead;
     this.taskMergeHead = deps.headProvider ?? fetchTaskMergeHead;
     this.authority = deps.authority ?? groundingAuthority;
+    this.admissionAuthority = deps.authority ?? { canWrite: requireProjectWrite, hasRole: hasProjectRole };
   }
 
   private settings(projectId: string) { return groundingSettings(this.deps.config, projectId); }
@@ -59,8 +63,8 @@ export class GroundingAttemptsService {
     return lockGroundingTask(db, taskId);
   }
 
-  private async authorizeTask(task: GroundingTask, actor: Actor, db: Prisma.TransactionClient): Promise<void> {
-    if ((actor.type === "agent" && !actor.scopes.includes("tasks:transition")) || !await this.authority.canWrite(actor, task.projectId, db))
+  private async authorizeTask(task: GroundingTask, actor: Actor, db: Prisma.TransactionClient, authority = this.authority): Promise<void> {
+    if ((actor.type === "agent" && !actor.scopes.includes("tasks:transition")) || !await authority.canWrite(actor, task.projectId, db))
       throw new GroundingAccessError("forbidden", 403);
     const ownsClaim = actor.type === "agent"
       ? task.claimedByAgentId === actor.tokenId || task.reviewClaimedByAgentId === actor.tokenId
@@ -77,8 +81,9 @@ export class GroundingAttemptsService {
     });
   }
 
-  private async authorizePolicy(task: GroundingTask, actor: Actor, db: Prisma.TransactionClient, intent?: GroundingIntent, taskRoute = false) {
-    if (taskRoute && intent === "merge" && task.status === "review") await resolveTaskMergeTarget(db, task, actor, this.authority);
+  private async authorizePolicy(task: GroundingTask, actor: Actor, db: Prisma.TransactionClient, intent?: GroundingIntent, taskRoute = false, direct: GroundingDirectDescriptor | null = null) {
+    if (direct) await resolveDirectGroundingTarget(db, task, actor, direct, this.authority);
+    else if (taskRoute && intent === "merge" && task.status === "review") await resolveTaskMergeTarget(db, task, actor, this.authority);
     else await this.authorizeTask(task, actor, db);
   }
 
@@ -94,7 +99,7 @@ export class GroundingAttemptsService {
     });
   }
 
-  private async receiptIntent(db: Prisma.TransactionClient, taskId: string, attemptId: string, actor: Actor): Promise<GroundingIntent> {
+  private async receiptIntent(db: Prisma.TransactionClient, taskId: string, attemptId: string, actor: Actor): Promise<{ intent: GroundingIntent; direct: GroundingDirectDescriptor | null }> {
     const task = await this.lock(db, taskId);
     if (!await this.authority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);
     const attempt = await db.groundingAttempt.findUnique({ where: { id: attemptId } });
@@ -102,50 +107,51 @@ export class GroundingAttemptsService {
     if (attempt.actorType !== actor.type || attempt.actorId !== actorId(actor)) throw new GroundingAccessError("forbidden", 403);
     const intent = groundingIntentSchema.safeParse(attempt.intent);
     if (!intent.success) unavailable();
-    return intent.data;
+    return { intent: intent.data, direct: readDirectDescriptor(attempt.directRoute) };
   }
 
   async authorizeRouteReceipt(taskId: string, attemptId: string, actor: Actor): Promise<void> {
     return this.transaction(async db => {
-      const intent = await this.receiptIntent(db, taskId, attemptId, actor);
-      await this.lockAuthorized(db, taskId, actor, intent, true);
+      const policy = await this.receiptIntent(db, taskId, attemptId, actor);
+      await this.lockAuthorized(db, taskId, actor, policy.intent, true, policy.direct);
     });
   }
 
-  private async lockAuthorized(db: Prisma.TransactionClient, taskId: string, actor: Actor, intent?: GroundingIntent, taskRoute = false): Promise<GroundingTask> {
-    const before = await db.task.findUnique({ where: { id: taskId }, include: { project: true } });
-    if (!before) throw new GroundingAccessError("not_found", 404);
-    await this.authorizePolicy(before, actor, db, intent, taskRoute);
+  private async lockAuthorized(db: Prisma.TransactionClient, taskId: string, actor: Actor, intent?: GroundingIntent, taskRoute = false, direct: GroundingDirectDescriptor | null = null): Promise<GroundingTask> {
     const task = await this.lock(db, taskId);
-    await this.authorizePolicy(task, actor, db, intent, taskRoute);
+    await this.authorizePolicy(task, actor, db, intent, taskRoute, direct);
     await assertNoGroundingReservation(db, task.id);
     return task;
   }
 
   /** Service-only enrollment from protected configuration; never called by the HTTP router. */
   async provision(input: { taskId: string; projectId: string; subjectMode: "TASK_SPEC" | "CODE_HEAD" }): Promise<GroundingBinding> {
-    if (!uuid.safeParse(input.projectId).success || !["TASK_SPEC", "CODE_HEAD"].includes(input.subjectMode)) unavailable();
-    return this.transaction(async db => {
-      const task = await this.lock(db, input.taskId);
-      if (task.projectId !== input.projectId) mismatch();
-      const settings = this.settings(task.projectId);
-      await provisionGroundingCohortInTransaction(db, task.id, task.projectId, { mode: "EXTERNAL_V1", protected: true, provenance: "external-binding:v1", legacySessionId: null, legacyPhase: null });
-      const existing = await db.groundingBinding.findUnique({ where: { taskId: task.id } });
-      if (existing) {
-        if (existing.projectId !== input.projectId || existing.audience !== settings.audience || existing.subjectMode !== input.subjectMode || !existing.protected ||
-            existing.policyId !== GROUNDING_POLICY.id || existing.policyRevision !== GROUNDING_POLICY.revision || existing.policySha256 !== GROUNDING_POLICY.sha256) mismatch();
-        return existing;
-      }
-      return db.groundingBinding.create({ data: {
-        taskId: task.id, projectId: task.projectId, audience: settings.audience, protected: true,
-        subjectMode: input.subjectMode, policyId: GROUNDING_POLICY.id, policyRevision: GROUNDING_POLICY.revision, policySha256: GROUNDING_POLICY.sha256,
-      } });
-    });
+    return this.transaction(db => this.provisionInTransaction(db, input));
   }
 
-  private async context(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, intent: GroundingIntent, taskRoute = false) {
+  /** Server-only creation enrollment. The caller must commit the initial row in this same transaction. */
+  async provisionInTransaction(db: Prisma.TransactionClient, input: { taskId: string; projectId: string; subjectMode: "TASK_SPEC" | "CODE_HEAD" }): Promise<GroundingBinding> {
+    if (!uuid.safeParse(input.projectId).success || !["TASK_SPEC", "CODE_HEAD"].includes(input.subjectMode)) unavailable();
+
+    const task = await this.lock(db, input.taskId);
+    if (task.projectId !== input.projectId) mismatch();
+    const settings = this.settings(task.projectId);
+    await provisionGroundingCohortInTransaction(db, task.id, task.projectId, { mode: "EXTERNAL_V1", protected: true, provenance: "external-binding:v1", legacySessionId: null, legacyPhase: null });
+    const existing = await db.groundingBinding.findUnique({ where: { taskId: task.id } });
+    if (existing) {
+      if (existing.projectId !== input.projectId || existing.audience !== settings.audience || existing.subjectMode !== input.subjectMode || !existing.protected ||
+          existing.policyId !== GROUNDING_POLICY.id || existing.policyRevision !== GROUNDING_POLICY.revision || existing.policySha256 !== GROUNDING_POLICY.sha256) mismatch();
+      return existing;
+    }
+    return db.groundingBinding.create({ data: {
+      taskId: task.id, projectId: task.projectId, audience: settings.audience, protected: true,
+      subjectMode: input.subjectMode, policyId: GROUNDING_POLICY.id, policyRevision: GROUNDING_POLICY.revision, policySha256: GROUNDING_POLICY.sha256,
+    } });
+  }
+
+  private async context(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, intent: GroundingIntent, taskRoute = false, direct: GroundingDirectDescriptor | null = null) {
     const standalone = taskRoute && intent === "merge" && task.status === "review";
-    const resolved = standalone ? await resolveTaskMergeTarget(db, task, actor, this.authority) : await resolveGroundingTarget(db, task, actor, intent, this.authority);
+    const resolved = direct ? await resolveDirectGroundingTarget(db, task, actor, direct, this.authority) : standalone ? await resolveTaskMergeTarget(db, task, actor, this.authority) : await resolveGroundingTarget(db, task, actor, intent, this.authority);
     const binding = await db.groundingBinding.findUnique({ where: { taskId: task.id } });
     if (!binding) throw new GroundingAccessError("grounding_not_provisioned", 409);
     await requireGroundingCohort(db, task.id, task.projectId);
@@ -161,18 +167,35 @@ export class GroundingAttemptsService {
   async issueForRoute(taskId: string, actor: Actor, intent: GroundingIntent) {
     return this.issueWithPolicy(taskId, actor, intent, true);
   }
-  private async issueWithPolicy(taskId: string, actor: Actor, intent: GroundingIntent, taskRoute: boolean) {
+  async authorizeDirectIssue(taskId: string, actor: Actor) {
+    return this.transaction(async db => {
+      const task = await this.lock(db, taskId);
+      if ((actor.type === "agent" && !actor.scopes.includes("tasks:transition")) || !await this.authority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);
+    });
+  }
+  async issueDirect(taskId: string, actor: Actor, input: GroundingDirectDescriptor) {
+    const parsed = directDescriptorSchema.safeParse(input);
+    if (!parsed.success) invalid();
+    // Resolve under the issuance lock below; callers never nominate a semantic action.
+    return this.issueWithPolicy(taskId, actor, "finish", true, parsed.data);
+  }
+  private async issueWithPolicy(taskId: string, actor: Actor, intent: GroundingIntent, taskRoute: boolean, direct: GroundingDirectDescriptor | null = null) {
     if (!groundingIntentSchema.safeParse(intent).success) throw new GroundingAccessError("bad_state", 409);
     return this.transaction(async db => {
-      const task = await this.lockAuthorized(db, taskId, actor, intent, taskRoute);
-      const context = await this.context(db, task, actor, intent, taskRoute);
+      const task = await this.lockAuthorized(db, taskId, actor, intent, taskRoute, direct);
+      const context = await this.context(db, task, actor, intent, taskRoute, direct);
+      if (direct) {
+        const resolved = await resolveDirectGroundingTarget(db, task, actor, direct, this.authority);
+        if (!resolved.success) throw new GroundingAccessError("bad_state", 409);
+        intent = resolved.action as GroundingIntent;
+      }
       const now = this.time();
       const revision = context.binding.contextRevision + (context.binding.contextDigest !== null && context.binding.contextDigest !== context.digest ? 1 : 0);
       if (revision > 2147483647) unavailable();
       await db.groundingAttempt.updateMany({ where: { taskId, state: "ACTIVE" }, data: { state: "SUPERSEDED" } });
       const attempt = await db.groundingAttempt.create({ data: {
         id: randomUUID(), taskId, contextRevision: revision, contextDigest: context.digest, contextBytes: context.bytes,
-        target: context.target, intent, nonce: randomBytes(32).toString("base64url"),
+        target: context.target, intent, ...(direct ? { directRoute: direct } : {}), nonce: randomBytes(32).toString("base64url"),
         actorType: actor.type, actorId: actorId(actor), createdAt: new Date(now * 1000), expiresAt: new Date((now + context.settings.seconds) * 1000),
       } });
       const changed = await db.groundingBinding.updateMany({ where: { taskId, activeAttemptId: context.binding.activeAttemptId, contextRevision: context.binding.contextRevision },
@@ -199,14 +222,20 @@ export class GroundingAttemptsService {
     // A string transport must not replace malformed UTF-16 with different signed bytes.
     if (typeof input === "string" && wire.toString("utf8") !== input) invalid();
     return this.transaction(async db => {
-      const persistedIntent = taskRoute ? await this.receiptIntent(db, taskId, attemptId, actor) : undefined;
-      const task = await this.lockAuthorized(db, taskId, actor, persistedIntent, taskRoute);
+      if (!taskRoute) {
+        const before = await db.task.findUnique({ where: { id: taskId }, include: { project: true } });
+        if (!before) throw new GroundingAccessError("not_found", 404);
+        await this.authorizeTask(before, actor, db, this.admissionAuthority);
+      }
+      const policy = await this.receiptIntent(db, taskId, attemptId, actor);
+      if (!taskRoute && policy.direct !== null) mismatch();
+      const task = await this.lockAuthorized(db, taskId, actor, policy.intent, taskRoute, policy.direct);
       const attempt = await db.groundingAttempt.findUnique({ where: { id: attemptId }, include: { receipt: true } });
       if (!attempt || attempt.taskId !== task.id) mismatch();
       if (attempt.actorType !== actor.type || attempt.actorId !== actorId(actor)) throw new GroundingAccessError("forbidden", 403);
       const intent = groundingIntentSchema.safeParse(attempt.intent);
       if (!intent.success) unavailable();
-      const context = await this.context(db, task, actor, intent.data, taskRoute);
+      const context = await this.context(db, task, actor, intent.data, taskRoute, policy.direct);
       if (context.binding.activeAttemptId !== attempt.id || attempt.state !== "ACTIVE") stale();
       if (context.binding.contextRevision !== attempt.contextRevision || context.digest !== attempt.contextDigest || !context.bytes.equals(attempt.contextBytes)) mismatch();
       if (this.time() >= attempt.expiresAt.getTime() / 1000) stale();

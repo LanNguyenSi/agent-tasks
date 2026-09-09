@@ -1,3 +1,5 @@
+import { readDirectOperation } from "./grounding-direct-input.js";
+import { resolveDirectGroundingTarget } from "./grounding-direct-context.js";
 import { z } from "zod";
 import type { Prisma, Signal } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
@@ -13,31 +15,35 @@ const contextSchema = z.object({
   branchName: text.nullable(), prUrl: text.nullable(), prNumber: z.number().int().nullable(),
   actor: z.object({ type: z.enum(["human", "agent"]), name: text }).strict(),
   reviewComment: text.optional(), assigneeName: text.optional(),
+  forceTransition: z.object({ from: text, to: text, forcedRules: z.array(text), forceReason: text.nullable() }).strict().optional(),
 }).strict();
 const mergeMethod = z.enum(["merge", "squash", "rebase"]).default("squash");
 const finishBody = z.object({ result: z.string().max(5000).optional(), prUrl: z.string().max(32768).optional(), prNumber: z.number().int().positive().optional(), autoMerge: z.boolean().default(false), mergeMethod }).strict();
 const reviewBody = z.object({ result: z.string().max(5000).optional(), outcome: z.enum(["approve", "request_changes"]), autoMerge: z.boolean().default(false), mergeMethod }).strict();
 const patchSchema = z.object({
-  status: z.string().max(128), result: text.optional(),
+  status: z.string().max(128), result: text.nullable().optional(),
+  title: text.optional(), description: text.nullable().optional(), templateData: z.unknown().optional(), branchName: text.nullable().optional(), prUrl: text.nullable().optional(), prNumber: z.number().int().positive().nullable().optional(), deliverableRepo: text.nullable().optional(), labels: z.array(text).optional(),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(), dueAt: z.string().datetime().nullable().optional(), externalRef: text.nullable().optional(),
   claimedByUserId: z.null().optional(), claimedByAgentId: z.null().optional(), claimedAt: z.null().optional(),
   reviewClaimedByUserId: z.null().optional(), reviewClaimedByAgentId: z.null().optional(), reviewClaimedAt: z.null().optional(),
 }).strict();
 const planSchema = z.object({
   version: z.literal(1),
-  kind: z.enum(["work_finish", "review_finish", "self_approve_finish", "task_merge", "abandon"]),
-  action: z.enum(["finish", "approve", "request_changes", "merge", "abandon"]),
+  kind: z.enum(["work_finish", "review_finish", "self_approve_finish", "task_merge", "abandon", "direct"]),
+  action: z.enum(["finish", "approve", "request_changes", "merge", "abandon", "transition"]),
   remote: z.boolean(), alreadyMerged: z.boolean().optional(), patch: patchSchema,
   response: z.object({ kind: z.enum(["work", "review"]).optional(), targetStatus: z.string().max(128).optional(), outcome: z.enum(["approve", "request_changes"]).optional(), skippedGates: z.array(z.string().max(128)).max(128).optional() }).strict(),
   acknowledge: z.boolean(),
-  signals: z.array(z.object({ type: z.enum(["review_needed", "changes_requested", "task_approved", "self_merge_notice"]), recipientAgentId: z.string().uuid().nullable(), recipientUserId: z.string().uuid().nullable(), context: contextSchema }).strict()).max(10000),
+  signals: z.array(z.object({ type: z.enum(["review_needed", "changes_requested", "task_approved", "self_merge_notice", "task_available", "task_force_transitioned"]), recipientAgentId: z.string().uuid().nullable(), recipientUserId: z.string().uuid().nullable(), context: contextSchema }).strict()).max(10000),
   comments: z.array(text).max(10),
-  audits: z.array(z.object({ action: z.enum(["task.transitioned", "task.reviewed", "task.released", "task.auto_merged", "task.merged", "task.self_merge_notice_emitted", "task.foreign_pr_linked"]), payload: z.record(z.unknown()) }).strict()).max(10),
+  audits: z.array(z.object({ action: z.enum(["task.transitioned", "task.reviewed", "task.released", "task.auto_merged", "task.merged", "task.self_merge_notice_emitted", "task.foreign_pr_linked", "task.transitioned.forced", "task.backlog_discarded", "task.backlog_promoted", "task.unabandoned", "task.created", "task.labels_changed", "task.deliverable_repo_changed"]), payload: z.record(z.unknown()) }).strict()).max(10),
 }).strict();
 export type GroundingRoutePlan = z.infer<typeof planSchema>;
 
 /** Compile only installed route behavior; transport data never supplies patches or recipients. */
 export async function buildGroundingRoutePlan(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, request: OperationRequest, decision: GroundingDecision, remote: boolean): Promise<GroundingRoutePlan | undefined> {
   if (!request.route) return undefined;
+  if (request.route.kind === "direct") return buildDirectPlan(db, task, actor, request, decision, remote);
   const { kind, transport } = request.route;
   const expectedEndpoint = kind === "task_merge" ? "merge" : kind === "abandon" ? "abandon" : "finish";
   if (transport.endpoint !== expectedEndpoint ||
@@ -105,6 +111,51 @@ export async function buildGroundingRoutePlan(db: Prisma.TransactionClient, task
   return readGroundingRoutePlan(plan);
 }
 
+async function buildDirectPlan(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, request: OperationRequest, decision: GroundingDecision, remote: boolean): Promise<GroundingRoutePlan> {
+  const direct = readDirectOperation(request)!;
+  if (remote) throw new GroundingAccessError("bad_state", 409);
+  const resolved = await resolveDirectGroundingTarget(db, task, actor, direct.descriptor, undefined, direct.force);
+  const actorId = actor.type === "agent" ? actor.tokenId : actor.userId;
+  const actorName = actor.type === "agent" ? (await db.agentToken.findUnique({ where: { id: actorId }, select: { name: true } }))?.name ?? "Agent" : (await db.user.findUnique({ where: { id: actorId }, select: { name: true } }))?.name ?? "Human";
+  const context: z.infer<typeof contextSchema> = { taskTitle: task.title, taskStatus: decision.to, projectSlug: task.project.slug, projectName: task.project.name, branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber, actor: { type: actor.type, name: actorName } };
+  const plan: GroundingRoutePlan = { version: 1, kind: "direct", action: decision.action as GroundingRoutePlan["action"], remote: false, patch: decision.data, response: {}, acknowledge: resolved.success && resolved.terminal, signals: [], comments: [], audits: [] };
+  if (direct.descriptor.endpoint === "review") {
+    const body = direct.body as { action: "approve" | "request_changes"; comment?: string };
+    if (body.comment?.trim()) plan.comments.push(`[${body.action === "approve" ? "Approved" : "Changes requested"}] ${body.comment.trim()}`);
+    if (task.claimedByAgentId || task.claimedByUserId) plan.signals.push({ type: body.action === "approve" ? "task_approved" : "changes_requested", recipientAgentId: task.claimedByAgentId, recipientUserId: task.claimedByUserId, context: { ...context, ...(body.comment ? { reviewComment: body.comment } : {}) } });
+    plan.audits.push({ action: "task.reviewed", payload: { reviewAction: body.action, from: decision.from, to: decision.to, actorType: actor.type, reviewerId: actorId } });
+  } else {
+    plan.audits.push({ action: direct.force ? "task.transitioned.forced" : resolved.special ?? "task.transitioned", payload: { from: decision.from, to: decision.to, actorType: actor.type, via: direct.descriptor.endpoint, ...(direct.force ? { forceReason: request.overrideReason } : {}) } });
+    if (isReviewState(resolved.def, decision.to) && !isReviewState(resolved.def, decision.from)) {
+      const agents = await db.agentToken.findMany({ where: { teamId: task.project.teamId, revokedAt: null, scopes: { has: "tasks:transition" }, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }], ...(task.claimedByAgentId ? { id: { not: task.claimedByAgentId } } : {}) }, select: { id: true, name: true }, orderBy: { id: "asc" } });
+      const humans = await db.teamMember.findMany({ where: { teamId: task.project.teamId, role: { in: ["REVIEWER", "ADMIN"] }, ...(task.claimedByUserId ? { userId: { not: task.claimedByUserId } } : {}) }, select: { userId: true, user: { select: { name: true, login: true } } }, orderBy: { userId: "asc" } });
+      const recipients = [...agents.map(a => ({ type: "agent" as const, id: a.id, name: a.name })), ...humans.map(h => ({ type: "human" as const, id: h.userId, name: h.user.name ?? h.user.login ?? "Unknown" }))];
+      const assigneeName = task.claimedByAgentId ? (await db.agentToken.findUnique({ where: { id: task.claimedByAgentId }, select: { name: true } }))?.name ?? "Agent" : "Human";
+      for (const r of recipients) plan.signals.push({ type: "review_needed", recipientAgentId: r.type === "agent" ? r.id : null, recipientUserId: r.type === "human" ? r.id : null, context: { ...context, actor: { type: "agent", name: assigneeName }, assigneeName } });
+      plan.comments.push(recipients.length ? `[system] Review requested — eligible reviewers: ${recipients.map(r => `${r.name} (${r.type})`).join(", ")}` : "[system] Review requested — no eligible reviewers found");
+      plan.audits.push({ action: "task.reviewed", payload: { event: "review_needed", recipientCount: recipients.length, recipients } });
+    }
+    if (decision.to === "open" && decision.from !== "open" && resolved.special !== "task.backlog_promoted") {
+      const agents = await db.agentToken.findMany({ where: { teamId: task.project.teamId, revokedAt: null, scopes: { has: "tasks:claim" }, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }, select: { id: true }, orderBy: { id: "asc" } });
+      for (const a of agents) plan.signals.push({ type: "task_available", recipientAgentId: a.id, recipientUserId: null, context });
+      if (agents.length) plan.audits.push({ action: "task.created", payload: { event: "task_available_signal", recipientCount: agents.length } });
+    }
+    if (direct.force) {
+      const forceContext = { ...context, forceTransition: { from: decision.from, to: decision.to, forcedRules: decision.skippedRules, forceReason: request.overrideReason } };
+      const recipients = new Map<string, { recipientAgentId: string | null; recipientUserId: string | null }>();
+      for (const id of [task.claimedByAgentId, task.reviewClaimedByAgentId]) if (id) recipients.set(`agent:${id}`, { recipientAgentId: id, recipientUserId: null });
+      for (const id of [task.claimedByUserId, task.reviewClaimedByUserId]) if (id && id !== actorId) recipients.set(`human:${id}`, { recipientAgentId: null, recipientUserId: id });
+      for (const recipient of recipients.values()) plan.signals.push({ type: "task_force_transitioned", ...recipient, context: forceContext });
+    }
+  }
+  if (direct.descriptor.endpoint === "patch") {
+    if (decision.data.labels && canonicalGroundingJson([...decision.data.labels].sort()) !== canonicalGroundingJson([...task.labels].sort())) plan.audits.push({ action: "task.labels_changed", payload: { from: task.labels, to: decision.data.labels, actorType: actor.type } });
+    if (decision.data.deliverableRepo !== undefined) plan.audits.push({ action: "task.deliverable_repo_changed", payload: { from: task.deliverableRepo, to: decision.data.deliverableRepo, actorType: actor.type } });
+  }
+  if (decision.skippedRules.length) plan.response.skippedGates = decision.skippedRules;
+  return readGroundingRoutePlan(plan);
+}
+
 export function readGroundingRoutePlan(value: unknown): GroundingRoutePlan {
   const parsed = planSchema.safeParse(value);
   if (!parsed.success || canonicalGroundingJson(parsed.data).length > 4 * 1024 * 1024) mismatch();
@@ -119,7 +170,9 @@ export async function applyGroundingRoutePlan(db: Prisma.TransactionClient, task
   if (plan.acknowledge) await db.signal.updateMany({ where: { taskId: task.id, acknowledgedAt: null }, data: { acknowledgedAt: new Date() } });
   const signals: Signal[] = [];
   for (const signal of plan.signals) signals.push(await db.signal.create({ data: { ...signal, taskId: task.id, projectId: task.projectId, context: signal.context } }));
-  for (const content of plan.comments) await db.comment.create({ data: { taskId: task.id, content } });
+  for (const content of plan.comments) await db.comment.create({ data: { taskId: task.id, content,
+    ...(plan.kind === "direct" && !content.startsWith("[system]") ? { authorUserId: actorType === "human" ? actorId : null, authorAgentId: actorType === "agent" ? actorId : null } : {}),
+  } });
   for (const audit of plan.audits) {
     const payload = { ...audit.payload };
     if (audit.action === "task.auto_merged") payload.autoMergeSha = mergeCommitSha!;

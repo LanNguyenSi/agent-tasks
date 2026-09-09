@@ -16,6 +16,9 @@ sources:
   - backend/src/config/index.ts
   - backend/src/routes/grounding.ts
   - backend/src/routes/grounding-task-completion.ts
+  - backend/src/routes/grounding-direct-tasks.ts
+  - backend/src/routes/grounding-creation.ts
+  - backend/src/routes/projects.ts
   - backend/src/services/grounding-attempts.ts
   - backend/src/services/grounding-context.ts
   - backend/src/services/grounding-merge-provider.ts
@@ -34,6 +37,12 @@ Framework is **Hono** (`hono@^4.12.21`), not Express, `backend/src/app.ts` build
 **Grounding receipts** (`backend/src/services/grounding-receipt.ts`): an offline verifier accepts explicit trust, expected context and clock inputs, then checks canonical receipt bytes, Ed25519 authentication, scopes, bindings, freshness and assessment outcome. Its passing result is documentary evidence. The provisioned completion router invokes the shared finalization service before task/claim/remote effects; historical unprovisioned task handlers remain the compatibility path. The runtime imports only `node:crypto`. See [the receipt contract](../grounding-receipt-contract.md) for the API and pinned fixture sync/check procedure.
 
 **Protected grounding attempts** (`grounding-attempts.ts`, `grounding-context.ts`, `routes/grounding.ts`): explicitly injected dormant service with protected server provisioning, server-derived workflow/context challenges, fresh authorized GitHub-head reads and atomic receipt nomination/ingest. Separate Prisma Binding/Attempt/Receipt/Finalization tables hold protected state; task metadata cannot enroll or downgrade it. `app.ts` mounts the authenticated attempt/receipt routes, but its default has no configured service. Issuance supersedes older attempts and ingest preserves immutable evidence with exact retries. Neither route changes task status, claims or PRs; unresolved shared-service reservations now block issuance/upload with 409.
+
+**Direct and creation adapters** (`grounding-direct-tasks.ts`, `grounding-creation.ts`): provisioned direct REST transition/review/PATCH operations issue a strict, persisted route descriptor and reauthorize it at receipt ingest. Positive operations require an idempotency key and commit their selected decision with receipt/history/audit effects; the direct lane retains its endpoint policy and does not make v2 attempts interchangeable. Direct respec and submit-PR context changes invalidate attempts atomically. The optional readonly creation policy is empty by default and can atomically bind a selected new task or import row; it is neither public enrollment nor historical admin import. Enrolled deletion returns `409 grounding_history_retained` after the reservation check and retains the data.
+
+An actual `requireGroundingForDebug` project toggle atomically invalidates each
+affected attempt and writes the attributed context audit; a same-value PATCH
+preserves attempts. It preserves the stored protection classification in the binding and cohort.
 
 Finish/approve issuance keeps the established transition scope and claimant
 rules. The installed REST task-merge path instead binds the validated merge

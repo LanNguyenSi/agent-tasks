@@ -1,3 +1,4 @@
+import { directDescriptorSchema } from "./grounding-direct-context.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Actor } from "../types/auth.js";
@@ -6,7 +7,7 @@ import { canonicalGroundingJson, GroundingAccessError, groundingAuthority, type 
 import { GroundingDecisionError } from "./grounding-transaction.js";
 
 export const routeTransportSchema = z.object({
-  endpoint: z.enum(["finish", "merge", "abandon"]),
+  endpoint: z.enum(["finish", "merge", "abandon", "transition", "patch", "review"]),
   body: z.record(z.unknown()),
 }).strict().superRefine((value, ctx) => {
   try { if (canonicalGroundingJson(value).length > 65536) ctx.addIssue({ code: "custom", message: "Transport intent too large" }); }
@@ -14,8 +15,9 @@ export const routeTransportSchema = z.object({
 });
 export type GroundingRouteTransport = z.infer<typeof routeTransportSchema>;
 export const routeInputSchema = z.object({
-  kind: z.enum(["work_finish", "review_finish", "self_approve_finish", "task_merge", "abandon"]),
+  kind: z.enum(["work_finish", "review_finish", "self_approve_finish", "task_merge", "abandon", "direct"]),
   transport: routeTransportSchema,
+  direct: directDescriptorSchema.optional(),
 }).strict();
 export function routeTransportFingerprint(transport: GroundingRouteTransport) {
   const parsed = routeTransportSchema.safeParse(transport);
@@ -24,7 +26,7 @@ export function routeTransportFingerprint(transport: GroundingRouteTransport) {
 }
 
 export const operationRequestSchema = z.object({
-  action: z.enum(["finish", "approve", "merge", "request_changes", "abandon", "release", "creator_abandon", "reopen"]),
+  action: z.enum(["finish", "approve", "merge", "request_changes", "abandon", "release", "creator_abandon", "reopen", "transition"]),
   result: z.string().max(32768).nullable().default(null),
   reason: z.string().trim().min(1).max(2000).nullable().default(null),
   overrideReason: z.string().trim().min(1).max(2000).nullable().default(null),
@@ -35,7 +37,7 @@ export type OperationRequest = z.infer<typeof operationRequestSchema>;
 export type OperationInput = z.input<typeof operationRequestSchema>;
 export function operationRequest(input: OperationInput): OperationRequest {
   const parsed = operationRequestSchema.safeParse(input);
-  if (!parsed.success || (!['finish', 'approve', 'merge'].includes(parsed.data.action) && parsed.data.overrideReason !== null)) throw new GroundingAccessError("bad_state", 409);
+  if (!parsed.success || (!['finish', 'approve', 'merge', 'transition'].includes(parsed.data.action) && parsed.data.overrideReason !== null)) throw new GroundingAccessError("bad_state", 409);
   return parsed.data;
 }
 export function groundingActorId(actor: Actor) { return actor.type === "agent" ? actor.tokenId : actor.userId; }

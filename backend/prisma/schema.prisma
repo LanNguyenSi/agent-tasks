@@ -809,6 +809,8 @@ enum GroundingAttemptState {
 }
 
 model GroundingAttempt {
+  // Null retains the existing v2 lane; direct descriptors are strict and create-only.
+  directRoute Json?
   id              String @id @default(uuid())
   taskId          String
   contextRevision Int

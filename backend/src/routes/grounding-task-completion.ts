@@ -1,3 +1,4 @@
+import type { GroundingCreationPolicy } from "./grounding-creation.js";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { Prisma, PrismaClient } from "@prisma/client";
@@ -16,6 +17,7 @@ import type { GroundingRouteTransport, OperationInput } from "../services/ground
 export interface GroundingTaskCompletionDependencies {
   db: PrismaClient;
   service?: GroundingFinalizationService;
+  creationPolicy?: GroundingCreationPolicy;
 }
 const methodSchema = z.enum(["squash", "merge", "rebase"]).default("squash");
 const finishSchema = z.object({

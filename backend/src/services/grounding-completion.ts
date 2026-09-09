@@ -1,3 +1,6 @@
+import { checkPrRepoMatchesProject } from "./gates/pr-repo-matches-project.js";
+import { readDirectDescriptor, requireDirectActor, resolveDirectGroundingTarget } from "./grounding-direct-context.js";
+import { changesDirectContext, readDirectOperation } from "./grounding-direct-input.js";
 import { createHash } from "node:crypto";
 import { Prisma, type GroundingCohort, type GroundingOperation, type PrismaClient, type Signal } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
@@ -32,7 +35,7 @@ export interface GroundingCompletionDependencies {
 export interface GroundingDecision {
   routePlan?: GroundingRoutePlan;
   action: OperationRequest["action"]; mode: string; protected: boolean; from: string; to: string;
-  target: GroundingTarget | null; data: { status: string; result?: string; claimedByUserId?: null; claimedByAgentId?: null; claimedAt?: null; reviewClaimedByUserId?: null; reviewClaimedByAgentId?: null; reviewClaimedAt?: null };
+  target: GroundingTarget | null; data: { status: string; result?: string | null; claimedByUserId?: null; claimedByAgentId?: null; claimedAt?: null; reviewClaimedByUserId?: null; reviewClaimedByAgentId?: null; reviewClaimedAt?: null; priority?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"; dueAt?: string | null; externalRef?: string | null; title?: string; description?: string | null; templateData?: Prisma.JsonValue; branchName?: string | null; prUrl?: string | null; prNumber?: number | null; deliverableRepo?: string | null; labels?: string[] };
   localDigest: string; contextDigest: string; receiptId: string | null; attemptId: string | null; contextRevision: number | null;
   expiresAt: number | null; overrideReason: string | null; reason: string | null; skippedRules: string[]; ciHeadSha: string | null;
 }
@@ -66,11 +69,19 @@ export class GroundingCompletionService {
   protected async requestAccess(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, request: OperationRequest) {
     await operationAccess(db, task, actor, this.authority);
     if (this.isTaskMerge(request)) await requireTaskMergeActor(db, task, actor, this.authority);
+    const direct = readDirectOperation(request);
+    if (direct) {
+      await requireDirectActor(db, task, actor, direct.descriptor.endpoint, this.authority);
+      if (direct.force && (actor.type !== "human" || !await this.authority.hasRole(actor, task.projectId, "ADMIN", db))) forbidden();
+    }
   }
 
   protected async decide(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, request: OperationRequest, remote = request.action === "merge"): Promise<GroundingDecision> {
     const cohort = await requireGroundingCohort(db, task.id, task.projectId);
-    const success = ["finish", "approve", "merge"].includes(request.action);
+    const direct = readDirectOperation(request);
+    const directResolved = direct ? await resolveDirectGroundingTarget(db, task, actor, direct.descriptor, this.authority, direct.force) : null;
+    if (directResolved && request.action !== directResolved.action) badState();
+    const success = directResolved ? directResolved.success : ["finish", "approve", "merge"].includes(request.action);
     const standalone = this.isTaskMerge(request);
     const head = this.requestHead(request);
     const scope = standalone ? "github:pr_merge" : request.action === "creator_abandon" ? "tasks:update" : ["abandon", "release"].includes(request.action) ? "tasks:claim" : "tasks:transition";
@@ -84,7 +95,26 @@ export class GroundingCompletionService {
     let data: GroundingDecision["data"] = { status: task.status };
     let skippedRules: string[] = [];
     let ciHeadSha: string | null = null;
-    if (success) {
+    if (direct && directResolved) {
+      if (remote) badState();
+      if (direct.descriptor.endpoint === "patch" && "deliverableRepo" in direct.body && direct.body.deliverableRepo !== undefined && !await this.authority.hasRole(actor, task.projectId, "ADMIN", db)) forbidden();
+      if (success && changesDirectContext(task, direct.body)) mismatch();
+      const pendingTask = direct.descriptor.endpoint === "patch" ? { ...task, ...direct.body } as GroundingTask : task;
+      if ("prUrl" in direct.body && direct.body.prUrl && !checkPrRepoMatchesProject(direct.body.prUrl, pendingTask, task.project).ok) forbidden();
+      if (direct.descriptor.endpoint === "review" && (direct.body as { action: string }).action !== (success ? "approve" : "request_changes")) badState();
+      target = success ? directResolved.target : null;
+      if (!direct.force && !directResolved.special) ({ skippedRules, ciHeadSha } = await completionGates(db, pendingTask, actor, directResolved.target, definition, this.authority, false, head));
+      data = { ...(!success && direct.descriptor.endpoint === "patch" ? direct.body : {}), status: directResolved.target.to,
+        ...(direct.descriptor.endpoint === "review" ? clearReview : directResolved.terminal ? { ...clearWork, ...clearReview } : isReviewState(def, task.status) && task.status !== directResolved.target.to ? clearReview : {}),
+      };
+      if (direct.descriptor.endpoint === "patch") {
+        const body = direct.body as { result?: string | null; priority?: GroundingDecision["data"]["priority"]; dueAt?: string | null; externalRef?: string | null; title?: string; description?: string | null; templateData?: Prisma.JsonValue; branchName?: string | null; prUrl?: string | null; prNumber?: number | null; deliverableRepo?: string | null; labels?: string[] };
+        if (body.result !== undefined) Object.assign(data, { result: body.result });
+        if (body.priority !== undefined) data.priority = body.priority;
+        if (body.dueAt !== undefined) data.dueAt = body.dueAt;
+        if (body.externalRef !== undefined) data.externalRef = body.externalRef;
+      }
+    } else if (success) {
       if (remote && request.action === "finish" && resolveGovernanceMode(task.project) !== GovernanceMode.AUTONOMOUS) badState();
       if (remote && !checkSelfMergeGate(task, actor, task.project).allowed) forbidden();
       const resolved = standalone ? await resolveTaskMergeTarget(db, task, actor, this.authority) : await resolveGroundingTarget(db, task, actor, request.action as "finish" | "approve" | "merge", this.authority);
@@ -137,6 +167,8 @@ export class GroundingCompletionService {
     if (!attempt || attempt.state !== "ACTIVE") stale();
     if (!attempt.receipt) throw new GroundingReceiptVerificationError("grounding_required");
     if (attempt.actorType !== actor.type || attempt.actorId !== groundingActorId(actor)) forbidden();
+    const persistedDirect = readDirectDescriptor(attempt.directRoute);
+    if (canonicalGroundingJson(persistedDirect) !== canonicalGroundingJson(direct?.descriptor ?? null)) mismatch();
     const projected = await projectGroundingContext(task, binding, target, definition, actor, head, db);
     if (binding.contextRevision !== attempt.contextRevision || projected.digest !== attempt.contextDigest || !projected.bytes.equals(attempt.contextBytes)) mismatch();
     if (ciHeadSha !== null && binding.subjectMode === "CODE_HEAD" && JSON.parse(projected.bytes.toString("utf8")).deliverable.headSha !== ciHeadSha)
@@ -165,7 +197,8 @@ export class GroundingCompletionService {
 
   protected async applyDecision(db: Prisma.TransactionClient, task: GroundingTask, operation: GroundingOperation, mergeCommitSha?: string) {
     const decision = operation.decision as unknown as GroundingDecision;
-    const changed = await db.task.updateMany({ where: { id: task.id, status: decision.from, claimedByUserId: task.claimedByUserId, claimedByAgentId: task.claimedByAgentId, reviewClaimedByUserId: task.reviewClaimedByUserId, reviewClaimedByAgentId: task.reviewClaimedByAgentId }, data: { ...decision.data, ...(mergeCommitSha ? { autoMergeSha: mergeCommitSha } : {}) } });
+    const { templateData, ...taskData } = decision.data;
+    const changed = await db.task.updateMany({ where: { id: task.id, status: decision.from, claimedByUserId: task.claimedByUserId, claimedByAgentId: task.claimedByAgentId, reviewClaimedByUserId: task.reviewClaimedByUserId, reviewClaimedByAgentId: task.reviewClaimedByAgentId }, data: { ...taskData, ...(templateData !== undefined ? { templateData: templateData === null ? Prisma.JsonNull : templateData } : {}), ...(mergeCommitSha ? { autoMergeSha: mergeCommitSha } : {}) } });
     if (changed.count !== 1) mismatch();
     if (decision.attemptId) {
       const consumed = await db.groundingAttempt.updateMany({ where: { id: decision.attemptId, taskId: task.id, state: "ACTIVE" }, data: { state: "CONSUMED" } });
@@ -223,7 +256,7 @@ export class GroundingCompletionService {
   }
   private async local(taskId: string, actor: Actor, key: string, request: OperationRequest, afterCommit?: GroundingAfterCommit) {
     const commit = await this.transaction(async db => {
-      const task = await lockGroundingTask(db, taskId); await operationAccess(db, task, actor, this.authority);
+      const task = await lockGroundingTask(db, taskId); await this.requestAccess(db, task, actor, request);
       const previous = await findOperation(db, taskId, key, actor, request);
       if (previous?.state === "COMPLETED") return { result: previous.result, signals: [], fresh: false };
       if (previous) throw new GroundingDecisionError("grounding_finalization_pending");
