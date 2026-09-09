@@ -529,4 +529,19 @@ describe("okf-literal-guard fixtures", () => {
     expect(result.checkedCount).toBe(1);
     fs.rmSync(root, { recursive: true, force: true });
   });
+
+  // T-010 round 2: a citation naming a directory (`CITATION_RE` does not
+  // require an extension, and a directory can be lexically and really
+  // inside root) reached `fs.readFileSync` uncaught and threw EISDIR
+  // before the fix above.
+  it("rejects a citation naming a directory as unreadable instead of throwing EISDIR", () => {
+    const root = makeFixtureRoot();
+    fs.mkdirSync(path.join(root, "src", "subdir"), { recursive: true });
+    const doc =
+      'The constant is `VERSION = "1.2.3"` (`src/subdir:1`), citing a directory, not a file.';
+    const [{ result }] = analyzeAndCheck(root, doc);
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].reason).toBe("unreadable-citation");
+    fs.rmSync(root, { recursive: true, force: true });
+  });
 });

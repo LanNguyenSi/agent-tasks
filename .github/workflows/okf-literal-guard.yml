@@ -67,15 +67,36 @@ jobs:
       # actually touches anything the guard cares about, so the later
       # steps can be skipped with success instead of the whole workflow
       # never triggering (see the header comment). Conservative on the
-      # one case it cannot diff cleanly: a base/before SHA this checkout
-      # does not have (e.g. a force-push rewriting history, or `before`
-      # being the all-zero SHA on a branch's first push) is treated as
-      # "relevant", i.e. it runs the guard rather than risk a false skip.
+      # two cases it cannot diff cleanly: a base or head SHA this checkout
+      # does not have (e.g. a force-push rewriting history, `before` being
+      # the all-zero SHA on a branch's first push, or an unresolvable head)
+      # is treated as "relevant", i.e. it runs the guard rather than risk a
+      # false skip; the `git diff` call itself failing for any other reason
+      # falls back the same way.
+      #
+      # Round 2 (D-006 residual): PATTERN's roots are derived from the
+      # source paths docs/okf actually cites (see index.md's Maintenance
+      # section and backend/tests/unit/docs-okf-literal-guard-pattern-coverage.test.ts,
+      # which fails if a future citation lands outside every listed root),
+      # not just the guard's own files -- a PR editing only a cited source
+      # file must still trip the guard. The match itself reads the full
+      # changed-file list from a captured variable through a herestring
+      # (`<<<`), never through a pipe into `grep`: a pipe's reader (`grep
+      # -q`) can exit at the first match and close the pipe before the
+      # writer has finished, and under `pipefail` that SIGPIPE turns a real
+      # match into a false `relevant=false` once the diff is large enough
+      # to not fit in one pipe write (measured: reproducible past a few
+      # thousand changed file names on a real `ubuntu-latest` bash 5;
+      # `backend/tests/unit/docs-okf-literal-guard-detect-step.test.ts`
+      # pins this with a >64KB name list). Piping the captured variable
+      # through `printf` first does not fix it: `printf` is itself a
+      # separate, non-last pipeline stage and is just as exposed to the
+      # same SIGPIPE.
       - name: Detect docs/okf-relevant changes
         id: filter
         run: |
           set -eo pipefail
-          PATTERN='^(docs/okf/|backend/tests/helpers/okf-literal-guard\.ts$|backend/tests/unit/docs-okf-literal-guard\.test\.ts$|backend/tests/fixtures/okf-literal-guard/|\.github/workflows/okf-literal-guard\.yml$)'
+          PATTERN='^(docs/okf/|backend/src/|backend/tests/helpers/okf-literal-guard\.ts$|backend/tests/unit/docs-okf-literal-guard[^/]*\.test\.ts$|backend/tests/fixtures/okf-literal-guard/|backend/tests/types/js-yaml\.d\.ts$|mcp-server/src/|mcp-server/package\.json$|mcp-bridge/src/|frontend/src/|\.github/workflows/ci\.yml$|\.github/workflows/okf-literal-guard\.yml$)'
           if [ "${EVENT_NAME}" = "pull_request" ]; then
             BASE_SHA="${PR_BASE_SHA}"
             HEAD_SHA="${PR_HEAD_SHA}"
@@ -83,11 +104,15 @@ jobs:
             BASE_SHA="${PUSH_BEFORE_SHA}"
             HEAD_SHA="${GITHUB_SHA}"
           fi
-          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || [ -z "$HEAD_SHA" ] || ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -Eq "$PATTERN"; then
+          if ! CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -Eq "$PATTERN" <<< "$CHANGED"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
@@ -110,5 +135,5 @@ jobs:
 
       - name: Run the guard test
         if: steps.filter.outputs.relevant == 'true'
-        run: npx vitest run tests/unit/docs-okf-literal-guard.test.ts
+        run: npx vitest run tests/unit/docs-okf-literal-guard.test.ts tests/unit/docs-okf-literal-guard-detect-step.test.ts tests/unit/docs-okf-literal-guard-pattern-coverage.test.ts
         working-directory: backend

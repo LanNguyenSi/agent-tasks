@@ -282,7 +282,17 @@ export function createFileLineReader(root: string): LineReader {
         cache.set(relPath, []);
         return null;
       }
-      lines = fs.readFileSync(real, "utf8").split("\n");
+      // A citation naming a directory (e.g. `docs/okf:1`) passes every
+      // check above -- `CITATION_RE` does not require an extension, and a
+      // directory can sit lexically and really inside root -- but
+      // `readFileSync` throws EISDIR on it. Caught here and reported the
+      // same way as any other unresolvable citation.
+      try {
+        lines = fs.readFileSync(real, "utf8").split("\n");
+      } catch {
+        cache.set(relPath, []);
+        return null;
+      }
       cache.set(relPath, lines);
     }
     if (lines.length === 0) return null;
