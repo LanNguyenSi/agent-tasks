@@ -45,10 +45,13 @@ jobs:
           esac
 
       - name: Verify package.json version matches tag
+        env:
+          WORKSPACE: ${{ steps.target.outputs.workspace }}
+          EXPECTED_VERSION: ${{ steps.target.outputs.expected }}
         run: |
-          pkg_version=$(node -p "require('./${{ steps.target.outputs.workspace }}/package.json').version")
-          if [ "$pkg_version" != "${{ steps.target.outputs.expected }}" ]; then
-            echo "Tag version (${{ steps.target.outputs.expected }}) does not match package.json ($pkg_version)" >&2
+          pkg_version=$(node -p "require('./${WORKSPACE}/package.json').version")
+          if [ "$pkg_version" != "${EXPECTED_VERSION}" ]; then
+            echo "Tag version (${EXPECTED_VERSION}) does not match package.json ($pkg_version)" >&2
             exit 1
           fi
 
@@ -64,9 +67,63 @@ jobs:
           fi
 
       - name: Build
-        run: npm run build --workspace=mcp-server && npm run build --workspace=${{ steps.target.outputs.workspace }}
+        env:
+          WORKSPACE: ${{ steps.target.outputs.workspace }}
+        run: npm run build --workspace=mcp-server && npm run build --workspace="${WORKSPACE}"
+
+      - name: Upgrade npm for trusted publishing
+        # npm Trusted Publishing (OIDC) needs npm >= 11.5.1; node 22 bundles
+        # npm 10, so upgrade first. Auth comes from the GitHub OIDC token
+        # (permissions.id-token: write above) matched against each package's
+        # Trusted Publisher entry on npmjs.com (repo LanNguyenSi/agent-tasks,
+        # workflow publish-npm.yml, packages @agent-tasks/mcp-server and
+        # @agent-tasks/mcp-bridge), not an NPM_TOKEN secret.
+        run: npm install -g npm@11 --no-audit --no-fund
 
       - name: Publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --workspace=${{ steps.target.outputs.workspace }} --access public --provenance
+          WORKSPACE: ${{ steps.target.outputs.workspace }}
+          VERSION: ${{ steps.target.outputs.expected }}
+        run: |
+          set -euo pipefail
+          workspace="${WORKSPACE}"
+          version="${VERSION}"
+          pkg=$(node -p "require('./${workspace}/package.json').name")
+
+          # Idempotency: re-running the failed job (Actions -> the failed run ->
+          # Re-run failed jobs) can land on a version a prior attempt already
+          # published.
+          if npm view "${pkg}@${version}" version > /dev/null 2>&1; then
+            echo "::notice::${pkg}@${version} is already on the registry; nothing to publish."
+            exit 0
+          fi
+
+          # Sigstore Rekor occasionally returns a transient TLOG_CREATE_ENTRY
+          # 409 (npm/cli#6892) that fails --provenance even though the tarball
+          # is fine. Retry up to 3 times with exponential backoff, and treat
+          # "already published" as success in case a failed attempt actually
+          # reached the registry.
+          max=3
+          attempt=1
+          while true; do
+            echo "npm publish attempt ${attempt}/${max}"
+            if npm publish --workspace="${workspace}" --access public --provenance; then
+              echo "::notice::Published ${pkg}@${version} on attempt ${attempt}."
+              exit 0
+            fi
+            # A failed --provenance publish can still have landed the tarball;
+            # give the registry a moment to settle before checking.
+            sleep 5
+            if npm view "${pkg}@${version}" version > /dev/null 2>&1; then
+              echo "::notice::${pkg}@${version} reached the registry despite a non-zero publish exit; treating as success."
+              exit 0
+            fi
+            if [ "${attempt}" -ge "${max}" ]; then
+              echo "::error::npm publish failed after ${max} attempts. If the failure is a Sigstore TLog 409, re-run the failed job on this run (Actions -> the failed run -> Re-run failed jobs), or delete and re-push the tag, once the Rekor service recovers. A persistent 403/404 instead likely means the npmjs.com Trusted Publisher entry for this repo/workflow/package is missing or misconfigured; retrying will not fix that." >&2
+              exit 1
+            fi
+            backoff=$((2 ** attempt * 5))
+            echo "publish failed; retrying in ${backoff}s"
+            sleep "${backoff}"
+            attempt=$((attempt + 1))
+          done

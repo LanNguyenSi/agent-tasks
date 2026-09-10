@@ -1,5 +1,15 @@
 # Change log
 
+## 2026-09-10
+
+Restamped `release-flow.md` and `deploy.md` after `.github/workflows/publish-npm.yml`
+moved from a token secret to npm Trusted Publishing (OIDC): an npm@11 upgrade
+step now runs directly before publish, and the publish step gained a retry
+loop with a 403/404 triage hint. `release-flow.md`'s step-order prose was
+rewritten to match; its `mcp-bridge/package.json` pin quote was re-verified
+against the current file and needed no change. `deploy.md` cites the workflow
+as a source but made no body claims about it, so only its timestamp moved.
+
 ## 2026-09-08
 
 Documented the provisioned grounding completion transport, session-free external
