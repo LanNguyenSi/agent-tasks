@@ -887,6 +887,52 @@ describe("buildTools", () => {
     expect(parsed).not.toHaveProperty("body");
   });
 
+  it("pull_requests_create preserves a GitHub failure's status, body, and reconciled PR", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "github_error",
+          message: "GitHub API error: existing pull request",
+          github: { message: "existing pull request" },
+          existingPullRequest: {
+            number: 47,
+            url: "https://github.com/o/r/pull/47",
+          },
+        }),
+        { status: 422, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    let captured = "";
+    try {
+      await tool("pull_requests_create").handler({
+        taskId: "22222222-2222-2222-2222-222222222222",
+        owner: "o",
+        repo: "r",
+        head: "fork-user:existing",
+        title: "Existing PR",
+      });
+    } catch (error) {
+      captured = (error as Error).message;
+    }
+
+    expect(JSON.parse(captured)).toEqual({
+      ok: false,
+      error: {
+        code: "github_error",
+        message: "GitHub API error: existing pull request",
+        recipe: "inspect the GitHub failure and retry pull_requests_create only when the upstream condition is resolved",
+        allowedNext: ["pull_requests_create"],
+        status: 422,
+        github: { message: "existing pull request" },
+        existingPullRequest: {
+          number: 47,
+          url: "https://github.com/o/r/pull/47",
+        },
+      },
+    });
+  });
+
   it("pull_requests_merge routes to /pull-requests/{prNumber}/merge and translates mergeMethod → merge_method", async () => {
     fetchMock.mockResolvedValue(ok({ merged: true, sha: "abc", message: "ok", task: { id: "t", status: "done" } }));
     await tool("pull_requests_merge").handler({

@@ -42,8 +42,8 @@ const MAX_PR_CREATE_ATTEMPTS = 2;
 const PR_CREATE_RETRY_DELAY_MS = 10;
 
 type GitHubErrorBody = {
-  message?: string;
-  errors?: Array<{ message?: string; type?: string }>;
+  message?: unknown;
+  errors?: unknown;
 };
 
 type ExistingPullRequest = {
@@ -64,28 +64,55 @@ function asGitHubErrorBody(value: unknown): GitHubErrorBody {
   return isRecord(value) ? (value as GitHubErrorBody) : {};
 }
 
+function githubErrorEntries(value: unknown): Array<Record<string, unknown>> {
+  const { errors } = asGitHubErrorBody(value);
+  return Array.isArray(errors) ? errors.filter(isRecord) : [];
+}
+
+function githubErrorMessages(value: unknown): string[] {
+  const body = asGitHubErrorBody(value);
+  return [
+    ...(typeof body.message === "string" ? [body.message] : []),
+    ...githubErrorEntries(value)
+      .map((error) => error.message)
+      .filter((message): message is string => typeof message === "string"),
+  ];
+}
+
 function hasGraphQlErrors(value: unknown): boolean {
   const { errors } = asGitHubErrorBody(value);
   return Array.isArray(errors) && errors.length > 0;
 }
 
 function isTransientGraphQlFailure(value: unknown): boolean {
-  const { errors } = asGitHubErrorBody(value);
-  return (
-    Array.isArray(errors) &&
-    errors.some((error) =>
-      ["INTERNAL", "RATE_LIMITED", "SERVICE_UNAVAILABLE"].includes(error.type ?? ""),
-    )
+  return githubErrorEntries(value).some(
+    (error) =>
+      typeof error.type === "string" &&
+      ["INTERNAL", "RATE_LIMITED", "SERVICE_UNAVAILABLE"].includes(error.type),
   );
 }
 
 function isExistingPullRequestFailure(status: number, value: unknown): boolean {
-  const { message } = asGitHubErrorBody(value);
-  return status === 422 && /pull request already exists/i.test(message ?? "");
+  return (
+    status === 422 &&
+    githubErrorMessages(value).some((message) => /pull request already exists/i.test(message))
+  );
 }
 
 function githubErrorMessage(value: unknown, fallback: string): string {
-  return asGitHubErrorBody(value).message ?? fallback;
+  return githubErrorMessages(value)[0] ?? (typeof value === "string" && value.length > 0 ? value : fallback);
+}
+
+async function parseGitHubResponseBody(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (text.length === 0) {
+    return { message: response.statusText || "Empty GitHub response" };
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
 
 function githubHeaders(token: string): HeadersInit {
@@ -241,10 +268,11 @@ githubRouter.post(
               }),
             },
           );
-          ghBody = await ghResponse.json().catch(() => ({ message: "Unknown GitHub error" }));
+          ghBody = await parseGitHubResponseBody(ghResponse);
 
           const isTransientFailure =
-            ghResponse.status >= 500 || isTransientGraphQlFailure(ghBody);
+            ghResponse.status !== 422 &&
+            (ghResponse.status >= 500 || isTransientGraphQlFailure(ghBody));
           if (!isTransientFailure || attempt === MAX_PR_CREATE_ATTEMPTS) {
             break;
           }

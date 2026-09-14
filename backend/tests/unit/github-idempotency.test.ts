@@ -384,6 +384,64 @@ describe("pull_requests_create idempotency", () => {
     fetchMock.mockRestore();
   });
 
+  it("preserves a non-JSON final GitHub failure body", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("first outage", { status: 502 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response("second outage", { status: 502 }));
+
+    const res = await makeApp(CREATE_ACTOR).request("/pull-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskId: TASK_ID,
+        owner: "acme",
+        repo: "thing",
+        head: "feat/plain-text-outage",
+        title: "Plain text outage",
+      }),
+    });
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({
+      error: "github_error",
+      message: "GitHub API error: second outage",
+      github: "second outage",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    fetchMock.mockRestore();
+  });
+
+  it("does not retry when transient-failure reconciliation cannot confirm an absent PR", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: "ambiguous outage" }), { status: 502 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: "lookup unavailable" }), { status: 503 }));
+
+    const res = await makeApp(CREATE_ACTOR).request("/pull-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskId: TASK_ID,
+        owner: "acme",
+        repo: "thing",
+        head: "feat/unreconciled",
+        title: "Unreconciled outage",
+      }),
+    });
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({
+      message: "GitHub API error: ambiguous outage",
+      github: { message: "ambiguous outage" },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fetchMock.mockRestore();
+  });
+
   it("does not retry an ambiguous 502 when head reconciliation finds a pull request", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
@@ -478,6 +536,56 @@ describe("pull_requests_create idempotency", () => {
       "https://api.github.com/repos/acme/thing/pulls?state=open&head=acme%3Afeat%2Fexisting",
     );
     expect(store.rows).toHaveLength(0);
+
+    fetchMock.mockRestore();
+  });
+
+  it("does not retry a 422 with malformed GraphQL errors and finds a qualified fork head", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            errors: [null, "not-an-error", { type: "INTERNAL" }, { message: "A pull request already exists for fork-user:existing." }],
+          }),
+          { status: 422 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              number: 48,
+              html_url: "https://github.com/acme/thing/pull/48",
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+    const res = await makeApp(CREATE_ACTOR).request("/pull-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskId: TASK_ID,
+        owner: "acme",
+        repo: "thing",
+        head: "fork-user:existing",
+        title: "Existing fork PR",
+      }),
+    });
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({
+      existingPullRequest: {
+        number: 48,
+        url: "https://github.com/acme/thing/pull/48",
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "https://api.github.com/repos/acme/thing/pulls?state=open&head=fork-user%3Aexisting",
+    );
 
     fetchMock.mockRestore();
   });

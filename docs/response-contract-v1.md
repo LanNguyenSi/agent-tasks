@@ -397,6 +397,12 @@ change retry or idempotency behavior for `pull_requests_merge`,
 stored by the opt-in `idempotencyKey` cache, while the eventual successful
 retry is stored once and replays normally.
 
+The stdio MCP wrapper preserves these fields instead of degrading this narrow
+case to a generic teaching error: its error result is
+`{ ok: false, error: { code: "github_error", status, github,
+existingPullRequest? } }`, with the same message and structured existing PR
+identity. Other backend error codes keep the normal teaching-error mapping.
+
 ### Catalog seed
 
 The block-tier catalog MUST cover at least the following known traps,

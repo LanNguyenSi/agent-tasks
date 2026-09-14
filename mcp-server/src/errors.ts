@@ -143,6 +143,12 @@ export interface TeachingError {
     /** Verb names only, machine-checkable. Empty when no self-service
      *  corrective call exists (e.g. an admin-only wall). */
     allowedNext: string[];
+    /** Present only for pull_requests_create's GitHub failure passthrough. */
+    status?: number;
+    /** Decoded GitHub failure body, preserved for pull_requests_create. */
+    github?: unknown;
+    /** Existing head PR discovered by pull_requests_create reconciliation. */
+    existingPullRequest?: { number: number; url: string };
     /** Present when this entry carries structured detail: today,
      *  precondition_failed's `failed[]`, low_confidence's
      *  score/threshold/missing[]/totalMissing, and, for the generic
@@ -291,6 +297,36 @@ function buildTeachingError(opts: {
   // defined further down (near clampDetailValue, which it reuses); function
   // declarations are hoisted, so the forward reference is fine.
   return enforceErrorBudget(err);
+}
+
+function githubCreateError(status: number, body: BackendErrorBody, message: string): TeachingError {
+  const existing = body.existingPullRequest;
+  const existingPullRequest =
+    existing &&
+    typeof existing === "object" &&
+    typeof (existing as Record<string, unknown>).number === "number" &&
+    typeof (existing as Record<string, unknown>).url === "string"
+      ? {
+          number: (existing as Record<string, unknown>).number as number,
+          url: (existing as Record<string, unknown>).url as string,
+        }
+      : undefined;
+
+  // Unlike the generic teaching-error path, this narrowly scoped mapping
+  // intentionally preserves GitHub's decoded failure body. The caller needs
+  // it to distinguish a final upstream outage from an already-created PR.
+  return {
+    ok: false,
+    error: {
+      code: "github_error",
+      message: clamp(message, MESSAGE_CHAR_BUDGET),
+      recipe: "inspect the GitHub failure and retry pull_requests_create only when the upstream condition is resolved",
+      allowedNext: ["pull_requests_create"],
+      status,
+      ...(Object.prototype.hasOwnProperty.call(body, "github") ? { github: body.github } : {}),
+      ...(existingPullRequest ? { existingPullRequest } : {}),
+    },
+  };
 }
 
 /** Serializes a TeachingError exactly as server.ts's serializeResult would
@@ -1532,6 +1568,9 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
   }
   if (status === 403 && code === "backlog_not_promoted") {
     return backlogNotPromotedError(message);
+  }
+  if (verbContext === "pull_requests_create" && code === "github_error") {
+    return githubCreateError(status, body, message);
   }
 
   return genericDegrade(status, message, body.details, body.error);
