@@ -12,7 +12,7 @@
  * Uses an in-memory stub for `prisma.toolInvocation` so the helper's real
  * code path is exercised end-to-end — only the DB boundary is faked.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
 import type { Actor } from "../../src/types/auth.js";
@@ -206,6 +206,10 @@ beforeEach(() => {
   hasProjectAccessMock.mockResolvedValue(true);
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("github-route project-access gate", () => {
   it("rejects pull_requests_create with 403 when hasProjectAccess returns false", async () => {
     hasProjectAccessMock.mockResolvedValueOnce(false);
@@ -250,6 +254,234 @@ describe("github-route project-access gate", () => {
 });
 
 describe("pull_requests_create idempotency", () => {
+  it("retries one transient 502 and stores the successful retry once", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: "GitHub is temporarily unavailable" }), {
+          status: 502,
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            number: 43,
+            html_url: "https://github.com/acme/thing/pull/43",
+            title: "Retry succeeded",
+          }),
+          { status: 201 },
+        ),
+      );
+
+    const body = {
+      taskId: TASK_ID,
+      owner: "acme",
+      repo: "thing",
+      head: "feat/retry",
+      title: "Retry succeeded",
+      idempotencyKey: "retry-502",
+    };
+    const app = makeApp(CREATE_ACTOR);
+
+    const first = await app.request("/pull-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(first.status).toBe(201);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(store.rows).toHaveLength(1);
+    expect(prismaMocks.taskUpdate).toHaveBeenCalledOnce();
+
+    const replay = await app.request("/pull-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(replay.status).toBe(201);
+    expect(replay.headers.get("X-Idempotent-Replay")).toBe("true");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(store.rows).toHaveLength(1);
+
+    fetchMock.mockRestore();
+  });
+
+  it("retries one transient GraphQL failure response", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            errors: [{ type: "INTERNAL", message: "GitHub temporarily failed" }],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            number: 44,
+            html_url: "https://github.com/acme/thing/pull/44",
+            title: "GraphQL retry succeeded",
+          }),
+          { status: 201 },
+        ),
+      );
+
+    const res = await makeApp(CREATE_ACTOR).request("/pull-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskId: TASK_ID,
+        owner: "acme",
+        repo: "thing",
+        head: "feat/graphql-retry",
+        title: "GraphQL retry succeeded",
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    fetchMock.mockRestore();
+  });
+
+  it("surfaces the final 502 GitHub body without storing an unsuccessful result", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: "first outage" }), { status: 502 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: "second outage" }), { status: 502 }),
+      );
+
+    const res = await makeApp(CREATE_ACTOR).request("/pull-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskId: TASK_ID,
+        owner: "acme",
+        repo: "thing",
+        head: "feat/still-out",
+        title: "Still out",
+        idempotencyKey: "two-502s",
+      }),
+    });
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({
+      error: "github_error",
+      message: "GitHub API error: second outage",
+      github: { message: "second outage" },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(store.rows).toHaveLength(0);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+
+    fetchMock.mockRestore();
+  });
+
+  it("does not retry an ambiguous 502 when head reconciliation finds a pull request", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: "upstream timeout" }), { status: 502 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              number: 46,
+              html_url: "https://github.com/acme/thing/pull/46",
+              title: "Created before timeout",
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+    const res = await makeApp(CREATE_ACTOR).request("/pull-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskId: TASK_ID,
+        owner: "acme",
+        repo: "thing",
+        head: "feat/ambiguous",
+        title: "Created before timeout",
+      }),
+    });
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({
+      message: expect.stringContaining("#46 https://github.com/acme/thing/pull/46"),
+      existingPullRequest: {
+        number: 46,
+        url: "https://github.com/acme/thing/pull/46",
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(store.rows).toHaveLength(0);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+
+    fetchMock.mockRestore();
+  });
+
+  it("does not retry a 422 and identifies an existing head pull request", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: "A pull request already exists for acme:feat/existing." }), {
+          status: 422,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              number: 45,
+              html_url: "https://github.com/acme/thing/pull/45",
+              title: "Existing pull request",
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+    const res = await makeApp(CREATE_ACTOR).request("/pull-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskId: TASK_ID,
+        owner: "acme",
+        repo: "thing",
+        head: "feat/existing",
+        title: "Existing pull request",
+      }),
+    });
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({
+      error: "github_error",
+      message: expect.stringContaining("#45 https://github.com/acme/thing/pull/45"),
+      github: { message: "A pull request already exists for acme:feat/existing." },
+      existingPullRequest: {
+        number: 45,
+        url: "https://github.com/acme/thing/pull/45",
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "https://api.github.com/repos/acme/thing/pulls?state=open&head=acme%3Afeat%2Fexisting",
+    );
+    expect(store.rows).toHaveLength(0);
+
+    fetchMock.mockRestore();
+  });
+
   it("replays stored response on retry with same key — GitHub called once", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")

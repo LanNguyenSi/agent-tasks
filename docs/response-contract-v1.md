@@ -377,6 +377,26 @@ appear in `allowedNext`, since `allowedNext` may only ever list verbs
 the caller can call immediately, and a legacy-gated verb is not
 immediately callable in the default configuration.
 
+### GitHub PR creation failures
+
+`pull_requests_create` preserves a final non-2xx GitHub failure status and
+exposes the decoded GitHub failure body as `github` alongside its stable
+`github_error`/`message` envelope. A GraphQL error payload carried by an HTTP
+2xx response is represented as 502 while retaining that payload in `github`.
+A transient GitHub 5xx or GraphQL
+`INTERNAL`, `RATE_LIMITED`, or `SERVICE_UNAVAILABLE` failure receives at most
+one retry. Before that retry, the backend looks up an open pull request for
+the requested head: an existing result stops the retry and is returned as a
+422 `github_error` with `existingPullRequest: { number, url }`; its number and
+URL are also named in `message`. A 422 response is never retried. This keeps a
+potentially committed-but-ambiguous GitHub write from being blindly repeated.
+
+The retry is deliberately limited to `pull_requests_create`; it does not
+change retry or idempotency behavior for `pull_requests_merge`,
+`pull_requests_comment`, or other GitHub verbs. An unsuccessful result is not
+stored by the opt-in `idempotencyKey` cache, while the eventual successful
+retry is stored once and replays normally.
+
 ### Catalog seed
 
 The block-tier catalog MUST cover at least the following known traps,

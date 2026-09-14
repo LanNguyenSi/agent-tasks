@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import type { AppVariables } from "../types/hono.js";
@@ -33,6 +34,102 @@ export const githubRouter = new Hono<{ Variables: AppVariables }>();
 // re-calling GitHub. Same key + different payload → 409. See
 // services/idempotency.ts.
 const idempotencyKeySchema = z.string().trim().min(1).max(255).optional();
+
+// PR creation is the only GitHub write that retries here. A transient write
+// can have committed remotely despite its error response, so every retry first
+// reconciles the requested head and only retries when that lookup is empty.
+const MAX_PR_CREATE_ATTEMPTS = 2;
+const PR_CREATE_RETRY_DELAY_MS = 10;
+
+type GitHubErrorBody = {
+  message?: string;
+  errors?: Array<{ message?: string; type?: string }>;
+};
+
+type ExistingPullRequest = {
+  number: number;
+  html_url: string;
+};
+
+type ExistingPullRequestLookup =
+  | { state: "absent" }
+  | { state: "found"; pullRequest: ExistingPullRequest }
+  | { state: "unavailable" };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function asGitHubErrorBody(value: unknown): GitHubErrorBody {
+  return isRecord(value) ? (value as GitHubErrorBody) : {};
+}
+
+function hasGraphQlErrors(value: unknown): boolean {
+  const { errors } = asGitHubErrorBody(value);
+  return Array.isArray(errors) && errors.length > 0;
+}
+
+function isTransientGraphQlFailure(value: unknown): boolean {
+  const { errors } = asGitHubErrorBody(value);
+  return (
+    Array.isArray(errors) &&
+    errors.some((error) =>
+      ["INTERNAL", "RATE_LIMITED", "SERVICE_UNAVAILABLE"].includes(error.type ?? ""),
+    )
+  );
+}
+
+function isExistingPullRequestFailure(status: number, value: unknown): boolean {
+  const { message } = asGitHubErrorBody(value);
+  return status === 422 && /pull request already exists/i.test(message ?? "");
+}
+
+function githubErrorMessage(value: unknown, fallback: string): string {
+  return asGitHubErrorBody(value).message ?? fallback;
+}
+
+function githubHeaders(token: string): HeadersInit {
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "User-Agent": "agent-tasks-bot",
+  };
+}
+
+async function findExistingPullRequest(
+  owner: string,
+  repo: string,
+  head: string,
+  token: string,
+): Promise<ExistingPullRequestLookup> {
+  const qualifiedHead = head.includes(":") ? head : `${owner}:${head}`;
+  try {
+    const response = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/pulls?state=open&head=${encodeURIComponent(qualifiedHead)}`,
+      { headers: githubHeaders(token) },
+    );
+    if (!response.ok) {
+      return { state: "unavailable" };
+    }
+    const pullRequests = (await response.json()) as unknown;
+    if (!Array.isArray(pullRequests)) {
+      return { state: "unavailable" };
+    }
+    const pullRequest = pullRequests.find(
+      (candidate): candidate is ExistingPullRequest =>
+        isRecord(candidate) &&
+        typeof candidate.number === "number" &&
+        typeof candidate.html_url === "string",
+    );
+    return pullRequest ? { state: "found", pullRequest } : { state: "absent" };
+  } catch {
+    return { state: "unavailable" };
+  }
+}
+
+function retryDelay(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, PR_CREATE_RETRY_DELAY_MS));
+}
 
 const createPrSchema = z.object({
   taskId: z.string().uuid(),
@@ -123,41 +220,98 @@ githubRouter.post(
         payload: body,
       },
       async () => {
-        const ghResponse = await fetch(
-          `https://api.github.com/repos/${body.owner}/${body.repo}/pulls`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${delegationUser.githubAccessToken}`,
-              Accept: "application/vnd.github+json",
-              "User-Agent": "agent-tasks-bot",
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              title: body.title,
-              body: body.body ?? "",
-              head: body.head,
-              base: body.base,
-            }),
-          },
-        );
+        let ghResponse: Response | undefined;
+        let ghBody: unknown;
+        let existingPullRequest: ExistingPullRequest | undefined;
 
-        if (!ghResponse.ok) {
-          const ghError = (await ghResponse
-            .json()
-            .catch(() => ({ message: "Unknown GitHub error" }))) as {
-            message?: string;
-          };
+        for (let attempt = 1; attempt <= MAX_PR_CREATE_ATTEMPTS; attempt += 1) {
+          ghResponse = await fetch(
+            `https://api.github.com/repos/${body.owner}/${body.repo}/pulls`,
+            {
+              method: "POST",
+              headers: {
+                ...githubHeaders(delegationUser.githubAccessToken),
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                title: body.title,
+                body: body.body ?? "",
+                head: body.head,
+                base: body.base,
+              }),
+            },
+          );
+          ghBody = await ghResponse.json().catch(() => ({ message: "Unknown GitHub error" }));
+
+          const isTransientFailure =
+            ghResponse.status >= 500 || isTransientGraphQlFailure(ghBody);
+          if (!isTransientFailure || attempt === MAX_PR_CREATE_ATTEMPTS) {
+            break;
+          }
+
+          const existing = await findExistingPullRequest(
+            body.owner,
+            body.repo,
+            body.head,
+            delegationUser.githubAccessToken,
+          );
+          if (existing.state === "found") {
+            existingPullRequest = existing.pullRequest;
+            break;
+          }
+          // An unsuccessful reconciliation cannot prove that a write did not
+          // commit, so returning the original GitHub response is safer than a
+          // blind duplicate-prone retry.
+          if (existing.state === "unavailable") {
+            break;
+          }
+          await retryDelay();
+        }
+
+        if (!ghResponse) {
+          throw new Error("GitHub PR creation did not produce a response");
+        }
+
+        if (isExistingPullRequestFailure(ghResponse.status, ghBody)) {
+          const existing = await findExistingPullRequest(
+            body.owner,
+            body.repo,
+            body.head,
+            delegationUser.githubAccessToken,
+          );
+          if (existing.state === "found") {
+            existingPullRequest = existing.pullRequest;
+          }
+        }
+
+        if (existingPullRequest || !ghResponse.ok || hasGraphQlErrors(ghBody)) {
+          const responseStatus = existingPullRequest
+            ? 422
+            : hasGraphQlErrors(ghBody) && ghResponse.ok
+              ? 502
+              : ghResponse.status;
+          const message = githubErrorMessage(ghBody, ghResponse.statusText);
           return {
-            status: ghResponse.status,
+            status: responseStatus,
             body: {
               error: "github_error",
-              message: `GitHub API error: ${ghError.message ?? ghResponse.statusText}`,
+              message: existingPullRequest
+                ? `GitHub API error: ${message}. Existing pull request: #${existingPullRequest.number} ${existingPullRequest.html_url}`
+                : `GitHub API error: ${message}`,
+              github: ghBody,
+              ...(existingPullRequest
+                ? {
+                    existingPullRequest: {
+                      number: existingPullRequest.number,
+                      url: existingPullRequest.html_url,
+                    },
+                  }
+                : {}),
             } as const,
           };
         }
 
-        const pr = (await ghResponse.json()) as {
+        const pr = ghBody as {
           number: number;
           html_url: string;
           title: string;
@@ -231,7 +385,7 @@ githubRouter.post(
     }
     return c.json(
       outcome.body,
-      outcome.status as 201 | 400 | 403 | 404 | 422 | 500,
+      outcome.status as ContentfulStatusCode,
     );
   },
 );
