@@ -418,10 +418,9 @@ describe("WORKFLOW_PRIMER's trap list stays in sync with errors.ts's catalog cod
   const CATALOG_CODE_PATTERN = /code:\s*"([a-z_]+)"/g;
 
   // Codes deliberately excused from appearing verbatim in WORKFLOW_PRIMER's
-  // trap list, with a recorded reason. Empty today -- every literal catalog
-  // code below IS named in the trap list -- so a future catalog entry can
-  // opt out deliberately (with a reason recorded here) instead of this
-  // guard being weakened silently by deleting the assertion.
+  // trap list, with a recorded reason. A future catalog entry can opt out
+  // deliberately (with a reason recorded here) instead of this guard being
+  // weakened silently by deleting the assertion.
   //
   // BUDGET SQUEEZE, recorded 2026-08-12: WORKFLOW_PRIMER sits at ~5.9k of
   // its 6000-char ceiling while this guard makes naming every new catalog
@@ -430,7 +429,10 @@ describe("WORKFLOW_PRIMER's trap list stays in sync with errors.ts's catalog cod
   // ceiling DELIBERATELY (it is a sanity bound, not a contract number).
   // This exclusion list is a semantic opt-out, NOT a budget valve -- do
   // not park a code here just to fit the ceiling.
-  const TRAP_LIST_EXCLUSIONS: Record<string, string> = {};
+  const TRAP_LIST_EXCLUSIONS: Record<string, string> = {
+    github_error:
+      "pull_requests_create-specific upstream passthrough preserving GitHub failure identity, not a reusable workflow trap",
+  };
 
   function catalogCodes(): Set<string> {
     const source = readFileSync(ERRORS_TS_PATH, "utf8");

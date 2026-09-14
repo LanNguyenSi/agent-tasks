@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `pull_requests_create` now reconciles an existing PR for the requested head
+  before one bounded retry after a transient GitHub 5xx or GraphQL failure,
+  preventing an ambiguous upstream write from being duplicated. Final non-2xx
+  GitHub failures preserve their status and decoded body; existing-head errors
+  name the PR number and URL. Validation 422 responses are not retried, and
+  the retry behavior does not extend to other GitHub verbs.
+
 ### Security
 
 - `mcp-server` and `mcp-bridge` now publish through npm Trusted Publishing (OIDC); the publish workflow no longer references `NPM_TOKEN`. The `NPM_TOKEN` repository secret itself is retired separately.

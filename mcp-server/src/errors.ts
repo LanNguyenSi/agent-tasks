@@ -69,12 +69,14 @@
 //
 // ── Response budget invariant ───────────────────────────────────────────
 //
-// INVARIANT: the serialized form of any TeachingError this module builds
-// (serializeTeachingError's output, exactly what a caller receives) is
-// always <= ERROR_BUDGET_CHARS (1200 chars, the wire-format size measured
-// through serializeResult exactly as server.ts emits it) for arbitrary
-// adversarial backend input. This is a genuine ceiling on the SERIALIZED
-// (wire) size, not just on each field's own JS string length: a per-field
+// INVARIANT: error results built through buildTeachingError are always <=
+// ERROR_BUDGET_CHARS (1200 chars, the wire-format size measured through
+// serializeResult exactly as server.ts emits it) for arbitrary adversarial
+// backend input. The narrow pull_requests_create github_error passthrough is
+// the deliberate exception: it preserves GitHub's decoded body and is not
+// truncated or passed through enforceErrorBudget. This is a genuine ceiling
+// on the SERIALIZED (wire) size for the teaching-error catalog, not just on
+// each field's own JS string length: a per-field
 // codepoint clamp (MESSAGE_CHAR_BUDGET, RECIPE_CHAR_BUDGET, the
 // DETAIL_* family) bounds how many characters a field's own VALUE holds,
 // but JSON.stringify can expand a single character into a much longer
@@ -143,6 +145,12 @@ export interface TeachingError {
     /** Verb names only, machine-checkable. Empty when no self-service
      *  corrective call exists (e.g. an admin-only wall). */
     allowedNext: string[];
+    /** Present only for pull_requests_create's GitHub failure passthrough. */
+    status?: number;
+    /** Decoded GitHub failure body, preserved for pull_requests_create. */
+    github?: unknown;
+    /** Existing head PR discovered by pull_requests_create reconciliation. */
+    existingPullRequest?: { number: number; url: string };
     /** Present when this entry carries structured detail: today,
      *  precondition_failed's `failed[]`, low_confidence's
      *  score/threshold/missing[]/totalMissing, and, for the generic
@@ -200,11 +208,12 @@ const RECIPE_CHAR_BUDGET = 240;
 const CODE_CHAR_BUDGET = 60;
 const TRUNCATION_MARKER = "...";
 
-/** Hard ceiling on the whole serialized teaching error (JSON.stringify(x,
- *  null, 2), the exact wire format serializeTeachingError/serializeResult
- *  emit). See the file header's "Response budget invariant" section: this
- *  is the number enforceErrorBudget (below) actually holds the line at,
- *  since the per-field clamps above only ever bound one field at a time. */
+/** Hard ceiling on serialized errors constructed through buildTeachingError
+ *  (JSON.stringify(x, null, 2), the exact wire format
+ *  serializeTeachingError/serializeResult emit). The dedicated
+ *  pull_requests_create github_error passthrough intentionally preserves its
+ *  decoded GitHub body without this ceiling. See the file header's "Response
+ *  budget invariant" section. */
 const ERROR_BUDGET_CHARS = 1200;
 
 /** `code` marker for the (not achievable by any catalog entry today, see
@@ -291,6 +300,36 @@ function buildTeachingError(opts: {
   // defined further down (near clampDetailValue, which it reuses); function
   // declarations are hoisted, so the forward reference is fine.
   return enforceErrorBudget(err);
+}
+
+function githubCreateError(status: number, body: BackendErrorBody, message: string): TeachingError {
+  const existing = body.existingPullRequest;
+  const existingPullRequest =
+    existing &&
+    typeof existing === "object" &&
+    typeof (existing as Record<string, unknown>).number === "number" &&
+    typeof (existing as Record<string, unknown>).url === "string"
+      ? {
+          number: (existing as Record<string, unknown>).number as number,
+          url: (existing as Record<string, unknown>).url as string,
+        }
+      : undefined;
+
+  // Unlike the generic teaching-error path, this narrowly scoped mapping
+  // intentionally preserves GitHub's decoded failure body. The caller needs
+  // it to distinguish a final upstream outage from an already-created PR.
+  return {
+    ok: false,
+    error: {
+      code: "github_error",
+      message: clamp(message, MESSAGE_CHAR_BUDGET),
+      recipe: "inspect the GitHub failure and retry pull_requests_create only when the upstream condition is resolved",
+      allowedNext: ["pull_requests_create"],
+      status,
+      ...(Object.prototype.hasOwnProperty.call(body, "github") ? { github: body.github } : {}),
+      ...(existingPullRequest ? { existingPullRequest } : {}),
+    },
+  };
 }
 
 /** Serializes a TeachingError exactly as server.ts's serializeResult would
@@ -1214,13 +1253,16 @@ function trimMessageForBudget(err: TeachingError): TeachingError {
   return { ...err, error: { ...err.error, message: best } };
 }
 
-/** Enforces the response budget invariant documented in the file header.
+/** Enforces the response budget invariant documented in the file header for
+ *  errors built through buildTeachingError (not the dedicated
+ *  pull_requests_create github_error passthrough).
  *  buildTeachingError's own per-field clamps (MESSAGE_CHAR_BUDGET,
  *  RECIPE_CHAR_BUDGET) and each catalog entry's own array/key clamps
  *  bound individual FIELDS' codepoint counts, never their escaped wire
  *  cost nor their sum: several near-max fields at once, or a single
  *  escape-heavy `message`, can still exceed ERROR_BUDGET_CHARS in total.
- *  This is the one place that actually guarantees the total. `code`,
+ *  This is the one place that actually guarantees the total for that
+ *  teaching-error catalog. `code`,
  *  `recipe`, and `allowedNext` are never touched here EXCEPT in the
  *  unreachable-today overflow case described on ERROR_BUDGET_OVERFLOW_CODE
  *  (the contract otherwise mandates them whole, regardless of size, and
@@ -1532,6 +1574,9 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
   }
   if (status === 403 && code === "backlog_not_promoted") {
     return backlogNotPromotedError(message);
+  }
+  if (verbContext === "pull_requests_create" && code === "github_error") {
+    return githubCreateError(status, body, message);
   }
 
   return genericDegrade(status, message, body.details, body.error);
