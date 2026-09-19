@@ -2,10 +2,9 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { prisma } from "../lib/prisma.js";
-import { hasProjectAccess, isProjectAdmin } from "../services/team-access.js";
+import { hasProjectAccess, hasProjectRole, isProjectAdmin } from "../services/team-access.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
-import { ConflictError } from "../lib/errors.js";
 import {
   defaultWorkflowDefinition,
   type WorkflowDefinitionShape,
@@ -14,6 +13,34 @@ import { RULE_CATALOG } from "../services/transition-rules.js";
 import { WORKFLOW_TEMPLATES, findWorkflowTemplate } from "../services/workflow-templates.js";
 import { logAuditEvent } from "../services/audit.js";
 import { summarizeWorkflowDiff } from "../services/workflow-diff.js";
+import { mutateGroundingContext } from "../services/grounding-context-mutation.js";
+import { canonicalGroundingJson, GroundingAccessError } from "../services/grounding-context.js";
+import { lockGroundingAuthority } from "../services/grounding-direct-authority.js";
+
+type ContextWorkflowResult<T> = T & { changed: boolean };
+
+async function workflowContextMutation<T extends object>(
+  projectId: string,
+  actor: AppVariables["actor"],
+  reason: string,
+  select: (db: Parameters<Parameters<typeof mutateGroundingContext>[1]["selectAndAuthorize"]>[0]) => Promise<readonly string[]>,
+  mutate: (db: Parameters<Parameters<typeof mutateGroundingContext>[1]["mutate"]>[0]) => Promise<ContextWorkflowResult<T>>,
+) {
+  return mutateGroundingContext(prisma, {
+    projectIds: [projectId], audit: { actor, reason },
+    selectAndAuthorize: async db => {
+      await lockGroundingAuthority(db, actor, projectId);
+      if (!await hasProjectRole(actor, projectId, "ADMIN", db)) throw new GroundingAccessError("forbidden", 403);
+      return select(db);
+    },
+    mutate,
+    didMutate: result => result.changed,
+  });
+}
+
+function inheritedTaskIds(db: Parameters<Parameters<typeof mutateGroundingContext>[1]["selectAndAuthorize"]>[0], projectId: string) {
+  return db.task.findMany({ where: { projectId, workflowId: null }, select: { id: true } }).then(tasks => tasks.map(task => task.id));
+}
 
 /**
  * Shape snapshot written into the `workflow.customized` audit payload.
@@ -232,26 +259,19 @@ workflowRouter.get("/projects/:projectId/effective-workflow", async (c) => {
 workflowRouter.post("/projects/:projectId/workflow/customize", async (c) => {
   const actor = c.get("actor");
   const projectId = c.req.param("projectId");
-
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) return notFound(c);
-
-  if (!(await isProjectAdmin(actor, projectId))) {
-    return forbidden(c, "Only team admins can customize a workflow");
-  }
-
-  // Wrap the check-then-create in a transaction so two concurrent POSTs
-  // cannot both pass the findFirst check and end up creating duplicate
-  // default workflow rows for the same project.
+  if (!(await isProjectAdmin(actor, projectId))) return forbidden(c, "Only team admins can customize a workflow");
   try {
-    const workflow = await prisma.$transaction(async (tx) => {
-      const existing = await tx.workflow.findFirst({
+    const result = await workflowContextMutation(projectId, actor, "workflow_customize_grounding_context", async db => {
+      const existing = await db.workflow.findFirst({
         where: { projectId, isDefault: true },
       });
-      if (existing) {
-        throw new WorkflowConflictError(existing.id);
-      }
-      return tx.workflow.create({
+      return existing ? [] : inheritedTaskIds(db, projectId);
+    }, async db => {
+      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true } });
+      if (existing) return { changed: false, conflict: existing.id };
+      const workflow = await db.workflow.create({
         data: {
           projectId,
           name: "Custom workflow",
@@ -259,7 +279,13 @@ workflowRouter.post("/projects/:projectId/workflow/customize", async (c) => {
           definition: defaultWorkflowDefinition() as object,
         },
       });
+      return { changed: true, workflow };
     });
+
+    if ("conflict" in result) {
+      return c.json({ error: "conflict", message: "This project already has a custom workflow", workflowId: result.conflict }, 409);
+    }
+    const workflow = result.workflow;
 
     const forkedDef = workflow.definition as unknown as WorkflowDefinitionShape;
     void logAuditEvent({
@@ -281,26 +307,14 @@ workflowRouter.post("/projects/:projectId/workflow/customize", async (c) => {
       201,
     );
   } catch (err) {
-    if (err instanceof WorkflowConflictError) {
-      return c.json(
-        {
-          error: "conflict",
-          message: "This project already has a custom workflow",
-          workflowId: err.workflowId,
-        },
-        409,
-      );
+    if (err instanceof GroundingAccessError) {
+      if (err.code === "not_found") return notFound(c);
+      if (err.code === "forbidden") return forbidden(c, "Only team admins can customize a workflow");
+      return c.json({ error: err.code }, 409);
     }
     throw err;
   }
 });
-
-class WorkflowConflictError extends ConflictError {
-  constructor(public workflowId: string) {
-    super("This project already has a custom workflow");
-    this.name = "WorkflowConflictError";
-  }
-}
 
 // ── Workflow templates ──────────────────────────────────────────────────────
 
@@ -329,13 +343,9 @@ workflowRouter.post("/projects/:projectId/workflow/apply-template/:slug", async 
   const actor = c.get("actor");
   const projectId = c.req.param("projectId");
   const slug = c.req.param("slug");
-
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) return notFound(c);
-
-  if (!(await isProjectAdmin(actor, projectId))) {
-    return forbidden(c, "Only team admins can apply workflow templates");
-  }
+  if (!(await isProjectAdmin(actor, projectId))) return forbidden(c, "Only team admins can apply workflow templates");
 
   const template = findWorkflowTemplate(slug);
   if (!template) {
@@ -345,32 +355,30 @@ workflowRouter.post("/projects/:projectId/workflow/apply-template/:slug", async 
     );
   }
 
-  // Upsert: if a custom workflow exists, overwrite its definition.
-  // If none exists, create one. Wrapped in a transaction for safety.
-  const workflow = await prisma.$transaction(async (tx) => {
-    const existing = await tx.workflow.findFirst({
-      where: { projectId, isDefault: true },
+  let workflow;
+  try {
+    const result = await workflowContextMutation(projectId, actor, "workflow_template_apply_grounding_context", async db => {
+      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true } });
+      if (existing && canonicalGroundingJson(existing.definition) === canonicalGroundingJson(template.definition)) return [];
+      const tasks = await db.task.findMany({ where: { projectId, OR: [{ workflowId: null }, ...(existing ? [{ workflowId: existing.id }] : [])] }, select: { id: true } });
+      return tasks.map(task => task.id);
+    }, async db => {
+      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true } });
+      const definitionChanged = !existing || canonicalGroundingJson(existing.definition) !== canonicalGroundingJson(template.definition);
+      const next = existing
+        ? await db.workflow.update({ where: { id: existing.id }, data: { name: template.name, definition: template.definition as object } })
+        : await db.workflow.create({ data: { projectId, name: template.name, isDefault: true, definition: template.definition as object } });
+      return { changed: definitionChanged, workflow: next };
     });
-
-    if (existing) {
-      return tx.workflow.update({
-        where: { id: existing.id },
-        data: {
-          name: template.name,
-          definition: template.definition as object,
-        },
-      });
+    workflow = result.workflow;
+  } catch (err) {
+    if (err instanceof GroundingAccessError) {
+      if (err.code === "not_found") return notFound(c);
+      if (err.code === "forbidden") return forbidden(c, "Only team admins can apply workflow templates");
+      return c.json({ error: err.code }, 409);
     }
-
-    return tx.workflow.create({
-      data: {
-        projectId,
-        name: template.name,
-        isDefault: true,
-        definition: template.definition as object,
-      },
-    });
-  });
+    throw err;
+  }
 
   void logAuditEvent({
     action: "workflow.template_applied",
@@ -400,53 +408,48 @@ workflowRouter.post("/projects/:projectId/workflow/apply-template/:slug", async 
 workflowRouter.delete("/projects/:projectId/workflow", async (c) => {
   const actor = c.get("actor");
   const projectId = c.req.param("projectId");
-
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) return notFound(c);
+  if (!(await isProjectAdmin(actor, projectId))) return forbidden(c, "Only team admins can reset a workflow");
 
-  if (!(await isProjectAdmin(actor, projectId))) {
-    return forbidden(c, "Only team admins can reset a workflow");
-  }
+  try {
+    const result = await workflowContextMutation(projectId, actor, "workflow_reset_grounding_context", async db => {
+      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true } });
+      if (!existing) return [];
+      const tasks = await db.task.findMany({ where: { projectId, OR: [{ workflowId: existing.id }, { workflowId: null }] }, select: { id: true } });
+      return tasks.map(task => task.id);
+    }, async db => {
+      const existing = await db.workflow.findFirst({ where: { projectId, isDefault: true } });
+      if (!existing) return { changed: false, missing: true, affectedTaskCount: 0, previousWorkflowId: "" };
+      const updateResult = await db.task.updateMany({ where: { projectId, workflowId: existing.id }, data: { workflowId: null } });
+      await db.workflow.delete({ where: { id: existing.id } });
+      return { changed: true, missing: false, affectedTaskCount: updateResult.count, previousWorkflowId: existing.id };
+    });
+    if (result.missing) return c.json({ error: "not_found", message: "This project has no custom workflow to reset" }, 404);
 
-  const existing = await prisma.workflow.findFirst({
-    where: { projectId, isDefault: true },
-  });
-  if (!existing) {
-    return c.json(
-      { error: "not_found", message: "This project has no custom workflow to reset" },
-      404,
-    );
-  }
-
-  // Task.workflow has no explicit `onDelete` in schema.prisma, so Prisma's
-  // default (NoAction) would fail the FK constraint on delete. Unset the
-  // workflowId on all referencing tasks first — atomically with the delete,
-  // so a mid-flight error doesn't leave tasks detached from a still-present
-  // workflow row. `updateMany` returns the count, which we capture for the
-  // audit payload so auditors can see the blast radius of a reset.
-  const [updateResult] = await prisma.$transaction([
-    prisma.task.updateMany({
-      where: { workflowId: existing.id },
-      data: { workflowId: null },
-    }),
-    prisma.workflow.delete({ where: { id: existing.id } }),
-  ]);
-
-  void logAuditEvent({
+    void logAuditEvent({
     action: "workflow.reset",
     actorId: actor.type === "human" ? actor.userId : undefined,
     projectId,
     payload: {
-      previousWorkflowId: existing.id,
-      affectedTaskCount: updateResult.count,
+      previousWorkflowId: result.previousWorkflowId,
+      affectedTaskCount: result.affectedTaskCount,
     },
-  });
+    });
 
-  return c.json({
+    return c.json({
     source: "default" as const,
     workflowId: null,
     definition: defaultWorkflowDefinition(),
-  });
+    });
+  } catch (err) {
+    if (err instanceof GroundingAccessError) {
+      if (err.code === "not_found") return notFound(c);
+      if (err.code === "forbidden") return forbidden(c, "Only team admins can reset a workflow");
+      return c.json({ error: err.code }, 409);
+    }
+    throw err;
+  }
 });
 
 // ── List workflows for a project ──────────────────────────────────────────────
@@ -479,29 +482,25 @@ workflowRouter.post(
     if (actor.type === "agent") {
       return forbidden(c, "Agents cannot create workflows");
     }
-
-    if (!(await isProjectAdmin(actor, projectId))) {
-      return forbidden(c, "Only team admins can create workflows");
-    }
+    if (!(await isProjectAdmin(actor, projectId))) return forbidden(c, "Only team admins can create workflows");
 
     const body = c.req.valid("json");
-
-    // If this is set as default, unset existing default
-    if (body.isDefault) {
-      await prisma.workflow.updateMany({
-        where: { projectId, isDefault: true },
-        data: { isDefault: false },
+    let workflow;
+    try {
+      const result = await workflowContextMutation(projectId, actor, "workflow_create_grounding_context", db => body.isDefault ? inheritedTaskIds(db, projectId) : Promise.resolve([]), async db => {
+        if (body.isDefault) await db.workflow.updateMany({ where: { projectId, isDefault: true }, data: { isDefault: false } });
+        const next = await db.workflow.create({ data: { projectId, name: body.name, isDefault: body.isDefault ?? false, definition: body.definition as object } });
+        return { changed: body.isDefault ?? false, workflow: next };
       });
+      workflow = result.workflow;
+    } catch (err) {
+      if (err instanceof GroundingAccessError) {
+        if (err.code === "not_found") return notFound(c);
+        if (err.code === "forbidden") return forbidden(c, "Only team admins can create workflows");
+        return c.json({ error: err.code }, 409);
+      }
+      throw err;
     }
-
-    const workflow = await prisma.workflow.create({
-      data: {
-        projectId,
-        name: body.name,
-        isDefault: body.isDefault ?? false,
-        definition: body.definition as object,
-      },
-    });
 
     void logAuditEvent({
       action: "workflow.created",
@@ -551,32 +550,44 @@ workflowRouter.put(
       where: { id: c.req.param("id") },
     });
     if (!workflow) return notFound(c);
-
-    // Gate workflow mutations on team ADMIN, not just project access. A
-    // team member who isn't an admin should not be able to silently swap
-    // out gates — otherwise the UI's admin-only editor branch can be
-    // trivially bypassed by a direct API call.
-    if (!(await isProjectAdmin(actor, workflow.projectId))) {
-      return forbidden(c, "Only team admins can modify workflows");
-    }
+    if (!(await isProjectAdmin(actor, workflow.projectId))) return forbidden(c, "Only team admins can modify workflows");
 
     const body = c.req.valid("json");
-
-    if (body.isDefault) {
-      await prisma.workflow.updateMany({
-        where: { projectId: workflow.projectId, isDefault: true },
-        data: { isDefault: false },
+    let updated;
+    let before = workflow;
+    try {
+      const result = await workflowContextMutation(workflow.projectId, actor, "workflow_update_grounding_context", async db => {
+        const current = await db.workflow.findUnique({ where: { id: workflow.id } });
+        if (!current) throw new GroundingAccessError("not_found", 404);
+        const definitionChanged = body.definition !== undefined && canonicalGroundingJson(body.definition) !== canonicalGroundingJson(current.definition);
+        const defaultChanged = body.isDefault !== undefined && body.isDefault !== current.isDefault;
+        const contextChanged = definitionChanged || defaultChanged;
+        if (!contextChanged) return [];
+        const ids = new Set<string>();
+        if (definitionChanged) {
+          for (const task of await db.task.findMany({ where: { projectId: current.projectId, workflowId: current.id }, select: { id: true } })) ids.add(task.id);
+        }
+        if (defaultChanged || (definitionChanged && current.isDefault)) {
+          for (const task of await db.task.findMany({ where: { projectId: current.projectId, workflowId: null }, select: { id: true } })) ids.add(task.id);
+        }
+        return [...ids];
+      }, async db => {
+        const current = await db.workflow.findUnique({ where: { id: workflow.id } });
+        if (!current) throw new GroundingAccessError("not_found", 404);
+        before = current;
+        if (body.isDefault) await db.workflow.updateMany({ where: { projectId: current.projectId, isDefault: true }, data: { isDefault: false } });
+        const next = await db.workflow.update({ where: { id: current.id }, data: { ...(body.name ? { name: body.name } : {}), ...(body.isDefault !== undefined ? { isDefault: body.isDefault } : {}), ...(body.definition ? { definition: body.definition as object } : {}) } });
+        return { changed: (body.definition !== undefined && canonicalGroundingJson(body.definition) !== canonicalGroundingJson(current.definition)) || (body.isDefault !== undefined && body.isDefault !== current.isDefault), workflow: next };
       });
+      updated = result.workflow;
+    } catch (err) {
+      if (err instanceof GroundingAccessError) {
+        if (err.code === "not_found") return notFound(c);
+        if (err.code === "forbidden") return forbidden(c, "Only team admins can modify workflows");
+        return c.json({ error: err.code }, 409);
+      }
+      throw err;
     }
-
-    const updated = await prisma.workflow.update({
-      where: { id: workflow.id },
-      data: {
-        ...(body.name ? { name: body.name } : {}),
-        ...(body.isDefault !== undefined ? { isDefault: body.isDefault } : {}),
-        ...(body.definition ? { definition: body.definition as object } : {}),
-      },
-    });
 
     // Compute a small diff summary for the audit payload so auditors can
     // reconstruct what changed without the backend storing every
@@ -584,7 +595,7 @@ workflowRouter.put(
     // actually changed — a name-only update writes a lighter payload.
     const diff = body.definition
       ? summarizeWorkflowDiff(
-          workflow.definition as unknown as WorkflowDefinitionShape,
+          before.definition as unknown as WorkflowDefinitionShape,
           body.definition as unknown as WorkflowDefinitionShape,
         )
       : null;
@@ -595,11 +606,11 @@ workflowRouter.put(
       projectId: workflow.projectId,
       payload: {
         workflowId: workflow.id,
-        ...(body.name && body.name !== workflow.name
-          ? { nameChanged: { from: workflow.name, to: body.name } }
+        ...(body.name && body.name !== before.name
+          ? { nameChanged: { from: before.name, to: body.name } }
           : {}),
-        ...(body.isDefault !== undefined && body.isDefault !== workflow.isDefault
-          ? { isDefaultChanged: { from: workflow.isDefault, to: body.isDefault } }
+        ...(body.isDefault !== undefined && body.isDefault !== before.isDefault
+          ? { isDefaultChanged: { from: before.isDefault, to: body.isDefault } }
           : {}),
         ...(diff ? { definitionDiff: diff } : {}),
       },

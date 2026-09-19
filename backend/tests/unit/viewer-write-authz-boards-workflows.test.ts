@@ -68,6 +68,11 @@ vi.mock("../../src/services/audit.js", () => ({
   logAuditEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../src/services/grounding-context-mutation.js", () => ({
+  mutateGroundingContext: async (_client: unknown, input: { mutate: (db: unknown, tasks: never[]) => Promise<unknown> }) =>
+    input.mutate({ workflow: { findFirst: prismaMocks.workflowFindFirst, create: prismaMocks.workflowCreate, updateMany: prismaMocks.workflowUpdateMany }, task: { findMany: prismaMocks.taskFindMany } }, []),
+}));
+
 // ── Import routers AFTER mocks are registered ─────────────────────────────────
 
 import { boardRouter } from "../../src/routes/boards.js";

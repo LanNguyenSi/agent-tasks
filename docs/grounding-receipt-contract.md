@@ -291,10 +291,18 @@ provisioned completion requests use their documented transport and grounding
 error responses.
 
 The staged boundary does not activate production enrollment. The direct REST
-adapter and the project PATCH path join the mutation protocol, but indirect
-workflow/team writers, GitHub/webhook writers, public MCP routing, and
-issuer/rollout qualification remain separate work. They must join the same
-context and authorization rules before productive activation.
+adapter, project PATCH path, and indirect workflow and project-member writers join the
+mutation protocol. Workflow customization, template application, reset,
+default creation or replacement, definition changes, and member removal select
+their affected tasks before writing. That selection includes tasks inheriting a
+project default through a null `workflowId`; an explicit workflow reference is
+also selected when its definition changes or reset detaches it. Name-only
+workflow writes and non-default workflow creation leave active attempts intact.
+Member removal clears the affected live work/review claims, invalidates their
+contexts, and deletes the membership in one transaction. GitHub/webhook and
+public MCP transport remain separate follow-up work, as do issuer and rollout
+qualification. They must join the same context and authorization rules before
+productive activation.
 
 An actual `Project.requireGroundingForDebug` toggle is a project context
 change: it atomically invalidates affected attempts and writes the mandatory

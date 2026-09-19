@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-09-08T08:12:00Z
+timestamp: 2026-09-19T10:28:42Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -15,6 +15,8 @@ sources:
   - backend/src/services/gates/pr-repo-matches-project.ts
   - backend/src/services/workflow-templates.ts
   - backend/src/services/default-workflow.ts
+  - backend/src/routes/workflows.ts
+  - backend/src/services/grounding-context-mutation.ts
   - backend/src/routes/tasks.ts
   - backend/prisma/schema.prisma
   - backend/src/services/confidence-gate.ts
@@ -28,7 +30,18 @@ sources:
 
 **No-PR task classes** (`workflow-templates.ts`, template `release-ops-no-pr`, agent-tasks 5107416c): a task whose class never produces a branch or a PR — a tag-only release, a config/ops action — hits `422 precondition_failed` on the default workflow's `in_progress → review`/`→ done` edges with `canForce: false` and no agent-side recovery, because both edges require `branchPresent`/`prPresent` there. Rather than adding a bypass to the gate evaluator, this is handled by applying a different, registered workflow: the `release-ops-no-pr` template is the default four-state workflow with exactly those two `requires` arrays dropped, every other edge (including the normal `review → done`/`→ in_progress` flow) unchanged.
 
-**Audit trail depends on how the template is applied.** Assigning it per task — `task_create({ workflowId })` against a *non-default* `Workflow` row (`POST /workflows { isDefault: false }`, seeded from the template's `definition`) — is per-task auditable: that one task's `workflowId` records the exception, and `result` (written on `task_finish`) stands in for the evidence a PR link would otherwise provide. `POST /projects/:projectId/workflow/apply-template/:slug` (`backend/src/routes/workflows.ts` ~line 328) is a different path: it always persists the workflow with `isDefault: true`, so any task subsequently created without an explicit `workflowId` resolves to it silently via the project-default lookup and itself carries `workflowId: null` — the audit trail for *those* tasks is the project's default-workflow row plus the `workflow.template_applied` audit event, not a per-task marker, and every task in the project (not just release/ops ones) loses the branch/PR gates. **Operator guidance**: in a mixed project (regular code tasks + release/ops tasks), do not `apply-template` this one as the project default — create a non-default named workflow from it instead and assign it per task.
+**Audit trail depends on how the template is applied.** Assigning it per task — `task_create({ workflowId })` against a *non-default* `Workflow` row (`POST /workflows { isDefault: false }`, seeded from the template's `definition`) — is per-task auditable: that one task's `workflowId` records the exception, and `result` (written on `task_finish`) stands in for the evidence a PR link would otherwise provide. `POST /projects/:projectId/workflow/apply-template/:slug` (`backend/src/routes/workflows.ts`, template-application handler) is a different path: it always persists the workflow with `isDefault: true`, so any task subsequently created without an explicit `workflowId` resolves to it silently via the project-default lookup and itself carries `workflowId: null` — the audit trail for *those* tasks is the project's default-workflow row plus the `workflow.template_applied` audit event, not a per-task marker, and every task in the project (not just release/ops ones) loses the branch/PR gates. **Operator guidance**: in a mixed project (regular code tasks + release/ops tasks), do not `apply-template` this one as the project default — create a non-default named workflow from it instead and assign it per task.
+
+**Grounding context writers**: workflow customize, template application, reset,
+default creation or replacement, and definition updates use the shared context
+mutation protocol. Before the route writes, it locks the project and selected
+tasks, rejects an active finalization reservation, and rechecks project-admin
+authority. A project-default change selects null-`workflowId` tasks because
+they inherit the default; a definition update also selects explicit references
+to that workflow. Reset selects both explicit references that it detaches and
+inherited tasks. A name-only update and non-default workflow creation leave
+existing grounding attempts unchanged. GitHub/webhook integration and public MCP transport
+remain separate follow-up work.
 
 `Task.workflowId` can only be set at task-create time: `updateTaskSchema` (the PATCH body schema) has no `workflowId` field at all, so a PATCH payload naming one has it silently stripped/ignored by Zod (`z.object()` strips unrecognized keys by default — this is not a rejected/400 request), not persisted. A task already created under the default workflow therefore cannot be migrated onto this template after the fact; recovery for an already-stuck task stays the admin-only forced `/transition` path described above.
 

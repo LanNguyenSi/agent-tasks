@@ -29,9 +29,12 @@ import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
-import { isProjectAdmin, hasProjectAccess } from "../services/team-access.js";
+import { hasProjectAccess, hasProjectRole, isProjectAdmin } from "../services/team-access.js";
 import { getUserRoleInTeam } from "../repositories/team-repository.js";
 import { logAuditEvent } from "../services/audit.js";
+import { mutateGroundingContext } from "../services/grounding-context-mutation.js";
+import { GroundingAccessError } from "../services/grounding-context.js";
+import { lockGroundingAuthority } from "../services/grounding-direct-authority.js";
 
 export const projectInviteAdminRouter = new Hono<{ Variables: AppVariables }>();
 export const inviteAcceptRouter = new Hono<{ Variables: AppVariables }>();
@@ -225,50 +228,79 @@ projectInviteAdminRouter.delete("/projects/:id/members/:userId", async (c) => {
   });
   if (!member) return notFound(c);
 
-  // Self-removal is permitted regardless of admin status; the user is
-  // declining the share. Otherwise project-admin authority is required.
   const selfRemoval = actor.type === "human" && actor.userId === targetUserId;
-  if (!selfRemoval) {
-    if (!(await isProjectAdmin(actor, projectId))) {
-      return forbidden(c, "Only project admins can remove members");
-    }
+  if (!selfRemoval && !(await isProjectAdmin(actor, projectId))) {
+    return forbidden(c, "Only project admins can remove members");
   }
+  try {
+    const result = await mutateGroundingContext(prisma, {
+      projectIds: [projectId],
+      audit: { actor, reason: "project_member_remove_grounding_context" },
+      selectAndAuthorize: async db => {
+        await lockGroundingAuthority(db, actor, projectId);
+        const member = await db.projectMember.findUnique({
+          where: { projectId_userId: { projectId, userId: targetUserId } },
+          select: { id: true, role: true, userId: true },
+        });
+        if (!member) throw new GroundingAccessError("not_found", 404);
+        if (!selfRemoval && !await hasProjectRole(actor, projectId, "ADMIN", db)) {
+          throw new GroundingAccessError("forbidden", 403);
+        }
+        const tasks = await db.task.findMany({
+          where: {
+            projectId,
+            OR: [
+              { claimedByUserId: targetUserId, status: { not: "done" } },
+              { reviewClaimedByUserId: targetUserId, status: "review" },
+            ],
+          },
+          select: { id: true },
+        });
+        return tasks.map(task => task.id);
+      },
+      mutate: async (db, tasks) => {
+        const member = await db.projectMember.findUnique({
+          where: { projectId_userId: { projectId, userId: targetUserId } },
+          select: { id: true, role: true },
+        });
+        if (!member) throw new GroundingAccessError("not_found", 404);
+        const releasedClaims = tasks.length
+          ? await db.task.updateMany({
+              where: { id: { in: tasks.map(task => task.id) } },
+              data: {
+                claimedByUserId: null,
+                claimedAt: null,
+                reviewClaimedByUserId: null,
+                reviewClaimedAt: null,
+              },
+            })
+          : { count: 0 };
+        await db.projectMember.delete({ where: { id: member.id } });
+        return { member, releasedClaims: releasedClaims.count };
+      },
+    });
 
-  // Auto-release any active claims the removed user holds on tasks in
-  // this project, so the task pool reflects the membership change. The
-  // task history retains the original claim trail; only the live claim
-  // pointer clears.
-  const releasedClaims = await prisma.task.updateMany({
-    where: {
+    void logAuditEvent({
+      action: "project.member_removed",
+      actorId: actor.type === "human" ? actor.userId : undefined,
       projectId,
-      OR: [
-        { claimedByUserId: targetUserId, status: { not: "done" } },
-        { reviewClaimedByUserId: targetUserId, status: "review" },
-      ],
-    },
-    data: {
-      claimedByUserId: null,
-      claimedAt: null,
-      reviewClaimedByUserId: null,
-      reviewClaimedAt: null,
-    },
-  });
+      payload: {
+        removedUserId: targetUserId,
+        removedRole: result.member.role,
+        selfRemoval,
+        claimsReleased: result.releasedClaims,
+      },
+    });
 
-  await prisma.projectMember.delete({ where: { id: member.id } });
-
-  void logAuditEvent({
-    action: "project.member_removed",
-    actorId: actor.type === "human" ? actor.userId : undefined,
-    projectId,
-    payload: {
-      removedUserId: targetUserId,
-      removedRole: member.role,
-      selfRemoval,
-      claimsReleased: releasedClaims.count,
-    },
-  });
-
-  return c.json({ success: true, claimsReleased: releasedClaims.count });
+    return c.json({ success: true, claimsReleased: result.releasedClaims });
+  } catch (err) {
+    if (err instanceof GroundingAccessError) {
+      if (err.code === "not_found") return notFound(c);
+      if (err.code === "forbidden") return forbidden(c, "Only project admins can remove members");
+      return c.json({ error: err.code }, 409);
+    }
+    throw err;
+  }
 });
 
 // GET /projects/:id/members: read-only list of accepted project members.

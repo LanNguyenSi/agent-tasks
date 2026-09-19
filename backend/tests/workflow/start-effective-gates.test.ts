@@ -95,6 +95,11 @@ vi.mock("../../src/services/audit.js", () => ({
   logAuditEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../src/services/grounding-context-mutation.js", () => ({
+  mutateGroundingContext: async (_client: unknown, input: { mutate: (db: unknown, tasks: never[]) => Promise<unknown> }) =>
+    input.mutate({ workflow: { findFirst: prismaMocks.workflowFindFirst, create: prismaMocks.workflowCreate, findUnique: prismaMocks.workflowFindUnique, update: prismaMocks.workflowUpdate, updateMany: prismaMocks.workflowUpdateMany }, task: { findMany: prismaMocks.taskFindMany, updateMany: prismaMocks.taskUpdateMany } }, []),
+}));
+
 // Only exercised by the finding-L6 round-trip test below, which finishes a
 // work-claim into a review target — `/tasks/:id/finish` fires this signal
 // (fire-and-forget) once the task lands in a review state. Mocked at the
