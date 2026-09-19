@@ -78,6 +78,14 @@ vi.mock("../../src/services/audit.js", () => ({
   logAuditEvent: auditMock,
 }));
 
+// Route unit tests deliberately isolate the writer callback. PostgreSQL lock,
+// reservation, and invalidation behavior is exercised by the mounted C08
+// integration suite; this shim keeps the older HTTP-contract fixtures narrow.
+vi.mock("../../src/services/grounding-context-mutation.js", () => ({
+  mutateGroundingContext: async (_client: unknown, input: { mutate: (db: unknown, tasks: Array<{ id: string }>) => Promise<unknown> }) =>
+    input.mutate({ projectMember: { findUnique: prismaMocks.projectMemberFindUnique, delete: prismaMocks.projectMemberDelete }, task: { updateMany: prismaMocks.taskUpdateMany } }, [{ id: "task-1" }]),
+}));
+
 import {
   projectInviteAdminRouter,
   inviteAcceptRouter,

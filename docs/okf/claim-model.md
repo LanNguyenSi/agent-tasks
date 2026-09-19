@@ -3,12 +3,13 @@ type: invariant
 title: "Claim model: task_pickup resolution order, backlog filtering, and single-active-claim"
 description: "Signals, then review, then open work, then idle; backlog is invisible to pickup; priority desc/createdAt asc; blockedBy filtering; one active claim per agent enforced in both pickup and start; status is an unconstrained free String; backlog tasks require human promotion before agent claim."
 tags: [claim, pickup, status, dependencies, backlog]
-timestamp: 2026-09-08T08:12:00Z
+timestamp: 2026-09-19T10:28:42Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/grounding-route-context.ts
   - backend/src/services/grounding-context-mutation.ts
   - backend/src/routes/workflows.ts
+  - backend/src/routes/invites.ts
   - backend/prisma/schema.prisma
   - mcp-server/src/errors.ts
   - cli/src/api.ts
@@ -46,5 +47,13 @@ supersedes the active grounding attempt, advances its context generation, and
 records the context mutation with the existing claim/audit semantics. A zero-row
 CAS or other no-op commits without invalidating again. An unresolved durable
 finalization reservation blocks these mutations until recovery resolves it.
+
+**Member removal is a context mutation**: removing a project member selects
+that member's active work and review claims after the project lock. It clears
+the live claim fields, invalidates the selected attempts, writes the mandatory
+context audit, and deletes the membership in one transaction. An active
+finalization reservation rejects the whole removal before either a claim or
+membership changes. Workflow and project-member writers now use this boundary; GitHub/webhook
+integration and public MCP transport remain separate follow-up work.
 
 Related: `workflow-gates.md`, `governance-merge.md`, `task-lifecycle.md`.
