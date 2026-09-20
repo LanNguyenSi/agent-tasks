@@ -439,6 +439,8 @@ model Task {
   groundingBinding GroundingBinding?
   groundingCohort GroundingCohort?
   groundingOperations GroundingOperation[]
+  groundingGithubMergeSeeds GroundingGithubMergeGroup[]
+  groundingGithubObservations GroundingGithubObservation[]
 
   @@unique([id, projectId])
   @@map("tasks")
@@ -937,9 +939,142 @@ model GroundingOperation {
   task Task @relation(fields: [taskId], references: [id], onDelete: Restrict)
   reservedFor GroundingCohort? @relation("GroundingReservation")
   finalization GroundingFinalization?
+  githubMergeMember GroundingGithubMergeMember?
+  githubObservations GroundingGithubObservation[]
 
   @@unique([taskId, key])
   @@unique([taskId, id])
   @@index([taskId, state])
   @@map("grounding_operations")
+}
+
+// Internal exclusion only: an intent is not a permission or completion decision.
+model GroundingGithubFenceIntent {
+  id        String @id
+  repo      String
+  kind      String
+  taskId    String?
+  state     String @default("ACTIVE")
+  fence     GroundingGithubRepositoryFence?
+
+  @@unique([id, repo])
+  @@map("grounding_github_fence_intents")
+}
+
+// Rows persist even while inactive; version writes defeat stale snapshots.
+model GroundingGithubRepositoryFence {
+  repo    String @id
+  version BigInt @default(0)
+  ownerId String? @unique
+  owner   GroundingGithubFenceIntent? @relation(fields: [ownerId, repo], references: [id, repo], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([ownerId, repo])
+  @@map("grounding_github_repository_fences")
+}
+
+// Membership and requests are fixed by the reserving transaction.
+model GroundingGithubMergeGroup {
+  id String @id
+  seedTaskId String
+  key String
+  actorType String
+  actorId String
+  fingerprint String
+  request Json
+  repo String
+  dispatchRepo String
+  prNumber Int
+  headSha String
+  mergeMethod String
+  state GroundingOperationState @default(RESERVED)
+  result Json?
+  createdAt DateTime @default(now())
+  dispatchedAt DateTime?
+  completedAt DateTime?
+
+  seed Task @relation(fields: [seedTaskId], references: [id], onDelete: Restrict)
+  members GroundingGithubMergeMember[]
+
+  @@unique([seedTaskId, key])
+  @@map("grounding_github_merge_groups")
+}
+
+enum GroundingGithubMergeRole {
+  SEED
+  GUARD
+}
+
+model GroundingGithubMergeMember {
+  groupId String
+  taskId String
+  operationId String @unique
+  role GroundingGithubMergeRole
+  group GroundingGithubMergeGroup @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  operation GroundingOperation @relation(fields: [taskId, operationId], references: [taskId, id], onDelete: Restrict)
+
+  @@id([groupId, taskId])
+  @@unique([taskId, operationId])
+  @@map("grounding_github_merge_members")
+}
+
+// Internal durable PR-create dispatch and reconciliation; contains no credentials.
+model GroundingGithubCreateOperation {
+  id             String @id @default(uuid())
+  taskId         String
+  projectId      String
+  key            String
+  actorId        String
+  actorUserId    String
+  actorTeamId    String
+  fingerprint    String
+  request        Json
+  delegateUserId String
+  state          GroundingOperationState @default(RESERVED)
+  observed       Json?
+  proofConflict  Json?
+  result         Json?
+  createdAt      DateTime @default(now())
+  dispatchedAt   DateTime?
+  completedAt    DateTime?
+
+  @@unique([taskId, key])
+  @@index([taskId, state])
+  @@map("grounding_github_create_operations")
+}
+
+// This row and all DB-only event effects commit in the same transaction.
+model GroundingGithubWebhookDelivery {
+  deliveryId String @id
+  event String
+  fingerprint String
+  result Json?
+  createdAt DateTime @default(now())
+  completedAt DateTime?
+  observations GroundingGithubObservation[]
+
+  @@map("grounding_github_webhook_deliveries")
+}
+
+// An external fact is never an authenticated completion decision.
+model GroundingGithubObservation {
+  id String @id @default(uuid())
+  deliveryId String
+  taskId String
+  operationId String?
+  repo String
+  prNumber Int?
+  issueNumber Int?
+  event String
+  matchKind String
+  state String
+  reason String
+  observedHeadSha String?
+  createdAt DateTime @default(now())
+  delivery GroundingGithubWebhookDelivery @relation(fields: [deliveryId], references: [deliveryId], onDelete: Restrict)
+  task Task @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  operation GroundingOperation? @relation(fields: [taskId, operationId], references: [taskId, id], onDelete: Restrict)
+
+  @@unique([deliveryId, taskId])
+  @@index([taskId, state])
+  @@map("grounding_github_observations")
 }

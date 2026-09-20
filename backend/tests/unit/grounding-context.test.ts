@@ -92,6 +92,16 @@ describe("fresh authorized GitHub head", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher).toHaveBeenCalledWith("https://api.github.com/repos/acme/repo/pulls/42", expect.objectContaining({ cache: "no-store", redirect: "error", signal: expect.any(AbortSignal) }));
   });
+  it("accepts case-insensitive canonical repository identity without relaxing URL structure", async () => {
+    vi.mocked(findDelegationUser).mockResolvedValue({ userId: ids.user, login: "test", githubAccessToken: "test-only" });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...body, html_url: "https://github.com/Acme/Repo/pull/42", base: { repo: { full_name: "ACME/REPO" } } })));
+    await expect(fetchGroundingHead(input)).resolves.toBe(headSha);
+  });
+  it.each(["http://github.com/acme/repo/pull/42", "https://github.com/acme/repo/pull/042", "https://github.com/acme/repo/pull/42?x=1", "https://github.com/acme/repo/pull/42#x", "https://github.com/acme/repo/pull/43", "https://github.com/evil/repo/pull/42", "https://github.com@evil.test/acme/repo/pull/42"])("rejects malformed or different canonical PR URL %s", async html_url => {
+    vi.mocked(findDelegationUser).mockResolvedValue({ userId: ids.user, login: "test", githubAccessToken: "test-only" });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...body, html_url })));
+    await expect(fetchGroundingHead(input)).rejects.toThrow("grounding_verification_unavailable");
+  });
   it("aborts a stalled authorized response at the configured deadline", async () => {
     vi.mocked(findDelegationUser).mockResolvedValue({ userId: ids.user, login: "test", githubAccessToken: "test-only" });
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => new Response(new ReadableStream({

@@ -8,6 +8,7 @@ import { canonicalGroundingJson, GroundingAccessError, groundingWorkflow, mismat
 import type { GroundingDecision } from "./grounding-completion.js";
 import type { OperationRequest } from "./grounding-operations.js";
 import { isReviewState, isTerminalState } from "./default-workflow.js";
+import { canonicalGithubRepo } from "./grounding-github-fence.js";
 
 const text = z.string().max(32768);
 const contextSchema = z.object({
@@ -18,6 +19,7 @@ const contextSchema = z.object({
   forceTransition: z.object({ from: text, to: text, forcedRules: z.array(text), forceReason: text.nullable() }).strict().optional(),
 }).strict();
 const mergeMethod = z.enum(["merge", "squash", "rebase"]).default("squash");
+const githubMergeBody = z.object({ taskId: z.string().uuid(), owner: z.string().min(1), repo: z.string().min(1), merge_method: mergeMethod, idempotencyKey: z.string().min(1).max(128), prNumber: z.number().int().positive() }).strict();
 const finishBody = z.object({ result: z.string().max(5000).optional(), prUrl: z.string().max(32768).optional(), prNumber: z.number().int().positive().optional(), autoMerge: z.boolean().default(false), mergeMethod }).strict();
 const reviewBody = z.object({ result: z.string().max(5000).optional(), outcome: z.enum(["approve", "request_changes"]), autoMerge: z.boolean().default(false), mergeMethod }).strict();
 const patchSchema = z.object({
@@ -29,7 +31,7 @@ const patchSchema = z.object({
 }).strict();
 const planSchema = z.object({
   version: z.literal(1),
-  kind: z.enum(["work_finish", "review_finish", "self_approve_finish", "task_merge", "abandon", "direct"]),
+  kind: z.enum(["work_finish", "review_finish", "self_approve_finish", "task_merge", "github_merge", "abandon", "direct"]),
   action: z.enum(["finish", "approve", "request_changes", "merge", "abandon", "transition"]),
   remote: z.boolean(), alreadyMerged: z.boolean().optional(), patch: patchSchema,
   response: z.object({ kind: z.enum(["work", "review"]).optional(), targetStatus: z.string().max(128).optional(), outcome: z.enum(["approve", "request_changes"]).optional(), skippedGates: z.array(z.string().max(128)).max(128).optional() }).strict(),
@@ -45,14 +47,19 @@ export async function buildGroundingRoutePlan(db: Prisma.TransactionClient, task
   if (!request.route) return undefined;
   if (request.route.kind === "direct") return buildDirectPlan(db, task, actor, request, decision, remote);
   const { kind, transport } = request.route;
-  const expectedEndpoint = kind === "task_merge" ? "merge" : kind === "abandon" ? "abandon" : "finish";
+  const standaloneMerge = kind === "task_merge" || kind === "github_merge";
+  const expectedEndpoint = kind === "github_merge" ? "github_merge" : kind === "task_merge" ? "merge" : kind === "abandon" ? "abandon" : "finish";
   if (transport.endpoint !== expectedEndpoint ||
       (kind === "work_finish" && request.action !== "finish") ||
       (["review_finish", "self_approve_finish"].includes(kind) && !["approve", "request_changes"].includes(request.action)) ||
-      (kind === "task_merge" && (request.action !== "merge" || !remote)) ||
+      (standaloneMerge && (request.action !== "merge" || !remote)) ||
       (kind === "abandon" && (request.action !== "abandon" || remote))) throw new GroundingAccessError("bad_state", 409);
-  const body = (kind === "work_finish" ? finishBody : kind === "review_finish" || kind === "self_approve_finish" ? reviewBody : kind === "task_merge" ? z.object({ mergeMethod }).strict() : z.object({}).strict()).safeParse(transport.body);
+  const body = (kind === "github_merge" ? githubMergeBody : kind === "work_finish" ? finishBody : kind === "review_finish" || kind === "self_approve_finish" ? reviewBody : kind === "task_merge" ? z.object({ mergeMethod }).strict() : z.object({}).strict()).safeParse(transport.body);
   if (!body.success) throw new GroundingAccessError("bad_state", 409);
+  if (kind === "github_merge") {
+    const input = body.data as z.infer<typeof githubMergeBody>;
+    if (input.taskId !== task.id || input.prNumber !== task.prNumber || input.merge_method !== request.method || canonicalGithubRepo(`${input.owner}/${input.repo}`) !== canonicalGithubRepo(task.deliverableRepo ?? task.project.githubRepo ?? "")) mismatch();
+  }
   if (kind.endsWith("finish")) {
     const finish = body.data as z.infer<typeof finishBody> & { outcome?: string };
     if ((finish.result ?? null) !== request.result || finish.mergeMethod !== request.method || finish.autoMerge !== remote || (finish.outcome && finish.outcome !== request.action)) throw new GroundingAccessError("bad_state", 409);
@@ -100,7 +107,7 @@ export async function buildGroundingRoutePlan(db: Prisma.TransactionClient, task
   }
   if (decision.skippedRules.length) plan.response.skippedGates = decision.skippedRules;
   if (remote) {
-    if (kind === "task_merge") audit("task.merged", { via: "task_merge", actorType: actor.type, ...(actor.type === "agent" ? { agentTokenId: actorId } : {}), mergeMethod: request.method });
+    if (standaloneMerge) audit("task.merged", { via: kind === "github_merge" ? "github_pr_merge" : "task_merge", actorType: actor.type, ...(actor.type === "agent" ? { agentTokenId: actorId } : {}), mergeMethod: request.method });
     else audit("task.auto_merged", { mode: kind === "work_finish" ? "A" : kind === "self_approve_finish" ? "B_self_approve" : "B", mergeMethod: request.method, actorType: actor.type });
     if (resolveGovernanceMode(task.project) === GovernanceMode.AWAITS_CONFIRMATION) {
       const humans = await db.teamMember.findMany({ where: { teamId: task.project.teamId, ...(actor.type === "human" ? { userId: { not: actor.userId } } : {}) }, select: { userId: true }, orderBy: { userId: "asc" } });
@@ -166,7 +173,7 @@ export function readGroundingRoutePlan(value: unknown): GroundingRoutePlan {
 export async function applyGroundingRoutePlan(db: Prisma.TransactionClient, task: GroundingTask, decision: GroundingDecision, actorType: string, actorId: string, mergeCommitSha?: string) {
   const plan = readGroundingRoutePlan(decision.routePlan);
   if (plan.action !== decision.action || canonicalGroundingJson(plan.patch) !== canonicalGroundingJson(decision.data) || plan.remote !== Boolean(mergeCommitSha)) mismatch();
-  if (plan.kind === "task_merge" && typeof plan.alreadyMerged !== "boolean") mismatch();
+  if ((plan.kind === "task_merge" || plan.kind === "github_merge") && typeof plan.alreadyMerged !== "boolean") mismatch();
   if (plan.acknowledge) await db.signal.updateMany({ where: { taskId: task.id, acknowledgedAt: null }, data: { acknowledgedAt: new Date() } });
   const signals: Signal[] = [];
   for (const signal of plan.signals) signals.push(await db.signal.create({ data: { ...signal, taskId: task.id, projectId: task.projectId, context: signal.context } }));
@@ -181,7 +188,9 @@ export async function applyGroundingRoutePlan(db: Prisma.TransactionClient, task
     await db.auditLog.create({ data: { taskId: task.id, projectId: task.projectId, actorId: actorType === "human" ? actorId : null, action: audit.action, payload: payload as Prisma.InputJsonObject } });
   }
   const updated = await db.task.findUniqueOrThrow({ where: { id: task.id }, include: groundingRouteTaskInclude });
-  const response = { ...plan.response, task: updated, ...(mergeCommitSha ? plan.kind === "task_merge" ? { merged: true, sha: mergeCommitSha, alreadyMerged: plan.alreadyMerged! } : { autoMergeSha: mergeCommitSha } : {}) };
+  const response = plan.kind === "github_merge"
+    ? { merged: true, sha: mergeCommitSha!, message: plan.alreadyMerged ? "Already merged" : "Pull request successfully merged", task: { id: task.id, status: decision.to } }
+    : { ...plan.response, task: updated, ...(mergeCommitSha ? plan.kind === "task_merge" ? { merged: true, sha: mergeCommitSha, alreadyMerged: plan.alreadyMerged! } : { autoMergeSha: mergeCommitSha } : {}) };
   return { signals, response: JSON.parse(JSON.stringify(response)) as Prisma.InputJsonObject };
 }
 

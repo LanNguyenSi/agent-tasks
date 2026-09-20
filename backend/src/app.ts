@@ -1,3 +1,6 @@
+import { createGroundingGithubRouter } from "./routes/grounding-github.js";
+import { createGroundingGithubWebhookRouter } from "./routes/grounding-github-webhooks.js";
+import { GroundingGithubWebhookService } from "./services/grounding-github-webhook.js";
 import { createGroundingCreationRouter } from "./routes/grounding-creation.js";
 import { prisma } from "./lib/prisma.js";
 import { createGroundingDirectTaskRouter } from "./routes/grounding-direct-tasks.js";
@@ -30,6 +33,8 @@ import { appErrorHandler } from "./lib/error-handler.js";
 import type { AppVariables } from "./types/hono.js";
 
 export function createApp(corsOrigins: string, grounding?: GroundingAttemptsService, completion?: GroundingTaskCompletionDependencies): Hono<{ Variables: AppVariables }> {
+  const configured = grounding !== undefined || completion !== undefined;
+  const groundingDb = completion?.db ?? prisma;
   const app = new Hono<{ Variables: AppVariables }>();
 
   // Structured logger w/ AsyncLocalStorage-backed per-request context.
@@ -95,7 +100,7 @@ export function createApp(corsOrigins: string, grounding?: GroundingAttemptsServ
 
   // Public
   app.route("/api/health", healthRouter);
-  app.route("/api/webhooks", webhookRouter); // GitHub webhooks — signature-verified, no auth
+  app.route("/api/webhooks", configured ? createGroundingGithubWebhookRouter({ service: new GroundingGithubWebhookService(groundingDb) }) : webhookRouter); // GitHub webhooks — signature-verified, no auth
   app.route("/", docsRouter);
 
   // Protected
@@ -140,7 +145,7 @@ export function createApp(corsOrigins: string, grounding?: GroundingAttemptsServ
   app.route("/api/invites", inviteAcceptRouter);
   app.route("/api/admin", sharesAdminRouter);
   app.route("/api", createGroundingRouter(grounding));
-  app.route("/api", createGroundingTaskCompletionRouter(completion));
+  app.route("/api", createGroundingTaskCompletionRouter(completion, configured));
   app.route("/api", createGroundingDirectTaskRouter(completion));
   app.route("/api", createGroundingCreationRouter(completion?.db ?? prisma, grounding, completion?.creationPolicy));
   app.route("/api", taskRouter);
@@ -148,6 +153,7 @@ export function createApp(corsOrigins: string, grounding?: GroundingAttemptsServ
   app.route("/api", boardRouter);
   app.route("/api", auditRouter);
   app.route("/api", signalRouter);
+  if (configured) app.route("/api/github", createGroundingGithubRouter(completion ?? { db: groundingDb }));
   app.route("/api/github", githubRouter);
   app.route("/api/mcp", mcpRouter);
 

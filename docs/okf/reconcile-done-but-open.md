@@ -1,34 +1,140 @@
 ---
 type: runbook
 title: "Reconciling a task whose PR merged but the record is stuck open"
-description: "task_start, ensure branchName, task_finish with prUrl, task_merge, relies on task_merge's alreadyMerged idempotency to bring a stale task record in line with GitHub reality."
+description: "Recover a configured merge with its original operation and exact GitHub proof; retain the separate historical task lifecycle repair flow."
 tags: [reconcile, task-lifecycle, idempotency, runbook]
-timestamp: 2026-09-08T08:12:00Z
+timestamp: 2026-09-20T06:26:48Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/default-workflow.ts
   - backend/src/services/github-merge.ts
+  - backend/src/app.ts
   - backend/src/routes/grounding-task-completion.ts
+  - backend/src/routes/grounding-github.ts
+  - backend/src/routes/grounding-github-webhooks.ts
+  - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
+  - backend/src/services/grounding-github-merge.ts
+  - backend/src/services/grounding-github-fence.ts
+  - backend/src/services/grounding-github-webhook.ts
+  - backend/src/services/grounding-github-observation-context.ts
+  - backend/src/services/grounding-merge-provider.ts
+  - backend/src/services/grounding-context.ts
+  - backend/src/services/grounding-operations.ts
+  - backend/src/services/grounding-route-effects.ts
+  - backend/prisma/grounding-github-fence.sql
+  - backend/src/services/grounding-github-create.ts
+  - backend/src/services/grounding-github-create-provider.ts
 ---
 
-Symptom: a task's PR is already merged on GitHub, but the task row in agent-tasks is still `open` (or `review`), tracking fell behind reality (e.g. a human merged the PR outside the tool, or a prior agent session died before calling the finish verbs).
+A PR may be merged while its task remains open because the remote response was
+lost, a local commit failed, or GitHub was changed outside the task API. First
+identify whether the application uses configured grounding completion and
+whether the task has an existing durable operation. A stored `autoMergeSha` or
+a webhook observation is not a completion decision.
 
-**Preconditions this flow assumes**: the task is currently in the workflow's *initial* state (`open` by default) or a *review* state. `POST /tasks/:id/start` explicitly rejects any other status with `409 bad_state` ("must be in initial state ... or a review state"), so this flow does **not** apply to a task stuck `in_progress` under a claim nobody holds anymore; that needs an admin-forced transition (`POST /tasks/:id/transition {force:true}`, admin-only, see `claim-model.md`) before these verbs become callable again. One exception to the generic `409`: since task backlog-status-v1 (`#477`, 2026-08-20) a `backlog` task is rejected earlier and more specifically, with `403 backlog_not_promoted` (see `claim-model.md`) — moot for this runbook in practice, since a backlog task (unpromoted, no branch/PR) cannot be the "PR already merged" scenario this doc addresses; `pickMergeTargetStatus` also no-ops on `backlog` (`governance-merge.md`), so a webhook merge event cannot even move a backlog task into this stuck state to begin with.
+## Configured operation recovery
 
-**Steps**:
-1. `task_start` (`POST /tasks/:id/start`), claims the task and transitions `open → in_progress` (default workflow; no `requires` gate on this edge, see `backend/src/services/default-workflow.ts` `DEFAULT_TRANSITIONS`). If the task is in a review state instead, this call acquires the review lock rather than the work claim.
-2. **Ensure `branchName` is set** before finishing: the default workflow's `in_progress → review` edge requires `branchPresent` (and `prPresent`). Either fold it in at step 1 (`task_start { branchName }`, folded atomically into the same claim write, see `workflow-gates.md`) or `PATCH /tasks/:id { branchName }` beforehand.
-3. `task_finish` (`POST /tasks/:id/finish`) with `{ prUrl }`, validates the PR URL shape and the cross-repo guard (`checkPrRepoMatchesProject`), stores `prUrl`/`prNumber`, and transitions to the workflow's expected finish state (`review` by default, or `done` directly for workflows that allow skipping review, both require `branchPresent`+`prPresent` in the default workflow).
-4. `task_merge` (`POST /tasks/:id/merge`), requires status `review` or `done` (409 otherwise); runs the self-merge/distinct-reviewer gates (see `governance-merge.md`), then calls `performPrMerge`. Because the PR is already merged on GitHub, `performPrMerge` detects this and returns `{ ok: true, alreadyMerged: true, sha: null }` instead of erroring, the task is still transitioned to `done` and `autoMergeSha` recorded. This is what makes the whole flow idempotent: re-running `task_merge` against an already-`done` task is a safe no-op retry: the distinct-reviewer approval check is skipped (it only runs while `status === "review"`), and the self-merge gate still runs but no-ops because the first merge cleared the claimant fields (see `governance-merge.md`).
+1. Resume the original merge endpoint with the originating actor, the same
+   idempotency key and the same canonical request. Preserve the original task,
+   repository, PR and merge method; do not substitute a new key to work around
+   a pending result. The service looks up the durable operation before mutable
+   status and claim admission, so a changed task state does not turn recovery
+   into a new merge.
+2. Restore the actor's required project access, scope and eligible GitHub
+   delegation if those checks fail. Recovery reauthorizes the original
+   operation; an administrator or webhook does not replace its actor.
+3. Let the service read GitHub. A DISPATCHED operation performs no second
+   remote write. Completion requires the exact original repository, PR number,
+   merged state and source head, plus a valid separate merge commit. Missing,
+   mismatched or ambiguous proof stays pending, even when GitHub currently
+   shows an open PR. A crash between the dispatch claim and network send is
+   also uncertain.
+4. On matching proof, the service commits the seed's stored task and route
+   effects, guard evidence decisions, audits and reservation releases together.
+   Guard peers retain their status, claims and signals. A database failure
+   leaves the operation available for the same retry; a completed retry returns
+   the stored response without repeating effects.
 
-`task_finish { autoMerge: true }` has its own narrower recovery path for the specific case of a call that merged the PR but crashed before persisting the transition (`task.status === "in_progress" && task.autoMergeSha` set), it re-verifies `prMerged` and completes the transition without re-invoking the merge API. That path is internal to `task_finish`'s autoMerge branches, not a general-purpose reconciliation entry point.
+Receipt expiry after authorized dispatch does not prevent exact-proof recovery
+or unlock the repository. Recovery checks the original local snapshot and
+receipt projection; it does not require renewed receipt TTL, trust or CI. Do
+not force a status, change a PR binding or clear a reservation to repair the
+operation. Such changes either conflict with its fence or invalidate the
+stored decision's context.
 
-For an externally provisioned task, use the same `Idempotency-Key` and canonical
-JSON request to resume a durable grounding operation. The completion service
-recovers only from exact repository, PR, source-head and merged-state proof; it
-does not create a first merge operation from a terminal task or from a bare
-`autoMergeSha`. If the supplied inline PR differs from the task's bound PR, bind
-the authoritative PR first and obtain fresh assessment context.
+Only a wholly RESERVED, provably undispatched operation can use the server's
+`cancelMerge(taskId, actor, key, reason)` API. It requires the originating actor's
+current authority and a nonblank reason. It atomically invalidates the attempt,
+records cancellation and releases the reservation. A DISPATCHED operation
+cannot be cancelled by this API; time passing or an open-PR read does not prove
+that no remote effect occurred.
 
-Related: `task-lifecycle.md`, `claim-model.md`, `governance-merge.md`.
+If no durable operation exists, use the ordinary authorized completion flow.
+For an external cohort, bind the authoritative PR before obtaining an attempt
+and assessment for the appropriate finish, approve or merge intent. Every
+protected peer linked to the PR must satisfy its own merge decision. A new
+standalone merge requires a review state; neither a terminal task nor a bare
+merge SHA permits creating a historical decision. Configured fresh remote
+merge requests without enrollment return `409 grounding_enrollment_required`;
+compatibility requires explicit OFF or LEGACY_LOCAL server enrollment, not a
+fallback selected from task metadata.
+
+A configured positive webhook for a provisioned task is a pending, audited
+observation. Even a valid receipt does not let that delivery complete the task.
+Use the actor-authorized completion flow to resolve the pending fact. Weak
+branch/title PR matches cannot establish completion authority.
+
+## Pending PR creation
+
+Retry `POST /api/github/pull-requests` with the original actor, key and
+normalized body. After dispatch, the create service reads for a unique PR with
+the operation's internal body marker and exact logical repository/ref/PR
+identity; it never repeats the POST. An old or newer untagged PR cannot stand
+in for the request. Missing or edited markers, multiple correlated matches or
+an incomplete lookup remain pending.
+
+Once proof is established, the service binds the branch and PR, invalidates
+assessment context, records audits and releases the repository fence in one
+transaction. A failed local commit is retryable. Do not create another PR or
+manually rewrite the binding to escape the intent.
+
+A completed retry must re-read matching proof before returning its original
+201 response. If proof is unavailable, `grounding_github_create_pending` can
+report state COMPLETED: the prior result and binding remain committed, and the
+released fence is not reacquired. If storage itself is unreadable, the response
+omits state rather than inventing it.
+
+`grounding_github_create_conflict` means a validated later response disagrees
+with the recorded PR. The service preserves the original binding and records
+a durable diagnostic, comment and system-observation audit. Later retries stay
+unresolved; they cannot overwrite the binding or issue another POST. A failed
+diagnostic transaction returns pending and a subsequent retry reads GitHub
+again before any saved success can be returned.
+
+## Historical unconfigured lifecycle repair
+
+The following flow applies only to the original unconfigured task routes. It
+assumes the task is in the workflow's initial or review state. `task_start`
+rejects other states; backlog must be explicitly promoted. An orphaned
+in-progress task needs the separate claim/admin procedure described in the
+[claim model](claim-model.md).
+
+1. Call `task_start` (`POST /api/tasks/:id/start`) to take the work claim from
+   the initial state, or the review claim from a review state.
+2. Ensure `branchName` is set. The default workflow's finish edge requires a
+   branch and PR; start can set the branch with the claim write.
+3. Call `task_finish` (`POST /api/tasks/:id/finish`) with the authoritative
+   `prUrl`. The historical route validates and stores that binding, then
+   selects the workflow's finish state.
+4. Call `task_merge` (`POST /api/tasks/:id/merge`) from review or done. Its
+   governance checks still apply. The legacy merge helper recognizes an
+   already-merged PR and the route brings the task to done.
+
+The historical finish autoMerge branch also has a narrower internal repair for
+a saved merge SHA after a partial operation. That compatibility behavior does
+not authorize a new configured operation or replace grouped recovery.
+
+Related: [task lifecycle](task-lifecycle.md),
+[governance and merge](governance-merge.md),
+[receipt contract](../grounding-receipt-contract.md).

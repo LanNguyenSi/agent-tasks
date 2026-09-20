@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
+import { assertGithubFenceInstalled } from "../../src/services/grounding-github-fence.js";
 
 /** Every run owns one newly named schema; no reset, public-schema cleanup, or implicit runtime URL. */
 export async function groundingPostgres() {
@@ -27,6 +28,10 @@ export async function groundingPostgres() {
     execFileSync(process.execPath, [resolve("../node_modules/prisma/build/index.js"), "db", "push", "--schema", "prisma/schema.prisma", "--skip-generate"], {
       env: { ...process.env, DATABASE_URL: datasourceUrl }, stdio: "pipe", timeout: 30000,
     });
+    execFileSync(process.execPath, [resolve("../node_modules/prisma/build/index.js"), "db", "execute", "--schema", "prisma/schema.prisma", "--file", "prisma/grounding-github-fence.sql"], {
+      env: { ...process.env, DATABASE_URL: datasourceUrl }, stdio: "pipe", timeout: 30000,
+    });
+    await assertGithubFenceInstalled(admin);
   } catch (error) {
     await admin.$executeRawUnsafe(`DROP SCHEMA "${schema}" CASCADE`);
     await admin.$disconnect();
