@@ -3,6 +3,7 @@ import type { Actor } from "../types/auth.js";
 import type { Prisma } from "@prisma/client";
 import { findDelegationUser } from "./github-delegation.js";
 import { GroundingAccessError, unavailable } from "./grounding-context.js";
+import { canonicalGithubRepo } from "./grounding-github-fence.js";
 
 const repoSchema = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).refine(repo => repo.split("/").every(p => p !== "." && p !== ".."));
 export const mergeIdentitySchema = z.object({ repo: repoSchema, prNumber: z.number().int().positive().max(2147483647), headSha: z.string().regex(/^[0-9a-f]{40}$/), method: z.enum(["merge", "squash", "rebase"]) });
@@ -45,8 +46,13 @@ export const githubGroundingMergeProvider: GroundingMergeProvider = {
   },
   async read(input, token) {
     const body = await request(input, token, false);
-    const parsed = z.object({ number: z.literal(input.prNumber), html_url: z.literal(`https://github.com/${input.repo}/pull/${input.prNumber}`),
-      base: z.object({ repo: z.object({ full_name: z.literal(input.repo) }) }), head: z.object({ sha: z.string().regex(/^[0-9a-f]{40}$/) }),
+    const sameRepo = repoSchema.refine(repo => canonicalGithubRepo(repo) === canonicalGithubRepo(input.repo));
+    const exactUrl = z.string().refine(url => {
+      const match = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)$/.exec(url);
+      return Boolean(match && sameRepo.safeParse(match[1]).success && match[2] === String(input.prNumber));
+    });
+    const parsed = z.object({ number: z.literal(input.prNumber), html_url: exactUrl,
+      base: z.object({ repo: z.object({ full_name: sameRepo }) }), head: z.object({ sha: z.string().regex(/^[0-9a-f]{40}$/) }),
       merged: z.boolean(), state: z.enum(["open", "closed"]), merge_commit_sha: z.string().regex(/^[0-9a-f]{40}$/).nullable(),
     }).safeParse(body);
     if (!parsed.success || (parsed.data.merged && (parsed.data.state !== "closed" || !parsed.data.merge_commit_sha))) unavailable();

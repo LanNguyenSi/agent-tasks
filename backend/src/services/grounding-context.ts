@@ -1,3 +1,4 @@
+import { canonicalGithubRepo } from "./grounding-github-fence.js";
 import { lockGroundingAuthority } from "./grounding-direct-authority.js";
 import { prisma } from "../lib/prisma.js";
 import { createHash } from "node:crypto";
@@ -185,11 +186,14 @@ async function fetchHeadWithConsent({ actor, teamId, repo, prNumber, db }: Groun
     } finally { reader.releaseLock(); }
     const body: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
     const parsed = z.object({
-      number: z.literal(prNumber), html_url: z.literal(`https://github.com/${repo}/pull/${prNumber}`),
-      base: z.object({ repo: z.object({ full_name: z.literal(repo) }) }),
+      number: z.literal(prNumber), html_url: z.string(),
+      base: z.object({ repo: z.object({ full_name: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/) }) }),
       head: z.object({ sha: z.string().regex(/^[0-9a-f]{40}$/) }),
     }).safeParse(body);
     if (!parsed.success) unavailable();
+    const url = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)$/.exec(parsed.data.html_url);
+    const canonical = canonicalGithubRepo(repo);
+    if (!url || Number(url[2]) !== prNumber || canonicalGithubRepo(url[1]!) !== canonical || canonicalGithubRepo(parsed.data.base.repo.full_name) !== canonical) unavailable();
     return parsed.data.head.sha;
   } catch { return unavailable(); }
 }

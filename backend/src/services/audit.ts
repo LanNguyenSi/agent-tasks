@@ -276,7 +276,7 @@ export async function getAuditLogs(opts: {
 /** Mandatory decision audit: failure aborts the caller's transaction. */
 export async function logGroundingDecision(db: Prisma.TransactionClient, input: {
   taskId: string; projectId: string; actorType: string; actorId: string; operationId: string;
-  action: "task.grounding.completed" | "task.grounding.overridden" | "task.grounding.disposed" | "task.grounding.cancelled";
+  action: "task.grounding.completed" | "task.grounding.overridden" | "task.grounding.disposed" | "task.grounding.cancelled" | "task.grounding.merge_guard_consumed";
   decision: Prisma.InputJsonValue;
 }) {
   await db.auditLog.create({ data: {

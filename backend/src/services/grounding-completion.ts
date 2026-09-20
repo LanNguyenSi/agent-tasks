@@ -63,7 +63,7 @@ export class GroundingCompletionService {
   protected transaction<T>(run: (db: Prisma.TransactionClient) => Promise<T>) { return groundingTransaction(this.deps.db, run); }
 
   protected isTaskMerge(request: OperationRequest) {
-    return request.action === "merge" && request.route?.kind === "task_merge" && request.route.transport.endpoint === "merge";
+    return request.action === "merge" && ((request.route?.kind === "task_merge" && request.route.transport.endpoint === "merge") || (request.route?.kind === "github_merge" && request.route.transport.endpoint === "github_merge"));
   }
   protected requestHead(request: OperationRequest) { return this.isTaskMerge(request) ? this.taskMergeHead : this.head; }
   protected async requestAccess(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, request: OperationRequest) {
@@ -183,8 +183,8 @@ export class GroundingCompletionService {
     return { ...decision, contextDigest: projected.digest, receiptId: evidence.receiptId, attemptId: attempt.id, contextRevision: attempt.contextRevision, expiresAt: Math.min(attempt.expiresAt.getTime() / 1000, evidence.expiresAt) };
   }
 
-  protected async record(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, key: string, request: OperationRequest, decision: GroundingDecision, remote?: MergeIdentity) {
-    const routePlan = await buildGroundingRoutePlan(db, task, actor, request, decision, Boolean(remote));
+  protected async record(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, key: string, request: OperationRequest, decision: GroundingDecision, remote?: MergeIdentity, guardOnly = false) {
+    const routePlan = guardOnly ? undefined : await buildGroundingRoutePlan(db, task, actor, request, decision, Boolean(remote));
     if (routePlan) decision = { ...decision, routePlan };
     const operation = await db.groundingOperation.create({ data: { taskId: task.id, key, actorType: actor.type, actorId: groundingActorId(actor), fingerprint: operationFingerprint(request), request: request as Prisma.InputJsonObject,
       decision: decision as unknown as Prisma.InputJsonValue, state: remote ? "RESERVED" : "COMPLETED", ...(remote ? { repo: remote.repo, prNumber: remote.prNumber, headSha: remote.headSha, mergeMethod: remote.method } : {}) } });

@@ -5,6 +5,8 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import type { AppVariables } from "../types/hono.js";
 import type { Actor } from "../types/auth.js";
+import { GroundingGithubMergeService } from "../services/grounding-github-merge.js";
+import type { GroundingGithubCreateService } from "../services/grounding-github-create.js";
 import { GroundingFinalizationService } from "../services/grounding-finalization.js";
 import { GroundingAccessError, groundingAuthority, groundingWorkflow, unavailable } from "../services/grounding-context.js";
 import { GroundingReceiptVerificationError } from "../services/grounding-receipt.js";
@@ -18,6 +20,7 @@ export interface GroundingTaskCompletionDependencies {
   db: PrismaClient;
   service?: GroundingFinalizationService;
   creationPolicy?: GroundingCreationPolicy;
+  githubCreate?: GroundingGithubCreateService;
 }
 const methodSchema = z.enum(["squash", "merge", "rebase"]).default("squash");
 const finishSchema = z.object({
@@ -32,7 +35,7 @@ const mergeSchema = z.object({ mergeMethod: methodSchema }).strict();
 const abandonSchema = z.object({}).strict();
 const keySchema = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
 
-function errorResponse(error: unknown, c: Context<{ Variables: AppVariables }>, taskId: string, intent: "finish" | "approve" | "merge") {
+export function groundingCompletionErrorResponse(error: unknown, c: Context<{ Variables: AppVariables }>, taskId: string, intent: "finish" | "approve" | "merge") {
   if (error instanceof GroundingAccessError) return c.json({ error: error.code }, error.status);
   if (error instanceof GroundingReceiptVerificationError) {
     const status = error.code === "grounding_verification_unavailable" ? 503
@@ -42,7 +45,7 @@ function errorResponse(error: unknown, c: Context<{ Variables: AppVariables }>, 
   }
   return c.json({ error: "grounding_verification_unavailable" }, 503);
 }
-function routeResponse(c: Context<{ Variables: AppVariables }>, result: unknown) {
+export function groundingCompletionRouteResponse(c: Context<{ Variables: AppVariables }>, result: unknown) {
   const parsed = z.object({ route: z.record(z.unknown()) }).safeParse(result);
   if (parsed.success) return c.json(parsed.data.route);
   const pending = z.object({ pending: z.literal(true) }).safeParse(result);
@@ -64,8 +67,8 @@ async function calibrate(result: unknown) {
   }
 }
 
-/** Per-app guard: only an absent authoritative enrollment may enter the compatibility router. */
-export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletionDependencies = { db: prisma }) {
+/** Configured remote effects require explicit enrollment and the grouped service. */
+export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletionDependencies = { db: prisma }, enforceRemote = deps.service !== undefined) {
   const router = new Hono<{ Variables: AppVariables }>();
   for (const endpoint of ["finish", "merge", "abandon"] as const) {
     router.post(`/tasks/:id/${endpoint}`, async (c, next) => {
@@ -79,31 +82,37 @@ export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletio
         const task = await deps.db.task.findUnique({ where: { id: taskId }, include: { project: true } });
         if (!task) return c.json({ error: "not_found" }, 404);
         if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403);
-        const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
-        // Enrollment is server-only. Activation must quiesce existing legacy requests before enrolling them.
-        if (context.mode === "UNPROVISIONED") return next();
-        if (!deps.service) unavailable();
-        const scope = endpoint === "merge" ? SCOPES.GithubPrMerge : endpoint === "abandon" ? SCOPES.TasksClaim : SCOPES.TasksTransition;
-        if (actor.type === "agent" && !actor.scopes.includes(scope)) throw new GroundingAccessError("forbidden", 403);
-        const key = keySchema.safeParse(c.req.header("Idempotency-Key"));
-        if (!key.success) return c.json({ error: "grounding_operation_key_required", message: "Supply a unique Idempotency-Key for this logical operation; reuse it only for identical retries." }, 400);
         let raw: unknown;
-        try { raw = await c.req.json(); } catch { return c.json({ error: "validation_error", message: "A JSON object body is required." }, 400); }
+        try { raw = await c.req.json(); } catch { raw = undefined; }
+        const remote = endpoint === "merge" || (endpoint === "finish" && typeof raw === "object" && raw !== null && "autoMerge" in raw && raw.autoMerge === true);
+        if (enforceRemote && remote && !(deps.service instanceof GroundingGithubMergeService)) unavailable();
+        const key = keySchema.safeParse(c.req.header("Idempotency-Key"));
+        const existing = key.success ? await deps.db.groundingOperation.findUnique({ where: { taskId_key: { taskId, key: key.data } } }) : null;
+        // Preserve the legacy parser for unrelated local requests with no durable keyed history.
+        if (!existing) {
+          const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
+          if (context.mode === "UNPROVISIONED") {
+            if (enforceRemote && remote) return c.json({ error: "grounding_enrollment_required" }, 409);
+            return next();
+          }
+        }
+        if (!deps.service) unavailable();
+        if (!key.success) return c.json({ error: "grounding_operation_key_required", message: "Supply a unique Idempotency-Key for this logical operation; reuse it only for identical retries." }, 400);
         const parsed = (endpoint === "finish" ? finishSchema : endpoint === "merge" ? mergeSchema : abandonSchema).safeParse(raw);
         if (!parsed.success) return c.json({ error: "validation_error", details: parsed.error.issues }, 400);
         if (endpoint === "finish" && "outcome" in parsed.data) intent = "approve";
         const transport: GroundingRouteTransport = { endpoint, body: parsed.data };
-        // Durable history owns branch identity; current claims and state must not reinterpret a retry.
+        // Durable history owns identity before current enrollment, claims or state can reinterpret a retry.
         const historical = await deps.service.lookupRouteOperation(taskId, actor, key.data, transport);
         if (historical) {
-          if (historical.state === "COMPLETED" || historical.state === "CANCELLED") return routeResponse(c, historical.result);
-          return routeResponse(c, await deps.service.dispatchMerge(taskId, actor, key.data, calibrate));
+          if (historical.state === "COMPLETED" || historical.state === "CANCELLED") return groundingCompletionRouteResponse(c, historical.result);
+          return groundingCompletionRouteResponse(c, await deps.service.dispatchMerge(taskId, actor, key.data, calibrate));
         }
-        if (endpoint === "abandon") return routeResponse(c, await deps.service.dispose(taskId, actor, key.data, { action: "abandon", route: { kind: "abandon", transport } }));
+        if (endpoint === "abandon") return groundingCompletionRouteResponse(c, await deps.service.dispose(taskId, actor, key.data, { action: "abandon", route: { kind: "abandon", transport } }));
         if (endpoint === "merge") {
           const body = parsed.data as z.infer<typeof mergeSchema>;
           await deps.service.reserveMerge(taskId, actor, key.data, { action: "merge", method: body.mergeMethod, route: { kind: "task_merge", transport } });
-          return routeResponse(c, await deps.service.dispatchMerge(taskId, actor, key.data, calibrate));
+          return groundingCompletionRouteResponse(c, await deps.service.dispatchMerge(taskId, actor, key.data, calibrate));
         }
         const body = parsed.data as z.infer<typeof finishSchema>;
         const holdsWork = actor.type === "agent" ? task.claimedByAgentId === actor.tokenId : task.claimedByUserId === actor.userId;
@@ -114,13 +123,13 @@ export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletio
         if ((review && (!body.outcome || body.prUrl !== undefined || body.prNumber !== undefined)) || (!review && body.outcome)) return c.json({ error: "validation_error", message: "Review finish requires outcome; work finish accepts result and the pre-bound PR." }, 400);
         const action = review ? body.outcome! : "finish";
         const request: OperationInput = { action, result: body.result, method: body.mergeMethod, route: { kind: review ? holdsReview ? "review_finish" : "self_approve_finish" : "work_finish", transport } };
-        if (action === "request_changes") return routeResponse(c, await deps.service.dispose(taskId, actor, key.data, request, calibrate));
+        if (action === "request_changes") return groundingCompletionRouteResponse(c, await deps.service.dispose(taskId, actor, key.data, request, calibrate));
         if (body.autoMerge) {
           await deps.service.reserveMerge(taskId, actor, key.data, { ...request, action });
-          return routeResponse(c, await deps.service.dispatchMerge(taskId, actor, key.data, calibrate));
+          return groundingCompletionRouteResponse(c, await deps.service.dispatchMerge(taskId, actor, key.data, calibrate));
         }
-        return routeResponse(c, await deps.service.complete(taskId, actor, key.data, request, calibrate));
-      } catch (error) { return errorResponse(error, c, taskId, intent); }
+        return groundingCompletionRouteResponse(c, await deps.service.complete(taskId, actor, key.data, request, calibrate));
+      } catch (error) { return groundingCompletionErrorResponse(error, c, taskId, intent); }
     });
   }
   return router;

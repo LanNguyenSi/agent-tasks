@@ -1,5 +1,5 @@
 import { afterEach, it, expect, vi } from "vitest";
-import { githubGroundingMergeProvider as provider } from "../../src/services/grounding-merge-provider.js";
+import { githubGroundingMergeProvider as provider, matchesGroundingMerge } from "../../src/services/grounding-merge-provider.js";
 const input = { repo: "acme/repo", prNumber: 42, headSha: "a".repeat(40), method: "squash" as const };
 const proof = () => ({ number: 42, html_url: "https://github.com/acme/repo/pull/42", base: { repo: { full_name: "acme/repo" } }, head: { sha: input.headSha }, merged: true, state: "closed", merge_commit_sha: "b".repeat(40) });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -22,6 +22,31 @@ it.each(["number", "repo", "url", "state", "commit"])("rejects inconsistent prov
   if (field === "commit") body.merge_commit_sha = "invalid";
   vi.stubGlobal("fetch", vi.fn(async () => Response.json(body)));
   await expect(provider.read(input, "token")).rejects.toBeInstanceOf(Error);
+});
+it("accepts only repository case variants while returning the original dispatch identity", async () => {
+  const body = proof(); body.base.repo.full_name = "ACME/Repo"; body.html_url = "https://github.com/Acme/REPO/pull/42";
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(body)));
+  const request = { ...input, repo: "AcMe/repo" };
+  const observed = await provider.read(request, "token");
+  expect(observed.repo).toBe(request.repo);
+  expect(matchesGroundingMerge(request, observed)).toBe(true);
+});
+it.each([
+  "https://github.com:443/acme/repo/pull/42", "https://user@github.com/acme/repo/pull/42",
+  "https://github.com/acme/repo/pull/42/", "https://github.com/acme/repo/pull/42?x=1",
+  "https://github.com/acme/repo/pull/42#files", "https://github.com/acme/other/pull/42",
+  "https://github.com/acme/repo/pull/4", "https://github.com/acme/repo/pull/042",
+  "https://github.com.evil.test/acme/repo/pull/42", "https://github.com/acme/%72epo/pull/42",
+  "http://github.com/acme/repo/pull/42", "https://github.com/acme/repo/issues/42",
+])("rejects case-normalized reads with altered URL shape: %s", async url => {
+  const body = proof(); body.html_url = url;
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(body)));
+  await expect(provider.read(input, "token")).rejects.toBeInstanceOf(Error);
+});
+it("a different observed source head remains an observation, never exact recovery proof", async () => {
+  const body = proof(); body.head.sha = "c".repeat(40);
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(body)));
+  expect(matchesGroundingMerge(input, await provider.read(input, "token"))).toBe(false);
 });
 it("rejects oversized streamed bodies and unsafe paths before network", async () => {
   const cancelled = vi.fn();

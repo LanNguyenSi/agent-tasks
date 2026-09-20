@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "repository": "LanNguyenSi/agent-tasks",
+  "preflight": {
+    "kind": "preflight",
+    "name": "repository",
+    "cwd": ".",
+    "argv": [
+      "preflight",
+      "run",
+      ".",
+      "--json"
+    ]
+  },
+  "extras": [
+    {
+      "kind": "check",
+      "name": "build",
+      "cwd": ".",
+      "argv": [
+        "agent-primitives",
+        "verify",
+        "-c",
+        "build",
+        "-x",
+        "build=npm run build"
+      ],
+      "phase": "before_preflight"
+    },
+    {
+      "kind": "check",
+      "name": "test-types",
+      "cwd": ".",
+      "argv": [
+        "agent-primitives",
+        "verify",
+        "-c",
+        "typecheck_test",
+        "-x",
+        "typecheck_test=npm run typecheck:test"
+      ],
+      "phase": "before_preflight"
+    },
+    {
+      "kind": "check",
+      "name": "c06-github",
+      "cwd": ".",
+      "argv": [
+        "agent-primitives",
+        "verify",
+        "-c",
+        "test,typecheck",
+        "-x",
+        "test=npm run test --workspace=backend -- tests/integration/grounding-github-fence.test.ts tests/integration/grounding-github-merge.test.ts tests/integration/grounding-github-create.test.ts tests/integration/grounding-github-webhook.test.ts tests/integration/grounding-github-routes.test.ts tests/integration/grounding-finalization.test.ts tests/unit/grounding-merge-provider.test.ts tests/unit/webhook-handlers.test.ts tests/workflow/agent-roundtrip-webhook-merge.test.ts tests/integration/grounding-v2-completion.test.ts tests/unit/grounding-context.test.ts tests/unit/github-idempotency.test.ts",
+        "-x",
+        "typecheck=npm run typecheck --workspace=backend"
+      ],
+      "phase": "before_preflight"
+    },
+    {
+      "kind": "check",
+      "name": "receipt-corpus",
+      "cwd": ".",
+      "argv": [
+        "node",
+        "scripts/grounding-receipt-contract.mjs",
+        "check"
+      ],
+      "phase": "before_preflight"
+    },
+    {
+      "kind": "check",
+      "name": "okf",
+      "cwd": ".",
+      "argv": [
+        "okf-kit",
+        "check",
+        "docs/okf"
+      ],
+      "phase": "before_preflight"
+    }
+  ]
+}

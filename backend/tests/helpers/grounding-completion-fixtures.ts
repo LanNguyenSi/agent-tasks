@@ -4,6 +4,7 @@ import { vi } from "vitest";
 import { groundingPostgres } from "./grounding-postgres.js";
 import { actor as baseActor, ids, epoch, headSha, session, testIssuer } from "./grounding-fixtures.js";
 import { GroundingAttemptsService } from "../../src/services/grounding-attempts.js";
+import type { GroundingCompletionDependencies } from "../../src/services/grounding-completion.js";
 import { GroundingFinalizationService } from "../../src/services/grounding-finalization.js";
 import type { GroundingMergeProvider, MergeProof } from "../../src/services/grounding-merge-provider.js";
 import { provisionGroundingCohort } from "../../src/services/grounding-cohort.js";
@@ -17,7 +18,7 @@ export async function completionStore() {
   await store.db.agentToken.create({ data: { id: ids.agent, teamId: ids.team, createdById: ids.user, name: "Test", tokenHash: "test", scopes: completionActor.scopes } });
   return store;
 }
-export async function completionFixture(store: Awaited<ReturnType<typeof completionStore>>, mode: "EXTERNAL_V1" | "OFF" | "LEGACY_LOCAL" = "EXTERNAL_V1") {
+export async function completionFixture(store: Awaited<ReturnType<typeof completionStore>>, mode: "EXTERNAL_V1" | "OFF" | "LEGACY_LOCAL" = "EXTERNAL_V1", serviceFactory: (deps: GroundingCompletionDependencies & { mergeProvider: GroundingMergeProvider }) => GroundingFinalizationService = deps => new GroundingFinalizationService(deps)) {
   const db = store.db; const taskId = randomUUID(); const projectId = randomUUID();
   await db.project.create({ data: { id: projectId, teamId: ids.team, name: "Test", slug: randomUUID(), githubRepo: "acme/repo" } });
   await db.task.create({ data: { id: taskId, projectId, title: "Exact task", description: "Original", templateData: { goal: "Exact" }, status: "in_progress", claimedByAgentId: ids.agent, createdByAgentId: ids.agent, prNumber: 42, prUrl: "https://github.com/acme/repo/pull/42", branchName: "branch" } });
@@ -29,7 +30,7 @@ export async function completionFixture(store: Awaited<ReturnType<typeof complet
   const head = vi.fn(async () => f.head);
   const deps = (client: PrismaClient = db) => ({ db: client, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, deliverSignal, headProvider: head, legacyClient: ledger, mergeProvider: { merge, read } });
   const attempts = new GroundingAttemptsService(deps());
-  const make = (client = db) => new GroundingFinalizationService(deps(client));
+  const make = (client = db) => serviceFactory(deps(client));
   if (mode === "EXTERNAL_V1") await attempts.provision({ taskId, projectId, subjectMode: "CODE_HEAD" });
   else await provisionGroundingCohort(db, { taskId, projectId, cohort: mode === "OFF" ? { mode, protected: false, provenance: "test-server", legacySessionId: null, legacyPhase: null } : { mode, protected: true, provenance: "test-server", legacySessionId: "legacy.session", legacyPhase: "claim-evaluation" } });
   return Object.assign(f, { attempts, service: make(), make, headProvider: head, merge, read, ledger, deliverSignal,

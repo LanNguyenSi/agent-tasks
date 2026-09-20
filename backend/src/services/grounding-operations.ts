@@ -7,7 +7,7 @@ import { canonicalGroundingJson, GroundingAccessError, groundingAuthority, type 
 import { GroundingDecisionError } from "./grounding-transaction.js";
 
 export const routeTransportSchema = z.object({
-  endpoint: z.enum(["finish", "merge", "abandon", "transition", "patch", "review"]),
+  endpoint: z.enum(["finish", "merge", "github_merge", "abandon", "transition", "patch", "review"]),
   body: z.record(z.unknown()),
 }).strict().superRefine((value, ctx) => {
   try { if (canonicalGroundingJson(value).length > 65536) ctx.addIssue({ code: "custom", message: "Transport intent too large" }); }
@@ -15,7 +15,7 @@ export const routeTransportSchema = z.object({
 });
 export type GroundingRouteTransport = z.infer<typeof routeTransportSchema>;
 export const routeInputSchema = z.object({
-  kind: z.enum(["work_finish", "review_finish", "self_approve_finish", "task_merge", "abandon", "direct"]),
+  kind: z.enum(["work_finish", "review_finish", "self_approve_finish", "task_merge", "github_merge", "abandon", "direct"]),
   transport: routeTransportSchema,
   direct: directDescriptorSchema.optional(),
 }).strict();

@@ -16,7 +16,7 @@
     "lint": "eslint src/",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
-    "db:push": "prisma db push",
+    "db:push": "prisma db push && prisma db execute --schema prisma/schema.prisma --file prisma/grounding-github-fence.sql",
     "db:seed": "tsx prisma/seed.ts",
     "shadow:report": "tsx src/scripts/shadow-report.ts"
   },

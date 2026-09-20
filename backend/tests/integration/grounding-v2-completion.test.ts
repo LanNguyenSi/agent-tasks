@@ -10,7 +10,7 @@ import { createApp } from "../../src/app.js";
 import { completionStore, completionFixture, completionActor as actor } from "../helpers/grounding-completion-fixtures.js";
 import { ids, session } from "../helpers/grounding-fixtures.js";
 import { GroundingAttemptsService, type GroundingChallenge } from "../../src/services/grounding-attempts.js";
-import { GroundingFinalizationService } from "../../src/services/grounding-finalization.js";
+import { GroundingGithubMergeService } from "../../src/services/grounding-github-merge.js";
 import { barrier } from "../helpers/grounding-postgres.js";
 import * as audit from "../../src/services/audit.js";
 import * as checks from "../../src/services/github-checks.js";
@@ -29,13 +29,17 @@ beforeEach(async () => {
   vi.stubEnv("REDIS_URL", "");
   // Even a deliberately bypassed guard must not reach an external service.
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("outbound fetch disabled in grounding route fixture")));
+  await store.db.groundingGithubRepositoryFence.deleteMany();
+  await store.db.groundingGithubFenceIntent.updateMany({ data: { state: "RELEASED" } });
+  await store.db.groundingGithubMergeMember.deleteMany();
+  await store.db.groundingGithubMergeGroup.deleteMany();
   await store.db.groundingBinding.updateMany({ data: { activeAttemptId: null } });
   await store.db.groundingCohort.updateMany({ data: { reservationId: null } });
   await store.db.groundingFinalization.deleteMany(); await store.db.groundingOperation.deleteMany();
   await store.db.groundingReceipt.deleteMany(); await store.db.groundingAttempt.deleteMany();
   await store.db.groundingBinding.deleteMany(); await store.db.groundingCohort.deleteMany();
   await store.db.task.deleteMany(); await store.db.project.deleteMany();
-  f = await completionFixture(store); f.ledger.getLedgerSummary.mockRejectedValue(new Error("legacy must not run"));
+  f = await completionFixture(store, "EXTERNAL_V1", deps => new GroundingGithubMergeService(deps)); f.ledger.getLedgerSummary.mockRejectedValue(new Error("legacy must not run"));
   harness.wrapper.start.mockReset().mockRejectedValue(new Error("wrapper must not run"));
   harness.wrapper.getLedgerSummary.mockReset().mockRejectedValue(new Error("legacy must not run"));
   harness.bounce.mockReset().mockResolvedValue(undefined); harness.terminal.mockReset().mockResolvedValue(undefined);
@@ -285,7 +289,7 @@ it("only UNPROVISIONED admission enters actual compatibility finish without a ke
 });
 
 it.each(["OFF", "LEGACY_LOCAL"] as const)("explicit %s remains keyed service policy rather than unprovisioned compatibility", async mode => {
-  f = await completionFixture(store, mode);
+  f = await completionFixture(store, mode, deps => new GroundingGithubMergeService(deps));
   expect((await app().fetch(request({}, "finish", null))).status).toBe(400);
   const response = await app().fetch(request()); expect(response.status).toBe(200);
   const after = await snapshot(); expect(after.operations).toHaveLength(1); expect(after.receipts).toHaveLength(0);
@@ -477,7 +481,7 @@ it("R1-H1 actual route default head and CI readers use merge-only delegation con
   vi.stubGlobal("fetch", fetcher);
   const deps = { db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now };
   const attempts = new GroundingAttemptsService(deps);
-  const service = new GroundingFinalizationService({ ...deps, mergeProvider: { merge: f.merge, read: f.read }, deliverSignal: f.deliverSignal });
+  const service = new GroundingGithubMergeService({ ...deps, mergeProvider: { merge: f.merge, read: f.read }, deliverSignal: f.deliverSignal });
   const a = createApp("", attempts, { db: store.db, service }); await routeEvidence(a);
   expect((await a.fetch(request({}, "merge"))).status).toBe(200); expect(f.merge).toHaveBeenCalledOnce();
   expect(fetcher.mock.calls.some(([url]) => String(url).includes("/check-runs"))).toBe(true);
