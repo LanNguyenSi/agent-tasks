@@ -859,19 +859,9 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
     where.claimedByUserId = null;
   }
 
-  // take-limit-plus-one probe (task e36696d7 criterion 1/2): fetch one row
-  // beyond `limit` so the response can say EXACTLY whether more rows exist
-  // after this page, not merely "this page happened to come back full".
-  // The previous heuristic (take: limit, nextCursor set whenever
-  // tasks.length === limit) was ambiguous exactly when the result set ends
-  // on a page boundary: a project with precisely `limit` remaining rows and
-  // a project with `limit + 1` or more remaining rows both produced
-  // tasks.length === limit, so nextCursor could not distinguish "one more
-  // page is coming" from "the caller has everything, page boundary was a
-  // coincidence". mcp-server's project_tasks `truncated` field (rc-v1-C006
-  // follow-up) needs that distinction to be exact, since a caller who reads
-  // a false truncated:true as "there is definitely more" would spin forever
-  // requesting an empty next page. See docs/response-contract-v1.md.
+  // Fetch one extra row past `limit` so nextCursor can say exactly whether
+  // more rows exist, instead of only inferring it from a full page (task
+  // e36696d7).
   const fetchTake = limit !== undefined ? limit + 1 : undefined;
   const tasks = await prisma.task.findMany({
     where,

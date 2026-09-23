@@ -1049,7 +1049,7 @@ export const openApiSpec = {
                       type: "string",
                       format: "uuid",
                       nullable: true,
-                      description: "Pass as `cursor` to fetch the next page. `null` when a `limit` was supplied and this page came back short of it (no more results) or when `limit` was omitted (already unbounded).",
+                      description: "Pass as `cursor` to fetch the next page. `null` when no rows exist after this page (the route fetches limit+1 to decide) or when limit was omitted.",
                     },
                   },
                   required: ["tasks"],

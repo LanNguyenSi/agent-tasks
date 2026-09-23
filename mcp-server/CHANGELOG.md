@@ -15,7 +15,9 @@ tell "exactly `limit` rows remain" from "more than `limit` rows remain",
 so a caller reading a full page as "there may be more" could not
 distinguish it from "this is genuinely the last page" without an extra
 round trip. `truncated` is `nextCursor !== null`, never `count === limit`
-(task e36696d7).
+(task e36696d7). `truncated` is exact only against a backend carrying the
+take-limit-plus-one fix; an older backend can only over-report
+`truncated: true` on an exactly-full last page, never under-report it.
 
 **CONTRACT CHANGE**: `project_tasks` now returns summary rows by default,
 an ALLOWLIST of id, title, status, priority, labels, externalRef,

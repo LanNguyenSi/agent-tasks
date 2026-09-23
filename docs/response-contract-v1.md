@@ -356,7 +356,10 @@ remain", both of which come back as a full page. `truncated` is
 deliberately never `count === limit` (a caller-supplied `limit` this
 projection does not itself see, and which would reproduce the very
 ambiguity the take-limit-plus-one probe fixes) and never a hardcoded
-`false`.
+`false`. This is exact only against a backend carrying the take-limit-plus-one
+fix; an older backend using the `tasks.length === limit` heuristic can only
+over-report `truncated: true` on an exactly-full last page, never
+under-report it.
 
 ## Error shape (block tier)
 
