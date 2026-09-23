@@ -1,5 +1,18 @@
 # Change log
 
+## 2026-09-23 (round 2)
+
+Restamped `claim-model.md`, `governance-merge.md`, `reconcile-done-but-open.md`,
+`workflow-gates.md`, `task-lifecycle.md`, `backend.md` and `mcp-server.md`
+after task e36696d7's round-2 fixes further edited
+`backend/src/routes/tasks.ts` (comment shrink), `backend/src/routes/docs.ts`
+(OpenAPI description) and `mcp-server/CHANGELOG.md`. `workflow-gates.md`'s
+`evaluateV2TransitionGates` prose and cross-repo `prUrl` guard line numbers
+were already stale at base (the function had moved since they were last
+verified); re-checked against the current file and corrected. The other
+docs carry only prose claims about `tasks.ts`/`tools.ts` with no line
+citations and needed no content change, only a timestamp bump.
+
 ## 2026-09-23
 
 Restamped `mcp-server.md` after `project_tasks`'s response gained `count`
