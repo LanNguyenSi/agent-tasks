@@ -1,6 +1,6 @@
 {
   "name": "@agent-tasks/mcp-bridge",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Zero-setup MCP bridge for agent-tasks: npx-distributable wrapper around @agent-tasks/mcp-server with interactive login and OS-keychain token storage",
   "homepage": "https://github.com/LanNguyenSi/agent-tasks/tree/master/mcp-bridge#readme",
   "repository": {

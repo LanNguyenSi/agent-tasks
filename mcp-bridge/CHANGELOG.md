@@ -4,10 +4,19 @@ All notable changes to `@agent-tasks/mcp-bridge` are documented here.
 
 ## Unreleased
 
+## 0.8.2
+
 ### Changed
 
-- `@agent-tasks/mcp-server` dependency bumped to `0.15.0` (lockstep with the
-  workspace; ships to npx consumers with the next bridge release).
+- **`@agent-tasks/mcp-server` dependency bumped to `0.15.0`.** Ships
+  mcp-server 0.15.0 to npx consumers. CONTRACT CHANGE: `project_tasks`
+  returns summary rows by default; pass `include: ["description"]`,
+  `["templateData"]` or `["task"]` to get fields or full rows back. Its
+  responses also carry `count` and `truncated`, and `pull_requests_create`
+  GitHub failures pass through as `github_error` with `status`, `github`
+  and `existingPullRequest`. See `mcp-server/CHANGELOG.md` `## 0.15.0`.
+- Dev-only: the `vitest` devDependency moved to `^4.1.11` (#514); no
+  runtime or published-dependency change.
 
 ## 0.8.1
 
