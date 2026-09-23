@@ -4,6 +4,19 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+**Additive**: `project_tasks` responses now carry `count` (the number of
+rows in this page) and `truncated` (`true` exactly when more rows exist
+after this page, `false` otherwise), on both the summary-row and
+`include: ["task"]` shapes. Both are derived from `nextCursor`, which the
+backend now computes exactly via a take-limit-plus-one probe
+(`GET /projects/:id/tasks`, `backend/src/routes/tasks.ts`) instead of the
+previous `tasks.length === limit` size heuristic: that heuristic could not
+tell "exactly `limit` rows remain" from "more than `limit` rows remain",
+so a caller reading a full page as "there may be more" could not
+distinguish it from "this is genuinely the last page" without an extra
+round trip. `truncated` is `nextCursor !== null`, never `count === limit`
+(task e36696d7).
+
 **CONTRACT CHANGE**: `project_tasks` now returns summary rows by default,
 an ALLOWLIST of id, title, status, priority, labels, externalRef,
 createdAt, claims (work claim only: this route's rows never carry a

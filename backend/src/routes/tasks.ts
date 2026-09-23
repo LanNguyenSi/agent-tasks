@@ -859,26 +859,36 @@ taskRouter.get("/projects/:projectId/tasks", async (c) => {
     where.claimedByUserId = null;
   }
 
+  // take-limit-plus-one probe (task e36696d7 criterion 1/2): fetch one row
+  // beyond `limit` so the response can say EXACTLY whether more rows exist
+  // after this page, not merely "this page happened to come back full".
+  // The previous heuristic (take: limit, nextCursor set whenever
+  // tasks.length === limit) was ambiguous exactly when the result set ends
+  // on a page boundary: a project with precisely `limit` remaining rows and
+  // a project with `limit + 1` or more remaining rows both produced
+  // tasks.length === limit, so nextCursor could not distinguish "one more
+  // page is coming" from "the caller has everything, page boundary was a
+  // coincidence". mcp-server's project_tasks `truncated` field (rc-v1-C006
+  // follow-up) needs that distinction to be exact, since a caller who reads
+  // a false truncated:true as "there is definitely more" would spin forever
+  // requesting an empty next page. See docs/response-contract-v1.md.
+  const fetchTake = limit !== undefined ? limit + 1 : undefined;
   const tasks = await prisma.task.findMany({
     where,
     include: detail === "full" ? taskInclude : taskListInclude,
     orderBy: [{ createdAt: sortDir }, { id: sortDir }],
-    ...(limit !== undefined ? { take: limit } : {}),
+    ...(fetchTake !== undefined ? { take: fetchTake } : {}),
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
-  // nextCursor: only meaningful when the caller supplied a `limit` — an
-  // unbounded fetch (limit omitted, the frontend dashboard's call shape)
-  // already returns everything, so there is no next page by definition. A
-  // full page (tasks.length === limit) yields the last row's id as the next
-  // cursor; this is a size heuristic rather than an exact has-more check —
-  // if the result set ends exactly on a page boundary, the next call
-  // legitimately comes back empty (nextCursor: null) rather than the caller
-  // never being offered a next page. That trade-off avoids an extra
-  // look-ahead row fetch on every call.
-  const nextCursor =
-    limit !== undefined && tasks.length === limit
-      ? (tasks[tasks.length - 1] as { id: string }).id
-      : null;
+  // hasMore is exact now: the lookahead row past `limit` came back or it
+  // didn't. Trim it off before returning -- callers never see more than
+  // `limit` rows, only an exact nextCursor derived from whether that extra
+  // row existed.
+  const hasMore = limit !== undefined && tasks.length > limit;
+  if (hasMore) {
+    tasks.length = limit as number;
+  }
+  const nextCursor = hasMore ? (tasks[tasks.length - 1] as { id: string }).id : null;
   return c.json({ tasks, nextCursor });
 });
 

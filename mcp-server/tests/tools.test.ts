@@ -1061,7 +1061,12 @@ describe("buildTools", () => {
     const result = await tool("project_tasks").handler(parsed);
     const url = fetchMock.mock.calls[0][0] as string;
     expect(url).toContain("status=backlog");
-    expect(result).toEqual({ tasks: [{ id: "t1", status: "backlog", title: "drafted by an agent" }], nextCursor: null });
+    expect(result).toEqual({
+      tasks: [{ id: "t1", status: "backlog", title: "drafted by an agent" }],
+      nextCursor: null,
+      count: 1,
+      truncated: false,
+    });
   });
 
   it("project_tasks skips the slug round-trip when given a UUID", async () => {
@@ -1881,6 +1886,8 @@ describe("buildTools", () => {
           },
         ],
         nextCursor: null,
+        count: 1,
+        truncated: false,
       });
       expect(JSON.stringify(result)).not.toContain("SECRET");
     });
@@ -1912,7 +1919,7 @@ describe("buildTools", () => {
       },
     );
 
-    it('include:["task"] returns the full, pre-contract { tasks, nextCursor } object unchanged', async () => {
+    it('include:["task"] returns the full, pre-contract rows unchanged, plus count/truncated', async () => {
       const backendBody = {
         tasks: [{ id: "t1", title: "Fix the bug", status: "open", description: "d" }],
         nextCursor: "cursor-1",
@@ -1922,7 +1929,7 @@ describe("buildTools", () => {
         project: "00000000-0000-0000-0000-000000000001",
         include: ["task"],
       } as never);
-      expect(result).toEqual(backendBody);
+      expect(result).toEqual({ ...backendBody, count: 1, truncated: true });
     });
 
     it("include schema accepts description/templateData/task and rejects an unknown value with a schema validation error", () => {
@@ -1978,7 +1985,55 @@ describe("buildTools", () => {
       const result = await tool("project_tasks").handler({
         project: "00000000-0000-0000-0000-000000000001",
       } as never);
-      expect(result).toEqual({ tasks: [], nextCursor: null });
+      expect(result).toEqual({ tasks: [], nextCursor: null, count: 0, truncated: false });
+    });
+
+    // ── task e36696d7 criterion 3: limit == remaining vs limit == remaining - 1
+    //
+    // These simulate the FIXED backend's take-limit-plus-one probe
+    // (backend/src/routes/tasks.ts): when exactly `limit` rows remain, the
+    // backend's lookahead fetch finds nothing extra and returns
+    // nextCursor: null; when MORE than `limit` rows remain, the backend
+    // trims its lookahead row and returns nextCursor: <last row id>. This is
+    // the exact scenario the old `tasks.length === limit` heuristic could
+    // not distinguish (task e36696d7 criterion 1).
+
+    it("limit == remaining count: backend's exact probe returns nextCursor:null -> truncated:false", async () => {
+      fetchMock.mockResolvedValueOnce(
+        ok({
+          tasks: [
+            { id: "t1", title: "A" },
+            { id: "t2", title: "B" },
+            { id: "t3", title: "C" },
+          ],
+          nextCursor: null,
+        }),
+      );
+      const result = (await tool("project_tasks").handler({
+        project: "00000000-0000-0000-0000-000000000001",
+        limit: 3,
+      } as never)) as { count: number; truncated: boolean };
+      expect(result.count).toBe(3);
+      expect(result.truncated).toBe(false);
+    });
+
+    it("limit == remaining count - 1 (one more row exists): backend's exact probe returns a nextCursor -> truncated:true", async () => {
+      fetchMock.mockResolvedValueOnce(
+        ok({
+          tasks: [
+            { id: "t1", title: "A" },
+            { id: "t2", title: "B" },
+            { id: "t3", title: "C" },
+          ],
+          nextCursor: "t3",
+        }),
+      );
+      const result = (await tool("project_tasks").handler({
+        project: "00000000-0000-0000-0000-000000000001",
+        limit: 3,
+      } as never)) as { count: number; truncated: boolean };
+      expect(result.count).toBe(3);
+      expect(result.truncated).toBe(true);
     });
   });
 

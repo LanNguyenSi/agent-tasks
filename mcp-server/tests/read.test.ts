@@ -301,10 +301,15 @@ describe("projectTaskListSummary", () => {
     expect(PROJECT_TASKS_INCLUDE_VALUES).toEqual(["description", "templateData", "task"]);
   });
 
-  it("defaults every row to id + title only when nothing else is present, nextCursor passed through", () => {
+  it("defaults every row to id + title only when nothing else is present, nextCursor passed through, count/truncated derived", () => {
     const response = listResponse([{ id: "t1", title: "Fix the login redirect loop" }], "next-id");
     const result = projectTaskListSummary(response);
-    expect(result).toEqual({ tasks: [{ id: "t1", title: "Fix the login redirect loop" }], nextCursor: "next-id" });
+    expect(result).toEqual({
+      tasks: [{ id: "t1", title: "Fix the login redirect loop" }],
+      nextCursor: "next-id",
+      count: 1,
+      truncated: true,
+    });
   });
 
   it("row summary carries status/priority/labels/externalRef/createdAt/claims/blockedBy/prUrl, never description/templateData/comments/artifacts by default", () => {
@@ -370,13 +375,23 @@ describe("projectTaskListSummary", () => {
     expect(result.tasks[0]?.templateData).toEqual({ taskType: "feature" });
   });
 
-  it('include:["task"] returns the raw response unchanged, full rows, nextCursor untouched', () => {
+  it('include:["task"] returns the raw rows unchanged, nextCursor untouched, plus count/truncated', () => {
     const response = listResponse(
       [{ id: "t1", title: "A", description: "full body", templateData: { x: 1 } }],
       "cursor-9",
     );
-    const result = projectTaskListSummary(response, ["task"]);
-    expect(result).toBe(response);
+    const result = projectTaskListSummary(response, ["task"]) as unknown as {
+      tasks: unknown[];
+      nextCursor: string | null;
+      count: number;
+      truncated: boolean;
+    };
+    // Rows themselves are the SAME array reference, not re-mapped: full,
+    // pre-contract rows, not a copy.
+    expect(result.tasks).toBe(response.tasks);
+    expect(result.nextCursor).toBe("cursor-9");
+    expect(result.count).toBe(1);
+    expect(result.truncated).toBe(true);
   });
 
   it("a malformed body (no tasks array) is returned raw rather than crashing on a dereference", () => {
@@ -529,8 +544,11 @@ describe("projectTaskListSummary", () => {
 
     const size = serializeResult(result).length;
     // Exact regression pin (fails loudly on any clamp drift), same
-    // discipline as projectTaskSummary's own WORST CASE pin above.
-    expect(size).toBe(132081);
+    // discipline as projectTaskSummary's own WORST CASE pin above. Bumped
+    // from 132081 to 132118 (task e36696d7): the envelope now also carries
+    // `count` and `truncated`, +37 bytes total, unrelated to any per-row
+    // clamp.
+    expect(size).toBe(132118);
     expect(size).toBeLessThanOrEqual(FORTY_ROW_CEILING);
 
     const oneRowResult = projectTaskListSummary(listResponse([clampMaxedListRow(0)], null));
