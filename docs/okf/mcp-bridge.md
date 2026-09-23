@@ -3,7 +3,7 @@ type: module
 title: "mcp-bridge: zero-setup CLI wrapper"
 description: "Resolves a bearer token (env, then OS keychain, then file) and hands off to mcp-server's stdio runtime; its own version constant is drift-guarded by a test."
 tags: [mcp, cli, token-store]
-timestamp: 2026-09-23T12:16:47Z
+timestamp: 2026-09-23T13:39:48Z
 sources:
   - mcp-bridge/src/cli.ts
   - mcp-bridge/src/token-store.ts
@@ -21,6 +21,6 @@ Published as `@agent-tasks/mcp-bridge`. Bin entry `mcp-bridge/src/cli.ts` parses
 
 Once a token is resolved, `serve` calls `runStdioServer({ token, baseUrl }, { legacy: process.env.AGENT_TASKS_MCP_LEGACY === "1" })` imported directly from `@agent-tasks/mcp-server` (the `legacy` option was added in `#440`/rc-v1-C007, so the AGENT_TASKS_MCP_LEGACY opt-in the bridge's own `--help` documents actually reaches the mcp-server runtime instead of being dropped), the bridge does not reimplement the MCP protocol, it only owns credential resolution and the `login`/`logout`/`status` UX (`mcp-bridge/src/login.ts`).
 
-**Version constant**: `PACKAGE_VERSION = "0.8.1"` in `cli.ts` is asserted equal to `package.json#version` by `mcp-bridge/tests/cli-version.test.ts` (a "drift guard", the comment in `cli.ts` says bump both together). `mcp-bridge/package.json` pins `@agent-tasks/mcp-server` at an exact version (`"0.15.0"`, no `^`; the published bridge 0.8.1 still pins `"0.14.0"` until the next bridge release); see `release-flow.md` for why this pin has to already be published before the bridge itself is published.
+**Version constant**: `PACKAGE_VERSION = "0.8.2"` in `cli.ts` is asserted equal to `package.json#version` by `mcp-bridge/tests/cli-version.test.ts` (a "drift guard", the comment in `cli.ts` says bump both together). `mcp-bridge/package.json` pins `@agent-tasks/mcp-server` at an exact version (`"0.15.0"`, no `^`); see `release-flow.md` for why this pin has to already be published before the bridge itself is published.
 
 Related: `mcp-server.md`, `release-flow.md`.
