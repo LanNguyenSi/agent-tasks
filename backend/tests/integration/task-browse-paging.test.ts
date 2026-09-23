@@ -95,7 +95,6 @@ async function getTasks(app: Hono<{ Variables: AppVariables }>, query: string) {
 let store: Awaited<ReturnType<typeof groundingPostgres>>;
 let db: PrismaClient;
 let projectId: string;
-let taskIds: string[];
 
 beforeAll(async () => {
   store = await groundingPostgres();
@@ -114,7 +113,6 @@ beforeEach(async () => {
   await db.team.create({ data: { id: teamId, name: "Paging", slug: randomUUID() } });
   projectId = randomUUID();
   await db.project.create({ data: { id: projectId, teamId, name: "Paging", slug: randomUUID() } });
-  taskIds = [];
 });
 
 async function seedTasks(count: number) {
@@ -132,7 +130,6 @@ async function seedTasks(count: number) {
       },
     });
   }
-  taskIds = ids;
   return ids;
 }
 
