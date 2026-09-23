@@ -1,5 +1,15 @@
 # Change log
 
+## 2026-09-23 (re-verification scope)
+
+The e36696d7 re-stamps of `backend.md`, `architecture.md`, `task-lifecycle.md`,
+`workflow-gates.md` and `claim-model.md` re-verified only the claims that cite
+`backend/src/routes/tasks.ts`, `backend/src/routes/docs.ts` and
+`mcp-server/src/tools.ts`, plus the `app.ts` route mounting (`backend.md`
+route list rewritten against the current `app.ts`, `architecture.md` Swagger
+mount citation corrected). Other sources these docs list were stale before the
+re-stamp and were not re-checked; follow-up task 1784b2a6.
+
 ## 2026-09-23 (round 2)
 
 Restamped `claim-model.md`, `governance-merge.md`, `reconcile-done-but-open.md`,
