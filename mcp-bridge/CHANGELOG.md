@@ -13,8 +13,9 @@ All notable changes to `@agent-tasks/mcp-bridge` are documented here.
   returns summary rows by default; pass `include: ["description"]`,
   `["templateData"]` or `["task"]` to get fields or full rows back. Its
   responses also carry `count` and `truncated`, and `pull_requests_create`
-  GitHub failures pass through as `github_error` with `status`, `github`
-  and `existingPullRequest`. See `mcp-server/CHANGELOG.md` `## 0.15.0`.
+  GitHub failures pass through as `github_error` with `status` and, when
+  available, `github` and `existingPullRequest`; `truncated` is exact only
+  against a backend with the limit+1 `nextCursor` fix. See `mcp-server/CHANGELOG.md` `## 0.15.0`.
 - Dev-only: the `vitest` devDependency moved to `^4.1.11` (#514); no
   runtime or published-dependency change.
 
