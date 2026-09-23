@@ -5,8 +5,9 @@
 `mcp-server.md` names `SERVER_VERSION` and `mcp-server/package.json#version`
 as `"0.15.0"` and points at the `## 0.15.0` CHANGELOG entry; `mcp-bridge.md`
 names the bridge's exact pin `"0.15.0"` (the published bridge 0.8.1 still pins
-`"0.14.0"`); `release-flow.md` re-checked against the pin bump (its steps
-describe it, no change). All three re-stamped.
+`"0.14.0"`); `release-flow.md` now moves the bridge pin with the server bump (step 2),
+since `mcp-bridge/tests/lockstep.test.ts` enforces pin equals workspace
+version, and lists that test as a source. All three re-stamped.
 
 ## 2026-09-23 (re-verification scope)
 
