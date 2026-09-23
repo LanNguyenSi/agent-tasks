@@ -6,7 +6,7 @@
 pins mcp-server `"0.15.0"` too, so the "still pins 0.14.0" clause is gone.
 Re-checked and re-stamped, together with `release-flow.md` (the pin steps
 still hold) and `auth.md` (the `cli.ts` serve-path sentence quoted a pre-#403 message
-and now cites `noTokenAvailableMessage()` with a line citation; the
+and now names `noTokenAvailableMessage()` and its current opening words; the
 `AgentToken` storage-shape sentence was corrected for `name` and the
 `scopes` default; both checked against the current files).
 
