@@ -2,6 +2,13 @@
 
 All notable changes to `@agent-tasks/mcp-bridge` are documented here.
 
+## Unreleased
+
+### Changed
+
+- `@agent-tasks/mcp-server` dependency bumped to `0.15.0` (lockstep with the
+  workspace; ships to npx consumers with the next bridge release).
+
 ## 0.8.1
 
 ### Changed
