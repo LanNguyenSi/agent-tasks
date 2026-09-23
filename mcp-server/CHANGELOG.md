@@ -4,6 +4,8 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+## 0.15.0
+
 **Additive**: `project_tasks` responses now carry `count` (the number of
 rows in this page) and `truncated` (`true` exactly when more rows exist
 after this page, `false` otherwise), on both the summary-row and
@@ -35,6 +37,19 @@ existing filter (status, priority, labels, unclaimed, limit, sort, cursor)
 are unchanged. The allowlist keeps a browse-scoped listing well inside the
 tool-result token cap regardless of how much description/templateData a
 project's tasks carry; `limit` still governs row count (task 3653962f).
+
+**Fixed**: `pull_requests_create` failures from GitHub are no longer
+degraded to a generic teaching error. The error result is
+`{ ok: false, error: { code: "github_error", status, github?,
+existingPullRequest? } }`: the final non-2xx status and decoded GitHub body
+are preserved, and when the backend's reconciliation finds an open pull
+request for the requested head (before its one bounded retry of a transient
+GitHub failure), its number and URL are returned as `existingPullRequest`
+and named in the message (#518). This passthrough is exempt from the
+teaching-error size ceiling: the decoded GitHub body is not clamped.
+
+**Dev-only**: the `vitest` devDependency moved to `^4.1.11` (#514); no
+runtime or published-dependency change.
 
 ## 0.14.0
 

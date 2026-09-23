@@ -3,12 +3,13 @@ type: runbook
 title: "Cutting a release: three tag axes, one publish workflow"
 description: "v* triggers a GitHub Release; mcp-server-v*/mcp-bridge-v* both drive publish-npm.yml, which requires mcp-server to already be published before mcp-bridge."
 tags: [release, ci, npm, tags]
-timestamp: 2026-09-10T06:30:38Z
+timestamp: 2026-09-23T12:41:50Z
 sources:
   - .github/workflows/release.yml
   - .github/workflows/publish-npm.yml
   - .github/workflows/ci.yml
   - mcp-bridge/package.json
+  - mcp-bridge/tests/lockstep.test.ts
 ---
 
 Three independent tag axes, two workflow files:
@@ -24,7 +25,7 @@ Then build (`mcp-server` always built first, then the target workspace), upgrade
 
 **Concrete steps to cut a release**:
 1. Root (`v*`): bump the relevant `package.json`(s), add a `## [x.y.z]` section to `CHANGELOG.md`, commit, `git tag vX.Y.Z`, push the tag.
-2. `mcp-server` package: bump `mcp-server/package.json#version` **and** the separate `SERVER_VERSION` constant in `mcp-server/src/server.ts` (since `#396`, 2026-07-04, this pair *is* test-enforced equal by `mcp-server/tests/server-version.test.ts`, the same drift-guard pattern as the bridge's own version test, see `mcp-server.md`), commit, `git tag mcp-server-vX.Y.Z`, push. Wait for `publish-npm.yml` to go green (or check `npm view @agent-tasks/mcp-server version`).
-3. `mcp-bridge` package: if depending on a new `mcp-server` version, bump the exact pin in `mcp-bridge/package.json#dependencies`. Bump `mcp-bridge/package.json#version` **and** `PACKAGE_VERSION` in `mcp-bridge/src/cli.ts` (this pair *is* test-enforced by `mcp-bridge/tests/cli-version.test.ts`). Commit, `git tag mcp-bridge-vX.Y.Z`, push, only after step 2's tag has actually published.
+2. `mcp-server` package: bump `mcp-server/package.json#version` **and** the separate `SERVER_VERSION` constant in `mcp-server/src/server.ts` (since `#396`, 2026-07-04, this pair *is* test-enforced equal by `mcp-server/tests/server-version.test.ts`, the same drift-guard pattern as the bridge's own version test, see `mcp-server.md`), and in the same commit the exact `@agent-tasks/mcp-server` pin in `mcp-bridge/package.json#dependencies` plus the lockfile (`mcp-bridge/tests/lockstep.test.ts` requires the pin to equal the workspace `mcp-server` version at all times, so a server bump without the pin fails the MCP Bridge CI job; the repo's bridge then points at a version not yet on npm, which is harmless until a bridge tag is pushed), commit, `git tag mcp-server-vX.Y.Z`, push. Wait for `publish-npm.yml` to go green (or check `npm view @agent-tasks/mcp-server version`).
+3. `mcp-bridge` package: the exact pin already moved with step 2. Bump `mcp-bridge/package.json#version` **and** `PACKAGE_VERSION` in `mcp-bridge/src/cli.ts` (this pair *is* test-enforced by `mcp-bridge/tests/cli-version.test.ts`). Commit, `git tag mcp-bridge-vX.Y.Z`, push, only after step 2's tag has actually published.
 
 Related: `mcp-server.md`, `mcp-bridge.md`, `deploy.md`.
