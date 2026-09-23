@@ -333,6 +333,34 @@ then slices and cursors that fetched array locally:
   idempotent, so this is safe to treat as at-least-once delivery, not
   exactly-once.
 
+### `project_tasks`'s `count` and `truncated` (task e36696d7)
+
+`project_tasks` carries two additional top-level fields alongside `tasks`
+and `nextCursor`, on both the default summary-row shape and
+`include: ["task"]`:
+
+- `count`: the number of rows in this page.
+- `truncated`: `true` exactly when more rows exist after this page,
+  `false` otherwise. A caller can no longer misread a page whose length
+  happens to equal `limit` as "this is everything": `truncated` says so
+  explicitly.
+
+`truncated` is derived from `nextCursor` (`nextCursor !== null`), which
+the backend (`GET /projects/:id/tasks`, `backend/src/routes/tasks.ts`) now
+computes with a take-limit-plus-one probe: it fetches `limit + 1` rows and
+trims the lookahead row off before returning, so `nextCursor` is set
+exactly when that lookahead row existed. Before this fix, `nextCursor` was
+set whenever `tasks.length === limit`, a size heuristic that could not
+distinguish "exactly `limit` rows remain" from "more than `limit` rows
+remain", both of which come back as a full page. `truncated` is
+deliberately never `count === limit` (a caller-supplied `limit` this
+projection does not itself see, and which would reproduce the very
+ambiguity the take-limit-plus-one probe fixes) and never a hardcoded
+`false`. This is exact only against a backend carrying the take-limit-plus-one
+fix; an older backend using the `tasks.length === limit` heuristic can only
+over-report `truncated: true` on an exactly-full last page, never
+under-report it.
+
 ## Error shape (block tier)
 
 A call that cannot proceed at all is the third receipt tier: a **teaching

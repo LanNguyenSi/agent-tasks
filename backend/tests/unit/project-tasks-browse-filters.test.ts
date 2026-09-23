@@ -215,14 +215,14 @@ describe("GET /projects/:projectId/tasks — unclaimed filter", () => {
 });
 
 describe("GET /projects/:projectId/tasks — limit clamping", () => {
-  it("honors an explicit limit within bounds", async () => {
+  it("honors an explicit limit within bounds, fetching one lookahead row (take-limit-plus-one probe)", async () => {
     await makeApp().request(`/projects/${PROJECT_ID}/tasks?limit=7`);
-    expect(lastFindManyArgs().take).toBe(7);
+    expect(lastFindManyArgs().take).toBe(8);
   });
 
-  it("clamps limit to the 500 ceiling", async () => {
+  it("clamps limit to the 500 ceiling before adding the lookahead row", async () => {
     await makeApp().request(`/projects/${PROJECT_ID}/tasks?limit=9999`);
-    expect(lastFindManyArgs().take).toBe(500);
+    expect(lastFindManyArgs().take).toBe(501);
   });
 
   it("rejects limit=0 with 400", async () => {
@@ -293,7 +293,7 @@ describe("GET /projects/:projectId/tasks — composite filters", () => {
       `/projects/${PROJECT_ID}/tasks?status=open&priority=HIGH,CRITICAL&labels=mcp&unclaimed=true&limit=10`,
     );
     const args = lastFindManyArgs();
-    expect(args.take).toBe(10);
+    expect(args.take).toBe(11); // limit=10 + take-limit-plus-one lookahead row
     expect(args.where).toMatchObject({
       projectId: PROJECT_ID,
       status: { in: ["open"] },
@@ -356,12 +356,31 @@ describe("GET /projects/:projectId/tasks — cursor pagination", () => {
   });
 });
 
-describe("GET /projects/:projectId/tasks — nextCursor", () => {
-  it("returns the last row's id as nextCursor when a limited page comes back full", async () => {
+describe("GET /projects/:projectId/tasks - nextCursor (take-limit-plus-one probe)", () => {
+  it("returns the last (trimmed) row's id as nextCursor when the lookahead row comes back (more rows exist)", async () => {
+    // limit=2 -> fetch take=3; the mock returns 3 rows (2 real + 1
+    // lookahead), proving more rows exist beyond this page.
+    prismaMocks.taskFindMany.mockResolvedValueOnce([
+      { id: "task-1" },
+      { id: "task-2" },
+      { id: "task-3" },
+    ]);
+    const res = await makeApp().request(`/projects/${PROJECT_ID}/tasks?limit=2`);
+    const body = (await res.json()) as { tasks: { id: string }[]; nextCursor: string | null };
+    // The lookahead row is trimmed off -- callers never see more than `limit` rows.
+    expect(body.tasks).toEqual([{ id: "task-1" }, { id: "task-2" }]);
+    expect(body.nextCursor).toBe("task-2");
+  });
+
+  it("returns null when the fetch (limit + 1) comes back at exactly `limit` rows (true end of results, no longer ambiguous)", async () => {
+    // Previously ambiguous case (task e36696d7 criterion 1): exactly `limit`
+    // rows remain. take-limit-plus-one now proves there is no lookahead row,
+    // so nextCursor is null instead of the old heuristic's false positive.
     prismaMocks.taskFindMany.mockResolvedValueOnce([{ id: "task-1" }, { id: "task-2" }]);
     const res = await makeApp().request(`/projects/${PROJECT_ID}/tasks?limit=2`);
-    const body = (await res.json()) as { nextCursor: string | null };
-    expect(body.nextCursor).toBe("task-2");
+    const body = (await res.json()) as { tasks: { id: string }[]; nextCursor: string | null };
+    expect(body.tasks).toEqual([{ id: "task-1" }, { id: "task-2" }]);
+    expect(body.nextCursor).toBeNull();
   });
 
   it("returns null when a limited page comes back short of the limit (end of results)", async () => {

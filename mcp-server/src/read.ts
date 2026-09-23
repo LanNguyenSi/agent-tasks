@@ -285,23 +285,51 @@ export interface ListProjectTasksResponse {
   nextCursor: string | null;
 }
 
+/** project_tasks's own response envelope (task e36696d7): the raw backend
+ *  envelope plus `count` (rows in this page) and `truncated` (more rows
+ *  exist after this page). Both are derived from `nextCursor`, which the
+ *  backend now computes with an exact take-limit-plus-one probe
+ *  (backend/src/routes/tasks.ts) rather than the size heuristic
+ *  (tasks.length === limit) it used before: that heuristic could not tell
+ *  "exactly `limit` rows remain" from "more than `limit` rows remain", so
+ *  `truncated` could not be derived from it exactly either. `truncated` is
+ *  therefore never `count === limit` (a caller-supplied limit this
+ *  projection does not even see) and never a hardcoded `false` -- it is
+ *  `nextCursor !== null`, the same exact signal the backend fix produced
+ *  for pagination itself. */
+export interface ProjectTaskListSummaryResult {
+  tasks: (TaskListSummary | RawTask)[];
+  nextCursor: string | null;
+  count: number;
+  truncated: boolean;
+}
+
 /**
  * Projects a raw GET /projects/:id/tasks response to summary rows, or (on
- * include:["task"]) returns it unchanged. Two independent defensive
- * guards, not one: the envelope guard below mirrors projectTaskSummary's
- * own (a malformed body -- no `tasks` array -- is returned raw rather than
- * crashing on a dereference), and EACH ROW inside the map callback gets
- * its own guard too (a malformed row -- null, or missing `id` -- passes
- * through unchanged rather than crashing on `task.id`/`task.title` or
- * silently serialising to `{}`). `nextCursor` passes through untouched in
- * both branches.
+ * include:["task"]) returns it unchanged plus count/truncated. Two
+ * independent defensive guards, not one: the envelope guard below mirrors
+ * projectTaskSummary's own (a malformed body -- no `tasks` array -- is
+ * returned raw rather than crashing on a dereference), and EACH ROW inside
+ * the map callback gets its own guard too (a malformed row -- null, or
+ * missing `id` -- passes through unchanged rather than crashing on
+ * `task.id`/`task.title` or silently serialising to `{}`). `nextCursor`
+ * passes through untouched in both branches.
  */
 export function projectTaskListSummary(
   response: ListProjectTasksResponse,
   include?: readonly string[],
-): ListProjectTasksResponse | { tasks: (TaskListSummary | RawTask)[]; nextCursor: string | null } {
-  if (include?.includes("task")) return response;
+): ListProjectTasksResponse | ProjectTaskListSummaryResult {
   if (!response || !Array.isArray(response.tasks)) return response;
+
+  const nextCursor = response.nextCursor ?? null;
+  // Exact (see the interface doc comment above): the backend's own
+  // take-limit-plus-one probe is what makes this safe to state as a fact,
+  // not a heuristic, for both the include:["task"] and summary branches.
+  const truncated = nextCursor !== null;
+
+  if (include?.includes("task")) {
+    return { ...response, nextCursor, count: response.tasks.length, truncated };
+  }
 
   const tasks = response.tasks.map((task): TaskListSummary | RawTask => {
     // Per-row guard (rc-v1-C006/task 3653962f review round 1, LOW): a row
@@ -318,7 +346,7 @@ export function projectTaskListSummary(
     return summary;
   });
 
-  return { tasks, nextCursor: response.nextCursor ?? null };
+  return { tasks, nextCursor, count: tasks.length, truncated };
 }
 
 // ── signals_poll: mcp-server-side cap + cursor ──────────────────────────

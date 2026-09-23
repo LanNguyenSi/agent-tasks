@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `GET /api/projects/:id/tasks` now fetches `limit + 1` rows so `nextCursor` is exactly `null` only when no rows remain after this page, instead of the previous `tasks.length === limit` heuristic (task e36696d7).
+
 ### Fixed
 
 - `pull_requests_create` now reconciles an existing PR for the requested head

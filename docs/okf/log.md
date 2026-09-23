@@ -1,5 +1,36 @@
 # Change log
 
+## 2026-09-23 (re-verification scope)
+
+The e36696d7 re-stamps of `backend.md`, `architecture.md`, `task-lifecycle.md`,
+`workflow-gates.md` and `claim-model.md` re-verified only the claims that cite
+`backend/src/routes/tasks.ts`, `backend/src/routes/docs.ts` and
+`mcp-server/src/tools.ts`, plus the `app.ts` route mounting (`backend.md`
+route list rewritten against the current `app.ts`, `architecture.md` Swagger
+mount citation corrected). Other sources these docs list were stale before the
+re-stamp and were not re-checked; follow-up task 1784b2a6.
+
+## 2026-09-23 (round 2)
+
+Restamped `claim-model.md`, `governance-merge.md`, `reconcile-done-but-open.md`,
+`workflow-gates.md`, `task-lifecycle.md`, `backend.md` and `mcp-server.md`
+after task e36696d7's round-2 fixes further edited
+`backend/src/routes/tasks.ts` (comment shrink), `backend/src/routes/docs.ts`
+(OpenAPI description) and `mcp-server/CHANGELOG.md`. `workflow-gates.md`'s
+`evaluateV2TransitionGates` prose and cross-repo `prUrl` guard line numbers
+were already stale at base (the function had moved since they were last
+verified); re-checked against the current file and corrected. The other
+docs carry only prose claims about `tasks.ts`/`tools.ts` with no line
+citations and needed no content change, only a timestamp bump.
+
+## 2026-09-23
+
+Restamped `mcp-server.md` after `project_tasks`'s response gained `count`
+and `truncated` fields (task e36696d7): the backend's `nextCursor`
+heuristic for `GET /projects/:id/tasks` was replaced with an exact
+take-limit-plus-one probe, and `read.ts`'s `projectTaskListSummary`
+citation was re-pointed at its rewritten return statement.
+
 ## 2026-09-10
 
 Restamped `release-flow.md` and `deploy.md` after `.github/workflows/publish-npm.yml`
