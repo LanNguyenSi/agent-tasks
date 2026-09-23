@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-09-20T06:26:48Z
+timestamp: 2026-09-23T10:20:00Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
