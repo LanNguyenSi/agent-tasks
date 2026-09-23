@@ -5,9 +5,10 @@
 `mcp-bridge.md` names `PACKAGE_VERSION` `"0.8.2"`; the published bridge now
 pins mcp-server `"0.15.0"` too, so the "still pins 0.14.0" clause is gone.
 Re-checked and re-stamped, together with `release-flow.md` (the pin steps
-still hold) and `auth.md` (its `cli.ts` serve-path claim and its
-`schema.prisma` `AgentToken` storage-shape claim re-verified against the
-current files).
+still hold) and `auth.md` (the `cli.ts` serve-path sentence quoted a pre-#403 message
+and now cites `noTokenAvailableMessage()` with a line citation; the
+`AgentToken` storage-shape sentence was corrected for `name` and the
+`scopes` default; both checked against the current files).
 
 ## 2026-09-23 (mcp-server 0.15.0)
 
