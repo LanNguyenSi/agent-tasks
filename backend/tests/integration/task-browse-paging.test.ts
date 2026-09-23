@@ -133,7 +133,7 @@ async function seedTasks(count: number) {
   return ids;
 }
 
-describe("GET /projects/:projectId/tasks — real-database paging (task e36696d7)", () => {
+describe("GET /projects/:projectId/tasks: real-database paging (task e36696d7)", () => {
   it("4 rows, limit 2: page one returns rows 1-2 with nextCursor=row2, page two returns rows 3-4 with nextCursor=null, no row skipped or repeated", async () => {
     const ids = await seedTasks(4);
     const app = makeApp();
