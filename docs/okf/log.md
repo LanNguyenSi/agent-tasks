@@ -1,5 +1,13 @@
 # Change log
 
+## 2026-09-23
+
+Restamped `mcp-server.md` after `project_tasks`'s response gained `count`
+and `truncated` fields (task e36696d7): the backend's `nextCursor`
+heuristic for `GET /projects/:id/tasks` was replaced with an exact
+take-limit-plus-one probe, and `read.ts`'s `projectTaskListSummary`
+citation was re-pointed at its rewritten return statement.
+
 ## 2026-09-10
 
 Restamped `release-flow.md` and `deploy.md` after `.github/workflows/publish-npm.yml`
