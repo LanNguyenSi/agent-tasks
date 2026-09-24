@@ -2,45 +2,48 @@
 
 ## 2026-09-24 (re-verification, remaining stale sources)
 
-Re-verified `backend.md`, `architecture.md`, `task-lifecycle.md`,
-`workflow-gates.md` and `claim-model.md` against every source that was
-still stale as of `50d3f9b`, before the earlier e36696d7 re-stamp cleared
-their warnings without a re-check: `backend/src/app.ts` route mounting
-(already covered by the prior pass, re-confirmed), `backend/src/services/grounding-completion.ts`,
-`backend/src/services/grounding-context.ts`, `backend/src/services/grounding-merge-provider.ts`,
-`backend/src/routes/grounding.ts`, `backend/src/routes/grounding-task-completion.ts`,
-`backend/src/routes/grounding-direct-tasks.ts`, `backend/src/routes/grounding-creation.ts`,
-`backend/src/routes/projects.ts`, `backend/src/services/grounding-attempts.ts`,
-`backend/src/services/grounding-route-context.ts`, `backend/prisma/schema.prisma`,
-`package.json`, `backend/package.json` and `frontend/package.json`.
+Re-verified five docs against the sources that `okf-kit@0.10.0 check`
+reported stale for them at `50d3f9b`, before the earlier e36696d7 re-stamp
+cleared those warnings without a re-check:
 
-The first pass at this re-verification missed drift from #520 (the
-configured GitHub adapters and the `grounding_enrollment_required` remote
-gate): `claim-model.md`, `workflow-gates.md`, `architecture.md` and
-`backend.md` still carried pre-#520 sentences saying GitHub/webhook
-integration remains separate follow-up work, or that an unenrolled task's
-remote operations simply fall back to the historical compatibility path.
-That drift is now corrected against `docs/grounding-receipt-contract.md`,
-`backend/src/services/grounding-github-create.ts`,
-`backend/src/services/grounding-github-webhook.ts`,
-`backend/src/routes/grounding-task-completion.ts` and
-`backend/src/routes/grounding-github.ts`: configured GitHub creation and
-webhook writers now participate in the shared context-mutation protocol
-(`claim-model.md`, `workflow-gates.md`), and a configured app's fresh
-remote operation (task merge, GitHub merge, finish with `autoMerge`) on an
-unenrolled task returns `409 grounding_enrollment_required` before any
-remote effect rather than reaching the historical compatibility routes,
-while unprovisioned local completion and the unconfigured default app keep
-their prior compatibility behavior (`architecture.md`, `backend.md`,
-`workflow-gates.md`). `backend.md`'s pinned `hono` version was also stale
-(`^4.12.21` vs. the current `backend/package.json` `^4.13.7`) and is
-corrected, with a one-sentence pointer to the configured GitHub services
-and their `GroundingGithubCreateOperation`/`GroundingGithubWebhookDelivery`
-tables added next to the grounding-attempts paragraph. Every other claim
-against the listed sources checked out unchanged, including the route-mount
-list, the `EXTERNAL_V1` session-free attempt/receipt contract, the
-shared-reservation `409` guard, and the `Task.status`/`externalRef` schema
-fields. All five docs re-stamped.
+- `architecture.md`: `backend/src/app.ts`, `backend/src/routes/grounding-creation.ts`,
+  `backend/src/routes/grounding-direct-tasks.ts`, `backend/src/routes/grounding-task-completion.ts`,
+  `frontend/package.json`, `package.json`.
+- `backend.md`: `backend/prisma/schema.prisma`, `backend/src/app.ts`,
+  `backend/src/routes/grounding-creation.ts`, `backend/src/routes/grounding-direct-tasks.ts`,
+  `backend/src/routes/grounding-task-completion.ts`, `backend/src/routes/grounding.ts`,
+  `backend/src/routes/projects.ts`, `backend/src/routes/tasks.ts`, `backend/src/services`,
+  `backend/src/services/grounding-attempts.ts`, `backend/src/services/grounding-completion.ts`,
+  `backend/src/services/grounding-context.ts`, `backend/src/services/grounding-merge-provider.ts`.
+- `claim-model.md`: `backend/prisma/schema.prisma`.
+- `task-lifecycle.md`: `backend/src/routes/grounding-creation.ts`,
+  `backend/src/routes/grounding-direct-tasks.ts`, `backend/src/routes/tasks.ts`,
+  `backend/src/services/grounding-route-context.ts`.
+- `workflow-gates.md`: `backend/prisma/schema.prisma`,
+  `backend/src/routes/grounding-task-completion.ts`, `backend/src/services/grounding-completion.ts`.
+
+Drift from #520 (the configured GitHub adapters and the
+`grounding_enrollment_required` remote gate) is corrected:
+`claim-model.md` and `workflow-gates.md` now say configured GitHub creation
+and webhook writers participate in the shared context-mutation protocol,
+and `architecture.md`, `backend.md` and `workflow-gates.md` now say a
+configured app's fresh remote operation (task merge, GitHub merge, finish
+with `autoMerge`) on an unenrolled task returns
+`409 grounding_enrollment_required` before any remote effect, while
+unprovisioned local completion and the unconfigured default app keep their
+compatibility behavior. `backend.md`'s pinned `hono` version is corrected
+to match `backend/package.json`, and its services list and
+grounding-attempts paragraph now point to the configured GitHub services
+and their tables.
+
+Newly cited sources (not stale at `50d3f9b`, added to the docs' sources):
+`docs/grounding-receipt-contract.md` (`backend.md`, `claim-model.md`,
+`workflow-gates.md`), `backend/package.json` (`backend.md`),
+`backend/src/routes/grounding-github.ts` (`architecture.md`, `backend.md`,
+`workflow-gates.md`), `backend/src/services/grounding-github-create.ts` and
+`backend/src/services/grounding-github-webhook.ts` (`backend.md`,
+`claim-model.md`).
+`task-lifecycle.md` needed no content change. All five docs re-stamped.
 
 ## 2026-09-23 (mcp-bridge 0.8.2)
 
