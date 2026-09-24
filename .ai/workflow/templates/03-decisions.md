@@ -1,12 +1,19 @@
 # Decisions
 
-| Date | Decision | Reason | Consequences |
-|---|---|---|---|
-| YYYY-MM-DD | <!-- decision --> | <!-- reason --> | <!-- consequences --> |
+<!-- For newly created decision records, this table is descriptive evidence, not an authorization mechanism. Record the real accountable source and its concrete approval evidence; a role label or this Markdown alone does not grant authority. Established runs retain their recorded decision format. -->
+
+| ID | Date | Trigger / Evidence | Decision | Authority / Source | Consequences | Supersedes |
+|---|---|---|---|---|---|---|
+| D-001 | YYYY-MM-DD | <!-- trigger and evidence --> | <!-- decision --> | <!-- accountable source and approval evidence --> | <!-- consequences --> | <!-- prior D-ID, or blank for first decision --> |
+
+<!-- Baseline revisions and accepted waivers link to their D-ID. A revision's
+Supersedes cell names the prior decision it replaces. Routine in-scope
+orchestrator decisions, operator-approved scope changes, and operator-only
+critical waivers remain distinct. -->
 
 ## Review-round escalation
 
-<!-- One row per task that triggers the Review-round escalation budget in SKILL.md: the second round-2 halt signal or the third fix_required review round on that task. A run carries multiple tasks, so this table can carry multiple rows. Leave the single placeholder row as n/a when no task in this run has triggered the budget. -->
+<!-- One row per task that triggers the Review-round escalation budget in SKILL.md: the second round-2 halt signal or the third negative round on that task. A negative round counts only with at least one introduced_by_delta yes/unknown finding; no stays ordinary gate. A run carries multiple tasks, so this table can carry multiple rows. Leave the single placeholder row as n/a when no task in this run has triggered the budget. -->
 
 | Task | Choice | Reason |
 |---|---|---|
