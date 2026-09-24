@@ -1,5 +1,29 @@
 # Change log
 
+## 2026-09-24 (re-verification, remaining stale sources)
+
+Re-verified `backend.md`, `architecture.md`, `task-lifecycle.md`,
+`workflow-gates.md` and `claim-model.md` against every source that was
+still stale as of `50d3f9b`, before the earlier e36696d7 re-stamp cleared
+their warnings without a re-check: `backend/src/app.ts` route mounting
+(already covered by the prior pass, re-confirmed), `backend/src/services/grounding-completion.ts`,
+`backend/src/services/grounding-context.ts`, `backend/src/services/grounding-merge-provider.ts`,
+`backend/src/routes/grounding.ts`, `backend/src/routes/grounding-task-completion.ts`,
+`backend/src/routes/grounding-direct-tasks.ts`, `backend/src/routes/grounding-creation.ts`,
+`backend/src/routes/projects.ts`, `backend/src/services/grounding-attempts.ts`,
+`backend/src/services/grounding-route-context.ts`, `backend/prisma/schema.prisma`,
+`package.json` and `frontend/package.json`. Every claim checked out against
+current file content, including the route-mount list, the `EXTERNAL_V1`
+session-free attempt/receipt contract, the shared-reservation `409` guard,
+and the `Task.status`/`externalRef` schema fields; no citation needed
+correction. The #520 GitHub merge guard changes (canonical repo-name
+comparison, the `github_merge` route kind, the `guardOnly` record path)
+touch these five docs only at the abstract level they already describe
+(CI/role/review checks, foreign-merge refusal); no new claim was needed to
+cover that drift here (the concrete guard mechanics live in
+`governance-merge.md` and `reconcile-done-but-open.md`, out of this pass's
+scope). All five docs re-stamped.
+
 ## 2026-09-23 (mcp-bridge 0.8.2)
 
 `mcp-bridge.md` names `PACKAGE_VERSION` `"0.8.2"`; the published bridge now
