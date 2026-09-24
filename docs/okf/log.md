@@ -12,17 +12,35 @@ their warnings without a re-check: `backend/src/app.ts` route mounting
 `backend/src/routes/grounding-direct-tasks.ts`, `backend/src/routes/grounding-creation.ts`,
 `backend/src/routes/projects.ts`, `backend/src/services/grounding-attempts.ts`,
 `backend/src/services/grounding-route-context.ts`, `backend/prisma/schema.prisma`,
-`package.json` and `frontend/package.json`. Every claim checked out against
-current file content, including the route-mount list, the `EXTERNAL_V1`
-session-free attempt/receipt contract, the shared-reservation `409` guard,
-and the `Task.status`/`externalRef` schema fields; no citation needed
-correction. The #520 GitHub merge guard changes (canonical repo-name
-comparison, the `github_merge` route kind, the `guardOnly` record path)
-touch these five docs only at the abstract level they already describe
-(CI/role/review checks, foreign-merge refusal); no new claim was needed to
-cover that drift here (the concrete guard mechanics live in
-`governance-merge.md` and `reconcile-done-but-open.md`, out of this pass's
-scope). All five docs re-stamped.
+`package.json`, `backend/package.json` and `frontend/package.json`.
+
+The first pass at this re-verification missed drift from #520 (the
+configured GitHub adapters and the `grounding_enrollment_required` remote
+gate): `claim-model.md`, `workflow-gates.md`, `architecture.md` and
+`backend.md` still carried pre-#520 sentences saying GitHub/webhook
+integration remains separate follow-up work, or that an unenrolled task's
+remote operations simply fall back to the historical compatibility path.
+That drift is now corrected against `docs/grounding-receipt-contract.md`,
+`backend/src/services/grounding-github-create.ts`,
+`backend/src/services/grounding-github-webhook.ts`,
+`backend/src/routes/grounding-task-completion.ts` and
+`backend/src/routes/grounding-github.ts`: configured GitHub creation and
+webhook writers now participate in the shared context-mutation protocol
+(`claim-model.md`, `workflow-gates.md`), and a configured app's fresh
+remote operation (task merge, GitHub merge, finish with `autoMerge`) on an
+unenrolled task returns `409 grounding_enrollment_required` before any
+remote effect rather than reaching the historical compatibility routes,
+while unprovisioned local completion and the unconfigured default app keep
+their prior compatibility behavior (`architecture.md`, `backend.md`,
+`workflow-gates.md`). `backend.md`'s pinned `hono` version was also stale
+(`^4.12.21` vs. the current `backend/package.json` `^4.13.7`) and is
+corrected, with a one-sentence pointer to the configured GitHub services
+and their `GroundingGithubCreateOperation`/`GroundingGithubWebhookDelivery`
+tables added next to the grounding-attempts paragraph. Every other claim
+against the listed sources checked out unchanged, including the route-mount
+list, the `EXTERNAL_V1` session-free attempt/receipt contract, the
+shared-reservation `409` guard, and the `Task.status`/`externalRef` schema
+fields. All five docs re-stamped.
 
 ## 2026-09-23 (mcp-bridge 0.8.2)
 
