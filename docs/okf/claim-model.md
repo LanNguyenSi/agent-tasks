@@ -3,7 +3,7 @@ type: invariant
 title: "Claim model: task_pickup resolution order, backlog filtering, and single-active-claim"
 description: "Signals, then review, then open work, then idle; backlog is invisible to pickup; priority desc/createdAt asc; blockedBy filtering; one active claim per agent enforced in both pickup and start; status is an unconstrained free String; backlog tasks require human promotion before agent claim."
 tags: [claim, pickup, status, dependencies, backlog]
-timestamp: 2026-09-23T10:20:00Z
+timestamp: 2026-09-24T06:10:17Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/grounding-route-context.ts
@@ -14,6 +14,9 @@ sources:
   - mcp-server/src/errors.ts
   - cli/src/api.ts
   - cli/src/resolve.ts
+  - backend/src/services/grounding-github-create.ts
+  - backend/src/services/grounding-github-webhook.ts
+  - docs/grounding-receipt-contract.md
 ---
 
 **Backlog filtering in pickup**: `POST /tasks/pickup` does not return backlog tasks at any point in its resolution order. A task in `backlog` status is invisible to both the signals branch (backlog tasks emit no `task_available` signal; see `task-lifecycle.md`) and the open-work branch. Backlog tasks are intended for human review before agent pickup; see `task-lifecycle.md` for the human promote/discard surface. **D18 revision**: the CLI's id-prefix resolver (`cli/src/resolve.ts`, `cli/src/api.ts`'s `searchTaskPool`) can now resolve backlog-task IDs by prefix -- `CLAIMABLE_VALID_STATUSES` on `/api/tasks/claimable` accepts `backlog` as an explicit-search value (see the "List claimable tasks" block comment in `backend/src/routes/tasks.ts`). This is discovery only: the implicit no-params "what can I claim right now?" default still excludes backlog entirely, and a resolved backlog task's id still 403s `backlog_not_promoted` at `/tasks/:id/start`/`/tasks/:id/claim` until a human promotes it. The web UI and MCP clients could already manipulate backlog tasks directly by full UUID; only the CLI's prefix-search discoverability was the gap.
@@ -53,7 +56,9 @@ that member's active work and review claims after the project lock. It clears
 the live claim fields, invalidates the selected attempts, writes the mandatory
 context audit, and deletes the membership in one transaction. An active
 finalization reservation rejects the whole removal before either a claim or
-membership changes. Workflow and project-member writers now use this boundary; GitHub/webhook
-integration and public MCP transport remain separate follow-up work.
+membership changes. Workflow and project-member writers now use this boundary; configured GitHub
+creation and webhook writers participate in it too (see `governance-merge.md`
+and the [receipt contract](../grounding-receipt-contract.md)). Public MCP
+transport remains separate follow-up work.
 
 Related: `workflow-gates.md`, `governance-merge.md`, `task-lifecycle.md`.

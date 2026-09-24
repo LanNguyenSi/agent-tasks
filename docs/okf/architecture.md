@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-23T10:22:47Z
+timestamp: 2026-09-24T06:10:17Z
 sources:
   - package.json
   - backend/src/app.ts
@@ -14,6 +14,7 @@ sources:
   - backend/src/routes/docs.ts
   - docker-compose.prod.yml
   - frontend/package.json
+  - backend/src/routes/grounding-github.ts
 ---
 
 npm workspaces monorepo (`package.json` workspaces: `backend`, `frontend`, `mcp-server`, `mcp-bridge`, `cli`). This doc covers the four deployables; `@agent-tasks/cli` is a fifth workspace (a standalone REST CLI client) not detailed here.
@@ -30,7 +31,13 @@ are mounted before the historical task router. Authoritative provisioning select
 the completion adapter for finish, merge and abandon, the direct adapter for
 transition, review, PATCH, respec and enrolled deletion checks, and an optional
 server-owned creation-policy adapter for selected new tasks/import rows. Absent
-selection reaches the historical compatibility routes. Invalid enrollment,
+selection reaches the historical compatibility routes; on a configured app, a
+task without server enrollment keeps that same compatibility behavior for
+local completion, but a fresh remote operation (task merge, GitHub merge,
+finish with `autoMerge`) instead returns `409 grounding_enrollment_required`
+before any remote effect (`grounding-task-completion.ts:95`,
+`routes/grounding-github.ts:71`); the unconfigured default app has no such
+gate. Invalid enrollment,
 orphan binding, unavailable trusted service, and database errors fail closed.
 There is no public enrollment endpoint. The empty creation-policy default does
 not activate enrollment; before server-only enrollment of legacy work, active

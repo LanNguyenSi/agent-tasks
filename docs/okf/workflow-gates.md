@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-09-23T10:20:00Z
+timestamp: 2026-09-24T06:10:17Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -20,6 +20,8 @@ sources:
   - backend/src/routes/tasks.ts
   - backend/prisma/schema.prisma
   - backend/src/services/confidence-gate.ts
+  - backend/src/routes/grounding-github.ts
+  - docs/grounding-receipt-contract.md
 ---
 
 **Four built-in transition rules** (`backend/src/services/transition-rules.ts`, `TransitionRule`): `branchPresent` (sync: non-empty `task.branchName`), `prPresent` (sync: both `prUrl` and `prNumber` set), `ciGreen` (async, GitHub-backed: every check run on the PR's head SHA must be `success`), `prMerged` (async, GitHub-backed: the PR must be in the closed-merged state, open, draft, and closed-unmerged all fail). `ciGreen`/`prMerged` are in `GITHUB_BACKED_RULES` and fail closed on any network/API error (`evaluateTransitionRules` catches per-rule throws; a `GithubChecksError` surfaces its status, anything else collapses to a generic "Rule evaluation error"). Workflows attach these to a `transitions[].requires` array (per-transition, per-workflow).
@@ -40,8 +42,10 @@ authority. A project-default change selects null-`workflowId` tasks because
 they inherit the default; a definition update also selects explicit references
 to that workflow. Reset selects both explicit references that it detaches and
 inherited tasks. A name-only update and non-default workflow creation leave
-existing grounding attempts unchanged. GitHub/webhook integration and public MCP transport
-remain separate follow-up work.
+existing grounding attempts unchanged. Configured GitHub creation and webhook
+writers participate in the same shared context-mutation protocol (see
+`governance-merge.md` and the [receipt contract](../grounding-receipt-contract.md)).
+Public MCP transport remains separate follow-up work.
 
 `Task.workflowId` can only be set at task-create time: `updateTaskSchema` (the PATCH body schema) has no `workflowId` field at all, so a PATCH payload naming one has it silently stripped/ignored by Zod (`z.object()` strips unrecognized keys by default — this is not a rejected/400 request), not persisted. A task already created under the default workflow therefore cannot be migrated onto this template after the fact; recovery for an already-stuck task stays the admin-only forced `/transition` path described above.
 
@@ -69,5 +73,9 @@ selects external, legacy-local or OFF; external errors never fall back.
 The per-app provisioned completion router now invokes these services before
 completion/disposition effects. It preserves the semantic finish/approve/merge
 edge and requires canonical transport plus a durable operation key; the
-historical unprovisioned handlers remain separate. See the
+historical unprovisioned handlers remain separate, and a configured app's
+fresh remote operation (task merge, GitHub merge, finish with `autoMerge`) on
+an unenrolled task returns `409 grounding_enrollment_required` before any
+remote effect rather than falling back to the unprovisioned handler
+(`grounding-task-completion.ts:95`, `routes/grounding-github.ts:71`). See the
 [shared receipt consumer contract](../grounding-receipt-contract.md).
