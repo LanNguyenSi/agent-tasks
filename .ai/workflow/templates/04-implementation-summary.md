@@ -14,7 +14,59 @@ not_started | in_progress | done | partial | blocked
 |---|---|
 | <!-- path --> | <!-- reason --> |
 
+## Acceptance-Baseline Coverage
+
+The Acceptance-Baseline Coverage and Open Required Residuals sections apply
+only to a run that recorded `Acceptance contract: acceptance-baseline/v1` in
+`00-goal.md` at creation before slicing. Existing runs retain their recorded
+original summary contract. Unknown provenance is resolved before dependent
+delegation; missing fields never select a version or require migration.
+
+This table indexes the implementer's returned `criterion_evidence` references
+against the frozen `acceptance_baseline` and assigned criteria. Empty
+`evidence_refs: []` stays unresolved, with its reason in risks/open questions.
+This table indexes result artifacts; it is not a results database and does not
+itself accept work. A required criterion with missing, aborted, skipped,
+unresolved, wrong-state, or wrong-baseline evidence remains an open residual
+and blocks acceptance.
+
+| Criterion ID | Baseline ID / revision | Evidence reference | Result |
+|---|---|---|---|
+| <!-- AC-001 --> | <!-- acceptance-baseline / r1 --> | <!-- relative result artifact reference --> | <!-- pass/fail/manual/residual --> |
+
+An automated result artifact identifies its attempt, repository, checked
+revision including relevant dirty-state identity, cwd, applied check definition,
+status, exit or abort information, and baseline/criterion identities. A manual reference
+identifies the artifact revision, reviewer, method, pass/fail standard, and
+reasoned result and baseline/criterion identities; it remains explicitly manual. Coverage never turns a reviewer
+recommendation or accepted risk into automated verification.
+
+Each reference resolves relative to the directory containing this summary
+file, with a precise artifact or fragment locator when needed. It must identify the
+same baseline and criterion as the frozen delegated record; a copied label or
+an optional row cannot stand in for a required criterion.
+
+## Open Required Residuals
+
+| Criterion ID | Why evidence is not decisive | Acceptance effect |
+|---|---|---|
+| <!-- AC-001 --> | <!-- missing/aborted/skipped/unresolved/wrong state or baseline --> | blocks acceptance |
+
 ## Test Evidence
+
+### Verification Set
+
+Record the frozen set reference (path plus digest), repository identity,
+effective configuration/scripts, preflight executable identity/definition, and
+every ordered `(kind, name, occurrence)` result with cwd and artifact. A
+missing-tool preflight limitation may have no raw child result, but is never a
+pass; disabled required categories are gaps. Missing, extra, mismatched, or
+unresolved results are misfires. Failures, skips, acknowledgements,
+limitations, and inconclusive outcomes remain explicit non-passes.
+
+| Set reference / digest | Repository identity                    | Result identity                   | Cwd          | Result artifact / status            |
+| ---------------------- | -------------------------------------- | --------------------------------- | ------------ | ----------------------------------- |
+| <!-- path / digest --> | <!-- repo / revision / dirty state --> | <!-- kind / name / occurrence --> | <!-- cwd --> | <!-- artifact / non-pass reason --> |
 
 ### Executed
 
@@ -28,6 +80,54 @@ not_started | in_progress | done | partial | blocked
 
 <!-- Explain why, if applicable. -->
 
+### Mutation Probes
+
+Before/After cells hold a single-line excerpt. When the mutant's actual
+before/after text is multi-line or contains an unescaped `|`, or the mutant
+is a patch/diff rather than a text swap, put the full text or diff in the
+implementer report or a fenced block directly under the table, and note
+where it lives in the row's own cell.
+
+| Round | Mutant | File | Anchor | Before | After | Verified Applied Via | Result | Expectation | Reason | Restored Verified | Replayed |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| <!-- round --> | <!-- mutant --> | <!-- file --> | <!-- anchor --> | <!-- before --> | <!-- after --> | <!-- verified_applied_via --> | <!-- result --> | <!-- expectation --> | <!-- reason --> | <!-- restored_verified --> | <!-- replayed --> |
+
+### Class Closure
+
+One row per fix round (any round after the task's first) that fixed a review
+finding: the defect class it closed, the search command run to enumerate other
+sites of that class (blank when `Closure Kind` is not `enumerated`), the sites
+the search found (blank when `Closure Kind` is not `enumerated`), and the
+closure kind (`enumerated | source`) the implementer reported in
+`class_closure`; `not_applicable` never appears in this table, since a row
+exists only for a round that fixed a finding, never for the task's first round.
+An unclosed site of the row's class is named in Risks / Notes with the reason.
+
+| Round | Class | Enumeration Command | Sites | Closure Kind |
+|---|---|---|---|---|
+| <!-- round --> | <!-- class --> | <!-- enumeration_command --> | <!-- sites --> | <!-- closure_kind --> |
+
+### Optional Probe Plan and Result Index
+
+An optional runner-supported probe plan may be referenced here by relative
+path, immutable revision/hash, and mutant locator/index. It helps later
+assignments locate an unchanged definition but is never evidence by itself.
+Each result reference binds that plan to checked state, cwd, attempt,
+expectation, applied mutant, and restoration. Missing, stale, or unresolved
+references block the relevant proof rather than count as skipped. Preserve the
+legacy table above; when a source move requires a replacement plan, record its
+intentional supersession and rationale in `03-decisions.md`.
+
+| Plan reference | Immutable revision/hash | Mutant locator/index | Result reference |
+|---|---|---|---|
+| <!-- relative plan path --> | <!-- immutable id --> | <!-- locator --> | <!-- relative result artifact --> |
+
 ## Risks / Notes
 
 - <!-- note -->
+
+## Integration
+
+<!-- Batch runs only (run mode `batch`); leave as is otherwise. Per merged
+slice: branch or worktree, merge order, conflicts and how they were resolved,
+and the verification set outcome on the integrated tree. -->
