@@ -1,6 +1,6 @@
 {
   "kit": "orchestrator-workflow",
-  "version": "0.40.1",
+  "version": "0.42.0",
   "harnesses": [],
   "models": {
     "explorer": "sonnet",
@@ -86,13 +86,13 @@
     }
   },
   "files": {
-    ".ai/workflow/templates/00-goal.md": "0a28ae93039d5e26df920ad16852a2066d359909912b65b9592a7dacfe44bf62",
+    ".ai/workflow/templates/00-goal.md": "1f60be1a81a8c610a347cfef6b4cd5e20cb6fbb0baca84469fd0ec1c5b34f84e",
     ".ai/workflow/templates/01-plan.md": "0b69aa09ccf24b3c7a09c209d30c09eb9814096ed18fb7fe18e67e4b8be42ad4",
-    ".ai/workflow/templates/02-tasks.md": "0e60b02d251b447e28c2e7737d1dc44796b0492616037c25680d639b583328c3",
+    ".ai/workflow/templates/02-tasks.md": "9d287a3d3726f400d123211e01b81e0f2423a79a1391676ba044fb1015b941b0",
     ".ai/workflow/templates/03-decisions.md": "7ff58e63dcc4e7b360eefc905f06157920b5a74f99fad14ca2175c60d5d65a99",
     ".ai/workflow/templates/04-implementation-summary.md": "bdc1ca541eeddf0513fae412bba2a5a82522df7a07b1f7b5de3f230079c17f9f",
     ".ai/workflow/templates/05-review-findings.md": "064ff34974b03b1c01fed2c9b4cff68b93d761bb903da4a16885bc9ca9a74b0d",
-    ".ai/workflow/templates/06-handoff.md": "47023d4aaabf4b1ecd6b309f7572b20f84ed3494d686d92e2fc8af5ac66d7a7a",
+    ".ai/workflow/templates/06-handoff.md": "335b7a10083a045f7b90b93ddc61e13e4875dccbb35f4c27ba3c363ba751a877",
     ".ai/runs/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "installedAt": "2026-07-27T08:29:00.000Z"

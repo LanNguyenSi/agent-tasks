@@ -27,10 +27,30 @@
 ## Knowledge Bundle
 
 <!-- Optional: only applies when the repo carries a curated knowledge bundle
-     (for example a docs/okf/ directory). Outcome: updated | not affected |
-     follow-up filed. -->
+     (each one configured via `knowledge` in `.ai/workflow/manifest.json`;
+     default `docs/okf/`). This is the safety net for bundle docs no task
+     re-stamped: a task that changes a doc's sources re-stamps it itself.
+     Outcome: updated | not affected | follow-up filed. -->
 
 - <!-- outcome and brief note, or omit this section when the repo carries no bundle -->
+
+## Documentation Impact
+
+<!-- Human-facing documentation (README, ADRs, architecture docs, end-user
+     docs) affected by this run. Exactly one of: none (<reason>) |
+     updated: <paths> | follow-up: <task>. -->
+
+- <!-- none (<reason>) | updated: <paths> | follow-up: <task> -->
+
+## Sent / Drafted Outward
+
+<!-- Optional: only applies when this run performed or drafted an outward
+     action (push, pull request, ticket comment/transition/close, release,
+     publish, message). Omit this section when nothing was sent or drafted. -->
+
+- <!-- action class, what was sent (with confirmation basis), what stayed a
+     draft in the run directory and why, or an action performed without
+     authorization (unauthorized) -->
 
 ## Follow-Ups
 
