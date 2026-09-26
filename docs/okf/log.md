@@ -26,6 +26,11 @@ re-verified against the current file content, not just re-stamped:
 - `governance-merge.md`, `reconcile-done-but-open.md`: same for
   `github-webhook.ts` and `tasks.ts`; no claim depends on the edited
   comment line.
+- Follow-up in the same change: the webhook-event-model ADR became 0014
+  instead of 0009, because existing text already cites an ADR-0009 for the
+  `task_submit_pr` design. `deploy.md`, `governance-merge.md` and
+  `backend.md` were re-verified against the edited sources (one comment and
+  one prose ADR reference, no line shifts) and re-stamped.
 
 ## 2026-09-24 (re-verification, remaining stale sources)
 
