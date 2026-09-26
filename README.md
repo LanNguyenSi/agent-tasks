@@ -10,9 +10,36 @@ Let humans and AI agents collaborate on tasks with explicit claim gates, transit
 
 ![The agent-tasks board: a Kanban view with Backlog, Open, In Progress, Review, and Done columns of task cards moving through a workflow.](docs/img/board.png)
 
-## Try it in 60 seconds
+## Overview
 
-Self-host:
+AI agents are fast; without workflow control that speed is plausible chaos: tasks claimed on vague descriptions, transitions that skip review, hand-offs nobody can audit. agent-tasks enforces the rules server-side instead of relying on prompt discipline: a confidence-scored claim gate, declarative per-transition preconditions (`branchPresent`, `prPresent`, `prMerged`, `ciGreen`), a durable pull-based signal inbox for human-agent hand-offs, and an audit row on every claim, transition, update, and admin override. Full mechanism in [docs/governance.md](docs/governance.md).
+
+## Key features
+
+The monorepo holds five workspace packages. `backend`, `frontend`, and `cli` version together as one deployable surface; `mcp-server` and `mcp-bridge` version independently as separate npm artefacts on their own release cadence. The version skew between the two groups is intentional.
+
+| Package | Purpose | Docs |
+|---|---|---|
+| [`backend`](backend) | Hono + Prisma REST API: routes, services, gate registry, auth middleware | [docs/architecture.md](docs/architecture.md) |
+| [`frontend`](frontend) | Next.js board and list UI | [docs/architecture.md](docs/architecture.md) |
+| [`cli`](cli/README.md) | Standalone `@agent-tasks/cli` REST client | [cli/docs/commands.md](cli/docs/commands.md) |
+| [`mcp-server`](mcp-server/README.md) | Stdio MCP server wrapping the backend API over a bearer token | [docs/response-contract-v1.md](docs/response-contract-v1.md) |
+| [`mcp-bridge`](mcp-bridge/README.md) | CLI wrapper resolving a token (env/keychain/file) and handing off to `mcp-server` | same file |
+
+Highlights, each detailed in [Next steps](#next-steps) below:
+
+- Deterministic, heuristic confidence scoring gates agent claims on vague tasks; no LLM in the loop.
+- Backlog routing: agent-created tasks land in `backlog`, invisible to `task_pickup`, until a human promotes them.
+- Configurable workflows: in-browser editor for states, transitions, required roles, reachability analysis.
+- GitHub integration: repo sync, branch/PR linking, and optional PR delegation with explicit human consent.
+- Per-project sharing via short-lived hashed share-links, three role tiers, automatic solo-to-dual-control flip.
+- OIDC SSO alongside email/GitHub, team-scoped, PKCE + JWKS.
+
+More detail (task-template fields and dependencies, CSV/Excel import with Jira column auto-detection, board/list filters and search, admin project-share listing): [docs/features.md](docs/features.md).
+
+## Quick start
+
+Self-host (prerequisites: Docker with Compose, git, openssl):
 
 ```bash
 git clone https://github.com/LanNguyenSi/agent-tasks.git
@@ -22,95 +49,66 @@ echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env   # required, >= 32 chars
 make dev-docker          # docker compose up: db + backend + frontend
 ```
 
-Open http://localhost:3000, register the first user, create a team, and generate a token in **Settings → API Tokens**. Full local-dev guide in [docs/development.md](docs/development.md).
+Open http://localhost:3000, register the first user, create a team, and generate a token in **Settings → API Tokens**. Full local-dev guide, a host-only setup (Node >= 22 and a reachable PostgreSQL; Docker optional), and Make targets: [docs/development.md](docs/development.md).
 
 Or skip the install: open the **Live** link above and click **Connect an agent** in **Settings → API Tokens**. The modal generates a team-scoped token and a copy-paste install snippet for Claude Code (MCP), the CLI, or raw curl.
 
 ## First five minutes as an agent
 
-Once an MCP client is connected (see the table below), the cold-start path is four steps:
+Once an MCP client is connected, the canonical verb order is `task_pickup` (find work) then `task_start` (claim it) then implement, `gh pr create`, `task_submit_pr` (record branch/PR metadata), `task_finish` (advance the task). One boundary to know from the start: agents claim tasks in `open` status only; a task an agent creates via `task_create` lands in `backlog`, unclaimable (`403 backlog_not_promoted`) until a human promotes it.
 
-1. **Connect.** The MCP `initialize` handshake carries a short `instructions` field, a primer on the task lifecycle, claim model, and canonical verb order. Read it once per session; call the parameterless `workflow_primer` tool any time you need the fuller reference again.
-2. **`projects_get_effective_gates`.** Check which gates are active on this project (confidence threshold, distinct-reviewer, template mode) before creating or claiming work.
-3. **`task_pickup`.** Get the next piece of work: a pending signal, a task ready for review, or a claimable task. Returns the full task spec by default, no extra call needed.
-4. **Do the work**, then follow the receipt's `next` hint (`task_start` to claim, `task_submit_pr` after `gh pr create`, `task_finish` to advance).
+```
+task_pickup                                          # find work: signal, review-ready task, or claimable task
+task_start     { taskId, branchName? }               # claim it, transition to in_progress
+task_submit_pr { taskId, branchName, prUrl, prNumber } # after `gh pr create`
+task_finish    { taskId, result?, prUrl? }           # advance to review or done, per governance mode
+```
 
-One boundary to know from the start: agents claim tasks in `open` status only. A task an agent creates via `task_create` lands in `backlog`, where it is invisible to `task_pickup` and rejected by `task_start` (`403 backlog_not_promoted`) until a human reviews it and promotes it to `open` on the board.
-
-The converted v2 write verbs (`task_create`, `task_respec`, `task_finish`, `task_submit_pr`, `task_note`, `task_merge`, `task_abandon`, `task_creator_abandon`, `tasks_comment`) return a small receipt by default and accept `include: ["task"]` for the full object; `task_pickup` returns the full spec and `task_start` a receipt plus a small slice; every other tool returns the raw backend body and ignores `include`. Full response shapes (receipts, `include`, errors) are in [docs/response-contract-v1.md](docs/response-contract-v1.md).
+The four-step MCP cold-start path (initialize handshake, `workflow_primer`, `projects_get_effective_gates`, `task_pickup`), the full MCP tool table, CLI and curl equivalents, and the response/receipt shapes: [docs/getting-started.md](docs/getting-started.md), [docs/agent-workflow.md](docs/agent-workflow.md), and [docs/response-contract-v1.md](docs/response-contract-v1.md).
 
 ## Next steps
 
-| If you want to... | Read |
-|------|------|
-| Connect a local agent (Claude Code via MCP, CLI, curl) | [docs/getting-started.md](docs/getting-started.md) |
-| Use the standalone CLI | [`@agent-tasks/cli`](cli/README.md) |
-| Look up a CLI command or flag | [cli/docs/commands.md](cli/docs/commands.md) |
-| Configure CLI endpoint, token, or multiple profiles | [cli/docs/configuration.md](cli/docs/configuration.md) |
-| Walk through full CLI task lifecycles (auto-merge, request-changes, bulk ops) | [cli/docs/workflows.md](cli/docs/workflows.md) |
-| Browse the verb-by-verb API | [docs/v2-api.md](docs/v2-api.md), or interactive [Swagger UI](https://agent-tasks.opentriologue.ai/docs) |
-| Understand confidence gates, governance modes, audit | [docs/governance.md](docs/governance.md) |
-| Build against the MCP response shapes (receipts, `include`, errors) | [docs/response-contract-v1.md](docs/response-contract-v1.md) |
-| Run agent-tasks locally for development | [docs/development.md](docs/development.md) |
-| Understand the architecture | [docs/architecture.md](docs/architecture.md) |
+**Getting started**
+- [docs/getting-started.md](docs/getting-started.md): connect an agent (Claude Code/MCP, CLI, curl), tokens, scopes.
+- [docs/development.md](docs/development.md): local dev stack, Make targets, Docker vs. host setup.
+- [CONTRIBUTING.md](CONTRIBUTING.md): how to propose a change.
 
-## Why this exists
+**Agent workflow and governance**
+- [docs/agent-workflow.md](docs/agent-workflow.md): the v2 verb surface end to end, with CLI/curl equivalents.
+- [docs/governance.md](docs/governance.md): confidence-scoring claim gate, backlog routing, transition preconditions, governance modes.
+- [docs/workflow-preconditions.md](docs/workflow-preconditions.md): per-transition rule reference and authoring guide.
+- [docs/permissions.md](docs/permissions.md): role/action permission matrix.
+- [docs/state-machines.md](docs/state-machines.md): task and workflow state charts.
 
-AI agents are fast. Speed without workflow control is plausible chaos: tasks claimed on vague descriptions, transitions that skip review, hand-offs nobody can audit.
+**API and contracts**
+- [docs/features.md](docs/features.md): task templates and dependencies, CSV/Excel import with Jira column auto-detection, board/list views, admin project-share listing.
+- [docs/v2-api.md](docs/v2-api.md): curated REST verb overview (authoritative schema is the live OpenAPI doc, [Swagger UI](https://agent-tasks.opentriologue.ai/docs)).
+- [docs/api-contract.md](docs/api-contract.md): where the API documentation actually lives, and why there is no static copy.
+- [docs/response-contract-v1.md](docs/response-contract-v1.md): MCP receipt shapes, `include`, and error catalog.
+- [docs/domain-model.md](docs/domain-model.md): entities, relations, and the fields that drive governance.
+- [docs/events.md](docs/events.md): domain events.
+- [docs/signal-payload-design.md](docs/signal-payload-design.md): the agent signal inbox payload design.
 
-Real teams need enforceable rules for:
+**Operations**
+- [docs/architecture.md](docs/architecture.md): runtime topology, modules, boundary rules.
+- [docs/deploy-verify-strategy.md](docs/deploy-verify-strategy.md): deploy and verification approach.
+- [docs/webhook-setup.md](docs/webhook-setup.md): optional GitHub webhook setup.
+- [docs/review-automation-policy.md](docs/review-automation-policy.md) / [docs/review-notification-policy.md](docs/review-notification-policy.md): review automation and notification policy.
+- [docs/enterprise-sso.md](docs/enterprise-sso.md): OIDC SSO configuration.
+- [docs/roadmap.md](docs/roadmap.md): shipped and planned work.
 
-- **when** a task is ready to claim
-- **when** it may change state
-- **when** human review is required
-- **who** may override what
-- **how** hand-offs stay auditable
+Further reference material (use cases, sequence flows, ADRs, design notes, the OKF knowledge bundle) lives under [docs/](docs).
 
-## Core differentiators
+## Development and contributing
 
-- **Claim gates.** Confidence-scored tasks (deterministic, no LLM). Agents are blocked from claiming vague work via `POST /api/tasks/:id/claim → 422` until the description reaches the project's threshold. Humans see the same signal as a warning. Full mechanism in [docs/governance.md](docs/governance.md#confidence-scoring-claim-gate).
-- **Backlog routing.** Tasks created by agents land in `backlog`, not `open`: invisible to `task_pickup` and unclaimable (`403 backlog_not_promoted`) until a human promotes them to `open`. Agents propose work; a human decides what enters the claimable pool. See [docs/governance.md](docs/governance.md#backlog-routing-agent-created-tasks).
-- **Declarative transition preconditions.** Per-transition rules like `branchPresent`, `prPresent`, `prMerged`, `ciGreen` are defined in the workflow schema and [enforced server-side](docs/workflow-preconditions.md). A task literally cannot advance to `review` without a PR if the workflow says so.
-- **Server-side enforcement, not prompt suggestion.** Every rule is checked by the API, not by the agent's prompt. Admin override exists, but it emits an audit row so nothing is silently bypassed.
-- **Durable human-agent signal inbox.** Pull-based, no push-dependency. Agents poll for review requests, assignment changes, and approval signals; human acknowledgement is explicit and logged.
-- **Auditability.** Every claim, transition, update, and override is recorded with actor and timestamp, scoped per project and per task.
+```bash
+make install   # backend + frontend workspace deps
+make setup     # .env + Prisma client
+make test      # frontend, cli, backend test suites
+make lint      # backend + frontend lint
+```
 
-## What you get
-
-- **Configurable workflows.** In-browser editor for states, transitions, required roles, per-state agent instructions, reachability analysis, client + server validation, admin-gated Cmd/Ctrl+S save.
-- **Confidence scoring and description quality analysis.** Heuristic "bullshit meter" measuring information density, structure markers, and concreteness (not character count), with reusable template presets (Bug Fix, Feature, Refactoring).
-- **Task templates and dependencies.** Structured fields (goal, acceptance criteria, context, constraints) plus block / blocked-by relationships with cycle detection.
-- **Agent API.** Team-scoped Bearer tokens with granular scopes. Full OpenAPI / Swagger docs at `/docs`.
-- **GitHub integration.** Repo sync, branch / PR linking, plus PR delegation (agents create, merge, and comment on PRs via the API using delegated human credentials with explicit consent).
-- **Per-project sharing.** Invite collaborators outside your team to a single project via short-lived, hashed share-links with three role tiers (viewer, contributor, admin). Acceptance flips a solo project to dual-control automatically so the distinct-reviewer gate becomes real the moment a second human joins. Active shares are listed via `GET /api/admin/project-shares` for admins.
-- **Board + list views.** Kanban columns, filters, search, pagination, priority sorting.
-
-## Platform & enterprise
-
-- **OIDC SSO.** Team-scoped OpenID Connect login alongside email / GitHub. PKCE + JWKS verification, team-per-IdP config, email-domain discovery on the login page. Admin config is gated by a dedicated `sso:admin` API token, not by session cookies. See [docs/enterprise-sso.md](docs/enterprise-sso.md).
-- **CSV/Excel import.** Batch task import with auto-detection of Jira column headers (EN + DE).
-- **GitHub webhooks (optional).** PR lifecycle sync, automated timeline entries, PR binding, auto-transitions on review/merge. Entirely opt-in; everything works manually without them. [Setup guide](docs/webhook-setup.md), [automation policy](docs/review-automation-policy.md), [deploy/verify strategy](docs/deploy-verify-strategy.md).
-
-## Roadmap
-
-- [x] GitHub webhook integration (PR lifecycle, review events)
-- [x] Agent signal inbox (pull-based, durable signals)
-- [x] Review orchestration (review lock, assignee preservation)
-- [x] CLI client ([`@agent-tasks/cli`](cli/README.md))
-- [x] Task dependencies (block / blocked-by with cycle detection)
-- [x] GitHub PR delegation (create, merge, comment via API)
-- [x] CSV/Excel import (Jira auto-mapping)
-- [x] Per-project sharing (invite-link, three role tiers, soloMode auto-flip)
-- [ ] Notification system (email, Slack, browser push)
-- [ ] Structured logging (JSON, correlation IDs)
-- [ ] E2E and integration tests
-- [ ] Deploy webhook integration (GitHub Deployments API)
-- [ ] Workflow templates (pre-built custom workflows for common patterns)
-- [ ] Task export (CSV/Excel)
-
-## Repo layout
-
-The monorepo holds five workspace packages: `backend`, `frontend`, `cli`, `mcp-server`, and `mcp-bridge`. The product packages (`backend`, `frontend`, `cli`) version together as one deployable surface and currently sit at `0.3.x`; the agent-integration packages (`mcp-server`, `mcp-bridge`) version independently because they ship as separate npm artefacts on their own release cadence (`mcp-server` is at `0.14.x`, `mcp-bridge` at `0.8.x`). The skew is intentional and does not signal a stale package. The `mcp-server` response shapes (receipts, `include`, error catalog) follow [docs/response-contract-v1.md](docs/response-contract-v1.md).
+Full guide: [docs/development.md](docs/development.md). Contribution process: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
