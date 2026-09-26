@@ -1,5 +1,32 @@
 # Change log
 
+## 2026-09-26 (re-verification, adr/ and diagrams/ move into docs/)
+
+Moving root `adr/` and `diagrams/` into `docs/adr/` and `docs/diagrams/`
+(and renumbering the two colliding docs/adr ADRs, webhook-event-model
+0001 -> 0009 and grounding-finish-gate 0002 -> 0013) touched
+`backend/prisma/schema.prisma`, `backend/src/routes/tasks.ts`,
+`backend/src/routes/projects.ts`, `backend/src/services/gates/grounding-gate.ts`,
+`backend/src/services/github-webhook.ts` and `docs/deploy-verify-strategy.md`
+(comment-only ADR-number fixes, no behavior change) and turned `okf-kit@0.10.0
+check` STALE for eight docs that list one of those files as a source. Each was
+re-verified against the current file content, not just re-stamped:
+
+- `deploy.md`: re-verified the `ADR 0009` cross-reference plus the four
+  sources (`.github/workflows/publish-npm.yml`, `Dockerfile.migrate`,
+  `backend/package.json`, `backend/prisma/grounding-github-fence.sql`)
+  already STALE before this task, since a blind re-stamp would have
+  silently cleared them too; `db:push`, the `Dockerfile.migrate` `CMD`,
+  and the fence SQL's header comment still match the doc's claims.
+- `auth.md`: `AgentToken` model fields (`tokenHash`, `scopes`, `revokedAt`,
+  `expiresAt`, `lastUsedAt`) unchanged in `backend/prisma/schema.prisma`.
+- `backend.md`, `claim-model.md`, `workflow-gates.md`, `task-lifecycle.md`:
+  none of their claims cite the edited comment lines in `tasks.ts` or
+  `schema.prisma`; the surrounding route/model behavior is unchanged.
+- `governance-merge.md`, `reconcile-done-but-open.md`: same for
+  `github-webhook.ts` and `tasks.ts`; no claim depends on the edited
+  comment line.
+
 ## 2026-09-24 (re-verification, remaining stale sources)
 
 Re-verified five docs against the sources that `okf-kit@0.10.0 check`
