@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - `GET /api/projects/:id/tasks` now fetches `limit + 1` rows so `nextCursor` is exactly `null` only when no rows remain after this page, instead of the previous `tasks.length === limit` heuristic (task e36696d7).
+- Docs layout: the root `adr/` directory moved to `docs/adr/` (numbers unchanged) and `diagrams/` to `docs/diagrams/`. The two ADRs that already lived in `docs/adr/` were renumbered to avoid collisions: `0001-webhook-event-model` is now `0014-webhook-event-model`, `0002-grounding-finish-gate` is now `0013-grounding-finish-gate`.
 
 ### Fixed
 

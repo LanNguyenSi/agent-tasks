@@ -2,7 +2,7 @@
 
 Defines when and how GitHub webhook events may transition task status, add comments, or update metadata in agent-tasks.
 
-Companion to [ADR 0009 — Webhook event model](adr/0009-webhook-event-model.md).
+Companion to [ADR 0014 — Webhook event model](adr/0014-webhook-event-model.md).
 
 ## Guiding principles
 
@@ -53,7 +53,7 @@ Closing a PR without merging is ambiguous — it could mean the approach was aba
 
 Before any status transition, the webhook handler must verify:
 
-1. **Task exists and is bound** — the event maps to exactly one task via the [binding strategy](adr/0009-webhook-event-model.md#pr--task-binding-policy).
+1. **Task exists and is bound** — the event maps to exactly one task via the [binding strategy](adr/0014-webhook-event-model.md#pr--task-binding-policy).
 2. **Current status allows transition** — the target status is a valid transition from the current status. If not, skip the transition and log `webhook.transition_blocked`.
 3. **Idempotency** — if the task is already in the target status, skip the transition (no-op, no duplicate audit entry).
 
@@ -71,7 +71,7 @@ Custom workflow overrides are defined in the workflow definition's `webhookPolic
 
 The following are explicitly **not** automated in the default workflow:
 
-- **Deploy transitions** — merge does not imply deploy. Deploy/verify remain external follow-ups per ADR 0009.
+- **Deploy transitions** — merge does not imply deploy. Deploy/verify remain external follow-ups per ADR 0014.
 - **Issue lifecycle** — `issues.opened` / `issues.closed` events create tasks or mark them done (existing behavior), but this is task creation, not workflow automation.
 - **CI status checks** — not consumed as webhook events in the MVP.
 - **Branch protection / required reviews** — GitHub enforces these; agent-tasks does not duplicate them.

@@ -17,7 +17,7 @@ The webhook MVP (PR #50) and automation policy now give us merge events, timelin
 
 The default workflow stays: `open → in_progress → review → done`.
 
-Deploy and verify are modeled as **operational follow-ups**, not task workflow states. This matches ADR 0009's design: `done` means the task's modeled lifecycle is complete, not that the change is live.
+Deploy and verify are modeled as **operational follow-ups**, not task workflow states. This matches ADR 0014's design: `done` means the task's modeled lifecycle is complete, not that the change is live.
 
 ### Why
 
