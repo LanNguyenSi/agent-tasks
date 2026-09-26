@@ -3371,7 +3371,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     );
   }
 
-  // ── Phase 3 grounding finish-gate (ADR-0002) ─────────────────────────
+  // ── Phase 3 grounding finish-gate (ADR-0013) ─────────────────────────
   //
   // Placed AFTER the retry-idempotency short-circuit and the isWorkState
   // guard so a replayed finish on an already-done task hits the terminal

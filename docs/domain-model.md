@@ -32,7 +32,7 @@ These fields on `Project` shape every state-write path:
 - `governanceMode` (`AUTONOMOUS \| AWAITS_CONFIRMATION \| REQUIRES_DISTINCT_REVIEWER`, nullable). Source of truth for new code. See [`state-machines.md`](state-machines.md) for what each tier gates.
 - `soloMode` (`Boolean`, **deprecated**). Kept readable for one release. Server derives `governanceMode` from this when the new field is null. Writes go through `governanceMode` and sync-write the legacy flag via `legacyFlagsFromGovernanceMode`.
 - `requireDistinctReviewer` (`Boolean`, **deprecated**). Same deprecation contract as `soloMode`.
-- `requireGroundingForDebug` (`Boolean`). When on, `task_finish` against a debug-flavored task gates on a `grounding-ledger` entry tagged with the session UUID (ADR 0002).
+- `requireGroundingForDebug` (`Boolean`). When on, `task_finish` against a debug-flavored task gates on a `grounding-ledger` entry tagged with the session UUID (ADR 0013).
 
 > Read with care: never read the legacy `soloMode` / `requireDistinctReviewer` directly in new code. Use `resolveGovernanceMode` (`backend/src/lib/governance-mode.ts`).
 
@@ -84,7 +84,7 @@ Team
            └── AuditLog
 ```
 
-For the same picture in mermaid, see [`../diagrams/domain-overview.mmd`](../diagrams/domain-overview.mmd).
+For the same picture in mermaid, see [`diagrams/domain-overview.mmd`](diagrams/domain-overview.mmd).
 
 ## Further reading
 

@@ -288,7 +288,7 @@ const baseTask = {
     requireDistinctReviewer: false,
     soloMode: false,
     // Phase 3 grounding finish-gate. Default false matches the schema
-    // default and the multi-host caveat documented in ADR-0002.
+    // default and the multi-host caveat documented in ADR-0013.
     requireGroundingForDebug: false,
   },
   attachments: [],

@@ -229,7 +229,7 @@ model Project {
   // the grounding session AND the session being at-or-past claim-evaluation.
   // Default false because the ledger lives on the agent's filesystem in
   // the common multi-host deployment; the backend cannot read it from
-  // there. See docs/adr/0002-grounding-finish-gate.md.
+  // there. See docs/adr/0013-grounding-finish-gate.md.
   requireGroundingForDebug Boolean         @default(false)
   // Respec verb (POST /api/tasks/:id/respec, ADR pending). Agents can
   // correct description/templateData on an OPEN+UNCLAIMED task without

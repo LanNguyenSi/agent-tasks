@@ -1,4 +1,4 @@
-# ADR 0002: Grounding finish-gate (Phase 3)
+# ADR 0013: Grounding finish-gate (Phase 3)
 
 ## Status
 Accepted
