@@ -16,7 +16,7 @@ AI agents are fast; without workflow control that speed is plausible chaos: task
 
 ## Key features
 
-The monorepo holds five workspace packages. `backend`, `frontend`, and `cli` version together as one deployable surface (`0.3.x`); `mcp-server` and `mcp-bridge` version independently as separate npm artefacts on their own release cadence (`mcp-server` at `0.14.x`, `mcp-bridge` at `0.8.x`). The skew is intentional.
+The monorepo holds five workspace packages. `backend`, `frontend`, and `cli` version together as one deployable surface; `mcp-server` and `mcp-bridge` version independently as separate npm artefacts on their own release cadence. The version skew between the two groups is intentional.
 
 | Package | Purpose | Docs |
 |---|---|---|
@@ -35,9 +35,11 @@ Highlights, each detailed in [Next steps](#next-steps) below:
 - Per-project sharing via short-lived hashed share-links, three role tiers, automatic solo-to-dual-control flip.
 - OIDC SSO alongside email/GitHub, team-scoped, PKCE + JWKS.
 
+More detail (task-template fields and dependencies, CSV/Excel import with Jira column auto-detection, board/list filters and search, admin project-share listing): [docs/features.md](docs/features.md).
+
 ## Quick start
 
-Self-host:
+Self-host (prerequisites: Docker with Compose, git, openssl):
 
 ```bash
 git clone https://github.com/LanNguyenSi/agent-tasks.git
@@ -47,7 +49,7 @@ echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env   # required, >= 32 chars
 make dev-docker          # docker compose up: db + backend + frontend
 ```
 
-Open http://localhost:3000, register the first user, create a team, and generate a token in **Settings → API Tokens**. Full local-dev guide, host-only setup, and Make targets: [docs/development.md](docs/development.md).
+Open http://localhost:3000, register the first user, create a team, and generate a token in **Settings → API Tokens**. Full local-dev guide, a host-only setup (Node >= 22 and a reachable PostgreSQL; Docker optional), and Make targets: [docs/development.md](docs/development.md).
 
 Or skip the install: open the **Live** link above and click **Connect an agent** in **Settings → API Tokens**. The modal generates a team-scoped token and a copy-paste install snippet for Claude Code (MCP), the CLI, or raw curl.
 
@@ -56,13 +58,13 @@ Or skip the install: open the **Live** link above and click **Connect an agent**
 Once an MCP client is connected, the canonical verb order is `task_pickup` (find work) then `task_start` (claim it) then implement, `gh pr create`, `task_submit_pr` (record branch/PR metadata), `task_finish` (advance the task). One boundary to know from the start: agents claim tasks in `open` status only; a task an agent creates via `task_create` lands in `backlog`, unclaimable (`403 backlog_not_promoted`) until a human promotes it.
 
 ```
-task_pickup                          # find work: signal, review-ready task, or claimable task
-task_start   { id }                  # claim it, transition to in_progress
-task_submit_pr { id, branch, prUrl } # after `gh pr create`
-task_finish  { id, outcome }         # advance to review or done, per governance mode
+task_pickup                                          # find work: signal, review-ready task, or claimable task
+task_start     { taskId, branchName? }               # claim it, transition to in_progress
+task_submit_pr { taskId, branchName, prUrl, prNumber } # after `gh pr create`
+task_finish    { taskId, result?, prUrl? }           # advance to review or done, per governance mode
 ```
 
-Full agent onboarding, MCP tool table, CLI and curl equivalents, and the response/receipt shapes: docs/getting-started.md and docs/agent-workflow.md, linked below.
+The four-step MCP cold-start path (initialize handshake, `workflow_primer`, `projects_get_effective_gates`, `task_pickup`), the full MCP tool table, CLI and curl equivalents, and the response/receipt shapes: [docs/getting-started.md](docs/getting-started.md), [docs/agent-workflow.md](docs/agent-workflow.md), and [docs/response-contract-v1.md](docs/response-contract-v1.md).
 
 ## Next steps
 
@@ -79,6 +81,7 @@ Full agent onboarding, MCP tool table, CLI and curl equivalents, and the respons
 - [docs/state-machines.md](docs/state-machines.md): task and workflow state charts.
 
 **API and contracts**
+- [docs/features.md](docs/features.md): task templates and dependencies, CSV/Excel import with Jira column auto-detection, board/list views, admin project-share listing.
 - [docs/v2-api.md](docs/v2-api.md): curated REST verb overview (authoritative schema is the live OpenAPI doc, [Swagger UI](https://agent-tasks.opentriologue.ai/docs)).
 - [docs/api-contract.md](docs/api-contract.md): where the API documentation actually lives, and why there is no static copy.
 - [docs/response-contract-v1.md](docs/response-contract-v1.md): MCP receipt shapes, `include`, and error catalog.

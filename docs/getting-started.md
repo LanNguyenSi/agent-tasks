@@ -63,6 +63,13 @@ claude mcp add agent-tasks --scope user \
   -- npx -y @agent-tasks/mcp-server
 ```
 
+Once the client is connected, the cold-start path is four steps:
+
+1. **Connect.** The MCP `initialize` handshake carries a short `instructions` field, a primer on the task lifecycle, claim model, and canonical verb order. Read it once per session; call the parameterless `workflow_primer` tool any time you need the fuller reference again.
+2. **`projects_get_effective_gates`.** Check which gates are active on this project (confidence threshold, distinct-reviewer, template mode) before creating or claiming work.
+3. **`task_pickup`.** Get the next piece of work: a pending signal, a task ready for review, or a claimable task. Returns the full task spec by default, no extra call needed.
+4. **Do the work**, then follow the receipt's `next` hint (`task_start` to claim, `task_submit_pr` after `gh pr create`, `task_finish` to advance).
+
 **v2 agent surface (recommended).** These verbs encode the full
 claim-to-merge flow as one tool call each, with governance state baked in:
 
