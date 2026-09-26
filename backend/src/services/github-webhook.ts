@@ -66,7 +66,7 @@ export interface GitHubPullRequestReviewPayload {
 /**
  * Find tasks bound to a PR within a project.
  *
- * Matching strategy (priority order per ADR 0001):
+ * Matching strategy (priority order per ADR 0009):
  *   1. prNumber field  — strongest, set by agents or webhook
  *   2. prUrl field     — set by agents or webhook
  *   3. branchName      — matches head branch from PR payload

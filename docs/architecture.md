@@ -69,8 +69,8 @@ Langfristig:
 
 ## Diagrams
 
-- Systemarchitektur: `../diagrams/architecture-overview.mmd`
-- Domänenübersicht: `../diagrams/domain-overview.mmd`
+- Systemarchitektur: `diagrams/architecture-overview.mmd`
+- Domänenübersicht: `diagrams/domain-overview.mmd`
 
 ## Repository layout
 

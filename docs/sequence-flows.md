@@ -4,9 +4,9 @@ Index of the runtime flows worth drawing. Each diagram is schematic, not exhaust
 
 | Flow | Diagram |
 |------|---------|
-| GitHub OAuth + initial project sync | [`../diagrams/sequence-github-oauth-sync.mmd`](../diagrams/sequence-github-oauth-sync.mmd) |
-| Agent picks up + claims a task (v2 verbs) | [`../diagrams/sequence-agent-create-claim.mmd`](../diagrams/sequence-agent-create-claim.mmd) |
-| Submit for review + merge (REST vs webhook) | [`../diagrams/sequence-review-deploy.mmd`](../diagrams/sequence-review-deploy.mmd) |
+| GitHub OAuth + initial project sync | [`diagrams/sequence-github-oauth-sync.mmd`](diagrams/sequence-github-oauth-sync.mmd) |
+| Agent picks up + claims a task (v2 verbs) | [`diagrams/sequence-agent-create-claim.mmd`](diagrams/sequence-agent-create-claim.mmd) |
+| Submit for review + merge (REST vs webhook) | [`diagrams/sequence-review-deploy.mmd`](diagrams/sequence-review-deploy.mmd) |
 
 ## Cross-cutting invariants
 

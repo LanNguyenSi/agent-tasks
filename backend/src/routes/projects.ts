@@ -86,7 +86,7 @@ const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, s
   // evidence ledger lives on a single host's filesystem; in multi-host
   // deployments the backend cannot read what the agent wrote. Power users
   // in single-host setups can flip it on per-project.
-  // See docs/adr/0002-grounding-finish-gate.md.
+  // See docs/adr/0013-grounding-finish-gate.md.
   requireGroundingForDebug: z.boolean().optional(),
   // Respec verb (POST /api/tasks/:id/respec). Default false: only the
   // task's own creator may respec it. True relaxes that to any agent with

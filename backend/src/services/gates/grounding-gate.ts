@@ -11,7 +11,7 @@
 // on the local filesystem of whichever process writes/reads it. In the
 // common multi-host deployment (backend on a VPS, agents on user laptops)
 // the backend cannot see the agent's writes, so the gate would always fail.
-// See docs/adr/0002-grounding-finish-gate.md.
+// See docs/adr/0013-grounding-finish-gate.md.
 
 import type { TaskMetadata } from "../../lib/debug-flavor.js";
 
