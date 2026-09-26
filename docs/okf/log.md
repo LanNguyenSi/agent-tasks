@@ -4,7 +4,7 @@
 
 Moving root `adr/` and `diagrams/` into `docs/adr/` and `docs/diagrams/`
 (and renumbering the two colliding docs/adr ADRs, webhook-event-model
-0001 -> 0009 and grounding-finish-gate 0002 -> 0013) touched
+0001 -> 0014 and grounding-finish-gate 0002 -> 0013) touched
 `backend/prisma/schema.prisma`, `backend/src/routes/tasks.ts`,
 `backend/src/routes/projects.ts`, `backend/src/services/gates/grounding-gate.ts`,
 `backend/src/services/github-webhook.ts` and `docs/deploy-verify-strategy.md`
@@ -12,7 +12,7 @@ Moving root `adr/` and `diagrams/` into `docs/adr/` and `docs/diagrams/`
 check` STALE for eight docs that list one of those files as a source. Each was
 re-verified against the current file content, not just re-stamped:
 
-- `deploy.md`: re-verified the `ADR 0009` cross-reference plus the four
+- `deploy.md`: re-verified the `ADR 0014` cross-reference plus the four
   sources (`.github/workflows/publish-npm.yml`, `Dockerfile.migrate`,
   `backend/package.json`, `backend/prisma/grounding-github-fence.sql`)
   already STALE before this task, since a blind re-stamp would have

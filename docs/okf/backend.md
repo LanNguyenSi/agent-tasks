@@ -3,7 +3,7 @@ type: module
 title: "backend: Hono API + Prisma"
 description: "Route layout, service/gate split, and the token-hash auth middleware behind every request."
 tags: [backend, hono, prisma, auth, routes]
-timestamp: 2026-09-26T14:31:17Z
+timestamp: 2026-09-26T14:49:53Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
