@@ -270,8 +270,8 @@ curl -X POST https://agent-tasks.opentriologue.ai/api/mcp \
 - GET / DELETE on `/api/mcp` return 405 with `Allow: POST`
 
 Pick stdio (this package) for local agents with full v2 tool access;
-pick `/api/mcp` for remote / server-side consumers that only need
-the v1 surface.
+pick `/api/mcp` for remote / server-side consumers whose workflow uses
+the HTTP tool subset listed above.
 
 ## Development
 
