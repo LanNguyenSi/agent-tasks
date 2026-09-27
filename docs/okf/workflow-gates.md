@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-09-27T18:30:09Z
+timestamp: 2026-09-27T19:22:30Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -79,3 +79,5 @@ an unenrolled task returns `409 grounding_enrollment_required` before any
 remote effect rather than falling back to the unprovisioned handler
 (`grounding-task-completion.ts:95`, `routes/grounding-github.ts:71`). See the
 [shared receipt consumer contract](../grounding-receipt-contract.md).
+
+An independent administrative hold is checked before cohort selection or unprovisioned fallback. It blocks fresh task completion and evidence use, including force/override paths; the database guard freezes all task-row updates and deletes. Existing claims and cohort history remain stored. See [migration and resume](../grounding-migration.md).

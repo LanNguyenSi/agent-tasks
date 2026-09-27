@@ -22,7 +22,7 @@ export const groundingIntentSchema = z.enum(["finish", "approve", "merge"]);
 export type GroundingIntent = z.infer<typeof groundingIntentSchema>;
 export type GroundingTarget = GroundingReceiptExpectedContext["target"];
 export class GroundingAccessError extends Error {
-  constructor(readonly code: "forbidden" | "not_found" | "bad_state" | "grounding_not_provisioned" | "grounding_finalization_pending" | "grounding_operation_conflict" | "precondition_failed" | "grounding_history_retained", readonly status: 403 | 404 | 409) {
+  constructor(readonly code: "grounding_task_held" | "forbidden" | "not_found" | "bad_state" | "grounding_not_provisioned" | "grounding_finalization_pending" | "grounding_operation_conflict" | "precondition_failed" | "grounding_history_retained", readonly status: 403 | 404 | 409) {
     super(code);
   }
 }

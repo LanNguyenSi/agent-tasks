@@ -18,6 +18,7 @@ export interface GroundingMigrationProjectReport {
   project: string;
   requireGroundingForDebug: boolean;
   tasks: number;
+  held: number;
   cohorts: Record<Cohort, number>;
   lifecycle: Record<Lifecycle, number>;
   debug: { debug: number; nondebug: number };
@@ -44,6 +45,7 @@ interface Row {
   projectSlug: string;
   requireGroundingForDebug: boolean;
   taskId: string | null;
+  held: boolean;
   status: string;
   hasReviewClaim: boolean;
   hasAutoMergeSha: boolean;
@@ -84,6 +86,7 @@ function emptyProject(projectId: string, project: string, requireGroundingForDeb
     project,
     requireGroundingForDebug,
     tasks: 0,
+    held: 0,
     cohorts: emptyCounts(cohorts),
     lifecycle: emptyCounts(lifecycles),
     debug: { debug: 0, nondebug: 0 },
@@ -168,6 +171,7 @@ function recordLegacyPhaseDiagnostics(report: GroundingMigrationProjectReport, r
 }
 
 function actionFor(row: Row, cohort: Cohort, legacyPhaseNeedsRepair: boolean): string {
+  if (row.held) return "HELD_REQUIRES_AUTHORIZED_READINESS_REVIEW";
   if (legacyPhaseNeedsRepair) return "RECOMMEND_HOLD_LEGACY_STATE_REPAIR";
   if (cohort === "INCONSISTENT") return "HOLD_INCONSISTENT_COHORT_BINDING";
   if (cohort === "UNPROVISIONED") {
@@ -185,6 +189,7 @@ const inventoryQuery = (projectFilter?: string) => Prisma.sql`
     p."requireGroundingForDebug",
     t.id AS "taskId",
     t.status,
+    coalesce(h.held, false) AS held,
     (t."reviewClaimedAt" IS NOT NULL) AS "hasReviewClaim",
     (t."autoMergeSha" IS NOT NULL) AS "hasAutoMergeSha",
     (jsonb_typeof(t.metadata) = 'object' AND t.metadata -> 'debugFlavor' = 'true'::jsonb) AS "isDebug",
@@ -230,6 +235,7 @@ const inventoryQuery = (projectFilter?: string) => Prisma.sql`
     defaults.definitions AS "defaultWorkflows"
   FROM projects p
   LEFT JOIN tasks t ON t."projectId" = p.id
+  LEFT JOIN grounding_migration_states h ON h."taskId" = t.id
   LEFT JOIN grounding_cohorts c ON c."taskId" = t.id
   LEFT JOIN grounding_bindings b ON b."taskId" = t.id
   LEFT JOIN workflows w ON w.id = t."workflowId"
@@ -263,6 +269,7 @@ export async function computeGroundingMigrationReport(db: PrismaClient, projectF
     const legacyPhaseNeedsRepair = recordLegacyPhaseDiagnostics(report, row, cohort);
 
     report.tasks++;
+    if (row.held) report.held++;
     report.cohorts[cohort]++;
     report.lifecycle[lifecycle]++;
     report.debug[row.isDebug ? "debug" : "nondebug"]++;
@@ -274,6 +281,7 @@ export async function computeGroundingMigrationReport(db: PrismaClient, projectF
   const totals = emptyProject("all", "all", false);
   for (const report of byProject.values()) {
     totals.tasks += report.tasks;
+    totals.held += report.held;
     for (const cohort of cohorts) totals.cohorts[cohort] += report.cohorts[cohort];
     for (const lifecycle of lifecycles) totals.lifecycle[lifecycle] += report.lifecycle[lifecycle];
     totals.debug.debug += report.debug.debug;

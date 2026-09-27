@@ -9,6 +9,7 @@ function setup() {
   const task = taskFixture(); const binding = bindingFixture(); const issuer = testIssuer();
   const mock = {
     $transaction: vi.fn(), $queryRaw: vi.fn(async () => [{ id: ids.project }]), task: { findUnique: vi.fn(async () => task) },
+    groundingMigrationState: { findUnique: vi.fn(async () => null) },
     groundingCohort: { findUnique: vi.fn(async () => ({ taskId: ids.task, projectId: ids.project, mode: "EXTERNAL_V1", protected: true, provenance: "external-binding:v1", legacySessionId: null, legacyPhase: null, reservationId: null })) },
     workflow: { findMany: vi.fn(async () => []) }, groundingBinding: { findUnique: vi.fn(async () => binding), updateMany: vi.fn(), create: vi.fn() },
     groundingAttempt: { findUnique: vi.fn(async () => null), updateMany: vi.fn(), create: vi.fn() },

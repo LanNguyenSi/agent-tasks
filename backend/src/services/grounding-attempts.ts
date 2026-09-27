@@ -1,3 +1,4 @@
+import { assertGroundingNotHeld } from "./grounding-hold.js";
 import { requireProjectWrite, hasProjectRole } from "./team-access.js";
 import { directDescriptorSchema, readDirectDescriptor, resolveDirectGroundingTarget, type GroundingDirectDescriptor } from "./grounding-direct-context.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -119,6 +120,7 @@ export class GroundingAttemptsService {
 
   private async lockAuthorized(db: Prisma.TransactionClient, taskId: string, actor: Actor, intent?: GroundingIntent, taskRoute = false, direct: GroundingDirectDescriptor | null = null): Promise<GroundingTask> {
     const task = await this.lock(db, taskId);
+    await assertGroundingNotHeld(db, task.id, task.projectId);
     await this.authorizePolicy(task, actor, db, intent, taskRoute, direct);
     await assertNoGroundingReservation(db, task.id);
     return task;

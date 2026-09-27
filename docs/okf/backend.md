@@ -3,7 +3,7 @@ type: module
 title: "backend: Hono API + Prisma"
 description: "Route layout, service/gate split, and the token-hash auth middleware behind every request."
 tags: [backend, hono, prisma, auth, routes]
-timestamp: 2026-09-27T18:50:32Z
+timestamp: 2026-09-27T19:22:30Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -93,3 +93,5 @@ task, receipt, operation, audit, comments and signal rows commit together.
 Replay does not recreate those rows. Webhook delivery and the optional
 calibration observer run after a new commit as best-effort work, so they are not
 an exactly-once delivery guarantee.
+
+**Administrative migration** (`grounding-migration.ts`, `grounding-hold.ts`): an optional fourth `createApp` argument enables the human-admin migration endpoint and configured GitHub adapters. The default server remains unconfigured. Independent revisioned holds and immutable command history retain cohort/evidence identity, and commands authorize live memberships and audit in one transaction. See [the migration procedure](../grounding-migration.md) for the full task freeze, readiness checks and supported transitions.

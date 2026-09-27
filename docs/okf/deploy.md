@@ -3,7 +3,7 @@ type: runbook
 title: "Deploy: no in-repo automation, prod is docker-compose"
 description: "ci.yml only tests and builds; deploy/verify is an external ops concern; prod runtime is db + one-shot Prisma db push + backend/frontend behind Traefik."
 tags: [deploy, docker-compose, ops, ci]
-timestamp: 2026-09-27T18:50:32Z
+timestamp: 2026-09-27T19:22:30Z
 sources:
   - .github/workflows/ci.yml
   - .github/workflows/docker-smoke.yml
@@ -40,3 +40,5 @@ Review the inventory together with an isolated backup/restore rehearsal, additiv
 Do not activate from inventory counts, a successful process exit, a package version, or a caller flag. Keep activation blocked until runtime trust composition, new-task cohort selection, writer-fleet exclusion, and separate host/operator key and state evidence are complete.
 
 Related: `architecture.md`, `release-flow.md`.
+
+The canonical fence SQL also installs the task UPDATE/DELETE hold guard, the migration-overlay repository fence and immutable-command guard. Hold entry advances the task row version; schema sync alone is insufficient. Inventory adds held counts while remaining read-only. The [migration procedure](../grounding-migration.md) describes the optional admin path and still requires separate fleet/deployment qualification.

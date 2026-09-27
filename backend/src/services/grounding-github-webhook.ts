@@ -1,3 +1,4 @@
+import { groundingTaskHeld } from "./grounding-hold.js";
 import { createHash } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
@@ -186,6 +187,10 @@ export class GroundingGithubWebhookService {
     const acknowledge: string[] = [];
     for (const match of matches) {
       const { task } = match;
+      if (await groundingTaskHeld(tx, task.id, task.projectId)) {
+        observations.push({ match, pending: true, reason: "grounding_task_held", operationId: null });
+        continue;
+      }
       const enrollment = await this.enrollment(tx, task);
       if (!enrollment.provisioned && ["done", "backlog"].includes(task.status)) continue;
       const positive = event.kind === "pr_merged" || event.kind === "issue_closed";

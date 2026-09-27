@@ -138,6 +138,32 @@ BEGIN
 END
 $$;
 
+-- No internal GitHub write token bypasses the administrative task freeze.
+CREATE OR REPLACE FUNCTION grounding_hold_task_guard() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM grounding_migration_states WHERE "taskId" = OLD.id AND held) THEN
+    RAISE EXCEPTION 'grounding_task_held' USING ERRCODE = '55000';
+  END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION grounding_migration_command_guard() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'grounding_migration_command_immutable' USING ERRCODE = '55000';
+END
+$$;
+
+DROP TRIGGER IF EXISTS grounding_hold_task_fence ON tasks;
+CREATE TRIGGER grounding_hold_task_fence BEFORE UPDATE OR DELETE ON tasks FOR EACH ROW EXECUTE FUNCTION grounding_hold_task_guard();
+DROP TRIGGER IF EXISTS grounding_github_migration_fence ON grounding_migration_states;
+CREATE TRIGGER grounding_github_migration_fence BEFORE INSERT OR UPDATE OR DELETE ON grounding_migration_states FOR EACH ROW EXECUTE FUNCTION grounding_github_enrollment_guard();
+DROP TRIGGER IF EXISTS grounding_migration_command_fence ON grounding_migration_commands;
+CREATE TRIGGER grounding_migration_command_fence BEFORE UPDATE OR DELETE ON grounding_migration_commands FOR EACH ROW EXECUTE FUNCTION grounding_migration_command_guard();
+
 DROP TRIGGER IF EXISTS grounding_github_task_fence ON tasks;
 CREATE TRIGGER grounding_github_task_fence BEFORE INSERT OR UPDATE OR DELETE ON tasks FOR EACH ROW EXECUTE FUNCTION grounding_github_task_guard();
 DROP TRIGGER IF EXISTS grounding_github_project_fence ON projects;
@@ -155,7 +181,7 @@ CREATE TRIGGER grounding_github_intent_fence BEFORE UPDATE OR DELETE ON groundin
 DO $$
 DECLARE f record;
 BEGIN
-  FOR f IN SELECT p.oid::regprocedure AS identity FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = current_schema() AND p.proname IN ('grounding_github_trim', 'grounding_github_repo', 'grounding_github_pr_repo', 'grounding_github_check', 'grounding_github_intent_repos', 'grounding_github_task_repos', 'grounding_github_task_guard', 'grounding_github_project_guard', 'grounding_github_enrollment_guard', 'grounding_github_intent_guard', 'grounding_github_operation_guard') LOOP
+  FOR f IN SELECT p.oid::regprocedure AS identity FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = current_schema() AND p.proname IN ('grounding_github_trim', 'grounding_github_repo', 'grounding_github_pr_repo', 'grounding_github_check', 'grounding_github_intent_repos', 'grounding_github_task_repos', 'grounding_github_task_guard', 'grounding_github_project_guard', 'grounding_github_enrollment_guard', 'grounding_github_intent_guard', 'grounding_github_operation_guard', 'grounding_hold_task_guard', 'grounding_migration_command_guard') LOOP
     EXECUTE format('ALTER FUNCTION %s SET search_path = %I, pg_temp', f.identity, current_schema());
   END LOOP;
 END

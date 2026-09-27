@@ -494,3 +494,21 @@ binding/cohort.
 The app may receive a server-owned, readonly per-project creation policy with one explicit `projectId` and `subjectMode` (`TASK_SPEC` or `CODE_HEAD`) entry. Its default is empty: it is not selected from environment, project flags, metadata, labels or other tasks. A selected project creates its initial task, cohort and protected binding in one transaction. Agent creation still enters backlog; a selected request that tries to create a review or terminal task is rejected with grounding guidance rather than manufacturing a protected success. Imports preserve their existing per-row atomic, partial-result behavior. There is no historical administrative import in this contract, and this dormant configuration does not constitute production enrollment or issuer/rollout qualification.
 
 For an enrolled task or project, deletion first checks an unresolved reservation, then rejects retained grounding history with `409 grounding_history_retained`. The rejection preserves the task/project and its history; it is not archival, disposal or an abandon transition. Unenrolled task deletion retains the historical behavior. No project-reassignment feature is introduced.
+
+## Administrative migration hold
+
+The independent `GroundingMigrationState` overlay freezes task-row writes and
+fresh consumer decisions without replacing the persisted cohort. The optional
+human-admin migration endpoint records exact idempotent command history,
+transactional before/after audits and attempt invalidation. Migration and
+legacy repair leave the task held until a separate readiness-checked resume.
+External history is retained and never converted to local ledger proof.
+
+Held tasks fail route selection, issuance, ingest and completion before force
+or override effects, including unenrolled tasks. Group discovery includes held
+unenrolled peers; configured webhooks persist held-task facts as pending.
+The task UPDATE/DELETE guard also blocks no-op updates, while hold activation
+advances the row version to reject stale snapshots. The canonical fence SQL is
+required alongside schema synchronization. Parent configuration and old writer
+exclusion are separate concerns. See [the migration procedure](grounding-migration.md)
+for the supported transition matrix, readiness requirements and rollback.

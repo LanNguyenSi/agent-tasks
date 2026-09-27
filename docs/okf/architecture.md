@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-27T16:17:24Z
+timestamp: 2026-09-27T19:22:30Z
 sources:
   - package.json
   - backend/src/app.ts
@@ -39,7 +39,7 @@ before any remote effect (`grounding-task-completion.ts:95`,
 `routes/grounding-github.ts:71`); the unconfigured default app has no such
 gate. Invalid enrollment,
 orphan binding, unavailable trusted service, and database errors fail closed.
-There is no public enrollment endpoint. The empty creation-policy default does
+There is no agent enrollment endpoint. An explicitly injected human-admin migration service supplies audited hold, legacy repair, external migration and readiness-checked resume. The empty creation-policy default does
 not activate enrollment; before server-only enrollment of legacy work, active
 legacy requests must be quiesced. The system does not claim safe live
 legacy-to-external conversion or complete coverage of indirect writers.

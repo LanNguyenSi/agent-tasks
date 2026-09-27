@@ -1,3 +1,5 @@
+import { createGroundingMigrationRouter } from "./routes/grounding-migration.js";
+import type { GroundingMigrationService } from "./services/grounding-migration.js";
 import { createGroundingGithubRouter } from "./routes/grounding-github.js";
 import { createGroundingGithubWebhookRouter } from "./routes/grounding-github-webhooks.js";
 import { GroundingGithubWebhookService } from "./services/grounding-github-webhook.js";
@@ -32,8 +34,8 @@ import { jsonBodyLimit } from "./middleware/json-body-limit.js";
 import { appErrorHandler } from "./lib/error-handler.js";
 import type { AppVariables } from "./types/hono.js";
 
-export function createApp(corsOrigins: string, grounding?: GroundingAttemptsService, completion?: GroundingTaskCompletionDependencies): Hono<{ Variables: AppVariables }> {
-  const configured = grounding !== undefined || completion !== undefined;
+export function createApp(corsOrigins: string, grounding?: GroundingAttemptsService, completion?: GroundingTaskCompletionDependencies, migration?: GroundingMigrationService): Hono<{ Variables: AppVariables }> {
+  const configured = grounding !== undefined || completion !== undefined || migration !== undefined;
   const groundingDb = completion?.db ?? prisma;
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -82,7 +84,7 @@ export function createApp(corsOrigins: string, grounding?: GroundingAttemptsServ
   // start → note → finish` sequence (~5 calls) every second per agent —
   // far above legitimate cadence, still enough to dampen a brute-force run.
   app.use("/api/mcp", rateLimit({ windowMs: 60_000, max: 300 }));
-  // M4 LLM rewrite helper (review round-2 finding 1): each call is a paid
+  // LLM rewrite helper: each call is a paid
   // Anthropic API request, and the SDK's own defaults (10-minute timeout,
   // 2 retries, timeouts ARE retried) let one client burn up to ~30 minutes
   // of server-side work per request before services/llm-rewrite.ts trims
@@ -144,6 +146,7 @@ export function createApp(corsOrigins: string, grounding?: GroundingAttemptsServ
   app.route("/api", projectInviteAdminRouter);
   app.route("/api/invites", inviteAcceptRouter);
   app.route("/api/admin", sharesAdminRouter);
+  app.route("/api", createGroundingMigrationRouter(migration));
   app.route("/api", createGroundingRouter(grounding));
   app.route("/api", createGroundingTaskCompletionRouter(completion, configured));
   app.route("/api", createGroundingDirectTaskRouter(completion));

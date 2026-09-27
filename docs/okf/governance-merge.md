@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-09-26T14:49:53Z
+timestamp: 2026-09-27T19:22:30Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -147,3 +147,5 @@ recovery contract for a configured grouped operation.
 Related: [receipt contract](../grounding-receipt-contract.md),
 [claim model](claim-model.md), [workflow gates](workflow-gates.md),
 [recovery runbook](reconcile-done-but-open.md).
+
+Administrative holds participate in repository fencing. Group discovery includes held unenrolled peers, and held seeds fail admission. Every matching held-task webhook fact remains pending, including PR-open, reopen and review changes requested; it cannot select the unprovisioned compatibility branch. The migration-only app composition also selects these configured adapters. See [migration and rollback](../grounding-migration.md).
