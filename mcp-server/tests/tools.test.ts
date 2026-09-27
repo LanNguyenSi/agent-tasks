@@ -1445,6 +1445,7 @@ describe("buildTools", () => {
     const shared = { taskId: TASK_ID, attemptId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", session: { id: "producer", revision: 1 } };
     expect(schema.parse({ ...shared, receipt: "😀".repeat(8_192) }).receipt).toHaveLength(16_384);
     expect(() => schema.parse({ ...shared, receipt: "😀".repeat(8_193) })).toThrow(/32768 UTF-8 bytes/);
+    expect(() => schema.parse({ ...shared, receipt: "x".repeat(32_769) })).toThrow(/32768 UTF-8 bytes/);
   });
 
   it.each(["grounding_receipt_unsupported", "grounding_receipt_untrusted", "grounding_verification_unavailable", "grounding_receipt_mismatch"])("preserves the backend grounding code %s", async (code) => {
