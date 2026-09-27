@@ -14,6 +14,7 @@ type Cohort = "UNPROVISIONED" | "OFF" | "LEGACY_LOCAL" | "EXTERNAL_V1" | "INCONS
 type Lifecycle = "work" | "review" | "terminal";
 
 export interface GroundingMigrationProjectReport {
+  projectId: string;
   project: string;
   requireGroundingForDebug: boolean;
   tasks: number;
@@ -23,6 +24,7 @@ export interface GroundingMigrationProjectReport {
   legacyPhaseDiagnostics: {
     withSession: number;
     missingSession: number;
+    malformedSession: number;
     malformedPhase: number;
     impossiblePhase: number;
     completePhase: number;
@@ -34,7 +36,7 @@ export interface GroundingMigrationProjectReport {
 export interface GroundingMigrationReport {
   inventoryOnly: true;
   projects: GroundingMigrationProjectReport[];
-  totals: Omit<GroundingMigrationProjectReport, "project" | "requireGroundingForDebug">;
+  totals: Omit<GroundingMigrationProjectReport, "projectId" | "project" | "requireGroundingForDebug">;
 }
 
 interface Row {
@@ -47,13 +49,14 @@ interface Row {
   hasAutoMergeSha: boolean;
   isDebug: boolean;
   hasLegacySession: boolean;
+  hasMalformedMetadataSession: boolean;
   hasMalformedMetadataPhase: boolean;
   metadataPhase: string | null;
   cohortMode: "OFF" | "LEGACY_LOCAL" | "EXTERNAL_V1" | null;
   cohortProjectId: string | null;
   cohortProtected: boolean | null;
-  cohortHasLegacySession: boolean | null;
-  cohortHasLegacyPhase: boolean | null;
+  cohortLegacySessionIsValid: boolean | null;
+  cohortLegacyPhaseIsValid: boolean | null;
   cohortPhase: string | null;
   cohortLegacySessionIsNull: boolean;
   cohortLegacyPhaseIsNull: boolean;
@@ -62,6 +65,7 @@ interface Row {
   bindingProtected: boolean | null;
   hasUnresolvedRemoteOperation: boolean;
   taskWorkflow: unknown;
+  taskWorkflowProjectId: string | null;
   defaultWorkflows: unknown;
 }
 
@@ -74,15 +78,16 @@ function emptyCounts<T extends string>(keys: readonly T[]): Record<T, number> {
   return Object.fromEntries(keys.map(key => [key, 0])) as Record<T, number>;
 }
 
-function emptyProject(project: string, requireGroundingForDebug: boolean): GroundingMigrationProjectReport {
+function emptyProject(projectId: string, project: string, requireGroundingForDebug: boolean): GroundingMigrationProjectReport {
   return {
+    projectId,
     project,
     requireGroundingForDebug,
     tasks: 0,
     cohorts: emptyCounts(cohorts),
     lifecycle: emptyCounts(lifecycles),
     debug: { debug: 0, nondebug: 0 },
-    legacyPhaseDiagnostics: { withSession: 0, missingSession: 0, malformedPhase: 0, impossiblePhase: 0, completePhase: 0 },
+    legacyPhaseDiagnostics: { withSession: 0, missingSession: 0, malformedSession: 0, malformedPhase: 0, impossiblePhase: 0, completePhase: 0 },
     remote: { unresolvedOperations: 0, autoMergeSha: 0 },
     recommendedActions: {},
   };
@@ -93,7 +98,10 @@ function increment(record: Record<string, number>, key: string): void {
 }
 
 function effectiveWorkflow(row: Row): WorkflowDefinitionShape {
-  if (row.taskWorkflow !== null) return parseWorkflow(row.taskWorkflow);
+  if (row.taskWorkflow !== null) {
+    if (row.taskWorkflowProjectId !== row.projectId) throw new Error("Inventory cannot classify a cross-project task workflow");
+    return parseWorkflow(row.taskWorkflow);
+  }
   if (row.defaultWorkflows === null) return defaultWorkflowDefinition();
   if (!Array.isArray(row.defaultWorkflows)) throw new Error("Inventory cannot classify a malformed project default workflow");
   if (row.defaultWorkflows.length === 0) return defaultWorkflowDefinition();
@@ -106,11 +114,22 @@ function parseWorkflow(value: unknown): WorkflowDefinitionShape {
   const definition = value as Partial<WorkflowDefinitionShape>;
   if (typeof definition.initialState !== "string" || !Array.isArray(definition.states) || !Array.isArray(definition.transitions))
     throw new Error("Inventory cannot classify an invalid workflow definition");
+  const states = definition.states as Array<{ name?: unknown; terminal?: unknown }>;
+  if (!states.length || states.some(state => typeof state?.name !== "string" || !state.name || typeof state.terminal !== "boolean"))
+    throw new Error("Inventory cannot classify invalid workflow states");
+  const names = new Set(states.map(state => state.name as string));
+  if (names.size !== states.length || !names.has(definition.initialState)) throw new Error("Inventory cannot classify invalid workflow states");
+  if ((definition.transitions as unknown[]).some(transition => !transition || typeof transition !== "object" ||
+    !names.has((transition as { from?: unknown }).from as string) || !names.has((transition as { to?: unknown }).to as string)))
+    throw new Error("Inventory cannot classify invalid workflow transitions");
   return definition as WorkflowDefinitionShape;
 }
 
 function lifecycleOf(row: Row): Lifecycle {
   const workflow = effectiveWorkflow(row);
+  if (row.status === "backlog") return "work";
+  if (row.status === "abandoned") return "terminal";
+  if (!workflow.states.some(state => state.name === row.status)) throw new Error("Inventory cannot classify an unknown task status");
   if (isTerminalState(workflow, row.status)) return "terminal";
   if (isReviewState(workflow, row.status) || row.hasReviewClaim) return "review";
   return "work";
@@ -123,33 +142,35 @@ function cohortOf(row: Row): Cohort {
   if (row.cohortMode === "EXTERNAL_V1") return row.cohortProtected && row.bindingProtected && row.cohortLegacySessionIsNull && row.cohortLegacyPhaseIsNull && row.cohortProvenanceIsValid ? "EXTERNAL_V1" : "INCONSISTENT";
   if (row.bindingProjectId) return "INCONSISTENT";
   if (row.cohortMode === "OFF") return row.cohortProtected === false && row.cohortLegacySessionIsNull && row.cohortLegacyPhaseIsNull && row.cohortProvenanceIsValid ? "OFF" : "INCONSISTENT";
-  return row.cohortHasLegacySession && row.cohortHasLegacyPhase ? "LEGACY_LOCAL" : "INCONSISTENT";
+  return row.cohortLegacySessionIsValid && row.cohortLegacyPhaseIsValid && row.cohortProvenanceIsValid ? "LEGACY_LOCAL" : "INCONSISTENT";
 }
 
 const legacyPhases = new Set([
-  "scope-resolution", "doc-resolution", "evidence-collection", "claim-evaluation",
-  "hypothesis-tracking", "playbook-execution", "post-incident-review",
+  "scope-resolution", "doc-reading", "playbook-loading", "runtime-inspection",
+  "evidence-collection", "claim-evaluation", "complete",
 ]);
 
 function recordLegacyPhaseDiagnostics(report: GroundingMigrationProjectReport, row: Row, cohort: Cohort): boolean {
   const unprovisionedLegacy = cohort === "UNPROVISIONED" && row.isDebug;
-  const persistedLegacy = cohort === "LEGACY_LOCAL";
+  const persistedLegacy = row.cohortMode === "LEGACY_LOCAL";
   if (!unprovisionedLegacy && !persistedLegacy) return false;
-  const hasSession = unprovisionedLegacy ? row.hasLegacySession : row.cohortHasLegacySession === true;
+  const hasSession = unprovisionedLegacy ? row.hasLegacySession : row.cohortLegacySessionIsValid === true;
   const phase = unprovisionedLegacy ? row.metadataPhase : row.cohortPhase;
-  const malformed = unprovisionedLegacy ? row.hasMalformedMetadataPhase : !row.cohortHasLegacyPhase;
+  const malformedSession = unprovisionedLegacy ? row.hasMalformedMetadataSession : row.cohortLegacySessionIsValid !== true;
+  const malformedPhase = unprovisionedLegacy ? row.hasMalformedMetadataPhase : row.cohortLegacyPhaseIsValid !== true;
   if (hasSession) report.legacyPhaseDiagnostics.withSession++;
   else report.legacyPhaseDiagnostics.missingSession++;
-  if (malformed) report.legacyPhaseDiagnostics.malformedPhase++;
+  if (malformedSession) report.legacyPhaseDiagnostics.malformedSession++;
+  if (malformedPhase) report.legacyPhaseDiagnostics.malformedPhase++;
   if (phase && !legacyPhases.has(phase)) report.legacyPhaseDiagnostics.impossiblePhase++;
   if (phase === "complete") report.legacyPhaseDiagnostics.completePhase++;
-  return malformed || (phase !== null && !legacyPhases.has(phase));
+  return malformedSession || malformedPhase || phase === "complete" || (phase !== null && !legacyPhases.has(phase));
 }
 
 function actionFor(row: Row, cohort: Cohort, legacyPhaseNeedsRepair: boolean): string {
+  if (legacyPhaseNeedsRepair) return "RECOMMEND_HOLD_LEGACY_STATE_REPAIR";
   if (cohort === "INCONSISTENT") return "HOLD_INCONSISTENT_COHORT_BINDING";
   if (cohort === "UNPROVISIONED") {
-    if (row.isDebug && legacyPhaseNeedsRepair) return "RECOMMEND_HOLD_LEGACY_STATE_REPAIR";
     if (row.isDebug && row.hasLegacySession) return "REVIEW_UNPROVISIONED_LEGACY";
     if (row.isDebug) return "REVIEW_UNPROVISIONED_DEBUG";
     return "NO_MIGRATION_UNPROVISIONED";
@@ -167,9 +188,15 @@ const inventoryQuery = (projectFilter?: string) => Prisma.sql`
     (t."reviewClaimedAt" IS NOT NULL) AS "hasReviewClaim",
     (t."autoMergeSha" IS NOT NULL) AS "hasAutoMergeSha",
     (jsonb_typeof(t.metadata) = 'object' AND t.metadata -> 'debugFlavor' = 'true'::jsonb) AS "isDebug",
-    (jsonb_typeof(t.metadata) = 'object' AND COALESCE(t.metadata ->> 'groundingSessionId', '') <> '') AS "hasLegacySession",
+    (jsonb_typeof(t.metadata) = 'object' AND jsonb_typeof(t.metadata -> 'groundingSessionId') = 'string' AND COALESCE(t.metadata ->> 'groundingSessionId', '') <> '') AS "hasLegacySession",
     (
       jsonb_typeof(t.metadata) = 'object'
+      AND t.metadata ? 'groundingSessionId'
+      AND NOT (jsonb_typeof(t.metadata -> 'groundingSessionId') = 'string' AND COALESCE(t.metadata ->> 'groundingSessionId', '') <> '')
+    ) AS "hasMalformedMetadataSession",
+    (
+      jsonb_typeof(t.metadata) = 'object'
+      AND jsonb_typeof(t.metadata -> 'groundingSessionId') = 'string'
       AND COALESCE(t.metadata ->> 'groundingSessionId', '') <> ''
       AND NOT (
         jsonb_typeof(t.metadata -> 'groundingSessionState') = 'object'
@@ -182,8 +209,8 @@ const inventoryQuery = (projectFilter?: string) => Prisma.sql`
     c.mode::text AS "cohortMode",
     c."projectId" AS "cohortProjectId",
     c.protected AS "cohortProtected",
-    (COALESCE(c."legacySessionId", '') <> '') AS "cohortHasLegacySession",
-    (COALESCE(c."legacyPhase", '') <> '') AS "cohortHasLegacyPhase",
+    (c."legacySessionId" ~ '^[A-Za-z0-9._:-]{1,128}$') AS "cohortLegacySessionIsValid",
+    (c."legacyPhase" ~ '^[A-Za-z0-9._:-]{1,128}$') AS "cohortLegacyPhaseIsValid",
     c."legacyPhase" AS "cohortPhase",
     (c."legacySessionId" IS NULL) AS "cohortLegacySessionIsNull",
     (c."legacyPhase" IS NULL) AS "cohortLegacyPhaseIsNull",
@@ -199,6 +226,7 @@ const inventoryQuery = (projectFilter?: string) => Prisma.sql`
       'states', w.definition -> 'states',
       'transitions', w.definition -> 'transitions'
     ) END AS "taskWorkflow",
+    w."projectId" AS "taskWorkflowProjectId",
     defaults.definitions AS "defaultWorkflows"
   FROM projects p
   LEFT JOIN tasks t ON t."projectId" = p.id
@@ -227,7 +255,7 @@ export async function computeGroundingMigrationReport(db: PrismaClient, projectF
 
   const byProject = new Map<string, GroundingMigrationProjectReport>();
   for (const row of rows) {
-    const report = byProject.get(row.projectId) ?? emptyProject(row.projectSlug, row.requireGroundingForDebug);
+    const report = byProject.get(row.projectId) ?? emptyProject(row.projectId, row.projectSlug, row.requireGroundingForDebug);
     byProject.set(row.projectId, report);
     if (!row.taskId) continue;
     const cohort = cohortOf(row);
@@ -243,7 +271,7 @@ export async function computeGroundingMigrationReport(db: PrismaClient, projectF
     increment(report.recommendedActions, actionFor(row, cohort, legacyPhaseNeedsRepair));
   }
 
-  const totals = emptyProject("all", false);
+  const totals = emptyProject("all", "all", false);
   for (const report of byProject.values()) {
     totals.tasks += report.tasks;
     for (const cohort of cohorts) totals.cohorts[cohort] += report.cohorts[cohort];
@@ -252,6 +280,7 @@ export async function computeGroundingMigrationReport(db: PrismaClient, projectF
     totals.debug.nondebug += report.debug.nondebug;
     totals.legacyPhaseDiagnostics.withSession += report.legacyPhaseDiagnostics.withSession;
     totals.legacyPhaseDiagnostics.missingSession += report.legacyPhaseDiagnostics.missingSession;
+    totals.legacyPhaseDiagnostics.malformedSession += report.legacyPhaseDiagnostics.malformedSession;
     totals.legacyPhaseDiagnostics.malformedPhase += report.legacyPhaseDiagnostics.malformedPhase;
     totals.legacyPhaseDiagnostics.impossiblePhase += report.legacyPhaseDiagnostics.impossiblePhase;
     totals.legacyPhaseDiagnostics.completePhase += report.legacyPhaseDiagnostics.completePhase;
@@ -259,7 +288,7 @@ export async function computeGroundingMigrationReport(db: PrismaClient, projectF
     totals.remote.autoMergeSha += report.remote.autoMergeSha;
     for (const [action, count] of Object.entries(report.recommendedActions)) totals.recommendedActions[action] = (totals.recommendedActions[action] ?? 0) + count;
   }
-  const { project: _project, requireGroundingForDebug: _flag, ...totalReport } = totals;
+  const { projectId: _projectId, project: _project, requireGroundingForDebug: _flag, ...totalReport } = totals;
   return { inventoryOnly: true, projects: [...byProject.values()], totals: totalReport };
 }
 
