@@ -489,6 +489,17 @@ session, not replayed on every transition call. Knowledge that changes
 every call (the new state) belongs in the receipt. Conflating the two is
 the direct cause of the current per-verb token cost.
 
+## External grounding transport
+
+`task_grounding_attempt_create` and `task_grounding_receipt_upload` are thin
+transport tools for provisioned external assessment. The first returns the
+authoritative challenge; the second sends the producer's original signed
+receipt as opaque UTF-8 text, capped at 32,768 bytes. Upload is evidence
+ingestion, not a completion result. The backend alone verifies the receipt and
+current task context. `task_finish`, `task_merge`, and `task_abandon` accept an
+explicit `operationKey` for provisioned work and forward it as
+`Idempotency-Key`; callers reuse a key only for the same retry.
+
 ## Versioning and rollout
 
 - This contract ships as `mcp-server` 0.13.0, a breaking change (default

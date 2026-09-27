@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-24T06:10:17Z
+timestamp: 2026-09-27T17:47:00Z
 sources:
   - package.json
   - backend/src/app.ts
@@ -43,6 +43,12 @@ There is no public enrollment endpoint. The empty creation-policy default does
 not activate enrollment; before server-only enrollment of legacy work, active
 legacy requests must be quiesced. The system does not claim safe live
 legacy-to-external conversion or complete coverage of indirect writers.
+
+The hosted MCP route exposes the same external attempt and receipt transport as
+the stdio server, plus the bounded completion verbs needed to finish the
+sequence. It forwards a caller-provided operation key and preserves backend
+pending and grounding error results instead of treating receipt ingestion as a
+completion outcome.
 
 **Actor/auth model**: every request is one of two actor shapes, resolved by `backend/src/middleware/auth.ts` (`backend.md`), a `HumanActor` (browser session cookie, or a session JWT passed as a Bearer token for server-to-server callers) or an `AgentActor` (a SHA-256-hashed `AgentToken` presented as `Authorization: Bearer <raw>`, carrying a `teamId` and a list of `scopes` from `backend/src/services/scopes.ts` that gate individual verbs). The mcp-server/mcp-bridge path is always an `AgentActor`; the frontend is always a `HumanActor`.
 

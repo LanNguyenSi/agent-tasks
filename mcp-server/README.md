@@ -137,6 +137,8 @@ in-session).
 | `task_start`          | `POST /api/tasks/:id/start`                  |
 | `task_note`           | `POST /api/tasks/:id/comments`               |
 | `task_finish`         | `POST /api/tasks/:id/finish`                 |
+| `task_grounding_attempt_create` | `POST /api/tasks/:id/grounding-attempts` |
+| `task_grounding_receipt_upload` | `POST /api/tasks/:id/grounding-attempts/:attemptId/receipt` |
 | `task_create`         | `POST /api/projects/:projectId/tasks`        |
 | `task_respec`         | `POST /api/tasks/:id/respec`                 |
 | `task_abandon`        | `POST /api/tasks/:id/abandon`                |
@@ -261,8 +263,8 @@ curl -X POST https://agent-tasks.opentriologue.ai/api/mcp \
   legacy-only under `AGENT_TASKS_MCP_LEGACY=1`, see "Tools" above). It
   covers the full v1 alias surface (projects_*, tasks_*, review_*,
   signals_*, pull_requests_*) but does **not** yet include the v2 verbs
-  (task_pickup / task_start /
-  task_finish / task_respec / etc.), the local-only `workflow_primer`
+  (task_pickup / task_start / task_finish / task_respec / etc.), the
+  external-grounding attempt and receipt tools, the local-only `workflow_primer`
   tool, artifact tools (task_artifact_*), attachment tools
   (task_attachment_*), or project_tasks. The code comment in
   `backend/src/routes/mcp.ts` documents this gap explicitly.

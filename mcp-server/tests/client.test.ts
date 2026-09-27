@@ -36,6 +36,22 @@ describe("AgentTasksClient", () => {
     expect(init.headers.Authorization).toBe("Bearer tok_abc");
   });
 
+  it("forwards an explicit operation key only on the completion request", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1", status: "review" } }));
+    const client = new AgentTasksClient(config);
+    await client.finishTask("t1", {}, "retry-key-1");
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["Idempotency-Key"]).toBe("retry-key-1");
+  });
+
+  it("does not generate an operation key when the caller did not supply one", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1", status: "open" } }));
+    const client = new AgentTasksClient(config);
+    await client.abandonTask("t1");
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).not.toHaveProperty("Idempotency-Key");
+  });
+
   it("strips trailing slash from baseUrl", async () => {
     fetchMock.mockResolvedValue(ok({ projects: [] }));
     const client = new AgentTasksClient({ ...config, baseUrl: "https://example.test/" });

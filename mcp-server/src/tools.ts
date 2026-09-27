@@ -58,6 +58,8 @@ const transitionStatusEnum = z.enum([
 const priorityEnum = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 
 const uuid = () => z.string().uuid();
+const operationKey = () => z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
+const MAX_GROUNDING_RECEIPT_BYTES = 32_768;
 
 // ── Receipt contract (docs/response-contract-v1.md) ─────────────────────────
 //
@@ -328,6 +330,36 @@ export function buildTools(
       },
     }),
     def({
+      name: "task_grounding_attempt_create",
+      description:
+        "Request an authoritative external-grounding challenge for a provisioned task. Send the returned challenge to the configured assessment producer, then use task_grounding_receipt_upload with the producer's signed receipt. This tool only creates an attempt; it does not finish, approve, or merge the task.",
+      inputShape: {
+        taskId: uuid(),
+        intent: z.enum(["finish", "approve", "merge"]),
+      },
+      handler: async ({ taskId, intent }) =>
+        wrap(() => client.createGroundingAttempt(taskId, intent)),
+    }),
+    def({
+      name: "task_grounding_receipt_upload",
+      description:
+        "Upload the producer's original signed receipt for a previously issued grounding attempt. receipt is transported as opaque UTF-8 text and is limited to 32,768 UTF-8 bytes. The backend verifies the signature, freshness, session nomination, and current task context; this tool never treats an upload as completion.",
+      inputShape: {
+        taskId: uuid(),
+        attemptId: uuid(),
+        session: z.object({
+          id: operationKey(),
+          revision: z.number().int().positive().max(2_147_483_647),
+        }).strict(),
+        receipt: z.string().refine(
+          value => Buffer.byteLength(value, "utf8") <= MAX_GROUNDING_RECEIPT_BYTES,
+          `receipt must be at most ${MAX_GROUNDING_RECEIPT_BYTES} UTF-8 bytes`,
+        ),
+      },
+      handler: async ({ taskId, attemptId, session, receipt }) =>
+        wrap(() => client.uploadGroundingReceipt(taskId, attemptId, { session, receipt })),
+    }),
+    def({
       name: "task_finish",
       description:
         "Finish a task. Requires an active work or review claim on this specific task; call task_start first to claim it (task_pickup alone returns a candidate but does not claim). The claim of any prior task you just finished does NOT carry over. Polymorphic based on the claim you hold.\n\nWork claim: pass { result?, prUrl?, autoMerge?, mergeMethod? }. prUrl must be a github.com pull-request URL if provided. The task transitions to its expectedFinishState (review or done depending on the workflow). The work claim is cleared when going to done and kept when going to review.\n\nautoMerge (Mode A — work claim): requires project.soloMode=true. Overrides targetStatus to 'done', evaluates gates (skipping prMerged pre-check), merges the PR via GitHub API, then transitions the task to done atomically. Sets autoMergeSha on success.\n\nReview claim: pass { result?, outcome, autoMerge?, mergeMethod? }. approve → task to done, both claims cleared. request_changes → task back to in_progress, review claim cleared, work claim kept so the author resumes, changes_requested signal emitted.\n\nautoMerge (Mode B — review claim + approve): does NOT require soloMode. Merges the PR and transitions to done atomically. outcome 'request_changes' + autoMerge is rejected.\n\nTransitions may be blocked by workflow gates (branchPresent, prPresent, ciGreen, prMerged). A 422 `precondition_failed` response lists the failing rules. See ADR-0010.\n\nReturns a receipt by default ({ ok, task: { id, status }, deviations? }) — a WORKFLOW_GATE_SKIPPED deviation appears when autoMerge bypassed a normally-required gate. Pass include:[\"task\"] for the full backend object.",
@@ -344,9 +376,10 @@ export function buildTools(
         outcome: z.enum(["approve", "request_changes"]).optional(),
         autoMerge: z.boolean().optional(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
+        operationKey: operationKey().optional().describe("Required by provisioned external-grounding completion. Reuse the same key only to retry the same operation."),
         include: includeSchema,
       },
-      handler: async ({ taskId, include, ...body }) => {
+      handler: async ({ taskId, include, operationKey, ...body }) => {
         // Catalog entry #8 (errors.ts): `result` is stored verbatim as free
         // text by the backend, which performs no validation of its shape —
         // this guard exists only at this layer, checked BEFORE any request
@@ -355,7 +388,7 @@ export function buildTools(
         if (body.result !== undefined && looksLikeStructuredWrapper(body.result)) {
           throw new Error(serializeTeachingError(resultMustBePlainStringError("task_finish")));
         }
-        const response = await wrap(() => client.finishTask(taskId, body), "task_finish");
+        const response = await wrap(() => client.finishTask(taskId, body, operationKey), "task_finish");
         if (include?.includes("task")) return response;
         return receiptForFinish(response as FinishResponse);
       },
@@ -507,9 +540,9 @@ export function buildTools(
       name: "task_abandon",
       description:
         "Explicit bail-out: release the active claim on a task without finishing. A work claim on an in_progress task returns it to open; a review claim simply releases the review lock. Use this sparingly — task_finish is the normal path. Separate intent from finish so audit trails distinguish abandonment from completion.\n\nReturns a receipt by default ({ ok, task: { id, status } }). Pass include:[\"task\"] for the full backend object.",
-      inputShape: { taskId: uuid(), include: includeSchema },
-      handler: async ({ taskId, include }) => {
-        const response = await wrap(() => client.abandonTask(taskId));
+      inputShape: { taskId: uuid(), operationKey: operationKey().optional().describe("Required by provisioned external-grounding abandonment. Reuse it only to retry the same operation."), include: includeSchema },
+      handler: async ({ taskId, operationKey, include }) => {
+        const response = await wrap(() => client.abandonTask(taskId, operationKey));
         if (include?.includes("task")) return response;
         return receiptForAbandon(response as AbandonResponse);
       },
@@ -661,10 +694,11 @@ export function buildTools(
       inputShape: {
         taskId: uuid(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
+        operationKey: operationKey().optional().describe("Required by provisioned external-grounding merge. Reuse the same key only to retry the same operation."),
         include: includeSchema,
       },
-      handler: async ({ taskId, mergeMethod, include }) => {
-        const response = await wrap(() => client.mergeTask(taskId, mergeMethod));
+      handler: async ({ taskId, mergeMethod, operationKey, include }) => {
+        const response = await wrap(() => client.mergeTask(taskId, mergeMethod, operationKey));
         if (include?.includes("task")) return response;
         return receiptForMerge(response as MergeResponse);
       },

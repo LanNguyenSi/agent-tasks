@@ -567,6 +567,13 @@ export interface StartGroundingHint {
   activeGuardrails?: string[];
 }
 
+interface ExternalGroundingHint {
+  kind: "external_grounding_v1";
+  taskId: string;
+  attempts: { issue: { body: { intent: "finish" | "approve" | "merge" } } };
+  completion: { requiredHeader: "Idempotency-Key" };
+}
+
 /**
  * Backend field since rc-v1-B001 (PR #445): the gates configured on the
  * edge(s) this call's caller will hit next on a subsequent task_finish,
@@ -595,7 +602,7 @@ export interface StartResponse {
   kind: "work" | "review";
   task: StartTask;
   expectedFinishState?: string;
-  groundingHint?: StartGroundingHint;
+  groundingHint?: StartGroundingHint | ExternalGroundingHint;
   project?: unknown;
   // KNOWN GAP: not present on the live backend's /start success response
   // today (the confidence gate discards its computed score once the claim
@@ -870,9 +877,12 @@ function deriveStartInstructions(task: StartTask): {
  * blob) is kept OUT of the default response: this function never reads
  * `metadata` at all, only the already-compact `groundingHint` field.
  */
-function deriveGroundingNext(hint: StartGroundingHint | undefined): string[] | undefined {
+function deriveGroundingNext(hint: StartGroundingHint | ExternalGroundingHint | undefined): string[] | undefined {
   if (!hint) return undefined;
-  return [hint.mcpToolHint];
+  if ("kind" in hint && hint.kind === "external_grounding_v1") {
+    return [`task_grounding_attempt_create intent=${hint.attempts.issue.body.intent}; send its challenge to the assessment producer, task_grounding_receipt_upload the signed receipt, then complete with an operationKey`];
+  }
+  return "mcpToolHint" in hint ? [hint.mcpToolHint] : undefined;
 }
 
 export function receiptForStart(

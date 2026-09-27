@@ -18,6 +18,7 @@ export const openApiSpec = {
   tags: [
     { name: "Projects", description: "Project discovery and management" },
     { name: "Tasks", description: "Task read/write/claim/transition operations" },
+    { name: "Grounding", description: "External assessment attempt and signed-receipt transport" },
     { name: "GitHub", description: "GitHub PR operations via delegation (agent-only)" },
   ],
   components: {
@@ -1320,6 +1321,75 @@ export const openApiSpec = {
             },
           },
         },
+      },
+    },
+    "/api/tasks/{id}/grounding-attempts": {
+      post: {
+        tags: ["Grounding"],
+        summary: "Issue an external-grounding challenge",
+        description: "Authorizes and issues an assessment attempt for a provisioned task. It does not complete the task. The strict JSON challenge envelope is limited to 1,024 streamed bytes.",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", additionalProperties: false, properties: { intent: { type: "string", enum: ["finish", "approve", "merge"] } }, required: ["intent"] } } } },
+        responses: {
+          "201": { description: "Authoritative challenge for the configured producer" },
+          "400": { description: "Invalid request", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "409": { description: "Stale or unavailable grounding context", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "401": { description: "Unauthenticated", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "403": { description: "Forbidden", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "404": { description: "Task not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "503": { description: "grounding_verification_unavailable", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/api/tasks/{id}/grounding-attempts/{attemptId}/receipt": {
+      post: {
+        tags: ["Grounding"],
+        summary: "Upload an external signed receipt",
+        description: "Transports the producer's original receipt JSON bytes as a JSON string. The request envelope is limited to 200,000 streamed bytes; receipt content is limited to 32,768 UTF-8 bytes (`x-maxBytes`), and is verified server-side. Upload alone does not complete a task.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } },
+          { name: "attemptId", in: "path", required: true, schema: { type: "string", format: "uuid" } },
+        ],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", additionalProperties: false, properties: { session: { type: "object", additionalProperties: false, properties: { id: { type: "string", pattern: "^[A-Za-z0-9._:-]{1,128}$" }, revision: { type: "integer", minimum: 1, maximum: 2147483647 } }, required: ["id", "revision"] }, receipt: { type: "string", "x-maxBytes": 32768 } }, required: ["session", "receipt"] } } } },
+        responses: {
+          "200": { description: "Verified receipt evidence or an exact replay" },
+          "400": { description: "Invalid receipt transport", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "409": { description: "Stale, mismatched, or missing active attempt", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "422": { description: "Untrusted or unsupported receipt", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "401": { description: "Unauthenticated", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "403": { description: "Forbidden", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "404": { description: "Task or attempt not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "503": { description: "grounding_verification_unavailable", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/api/tasks/{id}/finish": {
+      post: {
+        tags: ["Tasks", "Grounding"], summary: "Finish a task", security: [{ bearerAuth: [] }],
+        description: "Provisioned external-grounding completion requires Idempotency-Key. Reuse it only for an identical retry; a pending result is not completion.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }, { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string", pattern: "^[A-Za-z0-9._:-]{1,128}$" }, description: "Required for a provisioned task." }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object" } } } },
+        responses: { "200": { description: "Completed task route result" }, "202": { description: "Pending remote completion; retry with the same key." }, "400": { description: "Missing or invalid operation key for a provisioned task" } },
+      },
+    },
+    "/api/tasks/{id}/merge": {
+      post: {
+        tags: ["Tasks", "Grounding"], summary: "Merge a task pull request", security: [{ bearerAuth: [] }],
+        description: "Provisioned external-grounding merge requires Idempotency-Key. Reuse it only for an identical retry.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }, { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string", pattern: "^[A-Za-z0-9._:-]{1,128}$" }, description: "Required for a provisioned task." }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: { mergeMethod: { type: "string", enum: ["squash", "merge", "rebase"] } } } } } },
+        responses: { "200": { description: "Merged task route result" }, "202": { description: "Pending remote merge; retry with the same key." }, "400": { description: "Missing or invalid operation key for a provisioned task" } },
+      },
+    },
+    "/api/tasks/{id}/abandon": {
+      post: {
+        tags: ["Tasks", "Grounding"], summary: "Abandon an active task claim", security: [{ bearerAuth: [] }],
+        description: "Provisioned external-grounding abandonment requires Idempotency-Key and an empty JSON object. Reuse the key only for an identical retry.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }, { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string", pattern: "^[A-Za-z0-9._:-]{1,128}$" }, description: "Required for a provisioned task." }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", additionalProperties: false } } } },
+        responses: { "200": { description: "Abandoned task route result" }, "400": { description: "Missing or invalid operation key for a provisioned task" } },
       },
     },
     "/api/tasks/{id}/respec": {

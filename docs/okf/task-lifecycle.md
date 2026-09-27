@@ -3,7 +3,7 @@ type: overview
 title: "The v2 verb surface and the happy-path task lifecycle"
 description: "task_create, task_pickup, task_start, task_finish, task_merge, task_abandon, the polymorphic MCP-oriented verbs layered over the classic REST CRUD, plus lazy debugFlavor classification and the backlog status for agent-created work."
 tags: [task-lifecycle, mcp, verbs, overview, backlog]
-timestamp: 2026-09-26T14:31:17Z
+timestamp: 2026-09-27T17:47:00Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/routes/grounding-direct-tasks.ts
@@ -38,7 +38,10 @@ An explicitly selected, server-owned dormant grounding creation policy can inter
 the protected cohort and binding, never from task metadata. An `EXTERNAL_V1`
 task receives session-free REST attempt guidance (`/api/tasks/:id/grounding-attempts`
 and its receipt route) plus the `Idempotency-Key` completion requirement. It
-does not create, reconstruct, or expose a backend wrapper session; forged
+The stdio MCP surface projects that guidance to the matching attempt-create and
+receipt-upload verbs while leaving the backend as the verifier and completion
+authority.
+It does not create, reconstruct, or expose a backend wrapper session; forged
 debug/session metadata cannot select this mode. Selection and legacy initializer
 presentation share the enrollment lock so a server enrollment cannot interleave
 with that bounded legacy initialization. Explicit `LEGACY_LOCAL` and `OFF` stay

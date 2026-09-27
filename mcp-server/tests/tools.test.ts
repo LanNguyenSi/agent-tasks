@@ -110,6 +110,8 @@ describe("buildTools", () => {
         "task_create",
         "task_creator_abandon",
         "task_finish",
+        "task_grounding_attempt_create",
+        "task_grounding_receipt_upload",
         "task_merge",
         "task_note",
         "task_pickup",
@@ -150,6 +152,8 @@ describe("buildTools", () => {
         "task_create",
         "task_creator_abandon",
         "task_finish",
+        "task_grounding_attempt_create",
+        "task_grounding_receipt_upload",
         "task_merge",
         "task_note",
         "task_pickup",
@@ -1408,6 +1412,44 @@ describe("buildTools", () => {
     } as never);
     expect(result).toEqual({ ok: true, task: { id: "t1", status: "review" } });
     expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+
+  it("forwards an explicit operationKey as Idempotency-Key without inventing one", async () => {
+    fetchMock.mockResolvedValue(ok({ kind: "work", task: { id: "t1", status: "review" } }));
+    await tool("task_finish").handler({ taskId: TASK_ID, operationKey: "retry-key-1" } as never);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["Idempotency-Key"]).toBe("retry-key-1");
+    expect(init.body).toBe("{}");
+  });
+
+  it("sends the strict empty JSON body required by keyed abandonment", async () => {
+    fetchMock.mockResolvedValue(ok({ task: { id: "t1", status: "open" } }));
+    await tool("task_abandon").handler({ taskId: TASK_ID, operationKey: "retry-key-1" } as never);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["Idempotency-Key"]).toBe("retry-key-1");
+    expect(init.body).toBe("{}");
+  });
+
+  it("transports a grounding challenge request and opaque signed receipt unchanged", async () => {
+    fetchMock.mockResolvedValueOnce(ok({ attemptId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" })).mockResolvedValueOnce(ok({ receiptId: "r1", replayed: false }));
+    await tool("task_grounding_attempt_create").handler({ taskId: TASK_ID, intent: "finish" } as never);
+    await tool("task_grounding_receipt_upload").handler({ taskId: TASK_ID, attemptId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", session: { id: "producer.session", revision: 1 }, receipt: '{"signed":"bytes"}' } as never);
+    expect(fetchMock.mock.calls[0][0]).toBe(`https://example.test/api/tasks/${TASK_ID}/grounding-attempts`);
+    expect(fetchMock.mock.calls[0][1].body).toBe('{"intent":"finish"}');
+    expect(fetchMock.mock.calls[1][0]).toBe(`https://example.test/api/tasks/${TASK_ID}/grounding-attempts/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/receipt`);
+    expect(fetchMock.mock.calls[1][1].body).toBe('{"session":{"id":"producer.session","revision":1},"receipt":"{\\"signed\\":\\"bytes\\"}"}');
+  });
+
+  it("accepts exactly 32768 UTF-8 receipt bytes and rejects the next multibyte character", () => {
+    const schema = z.object(tool("task_grounding_receipt_upload").inputShape);
+    const shared = { taskId: TASK_ID, attemptId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", session: { id: "producer", revision: 1 } };
+    expect(schema.parse({ ...shared, receipt: "😀".repeat(8_192) }).receipt).toHaveLength(16_384);
+    expect(() => schema.parse({ ...shared, receipt: "😀".repeat(8_193) })).toThrow(/32768 UTF-8 bytes/);
+  });
+
+  it.each(["grounding_receipt_unsupported", "grounding_receipt_untrusted", "grounding_verification_unavailable", "grounding_receipt_mismatch"])("preserves the backend grounding code %s", async (code) => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: code }), { status: code === "grounding_verification_unavailable" ? 503 : 409, headers: { "content-type": "application/json" } }));
+    await expect(tool("task_grounding_receipt_upload").handler({ taskId: TASK_ID, attemptId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", session: { id: "producer", revision: 1 }, receipt: "{}" } as never)).rejects.toThrow(code);
   });
 
   it("task_finish include:[\"task\"] returns the full backend object", async () => {
