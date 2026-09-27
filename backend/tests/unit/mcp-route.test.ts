@@ -387,6 +387,13 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     expect(recorded[0]).toMatchObject({ method: "POST", path: `/api/tasks/${taskId}/grounding-attempts/${attemptId}/receipt`, body: { session: { id: "producer.session", revision: 1 }, receipt: '{"signed":"bytes"}' } });
   });
 
+  it("rejects a non-HTTP finish prUrl before self-dispatch", async () => {
+    const response = await mcpRequest(app, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "task_finish", arguments: { taskId: "33333333-3333-3333-3333-333333333333", prUrl: "javascript:alert(1)" } } }, { Authorization: "Bearer good_token" });
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
   it("can complete the hosted assessment transport sequence without treating receipt upload as completion", async () => {
     const taskId = "33333333-3333-3333-3333-333333333333";
     const attemptId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";

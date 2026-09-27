@@ -350,7 +350,7 @@ function buildServer(token: string): McpServer {
     {
       description: "Finish a task. Provisioned external-grounding tasks require operationKey; reuse that key only for the same retry.",
       inputSchema: {
-        taskId: uuid(), result: z.string().max(5000).optional(), prUrl: z.string().url().optional(),
+        taskId: uuid(), result: z.string().max(5000).optional(), prUrl: httpUrl().optional(),
         outcome: z.enum(["approve", "request_changes"]).optional(), autoMerge: z.boolean().optional(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(), operationKey: operationKey.optional(),
       },
