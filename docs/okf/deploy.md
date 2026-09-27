@@ -3,8 +3,10 @@ type: runbook
 title: "Deploy: no in-repo automation, prod is docker-compose"
 description: "ci.yml only tests and builds; deploy/verify is an external ops concern; prod runtime is db + one-shot Prisma db push + backend/frontend behind Traefik."
 tags: [deploy, docker-compose, ops, ci]
-timestamp: 2026-09-27T19:22:30Z
+timestamp: 2026-09-27T20:11:24Z
 sources:
+  - backend/src/config/grounding-runtime.ts
+  - backend/src/services/grounding-runtime.ts
   - .github/workflows/ci.yml
   - .github/workflows/docker-smoke.yml
   - .github/workflows/audit.yml
@@ -37,8 +39,10 @@ Grounding migration inventory is a read-only deployment check. Use `node scripts
 
 Review the inventory together with an isolated backup/restore rehearsal, additive-schema mixed-version exercise, and proof that old writing instances are excluded before any enforcement change. A report that recommends a hold does not enforce one. A valid hold needs an authorized migration and a maintenance mechanism that participating writers cannot bypass.
 
-Do not activate from inventory counts, a successful process exit, a package version, or a caller flag. Keep activation blocked until runtime trust composition, new-task cohort selection, writer-fleet exclusion, and separate host/operator key and state evidence are complete.
+Do not activate from inventory counts, a successful process exit, a package version, or a caller flag. Keep activation blocked until the explicit runtime configuration and new-task cohort selection are reviewed, writer-fleet exclusion is demonstrated, and separate host/operator key and state evidence is complete.
 
 Related: `architecture.md`, `release-flow.md`.
 
 The canonical fence SQL also installs the task UPDATE/DELETE hold guard, the migration-overlay repository fence and immutable-command guard. Hold entry advances the task row version; schema sync alone is insufficient. Inventory adds held counts while remaining read-only. The [migration procedure](../grounding-migration.md) describes the optional admin path and still requires separate fleet/deployment qualification.
+
+Compose forwards `GROUNDING_RUNTIME_CONFIG` with an empty default. The backend checks runtime configuration and database prerequisites before listening. Empty configuration requires all grounding tables to exist and contain no rows; completed and inactive history also requires configured routing. Preserve valid configuration for restore and compatible rollback, and coordinate restarts for trust rotation or revocation. See [configuration and upgrade](../grounding-migration.md).

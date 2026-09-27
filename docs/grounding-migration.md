@@ -14,13 +14,93 @@ Before an authorized migration, capture a backup and restore it into an isolated
 
 Legacy phase data needs a separately validated migration rule. The inventory treats the pinned legacy wrapper's `complete` phase as compatible with claim evaluation; it still flags malformed and impossible phase data. Phase compatibility does not prove a successful evaluated outcome. The inventory cannot repair state and is not a safe hold. Do not use `OFF`, task metadata, malformed cohort rows, or a report recommendation as a maintenance state. A migration requires an audited, authorized conversion that preserves history, invalidates active attempts atomically, and has enforceable writer exclusion before it can claim a safe hold.
 
-Activation remains blocked until the runtime composes the trusted receipt service, selects a cohort for new protected tasks, excludes older writing instances, and has separate operator evidence for host policy, state, and key isolation. The local separated-process qualification of the producer protocol is useful compatibility evidence only; it is not physical two-host or operating-system isolation proof.
+Activation requires an explicitly reviewed runtime configuration, exclusion of older writing instances, and separate operator evidence for host policy, state, and key isolation. The local separated-process qualification of the producer protocol is useful compatibility evidence only; it is not physical two-host or operating-system isolation proof.
+
+## Server configuration and startup
+
+The backend accepts one `GROUNDING_RUNTIME_CONFIG` environment value. Docker
+Compose forwards it with an empty default. Absence, the empty string, or the
+strict object `{"enabled":false}` requests the unconfigured runtime. Whitespace,
+malformed JSON, duplicate keys (including escaped names), and unknown fields
+are errors. Startup never logs the submitted value or falls back after an error.
+
+An enabled configuration has this shape; placeholders must be replaced by
+reviewed deployment values before use:
+
+```json
+{
+  "enabled": true,
+  "audience": "consumer.example",
+  "challengeSeconds": 900,
+  "trust": [{
+    "issuer": "assessment.example",
+    "kid": "public-key-version",
+    "publicKeyPem": "<Ed25519 public SPKI PEM with escaped newlines>",
+    "profileDigest": "<supported policy SHA-256>",
+    "projectIds": ["<lowercase project UUID>"],
+    "audiences": ["consumer.example"],
+    "revoked": false
+  }],
+  "creationPolicy": [{
+    "projectId": "<lowercase project UUID>",
+    "subjectMode": "TASK_SPEC"
+  }]
+}
+```
+
+`creationPolicy` is required and may be empty. Selection is explicit per project;
+`CODE_HEAD` is the other supported subject mode. Selected projects must exist
+and be covered by an unrevoked trust record for the configured audience and
+supported policy. Empty trust with empty selection is valid but cannot accept
+external evidence. Every record is checked, even unused and revoked records.
+Only Ed25519 public SPKI keys are accepted. Never supply a signing private key,
+producer credential, producer address, or ledger key to this consumer.
+
+The input is bounded to 64 KiB, with at most 64 trust records, 256 creation
+selections, 256 project scopes and 64 audience scopes per trust record. Project
+selections, trust identities, and each scope list must have no duplicates.
+Audience, issuer and key identifiers are 1–128 letters, digits, `.`, `_`, `:` or
+`-`. Challenge lifetime defaults to 900 seconds and accepts integers from 1 to
+86,400; receipt freshness remains separately bounded by the receipt protocol.
+
+Before opening its listener or scheduling the idempotency sweep, the real
+server awaits read-only grounding startup admission. Disabled startup requires
+all grounding tables to exist and be empty. Any history in any grounding table
+requires enabled configuration, including OFF and legacy cohorts, completed
+commands or deliveries, and inactive repository fences. Missing tables or failed
+queries abort startup. Once such history exists, removing the configuration is
+not a rollback: restore valid configuration and a compatible consumer. Do not
+delete history to obtain an unconfigured startup.
+
+Enabled startup validates the canonical schema-local SQL fence installation and
+selected project existence, then creates attempts, grouped merge/completion,
+PR creation, and migration services using one frozen configuration and the same
+Prisma database. Configured routing applies globally, including previously
+unprovisioned tasks: fresh remote merges require explicit enrollment. Existing
+history is never enrolled implicitly. Local compatibility behavior and existing
+authorization remain as described in the [receipt contract](grounding-receipt-contract.md).
+
+The same selection enrolls new REST tasks, import rows, and signed GitHub
+issue-created tasks atomically with their creation. Agent REST creation still
+enters backlog. Selected webhook creation preserves `open`, title, description
+and audit behavior, and requires `open` to exist in the effective workflow
+without being a review or terminal state. Invalid workflow or failed enrollment
+rolls back the whole delivery and its task, cohort, binding and audit writes.
+
+Configuration is loaded once and frozen for the process lifetime. Trust rotation,
+revocation, audience or selection changes require replacing the configuration
+and coordinating restart of every writing instance. Revocation is not immediate
+across an already-running fleet. Exclude old writers before relying on new trust
+or routing, preserve the deployment configuration with the restore procedure,
+and validate an isolated restored database with the intended configuration and
+canonical SQL. A passing startup does not prove backup restoration, writer
+exclusion, producer key isolation, or production rollout readiness.
 
 ## Audited administrative commands
 
 `POST /api/tasks/:id/grounding-migration` is available only when a
 `GroundingMigrationService` is explicitly injected as the fourth `createApp`
-argument. The default server does not configure it. There is no MCP migration
+argument. The server supplies it when the validated grounding runtime is enabled. There is no MCP migration
 tool. The authenticated actor must be a human with current team `ADMIN` or
 project `PROJECT_ADMIN` membership; the service rechecks membership inside its
 Serializable transaction, including exact retries.
@@ -81,5 +161,4 @@ history or silently falling back. This task-row freeze does not freeze parent
 project/workflow configuration, every related table, or remote GitHub itself.
 Exclude old writers and qualify the complete writer fleet before relying on it;
 untracked remote writes and physical isolation remain separate deployment
-prerequisites. These interfaces do not qualify a production rollout or enable project-level
-external creation policy; the inventory remains read-only.
+prerequisites. These interfaces do not qualify a production rollout; the inventory remains read-only.

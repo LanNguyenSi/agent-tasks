@@ -3,7 +3,7 @@ type: runbook
 title: "Reconciling a task whose PR merged but the record is stuck open"
 description: "Recover a configured merge with its original operation and exact GitHub proof; retain the separate historical task lifecycle repair flow."
 tags: [reconcile, task-lifecycle, idempotency, runbook]
-timestamp: 2026-09-27T19:43:33Z
+timestamp: 2026-09-27T20:11:24Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/default-workflow.ts
@@ -145,3 +145,5 @@ not authorize a new configured operation or replace grouped recovery.
 Related: [task lifecycle](task-lifecycle.md),
 [governance and merge](governance-merge.md),
 [receipt contract](../grounding-receipt-contract.md).
+
+The real server now selects configured adapters through validated `GROUNDING_RUNTIME_CONFIG`. Removing the configuration is not recovery: any grounding history, including completed deliveries or inactive fences, prevents disabled startup. Restore valid configuration and a compatible consumer; see [configuration and upgrade](../grounding-migration.md).

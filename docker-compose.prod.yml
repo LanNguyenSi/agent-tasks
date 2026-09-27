@@ -51,6 +51,7 @@ services:
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
       SESSION_SECRET: ${SESSION_SECRET}
+      GROUNDING_RUNTIME_CONFIG: ${GROUNDING_RUNTIME_CONFIG:-}
       FRONTEND_URL: https://agent-tasks.opentriologue.ai
       CORS_ORIGINS: https://agent-tasks.opentriologue.ai
       # Number of trusted reverse-proxy hops in front of the backend. Prod runs

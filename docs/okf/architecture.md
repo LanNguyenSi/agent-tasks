@@ -3,8 +3,10 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-27T19:22:30Z
+timestamp: 2026-09-27T20:11:24Z
 sources:
+  - backend/src/config/grounding-runtime.ts
+  - backend/src/services/grounding-runtime.ts
   - package.json
   - backend/src/app.ts
   - backend/src/routes/grounding-direct-tasks.ts
@@ -39,8 +41,8 @@ before any remote effect (`grounding-task-completion.ts:95`,
 `routes/grounding-github.ts:71`); the unconfigured default app has no such
 gate. Invalid enrollment,
 orphan binding, unavailable trusted service, and database errors fail closed.
-There is no agent enrollment endpoint. An explicitly injected human-admin migration service supplies audited hold, legacy repair, external migration and readiness-checked resume. The empty creation-policy default does
-not activate enrollment; before server-only enrollment of legacy work, active
+There is no agent enrollment endpoint. An explicitly injected human-admin migration service supplies audited hold, legacy repair, external migration and readiness-checked resume. The server loads explicit runtime selection from `GROUNDING_RUNTIME_CONFIG`;
+empty creation policy does not activate enrollment; before server-only enrollment of legacy work, active
 legacy requests must be quiesced. The system does not claim safe live
 legacy-to-external conversion or complete coverage of indirect writers.
 
@@ -53,3 +55,5 @@ completion outcome.
 **Actor/auth model**: every request is one of two actor shapes, resolved by `backend/src/middleware/auth.ts` (`backend.md`), a `HumanActor` (browser session cookie, or a session JWT passed as a Bearer token for server-to-server callers) or an `AgentActor` (a SHA-256-hashed `AgentToken` presented as `Authorization: Bearer <raw>`, carrying a `teamId` and a list of `scopes` from `backend/src/services/scopes.ts` that gate individual verbs). The mcp-server/mcp-bridge path is always an `AgentActor`; the frontend is always a `HumanActor`.
 
 Related: `backend.md`, `frontend.md`, `mcp-server.md`, `mcp-bridge.md`, `task-lifecycle.md`.
+
+**Startup admission**: the real server awaits strict public-only configuration and database checks before listening or sweeping idempotency state. Enabled startup composes attempts, grouped completion, PR creation and migration on the same database. Disabled startup is available only with all grounding tables present and empty; any history requires configured routing. See [configuration and upgrade](../grounding-migration.md).

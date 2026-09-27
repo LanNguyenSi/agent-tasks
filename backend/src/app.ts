@@ -102,7 +102,7 @@ export function createApp(corsOrigins: string, grounding?: GroundingAttemptsServ
 
   // Public
   app.route("/api/health", healthRouter);
-  app.route("/api/webhooks", configured ? createGroundingGithubWebhookRouter({ service: new GroundingGithubWebhookService(groundingDb) }) : webhookRouter); // GitHub webhooks — signature-verified, no auth
+  app.route("/api/webhooks", configured ? createGroundingGithubWebhookRouter({ service: new GroundingGithubWebhookService(groundingDb, grounding, completion?.creationPolicy) }) : webhookRouter); // GitHub webhooks — signature-verified, no auth
   app.route("/", docsRouter);
 
   // Protected
