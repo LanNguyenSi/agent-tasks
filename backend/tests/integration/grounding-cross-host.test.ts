@@ -11,12 +11,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { GroundingReceiptVerificationError, type GroundingReceiptTrustEntry } from "../../src/services/grounding-receipt.js";
 import { completionActor, completionFixture, completionStore } from "../helpers/grounding-completion-fixtures.js";
 
-const sentinels = vi.hoisted(() => ({ wrapper: { getLedgerSummary: vi.fn() } }));
-vi.mock("../../src/services/grounding-client.js", () => ({ getGroundingClient: () => sentinels.wrapper }));
+const sentinels = vi.hoisted(() => ({ factory: vi.fn() }));
+vi.mock("../../src/services/grounding-client.js", () => ({ getGroundingClient: sentinels.factory }));
 
 const assessmentEntrypoint = process.env.GROUNDING_TEST_ASSESSMENT_ENTRYPOINT;
 const qualified = assessmentEntrypoint ? it : it.skip;
 const execFile = promisify(execFileCallback);
+const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const deploymentCheck = fileURLToPath(new URL("../../../scripts/grounding-deployment-check.mjs", import.meta.url));
 const sevenAssessmentTools = [
   "assessment_start", "assessment_status", "assessment_advance", "assessment_dossier_add",
@@ -99,14 +100,17 @@ async function assessment(challenge: Awaited<ReturnType<typeof fixture.attempts.
 
 async function assertNoLegacyFallback() {
   expect(fixture.ledger.getLedgerSummary).not.toHaveBeenCalled();
-  expect(sentinels.wrapper.getLedgerSummary).not.toHaveBeenCalled();
+  expect(sentinels.factory).not.toHaveBeenCalled();
 }
 
 async function deployment(args: string[], env: Record<string, string> = {}, cwd = tmpdir()) {
   return execFile(process.execPath, [deploymentCheck, ...args], { cwd, encoding: "utf8", env: { PATH: process.env.PATH ?? "", ...env } });
 }
 
-beforeAll(async () => { store = await completionStore(); }, 60000);
+beforeAll(async () => {
+  await execFile("npm", ["run", "build", "--workspace=backend"], { cwd: repositoryRoot, encoding: "utf8" });
+  store = await completionStore();
+}, 60000);
 afterAll(async () => { await store?.close(); });
 beforeEach(async () => {
   await store.db.groundingFinalization.deleteMany(); await store.db.groundingOperation.deleteMany();
@@ -117,7 +121,7 @@ beforeEach(async () => {
   fixture = await completionFixture(store);
   fixture.now = Math.floor(Date.now() / 1000);
   fixture.ledger.getLedgerSummary.mockReset().mockRejectedValue(new Error("legacy ledger must not run"));
-  sentinels.wrapper.getLedgerSummary.mockReset().mockRejectedValue(new Error("wrapper must not run"));
+  sentinels.factory.mockReset().mockRejectedValue(new Error("grounding client factory must not run"));
 });
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -150,8 +154,10 @@ describe("local separated-process producer qualification", () => {
     const untrusted = await assessment(untrustedChallenge, true);
     const wrongKey = generateKeyPairSync("ed25519");
     fixture.issuer.trust = [{ ...untrusted.trust, publicKeyPem: wrongKey.publicKey.export({ format: "pem", type: "spki" }).toString() }];
+    const taskBeforeWrongKey = await fixture.task();
     await expect(fixture.attempts.ingest(fixture.taskId, untrustedChallenge.attemptId, completionActor, untrusted.session, untrusted.wire)).rejects.toBeInstanceOf(GroundingReceiptVerificationError);
-    await expect(fixture.attempts.ingest(fixture.taskId, untrustedChallenge.attemptId, completionActor, untrusted.session, untrusted.wire)).rejects.toMatchObject({ code: "grounding_receipt_untrusted" });
+    await expect(fixture.service.complete(fixture.taskId, completionActor, randomUUID(), { action: "finish" })).rejects.toMatchObject({ code: "grounding_required" });
+    expect(await fixture.task()).toEqual(taskBeforeWrongKey);
     await assertNoLegacyFallback();
   }, 60000);
 
