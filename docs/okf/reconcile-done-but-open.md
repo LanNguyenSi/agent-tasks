@@ -3,7 +3,7 @@ type: runbook
 title: "Reconciling a task whose PR merged but the record is stuck open"
 description: "Recover a configured merge with its original operation and exact GitHub proof; retain the separate historical task lifecycle repair flow."
 tags: [reconcile, task-lifecycle, idempotency, runbook]
-timestamp: 2026-09-26T14:31:17Z
+timestamp: 2026-09-27T19:43:33Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/default-workflow.ts
@@ -32,6 +32,13 @@ lost, a local commit failed, or GitHub was changed outside the task API. First
 identify whether the application uses configured grounding completion and
 whether the task has an existing durable operation. A stored `autoMergeSha` or
 a webhook observation is not a completion decision.
+
+A durable migration hold blocks fresh completion and task-row lifecycle repair,
+including for an unenrolled task. Administrative hold commands reject unresolved
+remote operations rather than changing their recovery state. Configured webhooks
+retain matching held-task facts as pending observations. The existing operation
+recovery rules below remain unchanged; see the [migration procedure](../grounding-migration.md)
+for hold and readiness semantics.
 
 ## Configured operation recovery
 
