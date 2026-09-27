@@ -28,9 +28,10 @@ let fixture: Awaited<ReturnType<typeof completionFixture>>;
 
 type AssessmentSession = { id: string; revision: number };
 
-function text(result: { content: Array<{ type: string; text?: string }>; isError?: boolean }): string {
-  expect(result.isError).not.toBe(true);
-  const content = result.content[0];
+function text(result: unknown): string {
+  const response = result as { content?: Array<{ type?: unknown; text?: unknown }>; isError?: unknown };
+  expect(response.isError).not.toBe(true);
+  const content = response.content?.[0];
   expect(content).toMatchObject({ type: "text" });
   if (!content || content.type !== "text" || typeof content.text !== "string") throw new Error("assessment producer returned no text");
   return content.text;
