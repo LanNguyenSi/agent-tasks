@@ -16,6 +16,8 @@ sources:
   - Dockerfile.migrate
   - backend/package.json
   - backend/prisma/grounding-github-fence.sql
+  - backend/src/scripts/grounding-migration-report.ts
+  - scripts/grounding-deployment-check.mjs
   - tools/frontend-docker-smoke.sh
   - tools/compose.smoke-override.yml
   - docs/deploy-verify-strategy.md
@@ -28,5 +30,13 @@ sources:
 `backend` and `frontend` both join two Docker networks: `internal` (talks to `db`) and the external `traefik` network, with Traefik router labels for `agent-tasks.opentriologue.ai` (`/api`+`/docs` prefix → backend port 3001; everything else → frontend port 3000), TLS via `letsencrypt` cert resolver. `backend` has an uploads volume (`agent_tasks_uploads`) for human-uploaded attachments, explicitly called out in the compose file as **not** covered by the Postgres backup scope. Memory limits are hand-tuned per service (`db` 512m, `migrate` 512m, `backend` 768m, `frontend` 1g) based on observed idle/peak RSS, documented inline.
 
 **Verifying a deployment**: since there is no in-repo mechanism, verification is external, confirm the `backend`/`frontend` containers are healthy and on the expected image digest, hit `GET /api/health` AND the root URL (the 2026-08-17 outage was a green backend with a crash-looping frontend), and check the Traefik router is serving the current cert/host. `tools/frontend-docker-smoke.sh` covers pre-merge image viability; there is still no scripted post-deploy verification in this repo -- that is an ops runbook outside `docs/okf/`.
+
+## Deployment checks for grounding migrations
+
+Grounding migration inventory is a read-only deployment check. Use `node scripts/grounding-deployment-check.mjs --inventory-only` with an explicit `GROUNDING_MIGRATION_DATABASE_URL` after building the backend. Its result is an input to a migration review, never a readiness decision or an activation command.
+
+Review the inventory together with an isolated backup/restore rehearsal, additive-schema mixed-version exercise, and proof that old writing instances are excluded before any enforcement change. A report that recommends a hold does not enforce one. A valid hold needs an authorized migration and a maintenance mechanism that participating writers cannot bypass.
+
+Do not activate from inventory counts, a successful process exit, a package version, or a caller flag. Keep activation blocked until runtime trust composition, new-task cohort selection, writer-fleet exclusion, and separate host/operator key and state evidence are complete.
 
 Related: `architecture.md`, `release-flow.md`.

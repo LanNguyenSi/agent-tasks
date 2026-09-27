@@ -36,6 +36,14 @@ Both commands accept `--target /path/to/fixture-dir`. Sync prepares and validate
 
 The verifier reads no environment variables or key files, imports no wrapper/ledger/harness key, fetches no keys, and makes no network requests. The consumer tests use the vendored corpus and temporary local Git repositories; they require no producer checkout. Issuer isolation and rollout qualification remain separate work.
 
+## Producer protocol qualification
+
+The receipt corpus tests the consumer verifier, not a deployment composition. A separate opt-in integration qualification starts a pinned assessment producer as a local child process over stdio. It gives that process an ephemeral key, a dedicated HOME and state directory, and no consumer database environment. The consumer receives only the public key in its temporary trust configuration and ingests the producer's original exported receipt bytes.
+
+That qualification checks the restricted seven-operation assessment surface, a complete passing lifecycle, and missing, failed, and untrusted receipt failures. It also proves that the protected completion path does not fall back to the legacy wrapper or ledger. Set `GROUNDING_TEST_ASSESSMENT_ENTRYPOINT` to the explicitly selected producer entry point when running it; without that explicit deployment-test configuration, the suite is skipped and ordinary CI does not establish this qualification.
+
+The child process is a local separated-process test. It does not demonstrate independent hosts, operating-system isolation, deployment key management, or operator policy. Those require separate rollout evidence before activation.
+
 ## Protected attempts and receipt ingest
 
 `GroundingAttemptsService` adds dormant consumer storage and two authenticated routes. The application requires explicit server-owned service injection; unconfigured attempt routes return `503 grounding_verification_unavailable`. There is no HTTP enrollment endpoint. The server-only `provision({taskId, projectId, subjectMode})` method requires an existing matching task, an explicit audience, a supported pinned policy and a usable independently configured trust store. Repeating identical provisioning is idempotent; conflicting provisioning fails. It never reads task metadata, changes the legacy `requireGroundingForDebug` default, or creates protection from `debugFlavor`.
