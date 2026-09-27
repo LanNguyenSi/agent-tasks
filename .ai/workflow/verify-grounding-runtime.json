@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "repository": "LanNguyenSi/agent-tasks",
+  "preflight": {
+    "kind": "preflight",
+    "name": "repository",
+    "cwd": ".",
+    "argv": [
+      "preflight",
+      "run",
+      ".",
+      "--json"
+    ]
+  },
+  "extras": [
+    {
+      "kind": "check",
+      "name": "prisma-generate",
+      "cwd": ".",
+      "argv": [
+        "agent-primitives",
+        "verify",
+        "-c",
+        "prisma-generate",
+        "-x",
+        "prisma-generate=npm run db:generate --workspace=backend"
+      ],
+      "phase": "before_preflight"
+    },
+    {
+      "kind": "check",
+      "name": "build",
+      "cwd": ".",
+      "argv": [
+        "agent-primitives",
+        "verify",
+        "-c",
+        "build",
+        "-x",
+        "build=npm run build --workspace=backend"
+      ],
+      "phase": "before_preflight"
+    },
+    {
+      "kind": "check",
+      "name": "test-types",
+      "cwd": ".",
+      "argv": [
+        "agent-primitives",
+        "verify",
+        "-c",
+        "test-types",
+        "-x",
+        "test-types=npm run typecheck:test --workspace=backend"
+      ],
+      "phase": "before_preflight"
+    },
+    {
+      "kind": "check",
+      "name": "okf",
+      "cwd": ".",
+      "argv": [
+        "okf-kit",
+        "check",
+        "docs/okf",
+        "--repo-root",
+        ".",
+        "--json"
+      ],
+      "phase": "before_preflight"
+    },
+    {
+      "kind": "check",
+      "name": "compose-config",
+      "cwd": ".",
+      "argv": [
+        "docker",
+        "compose",
+        "--env-file",
+        "/dev/null",
+        "-f",
+        "docker-compose.prod.yml",
+        "config",
+        "--quiet"
+      ],
+      "phase": "before_preflight"
+    }
+  ]
+}
