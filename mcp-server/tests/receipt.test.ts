@@ -920,6 +920,21 @@ describe("receiptForStart", () => {
     expect(slice).not.toHaveProperty("next");
   });
 
+  it("projects an external grounding hint into MCP verbs without exposing producer or wrapper session state", () => {
+    const slice = receiptForStart({
+      ...workResponse,
+      groundingHint: {
+        kind: "external_grounding_v1",
+        taskId: "b7f3c2d1-0000-4000-8000-000000000001",
+        attempts: { issue: { body: { intent: "finish" } } },
+        completion: { requiredHeader: "Idempotency-Key" },
+      },
+    }) as StartSlice;
+    expect(slice.next).toEqual(["task_grounding_attempt_create intent=finish; send its challenge to the assessment producer, task_grounding_receipt_upload the signed receipt, then complete with an operationKey"]);
+    expect(JSON.stringify(slice)).not.toContain("producer-session");
+    expect(JSON.stringify(slice)).not.toContain("backendSessionRef");
+  });
+
   it("compacts a debugFlavor groundingHint into `next`: keeps only the callable recipe, drops backendSessionRef and the other verbose fields, and stays within budget", () => {
     const debugResponse: StartResponse = {
       ...workResponse,
@@ -1048,7 +1063,8 @@ describe("receiptForStart", () => {
     };
     const raw = receiptForStart(debugResponse, ["task"]);
     expect(raw).toBe(debugResponse);
-    expect((raw as StartResponse).groundingHint?.backendSessionRef).toBe("gs-agent-tasks-abc123");
+    const hint = (raw as StartResponse).groundingHint;
+    expect(hint && "backendSessionRef" in hint ? hint.backendSessionRef : undefined).toBe("gs-agent-tasks-abc123");
   });
 
   it("include:[\"instructions\"] omits instructions (does not guess) when workflowId is set but no embedded workflow.definition.states is sent, mirroring deriveGateExpectations' custom-workflow guard (rc-v1-C003 fix round 1, MEDIUM finding)", () => {

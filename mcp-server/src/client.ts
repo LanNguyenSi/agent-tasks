@@ -88,6 +88,7 @@ export class AgentTasksClient {
     method: string,
     path: string,
     body?: unknown,
+    extraHeaders?: Record<string, string>,
   ): Promise<T> {
     const url = `${this.config.baseUrl.replace(/\/$/, "")}${path}`;
     const headers: Record<string, string> = {
@@ -97,6 +98,7 @@ export class AgentTasksClient {
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
     }
+    Object.assign(headers, extraHeaders);
 
     const res = await fetch(url, {
       method,
@@ -461,12 +463,15 @@ export class AgentTasksClient {
       autoMerge?: boolean;
       mergeMethod?: "squash" | "merge" | "rebase";
     },
+    operationKey?: string,
   ) {
-    return this.request<unknown>("POST", `/api/tasks/${taskId}/finish`, input);
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/finish`, input,
+      operationKey === undefined ? undefined : { "Idempotency-Key": operationKey });
   }
 
-  abandonTask(taskId: string) {
-    return this.request<unknown>("POST", `/api/tasks/${taskId}/abandon`);
+  abandonTask(taskId: string, operationKey?: string) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/abandon`, operationKey === undefined ? undefined : {},
+      operationKey === undefined ? undefined : { "Idempotency-Key": operationKey });
   }
 
   // Task 7a1360da: distinct from abandonTask above, which releases a CLAIM.
@@ -476,10 +481,22 @@ export class AgentTasksClient {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/creator-abandon`, input);
   }
 
-  mergeTask(taskId: string, mergeMethod?: "squash" | "merge" | "rebase") {
+  mergeTask(taskId: string, mergeMethod?: "squash" | "merge" | "rebase", operationKey?: string) {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/merge`, {
       mergeMethod: mergeMethod ?? "squash",
-    });
+    }, operationKey === undefined ? undefined : { "Idempotency-Key": operationKey });
+  }
+
+  createGroundingAttempt(taskId: string, intent: "finish" | "approve" | "merge") {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/grounding-attempts`, { intent });
+  }
+
+  uploadGroundingReceipt(
+    taskId: string,
+    attemptId: string,
+    input: { session: { id: string; revision: number }; receipt: string },
+  ) {
+    return this.request<unknown>("POST", `/api/tasks/${taskId}/grounding-attempts/${attemptId}/receipt`, input);
   }
 
   submitPr(

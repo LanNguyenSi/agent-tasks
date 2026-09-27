@@ -1,14 +1,15 @@
 /**
  * HTTP-transport peer of the stdio `@agent-tasks/mcp-server` package.
- * Exposes a hand-maintained 21-tool subset of that package's 35 tools
+ * Exposes a hand-maintained subset of the stdio package's tool surface
  * over JSON-RPC via the MCP SDK's
  * `WebStandardStreamableHTTPServerTransport`, which plugs directly
  * into Hono's fetch-native request/response.
  *
- * The subset is the full v1 alias surface (projects_*, tasks_*,
- * review_*, signals_*, pull_requests_*) minus project_tasks; it does
- * not yet include the v2 verbs (task_*), artifact tools, or attachment
- * tools. Kept in sync by hand with mcp-server/src/tools.ts.
+ * The subset contains the full v1 alias surface (projects_*, tasks_*,
+ * review_*, signals_*, pull_requests_*) minus project_tasks, plus the
+ * grounding attempt/receipt transport and minimum v2 completion verbs.
+ * Artifact tools, attachment tools, task pickup/start, and the local primer
+ * remain stdio-only. Kept in sync by hand with mcp-server/src/tools.ts.
  *
  * ## Why
  *
@@ -86,6 +87,7 @@ async function callSelf(
   init: {
     method: "GET" | "POST" | "PATCH" | "DELETE";
     body?: unknown;
+    headers?: Record<string, string>;
   },
   token: string,
 ): Promise<unknown> {
@@ -98,6 +100,7 @@ async function callSelf(
   if (init.body !== undefined) {
     headers["Content-Type"] = "application/json";
   }
+  Object.assign(headers, init.headers);
   const req = new Request(url, {
     method: init.method,
     headers,
@@ -114,11 +117,15 @@ async function callSelf(
     }
   }
   if (!res.ok) {
+    const code =
+      parsed && typeof parsed === "object" && "error" in parsed
+        ? String((parsed as { error: unknown }).error)
+        : undefined;
     const message =
       parsed && typeof parsed === "object" && "message" in parsed
         ? String((parsed as { message: unknown }).message)
         : `backend ${res.status}`;
-    throw new Error(`agent-tasks API ${res.status}: ${message}`);
+    throw new Error(`agent-tasks API ${res.status}: ${code ? `${code}: ` : ""}${message}`);
   }
   return parsed;
 }
@@ -301,6 +308,80 @@ function buildServer(token: string): McpServer {
       } catch (e) {
         return errorResult(e);
       }
+    },
+  );
+
+  server.registerTool(
+    "task_grounding_attempt_create",
+    {
+      description: "Request an external-grounding challenge for a provisioned task. It authorizes an attempt only; it does not complete the task.",
+      inputSchema: { taskId: uuid(), intent: z.enum(["finish", "approve", "merge"]) },
+    },
+    async ({ taskId, intent }) => {
+      try {
+        return textResult(await callSelf(`/api/tasks/${taskId}/grounding-attempts`, { method: "POST", body: { intent } }, token));
+      } catch (e) { return errorResult(e); }
+    },
+  );
+
+  server.registerTool(
+    "task_grounding_receipt_upload",
+    {
+      description: "Upload the producer's original signed receipt for a grounding attempt. The receipt is opaque UTF-8 text limited to 32,768 bytes; backend verification remains authoritative.",
+      inputSchema: {
+        taskId: uuid(),
+        attemptId: uuid(),
+        session: z.object({ id: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/), revision: z.number().int().positive().max(2_147_483_647) }).strict(),
+        receipt: z.string().refine(value => Buffer.byteLength(value, "utf8") <= 32_768, "receipt must be at most 32768 UTF-8 bytes"),
+      },
+    },
+    async ({ taskId, attemptId, session, receipt }) => {
+      try {
+        return textResult(await callSelf(`/api/tasks/${taskId}/grounding-attempts/${attemptId}/receipt`, { method: "POST", body: { session, receipt } }, token));
+      } catch (e) { return errorResult(e); }
+    },
+  );
+
+  const operationKey = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
+  const completionHeaders = (key: string | undefined) => key === undefined ? undefined : { "Idempotency-Key": key };
+
+  server.registerTool(
+    "task_finish",
+    {
+      description: "Finish a task. Provisioned external-grounding tasks require operationKey; reuse that key only for the same retry.",
+      inputSchema: {
+        taskId: uuid(), result: z.string().max(5000).optional(), prUrl: httpUrl().optional(),
+        outcome: z.enum(["approve", "request_changes"]).optional(), autoMerge: z.boolean().optional(),
+        mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(), operationKey: operationKey.optional(),
+      },
+    },
+    async ({ taskId, operationKey: key, ...body }) => {
+      try { return textResult(await callSelf(`/api/tasks/${taskId}/finish`, { method: "POST", body, headers: completionHeaders(key) }, token)); }
+      catch (e) { return errorResult(e); }
+    },
+  );
+
+  server.registerTool(
+    "task_merge",
+    {
+      description: "Merge the task's registered pull request. Provisioned external-grounding tasks require operationKey; reuse that key only for the same retry.",
+      inputSchema: { taskId: uuid(), mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(), operationKey: operationKey.optional() },
+    },
+    async ({ taskId, mergeMethod, operationKey: key }) => {
+      try { return textResult(await callSelf(`/api/tasks/${taskId}/merge`, { method: "POST", body: { ...(mergeMethod === undefined ? {} : { mergeMethod }) }, headers: completionHeaders(key) }, token)); }
+      catch (e) { return errorResult(e); }
+    },
+  );
+
+  server.registerTool(
+    "task_abandon",
+    {
+      description: "Release the active task claim. Provisioned external-grounding tasks require operationKey; reuse that key only for the same retry.",
+      inputSchema: { taskId: uuid(), operationKey: operationKey.optional() },
+    },
+    async ({ taskId, operationKey: key }) => {
+      try { return textResult(await callSelf(`/api/tasks/${taskId}/abandon`, { method: "POST", body: {}, headers: completionHeaders(key) }, token)); }
+      catch (e) { return errorResult(e); }
     },
   );
 

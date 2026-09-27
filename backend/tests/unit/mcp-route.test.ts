@@ -25,6 +25,7 @@ interface RecordedRequest {
   path: string;
   query: Record<string, string>;
   authorization: string | null;
+  idempotencyKey: string | null;
   body: unknown;
 }
 
@@ -65,6 +66,7 @@ function makeTestApp(): {
       path: c.req.path,
       query: Object.fromEntries(url.searchParams),
       authorization: c.req.header("Authorization") ?? null,
+      idempotencyKey: c.req.header("Idempotency-Key") ?? null,
       body: parsedBody,
     });
     return c.json(nextResponse.json, nextResponse.status as 200);
@@ -139,7 +141,7 @@ describe("POST /api/mcp — tool registration", () => {
     ({ app } = makeTestApp());
   });
 
-  it("tools/list returns the full set of 21 tools", async () => {
+  it("tools/list returns the full set of 26 tools", async () => {
     const res = await mcpRequest(
       app,
       { jsonrpc: "2.0", id: 1, method: "tools/list" },
@@ -173,6 +175,11 @@ describe("POST /api/mcp — tool registration", () => {
         "tasks_release",
         "tasks_transition",
         "tasks_update",
+        "task_abandon",
+        "task_finish",
+        "task_grounding_attempt_create",
+        "task_grounding_receipt_upload",
+        "task_merge",
       ].sort(),
     );
   });
@@ -181,9 +188,10 @@ describe("POST /api/mcp — tool registration", () => {
 describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
   let app: Hono<{ Variables: AppVariables }>;
   let recorded: RecordedRequest[];
+  let nextResponse: { status: number; json: unknown };
 
   beforeEach(() => {
-    ({ app, recorded } = makeTestApp());
+    ({ app, recorded, nextResponse } = makeTestApp());
   });
 
   afterEach(() => {
@@ -367,6 +375,74 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
       path: `/api/tasks/${taskId}/transition`,
       body: { status: "done", force: true, forceReason: "hotfix rollback" },
     });
+  });
+
+  it("grounding tools forward the exact challenge and signed-receipt contracts", async () => {
+    const taskId = "33333333-3333-3333-3333-333333333333";
+    const attemptId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    await callTool("task_grounding_attempt_create", { taskId, intent: "finish" });
+    expect(recorded[0]).toMatchObject({ method: "POST", path: `/api/tasks/${taskId}/grounding-attempts`, body: { intent: "finish" } });
+    recorded.length = 0;
+    await callTool("task_grounding_receipt_upload", { taskId, attemptId, session: { id: "producer.session", revision: 1 }, receipt: '{"signed":"bytes"}' });
+    expect(recorded[0]).toMatchObject({ method: "POST", path: `/api/tasks/${taskId}/grounding-attempts/${attemptId}/receipt`, body: { session: { id: "producer.session", revision: 1 }, receipt: '{"signed":"bytes"}' } });
+  });
+
+  it("rejects a non-HTTP finish prUrl before self-dispatch", async () => {
+    const response = await mcpRequest(app, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "task_finish", arguments: { taskId: "33333333-3333-3333-3333-333333333333", prUrl: "javascript:alert(1)" } } }, { Authorization: "Bearer good_token" });
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
+  it("can complete the hosted assessment transport sequence without treating receipt upload as completion", async () => {
+    const taskId = "33333333-3333-3333-3333-333333333333";
+    const attemptId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    nextResponse.json = { attemptId, nonce: "challenge-nonce" };
+    const challenge = await mcpRequest(app, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "task_grounding_attempt_create", arguments: { taskId, intent: "finish" } } }, { Authorization: "Bearer good_token" });
+    expect(challenge.body).toMatchObject({ result: { content: [{ text: expect.stringContaining("challenge-nonce") }] } });
+    nextResponse.json = { receiptId: "receipt-1", replayed: false };
+    const uploaded = await mcpRequest(app, { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "task_grounding_receipt_upload", arguments: { taskId, attemptId, session: { id: "producer", revision: 1 }, receipt: "{}" } } }, { Authorization: "Bearer good_token" });
+    expect(uploaded.body).toMatchObject({ result: { content: [{ text: expect.stringContaining("receipt-1") }] } });
+    nextResponse.json = { task: { id: taskId, status: "review" } };
+    const completed = await mcpRequest(app, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "task_finish", arguments: { taskId, operationKey: "operation-1" } } }, { Authorization: "Bearer good_token" });
+    expect(completed.body).toMatchObject({ result: { content: [{ text: expect.stringContaining('"status": "review"') }] } });
+    expect(recorded.map(request => request.path)).toEqual([`/api/tasks/${taskId}/grounding-attempts`, `/api/tasks/${taskId}/grounding-attempts/${attemptId}/receipt`, `/api/tasks/${taskId}/finish`]);
+  });
+
+  it("passes operationKey as Idempotency-Key for completion without turning a pending response into success", async () => {
+    const taskId = "33333333-3333-3333-3333-333333333333";
+    nextResponse.status = 202;
+    nextResponse.json = { pending: true, operationId: "op-1" };
+    const response = await mcpRequest(app, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "task_finish", arguments: { taskId, operationKey: "retry-key-1" } } }, { Authorization: "Bearer good_token" });
+    expect(response.status).toBe(200);
+    expect(recorded[0]).toMatchObject({ method: "POST", path: `/api/tasks/${taskId}/finish`, body: {} });
+    expect(recorded[0].authorization).toBe("Bearer good_token");
+    expect(recorded[0].idempotencyKey).toBe("retry-key-1");
+    expect(response.body).toMatchObject({ result: { content: [{ text: expect.stringContaining('"pending": true') }] } });
+  });
+
+  it("rejects an oversized multibyte receipt before it reaches the REST route", async () => {
+    const taskId = "33333333-3333-3333-3333-333333333333";
+    const response = await mcpRequest(app, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "task_grounding_receipt_upload", arguments: { taskId, attemptId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", session: { id: "producer", revision: 1 }, receipt: "😀".repeat(8_193) } } }, { Authorization: "Bearer good_token" });
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("32768 UTF-8 bytes") }] } });
+  });
+
+  it("preserves a stable grounding error code when the backend provides no message", async () => {
+    const taskId = "33333333-3333-3333-3333-333333333333";
+    nextResponse.status = 409;
+    nextResponse.json = { error: "grounding_required" };
+    const response = await mcpRequest(app, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "task_finish", arguments: { taskId, operationKey: "retry-key-1" } } }, { Authorization: "Bearer good_token" });
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("grounding_required") }] } });
+  });
+
+  it.each(["grounding_receipt_unsupported", "grounding_receipt_untrusted", "grounding_verification_unavailable", "grounding_receipt_mismatch"])("preserves embedded grounding code %s", async (code) => {
+    nextResponse.status = code === "grounding_verification_unavailable" ? 503 : 409;
+    nextResponse.json = { error: code };
+    const response = await mcpRequest(app, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "task_finish", arguments: { taskId: "33333333-3333-3333-3333-333333333333", operationKey: "retry-key-1" } } }, { Authorization: "Bearer good_token" });
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining(code) }] } });
   });
 
   it("signals_poll → GET /api/agent/signals", async () => {

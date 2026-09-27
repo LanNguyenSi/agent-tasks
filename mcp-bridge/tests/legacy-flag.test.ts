@@ -75,6 +75,8 @@ describe("cli.ts forwards AGENT_TASKS_MCP_LEGACY to the real spawned server (rc-
       });
       expect(names).not.toContain("tasks_claim");
       expect(names).toContain("task_start");
+      expect(names).toContain("task_grounding_attempt_create");
+      expect(names).toContain("task_grounding_receipt_upload");
     },
     10_000,
   );
