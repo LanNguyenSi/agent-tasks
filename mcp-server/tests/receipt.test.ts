@@ -1063,7 +1063,8 @@ describe("receiptForStart", () => {
     };
     const raw = receiptForStart(debugResponse, ["task"]);
     expect(raw).toBe(debugResponse);
-    expect((raw as StartResponse).groundingHint?.backendSessionRef).toBe("gs-agent-tasks-abc123");
+    const hint = (raw as StartResponse).groundingHint;
+    expect(hint && "backendSessionRef" in hint ? hint.backendSessionRef : undefined).toBe("gs-agent-tasks-abc123");
   });
 
   it("include:[\"instructions\"] omits instructions (does not guess) when workflowId is set but no embedded workflow.definition.states is sent, mirroring deriveGateExpectations' custom-workflow guard (rc-v1-C003 fix round 1, MEDIUM finding)", () => {
