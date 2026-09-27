@@ -164,7 +164,7 @@ function recordLegacyPhaseDiagnostics(report: GroundingMigrationProjectReport, r
   if (malformedPhase) report.legacyPhaseDiagnostics.malformedPhase++;
   if (phase && !legacyPhases.has(phase)) report.legacyPhaseDiagnostics.impossiblePhase++;
   if (phase === "complete") report.legacyPhaseDiagnostics.completePhase++;
-  return malformedSession || malformedPhase || phase === "complete" || (phase !== null && !legacyPhases.has(phase));
+  return malformedSession || malformedPhase || (phase !== null && !legacyPhases.has(phase));
 }
 
 function actionFor(row: Row, cohort: Cohort, legacyPhaseNeedsRepair: boolean): string {

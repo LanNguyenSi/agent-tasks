@@ -70,10 +70,12 @@ additive and has no caller in this decision's legacy gate.
   every debug-flavored finish in projects with the gate disabled. This
   is intentional: it gives operators a way to validate "would we have
   caught this with the gate on?" before flipping the flag.
-- The phase allowlist (`PHASES_AT_OR_PAST_CLAIM_EVAL`) is hard-coded
-  against `@lannguyensi/grounding-wrapper@0.1.0`. A wrapper version
-  bump that renames or reorders phases needs the constant updated.
-  A unit test pins the current contents so the next bumper sees the
+- The legacy phase allowlist (`PHASES_AT_OR_PAST_CLAIM_EVAL`) is hard-coded
+  against `@lannguyensi/grounding-wrapper@0.1.0`: only `claim-evaluation`
+  and its terminal `complete` state qualify. Those labels express phase
+  compatibility, not a successful evaluated outcome. A wrapper version bump
+  that renames or reorders phases needs the constant updated; a unit test
+  advances an actual pinned-wrapper session so the next bumper sees the
   failure.
 
 ## Alternatives considered

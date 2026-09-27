@@ -92,7 +92,7 @@ describe("grounding migration inventory", () => {
       expect(report.totals.debug.debug).toBeGreaterThan(7);
       expect(report.totals.legacyPhaseDiagnostics).toMatchObject({ malformedSession: 3, malformedPhase: 2, impossiblePhase: 8, completePhase: 4 });
       expect(report.totals.remote).toEqual({ unresolvedOperations: 1, autoMergeSha: 1 });
-      expect(report.totals.recommendedActions.RECOMMEND_HOLD_LEGACY_STATE_REPAIR).toBeGreaterThanOrEqual(13);
+      expect(report.totals.recommendedActions.RECOMMEND_HOLD_LEGACY_STATE_REPAIR).toBe(12);
       expect(report.projects.map(project => [project.projectId, project.project, project.requireGroundingForDebug])).toEqual([
         ["project-empty", "empty", false], ["project-optional", "optional", false], ["project-required", "required", true], ["project-required-duplicate", "required", false],
       ]);

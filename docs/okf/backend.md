@@ -3,7 +3,7 @@ type: module
 title: "backend: Hono API + Prisma"
 description: "Route layout, service/gate split, and the token-hash auth middleware behind every request."
 tags: [backend, hono, prisma, auth, routes]
-timestamp: 2026-09-27T18:30:09Z
+timestamp: 2026-09-27T18:50:32Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -64,7 +64,7 @@ the protected transaction; existing callers retain their singleton default.
 Exact byte projection, limits and error behavior are documented in [the receipt
 contract](../grounding-receipt-contract.md).
 
-**Gate registry** (`backend/src/services/gates/`): a small discovery-only registry (`types.ts` `GateCode` enum: `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) so a project can introspect *which* gates would fire before calling a verb (`GET /api/projects/:id/effective-gates`, MCP `projects_get_effective_gates`). Enforcement itself still lives inline in the route handlers, not in this registry.
+**Gate registry** (`backend/src/services/gates/`): a small discovery-only registry (`types.ts` `GateCode` enum: `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) so a project can introspect *which* gates would fire before calling a verb (`GET /api/projects/:id/effective-gates`, MCP `projects_get_effective_gates`). Enforcement itself still lives inline in the route handlers, not in this registry. The separate legacy finish gate accepts only the pinned wrapper's `claim-evaluation` and terminal `complete` phases with a session and ledger evidence; its phase compatibility is not an evaluated-outcome result.
 
 **Auth middleware** (`backend/src/middleware/auth.ts`): `authMiddleware` reads `Authorization: Bearer <token>`, SHA-256-hashes it (`hashToken`, `createHash("sha256")`) and looks up `AgentToken.tokenHash` (unique). A hit yields an `AgentActor{ tokenId, teamId, scopes, userId }` (also checks `revokedAt`/`expiresAt`, updates `lastUsedAt`). A miss falls through to `verifySessionToken` (session JWT, e.g. server-to-server callers with no cookie jar) → `HumanActor`. No bearer header falls back to the session cookie (`extractSessionCookie`). `requireScope(scope)` is the per-route scope gate; `hashToken` is exported for reuse.
 

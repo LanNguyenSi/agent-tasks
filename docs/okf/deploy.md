@@ -3,7 +3,7 @@ type: runbook
 title: "Deploy: no in-repo automation, prod is docker-compose"
 description: "ci.yml only tests and builds; deploy/verify is an external ops concern; prod runtime is db + one-shot Prisma db push + backend/frontend behind Traefik."
 tags: [deploy, docker-compose, ops, ci]
-timestamp: 2026-09-27T18:28:58Z
+timestamp: 2026-09-27T18:50:32Z
 sources:
   - .github/workflows/ci.yml
   - .github/workflows/docker-smoke.yml
@@ -33,7 +33,7 @@ sources:
 
 ## Deployment checks for grounding migrations
 
-Grounding migration inventory is a read-only deployment check. Use `node scripts/grounding-deployment-check.mjs --inventory-only` with an explicit `GROUNDING_MIGRATION_DATABASE_URL` after building the backend. Its result is an input to a migration review, never a readiness decision or an activation command.
+Grounding migration inventory is a read-only deployment check. Use `node scripts/grounding-deployment-check.mjs --inventory-only` with an explicit `GROUNDING_MIGRATION_DATABASE_URL` after building the backend. Its result is an input to a migration review, never a readiness decision or an activation command. A valid pinned legacy `complete` phase is reported as compatible rather than as a repair request; malformed or impossible legacy phase data remains a repair signal.
 
 Review the inventory together with an isolated backup/restore rehearsal, additive-schema mixed-version exercise, and proof that old writing instances are excluded before any enforcement change. A report that recommends a hold does not enforce one. A valid hold needs an authorized migration and a maintenance mechanism that participating writers cannot bypass.
 
