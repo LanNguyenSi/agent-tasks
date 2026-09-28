@@ -3,7 +3,7 @@ type: runbook
 title: "Reconciling a task whose PR merged but the record is stuck open"
 description: "Recover a configured merge with its original operation and exact GitHub proof; retain the separate historical task lifecycle repair flow."
 tags: [reconcile, task-lifecycle, idempotency, runbook]
-timestamp: 2026-09-28T09:56:47Z
+timestamp: 2026-09-28T11:20:25Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/default-workflow.ts
@@ -85,30 +85,42 @@ protected peer linked to the PR must satisfy its own merge decision. A new
 standalone merge requires a review state; neither a terminal task nor a bare
 merge SHA permits creating a historical decision. Configured fresh remote
 merge requests without enrollment return `409 grounding_enrollment_required`
-only when the task's project is selected by `creationPolicy`, or when any
-repository or PR number the legacy handler could act on (request, task and PR
-URL targets alike) belongs to a selected project or is shared with a
-protected/`EXTERNAL_V1`/held peer, or any candidate repository string is not a
-canonical identity, or a protected/`EXTERNAL_V1`/bound/held task whose own
-repository string is not canonical shares a candidate PR number; an unguarded
-request whose candidate repository fence another operation owns returns `409
-grounding_finalization_pending` before any GitHub call; otherwise, including
-without an operation key, the request reaches the unchanged legacy handler.
+from the router only when the task's own project is selected by
+`creationPolicy` (`grounding-task-completion.ts:114`,
+`routes/grounding-github.ts:142`); otherwise, including without an operation
+key, the untouched request reaches the legacy handler. That handler is
+unchanged except for a target check at its effect boundary: with configuration
+enabled, `performPrMerge` checks the exact repository and PR number right
+before the GitHub merge call (`services/github-merge.ts:112`) and refuses
+with `409 grounding_enrollment_required` when that repository string is not
+exactly canonical, belongs to a selected project, or when the PR is a
+protected/`EXTERNAL_V1`/bound/held task's (including such a task whose own
+repository string is not canonical and that shares the number), and with
+`409 grounding_finalization_pending` when another operation owns the
+repository fence (`grounding-scope.ts:93`). A legacy merge refused there makes
+no GitHub call and writes nothing, so it cannot produce a done-but-open
+mismatch; a legacy gate that refuses first answers as in the unconfigured app.
 The configured GitHub create and merge routes check the caller's project
 access with the legacy rule right after the task lookup, before any Grounding
-read or lock (`routes/grounding-github.ts:93`,
-`routes/grounding-github.ts:142`), so a caller without access gets the legacy
-handler's own 403. Outside the enforced scope they read only the task id, the
-create body owner/repo, a well-formed key for the history lookup and the path
-PR number parsed as legacy parses it, then hand the request to the legacy
+read or lock (`routes/grounding-github.ts:82`,
+`routes/grounding-github.ts:130`), so a caller without access gets the legacy
+handler's own 403. Outside the enforced scope they read only the task id and a
+well-formed key for the history lookup, then hand the request to the legacy
 handler unmodified; the principal differences from the unconfigured app are
-the guarded and fenced refusals, the agent-scope admission check that runs
+the boundary and in-scope refusals, the agent-scope admission check that runs
 first, a transient `503 grounding_verification_unavailable` from the
 Serializable routing read, and the GitHub merge route's `503` retry message.
-Enabling configuration writes grounding history (webhook deliveries, for
-example), so it is one-way; rollback keeps an enabled configuration with empty
-trust and an empty `creationPolicy`. Compatibility requires explicit OFF or
-LEGACY_LOCAL server enrollment, not a fallback selected from task metadata.
+The boundary read is point-in-time, one database round trip before the GitHub
+call: a grouped operation that acquires the repository fence after it lets
+the legacy merge land on GitHub while the legacy task write fails on the
+fence, which leaves the task in review with a merged PR; retrying the same
+legacy merge after the fence is released records it, because
+`performPrMerge` treats GitHub's already-merged answer as success
+(`services/github-merge.ts:157`). Enabling configuration writes grounding history
+(webhook deliveries, for example), so it is one-way; rollback keeps an enabled
+configuration with empty trust and an empty `creationPolicy`. Compatibility
+requires explicit OFF or LEGACY_LOCAL server enrollment, not a fallback
+selected from task metadata.
 
 A configured positive webhook for a provisioned task is a pending, audited
 observation. Even a valid receipt does not let that delivery complete the task.

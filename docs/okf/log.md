@@ -49,6 +49,28 @@ changed routes and scope service and re-stamped; `claim-model.md` was
 re-verified against the edited receipt contract (its claims did not change) and
 re-stamped.
 
+The target checks then moved from the routers to the effect boundary. The
+routers keep only exact decisions (admission, task lookup, access, durable
+history, enrollment mode, and whether the task's own project is in scope) and
+no longer derive candidate repositories and PR numbers from the request and
+the task. Instead, with configuration enabled, `performPrMerge` checks the
+exact repository and PR number right before the GitHub merge call, and the
+legacy PR creator and commenter check the repository (and PR) they post to;
+the check refuses a non-canonical repository string, an enforced repository,
+a protected/`EXTERNAL_V1`/bound/held peer's PR (alias peers included) and, for
+merges and creates, an owned repository fence, reading peer and fence in one
+statement. `createApp` hands the check to every request and the unconfigured
+app hands none. The grouped merge peer lookup now reads peer ids from the
+enrollment and hold tables first. The attempt and migration routes now check
+access before the task lock, and the creation router before its
+`creationPolicy` selection. `architecture.md`, `backend.md`,
+`governance-merge.md`, `reconcile-done-but-open.md` and `workflow-gates.md`
+were rewritten for the effect-boundary design and re-verified against the
+changed routes, services and wiring; `deploy.md` and `task-lifecycle.md` were
+re-verified and gained one sentence each (the composed check, the creation
+router's access order); `claim-model.md` was re-verified against the edited
+`tasks.ts` and receipt contract (its claims did not change) and re-stamped.
+
 Separately, unconfigured (grounding-disabled) startup admission stopped
 treating an unowned GitHub repository-fence row as grounding history on its
 own, since the repository-fence SQL trigger bumps such a row on any ordinary

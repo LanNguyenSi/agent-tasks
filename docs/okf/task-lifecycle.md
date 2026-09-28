@@ -3,7 +3,7 @@ type: overview
 title: "The v2 verb surface and the happy-path task lifecycle"
 description: "task_create, task_pickup, task_start, task_finish, task_merge, task_abandon, the polymorphic MCP-oriented verbs layered over the classic REST CRUD, plus lazy debugFlavor classification and the backlog status for agent-created work."
 tags: [task-lifecycle, mcp, verbs, overview, backlog]
-timestamp: 2026-09-27T19:22:30Z
+timestamp: 2026-09-28T11:20:25Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/routes/grounding-direct-tasks.ts
@@ -16,7 +16,7 @@ ADR-0008 introduced a small, polymorphic "verb" surface on top of the classic RE
 
 **Backlog status and agent create routing**: when an agent creates a task via `task_create`, it is routed to `status: "backlog"` instead of `open`, signaling operator review before agent pickup is allowed. Human-created tasks always default to `open`. Backlog tasks are invisible to `task_pickup` and fail with `403 backlog_not_promoted` on `task_start` or legacy claim; they can only be started after a human explicitly promotes them to `open` (see `claim-model.md`). See "Backlog routing (v1)" in the `workflow_primer` for the MCP teaching section.
 
-An explicitly selected, server-owned dormant grounding creation policy can intercept only new REST creates and import rows for its project. It atomically adds the protected cohort/binding and still applies the ordinary agent backlog route. It rejects a review/terminal initial state instead of treating creation as a receipt-backed success. The default policy is empty; this does not make MCP creation, historical import, or production enrollment available.
+An explicitly selected, server-owned dormant grounding creation policy can intercept only new REST creates and import rows for its project. It atomically adds the protected cohort/binding and still applies the ordinary agent backlog route. It rejects a review/terminal initial state instead of treating creation as a receipt-backed success. The default policy is empty; this does not make MCP creation, historical import, or production enrollment available. With a non-empty policy, a caller without access to the project gets the legacy creator's own validation and `403` whether or not the project is selected.
 
 **Happy path** (default workflow `backlog → open → in_progress → review → done`, or directly `open → in_progress → review → done` for human creates):
 1. `task_create` (`POST /projects/:projectId/tasks`), a human or agent creates a task; agents route to `backlog` (hard-routed, `400 backlog_routing_enforced` if explicit non-backlog status requested), humans default to `open`; a create-time confidence score is computed and returned but never blocks creation (see `confidence-scorer.md`).

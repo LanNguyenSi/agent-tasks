@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-28T09:56:47Z
+timestamp: 2026-09-28T11:20:25Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -18,11 +18,15 @@ sources:
   - frontend/package.json
   - backend/src/routes/grounding-github.ts
   - backend/src/services/grounding-scope.ts
+  - backend/src/services/github-merge.ts
+  - backend/src/routes/github.ts
+  - backend/src/services/grounding-attempts.ts
+  - backend/src/services/grounding-migration.ts
 ---
 
 npm workspaces monorepo (`package.json` workspaces: `backend`, `frontend`, `mcp-server`, `mcp-bridge`, `cli`). This doc covers the four deployables; `@agent-tasks/cli` is a fifth workspace (a standalone REST CLI client) not detailed here.
 
-1. **backend** (`@agent-tasks/backend`), a Hono HTTP API (`backend/src/app.ts`, served via `@hono/node-server` in `backend/src/server.ts`), Prisma ORM against PostgreSQL. All API routes mount under `/api`; the Swagger UI page is the one exception, served at `/docs` (`backend/src/app.ts:104`, `backend/src/routes/docs.ts:1946`; see `backend.md`). Owns all state.
+1. **backend** (`@agent-tasks/backend`), a Hono HTTP API (`backend/src/app.ts`, served via `@hono/node-server` in `backend/src/server.ts`), Prisma ORM against PostgreSQL. All API routes mount under `/api`; the Swagger UI page is the one exception, served at `/docs` (`backend/src/app.ts:120`, `backend/src/routes/docs.ts:1946`; see `backend.md`). Owns all state.
 2. **frontend** (`@agent-tasks/frontend`), Next.js 15 app (`frontend/package.json` pins `next@^15`), the human-facing UI. Talks to the backend over HTTP; has a couple of its own `app/api/*` route handlers only for GitHub OAuth redirects (`frontend/src/app/api/auth/github/*`).
 3. **mcp-server** (`@agent-tasks/mcp-server`), stdio MCP server wrapping the backend REST API with a fixed `Authorization: Bearer` token. Published to npm. See `mcp-server.md`.
 4. **mcp-bridge** (`@agent-tasks/mcp-bridge`), a thin CLI wrapper around mcp-server that resolves the bearer token (env var, OS keychain, or file) before handing off to the same stdio runtime. See `mcp-bridge.md`.
@@ -35,57 +39,65 @@ provisioning selects the completion adapter for finish, merge and abandon, the
 direct adapter for transition, review, PATCH, respec and enrolled deletion
 checks, and an optional server-owned creation-policy adapter for selected new
 tasks/import rows. Absent selection reaches the historical compatibility
-routes; on a configured app, a task without server enrollment keeps that same
-compatibility behavior for local completion, but a fresh remote operation
-(task merge, GitHub merge, finish with `autoMerge`) instead returns `409
-grounding_enrollment_required` before any remote effect
-(`grounding-task-completion.ts:117`, `routes/grounding-github.ts:157`) when
-the task's project is in the configured `creationPolicy` scope, or when any
-repository or PR number the legacy handler could act on (PR create owner/repo
-and finish PR URL, deliverable, project and stored PR URL repository; path,
-task and PR URL number; never a GitHub merge body's owner/repo, which the
-legacy merger does not send to GitHub) belongs to a selected project or is
-shared with a protected/`EXTERNAL_V1`/held peer (`grounding-scope.ts`, reusing
-the merge service's peer predicate). A non-canonical candidate repository
-string (dot segment, percent-encoded name, owner containing `/`) is guarded
-too, as is a candidate PR number shared with a
-protected/`EXTERNAL_V1`/bound/held task whose own repository or PR URL
-repository is not canonical (`grounding-scope.ts`, reading peer-class tasks by
-id), and an unguarded request whose candidate repository fence another
-operation owns returns `409 grounding_finalization_pending` before any GitHub
-call (`grounding-task-completion.ts:120`, `routes/grounding-github.ts:70`).
-Otherwise, including without an operation key, the same request reaches the
-historical route; an unprovisioned task's PR create outside that scope reaches
-the legacy creator even with a key, which reads it from the `Idempotency-Key`
-header or the body `idempotencyKey`. The unconfigured default app has no such
-gate either way. The configured GitHub create and merge routes check the
-caller's project access with the legacy rule right after the task lookup,
-before any Grounding read or lock (`routes/grounding-github.ts:93`,
-`routes/grounding-github.ts:142`), so a caller without access gets the legacy
-handler's own 403. Outside the enforced scope they read only the task id, the
-create body owner/repo, a well-formed key for the history lookup and the path
-PR number parsed as legacy parses it, then hand the request to the legacy
-handler unmodified; the principal differences from the unconfigured app are
-the guarded and fenced refusals, the agent-scope admission check that runs
-first, a transient `503 grounding_verification_unavailable` from the
-Serializable routing read, and the GitHub merge route's `503` retry message.
-Enabling configuration writes grounding history (webhook deliveries, for
-example), so a later unconfigured restart is refused and enabling is one-way;
-rollback means keeping an enabled configuration with empty trust and an empty
+routes. On a configured app the routers make only exact decisions: admission,
+task lookup, the caller's access, durable keyed history, enrollment mode, and
+whether the task's own project is in the configured `creationPolicy` scope. A
+fresh remote merge (task merge, GitHub merge, finish with `autoMerge`) on an
+unenrolled task in that scope returns `409 grounding_enrollment_required`
+(`grounding-task-completion.ts:114`, `routes/grounding-github.ts:142`);
+outside it the untouched request reaches the historical handler, with or
+without an operation key (`grounding-task-completion.ts:118`,
+`routes/grounding-github.ts:141`), and an unprovisioned task's PR create
+outside the scope reaches the legacy creator even with a key
+(`routes/grounding-github.ts:95`), which reads it from the `Idempotency-Key`
+header or the body `idempotencyKey`. The historical handlers are unchanged
+except for a target check at their effect boundary: with configuration
+enabled, `performPrMerge` checks the exact repository and PR number right
+before the GitHub merge call (`services/github-merge.ts:112`, shared by the
+GitHub merge route, task merge and the review, self-approve and work
+finishes), and the legacy PR creator and commenter check the repository (and
+PR) they post to (`routes/github.ts:267`, `routes/github.ts:759`). The check
+(`grounding-scope.ts:93`) refuses with `409 grounding_enrollment_required` a
+repository string that is not exactly canonical (`grounding-scope.ts:60`), an
+enforced repository, or a protected/`EXTERNAL_V1`/bound/held task's PR,
+including a peer that stores a non-canonical repository and shares the
+number, and it refuses a merge or create whose repository fence another
+operation owns with `409 grounding_finalization_pending`; comments take no
+fence, and a create sends no PR number. Peer and fence are read in one
+statement driven by the enrollment and hold tables (`grounding-scope.ts:71`).
+`createApp` hands the check to every request (`backend/src/app.ts:47`,
+`backend/src/app.ts:59`); the unconfigured app hands none, so its handlers run
+no check, and a completion service without its check refuses startup
+(`grounding-task-completion.ts:41`). Every Grounding router checks the
+caller's access before any Grounding read or lock: the GitHub create and merge
+routes with the legacy rule (`routes/grounding-github.ts:82`,
+`routes/grounding-github.ts:130`), so a caller without access gets the legacy
+handler's own 403, the attempt and migration routes with a lock-free read
+before the task lock (`grounding-attempts.ts:73`,
+`services/grounding-migration.ts:44`), and the creation router before it looks
+at the `creationPolicy` selection (`routes/grounding-creation.ts:36`). The
+principal differences from the unconfigured app are the boundary and in-scope
+refusals (including a provisioned task's comment on its own PR, since there is
+no Grounding comment path), the agent-scope admission check that runs first, a
+transient `503 grounding_verification_unavailable` from the Serializable
+routing read, and the GitHub merge route's `503` retry message. Enabling
+configuration writes grounding history (webhook deliveries, for example), so a
+later unconfigured restart is refused and enabling is one-way; rollback means
+keeping an enabled configuration with empty trust and an empty
 `creationPolicy`. Startup itself refuses when a project outside the enforced
 scope shares a GitHub repository with an enforced one, when an enforced
 project's repository is not canonical, and, while the scope owns a repository,
 when any project's repository is not canonical; a project created or
-re-pointed after startup is not re-checked. The scope, peer and fence reads
-are point-in-time, not locks, and two residual races are accepted: a change
-between the read and the legacy GitHub call that makes some task a
-protected/`EXTERNAL_V1`/held peer of the targeted PR or repository (an admin
-rebinding a repository or PR, a migration hold, an enrollment) is not seen,
-and a grouped operation that acquires a candidate repository fence after the
-read lets the legacy GitHub effect happen while the legacy task write fails on
-the fence (a merge lands with the task still in review; a create leaves an
-unlinked PR). Invalid enrollment, orphan binding, unavailable trusted service,
-and database errors fail closed. There is no agent enrollment endpoint. An
+re-pointed after startup is not re-checked. The boundary read is
+point-in-time, one database round trip before the GitHub call, and two
+residual races within that window are accepted: a change after the read that
+makes some task a protected/`EXTERNAL_V1`/held peer of the targeted PR (an
+admin rebinding a repository or PR, a migration hold, an enrollment) is not
+seen, and a grouped operation that acquires the target repository fence after
+the read lets the legacy GitHub effect happen while the legacy task write
+fails on the fence (a merge lands with the task still in review; a create
+leaves an unlinked PR). Invalid enrollment, orphan binding, unavailable
+trusted service, and database errors fail closed. There is no agent enrollment endpoint. An
 explicitly injected human-admin migration service supplies audited hold,
 legacy repair, external migration and readiness-checked resume. The server
 loads explicit runtime selection from `GROUNDING_RUNTIME_CONFIG`; empty
@@ -104,4 +116,4 @@ completion outcome.
 
 Related: `backend.md`, `frontend.md`, `mcp-server.md`, `mcp-bridge.md`, `task-lifecycle.md`.
 
-**Startup admission**: the real server awaits strict public-only configuration and database checks before listening or sweeping idempotency state. Enabled startup composes attempts, grouped completion, PR creation and migration on the same database. Disabled startup is available only with all grounding tables present and empty; any history requires configured routing. See [configuration and upgrade](../grounding-migration.md).
+**Startup admission**: the real server awaits strict public-only configuration and database checks before listening or sweeping idempotency state. Enabled startup composes attempts, grouped completion, PR creation, migration and the effect-boundary check on the same database (`services/grounding-runtime.ts:92`). Disabled startup is available only with all grounding tables present and empty apart from unowned repository-fence rows, which ordinary GitHub-linked task writes create; any other history requires configured routing. See [configuration and upgrade](../grounding-migration.md).
