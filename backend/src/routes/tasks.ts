@@ -1153,7 +1153,7 @@ export const importTaskSchema = createTaskSchema.omit({ workflowId: true, depend
   description: z.string().max(50_000).optional(),
 });
 
-const batchImportSchema = z.object({
+export const batchImportSchema = z.object({
   tasks: z.array(importTaskSchema).min(1).max(200),
 });
 
