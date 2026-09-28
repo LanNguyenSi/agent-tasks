@@ -59,6 +59,7 @@ const peerConditions: Record<string, (repo: string, pr: number) => PeerRow> = {
   "EXTERNAL_V1 peer": (repo, pr) => ["external", repo, pr, pullUrl(repo, pr)],
   "bound peer": (repo, pr) => ["bound", repo, pr, pullUrl(repo, pr)],
   "held peer": (repo, pr) => ["held", repo, pr, pullUrl(repo, pr)],
+  "peer without a PR URL": (repo, pr) => ["held", repo, pr, null],
   "peer whose PR number is only in its PR URL": (repo, pr) => ["held", repo, null, pullUrl(repo, pr)],
   "peer whose repository is only in its PR URL": (repo, pr) => ["held", canonicalRepo(), pr, pullUrl(repo, pr)],
   "alias peer": (repo, pr) => ["held", aliasOf(repo), pr, null],
@@ -209,6 +210,39 @@ describe("requesting-side race", () => {
     expect(harness.afterRouting).toBeNull();
     expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "grounding_enrollment_required" });
     expect(github.calls).toEqual([]);
+  });
+});
+
+describe("exact target", () => {
+  // The creator posts to the request's owner/repo, which the legacy cross-repo
+  // gate matches against the task's deliverable repository, not its project's.
+  it("a create is checked on the repository it posts to, not on the task's project repository", async () => {
+    const enforced = canonicalRepo();
+    const requester = await requesterTask(store.db, "create", canonicalRepo(), null);
+    await store.db.task.update({ where: { id: requester.taskId }, data: { deliverableRepo: enforced } });
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const refused = await configured({ projectIds: new Set(), repos: new Set([enforced]) }).fetch(siteRequest("create", requester.taskId, enforced, 1, token));
+    expect(refused.status).toBe(409); expect(await refused.json()).toMatchObject({ error: "grounding_enrollment_required" });
+    expect(github.calls).toEqual([]);
+    const allowed = await configured({ projectIds: new Set(), repos: new Set([requester.repo]) }).fetch(siteRequest("create", requester.taskId, enforced, 1, token));
+    expect(allowed.status).toBe(201);
+    expect(github.writes()).toEqual([siteWrite("create", enforced, 1)]);
+  });
+  // The commenter posts to the request's owner/repo and path number, whatever
+  // the task's own repository.
+  it("a comment is checked on the repository and PR it posts to, not on the task's own", async () => {
+    const target = canonicalRepo(); const pr = uniquePr();
+    await peerTask(store.db, "held", { repo: target, prNumber: pr, prUrl: null });
+    const requester = await requesterTask(store.db, "comment", canonicalRepo(), null);
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const peer = await configured().fetch(siteRequest("comment", requester.taskId, target, pr, token));
+    expect(peer.status).toBe(409); expect(await peer.json()).toMatchObject({ error: "grounding_enrollment_required" });
+    const enforced = await configured({ projectIds: new Set(), repos: new Set([target]) }).fetch(siteRequest("comment", requester.taskId, target, uniquePr(), token));
+    expect(enforced.status).toBe(409); expect(await enforced.json()).toMatchObject({ error: "grounding_enrollment_required" });
+    expect(github.calls).toEqual([]);
+    const own = await configured({ projectIds: new Set(), repos: new Set([target]) }).fetch(siteRequest("comment", requester.taskId, requester.repo, pr, token));
+    expect(own.status).toBe(201);
+    expect(github.writes()).toEqual([siteWrite("comment", requester.repo, pr)]);
   });
 });
 
