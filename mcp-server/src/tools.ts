@@ -60,13 +60,12 @@ const priorityEnum = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 
 const uuid = () => z.string().uuid();
 const operationKey = () => z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
-// pull_requests_create's idempotencyKey: relaxed to header-safe printable
-// ASCII (no whitespace, \x21-\x7E only), 1-255 chars — matches both the
-// legacy github.ts body-field bound (trim, 1-255) and the Grounding
-// router's createKey bound (backend/src/routes/grounding-github.ts), which
-// accept the full printable-ASCII set. pull_requests_merge keeps the
-// tighter operationKey() format because its Grounding-router counterpart
-// still enforces that narrower pattern.
+// pull_requests_create's idempotencyKey: printable ASCII without whitespace
+// (\x21-\x7E only), 1-255 chars. That is a header-safe subset of the legacy
+// bound (the github.ts body field: any string, trimmed, 1-255 chars), which
+// the Grounding router's createKey (backend/src/routes/grounding-github.ts)
+// repeats. pull_requests_merge is narrowed to the operationKey format
+// because the Grounding merge route requires it.
 const createIdempotencyKey = () => z.string().regex(/^[\x21-\x7E]{1,255}$/);
 const MAX_GROUNDING_RECEIPT_BYTES = 32_768;
 
@@ -88,7 +87,10 @@ const MAX_GROUNDING_RECEIPT_BYTES = 32_768;
 // - task_finish/task_merge/task_abandon dedupe only where the backend
 //   enforces operation keys: a provisioned task on a Grounding-configured
 //   backend. On an unconfigured backend, or for an unprovisioned task, the
-//   request reaches the legacy completion handler, which ignores the key.
+//   request either reaches the legacy completion handler, which ignores the
+//   key, or, for a remote merge (task_merge, or task_finish with autoMerge)
+//   where grounding enforcement applies to the task, is refused with 409
+//   grounding_enrollment_required before any effect.
 const GENERATED_KEY_NOTE =
   " When omitted, a fresh key is generated for this single call; a generated key differs on every call, so it does not make a retry idempotent.";
 const PR_RETRY_NOTE =
@@ -112,9 +114,9 @@ const CREATE_KEY_HINT =
   " idempotencyKey: optional, 1-255 printable ASCII chars, no whitespace." + GENERATED_KEY_NOTE + PR_RETRY_NOTE;
 
 /** Resolves the operation key to actually send: the caller's explicit key
- *  when given (already validated against the same 1-128 char format by the
- *  tool's own zod schema), otherwise a freshly generated one so every call
- *  reaches the backend with a key even when the caller supplies none. */
+ *  when given (already validated by the calling tool's own zod schema),
+ *  otherwise a freshly generated one so every call reaches the backend with
+ *  a key even when the caller supplies none. */
 function resolveOperationKey(explicit: string | undefined): string {
   return explicit ?? randomUUID();
 }

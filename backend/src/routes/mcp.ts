@@ -349,9 +349,10 @@ function buildServer(token: string): McpServer {
   // operation/idempotency key (the caller's explicit value when given,
   // otherwise a fresh one generated per call), so an unconfigured
   // (legacy) backend keeps working unchanged while a provisioned
-  // Grounding backend always receives one. pull_requests_merge keeps the
-  // tighter format below; pull_requests_create uses the more permissive
-  // header-safe printable-ASCII format (see createIdempotencyKey).
+  // Grounding backend always receives one. pull_requests_merge is narrowed
+  // to the operationKey format because the Grounding merge route requires
+  // it; pull_requests_create uses the more permissive header-safe
+  // printable-ASCII format (createIdempotencyKey).
   const operationKey = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
   const createIdempotencyKey = z.string().regex(/^[\x21-\x7E]{1,255}$/);
   // Each hint below starts with the input field name it documents
@@ -368,9 +369,12 @@ function buildServer(token: string): McpServer {
   // operation on the same value. The three task-completion verbs dedupe only
   // where the backend enforces operation keys, that is for a provisioned
   // task on a backend with Grounding configured. On an unconfigured backend,
-  // or for an unprovisioned task, the completion request reaches the legacy
-  // handler in `tasks.ts`, which ignores the key, so reusing it does not
-  // make the retry idempotent there.
+  // or for an unprovisioned task, the completion request either reaches the
+  // legacy handler in `tasks.ts`, which ignores the key, or, for a remote
+  // merge (task_merge, or task_finish with autoMerge) where grounding
+  // enforcement applies to the task, is refused with 409
+  // grounding_enrollment_required before any effect. Either way, reusing
+  // the key does not make the retry idempotent there.
   const GENERATED_KEY_NOTE =
     " When omitted, a fresh key is generated for this single call; a generated key differs on every call, so it does not make a retry idempotent.";
   const PR_RETRY_NOTE =

@@ -1045,9 +1045,11 @@ describe("buildTools", () => {
   // calling the handler directly bypasses schema validation, so a regression
   // that narrows createIdempotencyKey back to operationKey's 1-128 charset
   // would go undetected. The handler call only asserts header/body
-  // forwarding.
+  // forwarding. The 255-char row pins the accept side of the length cap, so a
+  // lowered cap (for example 1-200) fails here.
   it.each([
     { label: "200-char printable-ASCII", key: "a".repeat(200) },
+    { label: "255-char printable-ASCII (the upper bound)", key: "a/~".repeat(85) },
     { label: "a key with chars outside the 1-128 operationKey set", key: "k/+=~!" },
   ])(
     "pull_requests_create accepts $label idempotencyKey, validated against its own zod schema",
@@ -1086,7 +1088,7 @@ describe("buildTools", () => {
     },
   );
 
-  it("pull_requests_merge rejects a 129-char idempotencyKey locally (keeps the tighter 1-128 format)", () => {
+  it("pull_requests_merge rejects a 129-char idempotencyKey locally (narrowed to the 1-128 operationKey format)", () => {
     const key = "a".repeat(129);
     expect(() =>
       parseArgs("pull_requests_merge", { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1, idempotencyKey: key }),
@@ -1604,6 +1606,42 @@ describe("buildTools", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     },
   );
+
+  // Reject side of the 1-128 operationKey format on the three task tools,
+  // through their own zod schema: both keys below are valid under
+  // pull_requests_create's wider printable-ASCII format, so a task tool that
+  // accepted that wider format would let them through.
+  it.each(
+    ["task_finish", "task_merge", "task_abandon"].flatMap((name) => [
+      { name, label: "a 129-char operationKey", key: "a".repeat(129) },
+      { name, label: "an operationKey containing '/'", key: "a/b" },
+    ]),
+  )("$name rejects $label locally, before any network call", ({ name, key }) => {
+    expect(() => parseArgs(name, { taskId: TASK_ID, operationKey: key })).toThrow(/"operationKey"/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // Accept side of the 1-128 operationKey format (also used by
+  // pull_requests_merge's idempotencyKey): a 128-char key built from every
+  // allowed character class passes each tool's own zod schema (parseArgs)
+  // and reaches the backend unchanged, so a lowered length cap fails here.
+  const MAX_OPERATION_KEY = "Az09._:-".repeat(16);
+  it.each([
+    { name: "pull_requests_merge", args: { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 }, keyField: "idempotencyKey", inBody: true, body: { merged: true, sha: "s", message: "ok", task: { id: "t", status: "done" } } },
+    { name: "task_finish", args: { taskId: TASK_ID }, keyField: "operationKey", inBody: false, body: { kind: "work", task: { id: "t1", status: "review" } } },
+    { name: "task_merge", args: { taskId: TASK_ID }, keyField: "operationKey", inBody: false, body: { task: { id: "t1", status: "done" }, merged: true, sha: "s", alreadyMerged: false } },
+    { name: "task_abandon", args: { taskId: TASK_ID }, keyField: "operationKey", inBody: false, body: { task: { id: "t1", status: "open" } } },
+  ])("$name accepts a 128-char $keyField through its own zod schema and forwards it unchanged", async ({ name, args, keyField, inBody, body }) => {
+    expect(MAX_OPERATION_KEY).toHaveLength(128);
+    const parsed = parseArgs(name, { ...args, [keyField]: MAX_OPERATION_KEY });
+    expect(parsed[keyField]).toBe(MAX_OPERATION_KEY);
+    fetchMock.mockResolvedValue(ok(body));
+    await tool(name).handler(parsed as never);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["Idempotency-Key"]).toBe(MAX_OPERATION_KEY);
+    expect(JSON.parse(init.body).idempotencyKey).toBe(inBody ? MAX_OPERATION_KEY : undefined);
+  });
 
   it("transports a grounding challenge request and opaque signed receipt unchanged", async () => {
     fetchMock.mockResolvedValueOnce(ok({ attemptId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" })).mockResolvedValueOnce(ok({ receiptId: "r1", replayed: false }));

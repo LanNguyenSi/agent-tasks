@@ -517,10 +517,13 @@ only where the receiving route enforces operation keys:
   `409` (`backend/src/services/idempotency.ts`). The Grounding GitHub router
   keys its durable operation on the same value.
 - `task_finish`, `task_merge` and `task_abandon`: only for a provisioned task
-  on a Grounding-configured backend. On an unconfigured backend, and for an
-  unprovisioned task, the request reaches the legacy completion handler
-  (`backend/src/routes/tasks.ts`), which ignores the key, so reusing it does
-  not make the retry idempotent.
+  on a Grounding-configured backend. On an unconfigured backend, or for an
+  unprovisioned task, the request either reaches the legacy completion
+  handler (`backend/src/routes/tasks.ts`), which ignores the key, or, for a
+  remote merge (`task_merge`, or `task_finish` with `autoMerge`) where
+  grounding enforcement applies to the task, is refused with `409
+  grounding_enrollment_required` before any effect. Either way, reusing the
+  key does not make the retry idempotent.
 
 ## Versioning and rollout
 
