@@ -23,8 +23,9 @@ grounding_finalization_pending` before any GitHub call. Outside the scope the
 GitHub create and merge routes read only the task id, body owner/repo, a
 well-formed history key and the legacy-parsed path number, then hand the
 request to the legacy handler unmodified (the legacy creator now also reads the
-`Idempotency-Key` header); the remaining differences from the unconfigured app
-are those refusals and the agent-scope admission check. Enabling configuration
+`Idempotency-Key` header); the principal differences from the unconfigured
+app are those refusals, the agent-scope admission check, a transient routing
+`503` and the GitHub merge route's retry message. Enabling configuration
 writes grounding history and is therefore one-way; the
 docs no longer call an enabled, empty configuration equivalent to the
 unconfigured app. `architecture.md`, `workflow-gates.md`,
@@ -33,6 +34,20 @@ unconfigured app. `architecture.md`, `workflow-gates.md`,
 against the changed routes/service and re-stamped;
 `docs/grounding-migration.md` and `docs/grounding-receipt-contract.md` (both
 outside this bundle) were corrected the same way.
+
+The configured GitHub create and merge routes then moved their project-access
+check ahead of every Grounding read, so a caller without project access gets
+the legacy handler's own `403` whatever the task's Grounding state; the GitHub
+merge route stopped counting the body owner/repo as a candidate (the legacy
+merger never sends it to GitHub); and `grounding-scope.ts` gained a
+fail-closed check for a protected/`EXTERNAL_V1`/bound/held peer whose own
+repository string is not canonical and that shares a candidate PR number. The
+fence-acquisition race was described as an accepted residual with its
+consequence. `architecture.md`, `workflow-gates.md`, `governance-merge.md`,
+`reconcile-done-but-open.md` and `backend.md` were re-verified against the
+changed routes and scope service and re-stamped; `claim-model.md` was
+re-verified against the edited receipt contract (its claims did not change) and
+re-stamped.
 
 Separately, unconfigured (grounding-disabled) startup admission stopped
 treating an unowned GitHub repository-fence row as grounding history on its
