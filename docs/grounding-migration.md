@@ -256,6 +256,43 @@ and validate an isolated restored database with the intended configuration and
 canonical SQL. A passing startup does not prove backup restoration, writer
 exclusion, producer key isolation, or production rollout readiness.
 
+## Runtime database role
+
+The fence and hold guarantees are enforced by triggers. A superuser, a role
+granted `SET` on `session_replication_role`, or the table owner (or a member of
+it) can switch them off (`session_replication_role = replica`,
+`ALTER TABLE ... DISABLE TRIGGER`), so the backend should connect as a role that
+is none of these. In `docker-compose.prod.yml`, set both `POSTGRES_APP_USER`
+and `POSTGRES_APP_PASSWORD` (or neither) to a role created along these lines,
+run by the owner role:
+
+```sql
+CREATE ROLE agent_tasks_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION PASSWORD '...';
+GRANT CONNECT ON DATABASE agent_tasks TO agent_tasks_app;
+GRANT USAGE ON SCHEMA public TO agent_tasks_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO agent_tasks_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO agent_tasks_app;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO agent_tasks_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE agent_tasks IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO agent_tasks_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE agent_tasks IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO agent_tasks_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE agent_tasks IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO agent_tasks_app;
+```
+
+`migrate` keeps the owner role, since `prisma db push` and the fence SQL need
+it; the default privileges make tables and functions it creates later usable
+by the runtime role. Set both variables or neither: unset, both fall back to
+the owner role, while setting only one leaves the backend with a user and
+password that do not match, and it cannot connect. The password is placed into
+the connection URL unencoded, so use a URL-safe value such as
+`openssl rand -hex 32`.
+
+This role cannot disable the triggers. It still writes the fence, fence-intent
+and hold tables and sets the settings the triggers read, as the backend must, so
+SQL executed as the backend can still release a hold or a fence. The split
+removes trigger bypass from the runtime connection; it does not protect against
+arbitrary SQL run as the backend. Anyone holding the owner role's password can
+still bypass the triggers, so that credential stays with operators.
+
 ## Audited administrative commands
 
 `POST /api/tasks/:id/grounding-migration` is available only when a

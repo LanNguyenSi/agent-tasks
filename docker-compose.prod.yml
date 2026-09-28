@@ -47,7 +47,12 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      DATABASE_URL: postgresql://agent_tasks:${POSTGRES_PASSWORD}@db:5432/agent_tasks
+      # The backend can connect as a separate runtime role that owns no table
+      # and is not a superuser, so it cannot disable the grounding fence and
+      # hold triggers. Set both or neither; unset, both fall back to the owner
+      # role that migrate uses. See docs/grounding-migration.md, "Runtime
+      # database role".
+      DATABASE_URL: postgresql://${POSTGRES_APP_USER:-agent_tasks}:${POSTGRES_APP_PASSWORD:-${POSTGRES_PASSWORD}}@db:5432/agent_tasks
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
       SESSION_SECRET: ${SESSION_SECRET}

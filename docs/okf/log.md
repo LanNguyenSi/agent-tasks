@@ -1,5 +1,13 @@
 # Change log
 
+## 2026-09-28 (runtime database role)
+
+`deploy.md` was re-verified against `docker-compose.prod.yml`, whose backend
+`DATABASE_URL` now comes from the optional `POSTGRES_APP_USER` and
+`POSTGRES_APP_PASSWORD` with the owner role as fallback, and re-stamped.
+`architecture.md` was re-verified against the same file (its topology claim
+is unchanged) and re-stamped.
+
 ## 2026-09-28 (re-stamp after the operation-key merges)
 
 `task-lifecycle.md` and `claim-model.md` were re-stamped without content
