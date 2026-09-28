@@ -376,6 +376,19 @@ describe("requesting task that became a peer after routing", () => {
     expect(await response.json()).toEqual({ error: "grounding_enrollment_required", message: expect.any(String) });
     expect(github.calls).toEqual([]);
   });
+  it("github-merge by a task held after routing is refused as enrollment required while a fence it checks is owned", async () => {
+    const repo = canonicalRepo();
+    const requester = await requesterTask(store.db, "github-merge", repo, null);
+    // The hold goes in first: the enrollment fence trigger refuses a hold on a
+    // task whose repository fence is owned.
+    harness.afterRouting = async () => { harness.afterRouting = null; await enrollTask(store.db, "held", requester.taskId, requester.projectId); await ownFence(store.db, repo); };
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured().fetch(siteRequest("github-merge", requester.taskId, repo, uniquePr(), token));
+    expect(harness.afterRouting).toBeNull();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "grounding_enrollment_required", message: expect.any(String) });
+    expect(github.calls).toEqual([]);
+  });
   it("create by a task held after routing is refused", async () => {
     const repo = canonicalRepo();
     const requester = await requesterTask(store.db, "create", repo, null);
@@ -390,11 +403,10 @@ describe("requesting task that became a peer after routing", () => {
 });
 
 describe("a task's comment on its own PR", () => {
-  // There is no Grounding comment path, so a task that is itself protected,
-  // EXTERNAL_V1 or bound, or whose project is enforced, comments on its own
-  // stored PR through the legacy commenter. A hold freezes the task; another
-  // peer on the PR, another PR of an enforced repository and another peer's PR
-  // stay refused.
+  // A task's stored PR number and repository are fields an agent can set, so
+  // they prove no authorship: a comment on an enforced repository or on a
+  // protected, EXTERNAL_V1, bound or held task's PR is refused whoever sends
+  // it, the requesting task's own PR included.
   async function enrolledTask() {
     const enrolled = await completionFixture(store, "EXTERNAL_V1", deps => new GroundingGithubMergeService(deps));
     const repo = canonicalRepo(); const prNumber = uniquePr();
@@ -409,64 +421,45 @@ describe("a task's comment on its own PR", () => {
     return { status: response.status, body: await response.json(), calls: github.calls };
   }
   const refused = { status: 409, body: { error: "grounding_enrollment_required", message: expect.any(String) }, calls: [] };
-  it("an EXTERNAL_V1 task comments on its own PR, in an enforced repository as well", async () => {
+  it("an EXTERNAL_V1 task's comment on its own PR is refused, in an enforced repository as well", async () => {
     const task = await enrolledTask();
-    for (const scope of [emptyScope(), enforcedScope(task.repo)]) {
-      const answer = await comment(scope, task.taskId, task.repo, task.prNumber);
-      expect(answer.status).toBe(201);
-      expect(answer.calls).toEqual([siteWrite("comment", task.repo, task.prNumber)]);
+    for (const scope of [emptyScope(), enforcedScope(task.repo), enforcedScope(task.repo, task.projectId)]) {
+      expect(await comment(scope, task.taskId, task.repo, task.prNumber)).toEqual(refused);
     }
   });
-  it("a task of an enforced project comments on its own PR in its enforced repository", async () => {
+  it.each(["protected", "bound", "held"] as const)("a %s task's comment on its own PR is refused", async kind => {
     const repo = canonicalRepo(); const prNumber = uniquePr();
     const requester = await requesterTask(store.db, "comment", repo, prNumber);
-    const answer = await comment(enforcedScope(repo, requester.projectId), requester.taskId, repo, prNumber);
-    expect(answer.status).toBe(201);
-    expect(answer.calls).toEqual([siteWrite("comment", repo, prNumber)]);
+    await enrollTask(store.db, kind, requester.taskId, requester.projectId);
+    expect(await comment(emptyScope(), requester.taskId, repo, prNumber)).toEqual(refused);
+  });
+  // Whatever the requesting task stores, a comment on an enforced repository
+  // is refused: in scope or not, with or without a stored PR, and after a
+  // released hold.
+  const enforcedRequesters: Record<string, (repo: string, prNumber: number) => Record<string, unknown>> = {
+    "its stored PR and PR URL": (repo, prNumber) => ({ prNumber, prUrl: pullUrl(repo, prNumber) }),
+    "its stored PR without a PR URL": (_repo, prNumber) => ({ prNumber, prUrl: null }),
+    "no stored PR number or PR URL": () => ({ prNumber: null, prUrl: null }),
+    "a PR URL that is not a GitHub pull request": (_repo, prNumber) => ({ prNumber, prUrl: `https://gitlab.example/acme/x/-/merge_requests/${prNumber}` }),
+    "a non-canonical deliverable repository": (repo, prNumber) => ({ deliverableRepo: aliasOf(repo), prNumber, prUrl: null }),
+  };
+  it.each(Object.keys(enforcedRequesters))("a task of an enforced project with %s is refused on its enforced repository", async label => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "comment", repo, prNumber);
+    await store.db.task.update({ where: { id: requester.taskId }, data: enforcedRequesters[label]!(repo, prNumber) });
+    expect(await comment(enforcedScope(repo, requester.projectId), requester.taskId, repo, prNumber)).toEqual(refused);
+    expect(await comment(enforcedScope(repo), requester.taskId, repo, prNumber)).toEqual(refused);
+  });
+  it("a task whose hold was released is refused on its own PR in its enforced repository", async () => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "comment", repo, prNumber);
+    await enrollTask(store.db, "released", requester.taskId, requester.projectId);
+    expect(await comment(enforcedScope(repo, requester.projectId), requester.taskId, repo, prNumber)).toEqual(refused);
   });
   it("another peer's PR in the task's repository stays refused", async () => {
     const task = await enrolledTask(); const other = uniquePr();
     await peerTask(store.db, "held", { repo: task.repo, prNumber: other, prUrl: pullUrl(task.repo, other) });
     expect(await comment(emptyScope(), task.taskId, task.repo, other)).toEqual(refused);
-  });
-  it("the task's own PR stays refused while another peer also names it", async () => {
-    const task = await enrolledTask();
-    await peerTask(store.db, "held", { repo: task.repo, prNumber: task.prNumber, prUrl: null });
-    expect(await comment(emptyScope(), task.taskId, task.repo, task.prNumber)).toEqual(refused);
-  });
-  it("another PR of the enforced repository stays refused, with or without a stored PR URL", async () => {
-    const repo = canonicalRepo(); const prNumber = uniquePr();
-    const requester = await requesterTask(store.db, "comment", repo, prNumber);
-    expect(await comment(enforcedScope(repo, requester.projectId), requester.taskId, repo, uniquePr())).toEqual(refused);
-    await store.db.task.update({ where: { id: requester.taskId }, data: { prUrl: null } });
-    expect(await comment(enforcedScope(repo, requester.projectId), requester.taskId, repo, uniquePr())).toEqual(refused);
-  });
-  it("a PR URL naming another PR or another repository does not make the PR the task's own", async () => {
-    const repo = canonicalRepo(); const prNumber = uniquePr();
-    const requester = await requesterTask(store.db, "comment", repo, prNumber);
-    const scope = enforcedScope(repo, requester.projectId);
-    await store.db.task.update({ where: { id: requester.taskId }, data: { prUrl: pullUrl(repo, uniquePr()) } });
-    expect(await comment(scope, requester.taskId, repo, prNumber)).toEqual(refused);
-    await store.db.task.update({ where: { id: requester.taskId }, data: { prUrl: pullUrl(canonicalRepo(), prNumber) } });
-    expect(await comment(scope, requester.taskId, repo, prNumber)).toEqual(refused);
-  });
-  it("the task's PR number in another enforced repository is not its own PR", async () => {
-    const repo = canonicalRepo(); const other = canonicalRepo(); const prNumber = uniquePr();
-    const requester = await requesterTask(store.db, "comment", repo, prNumber);
-    await store.db.task.update({ where: { id: requester.taskId }, data: { prUrl: null } });
-    const scope: GroundingEnforcedScope = { projectIds: new Set([requester.projectId]), repos: new Set([repo, other]) };
-    expect(await comment(scope, requester.taskId, other, prNumber)).toEqual(refused);
-  });
-  it("a task outside the scope does not comment on its own PR in an enforced repository", async () => {
-    const repo = canonicalRepo(); const prNumber = uniquePr();
-    const requester = await requesterTask(store.db, "comment", repo, prNumber);
-    expect(await comment(enforcedScope(repo), requester.taskId, repo, prNumber)).toEqual(refused);
-  });
-  it("a held task's comment on its own PR stays refused", async () => {
-    const repo = canonicalRepo(); const prNumber = uniquePr();
-    const requester = await requesterTask(store.db, "comment", repo, prNumber);
-    await enrollTask(store.db, "held", requester.taskId, requester.projectId);
-    expect(await comment(emptyScope(), requester.taskId, repo, prNumber)).toEqual(refused);
   });
   it("an enrolled or held task's comment on an unrelated PR is not refused by its own class", async () => {
     const task = await enrolledTask();
@@ -479,6 +472,13 @@ describe("a task's comment on its own PR", () => {
     const answer = await comment(emptyScope(), held.taskId, repo, unrelated);
     expect(answer.status).toBe(201);
     expect(answer.calls).toEqual([siteWrite("comment", repo, unrelated)]);
+  });
+  it("an unenrolled task outside the scope comments on its own PR in a repository no enforced project owns", async () => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "comment", repo, prNumber);
+    const answer = await comment(enforcedScope(canonicalRepo()), requester.taskId, repo, prNumber);
+    expect(answer.status).toBe(201);
+    expect(answer.calls).toEqual([siteWrite("comment", repo, prNumber)]);
   });
 });
 

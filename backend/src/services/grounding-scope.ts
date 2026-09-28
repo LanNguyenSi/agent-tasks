@@ -86,13 +86,9 @@ export const groundingPeerTaskIds = Prisma.sql`ARRAY(
  * target repository) sharing the number. A merge or create is refused the same
  * way when the requesting task is itself such a task, whatever PR number it
  * sends: the router handed it on as unprovisioned, so it became one since.
- *
- * A comment may reach the requesting task's own stored PR (its PR number, in
- * its effective repository, matching its PR URL when it has one) even in an
- * enforced repository, when that task is protected, EXTERNAL_V1 or bound, or
- * its project is enforced, and it is not held; any other peer on that PR
- * still refuses it. There is no Grounding comment path, so this is the only
- * way such a task comments on its own PR.
+ * A comment is refused by the same enforced repository and peer PR checks
+ * whoever requests it, the requesting task's own stored PR included: an agent
+ * can set a task's PR number and repository, so they prove no authorship.
  *
  * A merge or create is refused with `grounding_finalization_pending` when
  * another operation owns the fence of the target repository or of any
@@ -108,24 +104,14 @@ export async function groundingRemoteTargetRefusal(db: PrismaClient | Prisma.Tra
   if (!scope) return refusal("grounding_enrollment_required");
   const repo = exactGithubRepo(target.repo);
   if (repo === null) return refusal("grounding_enrollment_required");
+  if (scope.repos.has(repo)) return refusal("grounding_enrollment_required");
   const comment = target.kind === "comment";
-  // Only the statement below can tell whether a comment goes to the requesting
-  // task's own PR, which an enforced repository does not refuse.
-  const enforced = scope.repos.has(repo);
-  if (enforced && !comment) return refusal("grounding_enrollment_required");
   const pr = target.prNumber === undefined ? null : String(target.prNumber);
   const fenced = !comment;
-  const [row] = await db.$queryRaw<{ requesterPeer: boolean; ownPr: boolean; peer: boolean; fenced: boolean }[]>`
+  const [row] = await db.$queryRaw<{ requesterPeer: boolean; peer: boolean; fenced: boolean }[]>`
     WITH requester AS (
       SELECT t.id,
         t.id = ANY (${groundingPeerTaskIds}) AS peer,
-        (${comment}
-          AND NOT EXISTS (SELECT 1 FROM grounding_migration_states WHERE "taskId" = t.id AND held)
-          AND (t.id = ANY (${groundingPeerTaskIds}) OR t."projectId" = ANY (${[...scope.projectIds]}::text[]))
-          AND t."prNumber"::numeric = ${pr}::numeric
-          AND grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) = ${repo}
-          AND (t."prUrl" IS NULL OR (grounding_github_pr_repo(t."prUrl") = ${repo}
-            AND substring(t."prUrl" from '/pull/([0-9]+)')::numeric = ${pr}::numeric))) IS TRUE AS "ownPr",
         ARRAY[coalesce(grounding_github_repo(t."deliverableRepo"), grounding_github_repo(p."githubRepo")),
           grounding_github_pr_repo(t."prUrl")] || grounding_github_intent_repos(t.id) AS repos
       FROM tasks t JOIN projects p ON p.id = t."projectId"
@@ -133,11 +119,9 @@ export async function groundingRemoteTargetRefusal(db: PrismaClient | Prisma.Tra
     )
     SELECT
       coalesce(r.peer, false) AS "requesterPeer",
-      coalesce(r."ownPr", false) AS "ownPr",
       (${pr}::numeric IS NOT NULL AND EXISTS (
         SELECT 1 FROM tasks t JOIN projects p ON p.id = t."projectId"
         WHERE t.id = ANY (${groundingPeerTaskIds})
-          AND (t.id <> ${target.taskId} OR r."ownPr" IS NOT TRUE)
           AND (t."prNumber"::numeric = ${pr}::numeric
             OR substring(t."prUrl" from '/pull/([0-9]+)')::numeric = ${pr}::numeric)
           AND (grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) = ${repo}
@@ -152,7 +136,7 @@ export async function groundingRemoteTargetRefusal(db: PrismaClient | Prisma.Tra
   `;
   if (!row) return refusal("grounding_enrollment_required");
   if (row.peer) return refusal("grounding_enrollment_required");
-  if (comment) return enforced && !row.ownPr ? refusal("grounding_enrollment_required") : null;
+  if (comment) return null;
   if (row.requesterPeer) return refusal("grounding_enrollment_required");
   if (row.fenced) return refusal("grounding_finalization_pending");
   return null;
