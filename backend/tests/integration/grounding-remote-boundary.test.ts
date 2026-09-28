@@ -197,6 +197,36 @@ describe("requesting-side race", () => {
     expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "grounding_enrollment_required" });
     expect(github.calls).toEqual([]);
   });
+  it.each(mergeSites)("%s: a hold placed on the requesting task after the router's decision is refused at the effect boundary", async site => {
+    const repo = canonicalRepo();
+    const requester = await requesterTask(store.db, site, repo, uniquePr());
+    harness.afterRouting = async () => {
+      harness.afterRouting = null;
+      await store.db.groundingMigrationState.create({ data: { taskId: requester.taskId, projectId: requester.projectId, held: true, revision: 1 } });
+    };
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured().fetch(siteRequest(site, requester.taskId, repo, requester.prNumber!, token));
+    expect(harness.afterRouting).toBeNull();
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "grounding_enrollment_required" });
+    expect(github.calls).toEqual([]);
+  });
+});
+
+describe("enrolled tasks on the legacy comment route", () => {
+  it("an EXTERNAL_V1 task's comment on its own PR is refused, since no Grounding comment path exists", async () => {
+    const enrolled = await completionFixture(store, "EXTERNAL_V1", deps => new GroundingGithubMergeService(deps));
+    const repo = canonicalRepo();
+    await store.db.project.update({ where: { id: enrolled.projectId }, data: { githubRepo: repo } });
+    await store.db.task.update({ where: { id: enrolled.taskId }, data: { prUrl: pullUrl(repo, 42) } });
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured().fetch(siteRequest("comment", enrolled.taskId, repo, 42, token));
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "grounding_enrollment_required" });
+    expect(github.calls).toEqual([]);
+    // The same comment on another PR of that repository goes through.
+    const other = await configured().fetch(siteRequest("comment", enrolled.taskId, repo, uniquePr(), token));
+    expect(other.status).toBe(201);
+    expect(github.writes()).toHaveLength(1);
+  });
 });
 
 describe("guard wiring", () => {
