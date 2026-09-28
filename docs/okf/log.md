@@ -78,10 +78,11 @@ the target repository or of any repository of the requesting task (its
 effective repository, stored PR URL repository and own active PR-create
 intents' repositories), and with `409 grounding_enrollment_required` when the
 requesting task is itself protected/`EXTERNAL_V1`/bound/held, whatever PR
-number it sends. A task that is protected, `EXTERNAL_V1` or bound, or whose
-project is enforced, may comment on its own stored PR unless it is held, and
-enforced repositories must not run comment-triggered merge or deploy
-automation. With configuration enabled, the legacy merge, create and comment
+number it sends. A comment is refused on an enforced repository and on a
+peer's PR whoever sends it, the PR the requesting task stores included; as
+defense in depth, enforced repositories must still not run comment-triggered
+merge or deploy automation, and direct GitHub access outside agent-tasks is
+not governed by the check. With configuration enabled, the legacy merge, create and comment
 writes are sent with `redirect: "manual"` and a GitHub redirect (a renamed or
 transferred repository) is refused with `409 github_redirect_refused`; the
 unconfigured app still follows redirects. `architecture.md`, `backend.md`,
@@ -89,6 +90,15 @@ unconfigured app still follows redirects. `architecture.md`, `backend.md`,
 were updated, re-verified against the changed scope service and legacy
 writers and re-stamped; `claim-model.md` was re-verified against the edited
 receipt contract (its claims did not change) and re-stamped.
+
+The comment check was then re-verified as strict: a comment on the PR the
+requesting task stores is refused like any other comment on an enforced
+repository or a peer's PR, and the check's line citations moved with the
+scope service. `architecture.md`, `backend.md`, `governance-merge.md`,
+`reconcile-done-but-open.md` and `workflow-gates.md` were re-verified against
+the changed scope service and re-stamped; `claim-model.md` was re-verified
+against the edited receipt contract (its claims did not change) and
+re-stamped.
 
 Separately, unconfigured (grounding-disabled) startup admission stopped
 treating an unowned GitHub repository-fence row as grounding history on its

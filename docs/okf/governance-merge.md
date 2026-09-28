@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-09-28T13:36:04Z
+timestamp: 2026-09-28T16:42:00Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -111,7 +111,7 @@ task merge, and the review, self-approve and work finishes (the work finish
 merges the number of the body PR URL when one is given). The legacy PR creator
 and commenter check the repository (and PR) they post to
 (`routes/github.ts:267`, `routes/github.ts:768`). The check
-(`grounding-scope.ts:107`) refuses with `409 grounding_enrollment_required` a
+(`grounding-scope.ts:103`) refuses with `409 grounding_enrollment_required` a
 repository string that is not exactly canonical (surrounding whitespace, dot
 segment, percent-encoded name, owner containing `/`), an enforced repository,
 a PR that belongs to a protected, `EXTERNAL_V1`, bound or held task, including
@@ -122,12 +122,12 @@ whatever PR number it sends. It refuses a merge or create with
 the target repository or of any repository the legacy task write's fence
 trigger checks for the requesting task (its effective repository, stored PR
 URL repository and own active PR-create intents' repositories); comments write
-no task and take no fence, and a create sends no PR number. A task that is
-protected, `EXTERNAL_V1` or bound, or whose project is enforced, may comment
-on its own stored PR even in an enforced repository unless it is held, since
-there is no Grounding comment path; any other peer on that PR still refuses
-it, and enforced repositories must not run comment-triggered merge or deploy
-automation. Grouped merge discovery and the boundary read the same peer-class
+no task and take no fence, and a create sends no PR number. A comment is
+refused on an enforced repository and on a peer's PR whoever sends it, the PR the requesting task stores
+included, since an agent can set a task's PR number and repository. As defense
+in depth, enforced repositories must still not run comment-triggered merge or
+deploy automation; direct GitHub access outside agent-tasks (tokens, the
+GitHub UI, other apps) is not governed by the check. Grouped merge discovery and the boundary read the same peer-class
 ids from the enrollment and hold tables (`grounding-scope.ts:71`,
 `grounding-github-merge.ts:40`), and the boundary reads everything in one
 statement. With configuration enabled the three legacy writes go out with

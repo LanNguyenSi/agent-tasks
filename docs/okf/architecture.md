@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-28T13:36:04Z
+timestamp: 2026-09-28T16:42:00Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -57,7 +57,7 @@ before the GitHub merge call (`services/github-merge.ts:114`, shared by the
 GitHub merge route, task merge and the review, self-approve and work
 finishes), and the legacy PR creator and commenter check the repository (and
 PR) they post to (`routes/github.ts:267`, `routes/github.ts:768`). The check
-(`grounding-scope.ts:107`) refuses with `409 grounding_enrollment_required` a
+(`grounding-scope.ts:103`) refuses with `409 grounding_enrollment_required` a
 repository string that is not exactly canonical (`grounding-scope.ts:60`), an
 enforced repository, or a protected/`EXTERNAL_V1`/bound/held task's PR,
 including a peer that stores a non-canonical repository and shares the
@@ -68,16 +68,15 @@ owns the fence of the target repository or of any repository the legacy task
 write's fence trigger checks for the requesting task (its effective
 repository, its stored PR URL repository and its own active PR-create intents'
 repositories). Comments write no task and take no fence, and a create sends
-no PR number. A task that is protected, `EXTERNAL_V1` or bound, or whose
-project is enforced, may comment on its own stored PR even in an enforced
-repository unless it is held, since there is no Grounding comment path; any
-other peer on that PR still refuses it. Everything is read in one statement
+no PR number. A comment is refused on an enforced repository and on a peer's PR whoever sends it, the PR the
+requesting task stores included, since an agent can set a task's PR number and
+repository. Everything is read in one statement
 driven by the enrollment and hold tables (`grounding-scope.ts:71`). With
 configuration enabled the three legacy writes are sent with
 `redirect: "manual"` (`backend/src/services/github-merge.ts:126`, `backend/src/routes/github.ts:282`,
 `backend/src/routes/github.ts:778`), and a GitHub redirect (a renamed or transferred
 repository) is answered with `409 github_redirect_refused` instead of being
-followed (`grounding-scope.ts:167`, `services/github-merge.ts:156`,
+followed (`grounding-scope.ts:151`, `services/github-merge.ts:156`,
 `routes/github.ts:297`, `routes/github.ts:791`); the unconfigured app keeps
 fetch's default redirect handling.
 `createApp` hands the check to every request (`backend/src/app.ts:47`,
@@ -95,9 +94,10 @@ principal differences from the unconfigured app are the boundary and in-scope
 refusals, the refusal of renamed or transferred repository writes, the
 agent-scope admission check that runs first, a transient
 `503 grounding_verification_unavailable` from the Serializable routing read,
-and the GitHub merge route's `503` retry message; since a task's own-PR comment
-reaches GitHub, enforced repositories must not run comment-triggered merge or
-deploy automation. Enabling
+and the GitHub merge route's `503` retry message. As defense in depth,
+enforced repositories must still not run comment-triggered merge or deploy
+automation; direct GitHub access outside agent-tasks (tokens, the GitHub UI,
+other apps) is not governed by the check. Enabling
 configuration writes grounding history (webhook deliveries, for example), so a
 later unconfigured restart is refused and enabling is one-way; rollback means
 keeping an enabled configuration with empty trust and an empty

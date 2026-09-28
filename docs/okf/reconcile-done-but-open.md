@@ -3,7 +3,7 @@ type: runbook
 title: "Reconciling a task whose PR merged but the record is stuck open"
 description: "Recover a configured merge with its original operation and exact GitHub proof; retain the separate historical task lifecycle repair flow."
 tags: [reconcile, task-lifecycle, idempotency, runbook]
-timestamp: 2026-09-28T13:30:23Z
+timestamp: 2026-09-28T16:42:00Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/default-workflow.ts
@@ -100,7 +100,7 @@ requesting task is itself such a task, and with
 `409 grounding_finalization_pending` when another operation owns the fence of
 the target repository or of any repository the task's own write checks (its
 effective repository, stored PR URL repository and own active PR-create
-intents' repositories) (`grounding-scope.ts:107`). A legacy merge refused
+intents' repositories) (`grounding-scope.ts:103`). A legacy merge refused
 there makes no GitHub call and writes nothing, so it cannot produce a
 done-but-open mismatch; with configuration enabled a GitHub redirect (a
 renamed or transferred repository) is answered with

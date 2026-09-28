@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-09-28T13:30:23Z
+timestamp: 2026-09-28T16:42:00Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -88,7 +88,7 @@ outside it the untouched request falls back to the unprovisioned handler,
 including without an operation key (`grounding-task-completion.ts:118`,
 `routes/grounding-github.ts:141`). The unprovisioned handler's transition
 gates run as before; the handler is unchanged except for a target check at its
-effect boundary (`grounding-scope.ts:107`): with configuration enabled,
+effect boundary (`grounding-scope.ts:103`): with configuration enabled,
 `performPrMerge` checks the exact repository and PR number right before the
 GitHub merge call (`services/github-merge.ts:114`), and the legacy PR creator
 and commenter check the repository (and PR) they post to
@@ -102,11 +102,12 @@ such a task, whatever PR number it sends; it refuses a merge or create with
 the target repository or of any repository the legacy task write's fence
 trigger checks for the requesting task (its effective repository, stored PR
 URL repository and own active PR-create intents' repositories). Comments write
-no task and take no fence; a task that is protected, `EXTERNAL_V1` or bound,
-or whose project is enforced, may comment on its own stored PR even in an
-enforced repository unless it is held, and any other peer on that PR still
-refuses it, so enforced repositories must not run comment-triggered merge or
-deploy automation. With configuration enabled a GitHub redirect on any of the
+no task and take no fence. A comment is refused on an enforced repository and on a peer's PR whoever sends
+it, the PR the requesting task stores included, since an agent can set a
+task's PR number and repository. As defense in depth, enforced repositories
+must still not run comment-triggered merge or deploy automation; direct GitHub
+access outside agent-tasks (tokens, the GitHub UI, other apps) is not governed
+by the check. With configuration enabled a GitHub redirect on any of the
 three legacy writes (a renamed or transferred repository) is answered with
 `409 github_redirect_refused` instead of being followed
 (`services/github-merge.ts:156`, `routes/github.ts:297`,
