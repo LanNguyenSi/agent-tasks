@@ -1,3 +1,4 @@
+import { assertGroundingNotHeld } from "./grounding-hold.js";
 import { lockGroundingAuthority } from "./grounding-direct-authority.js";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { requireGroundingCohort } from "./grounding-cohort.js";
@@ -61,6 +62,7 @@ export async function selectGroundingRouteContextInTransaction(
   db: Prisma.TransactionClient,
   input: { taskId: string; projectId: string },
 ): Promise<GroundingRouteContext> {
+  await assertGroundingNotHeld(db, input.taskId, input.projectId);
   const [cohort, binding] = await Promise.all([
     db.groundingCohort.findUnique({ where: { taskId: input.taskId } }),
     db.groundingBinding.findUnique({ where: { taskId: input.taskId } }),

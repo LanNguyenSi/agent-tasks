@@ -1,16 +1,18 @@
+import { assertGroundingNotHeld } from "./grounding-hold.js";
 import type { GroundingCohort, Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { groundingTransaction, lockGroundingTask, assertNoGroundingReservation } from "./grounding-transaction.js";
 import { GroundingAccessError, mismatch, unavailable } from "./grounding-context.js";
 
 const token = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
-const cohortSchema = z.discriminatedUnion("mode", [
+export const cohortSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("EXTERNAL_V1"), protected: z.literal(true), provenance: token, legacySessionId: z.null(), legacyPhase: z.null() }),
   z.object({ mode: z.literal("OFF"), protected: z.literal(false), provenance: token, legacySessionId: z.null(), legacyPhase: z.null() }),
   z.object({ mode: z.literal("LEGACY_LOCAL"), protected: z.boolean(), provenance: token, legacySessionId: token, legacyPhase: token }),
 ]);
 export type GroundingCohortInput = z.infer<typeof cohortSchema>;
 export async function requireGroundingCohort(db: Prisma.TransactionClient, taskId: string, projectId: string): Promise<GroundingCohort> {
+  await assertGroundingNotHeld(db, taskId, projectId);
   const cohort = await db.groundingCohort.findUnique({ where: { taskId } });
   if (!cohort) throw new GroundingAccessError("grounding_not_provisioned", 409);
   if (cohort.projectId !== projectId || !cohortSchema.safeParse(cohort).success) unavailable();
@@ -19,6 +21,7 @@ export async function requireGroundingCohort(db: Prisma.TransactionClient, taskI
   return cohort;
 }
 export async function provisionGroundingCohortInTransaction(db: Prisma.TransactionClient, taskId: string, projectId: string, input: GroundingCohortInput) {
+  await assertGroundingNotHeld(db, taskId, projectId);
   const parsed = cohortSchema.safeParse(input);
   if (!parsed.success) unavailable();
   await assertNoGroundingReservation(db, taskId);

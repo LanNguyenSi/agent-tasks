@@ -36,6 +36,30 @@ Both commands accept `--target /path/to/fixture-dir`. Sync prepares and validate
 
 The verifier reads no environment variables or key files, imports no wrapper/ledger/harness key, fetches no keys, and makes no network requests. The consumer tests use the vendored corpus and temporary local Git repositories; they require no producer checkout. Issuer isolation and rollout qualification remain separate work.
 
+## Producer protocol qualification
+
+The receipt corpus tests the consumer verifier, not a deployment composition. A separate opt-in integration qualification starts a pinned assessment producer as a local child process over stdio. It gives that process an ephemeral key, a dedicated HOME and state directory, and no consumer database environment. The consumer receives only the public key in its temporary trust configuration and ingests the producer's original exported receipt bytes.
+
+That qualification checks the restricted seven-operation assessment surface, a complete passing lifecycle, and missing, failed, and untrusted receipt failures. It also proves that the protected completion path does not fall back to the legacy wrapper or ledger. Set `GROUNDING_TEST_ASSESSMENT_ENTRYPOINT` to the explicitly selected producer entry point when running it; without that explicit deployment-test configuration, the suite is skipped and ordinary CI does not establish this qualification.
+
+The child process is a local separated-process test. It does not demonstrate independent hosts, operating-system isolation, deployment key management, or operator policy. Those require separate rollout evidence before activation.
+
+## Runtime trust composition
+
+The server awaits strict configuration and database admission before listening
+or scheduling periodic writers. Enabled `GROUNDING_RUNTIME_CONFIG` composes
+attempts, grouped completion/merge, PR creation and human-admin migration with
+one frozen public trust configuration and one database. Empty configuration
+preserves the unconfigured runtime only when all migrated grounding tables are
+empty. Any retained grounding history makes enabled configuration mandatory;
+query failures and missing tables never count as empty.
+
+All trust entries, including unused and revoked keys, are validated. There is
+no producer connection or signing capability in this runtime configuration.
+Trust revocation and rotation require a coordinated process restart; a running
+fleet does not hot-reload trust. See the [configuration and upgrade procedure](grounding-migration.md)
+for the strict schema, bounds, SQL prerequisites and independent activation gates.
+
 ## Protected attempts and receipt ingest
 
 `GroundingAttemptsService` adds dormant consumer storage and two authenticated routes. The application requires explicit server-owned service injection; unconfigured attempt routes return `503 grounding_verification_unavailable`. There is no HTTP enrollment endpoint. The server-only `provision({taskId, projectId, subjectMode})` method requires an existing matching task, an explicit audience, a supported pinned policy and a usable independently configured trust store. Repeating identical provisioning is idempotent; conflicting provisioning fails. It never reads task metadata, changes the legacy `requireGroundingForDebug` default, or creates protection from `debugFlavor`.
@@ -438,6 +462,14 @@ observation; it invalidates when an observed changed head alters an active
 CODE_HEAD assessment context, not merely because a new delivery arrived. It
 does not invent a new task status.
 
+Selected issue-open deliveries use the same explicit project creation policy as
+REST creation and import. The provisional task, external cohort and protected
+binding share the delivery transaction. The preserved `open` status must exist
+in the effective workflow and must not be a review or terminal state. A failed
+workflow check, provisioning write or audit leaves no delivery or creation
+side effects; exact committed redelivery remains idempotent. Unselected issue
+creation retains its compatibility behavior.
+
 ## Context mutation protocol
 
 `mutateGroundingContext(db, {projectIds, audit, selectAndAuthorize, mutate})`
@@ -481,8 +513,26 @@ attributed context audit. Repeating its current value preserves attempts. The
 toggle does not enroll, downgrade or otherwise alter the protected
 binding/cohort.
 
-## Dormant creation policy and retained history
+## Runtime creation policy and retained history
 
-The app may receive a server-owned, readonly per-project creation policy with one explicit `projectId` and `subjectMode` (`TASK_SPEC` or `CODE_HEAD`) entry. Its default is empty: it is not selected from environment, project flags, metadata, labels or other tasks. A selected project creates its initial task, cohort and protected binding in one transaction. Agent creation still enters backlog; a selected request that tries to create a review or terminal task is rejected with grounding guidance rather than manufacturing a protected success. Imports preserve their existing per-row atomic, partial-result behavior. There is no historical administrative import in this contract, and this dormant configuration does not constitute production enrollment or issuer/rollout qualification.
+The app may receive a server-owned, readonly per-project creation policy with one explicit `projectId` and `subjectMode` (`TASK_SPEC` or `CODE_HEAD`) entry. Its default is empty. The real server reads an explicit `creationPolicy` from validated `GROUNDING_RUNTIME_CONFIG`; project flags, metadata, labels and other tasks cannot select it. A selected project creates its initial task, cohort and protected binding in one transaction. Agent creation still enters backlog; a selected request that tries to create a review or terminal task is rejected with grounding guidance rather than manufacturing a protected success. Imports preserve their existing per-row atomic, partial-result behavior. There is no historical administrative import in this contract, and configuring this policy does not constitute issuer or rollout qualification.
 
 For an enrolled task or project, deletion first checks an unresolved reservation, then rejects retained grounding history with `409 grounding_history_retained`. The rejection preserves the task/project and its history; it is not archival, disposal or an abandon transition. Unenrolled task deletion retains the historical behavior. No project-reassignment feature is introduced.
+
+## Administrative migration hold
+
+The independent `GroundingMigrationState` overlay freezes task-row writes and
+fresh consumer decisions without replacing the persisted cohort. The optional
+human-admin migration endpoint records exact idempotent command history,
+transactional before/after audits and attempt invalidation. Migration and
+legacy repair leave the task held until a separate readiness-checked resume.
+External history is retained and never converted to local ledger proof.
+
+Held tasks fail route selection, issuance, ingest and completion before force
+or override effects, including unenrolled tasks. Group discovery includes held
+unenrolled peers; configured webhooks persist held-task facts as pending.
+The task UPDATE/DELETE guard also blocks no-op updates, while hold activation
+advances the row version to reject stale snapshots. The canonical fence SQL is
+required alongside schema synchronization. Parent configuration and old writer
+exclusion are separate concerns. See [the migration procedure](grounding-migration.md)
+for the supported transition matrix, readiness requirements and rollback.

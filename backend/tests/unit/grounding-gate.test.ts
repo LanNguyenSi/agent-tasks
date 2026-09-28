@@ -13,6 +13,7 @@
  * decision table.
  */
 import { describe, it, expect } from "vitest";
+import { advancePhase, initSession } from "@lannguyensi/grounding-wrapper";
 import {
   evaluateGroundingGate,
   CLAIM_EVALUATION_PHASE,
@@ -125,7 +126,7 @@ describe("evaluateGroundingGate", () => {
     expect(result.entryCount).toBe(3);
   });
 
-  it("allows when past claim-evaluation (post-incident-review)", () => {
+  it("allows the pinned wrapper's terminal complete phase", () => {
     const result = evaluateGroundingGate({
       metadata: {
         debugFlavor: true,
@@ -133,20 +134,48 @@ describe("evaluateGroundingGate", () => {
       },
       project: { requireGroundingForDebug: true },
       ledgerSummary: { entryCount: 5 },
-      currentPhase: "post-incident-review",
+      currentPhase: "complete",
     });
     expect(result.allowed).toBe(true);
     expect(result.missing).toEqual([]);
   });
 
-  it("PHASES_AT_OR_PAST_CLAIM_EVAL is a stable, ordered allowlist", () => {
-    // Guard so a wrapper-version bump that renames a phase doesn't
-    // silently shrink the allowlist and break the gate for active sessions.
+  it("uses the real pinned wrapper progression and rejects every earlier or foreign phase", () => {
+    const session = initSession({ keyword: "agent service", problem: "Test compatibility" });
+    const phases = [session.current_phase];
+    while (session.current_phase !== "complete") phases.push(advancePhase(session).current_phase);
+
+    expect(phases).toEqual([
+      "scope-resolution",
+      "doc-reading",
+      "playbook-loading",
+      "runtime-inspection",
+      "evidence-collection",
+      "claim-evaluation",
+      "complete",
+    ]);
+    for (const phase of phases.slice(0, -2)) {
+      expect(evaluateGroundingGate({
+        metadata: { debugFlavor: true, groundingSessionId: session.id },
+        project: { requireGroundingForDebug: true },
+        ledgerSummary: { entryCount: 1 },
+        currentPhase: phase,
+      })).toMatchObject({ allowed: false, missing: ["claimEvaluationPhase"] });
+    }
+    for (const phase of ["post-incident-review", "unknown-phase"]) {
+      expect(evaluateGroundingGate({
+        metadata: { debugFlavor: true, groundingSessionId: session.id },
+        project: { requireGroundingForDebug: true },
+        ledgerSummary: { entryCount: 1 },
+        currentPhase: phase,
+      })).toMatchObject({ allowed: false, missing: ["claimEvaluationPhase"] });
+    }
+  });
+
+  it("PHASES_AT_OR_PAST_CLAIM_EVAL is a stable legacy compatibility allowlist", () => {
     expect(PHASES_AT_OR_PAST_CLAIM_EVAL).toEqual([
       "claim-evaluation",
-      "hypothesis-tracking",
-      "playbook-execution",
-      "post-incident-review",
+      "complete",
     ]);
     expect(PHASES_AT_OR_PAST_CLAIM_EVAL).toContain(CLAIM_EVALUATION_PHASE);
   });

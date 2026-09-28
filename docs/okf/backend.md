@@ -3,8 +3,10 @@ type: module
 title: "backend: Hono API + Prisma"
 description: "Route layout, service/gate split, and the token-hash auth middleware behind every request."
 tags: [backend, hono, prisma, auth, routes]
-timestamp: 2026-09-26T14:49:53Z
+timestamp: 2026-09-27T20:11:24Z
 sources:
+  - backend/src/config/grounding-runtime.ts
+  - backend/src/services/grounding-runtime.ts
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
   - backend/src/services/grounding-context-mutation.ts
@@ -43,7 +45,7 @@ Framework is **Hono** (`hono@^4.13.7`), not Express, `backend/src/app.ts` builds
 
 The provisioned completion router invokes the shared finalization service before task/claim/remote effects; a configured app's fresh remote operations (task merge, GitHub merge, finish with `autoMerge`) on an unenrolled task return `409 grounding_enrollment_required` instead of the remote effect (`grounding-task-completion.ts:95`, `routes/grounding-github.ts:71`). Unprovisioned local completion and the unconfigured default app keep their compatibility behavior.
 
-**Protected grounding attempts** (`grounding-attempts.ts`, `grounding-context.ts`, `routes/grounding.ts`): explicitly injected dormant service with protected server provisioning, server-derived workflow/context challenges, fresh authorized GitHub-head reads and atomic receipt nomination/ingest. Separate Prisma Binding/Attempt/Receipt/Finalization tables hold protected state; task metadata cannot enroll or downgrade it. `app.ts` mounts the authenticated attempt/receipt routes, but its default has no configured service. Issuance supersedes older attempts and ingest preserves immutable evidence with exact retries. Neither route changes task status, claims or PRs; unresolved shared-service reservations now block issuance/upload with 409. Configured GitHub creation and webhook writers (`grounding-github-create.ts`, `grounding-github-webhook.ts`) participate in the same context-mutation protocol, backed by their own `GroundingGithubCreateOperation`/`GroundingGithubWebhookDelivery` tables; see `governance-merge.md` and [the receipt contract](../grounding-receipt-contract.md) for the detail.
+**Protected grounding attempts** (`grounding-attempts.ts`, `grounding-context.ts`, `routes/grounding.ts`): explicitly injected dormant service with protected server provisioning, server-derived workflow/context challenges, fresh authorized GitHub-head reads and atomic receipt nomination/ingest. Separate Prisma Binding/Attempt/Receipt/Finalization tables hold protected state; task metadata cannot enroll or downgrade it. `app.ts` mounts the authenticated attempt/receipt routes. The server injects the full service set only after validated runtime startup admission. Issuance supersedes older attempts and ingest preserves immutable evidence with exact retries. Neither route changes task status, claims or PRs; unresolved shared-service reservations now block issuance/upload with 409. Configured GitHub creation and webhook writers (`grounding-github-create.ts`, `grounding-github-webhook.ts`) participate in the same context-mutation protocol, backed by their own `GroundingGithubCreateOperation`/`GroundingGithubWebhookDelivery` tables; see `governance-merge.md` and [the receipt contract](../grounding-receipt-contract.md) for the detail.
 
 **Direct and creation adapters** (`grounding-direct-tasks.ts`, `grounding-creation.ts`): provisioned direct REST transition/review/PATCH operations issue a strict, persisted route descriptor and reauthorize it at receipt ingest. Positive operations require an idempotency key and commit their selected decision with receipt/history/audit effects; the direct lane retains its endpoint policy and does not make v2 attempts interchangeable. Direct respec and submit-PR context changes invalidate attempts atomically. The optional readonly creation policy is empty by default and can atomically bind a selected new task or import row; it is neither public enrollment nor historical admin import. Enrolled deletion returns `409 grounding_history_retained` after the reservation check and retains the data.
 
@@ -64,7 +66,7 @@ the protected transaction; existing callers retain their singleton default.
 Exact byte projection, limits and error behavior are documented in [the receipt
 contract](../grounding-receipt-contract.md).
 
-**Gate registry** (`backend/src/services/gates/`): a small discovery-only registry (`types.ts` `GateCode` enum: `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) so a project can introspect *which* gates would fire before calling a verb (`GET /api/projects/:id/effective-gates`, MCP `projects_get_effective_gates`). Enforcement itself still lives inline in the route handlers, not in this registry.
+**Gate registry** (`backend/src/services/gates/`): a small discovery-only registry (`types.ts` `GateCode` enum: `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) so a project can introspect *which* gates would fire before calling a verb (`GET /api/projects/:id/effective-gates`, MCP `projects_get_effective_gates`). Enforcement itself still lives inline in the route handlers, not in this registry. The separate legacy finish gate accepts only the pinned wrapper's `claim-evaluation` and terminal `complete` phases with a session and ledger evidence; its phase compatibility is not an evaluated-outcome result.
 
 **Auth middleware** (`backend/src/middleware/auth.ts`): `authMiddleware` reads `Authorization: Bearer <token>`, SHA-256-hashes it (`hashToken`, `createHash("sha256")`) and looks up `AgentToken.tokenHash` (unique). A hit yields an `AgentActor{ tokenId, teamId, scopes, userId }` (also checks `revokedAt`/`expiresAt`, updates `lastUsedAt`). A miss falls through to `verifySessionToken` (session JWT, e.g. server-to-server callers with no cookie jar) → `HumanActor`. No bearer header falls back to the session cookie (`extractSessionCookie`). `requireScope(scope)` is the per-route scope gate; `hashToken` is exported for reuse.
 
@@ -93,3 +95,7 @@ task, receipt, operation, audit, comments and signal rows commit together.
 Replay does not recreate those rows. Webhook delivery and the optional
 calibration observer run after a new commit as best-effort work, so they are not
 an exactly-once delivery guarantee.
+
+**Administrative migration** (`grounding-migration.ts`, `grounding-hold.ts`): an optional fourth `createApp` argument enables the human-admin migration endpoint and configured GitHub adapters. The server supplies it with the full service set when `GROUNDING_RUNTIME_CONFIG` is enabled; disabled startup requires every migrated grounding table to be empty. Independent revisioned holds and immutable command history retain cohort/evidence identity, and commands authorize live memberships and audit in one transaction. See [the migration procedure](../grounding-migration.md) for the full task freeze, readiness checks and supported transitions.
+
+**Runtime configuration**: strict, bounded `GROUNDING_RUNTIME_CONFIG` supplies frozen public trust, audience, challenge lifetime and explicit project creation selection. The same policy enrolls REST tasks, import rows and signed issue-open creations atomically. Startup checks selected projects and canonical SQL before creating the listener. Trust changes require coordinated restarts; see [configuration and upgrade](../grounding-migration.md).

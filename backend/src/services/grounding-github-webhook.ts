@@ -1,9 +1,13 @@
+import { groundingTaskHeld } from "./grounding-hold.js";
 import { createHash } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { canonicalGithubRepo } from "./grounding-github-fence.js";
 import { requireGroundingCohort } from "./grounding-cohort.js";
-import { GroundingAccessError, type GroundingTask } from "./grounding-context.js";
+import { GroundingAccessError, groundingWorkflow, unavailable, type GroundingTask } from "./grounding-context.js";
+import type { GroundingAttemptsService } from "./grounding-attempts.js";
+import type { GroundingCreationPolicy } from "../routes/grounding-creation.js";
+import { isReviewState, isTerminalState } from "./default-workflow.js";
 import { GroundingReceiptVerificationError } from "./grounding-receipt.js";
 import { GroundingDecisionError, groundingTransaction, lockGroundingProjects, lockGroundingTaskUnderProject } from "./grounding-transaction.js";
 import { applyGithubObservedContext, type GithubObservedContextChange } from "./grounding-github-observation-context.js";
@@ -80,7 +84,7 @@ function prMatch(task: GroundingTask, event: Event): Match["strength"] | null {
 
 /** Actorless, DB-only handler. A delivery result never commits without its required effects. */
 export class GroundingGithubWebhookService {
-  constructor(private readonly db: PrismaClient) {}
+  constructor(private readonly db: PrismaClient, private readonly attempts?: GroundingAttemptsService, private readonly creationPolicy: GroundingCreationPolicy = []) {}
 
   async handle(input: { deliveryId: string; event: string; rawBody: string }) {
     const event = parse(input);
@@ -174,7 +178,15 @@ export class GroundingGithubWebhookService {
     if (event.kind === "issue_opened") {
       let changed = 0;
       for (const project of projects.filter(project => canonicalOrNull(project.githubRepo) === event.repo)) {
-        const task = await tx.task.create({ data: { projectId: project.id, title: `[GH #${event.number}] ${event.title}`, description: event.body, status: "open" } });
+        const selected = this.creationPolicy.filter(entry => entry.projectId === project.id);
+        if (selected.length > 1 || (selected.length && !this.attempts)) unavailable();
+        const task = await tx.task.create({ data: { projectId: project.id, title: `[GH #${event.number}] ${event.title}`, description: event.body, status: "open" }, include: { project: true } });
+        if (selected.length) {
+          const { def } = await groundingWorkflow(tx, task);
+          if (isReviewState(def, task.status) || isTerminalState(def, task.status)) throw new GroundingReceiptVerificationError("grounding_required");
+          if (!def.states.some(state => state.name === task.status)) throw new GroundingAccessError("bad_state", 409);
+          await this.attempts!.provisionInTransaction(tx, { taskId: task.id, projectId: project.id, subjectMode: selected[0]!.subjectMode });
+        }
         await tx.auditLog.create({ data: { projectId: project.id, taskId: task.id, actorId: null, action: "task.created", payload: { source: "github_webhook", actorType: "system_observation", deliveryId: event.deliveryId, issue_number: event.number } } });
         changed++;
       }
@@ -186,6 +198,10 @@ export class GroundingGithubWebhookService {
     const acknowledge: string[] = [];
     for (const match of matches) {
       const { task } = match;
+      if (await groundingTaskHeld(tx, task.id, task.projectId)) {
+        observations.push({ match, pending: true, reason: "grounding_task_held", operationId: null });
+        continue;
+      }
       const enrollment = await this.enrollment(tx, task);
       if (!enrollment.provisioned && ["done", "backlog"].includes(task.status)) continue;
       const positive = event.kind === "pr_merged" || event.kind === "issue_closed";

@@ -48,6 +48,7 @@ const configSchema = z.object({
   //   happen within minutes-to-hours of the original attempt, not days).
   // 30 days comfortably clears both without weakening dedup.
   IDEMPOTENCY_TTL_DAYS: z.coerce.number().int().min(1).default(30),
+  GROUNDING_RUNTIME_CONFIG: z.string().default(""),
 });
 
 function loadConfig() {

@@ -1,3 +1,4 @@
+import { assertGroundingNotHeld } from "./grounding-hold.js";
 import { randomUUID } from "node:crypto";
 import { Prisma, type GroundingGithubMergeGroup, type GroundingOperation } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
@@ -38,14 +39,15 @@ export class GroundingGithubMergeService extends GroundingFinalizationService {
     const relevant = await db.$queryRaw<{ id: string }[]>`
       SELECT t.id FROM tasks t JOIN projects p ON p.id = t."projectId"
       LEFT JOIN grounding_cohorts c ON c."taskId" = t.id LEFT JOIN grounding_bindings b ON b."taskId" = t.id
-      WHERE t.id = ${seed.id} OR ((c.protected OR c.mode = 'EXTERNAL_V1' OR b."taskId" IS NOT NULL) AND (
+      LEFT JOIN grounding_migration_states h ON h."taskId" = t.id
+      WHERE t.id = ${seed.id} OR ((c.protected OR c.mode = 'EXTERNAL_V1' OR b."taskId" IS NOT NULL OR h.held) AND (
         grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) = ${remote.canonicalRepo} OR grounding_github_pr_repo(t."prUrl") = ${remote.canonicalRepo}
       ))
     `;
-    const candidates = await db.task.findMany({ where: { id: { in: relevant.map(task => task.id) } }, include: { project: true, groundingCohort: true, groundingBinding: true }, orderBy: { id: "asc" } });
+    const candidates = await db.task.findMany({ where: { id: { in: relevant.map(task => task.id) } }, include: { project: true, groundingCohort: true, groundingBinding: true, groundingMigrationState: true }, orderBy: { id: "asc" } });
     const result: GroundingTask[] = [];
     for (const task of candidates) {
-      if (task.id !== seed.id && !task.groundingCohort?.protected && !task.groundingBinding && task.groundingCohort?.mode !== "EXTERNAL_V1") continue;
+      if (task.id !== seed.id && !task.groundingMigrationState?.held && !task.groundingCohort?.protected && !task.groundingBinding && task.groundingCohort?.mode !== "EXTERNAL_V1") continue;
       const effective = task.deliverableRepo ?? task.project.githubRepo;
       // Recognition includes malformed suffixes solely to reject ambiguous membership.
       // Strict binding() below remains the authorization input.
@@ -69,6 +71,7 @@ export class GroundingGithubMergeService extends GroundingFinalizationService {
     return this.transaction(async db => {
       const seed = await db.task.findUnique({ where: { id: taskId }, include: { project: true } });
       if (!seed) throw new GroundingAccessError("not_found", 404);
+      await assertGroundingNotHeld(db, taskId, seed.projectId);
       await this.requestAccess(db, seed, actor, operationRequest({ action: "merge" }));
       const tasks = await this.discover(db, seed);
       const seedCohort = await db.groundingCohort.findUnique({ where: { taskId } });
@@ -142,6 +145,7 @@ export class GroundingGithubMergeService extends GroundingFinalizationService {
       }
       const seed = await db.task.findUnique({ where: { id: taskId }, include: { project: true } });
       if (!seed) throw new GroundingAccessError("not_found", 404);
+      await assertGroundingNotHeld(db, taskId, seed.projectId);
       await this.requestAccess(db, seed, actor, request);
       // An unprovisioned seed cannot express a protected decision for its linked peers.
       await requireGroundingCohort(db, seed.id, seed.projectId);

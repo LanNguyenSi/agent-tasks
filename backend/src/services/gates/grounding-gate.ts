@@ -17,17 +17,12 @@ import type { TaskMetadata } from "../../lib/debug-flavor.js";
 
 export const CLAIM_EVALUATION_PHASE = "claim-evaluation";
 
-// Phases that count as "at or past claim-evaluation" given the wrapper's
-// mandatorySequence ordering. Source of truth: the wrapper's GroundingPhase
-// union. As of @lannguyensi/grounding-wrapper@0.1.0:
-//   "scope-resolution" | "doc-resolution" | "evidence-collection" |
-//   "claim-evaluation" | "hypothesis-tracking" | "playbook-execution" |
-//   "post-incident-review"
+// The pinned legacy wrapper has a fixed phase sequence. Its terminal
+// `complete` state follows claim evaluation, while unfamiliar values must not
+// inherit compatibility merely because another wrapper version used them.
 export const PHASES_AT_OR_PAST_CLAIM_EVAL: readonly string[] = [
   "claim-evaluation",
-  "hypothesis-tracking",
-  "playbook-execution",
-  "post-incident-review",
+  "complete",
 ];
 
 export type GroundingGateMissing =

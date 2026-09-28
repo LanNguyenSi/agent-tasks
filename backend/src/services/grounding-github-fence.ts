@@ -17,6 +17,9 @@ export function canonicalGithubRepo(value: string): string {
 export async function assertGithubFenceInstalled(tx: Prisma.TransactionClient): Promise<void> {
   const rows = await tx.$queryRaw<{ count: bigint }[]>`
     SELECT count(*) FROM (VALUES
+      ('tasks', 'grounding_hold_task_fence', 'grounding_hold_task_guard', 27),
+      ('grounding_migration_states', 'grounding_github_migration_fence', 'grounding_github_enrollment_guard', 31),
+      ('grounding_migration_commands', 'grounding_migration_command_fence', 'grounding_migration_command_guard', 27),
       ('tasks', 'grounding_github_task_fence', 'grounding_github_task_guard', 31),
       ('projects', 'grounding_github_project_fence', 'grounding_github_project_guard', 27),
       ('grounding_bindings', 'grounding_github_binding_fence', 'grounding_github_enrollment_guard', 31),
@@ -31,7 +34,7 @@ export async function assertGithubFenceInstalled(tx: Prisma.TransactionClient): 
     WHERE NOT t.tgisinternal AND t.tgenabled IN ('O', 'A') AND t.tgtype = required.bits
       AND t.tgqual IS NULL AND p.proconfig @> ARRAY[format('search_path=%I, pg_temp', current_schema())]
   `;
-  if (Number(rows[0]?.count) !== 6) throw new GithubFenceError("GitHub repository fence SQL is not installed");
+  if (Number(rows[0]?.count) !== 9) throw new GithubFenceError("GitHub repository fence SQL is not installed");
 }
 
 function normalized(owner: GithubFenceOwner): GithubFenceOwner {

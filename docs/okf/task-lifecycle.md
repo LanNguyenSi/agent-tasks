@@ -3,7 +3,7 @@ type: overview
 title: "The v2 verb surface and the happy-path task lifecycle"
 description: "task_create, task_pickup, task_start, task_finish, task_merge, task_abandon, the polymorphic MCP-oriented verbs layered over the classic REST CRUD, plus lazy debugFlavor classification and the backlog status for agent-created work."
 tags: [task-lifecycle, mcp, verbs, overview, backlog]
-timestamp: 2026-09-27T16:17:24Z
+timestamp: 2026-09-27T19:22:30Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/routes/grounding-direct-tasks.ts
@@ -49,3 +49,5 @@ attempt; review pickup and start issue an `approve` attempt, including an
 idempotent review-start reply.
 
 Related: `claim-model.md`, `workflow-gates.md`, `governance-merge.md`, `mcp-server.md`, `reconcile-done-but-open.md`.
+
+An independent administrative hold is checked before cohort selection or unprovisioned fallback. It blocks fresh task completion and evidence use, including force/override paths; the database guard freezes all task-row updates and deletes. Existing claims and cohort history remain stored. See [migration and resume](../grounding-migration.md).

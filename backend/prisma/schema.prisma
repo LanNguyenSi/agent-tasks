@@ -438,6 +438,8 @@ model Task {
   @@index([labels], type: Gin)
   groundingBinding GroundingBinding?
   groundingCohort GroundingCohort?
+  groundingMigrationState GroundingMigrationState?
+  groundingMigrationCommands GroundingMigrationCommand[]
   groundingOperations GroundingOperation[]
   groundingGithubMergeSeeds GroundingGithubMergeGroup[]
   groundingGithubObservations GroundingGithubObservation[]
@@ -1077,4 +1079,32 @@ model GroundingGithubObservation {
   @@unique([deliveryId, taskId])
   @@index([taskId, state])
   @@map("grounding_github_observations")
+}
+
+// Administrative overlay: absence means unheld revision zero, never OFF.
+model GroundingMigrationState {
+  taskId String @id
+  projectId String
+  held Boolean
+  revision Int
+  task Task @relation(fields: [taskId, projectId], references: [id, projectId], onDelete: Restrict)
+  @@unique([taskId, projectId])
+  @@map("grounding_migration_states")
+}
+
+// Immutable exact administrative request and its historical outcome.
+model GroundingMigrationCommand {
+  id String @id @default(uuid())
+  taskId String
+  key String
+  actorId String
+  fingerprint String
+  request Json
+  before Json
+  after Json
+  result Json
+  createdAt DateTime @default(now())
+  task Task @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  @@unique([taskId, key])
+  @@map("grounding_migration_commands")
 }

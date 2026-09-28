@@ -3,8 +3,10 @@ type: runbook
 title: "Deploy: no in-repo automation, prod is docker-compose"
 description: "ci.yml only tests and builds; deploy/verify is an external ops concern; prod runtime is db + one-shot Prisma db push + backend/frontend behind Traefik."
 tags: [deploy, docker-compose, ops, ci]
-timestamp: 2026-09-26T14:49:53Z
+timestamp: 2026-09-27T20:11:24Z
 sources:
+  - backend/src/config/grounding-runtime.ts
+  - backend/src/services/grounding-runtime.ts
   - .github/workflows/ci.yml
   - .github/workflows/docker-smoke.yml
   - .github/workflows/audit.yml
@@ -16,6 +18,8 @@ sources:
   - Dockerfile.migrate
   - backend/package.json
   - backend/prisma/grounding-github-fence.sql
+  - backend/src/scripts/grounding-migration-report.ts
+  - scripts/grounding-deployment-check.mjs
   - tools/frontend-docker-smoke.sh
   - tools/compose.smoke-override.yml
   - docs/deploy-verify-strategy.md
@@ -29,4 +33,16 @@ sources:
 
 **Verifying a deployment**: since there is no in-repo mechanism, verification is external, confirm the `backend`/`frontend` containers are healthy and on the expected image digest, hit `GET /api/health` AND the root URL (the 2026-08-17 outage was a green backend with a crash-looping frontend), and check the Traefik router is serving the current cert/host. `tools/frontend-docker-smoke.sh` covers pre-merge image viability; there is still no scripted post-deploy verification in this repo -- that is an ops runbook outside `docs/okf/`.
 
+## Deployment checks for grounding migrations
+
+Grounding migration inventory is a read-only deployment check. Use `node scripts/grounding-deployment-check.mjs --inventory-only` with an explicit `GROUNDING_MIGRATION_DATABASE_URL` after building the backend. Its result is an input to a migration review, never a readiness decision or an activation command. A valid pinned legacy `complete` phase is reported as compatible rather than as a repair request; malformed or impossible legacy phase data remains a repair signal.
+
+Review the inventory together with an isolated backup/restore rehearsal, additive-schema mixed-version exercise, and proof that old writing instances are excluded before any enforcement change. A report that recommends a hold does not enforce one. A valid hold needs an authorized migration and a maintenance mechanism that participating writers cannot bypass.
+
+Do not activate from inventory counts, a successful process exit, a package version, or a caller flag. Keep activation blocked until the explicit runtime configuration and new-task cohort selection are reviewed, writer-fleet exclusion is demonstrated, and separate host/operator key and state evidence is complete.
+
 Related: `architecture.md`, `release-flow.md`.
+
+The canonical fence SQL also installs the task UPDATE/DELETE hold guard, the migration-overlay repository fence and immutable-command guard. Hold entry advances the task row version; schema sync alone is insufficient. Inventory adds held counts while remaining read-only. The [migration procedure](../grounding-migration.md) describes the optional admin path and still requires separate fleet/deployment qualification.
+
+Compose forwards `GROUNDING_RUNTIME_CONFIG` with an empty default. The backend checks runtime configuration and database prerequisites before listening. Empty configuration requires all grounding tables to exist and contain no rows; completed and inactive history also requires configured routing. Preserve valid configuration for restore and compatible rollback, and coordinate restarts for trust rotation or revocation. See [configuration and upgrade](../grounding-migration.md).
