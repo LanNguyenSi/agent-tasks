@@ -4,6 +4,26 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+**BREAKING**: `task_finish`, `task_merge`, `task_abandon`, `pull_requests_create`
+and `pull_requests_merge` now always send an operation/idempotency key —
+the caller's explicit value when given, otherwise a fresh one generated
+per call (`crypto.randomUUID()`), so an unconfigured (legacy) backend
+still works unchanged (it accepts and ignores the header/field it does
+not require) while a provisioned Grounding backend always receives one.
+A generated key is NOT stable across separate calls — it makes a single
+attempt safe but does nothing for a retry; pass your own key explicitly
+to make a retry after a network timeout idempotent.
+
+`pull_requests_merge`'s `idempotencyKey` keeps the previous format
+(`/^[A-Za-z0-9._:-]{1,128}$/`) unchanged. `pull_requests_create`'s
+`idempotencyKey` is narrowed from "any string, trimmed, 1-255 chars" to
+header-safe printable ASCII with no whitespace (`\x21-\x7E`, 1-255
+chars) — this is a breaking narrowing versus the previous unrestricted
+format, matching what the header transport and both backend routers
+(the always-mounted legacy router and the Grounding router) already
+require in practice. Both PR tools continue to send the same value in
+the `Idempotency-Key` header and the request body.
+
 ## 0.15.0
 
 **Additive**: `project_tasks` responses now carry `count` (the number of

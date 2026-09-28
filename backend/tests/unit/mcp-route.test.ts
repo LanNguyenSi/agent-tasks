@@ -421,6 +421,87 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     expect(response.body).toMatchObject({ result: { content: [{ text: expect.stringContaining('"pending": true') }] } });
   });
 
+  // Operation/idempotency-key coverage for the five remote-MCP tools that
+  // now always send a key (see mcp.ts's resolveOperationKey): the caller's
+  // explicit key is forwarded unchanged, and an omitted key is replaced by
+  // a freshly generated one so a provisioned Grounding backend always
+  // receives one while an unconfigured (legacy) backend keeps working
+  // (it just ignores the header/field it does not require).
+  const TASK_ID = "33333333-3333-3333-3333-333333333333";
+
+  it.each([
+    { name: "task_finish", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/finish` },
+    { name: "task_merge", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/merge` },
+    { name: "task_abandon", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/abandon` },
+  ])("$name forwards an explicit operationKey as Idempotency-Key unchanged", async ({ name, args, path }) => {
+    await callTool(name, { ...args, operationKey: "explicit-key-1" });
+    expect(recorded[0]).toMatchObject({ method: "POST", path });
+    expect(recorded[0].idempotencyKey).toBe("explicit-key-1");
+  });
+
+  it.each([
+    { name: "task_finish", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/finish` },
+    { name: "task_merge", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/merge` },
+    { name: "task_abandon", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/abandon` },
+  ])("$name generates an Idempotency-Key header when operationKey is omitted", async ({ name, args, path }) => {
+    await callTool(name, args);
+    expect(recorded[0]).toMatchObject({ method: "POST", path });
+    expect(recorded[0].idempotencyKey).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+  });
+
+  it.each(["task_finish", "task_merge", "task_abandon"])(
+    "%s generates a DIFFERENT Idempotency-Key on each call when operationKey is omitted",
+    async (name) => {
+      await callTool(name, { taskId: TASK_ID });
+      await callTool(name, { taskId: TASK_ID });
+      expect(recorded).toHaveLength(2);
+      expect(recorded[0].idempotencyKey).toBeTruthy();
+      expect(recorded[1].idempotencyKey).toBeTruthy();
+      expect(recorded[0].idempotencyKey).not.toBe(recorded[1].idempotencyKey);
+    },
+  );
+
+  it("pull_requests_create forwards an explicit idempotencyKey unchanged, as both header and body", async () => {
+    await callTool("pull_requests_create", {
+      taskId: TASK_ID,
+      owner: "o",
+      repo: "r",
+      head: "b",
+      title: "t",
+      idempotencyKey: "explicit-key-2",
+    });
+    expect(recorded[0]).toMatchObject({ method: "POST", path: "/api/github/pull-requests" });
+    expect(recorded[0].idempotencyKey).toBe("explicit-key-2");
+    expect((recorded[0].body as { idempotencyKey?: string }).idempotencyKey).toBe("explicit-key-2");
+  });
+
+  it("pull_requests_create generates an idempotencyKey (header + body) when omitted", async () => {
+    await callTool("pull_requests_create", { taskId: TASK_ID, owner: "o", repo: "r", head: "b", title: "t" });
+    const bodyKey = (recorded[0].body as { idempotencyKey?: string }).idempotencyKey;
+    expect(bodyKey).toBeTruthy();
+    expect(recorded[0].idempotencyKey).toBe(bodyKey);
+  });
+
+  it("pull_requests_merge forwards an explicit idempotencyKey unchanged, as both header and body", async () => {
+    await callTool("pull_requests_merge", {
+      taskId: TASK_ID,
+      owner: "o",
+      repo: "r",
+      prNumber: 1,
+      idempotencyKey: "explicit-key-3",
+    });
+    expect(recorded[0]).toMatchObject({ method: "POST", path: "/api/github/pull-requests/1/merge" });
+    expect(recorded[0].idempotencyKey).toBe("explicit-key-3");
+    expect((recorded[0].body as { idempotencyKey?: string }).idempotencyKey).toBe("explicit-key-3");
+  });
+
+  it("pull_requests_merge generates an idempotencyKey (header + body) when omitted", async () => {
+    await callTool("pull_requests_merge", { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 });
+    const bodyKey = (recorded[0].body as { idempotencyKey?: string }).idempotencyKey;
+    expect(bodyKey).toBeTruthy();
+    expect(recorded[0].idempotencyKey).toBe(bodyKey);
+  });
+
   it("rejects an oversized multibyte receipt before it reaches the REST route", async () => {
     const taskId = "33333333-3333-3333-3333-333333333333";
     const response = await mcpRequest(app, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "task_grounding_receipt_upload", arguments: { taskId, attemptId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", session: { id: "producer", revision: 1 }, receipt: "😀".repeat(8_193) } } }, { Authorization: "Bearer good_token" });

@@ -507,7 +507,10 @@ generated key is NOT stable across separate calls: it makes a first attempt safe
 not a retry. To make a network-timeout retry of the SAME operation idempotent,
 the caller generates its own key up front and passes that same value again on
 the retry; reusing a key for a genuinely different operation is a caller error
-the backend rejects as a conflict once the payloads differ.
+the backend rejects as a conflict once the payloads differ — true only for the
+provisioned Grounding completion routes and the GitHub PR routes, which both
+enforce same-key-same-payload; an unprovisioned (legacy) task route accepts
+and simply ignores the key, so it has no such conflict to reject.
 
 ## Versioning and rollout
 

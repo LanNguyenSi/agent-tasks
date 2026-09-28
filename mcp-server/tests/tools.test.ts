@@ -1041,6 +1041,39 @@ describe("buildTools", () => {
     },
   );
 
+  it("pull_requests_create accepts a 200-char printable-ASCII idempotencyKey", async () => {
+    fetchMock.mockResolvedValue(ok({ pullRequest: { number: 1, url: "u", title: "t" } }));
+    const key = "a".repeat(200);
+    await tool("pull_requests_create").handler({
+      taskId: TASK_ID,
+      owner: "o",
+      repo: "r",
+      head: "b",
+      title: "t",
+      idempotencyKey: key,
+    } as never);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["Idempotency-Key"]).toBe(key);
+  });
+
+  it.each(["has a space", "nön-ascii"])(
+    "pull_requests_create rejects a whitespace-or-non-ASCII idempotencyKey %s locally",
+    (key) => {
+      expect(() =>
+        parseArgs("pull_requests_create", { taskId: TASK_ID, owner: "o", repo: "r", head: "b", title: "t", idempotencyKey: key }),
+      ).toThrow();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("pull_requests_merge rejects a 129-char idempotencyKey locally (keeps the tighter 1-128 format)", () => {
+    const key = "a".repeat(129);
+    expect(() =>
+      parseArgs("pull_requests_merge", { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1, idempotencyKey: key }),
+    ).toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("pull_requests_comment routes to /pull-requests/{prNumber}/comments and keeps body field", async () => {
     fetchMock.mockResolvedValue(ok({ comment: { id: "c1" } }));
     await tool("pull_requests_comment").handler({
@@ -1480,12 +1513,15 @@ describe("buildTools", () => {
     expect(JSON.stringify(result)).not.toContain("SECRET");
   });
 
-  it("forwards an explicit operationKey as Idempotency-Key without inventing one", async () => {
-    fetchMock.mockResolvedValue(ok({ kind: "work", task: { id: "t1", status: "review" } }));
-    await tool("task_finish").handler({ taskId: TASK_ID, operationKey: "retry-key-1" } as never);
+  it.each([
+    { name: "task_finish", args: { taskId: TASK_ID, operationKey: "retry-key-1" }, body: { kind: "work", task: { id: "t1", status: "review" } } },
+    { name: "task_merge", args: { taskId: TASK_ID, operationKey: "retry-key-1" }, body: { task: { id: "t1", status: "done" }, merged: true, sha: "s", alreadyMerged: false } },
+    { name: "task_abandon", args: { taskId: TASK_ID, operationKey: "retry-key-1" }, body: { task: { id: "t1", status: "open" } } },
+  ])("$name forwards an explicit operationKey as Idempotency-Key without inventing one", async ({ name, args, body }) => {
+    fetchMock.mockResolvedValue(ok(body));
+    await tool(name).handler(args as never);
     const [, init] = fetchMock.mock.calls[0];
     expect(init.headers["Idempotency-Key"]).toBe("retry-key-1");
-    expect(init.body).toBe("{}");
   });
 
   it("sends the strict empty JSON body required by keyed abandonment", async () => {

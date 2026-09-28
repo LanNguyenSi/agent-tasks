@@ -60,6 +60,14 @@ const priorityEnum = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 
 const uuid = () => z.string().uuid();
 const operationKey = () => z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
+// pull_requests_create's idempotencyKey: relaxed to header-safe printable
+// ASCII (no whitespace, \x21-\x7E only), 1-255 chars — matches both the
+// legacy github.ts body-field bound (trim, 1-255) and the Grounding
+// router's createKey bound (backend/src/routes/grounding-github.ts), which
+// accept the full printable-ASCII set. pull_requests_merge keeps the
+// tighter operationKey() format because its Grounding-router counterpart
+// still enforces that narrower pattern.
+const createIdempotencyKey = () => z.string().regex(/^[\x21-\x7E]{1,255}$/);
 const MAX_GROUNDING_RECEIPT_BYTES = 32_768;
 
 // Shared description suffix for the five operation-key inputs below
@@ -71,6 +79,11 @@ const MAX_GROUNDING_RECEIPT_BYTES = 32_768;
 // on both the original call and the retry.
 const OPERATION_KEY_HINT =
   " Optional, 1-128 chars of letters, digits, '.', '_', ':', '-'. When omitted, a fresh key is generated for this single call — safe for a one-off attempt, but a regenerated key differs every call, so it does not make a retry idempotent. To retry the exact same operation safely (e.g. after a network timeout), generate your own key up front and pass that same value again on the retry.";
+
+// pull_requests_create's own key-format note (see createIdempotencyKey()
+// above for why this tool's format differs from the other four).
+const CREATE_KEY_HINT =
+  " Optional, 1-255 printable ASCII chars, no whitespace. When omitted, a fresh key is generated for this single call — safe for a one-off attempt, but a regenerated key differs every call, so it does not make a retry idempotent. To retry the exact same operation safely (e.g. after a network timeout), generate your own key up front and pass that same value again on the retry.";
 
 /** Resolves the operation key to actually send: the caller's explicit key
  *  when given (already validated against the same 1-128 char format by the
@@ -395,7 +408,7 @@ export function buildTools(
         outcome: z.enum(["approve", "request_changes"]).optional(),
         autoMerge: z.boolean().optional(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
-        operationKey: operationKey().optional().describe("Required by provisioned external-grounding completion." + OPERATION_KEY_HINT),
+        operationKey: operationKey().optional().describe("Provisioned external-grounding completion always receives a key." + OPERATION_KEY_HINT),
         include: includeSchema,
       },
       handler: async ({ taskId, include, operationKey, ...body }) => {
@@ -560,7 +573,7 @@ export function buildTools(
       name: "task_abandon",
       description:
         "Explicit bail-out: release the active claim on a task without finishing. A work claim on an in_progress task returns it to open; a review claim simply releases the review lock. Use this sparingly — task_finish is the normal path. Separate intent from finish so audit trails distinguish abandonment from completion.\n\nReturns a receipt by default ({ ok, task: { id, status } }). Pass include:[\"task\"] for the full backend object.",
-      inputShape: { taskId: uuid(), operationKey: operationKey().optional().describe("Required by provisioned external-grounding abandonment." + OPERATION_KEY_HINT), include: includeSchema },
+      inputShape: { taskId: uuid(), operationKey: operationKey().optional().describe("Provisioned external-grounding abandonment always receives a key." + OPERATION_KEY_HINT), include: includeSchema },
       handler: async ({ taskId, operationKey, include }) => {
         const key = resolveOperationKey(operationKey);
         const response = await wrap(() => client.abandonTask(taskId, key));
@@ -715,7 +728,7 @@ export function buildTools(
       inputShape: {
         taskId: uuid(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
-        operationKey: operationKey().optional().describe("Required by provisioned external-grounding merge." + OPERATION_KEY_HINT),
+        operationKey: operationKey().optional().describe("Provisioned external-grounding merge always receives a key." + OPERATION_KEY_HINT),
         include: includeSchema,
       },
       handler: async ({ taskId, mergeMethod, operationKey, include }) => {
@@ -1059,7 +1072,7 @@ export function buildTools(
     def({
       name: "pull_requests_create",
       description:
-        "Create a pull request on behalf of a team member with GitHub connected. Requires `github:pr_create` scope for agent callers plus an operator who has opted in via 'Allow agents to create PRs' in Settings. The task is updated with `branchName`, `prUrl`, `prNumber` on success. The historic alternative — agents running `gh pr create` themselves and passing the URL into `task_finish { prUrl }` — still works and remains a supported fallback for orgs that prefer not to share a GitHub identity with agent-tasks. `idempotencyKey` makes the call safe to retry after a network timeout — the backend replays the stored 2xx response on subsequent calls with the same key, and rejects the same key + different payload with 409." + OPERATION_KEY_HINT,
+        "Create a pull request on behalf of a team member with GitHub connected. Requires `github:pr_create` scope for agent callers plus an operator who has opted in via 'Allow agents to create PRs' in Settings. The task is updated with `branchName`, `prUrl`, `prNumber` on success. The historic alternative — agents running `gh pr create` themselves and passing the URL into `task_finish { prUrl }` — still works and remains a supported fallback for orgs that prefer not to share a GitHub identity with agent-tasks. `idempotencyKey` makes the call safe to retry after a network timeout — the backend replays the stored 2xx response on subsequent calls with the same key, and rejects the same key + different payload with 409." + CREATE_KEY_HINT,
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),
@@ -1068,7 +1081,7 @@ export function buildTools(
         base: z.string().min(1).optional(),
         title: z.string().min(1),
         body: z.string().optional(),
-        idempotencyKey: operationKey().optional(),
+        idempotencyKey: createIdempotencyKey().optional(),
       },
       handler: async ({ idempotencyKey, ...rest }) => {
         const key = resolveOperationKey(idempotencyKey);
