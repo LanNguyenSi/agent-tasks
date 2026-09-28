@@ -571,6 +571,21 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
   });
 
+  // Reject side of pull_requests_create's length cap and ASCII-only charset.
+  it.each([
+    { label: "a 256-char", key: "a".repeat(256) },
+    { label: "a non-ASCII", key: "nön-ascii" },
+  ])("rejects $label pull_requests_create idempotencyKey before self-dispatch", async ({ key }) => {
+    const response = await mcpRequest(
+      app,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "pull_requests_create", arguments: { taskId: TASK_ID, owner: "o", repo: "r", head: "b", title: "t", idempotencyKey: key } } },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
   it.each([
     { name: "pull_requests_merge", args: { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 }, keyField: "idempotencyKey" },
     { name: "task_finish", args: { taskId: TASK_ID }, keyField: "operationKey" },

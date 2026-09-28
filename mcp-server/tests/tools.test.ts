@@ -1096,6 +1096,13 @@ describe("buildTools", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("pull_requests_merge rejects an idempotencyKey containing '/' locally (valid for pull_requests_create, outside the operationKey charset)", () => {
+    expect(() =>
+      parseArgs("pull_requests_merge", { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1, idempotencyKey: "a/b" }),
+    ).toThrow(/"idempotencyKey"/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("pull_requests_comment routes to /pull-requests/{prNumber}/comments and keeps body field", async () => {
     fetchMock.mockResolvedValue(ok({ comment: { id: "c1" } }));
     await tool("pull_requests_comment").handler({
