@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Unconfigured (grounding-disabled) backend startup no longer refuses to start over an unowned GitHub repository-fence row or a non-`ACTIVE` fence-intent row on their own. The repository-fence SQL trigger bumps a fence row on any ordinary task write that carries a GitHub repo, whether or not grounding is ever configured, so that row alone was never real grounding history. An *owned* fence or an `ACTIVE` intent — meaning a configured lane actually reserved it — still counts as history and still refuses unconfigured startup, and every other grounding table is checked exactly as before. Self-hosters who install without ever configuring `GROUNDING_RUNTIME_CONFIG` need no action; those who want real grounding history still need enabled config.
 - `GET /api/projects/:id/tasks` now fetches `limit + 1` rows so `nextCursor` is exactly `null` only when no rows remain after this page, instead of the previous `tasks.length === limit` heuristic (task e36696d7).
 - Docs layout: the root `adr/` directory moved to `docs/adr/` (numbers unchanged) and `diagrams/` to `docs/diagrams/`. The two ADRs that already lived in `docs/adr/` were renumbered to avoid collisions: `0001-webhook-event-model` is now `0014-webhook-event-model`, `0002-grounding-finish-gate` is now `0013-grounding-finish-gate`.
 

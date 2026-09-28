@@ -29,7 +29,18 @@ export async function composeGroundingRuntime(raw: string | undefined, db: Prism
   try {
     const runtime = parseGroundingRuntimeConfig(raw);
     if (!runtime.enabled) {
-      const predicates = groundingStateTables.map(table => Prisma.sql`EXISTS (SELECT 1 FROM ${Prisma.raw(table)})`);
+      // The GitHub repository-fence trigger (grounding-github-fence.sql) fires
+      // on every ordinary task write that carries a GitHub repo, whether or
+      // not grounding is ever configured, bumping an unowned
+      // grounding_github_repository_fences row. That row alone is not real
+      // grounding history, so it (and a non-ACTIVE grounding_github_fence_intents
+      // row, its historical counterpart) is exempted below; an OWNED fence or
+      // an ACTIVE intent still means a configured lane actually reserved one.
+      const predicates = groundingStateTables.map(table => {
+        if (table === "grounding_github_repository_fences") return Prisma.sql`EXISTS (SELECT 1 FROM grounding_github_repository_fences WHERE "ownerId" IS NOT NULL)`;
+        if (table === "grounding_github_fence_intents") return Prisma.sql`EXISTS (SELECT 1 FROM grounding_github_fence_intents WHERE state = 'ACTIVE')`;
+        return Prisma.sql`EXISTS (SELECT 1 FROM ${Prisma.raw(table)})`;
+      });
       const rows = await db.$queryRaw<{ present: boolean }[]>(Prisma.sql`SELECT (${Prisma.join(predicates, " OR ")}) AS present`);
       if (rows.length !== 1 || rows[0]?.present !== false) throw new Error("Grounding history requires configured startup");
       return {};

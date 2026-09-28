@@ -71,10 +71,9 @@ it("preserves empty migrated disabled startup and refuses missing grounding tabl
   } finally { await isolated.close(); }
 }, 60000);
 
-it.each(["off cohort", "inactive fence", "completed delivery"])("disabled startup refuses %s without modifying it", async kind => {
+it.each(["off cohort", "completed delivery"])("disabled startup refuses %s without modifying it", async kind => {
   const isolated = await groundingPostgres();
   try {
-    if (kind === "inactive fence") await isolated.db.groundingGithubRepositoryFence.create({ data: { repo: "acme/history", ownerId: null } });
     if (kind === "completed delivery") await isolated.db.groundingGithubWebhookDelivery.create({ data: { deliveryId: "history", event: "ping", fingerprint: "a".repeat(64), result: { received: true }, completedAt: new Date() } });
     if (kind === "off cohort") {
       await isolated.db.team.create({ data: { id: ids.team, name: "History", slug: "history" } });
@@ -85,6 +84,39 @@ it.each(["off cohort", "inactive fence", "completed delivery"])("disabled startu
     const before = [await isolated.db.groundingCohort.count(), await isolated.db.groundingGithubRepositoryFence.count(), await isolated.db.groundingGithubWebhookDelivery.count()];
     await expect(composeGroundingRuntime('{"enabled":false}', isolated.db)).rejects.toThrow("Grounding runtime startup refused");
     expect([await isolated.db.groundingCohort.count(), await isolated.db.groundingGithubRepositoryFence.count(), await isolated.db.groundingGithubWebhookDelivery.count()]).toEqual(before);
+  } finally { await isolated.close(); }
+}, 60000);
+
+// SE-04: the repository-fence trigger fires on every ordinary GitHub-linked
+// task write whether or not grounding is configured, so an unowned fence row
+// (and a non-ACTIVE fence intent, its historical counterpart) is no longer
+// treated as grounding history on its own; every other grounding table is
+// still checked exactly as before.
+it("disabled startup accepts an unowned repository fence produced by an ordinary GitHub-linked task write", async () => {
+  const isolated = await groundingPostgres();
+  try {
+    await isolated.db.team.create({ data: { id: ids.team, name: "History", slug: "history" } });
+    await isolated.db.project.create({ data: { id: ids.project, teamId: ids.team, name: "History", slug: "history", githubRepo: "acme/history" } });
+    await isolated.db.task.create({ data: { id: ids.task, projectId: ids.project, title: "History" } });
+    expect(await isolated.db.groundingGithubRepositoryFence.findUniqueOrThrow({ where: { repo: "acme/history" } })).toMatchObject({ ownerId: null });
+    expect(await composeGroundingRuntime("", isolated.db)).toEqual({});
+    await isolated.db.task.update({ where: { id: ids.task }, data: { title: "History (touched)" } });
+    expect(await composeGroundingRuntime("", isolated.db)).toEqual({});
+  } finally { await isolated.close(); }
+}, 60000);
+it.each(["owned fence", "active intent", "other table row"])("disabled startup still refuses %s despite an otherwise-exempt unowned fence", async kind => {
+  const isolated = await groundingPostgres();
+  try {
+    await isolated.db.team.create({ data: { id: ids.team, name: "History", slug: "history" } });
+    await isolated.db.project.create({ data: { id: ids.project, teamId: ids.team, name: "History", slug: "history", githubRepo: "acme/history" } });
+    await isolated.db.task.create({ data: { id: ids.task, projectId: ids.project, title: "History" } });
+    if (kind === "owned fence") {
+      const intent = await isolated.db.groundingGithubFenceIntent.create({ data: { id: randomUUID(), repo: "acme/history", kind: "MERGE", taskId: ids.task, state: "COMPLETED" } });
+      await isolated.db.groundingGithubRepositoryFence.update({ where: { repo: "acme/history" }, data: { ownerId: intent.id } });
+    }
+    if (kind === "active intent") await isolated.db.groundingGithubFenceIntent.create({ data: { id: randomUUID(), repo: "acme/other", kind: "PR_CREATE", taskId: ids.task, state: "ACTIVE" } });
+    if (kind === "other table row") await isolated.db.groundingGithubWebhookDelivery.create({ data: { deliveryId: "history", event: "ping", fingerprint: "a".repeat(64), result: { received: true }, completedAt: new Date() } });
+    await expect(composeGroundingRuntime("", isolated.db)).rejects.toThrow("Grounding runtime startup refused");
   } finally { await isolated.close(); }
 }, 60000);
 
