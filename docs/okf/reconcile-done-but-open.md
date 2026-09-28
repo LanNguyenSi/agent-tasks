@@ -3,7 +3,7 @@ type: runbook
 title: "Reconciling a task whose PR merged but the record is stuck open"
 description: "Recover a configured merge with its original operation and exact GitHub proof; retain the separate historical task lifecycle repair flow."
 tags: [reconcile, task-lifecycle, idempotency, runbook]
-timestamp: 2026-09-28T06:59:39Z
+timestamp: 2026-09-28T07:54:48Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/default-workflow.ts
@@ -88,11 +88,18 @@ merge requests without enrollment return `409 grounding_enrollment_required`
 only when the task's project is selected by `creationPolicy`, or when any
 repository or PR number the legacy handler could act on (request, task and PR
 URL targets alike) belongs to a selected project or is shared with a
-protected/`EXTERNAL_V1`/held peer; otherwise, including without an operation
-key, the request reaches the unchanged legacy handler. Remote merge and
-PR-create routing outside the enforced scope therefore match legacy, but
-enabling configuration writes grounding history (webhook deliveries, for
-example), so it is one-way; rollback keeps an enabled configuration with empty
+protected/`EXTERNAL_V1`/held peer, or any candidate repository string is not a
+canonical identity; an unguarded request whose candidate repository fence
+another operation owns returns `409 grounding_finalization_pending` before any
+GitHub call; otherwise, including without an operation key, the request
+reaches the unchanged legacy handler. Outside the enforced scope the
+configured GitHub create and merge routes read only the task id, body
+owner/repo, a well-formed key for the history lookup and the path PR number
+parsed as legacy parses it, then hand the request to the legacy handler
+unmodified; the remaining differences from the unconfigured app are the
+guarded and fenced refusals and the agent-scope admission check that runs
+first. Enabling configuration writes grounding history (webhook deliveries,
+for example), so it is one-way; rollback keeps an enabled configuration with empty
 trust and an empty `creationPolicy`. Compatibility requires explicit OFF or LEGACY_LOCAL server
 enrollment, not a fallback selected from task metadata.
 

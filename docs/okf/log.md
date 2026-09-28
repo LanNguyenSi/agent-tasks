@@ -16,8 +16,16 @@ merge service's peer-discovery SQL into a shared, exported helper). An
 unprovisioned task's PR create outside that scope now reaches the legacy
 creator even with an operation key. Startup now also refuses when a project
 outside the enforced scope shares a GitHub repository with an enforced one.
-Remote merge and PR-create routing outside the scope match legacy, but
-enabling configuration writes grounding history and is therefore one-way; the
+A repository string among those targets that is not a canonical `owner/repo`
+identity is guarded too, and a legacy fall-through whose candidate repository
+fence another operation owns is refused with `409
+grounding_finalization_pending` before any GitHub call. Outside the scope the
+GitHub create and merge routes read only the task id, body owner/repo, a
+well-formed history key and the legacy-parsed path number, then hand the
+request to the legacy handler unmodified (the legacy creator now also reads the
+`Idempotency-Key` header); the remaining differences from the unconfigured app
+are those refusals and the agent-scope admission check. Enabling configuration
+writes grounding history and is therefore one-way; the
 docs no longer call an enabled, empty configuration equivalent to the
 unconfigured app. `architecture.md`, `workflow-gates.md`,
 `governance-merge.md`, `reconcile-done-but-open.md`, `backend.md` and

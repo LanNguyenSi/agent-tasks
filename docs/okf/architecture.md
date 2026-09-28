@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-28T06:59:39Z
+timestamp: 2026-09-28T07:54:48Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -39,26 +39,39 @@ task without server enrollment keeps that same compatibility behavior for
 local completion, but a fresh remote operation (task merge, GitHub merge,
 finish with `autoMerge`) instead returns `409 grounding_enrollment_required`
 before any remote effect (`grounding-task-completion.ts:117`,
-`routes/grounding-github.ts:124`) when the task's project is in the configured
+`routes/grounding-github.ts:151`) when the task's project is in the configured
 `creationPolicy` scope, or when any repository or PR number the legacy handler
 could act on (request owner/repo and PR URL, deliverable, project and stored
 PR URL repository; path, task and PR URL number) belongs to a selected project
 or is shared with a protected/`EXTERNAL_V1`/held peer (`grounding-scope.ts`,
-reusing the merge service's peer predicate). Otherwise, including without an
-operation key, the same request reaches the historical route; an unprovisioned
-task's PR create outside that scope reaches the legacy creator even with a key,
-which is forwarded as the body `idempotencyKey`. The unconfigured default app
-has no such gate either way. Remote merge and PR-create routing outside the
-enforced scope therefore match legacy, but enabling configuration writes
-grounding history (webhook deliveries, for example), so a later unconfigured
-restart is refused and enabling is one-way; rollback means keeping an enabled
+reusing the merge service's peer predicate). A non-canonical candidate
+repository string (dot segment, percent-encoded name, owner containing `/`) is
+guarded too, and an unguarded request whose candidate repository fence another
+operation owns returns `409 grounding_finalization_pending` before any GitHub
+call (`grounding-task-completion.ts:120`, `routes/grounding-github.ts:68`).
+Otherwise, including without an operation key, the same request reaches the
+historical route; an unprovisioned task's PR create outside that scope reaches
+the legacy creator even with a key, which reads it from the `Idempotency-Key`
+header or the body `idempotencyKey`. The unconfigured default app has no such
+gate either way. Outside the enforced scope the configured GitHub create and
+merge routes read only the task id, body owner/repo, a well-formed key for the
+history lookup and the path PR number parsed as legacy parses it, then hand
+the request to the legacy handler unmodified; the remaining differences from
+the unconfigured app are the guarded and fenced refusals and the agent-scope
+admission check that runs first. Enabling configuration writes grounding
+history (webhook deliveries, for example), so a later unconfigured restart is
+refused and enabling is one-way; rollback means keeping an enabled
 configuration with empty trust and an empty `creationPolicy`. Startup itself
 refuses when a project outside the enforced scope shares a GitHub repository
-with an enforced one; a project created or re-pointed after startup is not
-re-checked. The scope check is a point-in-time read, not a lock, so it accepts
-one residual race: an admin rebinding a protected task's repository or PR
-concurrently with an in-flight legacy merge of that same PR is not fenced by
-it. Invalid enrollment,
+with an enforced one, when an enforced project's repository is not canonical,
+and, while the scope owns a repository, when any project's repository is not
+canonical; a project created or re-pointed after startup is not re-checked.
+The scope, peer and fence reads are point-in-time, not locks, and accept a
+residual race: any change between the read and the legacy GitHub call that
+makes some task a protected/`EXTERNAL_V1`/held peer of the targeted PR or
+repository (an admin rebinding a repository or PR, a migration hold, an
+enrollment), or a grouped operation acquiring a candidate repository fence, is
+not seen. Invalid enrollment,
 orphan binding, unavailable trusted service, and database errors fail closed.
 There is no agent enrollment endpoint. An explicitly injected human-admin migration service supplies audited hold, legacy repair, external migration and readiness-checked resume. The server loads explicit runtime selection from `GROUNDING_RUNTIME_CONFIG`;
 empty creation policy does not activate enrollment; before server-only enrollment of legacy work, active

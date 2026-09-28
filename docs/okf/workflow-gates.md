@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-09-28T06:59:39Z
+timestamp: 2026-09-28T07:54:48Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -78,24 +78,36 @@ historical unprovisioned handlers remain separate, and a configured app's
 fresh remote operation (task merge, GitHub merge, finish with `autoMerge`) on
 an unenrolled task returns `409 grounding_enrollment_required` before any
 remote effect rather than falling back to the unprovisioned handler
-(`grounding-task-completion.ts:117`, `routes/grounding-github.ts:124`) when
+(`grounding-task-completion.ts:117`, `routes/grounding-github.ts:151`) when
 that task's project is in the configured `creationPolicy` scope, or when any
 repository or PR number the legacy handler could act on (request owner/repo
 and PR URL, deliverable, project and stored PR URL repository; path, task and
 PR URL number) belongs to a selected project or is shared with a
-protected/`EXTERNAL_V1`/held peer (`grounding-scope.ts`). Otherwise,
-including without an operation key, the same request falls back to the
-unprovisioned handler. Remote merge and PR-create routing outside the
-enforced scope therefore match legacy; enabling configuration still writes
-grounding history (webhook deliveries, for example), so a later unconfigured
-restart is refused and enabling is one-way, and rollback keeps an enabled
-configuration with empty trust and an empty `creationPolicy`. Startup refuses
-when a project outside the enforced scope shares a GitHub repository with an
-enforced one; a project created or re-pointed after startup is not re-checked.
-The scope check's peer read is point-in-time, not a lock, and accepts one
-residual race: an admin rebinding a protected task's repository or PR
-concurrently with an in-flight legacy merge of that same PR is not fenced by
-it. See the
+protected/`EXTERNAL_V1`/held peer (`grounding-scope.ts`). A non-canonical
+candidate repository string (dot segment, percent-encoded name, owner
+containing `/`) is guarded too, and an unguarded request whose candidate
+repository fence another operation owns returns `409
+grounding_finalization_pending` before any GitHub call (`grounding-task-
+completion.ts:120`, `routes/grounding-github.ts:68`). Otherwise, including
+without an operation key, the same request falls back to the unprovisioned
+handler. Outside the enforced scope the configured GitHub create and merge
+routes read only the task id, body owner/repo, a well-formed key for the
+history lookup and the path PR number parsed as legacy parses it, then hand
+the request to the legacy handler unmodified; the remaining differences from
+the unconfigured app are the guarded and fenced refusals and the agent-scope
+admission check that runs first. Enabling configuration still writes grounding
+history (webhook deliveries, for example), so a later unconfigured restart is
+refused and enabling is one-way, and rollback keeps an enabled configuration
+with empty trust and an empty `creationPolicy`. Startup itself refuses when a
+project outside the enforced scope shares a GitHub repository with an enforced
+one, when an enforced project's repository is not canonical, and, while the
+scope owns a repository, when any project's repository is not canonical; a
+project created or re-pointed after startup is not re-checked. The scope, peer
+and fence reads are point-in-time, not locks, and accept a residual race: any
+change between the read and the legacy GitHub call that makes some task a
+protected/`EXTERNAL_V1`/held peer of the targeted PR or repository (an admin
+rebinding a repository or PR, a migration hold, an enrollment), or a grouped
+operation acquiring a candidate repository fence, is not seen. See the
 [shared receipt consumer contract](../grounding-receipt-contract.md).
 
 An independent administrative hold is checked before cohort selection or unprovisioned fallback. It blocks fresh task completion and evidence use, including force/override paths; the database guard freezes all task-row updates and deletes. Existing claims and cohort history remain stored. See [migration and resume](../grounding-migration.md).
