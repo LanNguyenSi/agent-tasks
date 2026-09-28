@@ -251,6 +251,32 @@ describe("wiring: tasks finish --auto-merge sends the operation key", () => {
   });
 });
 
+describe("wiring: tasks abandon sends the operation key", () => {
+  it("forwards --operation-key as the Idempotency-Key header on abandon", async () => {
+    let receivedHeader: string | undefined;
+    const { endpoint, close } = await startStubServer((req, res) => {
+      receivedHeader = req.headers["idempotency-key"] as string | undefined;
+      respondJson(res, 200, {
+        task: { id: "00000000-0000-0000-0000-000000000000", title: "x", status: "open", priority: "LOW" },
+      });
+    });
+    try {
+      const res = await runAgainst(endpoint, [
+        "tasks",
+        "abandon",
+        "00000000-0000-0000-0000-000000000000",
+        "--operation-key",
+        "abandon-wiring-key.1",
+      ]);
+      expect(res.stderr).toBe("");
+      expect(res.status).toBe(0);
+      expect(receivedHeader).toBe("abandon-wiring-key.1");
+    } finally {
+      await close();
+    }
+  });
+});
+
 describe("wiring: --operation-key is validated before an id prefix is resolved", () => {
   it("rejects an invalid --operation-key on finish with zero requests, even with an id prefix", async () => {
     let requestCount = 0;

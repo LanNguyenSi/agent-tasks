@@ -278,6 +278,22 @@ describe("taskAbandon", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects a key valid only under the relaxed pr-create/merge format, not abandon's tighter one", async () => {
+    // "!" is inside PR_OPERATION_KEY_PATTERN's \x21-\x7E range but outside
+    // abandon's tighter alnum/./_/:/- set -- this discriminates abandon
+    // from a regression that widened its pattern to the PR one.
+    await expect(taskAbandon(config, "t1", "has!bang")).rejects.toBeInstanceOf(
+      InvalidOperationKeyError,
+    );
+    // 200 chars exceeds abandon's 128-char cap but fits under the PR
+    // format's 255-char cap -- same discriminator, on length instead of
+    // charset.
+    await expect(taskAbandon(config, "t1", "a".repeat(200))).rejects.toBeInstanceOf(
+      InvalidOperationKeyError,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("accepts a 128-char operation key (the format's own upper bound)", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "LOW" } }),
