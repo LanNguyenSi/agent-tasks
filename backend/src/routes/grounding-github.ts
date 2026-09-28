@@ -131,10 +131,9 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
       if (!routing) return next();
       taskId = routing.taskId;
       const keys = historyKeys(c, routing.bodyKey, mergeKey);
-      const history = keys.length > 0 && (
-        await deps.db.groundingOperation.findFirst({ where: { taskId, key: { in: keys } }, select: { id: true } })
-        ?? await deps.db.groundingGithubMergeGroup.findFirst({ where: { seedTaskId: taskId, key: { in: keys } }, select: { id: true } })
-      );
+      // A grouped merge records its seed operation under the same key in the
+      // same transaction as its group, so the operation alone identifies it.
+      const history = keys.length > 0 && await deps.db.groundingOperation.findFirst({ where: { taskId, key: { in: keys } }, select: { id: true } });
       if (!history) {
         const task = await deps.db.task.findUnique({ where: { id: taskId }, include: { project: true } });
         if (!task) return next();

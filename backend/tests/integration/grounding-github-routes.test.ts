@@ -678,3 +678,19 @@ it("a failed reservation without durable history for its key still fails", async
   expect(result.status).toBe(503); expect(await result.json()).toMatchObject({ error: "grounding_verification_unavailable" });
   expect(f.merge).not.toHaveBeenCalled();
 });
+
+it("a keyed github merge whose key has durable operation history on an unprovisioned task stays on the Grounding path", async () => {
+  const u = await unscopedTask();
+  await store.db.task.update({ where: { id: u.taskId }, data: { status: "done" } });
+  await store.db.groundingOperation.create({ data: { taskId: u.taskId, key: "prior-key", actorType: "agent", actorId: ids.agent, fingerprint: "0".repeat(64), request: {}, decision: {}, state: "COMPLETED", result: {} } });
+  const [owner, name] = u.ownRepo.split("/");
+  const a = app(f.service, undefined, emptyScope);
+  for (const [header, body] of [["prior-key", {}], [null, { idempotencyKey: "prior-key" }]] as const) {
+    const result = await a.fetch(request({ taskId: u.taskId, owner, repo: name, ...body }, "/api/github/pull-requests/99/merge", header));
+    expect(result.status).toBe(409); expect(await result.json()).toEqual({ error: "bad_state" });
+  }
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+  // Without that history the same request is the legacy handler's.
+  const legacy = await a.fetch(request({ taskId: u.taskId, owner, repo: name }, "/api/github/pull-requests/99/merge", "fresh-key"));
+  expect(legacy.status).toBe(502); expect(fetchCalls()).toEqual([`https://api.github.com/repos/${u.ownRepo}/pulls/99/merge`]);
+});
