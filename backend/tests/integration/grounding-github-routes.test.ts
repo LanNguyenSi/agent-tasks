@@ -22,7 +22,15 @@ let f: Awaited<ReturnType<typeof completionFixture>>;
 let repo: string;
 const token = "configured-github-route-test";
 const actor = { ...completionActor, scopes: [...completionActor.scopes, "github:pr_create"] };
-beforeAll(async () => { store = await completionStore(); harness.db = store.db; }, 60000);
+// An agent of another team with every route scope but no access to any fixture project.
+const foreign = { user: randomUUID(), team: randomUUID(), agent: randomUUID(), token: "foreign-team-github-route-test" };
+beforeAll(async () => {
+  store = await completionStore(); harness.db = store.db;
+  await store.db.user.create({ data: { id: foreign.user, login: "foreign", githubAccessToken: "test-only", githubConnectedAt: new Date(), allowAgentPrCreate: true, allowAgentPrMerge: true } });
+  await store.db.team.create({ data: { id: foreign.team, name: "Foreign", slug: `foreign-${foreign.team}` } });
+  await store.db.teamMember.create({ data: { teamId: foreign.team, userId: foreign.user, role: "ADMIN" } });
+  await store.db.agentToken.create({ data: { id: foreign.agent, teamId: foreign.team, createdById: foreign.user, name: "Foreign", tokenHash: createHash("sha256").update(foreign.token).digest("hex"), scopes: actor.scopes } });
+}, 60000);
 afterAll(async () => { if (store) await store.close(); });
 beforeEach(async () => {
   vi.stubEnv("REDIS_URL", ""); vi.stubEnv("GITHUB_WEBHOOK_SECRET", "configured-test-secret");
@@ -115,7 +123,13 @@ it("requires durable key and current authenticated scope before effects", async 
 it("N11 concurrent same-key route calls commit one group and send one merge", async () => {
   await f.evidence("merge"); const a = app(); const b = app(f.make(store.connect()));
   const responses = await Promise.all([a.fetch(request(mergeBody())), b.fetch(request(mergeBody()))]);
-  expect(responses.every(r => [200, 202].includes(r.status))).toBe(true);
+  // The losing request may see one transient serialization failure, answered
+  // with the documented retryable 503; the other one wins.
+  const unavailable = responses.filter(r => r.status === 503);
+  expect(unavailable.length).toBeLessThanOrEqual(1);
+  for (const r of unavailable) expect(await r.json()).toEqual({ error: "grounding_verification_unavailable", message: "Retry with the same Idempotency-Key and unchanged request to resolve the durable operation." });
+  expect(responses.filter(r => [200, 202].includes(r.status)).length).toBe(responses.length - unavailable.length);
+  // A same-key retry converges on the one committed group and merge.
   expect((await a.fetch(request(mergeBody()))).status).toBe(200); expect(f.merge).toHaveBeenCalledOnce();
   expect(await store.db.groundingGithubMergeGroup.count({ where: { seedTaskId: f.taskId } })).toBe(1);
   expect((await a.fetch(request({ ...mergeBody(), merge_method: "merge" }))).status).toBe(409);
@@ -330,14 +344,16 @@ it("a failed keyed legacy create for an unscoped task leaves no owned fence and 
   await store.db.task.update({ where: { id: sibling.id }, data: { title: "Sibling edit" } });
   expect(await store.db.task.findUniqueOrThrow({ where: { id: sibling.id } })).toMatchObject({ title: "Sibling edit" });
 });
-it("a keyed create with durable create history keeps using the grouped create service", async () => {
+// "k/+=" is a valid create key that the merge key format rejects, so the
+// history lookup must use the create key format.
+it.each(["mcp-generated-key", "k/+="])("a keyed create with durable create history under key %s keeps using the grouped create service", async historyKey => {
   const u = await unscopedTask();
   const [owner, name] = u.ownRepo.split("/");
   const a = app(f.service, new GroundingGithubCreateService({ db: store.db }), emptyScope);
   const body = { taskId: u.taskId, owner, repo: name, head: "feature", title: "Create" };
   const intent = await store.db.groundingGithubFenceIntent.create({ data: { id: randomUUID(), repo: u.ownRepo, kind: "PR_CREATE", taskId: u.taskId, state: "COMPLETED" } });
-  await store.db.groundingGithubCreateOperation.create({ data: { id: intent.id, taskId: u.taskId, projectId: u.projectId, key: "mcp-generated-key", actorId: ids.agent, actorUserId: ids.user, actorTeamId: ids.team, fingerprint: "0".repeat(64), request: { owner, repo: name, head: "feature", base: "main", title: "Create" }, delegateUserId: ids.user, state: "COMPLETED" } });
-  const result = await a.fetch(request(body, "/api/github/pull-requests", "mcp-generated-key"));
+  await store.db.groundingGithubCreateOperation.create({ data: { id: intent.id, taskId: u.taskId, projectId: u.projectId, key: historyKey, actorId: ids.agent, actorUserId: ids.user, actorTeamId: ids.team, fingerprint: "0".repeat(64), request: { owner, repo: name, head: "feature", base: "main", title: "Create" }, delegateUserId: ids.user, state: "COMPLETED" } });
+  const result = await a.fetch(request(body, "/api/github/pull-requests", historyKey));
   expect(result.status).toBe(409); expect(await result.json()).toMatchObject({ error: "grounding_operation_conflict" });
   expect(globalThis.fetch).not.toHaveBeenCalled();
 });
@@ -693,4 +709,160 @@ it("a keyed github merge whose key has durable operation history on an unprovisi
   // Without that history the same request is the legacy handler's.
   const legacy = await a.fetch(request({ taskId: u.taskId, owner, repo: name }, "/api/github/pull-requests/99/merge", "fresh-key"));
   expect(legacy.status).toBe(502); expect(fetchCalls()).toEqual([`https://api.github.com/repos/${u.ownRepo}/pulls/99/merge`]);
+});
+
+// A caller without access to the task's project gets the legacy handlers' own
+// answer before any Grounding state is read or locked, so the answer does not
+// depend on whether the task is held, provisioned, guarded, fenced or has
+// pending Grounding history.
+type ForeignTarget = { taskId: string; owner: string; name: string; prPath: string; key: string | null; scope: GroundingEnforcedScope };
+function foreignTarget(u: Awaited<ReturnType<typeof unscopedTask>>, scope: GroundingEnforcedScope = emptyScope): ForeignTarget {
+  const [owner, name] = u.ownRepo.split("/");
+  return { taskId: u.taskId, owner: owner!, name: name!, prPath: "99", key: null, scope };
+}
+const foreignTargets: [string, () => Promise<ForeignTarget>][] = [
+  ["unprovisioned unscoped", async () => foreignTarget(await unscopedTask())],
+  ["held", async () => {
+    const u = await unscopedTask();
+    await store.db.groundingMigrationState.create({ data: { taskId: u.taskId, projectId: u.projectId, held: true, revision: 1 } });
+    return foreignTarget(u);
+  }],
+  // "042" is a path number the Grounding merge contract rejects.
+  ["provisioned", async () => ({ taskId: f.taskId, owner: "acme", name: repo, prPath: "042", key: null, scope: emptyScope })],
+  ["guarded", async () => { const u = await unscopedTask(); return foreignTarget(u, { projectIds: new Set([u.projectId]), repos: new Set() }); }],
+  ["fenced", async () => { const u = await unscopedTask(); await ownFence(u.projectId, u.ownRepo, "MERGE"); return foreignTarget(u); }],
+  ["pending create", async () => {
+    const u = await unscopedTask();
+    const [owner, name] = u.ownRepo.split("/");
+    const intent = await store.db.groundingGithubFenceIntent.create({ data: { id: randomUUID(), repo: u.ownRepo, kind: "PR_CREATE", taskId: u.taskId, state: "COMPLETED" } });
+    await store.db.groundingGithubCreateOperation.create({ data: { id: intent.id, taskId: u.taskId, projectId: u.projectId, key: "key-a", actorId: ids.agent, actorUserId: ids.user, actorTeamId: ids.team, fingerprint: "0".repeat(64), request: { owner, repo: name, head: "feature", base: "main", title: "Create" }, delegateUserId: ids.user, state: "DISPATCHED" } });
+    return foreignTarget(u);
+  }],
+  ["merge operation history", async () => {
+    const u = await unscopedTask();
+    await store.db.groundingOperation.create({ data: { taskId: u.taskId, key: "prior-key", actorType: "agent", actorId: ids.agent, fingerprint: "0".repeat(64), request: {}, decision: {}, state: "COMPLETED", result: {} } });
+    return { ...foreignTarget(u), key: "prior-key" };
+  }],
+];
+it.each(foreignTargets)("an agent without project access gets the legacy create and merge 403 for a %s task", async (_label, setup) => {
+  const target = await setup();
+  const configured = app(f.service, new GroundingGithubCreateService({ db: store.db }), target.scope);
+  const unconfigured = createApp("");
+  const denied = { status: 403, body: { error: "forbidden", message: "Access denied to this project" } };
+  for (const [path, body] of [
+    ["/api/github/pull-requests", createRequest(target.taskId, target.owner, target.name)],
+    [`/api/github/pull-requests/${target.prPath}/merge`, { taskId: target.taskId, owner: target.owner, repo: target.name }],
+  ] as const) {
+    const answer = async (a: ReturnType<typeof createApp>) => { const r = await a.fetch(request(body, path, target.key, foreign.token)); return { status: r.status, body: await r.json() }; };
+    expect(await answer(configured)).toEqual(denied);
+    expect(await answer(unconfigured)).toEqual(denied);
+  }
+  expect(globalThis.fetch).not.toHaveBeenCalled(); expect(f.merge).not.toHaveBeenCalled();
+});
+it.each(foreignTargets.filter(([label]) => ["unprovisioned unscoped", "held", "provisioned", "guarded", "fenced"].includes(label)))("an agent without project access gets one 403 from every completion route for a %s task", async (_label, setup) => {
+  const target = await setup();
+  const a = app(f.service, undefined, target.scope);
+  for (const [endpoint, body] of [["finish", { autoMerge: true }], ["merge", {}], ["abandon", {}]] as const) {
+    const result = await a.fetch(request(body, `/api/tasks/${target.taskId}/${endpoint}`, null, foreign.token));
+    expect({ status: result.status, body: await result.json() }).toEqual({ status: 403, body: { error: "forbidden" } });
+  }
+  expect(globalThis.fetch).not.toHaveBeenCalled(); expect(f.merge).not.toHaveBeenCalled();
+});
+it("a create or merge naming a task that does not exist gets the legacy handlers' own 404", async () => {
+  const missing = randomUUID();
+  const notFound = { status: 404, body: { error: "not_found", message: "Task not found" } };
+  const create = await sameAsUnconfigured(target => target.fetch(request(createRequest(missing, "acme", repo), "/api/github/pull-requests", null)));
+  expect(create.configured).toEqual(notFound); expect(create.unconfigured).toEqual(notFound);
+  const merge = await sameAsUnconfigured(target => target.fetch(request({ taskId: missing, owner: "acme", repo }, "/api/github/pull-requests/42/merge", null)));
+  expect(merge.configured).toEqual(notFound); expect(merge.unconfigured).toEqual(notFound);
+  expect([...create.configuredCalls, ...merge.configuredCalls]).toEqual([]);
+});
+
+// The legacy merger reads the path number with parseInt, so a path that is
+// not a canonical number can still name a guarded PR.
+it("a github merge whose path number parseInt reads as a protected peer's PR is guarded", async () => {
+  const peer = await protectedPeerElsewhere();
+  const u = await unscopedAt(peer.peerRepo, null);
+  const [owner, name] = peer.peerRepo.split("/");
+  const a = app(f.service, undefined, emptyScope);
+  for (const path of ["7x", "7.0", "07"]) {
+    await expectEnrollmentRequired(await a.fetch(request({ taskId: u.taskId, owner, repo: name }, `/api/github/pull-requests/${path}/merge`, null)));
+  }
+});
+// The legacy merger never sends the body owner/repo to GitHub, so even a
+// body repo that is not a canonical identity leaves the request unguarded.
+it("a github merge whose body repo repeats the owner reaches the legacy merger unchanged", async () => {
+  const u = await unscopedTask();
+  await store.db.task.update({ where: { id: u.taskId }, data: { status: "done" } });
+  const [owner] = u.ownRepo.split("/");
+  const result = await sameAsUnconfigured(target => target.fetch(request({ taskId: u.taskId, owner, repo: u.ownRepo }, "/api/github/pull-requests/99/merge", null)));
+  expect(result.configured).toEqual(result.unconfigured);
+  expect(result.configured).toMatchObject({ status: 502, body: { error: "github_error" } });
+  expect(result.configuredCalls).toEqual([`https://api.github.com/repos/${u.ownRepo}/pulls/99/merge`]);
+  expect(result.unconfiguredCalls).toEqual(result.configuredCalls);
+});
+
+// A peer-class task whose own repository string is not canonical cannot be
+// matched by repository, so any candidate PR number it shares is guarded.
+// Each test uses its own PR number: this check is not scoped to a repository.
+const uniquePr = () => 100000 + Math.floor(Math.random() * 900000);
+async function heldPeer(data: { githubRepo: string; prNumber: number | null; prUrl: string | null }) {
+  const g = await completionFixture(store);
+  await store.db.groundingBinding.delete({ where: { taskId: g.taskId } });
+  await store.db.groundingCohort.delete({ where: { taskId: g.taskId } });
+  await store.db.project.update({ where: { id: g.projectId }, data: { githubRepo: data.githubRepo } });
+  await store.db.task.update({ where: { id: g.taskId }, data: { status: "review", prNumber: data.prNumber, prUrl: data.prUrl } });
+  await store.db.groundingMigrationState.create({ data: { taskId: g.taskId, projectId: g.projectId, held: true, revision: 1 } });
+}
+const canonicalRepo = () => `acme/r${randomUUID().replaceAll("-", "")}`;
+const aliasOf = (canonical: string) => { const [owner, name] = canonical.split("/"); return `${owner}/${percentAlias(name!)}`; };
+it("a held peer whose project repository is a percent-encoded alias guards the PR number it shares", async () => {
+  const canonical = canonicalRepo(); const pr = uniquePr();
+  await heldPeer({ githubRepo: aliasOf(canonical), prNumber: pr, prUrl: null });
+  const u = await unscopedAt(canonical, null);
+  const [owner, name] = canonical.split("/");
+  const a = app(f.service, undefined, emptyScope);
+  await expectEnrollmentRequired(await a.fetch(request({ taskId: u.taskId, owner, repo: name }, `/api/github/pull-requests/${pr}/merge`, null)));
+  await store.db.task.update({ where: { id: u.taskId }, data: { status: "review", prNumber: pr } });
+  await expectEnrollmentRequired(await a.fetch(request({}, `/api/tasks/${u.taskId}/merge`, null)));
+});
+it("a held peer whose PR URL names a percent-encoded alias guards that URL's PR number", async () => {
+  const canonical = canonicalRepo(); const pr = uniquePr();
+  await heldPeer({ githubRepo: canonicalRepo(), prNumber: null, prUrl: `https://github.com/${aliasOf(canonical)}/pull/${pr}` });
+  const u = await unscopedAt(canonical, null);
+  const [owner, name] = canonical.split("/");
+  await expectEnrollmentRequired(await app(f.service, undefined, emptyScope).fetch(request({ taskId: u.taskId, owner, repo: name }, `/api/github/pull-requests/${pr}/merge`, null)));
+});
+it("an unenrolled task whose repository is a percent-encoded alias does not guard a shared PR number", async () => {
+  const canonical = canonicalRepo(); const pr = uniquePr();
+  await unscopedAt(aliasOf(canonical), pr, "review");
+  const u = await unscopedAt(canonical, null);
+  const [owner, name] = canonical.split("/");
+  const result = await app(f.service, undefined, emptyScope).fetch(request({ taskId: u.taskId, owner, repo: name }, `/api/github/pull-requests/${pr}/merge`, null));
+  expect(result.status).toBe(502); expect(await result.json()).toMatchObject({ error: "github_error" });
+  expect(fetchCalls()).toEqual([`https://api.github.com/repos/${canonical}/pulls/${pr}/merge`]);
+});
+
+it("a failed reservation whose same-key operation is reserved but not dispatched still answers 503", async () => {
+  await f.evidence("merge");
+  const reserve = f.service.reserveMerge.bind(f.service);
+  vi.spyOn(f.service, "reserveMerge").mockImplementationOnce(async (...args: Parameters<typeof reserve>) => {
+    await reserve(...args);
+    throw new GroundingReceiptVerificationError("grounding_verification_unavailable");
+  });
+  const result = await app().fetch(request(mergeBody()));
+  expect(result.status).toBe(503);
+  expect(await result.json()).toEqual({ error: "grounding_verification_unavailable", message: "Retry with the same Idempotency-Key and unchanged request to resolve the durable operation." });
+  expect((await store.db.groundingGithubMergeGroup.findFirst({ where: { seedTaskId: f.taskId } }))?.state).toBe("RESERVED");
+  expect(f.merge).not.toHaveBeenCalled();
+});
+it("a local finish in a repository whose fence another operation owns still reaches the legacy handler", async () => {
+  // An unclaimed task makes the legacy finish refuse without a write.
+  const u = await unscopedTask();
+  await store.db.task.update({ where: { id: u.taskId }, data: { claimedByAgentId: null } });
+  await ownFence(u.projectId, u.ownRepo, "MERGE");
+  const result = await sameAsUnconfigured(target => target.fetch(request({ result: "done" }, `/api/tasks/${u.taskId}/finish`, null)));
+  expect(result.configured).toEqual(result.unconfigured);
+  expect(result.configured.status).toBe(403);
+  expect(result.configured.body).not.toMatchObject({ error: expect.stringMatching(/^grounding_/) });
 });

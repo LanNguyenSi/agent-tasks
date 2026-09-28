@@ -118,14 +118,46 @@ export async function candidateRepositoryFenceOwned(db: PrismaClient | Prisma.Tr
 }
 
 /**
+ * Whether a peer-class task (protected or EXTERNAL_V1 cohort, bound, or held)
+ * other than `excludeTaskId` stores its repository as a string the peer
+ * lookup cannot canonicalize (its effective repository, or the repository of
+ * a PR URL in the legacy shape) while sharing one of these PR numbers (its
+ * own, or its PR URL's). protectedGithubPeerIds matches canonical
+ * repositories only, so such a peer could be an alias of a candidate
+ * repository without being seen; the caller fails closed on it. The query is
+ * driven from the enrollment and hold tables, so it reads peer-class tasks
+ * only, never every task, and stops at the first match.
+ */
+export async function nonCanonicalPeerSharesPr(db: PrismaClient | Prisma.TransactionClient, input: { prNumbers: Iterable<number>; excludeTaskId: string }): Promise<boolean> {
+  const numbers = [...input.prNumbers].map(String);
+  if (numbers.length === 0) return false;
+  const rows = await db.$queryRaw<{ id: string }[]>`
+    SELECT t.id FROM tasks t JOIN projects p ON p.id = t."projectId"
+    WHERE t.id IN (
+        SELECT "taskId" FROM grounding_cohorts WHERE protected OR mode = 'EXTERNAL_V1'
+        UNION SELECT "taskId" FROM grounding_bindings
+        UNION SELECT "taskId" FROM grounding_migration_states WHERE held)
+      AND t.id <> ${input.excludeTaskId}
+      AND (t."prNumber"::numeric = ANY(${numbers}::numeric[])
+        OR substring(t."prUrl" from '/pull/([0-9]+)')::numeric = ANY(${numbers}::numeric[]))
+      AND ((coalesce(t."deliverableRepo", p."githubRepo") <> '' AND grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) IS NULL)
+        OR (t."prUrl" ~* 'github[.]com/[^/]+/[^/]+/pull/' AND grounding_github_pr_repo(t."prUrl") IS NULL))
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
+/**
  * Whether a fresh remote operation on an UNPROVISIONED task must still be
  * enrolled: the task's own project is in the enforced scope, OR any candidate
  * repository (see remoteOperationCandidates) belongs to an enforced project,
  * OR any candidate (repository, PR number) pair is shared with a protected,
  * EXTERNAL_V1 or held peer (reusing protectedGithubPeerIds rather than
  * duplicating that SQL), OR any candidate repository string is not a
- * canonical identity (it cannot be compared, so it fails closed). A missing
- * scope fails closed too: everything is enforced.
+ * canonical identity (it cannot be compared, so it fails closed), OR a
+ * peer-class task whose own repository string is not canonical shares a
+ * candidate PR number (see nonCanonicalPeerSharesPr). A missing scope fails
+ * closed too: everything is enforced.
  */
 export async function isEnforcedRemoteOperation(
   db: PrismaClient | Prisma.TransactionClient,
@@ -139,6 +171,7 @@ export async function isEnforcedRemoteOperation(
   if (unresolved) return true;
   for (const repo of repos) if (scope.repos.has(repo)) return true;
   if (prNumbers.size === 0) return false;
+  if (await nonCanonicalPeerSharesPr(db, { prNumbers, excludeTaskId: task.id })) return true;
   const peerIds = new Set<string>();
   for (const repo of repos) {
     for (const peer of await protectedGithubPeerIds(db, { repo, excludeTaskId: task.id })) peerIds.add(peer.id);

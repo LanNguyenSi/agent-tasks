@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: {} }));
 vi.mock("../../src/config/index.js", () => ({ config: { NODE_ENV: "test", SESSION_SECRET: "test-secret-which-is-long-enough-1234", TRUSTED_PROXY_HOPS: 0 } }));
-import { candidateRepositoryFenceOwned, isEnforcedRemoteOperation, prUrlTarget, remoteOperationCandidates, type GroundingScopeTask } from "../../src/services/grounding-scope.js";
+import { candidateRepositoryFenceOwned, isEnforcedRemoteOperation, nonCanonicalPeerSharesPr, prUrlTarget, remoteOperationCandidates, type GroundingScopeTask } from "../../src/services/grounding-scope.js";
 import { assertGroundingScopeWired, createGroundingTaskCompletionRouter, type GroundingTaskCompletionDependencies } from "../../src/routes/grounding-task-completion.js";
 import { createGroundingGithubRouter } from "../../src/routes/grounding-github.js";
 import { GroundingFinalizationService } from "../../src/services/grounding-finalization.js";
@@ -67,6 +67,15 @@ describe("enforced remote operation guard", () => {
   });
   it("leaves a task with no candidate PR number to the legacy handler without a peer query", async () => {
     expect(await isEnforcedRemoteOperation(untouchedDb, { projectIds: new Set(), repos: new Set() }, task({ project: { githubRepo: "acme/widget" } }))).toBe(false);
+  });
+  it("fails closed when a peer with a non-canonical repository shares a candidate PR number, before the canonical peer lookup", async () => {
+    const $queryRaw = vi.fn(async () => [{ id: "alias-peer" }]);
+    const db = { $queryRaw } as unknown as PrismaClient;
+    expect(await isEnforcedRemoteOperation(db, { projectIds: new Set(), repos: new Set() }, task({ prNumber: 7, project: { githubRepo: "acme/widget" } }))).toBe(true);
+    expect($queryRaw).toHaveBeenCalledOnce();
+  });
+  it("does not look for non-canonical peers without a PR number", async () => {
+    expect(await nonCanonicalPeerSharesPr(untouchedDb, { prNumbers: [], excludeTaskId: "task" })).toBe(false);
   });
 });
 

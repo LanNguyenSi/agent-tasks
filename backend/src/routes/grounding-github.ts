@@ -5,6 +5,7 @@ import type { Actor } from "../types/auth.js";
 import { GroundingGithubMergeService } from "../services/grounding-github-merge.js";
 import { GroundingAccessError, groundingAuthority, unavailable } from "../services/grounding-context.js";
 import { selectGroundingRouteContext } from "../services/grounding-route-context.js";
+import { hasProjectAccess } from "../services/team-access.js";
 import { candidateRepositoryFenceOwned, isEnforcedRemoteOperation, type GroundingRemoteTargets, type GroundingScopeTask } from "../services/grounding-scope.js";
 import { assertGroundingScopeWired, type GroundingTaskCompletionDependencies, groundingCompletionErrorResponse, groundingCompletionRouteResponse } from "./grounding-task-completion.js";
 
@@ -34,8 +35,9 @@ function agent(c: Context<{ Variables: AppVariables }>, scopes: string[]): Actor
  * The only request fields the routing decision reads, taken without any
  * validation beyond what the legacy handler's own schema requires of them:
  * a UUID taskId, and owner/repo when both are non-empty strings, joined the
- * way the legacy creator joins them for its GitHub URL. Null when the body
- * names no task the legacy handler could act on; the legacy handler then
+ * way the legacy creator joins them for its GitHub URL (the legacy merger
+ * never sends them to GitHub, so only PR creation uses them). Null when the
+ * body names no task the legacy handler could act on; the legacy handler then
  * rejects the request itself.
  */
 function legacyRouting(raw: unknown) {
@@ -83,6 +85,12 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
       // A request naming no task is the legacy creator's to reject.
       if (!routing) return next();
       taskId = routing.taskId;
+      // A missing task and a caller without project access get the legacy
+      // creator's own answer, before any Grounding state is read or locked,
+      // so neither learns anything about the task's Grounding state.
+      const task = await deps.db.task.findUnique({ where: { id: taskId }, include: { project: true } });
+      if (!task) return next();
+      if (!await hasProjectAccess(actor, task.projectId, deps.db)) return next();
       // Durable create history for a supplied key, or any unfinished create
       // on the task, stays with the grouped create service that owns it.
       const keys = historyKeys(c, routing.bodyKey, createKey);
@@ -91,14 +99,11 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
         select: { id: true },
       });
       if (!history) {
-        const task = await deps.db.task.findUnique({ where: { id: taskId }, include: { project: true } });
-        if (!task) return next();
         const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
         // Outside the enforced scope PR creation is the legacy creator's,
         // keyed or not, and it receives the request exactly as sent.
         const decision = context.mode === "UNPROVISIONED" ? await legacyDecision(deps, task, { repos: [routing.repo] }) : null;
         if (decision === "legacy") return next();
-        if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403);
         if (decision === "grounding_finalization_pending") return c.json({ error: decision }, 409);
       }
       // Grounding-owned from here: the strict request contract applies.
@@ -130,23 +135,25 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
       // A request naming no task is the legacy merger's to reject.
       if (!routing) return next();
       taskId = routing.taskId;
+      // A missing task and a caller without project access get the legacy
+      // merger's own answer, before any Grounding state is read or locked.
+      const task = await deps.db.task.findUnique({ where: { id: taskId }, include: { project: true } });
+      if (!task) return next();
+      if (!await hasProjectAccess(actor, task.projectId, deps.db)) return next();
       const keys = historyKeys(c, routing.bodyKey, mergeKey);
       // A grouped merge records its seed operation under the same key in the
       // same transaction as its group, so the operation alone identifies it.
       const history = keys.length > 0 && await deps.db.groundingOperation.findFirst({ where: { taskId, key: { in: keys } }, select: { id: true } });
       if (!history) {
-        const task = await deps.db.task.findUnique({ where: { id: taskId }, include: { project: true } });
-        if (!task) return next();
         const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
         if (context.mode === "UNPROVISIONED") {
           // The legacy handler merges the project's repository and the task's
           // PR number (the path number, parsed with parseInt, only when the
-          // task has none), ignoring the body owner/repo, so every one of
-          // those is a candidate target.
+          // task has none). It never sends the body owner/repo to GitHub, so
+          // those are not candidates; the stored targets and the path number are.
           const legacyNumber = Number.parseInt(path, 10);
-          const decision = await legacyDecision(deps, task, { repos: [routing.repo], prNumbers: [Number.isNaN(legacyNumber) ? null : legacyNumber] });
+          const decision = await legacyDecision(deps, task, { prNumbers: [Number.isNaN(legacyNumber) ? null : legacyNumber] });
           if (decision === "legacy") return next();
-          if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403);
           return c.json({ error: decision }, 409);
         }
       }
@@ -161,8 +168,6 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
       const buildTransport = (idempotencyKey: string) => ({ endpoint: "github_merge" as const, body: { ...parsed.data, idempotencyKey, prNumber } });
       const previous = keyValue ? await service.lookupRouteOperation(taskId, actor, keyValue, buildTransport(keyValue)) : null;
       if (!previous) {
-        const task = await deps.db.task.findUnique({ where: { id: taskId }, include: { project: true } });
-        if (!task) throw new GroundingAccessError("not_found", 404);
         if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403);
         const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
         // Reached only when durable history named a key that no longer
