@@ -50,9 +50,9 @@ describe("effect-boundary refusal", () => {
       expect(await groundingRemoteTargetRefusal(untouchedDb, scope, target({ repo: "ACME/Widget", kind }))).toMatchObject({ error: "grounding_enrollment_required" });
     }
   });
-  it("refuses a comment on a peer's PR, the requesting task's own included", async () => {
+  it("refuses a comment on a peer's PR", async () => {
     expect(await groundingRemoteTargetRefusal(answering({ peer: true }).db, emptyScope, target({ kind: "comment" }))).toMatchObject({ error: "grounding_enrollment_required", status: 409 });
-    expect(await groundingRemoteTargetRefusal(answering({ peer: true, requesterPeer: true }).db, emptyScope, target({ kind: "comment" }))).toMatchObject({ error: "grounding_enrollment_required", status: 409 });
+    expect(await groundingRemoteTargetRefusal(answering({ requesterPeer: true, peer: false }).db, emptyScope, target({ kind: "comment" }))).toBeNull();
   });
   it("refuses a merge or create when the requesting task is itself a peer, whatever PR it sends", async () => {
     for (const kind of ["merge", "create"] as const) {

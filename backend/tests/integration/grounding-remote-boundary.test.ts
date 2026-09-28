@@ -461,6 +461,30 @@ describe("a task's comment on its own PR", () => {
     await peerTask(store.db, "held", { repo: task.repo, prNumber: other, prUrl: pullUrl(task.repo, other) });
     expect(await comment(emptyScope(), task.taskId, task.repo, other)).toEqual(refused);
   });
+  // The requesting task's own row matches its target through the PR URL
+  // number and through the non-canonical repository branches as well, in a
+  // repository no enforced project owns.
+  it("a held task whose PR is named only by its PR URL is refused on that PR", async () => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "comment", repo, prNumber);
+    await store.db.task.update({ where: { id: requester.taskId }, data: { prNumber: null, prUrl: pullUrl(repo, prNumber) } });
+    await enrollTask(store.db, "held", requester.taskId, requester.projectId);
+    expect(await comment(emptyScope(), requester.taskId, repo, prNumber)).toEqual(refused);
+  });
+  it("a bound task with a non-canonical deliverable repository is refused on its PR number in the canonical repository", async () => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "comment", repo, prNumber);
+    await store.db.task.update({ where: { id: requester.taskId }, data: { deliverableRepo: aliasOf(repo), prNumber, prUrl: null } });
+    await enrollTask(store.db, "bound", requester.taskId, requester.projectId);
+    expect(await comment(emptyScope(), requester.taskId, repo, prNumber)).toEqual(refused);
+  });
+  it("a held task of another repository whose PR URL names a non-canonical alias is refused on that PR in the canonical repository", async () => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "comment", canonicalRepo(), null);
+    await store.db.task.update({ where: { id: requester.taskId }, data: { prNumber: null, prUrl: pullUrl(aliasOf(repo), prNumber) } });
+    await enrollTask(store.db, "held", requester.taskId, requester.projectId);
+    expect(await comment(emptyScope(), requester.taskId, repo, prNumber)).toEqual(refused);
+  });
   it("an enrolled or held task's comment on an unrelated PR is not refused by its own class", async () => {
     const task = await enrolledTask();
     const other = await comment(emptyScope(), task.taskId, task.repo, uniquePr());
