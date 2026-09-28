@@ -12,6 +12,7 @@ import { acquireGithubFence, assertGithubFenceOwned, canonicalGithubRepo, releas
 import { githubGroundingMergeProvider, groundingMergeConsent, mergeIdentitySchema, type GroundingMergeProvider, type MergeIdentity, type MergeProof } from "./grounding-merge-provider.js";
 import { isTerminalState } from "./default-workflow.js";
 import { logGroundingDecision } from "./audit.js";
+import { groundingPeerTaskIds } from "./grounding-scope.js";
 
 function binding(task: GroundingTask) {
   const repo = task.deliverableRepo ?? task.project.githubRepo;
@@ -30,18 +31,16 @@ const completed = (state: string) => state === "COMPLETED" || state === "CANCELL
 /**
  * Ids of tasks that are protected, EXTERNAL_V1, bound, or held and whose
  * effective repository (deliverable/project repo, or PR URL repo) matches
- * `repo`. Shared by the merge grouping discovery below and by the scoped
- * enforcement guard in grounding-scope.ts, so the SQL lives in one place.
- * `excludeTaskId` is omitted by discover(), which folds its own seed task in
- * unconditionally regardless of protection status.
+ * `repo`. The peer ids come from the enrollment and hold tables first
+ * (groundingPeerTaskIds, shared with the effect-boundary guard in
+ * grounding-scope.ts) and the tasks are then read by id, so the query never
+ * scans every task. discover() folds its own seed task in unconditionally
+ * regardless of protection status.
  */
-export async function protectedGithubPeerIds(db: Prisma.TransactionClient | PrismaClient, input: { repo: string; excludeTaskId?: string }) {
+export async function protectedGithubPeerIds(db: Prisma.TransactionClient | PrismaClient, input: { repo: string }) {
   return db.$queryRaw<{ id: string }[]>`
     SELECT t.id FROM tasks t JOIN projects p ON p.id = t."projectId"
-    LEFT JOIN grounding_cohorts c ON c."taskId" = t.id LEFT JOIN grounding_bindings b ON b."taskId" = t.id
-    LEFT JOIN grounding_migration_states h ON h."taskId" = t.id
-    WHERE (${input.excludeTaskId ?? null}::text IS NULL OR t.id != ${input.excludeTaskId ?? null})
-      AND (c.protected OR c.mode = 'EXTERNAL_V1' OR b."taskId" IS NOT NULL OR h.held)
+    WHERE t.id = ANY (${groundingPeerTaskIds})
       AND (grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) = ${input.repo} OR grounding_github_pr_repo(t."prUrl") = ${input.repo})
   `;
 }

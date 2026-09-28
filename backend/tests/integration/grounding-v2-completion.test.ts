@@ -7,6 +7,7 @@ vi.mock("../../src/config/index.js", () => ({ config: { NODE_ENV: "test", SESSIO
 vi.mock("../../src/services/grounding-client.js", () => ({ getGroundingClient: () => harness.wrapper }));
 vi.mock("../../src/services/confidence-telemetry.js", () => ({ recordBounceBack: harness.bounce, recordTerminalSnapshot: harness.terminal }));
 import { createApp } from "../../src/app.js";
+import { createGroundingRemoteTargetGuard } from "../../src/services/grounding-scope.js";
 import { completionStore, completionFixture, completionActor as actor } from "../helpers/grounding-completion-fixtures.js";
 import { ids, session } from "../helpers/grounding-fixtures.js";
 import { GroundingAttemptsService, type GroundingChallenge } from "../../src/services/grounding-attempts.js";
@@ -47,7 +48,7 @@ beforeEach(async () => {
   await store.db.user.update({ where: { id: ids.user }, data: { allowAgentPrCreate: true, allowAgentPrMerge: true } });
 });
 afterEach(async () => { await checks._clearCheckCache(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-function app(service = f.service) { return createApp("http://localhost", f.attempts, { db: store.db, service, scope: { projectIds: new Set([f.projectId]), repos: new Set<string>() } }); }
+function app(service = f.service) { const scope = { projectIds: new Set([f.projectId]), repos: new Set<string>() }; return createApp("http://localhost", f.attempts, { db: store.db, service, scope, remoteGuard: createGroundingRemoteTargetGuard({ db: store.db, scope }) }); }
 function request(body: unknown = {}, endpoint = "finish", key: string | null = "operation", authorization: string | null = token) {
   return new Request(`http://localhost/api/tasks/${f.taskId}/${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json", ...(key ? { "Idempotency-Key": key } : {}), ...(authorization ? { Authorization: `Bearer ${authorization}` } : {}) }, body: JSON.stringify(body) });
 }
@@ -482,7 +483,8 @@ it("R1-H1 actual route default head and CI readers use merge-only delegation con
   const deps = { db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now };
   const attempts = new GroundingAttemptsService(deps);
   const service = new GroundingGithubMergeService({ ...deps, mergeProvider: { merge: f.merge, read: f.read }, deliverSignal: f.deliverSignal });
-  const a = createApp("", attempts, { db: store.db, service, scope: { projectIds: new Set([f.projectId]), repos: new Set<string>() } }); await routeEvidence(a);
+  const scope = { projectIds: new Set([f.projectId]), repos: new Set<string>() };
+  const a = createApp("", attempts, { db: store.db, service, scope, remoteGuard: createGroundingRemoteTargetGuard({ db: store.db, scope }) }); await routeEvidence(a);
   expect((await a.fetch(request({}, "merge"))).status).toBe(200); expect(f.merge).toHaveBeenCalledOnce();
   expect(fetcher.mock.calls.some(([url]) => String(url).includes("/check-runs"))).toBe(true);
   expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/pulls/42")).length).toBeGreaterThan(1);

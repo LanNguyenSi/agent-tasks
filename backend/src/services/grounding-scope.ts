@@ -1,6 +1,8 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
+import type { Context } from "hono";
+import type { AppVariables } from "../types/hono.js";
 import { canonicalGithubRepo } from "./grounding-github-fence.js";
-import { protectedGithubPeerIds } from "./grounding-github-merge.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * The enforced scope of an enabled runtime configuration: the projects whose
@@ -14,174 +16,125 @@ export interface GroundingEnforcedScope {
   repos: ReadonlySet<string>;
 }
 
-export interface GroundingScopeTask {
-  id: string;
-  projectId: string;
-  deliverableRepo: string | null;
-  prNumber: number | null;
-  prUrl: string | null;
-  project: { githubRepo: string | null };
+/** Whether a task's own project is enforced. A missing scope enforces every project. */
+export function groundingProjectEnforced(scope: GroundingEnforcedScope | undefined, projectId: string): boolean {
+  return !scope || scope.projectIds.has(projectId);
 }
 
 /**
- * Targets a request itself supplies, on top of the ones stored on the task.
- * A legacy handler may act on either, so the guard checks every one.
+ * The exact GitHub target a legacy remote handler is about to send: the
+ * repository string exactly as it goes into the GitHub URL, the PR number
+ * exactly as it goes into the URL (none for a PR create), and the kind of
+ * write.
  */
-export interface GroundingRemoteTargets {
-  /** Request-supplied repositories as the legacy handler would join them, for
-   * example `${owner}/${repo}` from body fields; not pre-canonicalized. */
-  repos?: readonly (string | null | undefined)[];
-  /** Request-supplied PR numbers, for example the merge route's path parameter. */
-  prNumbers?: readonly (number | null | undefined)[];
-  /** Request-supplied PR URLs; each contributes its repository and its number. */
-  prUrls?: readonly (string | null | undefined)[];
+export interface GroundingRemoteTarget {
+  repo: string;
+  prNumber?: number;
+  kind: "merge" | "create" | "comment";
+  taskId: string;
 }
+export type GroundingRemoteRefusalCode = "grounding_enrollment_required" | "grounding_finalization_pending";
+export interface GroundingRemoteRefusal {
+  error: GroundingRemoteRefusalCode;
+  status: 409;
+  message: string;
+}
+/** Resolves to a refusal when the target must not be written by a legacy handler, else null. */
+export type GroundingRemoteTargetGuard = (target: GroundingRemoteTarget) => Promise<GroundingRemoteRefusal | null>;
 
-// The same extraction the legacy handlers apply to a PR URL: the cross-repo
-// gate reads owner/repo with the first pattern, and finish Mode A reads the
-// PR number with the second. Matching case-insensitively only widens the set
-// of candidates the guard checks.
-const legacyPrUrlRepo = /github\.com\/([^/]+)\/([^/]+)\/pull\//i;
-const legacyPrUrlNumber = /\/pull\/(\d+)/;
-
-/**
- * Canonical form of a repository string. A non-empty string that is not a
- * canonical `owner/repo` identity (a dot segment, a percent-encoded or
- * otherwise escaped name, an owner containing '/') is `unresolved`: the
- * legacy handlers pass such strings to GitHub verbatim, and GitHub may
- * resolve them to a repository the guard cannot name, so the caller fails
- * closed on it.
- */
-function canonicalCandidate(value: string | null | undefined): { repo: string | null; unresolved: boolean } {
-  if (typeof value !== "string" || value.length === 0) return { repo: null, unresolved: false };
-  try { return { repo: canonicalGithubRepo(value), unresolved: false }; } catch { return { repo: null, unresolved: true }; }
+const refusalMessages: Record<GroundingRemoteRefusalCode, string> = {
+  grounding_enrollment_required: "This GitHub target is under Grounding enforcement; the task must be enrolled before this operation can run.",
+  grounding_finalization_pending: "Another Grounding operation owns this repository; retry after it finishes.",
+};
+function refusal(error: GroundingRemoteRefusalCode): GroundingRemoteRefusal {
+  return { error, status: 409, message: refusalMessages[error] };
 }
 
 /**
- * Repository and PR number a PR URL names, each null when it names none.
- * `unresolved` is true when the URL names a repository in the legacy shape
- * that is not a canonical identity.
+ * Canonical identity of exactly the repository string a legacy handler sends
+ * to GitHub, or null when that string is not one: surrounding whitespace, a
+ * dot segment, an escaped or percent-encoded name, or an owner containing
+ * '/' may all resolve on GitHub to a repository the guard cannot name, so the
+ * caller fails closed on it.
  */
-export function prUrlTarget(url: string | null | undefined): { repo: string | null; prNumber: number | null; unresolved: boolean } {
-  if (!url) return { repo: null, prNumber: null, unresolved: false };
-  const repoMatch = legacyPrUrlRepo.exec(url);
-  const numberMatch = legacyPrUrlNumber.exec(url);
-  const prNumber = numberMatch ? Number(numberMatch[1]) : null;
-  const repo = repoMatch ? canonicalCandidate(`${repoMatch[1]}/${repoMatch[2]}`) : { repo: null, unresolved: false };
-  return { ...repo, prNumber: prNumber !== null && Number.isSafeInteger(prNumber) ? prNumber : null };
+export function exactGithubRepo(raw: string): string | null {
+  if (raw.length === 0 || raw !== raw.trim()) return null;
+  try { return canonicalGithubRepo(raw); } catch { return null; }
 }
 
 /**
- * Every repository and PR number a legacy remote handler could act on for
- * this task and request. Legacy merges derive the repository from the
- * project and the PR number from the task (or the request when the task has
- * none), but the task's deliverable repository, its stored PR URL and the
- * request's own fields are included too, so a request that names one target
- * while the handler acts on another is still checked against both.
- * `unresolved` is true when any of those repository strings is non-empty but
- * not canonical (see canonicalCandidate).
+ * Ids of every peer-class task: protected or EXTERNAL_V1 cohort, bound, or
+ * held. Shared by the merge grouping discovery and the effect-boundary guard,
+ * so both read the enrollment and hold tables first and then the tasks by id,
+ * never every task.
  */
-export function remoteOperationCandidates(task: GroundingScopeTask, targets: GroundingRemoteTargets = {}) {
-  const stored = prUrlTarget(task.prUrl);
-  const requested = (targets.prUrls ?? []).map(prUrlTarget);
-  const repos = new Set<string>();
-  let unresolved = false;
-  for (const value of [...(targets.repos ?? []), task.deliverableRepo, task.project.githubRepo]) {
-    const candidate = canonicalCandidate(value);
-    if (candidate.repo !== null) repos.add(candidate.repo);
-    if (candidate.unresolved) unresolved = true;
-  }
-  for (const target of [stored, ...requested]) {
-    if (target.repo !== null) repos.add(target.repo);
-    if (target.unresolved) unresolved = true;
-  }
-  const prNumbers = new Set<number>();
-  for (const value of [...(targets.prNumbers ?? []), task.prNumber, stored.prNumber, ...requested.map(target => target.prNumber)]) {
-    if (typeof value === "number" && Number.isSafeInteger(value)) prNumbers.add(value);
-  }
-  return { repos, prNumbers, unresolved };
-}
+export const groundingPeerTaskIds = Prisma.sql`ARRAY(
+  SELECT "taskId" FROM grounding_cohorts WHERE protected OR mode = 'EXTERNAL_V1'
+  UNION SELECT "taskId" FROM grounding_bindings
+  UNION SELECT "taskId" FROM grounding_migration_states WHERE held)`;
 
 /**
- * Whether another operation currently owns the repository fence of any
- * candidate repository. A legacy handler that performed its GitHub effect in
- * such a repository would then fail its own task write on the fence, leaving
- * the effect without its recorded outcome, so the caller refuses before the
- * effect instead. This is a point-in-time read: a fence acquired after it is
- * not seen.
+ * The effect-boundary check a legacy remote handler runs immediately before
+ * its GitHub write, on exactly the repository and PR number it sends. A
+ * missing scope refuses every target. Otherwise the target is refused with
+ * `grounding_enrollment_required` when its repository string is not a
+ * canonical identity, when the repository belongs to an enforced project, or
+ * when the PR is a peer's: a protected, EXTERNAL_V1, bound or held task
+ * (including the requesting task itself, should it have become one) whose
+ * effective repository or PR URL repository is the target repository and
+ * whose own PR number or PR URL number is the target number, or such a task
+ * whose repository string is not canonical (so it could be an alias of the
+ * target repository) sharing the number. A merge or create whose repository
+ * fence another operation owns is refused with `grounding_finalization_pending`,
+ * because the legacy task write would then fail on the fence after the GitHub
+ * effect. Comments take no fence. Peer and fence are read in one statement,
+ * so the only window before the GitHub call is that one round trip.
  */
-export async function candidateRepositoryFenceOwned(db: PrismaClient | Prisma.TransactionClient, task: GroundingScopeTask, targets: GroundingRemoteTargets = {}): Promise<boolean> {
-  const { repos } = remoteOperationCandidates(task, targets);
-  if (repos.size === 0) return false;
-  const owned = await db.groundingGithubRepositoryFence.findFirst({ where: { repo: { in: [...repos] }, ownerId: { not: null } }, select: { repo: true } });
-  return owned !== null;
-}
-
-/**
- * Whether a peer-class task (protected or EXTERNAL_V1 cohort, bound, or held)
- * other than `excludeTaskId` stores its repository as a string the peer
- * lookup cannot canonicalize (its effective repository, or the repository of
- * a PR URL in the legacy shape) while sharing one of these PR numbers (its
- * own, or its PR URL's). protectedGithubPeerIds matches canonical
- * repositories only, so such a peer could be an alias of a candidate
- * repository without being seen; the caller fails closed on it. The peer ids
- * are collected from the enrollment and hold tables first and the tasks are
- * then read by id, so the query reads peer-class tasks only, never every
- * task, and stops at the first match.
- */
-export async function nonCanonicalPeerSharesPr(db: PrismaClient | Prisma.TransactionClient, input: { prNumbers: Iterable<number>; excludeTaskId: string }): Promise<boolean> {
-  const numbers = [...input.prNumbers].map(String);
-  if (numbers.length === 0) return false;
-  const rows = await db.$queryRaw<{ id: string }[]>`
-    SELECT t.id FROM tasks t JOIN projects p ON p.id = t."projectId"
-    WHERE t.id = ANY (ARRAY(
-        SELECT "taskId" FROM grounding_cohorts WHERE protected OR mode = 'EXTERNAL_V1'
-        UNION SELECT "taskId" FROM grounding_bindings
-        UNION SELECT "taskId" FROM grounding_migration_states WHERE held))
-      AND t.id <> ${input.excludeTaskId}
-      AND (t."prNumber"::numeric = ANY(${numbers}::numeric[])
-        OR substring(t."prUrl" from '/pull/([0-9]+)')::numeric = ANY(${numbers}::numeric[]))
-      AND ((coalesce(t."deliverableRepo", p."githubRepo") <> '' AND grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) IS NULL)
-        OR (t."prUrl" ~* 'github[.]com/[^/]+/[^/]+/pull/' AND grounding_github_pr_repo(t."prUrl") IS NULL))
-    LIMIT 1
+export async function groundingRemoteTargetRefusal(db: PrismaClient | Prisma.TransactionClient, scope: GroundingEnforcedScope | undefined, target: GroundingRemoteTarget): Promise<GroundingRemoteRefusal | null> {
+  if (!scope) return refusal("grounding_enrollment_required");
+  const repo = exactGithubRepo(target.repo);
+  if (repo === null) return refusal("grounding_enrollment_required");
+  if (scope.repos.has(repo)) return refusal("grounding_enrollment_required");
+  const pr = target.prNumber === undefined ? null : String(target.prNumber);
+  const fenced = target.kind !== "comment";
+  const [row] = await db.$queryRaw<{ peer: boolean; fenced: boolean }[]>`
+    SELECT
+      (${pr}::numeric IS NOT NULL AND EXISTS (
+        SELECT 1 FROM tasks t JOIN projects p ON p.id = t."projectId"
+        WHERE t.id = ANY (${groundingPeerTaskIds})
+          AND (t."prNumber"::numeric = ${pr}::numeric
+            OR substring(t."prUrl" from '/pull/([0-9]+)')::numeric = ${pr}::numeric)
+          AND (grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) = ${repo}
+            OR grounding_github_pr_repo(t."prUrl") = ${repo}
+            OR (coalesce(t."deliverableRepo", p."githubRepo") <> '' AND grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) IS NULL)
+            OR (t."prUrl" ~* 'github[.]com/[^/]+/[^/]+/pull/' AND grounding_github_pr_repo(t."prUrl") IS NULL)))) AS peer,
+      (${fenced} AND EXISTS (
+        SELECT 1 FROM grounding_github_repository_fences WHERE repo = ${repo} AND "ownerId" IS NOT NULL)) AS fenced
   `;
-  return rows.length > 0;
+  if (!row) return refusal("grounding_enrollment_required");
+  if (row.peer) return refusal("grounding_enrollment_required");
+  if (row.fenced) return refusal("grounding_finalization_pending");
+  return null;
+}
+
+/** The guard an enabled runtime installs for every legacy remote handler. */
+export function createGroundingRemoteTargetGuard(deps: { db: PrismaClient; scope: GroundingEnforcedScope | undefined }): GroundingRemoteTargetGuard {
+  return async target => {
+    const refused = await groundingRemoteTargetRefusal(deps.db, deps.scope, target);
+    if (refused) logger.info({ taskId: target.taskId, kind: target.kind, refusal: refused.error }, "grounding remote target refused");
+    return refused;
+  };
 }
 
 /**
- * Whether a fresh remote operation on an UNPROVISIONED task must still be
- * enrolled: the task's own project is in the enforced scope, OR any candidate
- * repository (see remoteOperationCandidates) belongs to an enforced project,
- * OR any candidate (repository, PR number) pair is shared with a protected,
- * EXTERNAL_V1 or held peer (reusing protectedGithubPeerIds rather than
- * duplicating that SQL), OR any candidate repository string is not a
- * canonical identity (it cannot be compared, so it fails closed), OR a
- * peer-class task whose own repository string is not canonical shares a
- * candidate PR number (see nonCanonicalPeerSharesPr). A missing scope fails
- * closed too: everything is enforced.
+ * The guard a legacy handler consults at its effect boundary. The
+ * application sets it for every request: the enabled runtime's guard, or null
+ * in the unconfigured application, whose legacy handlers then make no guard
+ * call at all. A handler mounted without that wiring cannot tell the two
+ * apart, so it fails closed: its guard throws before any GitHub call.
  */
-export async function isEnforcedRemoteOperation(
-  db: PrismaClient | Prisma.TransactionClient,
-  scope: GroundingEnforcedScope | undefined,
-  task: GroundingScopeTask,
-  targets: GroundingRemoteTargets = {},
-): Promise<boolean> {
-  if (!scope) return true;
-  if (scope.projectIds.has(task.projectId)) return true;
-  const { repos, prNumbers, unresolved } = remoteOperationCandidates(task, targets);
-  if (unresolved) return true;
-  for (const repo of repos) if (scope.repos.has(repo)) return true;
-  if (prNumbers.size === 0) return false;
-  if (await nonCanonicalPeerSharesPr(db, { prNumbers, excludeTaskId: task.id })) return true;
-  const peerIds = new Set<string>();
-  for (const repo of repos) {
-    for (const peer of await protectedGithubPeerIds(db, { repo, excludeTaskId: task.id })) peerIds.add(peer.id);
-  }
-  if (peerIds.size === 0) return false;
-  const peers = await db.task.findMany({ where: { id: { in: [...peerIds] } }, select: { prNumber: true, prUrl: true } });
-  return peers.some(peer => {
-    if (peer.prNumber !== null && prNumbers.has(peer.prNumber)) return true;
-    const fromUrl = prUrlTarget(peer.prUrl).prNumber;
-    return fromUrl !== null && prNumbers.has(fromUrl);
-  });
+export function groundingRemoteGuardFor(c: Context<{ Variables: AppVariables }>): GroundingRemoteTargetGuard | null {
+  const guard = c.get("groundingRemoteTargetGuard");
+  return guard === undefined ? unwiredRemoteTargetGuard : guard;
 }
+const unwiredRemoteTargetGuard: GroundingRemoteTargetGuard = async () => { throw new Error("Grounding remote target guard is not wired"); };

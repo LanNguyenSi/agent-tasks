@@ -24,6 +24,7 @@ import {
   isForeignDeliverable,
 } from "../services/gates/index.js";
 import { performPrMerge } from "../services/github-merge.js";
+import { groundingRemoteGuardFor } from "../services/grounding-scope.js";
 import { SCOPES } from "../services/scopes.js";
 import { withIdempotency } from "../services/idempotency.js";
 
@@ -252,6 +253,7 @@ githubRouter.post(
     // and does NOT create a second PR on GitHub. Gate checks above run on
     // every retry (they're pure + cheap; the caller learns the current
     // answer, not a stale one).
+    const groundingGuard = groundingRemoteGuardFor(c);
     const outcome = await withIdempotency<unknown>(
       {
         projectId: task.project.id,
@@ -260,6 +262,12 @@ githubRouter.post(
         payload: body,
       },
       async () => {
+        // Grounding effect-boundary check on exactly the repository the POST
+        // below is sent to.
+        if (groundingGuard) {
+          const refused = await groundingGuard({ repo: `${body.owner}/${body.repo}`, kind: "create", taskId: task.id });
+          if (refused) return { status: refused.status, body: { error: refused.error, message: refused.message } as const };
+        }
         let ghResponse: Response | undefined;
         let ghBody: unknown;
         let existingPullRequest: ExistingPullRequest | undefined;
@@ -619,6 +627,7 @@ githubRouter.post(
           { ...task, prNumber: task.prNumber ?? prNumber },
           body.merge_method,
           actor,
+          groundingRemoteGuardFor(c),
         );
 
         if (!mergeResult.ok) {
@@ -736,6 +745,7 @@ githubRouter.post(
     // twice. GitHub itself does NOT de-dupe comments — two successful
     // creates produce two visible comments on the PR — so without this the
     // retry-after-timeout path genuinely duplicates user-facing content.
+    const groundingGuard = groundingRemoteGuardFor(c);
     const outcome = await withIdempotency<unknown>(
       {
         projectId: task.project.id,
@@ -744,6 +754,12 @@ githubRouter.post(
         payload: { ...body, prNumber },
       },
       async () => {
+        // Grounding effect-boundary check on exactly the repository and PR
+        // number the comment is posted to. Comments take no repository fence.
+        if (groundingGuard) {
+          const refused = await groundingGuard({ repo: `${body.owner}/${body.repo}`, prNumber, kind: "comment", taskId: task.id });
+          if (refused) return { status: refused.status, body: { error: refused.error, message: refused.message } as const };
+        }
         const ghResponse = await fetch(
           `https://api.github.com/repos/${body.owner}/${body.repo}/issues/${prNumber}/comments`,
           {
@@ -814,7 +830,7 @@ githubRouter.post(
     }
     return c.json(
       outcome.body,
-      outcome.status as 201 | 400 | 403 | 404 | 422 | 500,
+      outcome.status as 201 | 400 | 403 | 404 | 409 | 422 | 500,
     );
   },
 );

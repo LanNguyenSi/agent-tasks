@@ -15,7 +15,7 @@ import { isReviewState } from "../services/default-workflow.js";
 import { buildExternalGroundingHint, selectGroundingRouteContext } from "../services/grounding-route-context.js";
 import { SCOPES } from "../services/scopes.js";
 import type { GroundingRouteTransport, OperationInput } from "../services/grounding-operations.js";
-import { candidateRepositoryFenceOwned, isEnforcedRemoteOperation, type GroundingEnforcedScope } from "../services/grounding-scope.js";
+import { groundingProjectEnforced, type GroundingEnforcedScope, type GroundingRemoteTargetGuard } from "../services/grounding-scope.js";
 
 interface GroundingCompletionBaseDependencies {
   db: PrismaClient;
@@ -24,18 +24,21 @@ interface GroundingCompletionBaseDependencies {
 }
 /**
  * `scope` is the enforced scope for fresh remote operations on an
- * UNPROVISIONED task. It is required whenever a completion service is wired,
- * so no configured runtime can silently enforce nothing; where it is absent,
- * the guard fails closed and enforces every task.
+ * UNPROVISIONED task, and `remoteGuard` the effect-boundary guard every legacy
+ * remote handler runs on the exact GitHub target it sends. Both are required
+ * whenever a completion service is wired, so no configured runtime can
+ * silently enforce nothing; where the scope is absent, routing fails closed
+ * and enforces every task.
  */
 export type GroundingTaskCompletionDependencies = GroundingCompletionBaseDependencies & (
-  | { service?: undefined; scope?: GroundingEnforcedScope }
-  | { service: GroundingFinalizationService; scope: GroundingEnforcedScope }
+  | { service?: undefined; scope?: GroundingEnforcedScope; remoteGuard?: GroundingRemoteTargetGuard }
+  | { service: GroundingFinalizationService; scope: GroundingEnforcedScope; remoteGuard: GroundingRemoteTargetGuard }
 );
 
 /** Runtime counterpart of the type rule above, for callers that bypass it. */
-export function assertGroundingScopeWired(deps: { service?: unknown; scope?: unknown }) {
+export function assertGroundingScopeWired(deps: { service?: unknown; scope?: unknown; remoteGuard?: unknown }) {
   if (deps.service !== undefined && deps.scope === undefined) throw new Error("Grounding completion service requires an enforced scope");
+  if (deps.service !== undefined && typeof deps.remoteGuard !== "function") throw new Error("Grounding completion service requires a remote target guard");
 }
 const methodSchema = z.enum(["squash", "merge", "rebase"]).default("squash");
 const finishSchema = z.object({
@@ -108,16 +111,10 @@ export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletio
         if (!existing) {
           const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
           if (context.mode === "UNPROVISIONED") {
-            // A body PR URL (finish Mode A) or PR number is a target the legacy
-            // handler may merge instead of the task's stored PR, so it is a
-            // candidate too.
-            const body = typeof raw === "object" && raw !== null ? raw as Record<string, unknown> : {};
-            const targets = { prUrls: [typeof body.prUrl === "string" ? body.prUrl : null], prNumbers: [typeof body.prNumber === "number" ? body.prNumber : null] };
-            const guarded = enforceRemote && remote && await isEnforcedRemoteOperation(deps.db, deps.scope, task, targets);
-            if (guarded) return c.json({ error: "grounding_enrollment_required" }, 409);
-            // A legacy merge in a repository whose fence another operation
-            // owns would reach GitHub and then fail its own task write.
-            if (enforceRemote && remote && await candidateRepositoryFenceOwned(deps.db, task, targets)) return c.json({ error: "grounding_finalization_pending" }, 409);
+            if (enforceRemote && remote && groundingProjectEnforced(deps.scope, task.projectId)) return c.json({ error: "grounding_enrollment_required" }, 409);
+            // Outside the enforced scope the legacy handler receives the
+            // request exactly as sent; whichever PR it merges is checked at
+            // its effect boundary (performPrMerge).
             return next();
           }
         }

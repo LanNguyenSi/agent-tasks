@@ -72,7 +72,7 @@ beforeEach(() => {
 
 describe("performPrMerge — foreign-deliverable hard refusal", () => {
   it("refuses with 409 foreign_deliverable_merge_refused when deliverableRepo diverges from project.githubRepo", async () => {
-    const result = await performPrMerge(FOREIGN_TASK, "squash", ACTOR);
+    const result = await performPrMerge(FOREIGN_TASK, "squash", ACTOR, null);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toBe("foreign_deliverable_merge_refused");
@@ -89,7 +89,7 @@ describe("performPrMerge — foreign-deliverable hard refusal", () => {
       new Response(JSON.stringify({ sha: "abc123", merged: true }), { status: 200 }),
     ) as unknown as typeof fetch;
 
-    const result = await performPrMerge(SAME_REPO_TASK, "squash", ACTOR);
+    const result = await performPrMerge(SAME_REPO_TASK, "squash", ACTOR, null);
     expect(result.ok).toBe(true);
 
     globalThis.fetch = originalFetch;
@@ -101,7 +101,7 @@ describe("performPrMerge — foreign-deliverable hard refusal", () => {
       new Response(JSON.stringify({ sha: "abc123", merged: true }), { status: 200 }),
     ) as unknown as typeof fetch;
 
-    const result = await performPrMerge(NOOP_OVERRIDE_TASK, "squash", ACTOR);
+    const result = await performPrMerge(NOOP_OVERRIDE_TASK, "squash", ACTOR, null);
     expect(result.ok).toBe(true);
 
     globalThis.fetch = originalFetch;
@@ -113,7 +113,7 @@ describe("performPrMerge — foreign-deliverable hard refusal", () => {
       new Response(JSON.stringify({ sha: "abc123", merged: true }), { status: 200 }),
     ) as unknown as typeof fetch;
 
-    const result = await performPrMerge(CASE_VARIANT_OVERRIDE_TASK, "squash", ACTOR);
+    const result = await performPrMerge(CASE_VARIANT_OVERRIDE_TASK, "squash", ACTOR, null);
     expect(result.ok).toBe(true);
 
     globalThis.fetch = originalFetch;
@@ -124,7 +124,51 @@ describe("performPrMerge — foreign-deliverable hard refusal", () => {
   // delegation / call GitHub for a task whose PR lives in a repo this
   // project has no business touching.
   it("[mutation guard] a foreign task never reaches delegation resolution", async () => {
-    await performPrMerge(FOREIGN_TASK, "squash", ACTOR);
+    await performPrMerge(FOREIGN_TASK, "squash", ACTOR, null);
     expect(findDelegationUserMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("performPrMerge — Grounding effect-boundary guard", () => {
+  const success = () => vi.fn().mockResolvedValue(new Response(JSON.stringify({ sha: "abc123", merged: true }), { status: 200 }));
+
+  it("hands the guard exactly the repository and PR number it merges, right before the GitHub call", async () => {
+    const fetcher = success();
+    vi.stubGlobal("fetch", fetcher);
+    const guard = vi.fn(async () => {
+      expect(findDelegationUserMock).toHaveBeenCalledOnce();
+      expect(fetcher).not.toHaveBeenCalled();
+      return null;
+    });
+    const result = await performPrMerge({ ...SAME_REPO_TASK, project: { ...SAME_REPO_TASK.project, githubRepo: "Acme/Thing" } }, "squash", ACTOR, guard);
+    expect(result).toEqual({ ok: true, sha: "abc123", alreadyMerged: false });
+    expect(guard).toHaveBeenCalledWith({ repo: "Acme/Thing", prNumber: 42, kind: "merge", taskId: "task-1" });
+    expect(fetcher.mock.calls.map(call => String(call[0]))).toEqual(["https://api.github.com/repos/Acme/Thing/pulls/42/merge"]);
+    vi.unstubAllGlobals();
+  });
+
+  it.each(["grounding_enrollment_required", "grounding_finalization_pending"] as const)("returns a %s refusal as a 409 and never calls GitHub", async error => {
+    const fetcher = success();
+    vi.stubGlobal("fetch", fetcher);
+    const result = await performPrMerge(SAME_REPO_TASK, "squash", ACTOR, async () => ({ error, status: 409, message: "refused" }));
+    expect(result).toEqual({ ok: false, error, message: "refused", status: 409 });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(logAuditEventMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not consult the guard for a refusal the legacy checks already make", async () => {
+    const guard = vi.fn(async () => null);
+    await performPrMerge(FOREIGN_TASK, "squash", ACTOR, guard);
+    await performPrMerge({ ...SAME_REPO_TASK, prNumber: null }, "squash", ACTOR, guard);
+    expect(guard).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the guard itself fails", async () => {
+    const fetcher = success();
+    vi.stubGlobal("fetch", fetcher);
+    await expect(performPrMerge(SAME_REPO_TASK, "squash", ACTOR, async () => { throw new Error("database offline"); })).rejects.toThrow("database offline");
+    expect(fetcher).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });

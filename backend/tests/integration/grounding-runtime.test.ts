@@ -173,6 +173,17 @@ it("enabled config with empty trust and creationPolicy routes all three remote p
   expect(await store.db.groundingOperation.count({ where: { taskId: task.id } })).toBe(0);
 });
 
+it("the enabled runtime composes a remote target guard over its enforced scope", async () => {
+  const services = await composeGroundingRuntime(JSON.stringify(config()), store.db);
+  const guard = services.completion?.remoteGuard;
+  expect(guard).toBeTypeOf("function");
+  expect(await guard!({ repo: repo.toUpperCase(), prNumber: 1, kind: "comment", taskId: randomUUID() })).toMatchObject({ error: "grounding_enrollment_required", status: 409 });
+  expect(await guard!({ repo: `other/unrelated_${randomUUID().replaceAll("-", "")}`, prNumber: 1, kind: "merge", taskId: randomUUID() })).toBeNull();
+  const empty = await composeGroundingRuntime(JSON.stringify({ enabled: true, audience: "consumer.test", trust: [], creationPolicy: [] }), store.db);
+  expect(await empty.completion!.remoteGuard!({ repo, prNumber: 1, kind: "merge", taskId: randomUUID() })).toBeNull();
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 it("enabled startup refuses when a project outside the enforced scope shares a repo with an enforced project", async () => {
   const other = await store.db.project.create({ data: { teamId: ids.team, name: "Shares repo", slug: randomUUID(), githubRepo: repo.toUpperCase() } });
   const before = await snapshot();

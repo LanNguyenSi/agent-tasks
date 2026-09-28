@@ -6,7 +6,7 @@ import { GroundingGithubMergeService } from "../services/grounding-github-merge.
 import { GroundingAccessError, groundingAuthority, unavailable } from "../services/grounding-context.js";
 import { selectGroundingRouteContext } from "../services/grounding-route-context.js";
 import { hasProjectAccess } from "../services/team-access.js";
-import { candidateRepositoryFenceOwned, isEnforcedRemoteOperation, type GroundingRemoteTargets, type GroundingScopeTask } from "../services/grounding-scope.js";
+import { groundingProjectEnforced } from "../services/grounding-scope.js";
 import { assertGroundingScopeWired, type GroundingTaskCompletionDependencies, groundingCompletionErrorResponse, groundingCompletionRouteResponse } from "./grounding-task-completion.js";
 
 const mergeKey = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
@@ -33,19 +33,17 @@ function agent(c: Context<{ Variables: AppVariables }>, scopes: string[]): Actor
 
 /**
  * The only request fields the routing decision reads, taken without any
- * validation beyond what the legacy handler's own schema requires of them:
- * a UUID taskId, and owner/repo when both are non-empty strings, joined the
- * way the legacy creator joins them for its GitHub URL (the legacy merger
- * never sends them to GitHub, so only PR creation uses them). Null when the
+ * validation beyond what the legacy handler's own schema requires of them: a
+ * UUID taskId, and the body key for the durable-history lookup. Null when the
  * body names no task the legacy handler could act on; the legacy handler then
- * rejects the request itself.
+ * rejects the request itself. The GitHub target is not read here: the legacy
+ * handler checks exactly what it sends at its effect boundary.
  */
 function legacyRouting(raw: unknown) {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const body = raw as Record<string, unknown>;
   if (!legacyTaskId.safeParse(body.taskId).success) return null;
-  const named = typeof body.owner === "string" && body.owner.length > 0 && typeof body.repo === "string" && body.repo.length > 0;
-  return { taskId: body.taskId as string, repo: named ? `${body.owner as string}/${body.repo as string}` : null, bodyKey: body.idempotencyKey };
+  return { taskId: body.taskId as string, bodyKey: body.idempotencyKey };
 }
 /** Every well-formed key the request carries, header or body, for the
  * durable-history lookup only; format errors are reported on the Grounding
@@ -60,15 +58,6 @@ function historyKeys(c: Context<{ Variables: AppVariables }>, bodyKey: unknown, 
 }
 async function readJson(c: Context<{ Variables: AppVariables }>): Promise<unknown> {
   try { return await c.req.json(); } catch { return undefined; }
-}
-type LegacyDecision = "legacy" | "grounding_enrollment_required" | "grounding_finalization_pending";
-/** Where an UNPROVISIONED task's fresh remote operation goes: the legacy
- * handler, or a 409 when it is enforced or when a candidate repository's fence
- * is owned by another operation (the legacy effect could not be recorded). */
-async function legacyDecision(deps: GroundingTaskCompletionDependencies, task: GroundingScopeTask, targets: GroundingRemoteTargets): Promise<LegacyDecision> {
-  if (await isEnforcedRemoteOperation(deps.db, deps.scope, task, targets)) return "grounding_enrollment_required";
-  if (await candidateRepositoryFenceOwned(deps.db, task, targets)) return "grounding_finalization_pending";
-  return "legacy";
 }
 
 /** Mounted before the legacy GitHub writer whenever any Grounding capability is configured. */
@@ -100,11 +89,10 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
       });
       if (!history) {
         const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
-        // Outside the enforced scope PR creation is the legacy creator's,
-        // keyed or not, and it receives the request exactly as sent.
-        const decision = context.mode === "UNPROVISIONED" ? await legacyDecision(deps, task, { repos: [routing.repo] }) : null;
-        if (decision === "legacy") return next();
-        if (decision === "grounding_finalization_pending") return c.json({ error: decision }, 409);
+        // Outside the enforced scope an unprovisioned task's PR creation is
+        // the legacy creator's, keyed or not: it receives the request exactly
+        // as sent and checks its GitHub target at its effect boundary.
+        if (context.mode === "UNPROVISIONED" && !groundingProjectEnforced(deps.scope, task.projectId)) return next();
       }
       // Grounding-owned from here: the strict request contract applies.
       const input = createBody.safeParse(raw);
@@ -147,14 +135,11 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
       if (!history) {
         const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
         if (context.mode === "UNPROVISIONED") {
-          // The legacy handler merges the project's repository and the task's
-          // PR number (the path number, parsed with parseInt, only when the
-          // task has none). It never sends the body owner/repo to GitHub, so
-          // those are not candidates; the stored targets and the path number are.
-          const legacyNumber = Number.parseInt(path, 10);
-          const decision = await legacyDecision(deps, task, { prNumbers: [Number.isNaN(legacyNumber) ? null : legacyNumber] });
-          if (decision === "legacy") return next();
-          return c.json({ error: decision }, 409);
+          // Outside the enforced scope the legacy merger receives the request
+          // exactly as sent and checks the repository and PR number it merges
+          // at its effect boundary.
+          if (!groundingProjectEnforced(deps.scope, task.projectId)) return next();
+          return c.json({ error: "grounding_enrollment_required" }, 409);
         }
       }
       // Grounding-owned from here: the strict request contract applies.

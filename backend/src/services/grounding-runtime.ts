@@ -6,7 +6,7 @@ import { GroundingGithubCreateService } from "./grounding-github-create.js";
 import { GroundingMigrationService } from "./grounding-migration.js";
 import { assertGithubFenceInstalled, canonicalGithubRepo } from "./grounding-github-fence.js";
 import { groundingSettings } from "./grounding-verification.js";
-import type { GroundingEnforcedScope } from "./grounding-scope.js";
+import { createGroundingRemoteTargetGuard, type GroundingEnforcedScope } from "./grounding-scope.js";
 import type { GroundingTaskCompletionDependencies } from "../routes/grounding-task-completion.js";
 
 // History in any grounding table requires configured routing, even OFF, inactive
@@ -89,6 +89,7 @@ export async function composeGroundingRuntime(raw: string | undefined, db: Prism
       completion: {
         db, service: new GroundingGithubMergeService({ db, config }),
         githubCreate: new GroundingGithubCreateService({ db }), creationPolicy: runtime.creationPolicy, scope,
+        remoteGuard: createGroundingRemoteTargetGuard({ db, scope }),
       },
       migration: new GroundingMigrationService({ db, config }),
     };
