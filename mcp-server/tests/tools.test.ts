@@ -865,7 +865,12 @@ describe("buildTools", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("https://example.test/api/github/pull-requests");
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body)).toEqual({
+    // No idempotencyKey was passed, so one is generated: assert it separately
+    // (format only, value is random) and compare the rest of the body as before.
+    const { idempotencyKey, ...rest } = JSON.parse(init.body);
+    expect(idempotencyKey).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+    expect(init.headers["Idempotency-Key"]).toBe(idempotencyKey);
+    expect(rest).toEqual({
       taskId: "11111111-1111-1111-1111-111111111111",
       owner: "LanNguyenSi",
       repo: "agent-tasks",
@@ -974,6 +979,67 @@ describe("buildTools", () => {
     expect(parsed).not.toHaveProperty("merge_method");
     expect(parsed).not.toHaveProperty("mergeMethod");
   });
+
+  it("pull_requests_create forwards an explicit idempotencyKey unchanged, as both header and body", async () => {
+    fetchMock.mockResolvedValue(ok({ pullRequest: { number: 1, url: "u", title: "t" } }));
+    await tool("pull_requests_create").handler({
+      taskId: "55555555-5555-5555-5555-555555555555",
+      owner: "o",
+      repo: "r",
+      head: "b",
+      title: "t",
+      idempotencyKey: "explicit-key-1",
+    });
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body).idempotencyKey).toBe("explicit-key-1");
+    expect(init.headers["Idempotency-Key"]).toBe("explicit-key-1");
+  });
+
+  it("pull_requests_merge forwards an explicit idempotencyKey unchanged, as both header and body", async () => {
+    fetchMock.mockResolvedValue(ok({ merged: true, sha: "s", message: "ok", task: { id: "t", status: "done" } }));
+    await tool("pull_requests_merge").handler({
+      taskId: "66666666-6666-6666-6666-666666666666",
+      owner: "o",
+      repo: "r",
+      prNumber: 1,
+      idempotencyKey: "explicit-key-2",
+    });
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body).idempotencyKey).toBe("explicit-key-2");
+    expect(init.headers["Idempotency-Key"]).toBe("explicit-key-2");
+  });
+
+  it.each(["pull_requests_create", "pull_requests_merge"])(
+    "%s generates a DIFFERENT idempotencyKey on each call when it is omitted",
+    async (name) => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(ok({ merged: true, sha: "s", message: "ok", task: { id: "t", status: "done" }, pullRequest: { number: 1, url: "u", title: "t" } })),
+      );
+      const args = name === "pull_requests_create"
+        ? { taskId: TASK_ID, owner: "o", repo: "r", head: "b", title: "t" }
+        : { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 };
+      await tool(name).handler(args as never);
+      await tool(name).handler(args as never);
+      const firstKey = JSON.parse(fetchMock.mock.calls[0][1].body).idempotencyKey;
+      const secondKey = JSON.parse(fetchMock.mock.calls[1][1].body).idempotencyKey;
+      expect(firstKey).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+      expect(secondKey).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+      expect(firstKey).not.toBe(secondKey);
+      expect(fetchMock.mock.calls[0][1].headers["Idempotency-Key"]).toBe(firstKey);
+      expect(fetchMock.mock.calls[1][1].headers["Idempotency-Key"]).toBe(secondKey);
+    },
+  );
+
+  it.each(["pull_requests_create", "pull_requests_merge"])(
+    "%s rejects a malformed idempotencyKey locally, before any network call",
+    (name) => {
+      const args = name === "pull_requests_create"
+        ? { taskId: TASK_ID, owner: "o", repo: "r", head: "b", title: "t", idempotencyKey: "has a space" }
+        : { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1, idempotencyKey: "has a space" };
+      expect(() => parseArgs(name, args)).toThrow();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("pull_requests_comment routes to /pull-requests/{prNumber}/comments and keeps body field", async () => {
     fetchMock.mockResolvedValue(ok({ comment: { id: "c1" } }));
@@ -1429,6 +1495,48 @@ describe("buildTools", () => {
     expect(init.headers["Idempotency-Key"]).toBe("retry-key-1");
     expect(init.body).toBe("{}");
   });
+
+  // Generated-operation-key coverage for task_finish/task_merge/task_abandon:
+  // an omitted operationKey must not leave the request keyless (the
+  // provisioned Grounding backend requires the header on all three -- see
+  // backend/src/routes/grounding-task-completion.ts), a generated key must
+  // still be forwarded as the Idempotency-Key header, and two separate calls
+  // must not reuse the same generated value (a reused generated key would
+  // silently make an unrelated second call look like a retry of the first).
+  it.each([
+    { name: "task_finish", args: { taskId: TASK_ID }, body: { kind: "work", task: { id: "t1", status: "review" } } },
+    { name: "task_merge", args: { taskId: TASK_ID }, body: { task: { id: "t1", status: "done" }, merged: true, sha: "s", alreadyMerged: false } },
+    { name: "task_abandon", args: { taskId: TASK_ID }, body: { task: { id: "t1", status: "open" } } },
+  ])("$name generates an Idempotency-Key header when operationKey is omitted", async ({ name, args, body }) => {
+    fetchMock.mockResolvedValue(ok(body));
+    await tool(name).handler(args as never);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["Idempotency-Key"]).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+  });
+
+  it.each(["task_finish", "task_merge", "task_abandon"])(
+    "%s generates a DIFFERENT Idempotency-Key on each call when operationKey is omitted",
+    async (name) => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(ok({ task: { id: "t1", status: "review" }, kind: "work", merged: true, sha: "s", alreadyMerged: false })),
+      );
+      await tool(name).handler({ taskId: TASK_ID } as never);
+      await tool(name).handler({ taskId: TASK_ID } as never);
+      const firstKey = fetchMock.mock.calls[0][1].headers["Idempotency-Key"];
+      const secondKey = fetchMock.mock.calls[1][1].headers["Idempotency-Key"];
+      expect(firstKey).toBeTruthy();
+      expect(secondKey).toBeTruthy();
+      expect(firstKey).not.toBe(secondKey);
+    },
+  );
+
+  it.each(["task_finish", "task_merge", "task_abandon"])(
+    "%s rejects a malformed operationKey locally, before any network call",
+    (name) => {
+      expect(() => parseArgs(name, { taskId: TASK_ID, operationKey: "has a space" })).toThrow();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("transports a grounding challenge request and opaque signed receipt unchanged", async () => {
     fetchMock.mockResolvedValueOnce(ok({ attemptId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" })).mockResolvedValueOnce(ok({ receiptId: "r1", replayed: false }));

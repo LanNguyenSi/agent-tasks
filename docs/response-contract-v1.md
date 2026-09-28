@@ -497,8 +497,17 @@ authoritative challenge; the second sends the producer's original signed
 receipt as opaque UTF-8 text, capped at 32,768 bytes. Upload is evidence
 ingestion, not a completion result. The backend alone verifies the receipt and
 current task context. `task_finish`, `task_merge`, and `task_abandon` accept an
-explicit `operationKey` for provisioned work and forward it as
-`Idempotency-Key`; callers reuse a key only for the same retry.
+optional `operationKey`, and `pull_requests_create`/`pull_requests_merge` an
+optional `idempotencyKey`, forwarded as the `Idempotency-Key` header (the two
+GitHub verbs also mirror it into the request body, so the legacy, unprovisioned
+`/api/github/pull-requests*` routes keep their own body-based retry dedupe). When
+the caller omits the key, mcp-server generates a fresh one (`crypto.randomUUID()`)
+for that single call, so provisioned completion is never left keyless — but a
+generated key is NOT stable across separate calls: it makes a first attempt safe,
+not a retry. To make a network-timeout retry of the SAME operation idempotent,
+the caller generates its own key up front and passes that same value again on
+the retry; reusing a key for a genuinely different operation is a caller error
+the backend rejects as a conflict once the payloads differ.
 
 ## Versioning and rollout
 
