@@ -121,13 +121,34 @@ when the repository string is not exactly a canonical `owner/repo` identity
 containing `/`), when it belongs to an enforced project, or when the PR is a
 protected, `EXTERNAL_V1`, bound or held task's, including such a task whose own
 repository string is not canonical and that shares the PR number. It refuses a
-merge or create with `409 grounding_finalization_pending` when another
-operation owns the repository fence, because the legacy task write would then
-fail after the GitHub effect; comments take no fence. A create sends no PR
-number, so the peer check does not apply to it. A legacy gate that refuses
-first answers as in the unconfigured application. There is no Grounding
-comment path, so a provisioned or in-scope task's comment on its own PR is
-refused as well.
+merge or create the same way when the requesting task is itself protected,
+`EXTERNAL_V1`, bound or held, whatever PR number it sends. It refuses a merge
+or create with `409 grounding_finalization_pending` when another operation
+owns the fence of the target repository or of any repository the legacy task
+write checks for the requesting task (its effective repository, its stored PR
+URL repository and the repositories its own active PR-create intents fence),
+because that task write would then fail after the GitHub effect; comments
+write no task and take no fence. A create sends no PR number, so the peer
+check does not apply to it. A legacy gate that refuses first answers as in the
+unconfigured application.
+
+There is no Grounding comment path, so a task may comment through the legacy
+commenter on its own stored PR (its PR number, in its effective repository,
+matching its stored PR URL when it has one) when it is protected,
+`EXTERNAL_V1` or bound, or its project is in the enforced scope, even in an
+enforced repository, unless it is held. Another peer on that PR, another PR of
+an enforced repository and another peer's PR stay refused. Such a comment
+reaches GitHub, so an enforced repository must not run comment-triggered
+merge or deploy automation.
+
+With configuration enabled the three legacy writes do not follow a GitHub
+redirect. GitHub redirects a write to a renamed or transferred repository to
+its new location, which the check never saw, so the configured application
+sends each write with `redirect: "manual"` and answers a redirect with
+`409 github_redirect_refused` (body `{error, message}`) without re-sending the
+write to the redirect target. Update the project or
+request to the repository's current name. The unconfigured application keeps
+the previous behavior and follows the redirect.
 
 Every Grounding router checks the caller's access before it reads or locks any
 Grounding state, and answers a caller without access the same way whatever the
@@ -144,6 +165,9 @@ unconfigured application are therefore:
 - the effect-boundary refusals (`409 grounding_enrollment_required`,
   `409 grounding_finalization_pending`) above, including a refused comment on a
   peer's or an enforced repository's PR;
+- renamed or transferred repository writes are refused: a legacy write that
+  GitHub redirects is answered with `409 github_redirect_refused` instead of
+  being followed;
 - the router's `409 grounding_enrollment_required` for a task whose project is
   in the enforced scope;
 - the agent and scope admission check that runs before routing;
@@ -173,7 +197,8 @@ do:
   held peer of the targeted PR, for example an administrator rebinding a
   task's repository or PR, a migration hold placed on a task, or a task's
   enrollment, is not seen.
-- A grouped operation that acquires the target repository's fence after the
+- A grouped operation that acquires one of the checked fences (the target
+  repository's, or one of the requesting task's own repositories') after the
   read is not seen either. The legacy handler then performs its GitHub effect
   and its own task write fails on the fence: a merge can land on GitHub while
   the task stays in review, and a PR create can leave a PR that is not linked
@@ -185,27 +210,30 @@ check reads the target the handler actually sends.
 
 Before enabling configuration, confirm with read-only SQL, run in a read-only
 transaction against the database the runtime will use, that no project
-repository, task deliverable repository or task PR URL repository fails
-`grounding_github_repo()` or carries surrounding whitespace. Such a string
-cannot be compared with the enforced scope or with peers, so every remote
-operation that sends it is refused with `409 grounding_enrollment_required`
-even for a project outside the scope, and every operation that shares a PR
-number with a protected, `EXTERNAL_V1`, bound or held task that stores it is
-refused as well. Each query should return no rows:
+repository or task deliverable repository fails `grounding_github_repo()` or
+carries surrounding whitespace (the whitespace the effect-boundary check
+rejects, which `grounding_github_trim()` removes, including no-break spaces
+and a byte order mark), and that no task PR URL in the GitHub pull-request
+shape fails `grounding_github_pr_repo()`. Such a string cannot be
+compared with the enforced scope or with peers, so every remote operation
+that sends it is refused with `409 grounding_enrollment_required` even for a
+project outside the scope, and every operation that shares a PR number with a
+protected, `EXTERNAL_V1`, bound or held task that stores it is refused as
+well. Each query should return no rows:
 
 ```sql
 -- Project repositories
 SELECT id FROM projects
 WHERE "githubRepo" IS NOT NULL
-  AND ("githubRepo" = '' OR "githubRepo" ~ '(^\s|\s$)' OR grounding_github_repo("githubRepo") IS NULL);
+  AND ("githubRepo" = '' OR "githubRepo" <> grounding_github_trim("githubRepo") OR grounding_github_repo("githubRepo") IS NULL);
 -- Task deliverable repositories
 SELECT id FROM tasks
 WHERE "deliverableRepo" IS NOT NULL
-  AND ("deliverableRepo" ~ '(^\s|\s$)' OR grounding_github_repo("deliverableRepo") IS NULL);
--- Repositories of task PR URLs in the GitHub pull-request shape
+  AND ("deliverableRepo" <> grounding_github_trim("deliverableRepo") OR grounding_github_repo("deliverableRepo") IS NULL);
+-- Task PR URLs in the GitHub pull-request shape whose repository the check cannot name
 SELECT id FROM tasks
-WHERE "prUrl" ~* 'github\.com/[^/]+/[^/]+/pull/'
-  AND grounding_github_repo((regexp_match("prUrl", 'github\.com/([^/]+/[^/]+)/pull/', 'i'))[1]) IS NULL;
+WHERE "prUrl" ~* 'github[.]com/[^/]+/[^/]+/pull/'
+  AND grounding_github_pr_repo("prUrl") IS NULL;
 ```
 
 Correct any row these return before enabling, or accept that its operations

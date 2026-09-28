@@ -197,17 +197,38 @@ when its canonical form belongs to a selected project, or when the PR is a
 protected, `EXTERNAL_V1`, bound or held task's: that task's effective or PR URL
 repository is the target repository and its PR number or PR URL number is the
 target number, or its own repository string is not canonical (it could be an
-alias of the target) and it shares the number. That includes the requesting
-task itself if it became such a task after routing. The check returns
+alias of the target) and it shares the number. A merge or create is refused
+the same way when the requesting task is itself a protected, `EXTERNAL_V1`,
+bound or held task, whatever PR number it sends, for example after an
+enrollment or a hold placed after routing. The check returns
 `grounding_finalization_pending` for a merge or create when another operation
-owns the target repository's fence, because the legacy task write would then
-fail on the fence after the GitHub effect; comments take no fence. Peer and
-fence are read in one statement. A legacy gate that refuses first (status,
-claim, governance, cross-repository or delegation checks) answers exactly as in
-the unconfigured application, and a keyed legacy replay of a stored `2xx`
-response makes no GitHub call and is returned without a check. Because there
-is no Grounding comment path, a provisioned or in-scope task's comment on its
-own PR is refused too.
+owns the fence of the target repository or of any repository the legacy task
+write's fence trigger checks for the requesting task (its effective
+repository, its stored PR URL repository and the repositories its own active
+PR-create intents fence), because that task write would then fail on the fence
+after the GitHub effect; comments write no task and take no fence. Everything
+is read in one statement. A legacy gate that refuses first (status, claim,
+governance, cross-repository or delegation checks) answers exactly as in the
+unconfigured application, and a keyed legacy replay of a stored `2xx` response
+makes no GitHub call and is returned without a check.
+
+There is no Grounding comment path, so a task may comment through the legacy
+commenter on its own stored PR: the PR number it stores, in its effective
+repository, matching its stored PR URL when it has one. That holds when the
+task is protected, `EXTERNAL_V1` or bound, or its project is in the enforced
+scope, even in an enforced repository, unless the task is held. Another peer on
+that PR, another PR of an enforced repository and another peer's PR stay
+refused. Because such a comment reaches GitHub, an enforced repository must
+not run comment-triggered merge or deploy automation.
+
+With configuration enabled, the three legacy writes (merge `PUT`, PR create
+`POST`, PR comment `POST`) are sent with `redirect: "manual"`. GitHub answers a
+write to a renamed or transferred repository with a redirect, and following it
+would send the write to a repository the check never saw, so a redirect answer
+is refused with `409 github_redirect_refused` (`{error, message}`) and the
+write is not re-sent to the redirect target. The unconfigured
+application sends the same request as before and keeps fetch's default
+redirect handling.
 
 Startup itself refuses to start when a project outside the enforced scope
 shares a GitHub repository with an enforced one, when an enforced project's
@@ -220,8 +241,9 @@ trip before the GitHub call. Two residual races are accepted within that
 window; they are narrowed, not closed. A change that makes some task a
 protected, `EXTERNAL_V1` or held peer of the targeted PR (an administrator
 rebinding a task's repository or PR, a migration hold, a task's enrollment)
-after the read is not seen. A grouped operation that acquires the target
-repository's fence after the read is not seen either: the legacy GitHub effect
+after the read is not seen. A grouped operation that acquires one of the
+checked fences (the target repository's or one of the requesting task's own
+repositories') after the read is not seen either: the legacy GitHub effect
 then happens and the legacy task write fails on the fence, so a merge can land
 on GitHub while the task stays in review, and a PR create can leave a PR that
 is not linked to its task. A change to the requesting task between routing
@@ -258,11 +280,13 @@ handing the request on.
 
 Outside the enforced scope the principal differences from the unconfigured
 application are the effect-boundary refusals above (including a refused
-comment on a peer's or an enforced repository's PR), the router's refusal for
-an in-scope task, the agent and scope admission check that runs before
-routing, a transient `503 grounding_verification_unavailable` when the
-Serializable routing read cannot be serialized, and the retry message a
-Grounding-path `503` carries on the GitHub merge route. Enabling configuration
+comment on a peer's or an enforced repository's PR), the refusal of a
+redirected write to a renamed or transferred repository
+(`409 github_redirect_refused`), the router's refusal for an in-scope task,
+the agent and scope admission check that runs before routing, a transient
+`503 grounding_verification_unavailable` when the Serializable routing read
+cannot be serialized, and the retry message a Grounding-path `503` carries on
+the GitHub merge route. Enabling configuration
 still writes grounding history, for example webhook deliveries, so a later
 unconfigured restart is refused and enabling is one-way; rollback means keeping
 an enabled configuration with empty trust and an empty `creationPolicy`, which
