@@ -222,7 +222,7 @@ describe("github pr create/merge --operation-key validation", () => {
   });
 });
 
-describe("wiring: tasks finish --auto-merge sends the operation key (T3)", () => {
+describe("wiring: tasks finish --auto-merge sends the operation key", () => {
   it("forwards --operation-key as the Idempotency-Key header on a finish with --auto-merge", async () => {
     let receivedHeader: string | undefined;
     const { endpoint, close } = await startStubServer((req, res) => {
@@ -245,6 +245,54 @@ describe("wiring: tasks finish --auto-merge sends the operation key (T3)", () =>
       expect(res.stderr).toBe("");
       expect(res.status).toBe(0);
       expect(receivedHeader).toBe("wiring-key.1");
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("wiring: --operation-key is validated before an id prefix is resolved", () => {
+  it("rejects an invalid --operation-key on finish with zero requests, even with an id prefix", async () => {
+    let requestCount = 0;
+    const { endpoint, close } = await startStubServer((_req, res) => {
+      requestCount += 1;
+      respondJson(res, 200, { matches: [] });
+    });
+    try {
+      const res = await runAgainst(endpoint, [
+        "tasks",
+        "finish",
+        "abc12345",
+        "--outcome",
+        "approve",
+        "--operation-key",
+        "has a space",
+      ]);
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain("Invalid --operation-key");
+      expect(requestCount).toBe(0);
+    } finally {
+      await close();
+    }
+  });
+
+  it("rejects an invalid --operation-key on abandon with zero requests, even with an id prefix", async () => {
+    let requestCount = 0;
+    const { endpoint, close } = await startStubServer((_req, res) => {
+      requestCount += 1;
+      respondJson(res, 200, { matches: [] });
+    });
+    try {
+      const res = await runAgainst(endpoint, [
+        "tasks",
+        "abandon",
+        "abc12345",
+        "--operation-key",
+        "has a space",
+      ]);
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain("Invalid --operation-key");
+      expect(requestCount).toBe(0);
     } finally {
       await close();
     }

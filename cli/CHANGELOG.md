@@ -13,12 +13,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   gain an optional `--operation-key <key>` flag and now always send an
   `Idempotency-Key` header (and, for the two `github pr` commands, the
   same value as the `idempotencyKey` body field) on every call. When the
-  flag is omitted, a fresh key is generated per invocation. A generated key
-  is not stable across separate calls; pass the same `--operation-key`
-  value again to retry a timed-out call idempotently. This closes the gap
-  where a task or PR operation on a provisioned or pilot-scoped project (with
-  `GROUNDING_RUNTIME_CONFIG` enabled) previously reached the backend with no
-  operation key and got a `400 grounding_operation_key_required`.
+  flag is omitted, a fresh key is generated per invocation. This closes the
+  gap where a task or PR operation on a provisioned or pilot-scoped project
+  (with `GROUNDING_RUNTIME_CONFIG` enabled) previously reached the backend
+  with no operation key and got a `400 grounding_operation_key_required`.
+  Passing the same `--operation-key` value again on retry makes that retry
+  idempotent for `github pr create` and `github pr merge` unconditionally,
+  and for `tasks finish`/`tasks abandon` only where the backend enforces
+  operation keys (a provisioned or pilot-scoped grounding project); see the
+  legacy-compatibility note below for what happens elsewhere.
+  - Legacy compatibility: `tasks finish` and `tasks abandon` reach the
+    backend's legacy task-completion handlers unchanged on any task the
+    grounding runtime doesn't enforce, including an UNPROVISIONED task on an
+    otherwise-enabled backend (the grounding middleware's `next()` falls
+    through to the legacy handler for that case). Those legacy handlers
+    ignore the `Idempotency-Key` header entirely, so a retried
+    `--operation-key` gives no dedupe there -- the key is sent, but nothing
+    reads it. `github pr create` and `github pr merge` are different: even
+    on their legacy (non-grounding) routes, the backend uses the request's
+    own key for its own dedupe, independent of grounding enforcement. It
+    stores one row per successful call, swept out by TTL; a retry with the
+    same key and the same payload replays the stored 2xx response (marked
+    `_idempotent_replay: true`); the same key with a different payload
+    returns `409`.
 - `tasks create` gains `--debug-flavor` / `--no-debug-flavor` and
   `--depends-on <task-id>` (repeatable), bringing the human CLI to parity
   with the REST and MCP create surfaces. `--debug-flavor` forces

@@ -227,6 +227,11 @@ tasks
       process.exit(1);
     }
 
+    // Validate before resolveTaskId so a bad --operation-key fails fast: an
+    // id prefix would otherwise cost a GET to the search endpoint before
+    // this rejection ever runs.
+    api.assertValidOperationKey(opts.operationKey, api.OPERATION_KEY_PATTERN, "finish");
+
     const config = loadConfig();
     const resolvedId = await resolveTaskId(config, taskId);
     const body: api.FinishInput = opts.outcome
@@ -254,6 +259,10 @@ tasks
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
     const mode = getMode(opts);
+    // Same fail-fast ordering as `tasks finish`: reject before spending a
+    // network call resolving an id prefix.
+    api.assertValidOperationKey(opts.operationKey, api.OPERATION_KEY_PATTERN, "abandon");
+
     const config = loadConfig();
     const resolvedId = await resolveTaskId(config, taskId);
     const { task } = await api.taskAbandon(config, resolvedId, opts.operationKey);

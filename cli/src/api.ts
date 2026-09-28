@@ -12,28 +12,39 @@ export class ApiError extends Error {
 
 // ── Operation keys (Idempotency-Key) ────────────────────────────────────────
 //
-// Mirrors mcp-server/src/tools.ts's resolveOperationKey: taskFinish,
-// taskAbandon and mergePullRequest use the tighter format (it matches the
-// Grounding router's own pattern for those endpoints, backend/src/routes/
-// grounding-task-completion.ts and grounding-github.ts's mergeKey);
-// createPullRequest uses the relaxed printable-ASCII format (matches
-// grounding-github.ts's createKey and the legacy github.ts body-field
-// bound). A caller-supplied --operation-key is validated against the
-// endpoint's own format and forwarded unchanged; when omitted, a fresh
-// UUID is generated for that single call, so every one of these four calls
-// always reaches the backend with a key.
+// taskFinish, taskAbandon and mergePullRequest use the tighter format (it
+// matches the Grounding router's own pattern for those endpoints,
+// backend/src/routes/grounding-task-completion.ts and
+// grounding-github.ts's mergeKey); createPullRequest uses the relaxed
+// printable-ASCII format, a header-safe subset of the backend's own bounds
+// (\x21-\x7E, 1-255: grounding-github.ts's createKey and the legacy
+// github.ts body-field bound both accept a wider byte range, but a header
+// value can't safely carry whitespace or control bytes, so this format is
+// narrower than what the backend itself accepts). A caller-supplied
+// --operation-key is validated against the endpoint's own format and
+// forwarded unchanged; when omitted, a fresh UUID is generated for that
+// single call, so every one of these four calls always reaches the backend
+// with a key.
 export const OPERATION_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 export const PR_OPERATION_KEY_PATTERN = /^[\x21-\x7E]{1,255}$/;
 
 export class InvalidOperationKeyError extends Error {}
 
-function resolveOperationKey(explicit: string | undefined, pattern: RegExp, flagHint: string): string {
-  if (explicit === undefined) return randomUUID();
+// Exported so a caller (the CLI's own action handlers) can validate
+// --operation-key up front, before doing any other work such as resolving
+// an id prefix, without having to duplicate the pattern-match logic.
+export function assertValidOperationKey(explicit: string | undefined, pattern: RegExp, flagHint: string): void {
+  if (explicit === undefined) return;
   if (!pattern.test(explicit)) {
     throw new InvalidOperationKeyError(
       `Invalid --operation-key for ${flagHint}: must match ${pattern}`,
     );
   }
+}
+
+function resolveOperationKey(explicit: string | undefined, pattern: RegExp, flagHint: string): string {
+  if (explicit === undefined) return randomUUID();
+  assertValidOperationKey(explicit, pattern, flagHint);
   return explicit;
 }
 

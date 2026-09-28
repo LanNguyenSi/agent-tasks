@@ -226,6 +226,16 @@ describe("taskFinish", () => {
     expect(init.headers["Idempotency-Key"]).toBe("merge-key");
     expect(JSON.parse(init.body)).toMatchObject({ autoMerge: true });
   });
+
+  it("accepts a 128-char operation key (the format's own upper bound)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "done", priority: "MEDIUM" } }),
+    );
+    const key = "a".repeat(128);
+    await taskFinish(config, "t1", { outcome: "approve" }, key);
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.headers["Idempotency-Key"]).toBe(key);
+  });
 });
 
 describe("taskAbandon", () => {
@@ -266,6 +276,15 @@ describe("taskAbandon", () => {
       InvalidOperationKeyError,
     );
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a 128-char operation key (the format's own upper bound)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "LOW" } }),
+    );
+    const key = "a".repeat(128);
+    await taskAbandon(config, "t1", key);
+    expect(fetchMock.mock.calls[0]![1].headers["Idempotency-Key"]).toBe(key);
   });
 });
 
@@ -323,6 +342,17 @@ describe("createPullRequest", () => {
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("accepts a 255-char key using the format's wider printable-ASCII set (the format's own upper bound)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ pullRequest: { number: 1, url: "https://github.com/o/r/pull/1" } }),
+    );
+    const key = "a/".repeat(127) + "b";
+    expect(key).toHaveLength(255);
+    await createPullRequest(config, input, key);
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.headers["Idempotency-Key"]).toBe(key);
+  });
 });
 
 describe("mergePullRequest", () => {
@@ -363,6 +393,21 @@ describe("mergePullRequest", () => {
     // '!' are valid for pr create but invalid here.
     await expect(
       mergePullRequest(config, 1, input, "has!bang"),
+    ).rejects.toBeInstanceOf(InvalidOperationKeyError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a 128-char operation key (the format's own upper bound)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ merged: true }));
+    const key = "a".repeat(128);
+    await mergePullRequest(config, 1, input, key);
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.headers["Idempotency-Key"]).toBe(key);
+  });
+
+  it("rejects a 200-char operation key (tighter format caps at 128, unlike pr create's 255)", async () => {
+    await expect(
+      mergePullRequest(config, 1, input, "a".repeat(200)),
     ).rejects.toBeInstanceOf(InvalidOperationKeyError);
     expect(fetchMock).not.toHaveBeenCalled();
   });
