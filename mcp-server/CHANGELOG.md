@@ -4,6 +4,49 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+**BREAKING**: `task_finish`, `task_merge`, `task_abandon`, `pull_requests_create`
+and `pull_requests_merge` now always send an operation/idempotency key: the
+caller's explicit value when given, otherwise a fresh one generated per call
+(`crypto.randomUUID()`). An unconfigured (legacy) backend keeps working, and a
+provisioned Grounding backend always receives a key. The legacy
+`/api/tasks/:id/{finish,merge,abandon}` routes have no key field and never read
+the `Idempotency-Key` header, so they ignore it. The legacy
+`/api/github/pull-requests*` routes do not ignore the body `idempotencyKey`
+field the PR tools also send: they dedupe on it (one `tool_invocations` row per
+successful call, pruned by the idempotency TTL sweep; a same-key retry replays
+the stored 2xx response with `_idempotent_replay: true`; the same key with a
+different payload returns 409).
+
+A generated key is not stable across separate calls: it makes a single attempt
+safe but does nothing for a retry. Passing your own key on both the original
+call and the retry makes the retry idempotent only where the receiving route
+enforces operation keys:
+
+- `pull_requests_create` and `pull_requests_merge`: on every backend. The
+  legacy PR routes dedupe on the body key as described above, and the
+  Grounding GitHub router keys its durable operation on the same value.
+- `task_finish`, `task_merge` and `task_abandon`: only for a provisioned task
+  on a Grounding-configured backend. On an unconfigured backend, or for an
+  unprovisioned task, the request either reaches the legacy handler, which
+  ignores the key, or, for a remote merge (`task_merge`, or `task_finish` with
+  `autoMerge`) where grounding enforcement applies to the task, is refused
+  with 409 `grounding_enrollment_required` before any effect. Either way a
+  retry is not deduplicated.
+
+Key formats in this stdio package, both breaking narrowings versus 0.15.0
+(where both PR tools accepted any string, trimmed, 1-255 chars), needed because
+the key now also travels in the `Idempotency-Key` header:
+
+- `pull_requests_merge`'s `idempotencyKey` is narrowed to
+  `/^[A-Za-z0-9._:-]{1,128}$/`, the same format as `operationKey` on the three
+  task tools.
+- `pull_requests_create`'s `idempotencyKey` is narrowed to header-safe
+  printable ASCII with no whitespace (`\x21-\x7E`, 1-255 chars).
+
+Both PR tools send the same value in the header and the request body. The
+backend-hosted remote MCP route at `POST /api/mcp` is a separate surface; its
+own, matching narrowing is recorded in the root `CHANGELOG.md`.
+
 ## 0.15.0
 
 **Additive**: `project_tasks` responses now carry `count` (the number of

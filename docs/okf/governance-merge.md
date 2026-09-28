@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-09-27T20:11:24Z
+timestamp: 2026-09-28T16:42:00Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -17,6 +17,8 @@ sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
   - backend/src/services/grounding-github-merge.ts
+  - backend/src/services/grounding-scope.ts
+  - backend/src/services/github-merge.ts
   - backend/src/services/grounding-github-fence.ts
   - backend/src/services/grounding-github-webhook.ts
   - backend/src/services/grounding-github-observation-context.ts
@@ -90,15 +92,80 @@ one. Only a wholly RESERVED, provably undispatched group can be cancelled, with
 the original actor's current authority and a nonblank reason. Cancellation and
 dispatch serialize, and a new operation needs a new key and evidence decision.
 
-Configured fresh remote merges require explicit server enrollment. Missing
-enrollment returns `409 grounding_enrollment_required` for task merge, GitHub
-merge and finish with `autoMerge`. Compatibility tasks may be explicitly
-enrolled as OFF or LEGACY_LOCAL; external evidence is not mandatory for every
-task. A read showing no protected peers is not permission to fall through to a
-legacy remote write, because a peer could join after that read. Existing durable
-operations keep their recovery path. Production enrollment and rollout remain
-separate prerequisites; active legacy workers must be excluded before enabling
-the configured lane.
+Configured fresh remote merges on an unprovisioned task require explicit
+server enrollment when the task's own project is selected by `creationPolicy`
+at startup: task merge, GitHub merge and finish with `autoMerge` then return
+`409 grounding_enrollment_required` (`grounding-task-completion.ts:114`,
+`routes/grounding-github.ts:142`). The routers make only that exact decision,
+after admission, task lookup, the caller's access, durable keyed history and
+enrollment mode; outside the scope the untouched request reaches the legacy
+handler, including without an operation key
+(`grounding-task-completion.ts:118`, `routes/grounding-github.ts:141`). The
+legacy governance gates above are unchanged and run first. The legacy merge
+path is unchanged except for a target check at its effect boundary: with
+configuration enabled, `performPrMerge` checks the exact repository and PR
+number it merges right before the GitHub call (`services/github-merge.ts:114`),
+which covers the GitHub merge route (project repository and the task's PR
+number, or the path number parsed with `parseInt` when the task has none),
+task merge, and the review, self-approve and work finishes (the work finish
+merges the number of the body PR URL when one is given). The legacy PR creator
+and commenter check the repository (and PR) they post to
+(`routes/github.ts:267`, `routes/github.ts:768`). The check
+(`grounding-scope.ts:103`) refuses with `409 grounding_enrollment_required` a
+repository string that is not exactly canonical (surrounding whitespace, dot
+segment, percent-encoded name, owner containing `/`), an enforced repository,
+a PR that belongs to a protected, `EXTERNAL_V1`, bound or held task, including
+such a task whose own repository string is not canonical and that shares the
+number, and a merge or create whose requesting task is itself such a task,
+whatever PR number it sends. It refuses a merge or create with
+`409 grounding_finalization_pending` when another operation owns the fence of
+the target repository or of any repository the legacy task write's fence
+trigger checks for the requesting task (its effective repository, stored PR
+URL repository and own active PR-create intents' repositories); comments write
+no task and take no fence, and a create sends no PR number. A comment is
+refused on an enforced repository and on a peer's PR whoever sends it, the PR the requesting task stores
+included, since an agent can set a task's PR number and repository. As defense
+in depth, enforced repositories must still not run comment-triggered merge or
+deploy automation; direct GitHub access outside agent-tasks (tokens, the
+GitHub UI, other apps) is not governed by the check. Grouped merge discovery and the boundary read the same peer-class
+ids from the enrollment and hold tables (`grounding-scope.ts:71`,
+`grounding-github-merge.ts:40`), and the boundary reads everything in one
+statement. With configuration enabled the three legacy writes go out with
+`redirect: "manual"` (`backend/src/services/github-merge.ts:126`, `backend/src/routes/github.ts:282`,
+`backend/src/routes/github.ts:778`), and a GitHub redirect (a renamed or transferred
+repository) is answered with `409 github_redirect_refused` instead of being
+followed (`services/github-merge.ts:156`, `routes/github.ts:297`,
+`routes/github.ts:791`). The configured GitHub create and merge
+routes check the caller's project access with the legacy rule right after the
+task lookup, before any Grounding read or lock (`routes/grounding-github.ts:82`,
+`routes/grounding-github.ts:130`), so a caller without access gets the legacy
+handler's own 403. Outside the enforced scope they read only the task id and a
+well-formed key for the history lookup, then hand the request to the legacy
+handler unmodified; the principal differences from the unconfigured app are
+the boundary and in-scope refusals, the refusal of renamed or transferred
+repository writes, the agent-scope admission check that runs first, a transient `503
+grounding_verification_unavailable` from the Serializable routing read, and
+the GitHub merge route's `503` retry message. Enabling configuration still
+writes grounding history (webhook deliveries, for example), so it is one-way,
+and rollback keeps an enabled configuration with empty trust and an empty
+`creationPolicy`. Startup itself refuses when a project outside the enforced
+scope shares a GitHub repository with an enforced one, when an enforced
+project's repository is not canonical, and, while the scope owns a repository,
+when any project's repository is not canonical, so the enforced/legacy
+boundary is never ambiguous per request; a project created or re-pointed after
+startup is not re-checked. Compatibility tasks may be explicitly enrolled as
+OFF or LEGACY_LOCAL; external evidence is not mandatory for every task. The
+boundary read is point-in-time, one database round trip before the GitHub
+call, and two residual races within that window are accepted: a change after
+the read that makes some task a protected/`EXTERNAL_V1`/held peer of the
+targeted PR (an admin rebinding a repository or PR, a migration hold, an
+enrollment) is not seen, and a grouped operation that acquires one of the
+checked fences after the read lets the legacy GitHub effect happen while the
+legacy task write fails on the fence (a merge lands with the task still in
+review; a create leaves an unlinked PR). Existing durable operations keep
+their recovery path. Production enrollment and rollout remain separate
+prerequisites; active legacy workers must be excluded before enabling the
+configured lane.
 
 ## Configured webhook observations
 

@@ -497,8 +497,33 @@ authoritative challenge; the second sends the producer's original signed
 receipt as opaque UTF-8 text, capped at 32,768 bytes. Upload is evidence
 ingestion, not a completion result. The backend alone verifies the receipt and
 current task context. `task_finish`, `task_merge`, and `task_abandon` accept an
-explicit `operationKey` for provisioned work and forward it as
-`Idempotency-Key`; callers reuse a key only for the same retry.
+optional `operationKey`, and `pull_requests_create`/`pull_requests_merge` an
+optional `idempotencyKey`, forwarded as the `Idempotency-Key` header (the two
+GitHub verbs also mirror it into the request body, so the legacy, unprovisioned
+`/api/github/pull-requests*` routes keep their own body-based retry dedupe). When
+the caller omits the key, mcp-server generates a fresh one (`crypto.randomUUID()`)
+for that single call, so provisioned completion is never left keyless. A
+generated key is not stable across separate calls: it makes a first attempt
+safe, not a retry.
+
+Reusing the same key on a network-timeout retry makes that retry idempotent
+only where the receiving route enforces operation keys:
+
+- `pull_requests_create` and `pull_requests_merge`: on every backend. The
+  legacy `/api/github/pull-requests*` routes dedupe on the body key: one
+  `tool_invocations` row per successful call, pruned by the idempotency TTL
+  sweep; a same-key retry replays the stored 2xx response with
+  `_idempotent_replay: true`; the same key with a different payload returns
+  `409` (`backend/src/services/idempotency.ts`). The Grounding GitHub router
+  keys its durable operation on the same value.
+- `task_finish`, `task_merge` and `task_abandon`: only for a provisioned task
+  on a Grounding-configured backend. On an unconfigured backend, or for an
+  unprovisioned task, the request either reaches the legacy completion
+  handler (`backend/src/routes/tasks.ts`), which ignores the key, or, for a
+  remote merge (`task_merge`, or `task_finish` with `autoMerge`) where
+  grounding enforcement applies to the task, is refused with `409
+  grounding_enrollment_required` before any effect. Either way, reusing the
+  key does not make the retry idempotent.
 
 ## Versioning and rollout
 

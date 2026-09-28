@@ -103,6 +103,8 @@ function makeApp(actor: Actor) {
   const app = new Hono<{ Variables: AppVariables }>();
   app.use("*", async (c, next) => {
     c.set("actor", actor);
+    // An unconfigured application: its legacy handlers run no Grounding guard.
+    c.set("groundingRemoteTargetGuard", null);
     await next();
   });
   app.route("/", taskRouter);
@@ -227,6 +229,7 @@ describe("POST /tasks/:id/merge", () => {
       expect.objectContaining({ id: "task-1" }),
       "merge",
       AGENT_WITH_SCOPE,
+      null,
     );
     const body = (await res.json()) as { merged: boolean; sha: string };
     expect(body.merged).toBe(true);

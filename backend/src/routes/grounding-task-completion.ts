@@ -15,12 +15,30 @@ import { isReviewState } from "../services/default-workflow.js";
 import { buildExternalGroundingHint, selectGroundingRouteContext } from "../services/grounding-route-context.js";
 import { SCOPES } from "../services/scopes.js";
 import type { GroundingRouteTransport, OperationInput } from "../services/grounding-operations.js";
+import { groundingProjectEnforced, type GroundingEnforcedScope, type GroundingRemoteTargetGuard } from "../services/grounding-scope.js";
 
-export interface GroundingTaskCompletionDependencies {
+interface GroundingCompletionBaseDependencies {
   db: PrismaClient;
-  service?: GroundingFinalizationService;
   creationPolicy?: GroundingCreationPolicy;
   githubCreate?: GroundingGithubCreateService;
+}
+/**
+ * `scope` is the enforced scope for fresh remote operations on an
+ * UNPROVISIONED task, and `remoteGuard` the effect-boundary guard every legacy
+ * remote handler runs on the exact GitHub target it sends. Both are required
+ * whenever a completion service is wired, so no configured runtime can
+ * silently enforce nothing; where the scope is absent, routing fails closed
+ * and enforces every task.
+ */
+export type GroundingTaskCompletionDependencies = GroundingCompletionBaseDependencies & (
+  | { service?: undefined; scope?: GroundingEnforcedScope; remoteGuard?: GroundingRemoteTargetGuard }
+  | { service: GroundingFinalizationService; scope: GroundingEnforcedScope; remoteGuard: GroundingRemoteTargetGuard }
+);
+
+/** Runtime counterpart of the type rule above, for callers that bypass it. */
+export function assertGroundingScopeWired(deps: { service?: unknown; scope?: unknown; remoteGuard?: unknown }) {
+  if (deps.service !== undefined && deps.scope === undefined) throw new Error("Grounding completion service requires an enforced scope");
+  if (deps.service !== undefined && typeof deps.remoteGuard !== "function") throw new Error("Grounding completion service requires a remote target guard");
 }
 const methodSchema = z.enum(["squash", "merge", "rebase"]).default("squash");
 const finishSchema = z.object({
@@ -69,6 +87,7 @@ async function calibrate(result: unknown) {
 
 /** Configured remote effects require explicit enrollment and the grouped service. */
 export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletionDependencies = { db: prisma }, enforceRemote = deps.service !== undefined) {
+  assertGroundingScopeWired(deps);
   const router = new Hono<{ Variables: AppVariables }>();
   for (const endpoint of ["finish", "merge", "abandon"] as const) {
     router.post(`/tasks/:id/${endpoint}`, async (c, next) => {
@@ -92,7 +111,10 @@ export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletio
         if (!existing) {
           const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
           if (context.mode === "UNPROVISIONED") {
-            if (enforceRemote && remote) return c.json({ error: "grounding_enrollment_required" }, 409);
+            if (enforceRemote && remote && groundingProjectEnforced(deps.scope, task.projectId)) return c.json({ error: "grounding_enrollment_required" }, 409);
+            // Outside the enforced scope the legacy handler receives the
+            // request exactly as sent; whichever PR it merges is checked at
+            // its effect boundary (performPrMerge).
             return next();
           }
         }

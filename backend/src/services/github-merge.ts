@@ -10,6 +10,13 @@
  * Owner/repo is derived from `task.project.githubRepo` — NOT from any
  * request body — closing the cross-repo exploit path (ADR-0010 §5b).
  *
+ * With Grounding configured, the caller passes the runtime's effect-boundary
+ * guard, which checks exactly the repository and PR number this function is
+ * about to send immediately before the GitHub merge call, and the call does
+ * not follow a GitHub redirect (a renamed or transferred repository); the
+ * unconfigured application passes null, no guard runs and the call keeps
+ * fetch's default redirect handling.
+ *
  * ADR-0010 §5c: a task's PR lifecycle may belong to a foreign repo via
  * `deliverableRepo`. This project's GitHub delegation token has no standing
  * there, so merge automation refuses outright — checked HERE, at the single
@@ -24,6 +31,7 @@ import {
   isForeignDeliverable,
 } from "./gates/pr-repo-matches-project.js";
 import type { Actor } from "../types/auth.js";
+import { groundingRedirectRefusal, isGithubRedirect, type GroundingRemoteRefusalCode, type GroundingRemoteTargetGuard } from "./grounding-scope.js";
 
 export interface MergeTask {
   id: string;
@@ -40,7 +48,7 @@ export type MergeResult =
   | { ok: true; sha: string | null; alreadyMerged: boolean }
   | {
       ok: false;
-      error: "no_delegation" | "github_error" | "foreign_deliverable_merge_refused";
+      error: "no_delegation" | "github_error" | "foreign_deliverable_merge_refused" | GroundingRemoteRefusalCode | typeof groundingRedirectRefusal.error;
       message: string;
       status?: number;
     };
@@ -49,6 +57,7 @@ export async function performPrMerge(
   task: MergeTask,
   mergeMethod: "squash" | "merge" | "rebase",
   actor: Actor,
+  groundingGuard: GroundingRemoteTargetGuard | null,
 ): Promise<MergeResult> {
   // Foreign-deliverable hard refusal. A task whose effective deliverable
   // repo diverges from project.githubRepo has its PR lifecycle owned by
@@ -98,15 +107,23 @@ export async function performPrMerge(
     };
   }
 
-  // Call GitHub Merge API.
   const { owner, repo } = parsed;
   const prNumber = task.prNumber;
+  // Grounding effect-boundary check on exactly the repository and PR number
+  // sent below, immediately before the call.
+  if (groundingGuard) {
+    const refused = await groundingGuard({ repo: `${owner}/${repo}`, prNumber, kind: "merge", taskId: task.id });
+    if (refused) return { ok: false, error: refused.error, message: refused.message, status: refused.status };
+  }
+
+  // Call GitHub Merge API.
   let ghResponse: Response;
   try {
     ghResponse = await fetch(
       `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/merge`,
       {
         method: "PUT",
+        ...(groundingGuard ? { redirect: "manual" as const } : {}),
         headers: {
           Authorization: `Bearer ${delegationUser.githubAccessToken}`,
           Accept: "application/vnd.github+json",
@@ -132,6 +149,27 @@ export async function performPrMerge(
       },
     });
     return { ok: false, error: "github_error", message: `GitHub API unreachable: ${message}`, status: 502 };
+  }
+
+  // A redirect answer is not a merge result: re-sending the PUT would reach a
+  // repository the check above never saw, so it is refused instead.
+  if (groundingGuard && isGithubRedirect(ghResponse)) {
+    await ghResponse.body?.cancel().catch(() => undefined);
+    void logAuditEvent({
+      action: "github.pr_merge_failed",
+      projectId: task.project.id,
+      taskId: task.id,
+      payload: {
+        agentTokenId: actor.type === "agent" ? actor.tokenId : undefined,
+        owner,
+        repo,
+        prNumber,
+        mergeMethod,
+        githubStatus: ghResponse.status,
+        githubMessage: groundingRedirectRefusal.error,
+      },
+    });
+    return { ok: false, error: groundingRedirectRefusal.error, message: groundingRedirectRefusal.message, status: groundingRedirectRefusal.status };
   }
 
   if (!ghResponse.ok) {
