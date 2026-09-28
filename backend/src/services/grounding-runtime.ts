@@ -59,13 +59,17 @@ export async function composeGroundingRuntime(raw: string | undefined, db: Prism
     // GitHub repos those same projects own. A repo an unscoped project also
     // claims would make enforcement ambiguous at the repo boundary, so
     // startup refuses that configuration outright rather than ever
-    // resolving it per-request. Projects created or re-pointed after
-    // startup are not re-validated.
+    // resolving it per-request. A stored repository that is not a canonical
+    // identity cannot be compared at all (it may be an escaped alias of an
+    // enforced repository), so it refuses startup too: on an enforced
+    // project always, and on any project whenever the scope owns a
+    // repository. Projects created or re-pointed after startup are not
+    // re-validated.
     const enforcedProjectIds = new Set(projectIds);
     const enforcedRepos = new Set<string>();
     for (const project of projects) {
-      if (!project.githubRepo) continue;
-      try { enforcedRepos.add(canonicalGithubRepo(project.githubRepo)); } catch { /* an unparseable stored repo can never match a canonical form */ }
+      if (project.githubRepo === null) continue;
+      try { enforcedRepos.add(canonicalGithubRepo(project.githubRepo)); } catch { throw new Error("Grounding enforced project has a non-canonical repository"); }
     }
     if (enforcedRepos.size > 0) {
       const conflicts = await db.$queryRaw<{ id: string }[]>`
@@ -74,6 +78,10 @@ export async function composeGroundingRuntime(raw: string | undefined, db: Prism
           AND grounding_github_repo(p."githubRepo") IN (${Prisma.join([...enforcedRepos])})
       `;
       if (conflicts.length > 0) throw new Error("Grounding enforced project shares a repository with an unscoped project");
+      const unresolved = await db.$queryRaw<{ id: string }[]>`
+        SELECT p.id FROM projects p WHERE p."githubRepo" IS NOT NULL AND grounding_github_repo(p."githubRepo") IS NULL LIMIT 1
+      `;
+      if (unresolved.length > 0) throw new Error("Grounding scope cannot compare a non-canonical project repository");
     }
     const scope: GroundingEnforcedScope = Object.freeze({ projectIds: enforcedProjectIds, repos: enforcedRepos });
     return {

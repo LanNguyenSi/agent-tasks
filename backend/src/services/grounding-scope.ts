@@ -28,7 +28,8 @@ export interface GroundingScopeTask {
  * A legacy handler may act on either, so the guard checks every one.
  */
 export interface GroundingRemoteTargets {
-  /** Request-supplied repositories, for example owner/repo body fields. */
+  /** Request-supplied repositories as the legacy handler would join them, for
+   * example `${owner}/${repo}` from body fields; not pre-canonicalized. */
   repos?: readonly (string | null | undefined)[];
   /** Request-supplied PR numbers, for example the merge route's path parameter. */
   prNumbers?: readonly (number | null | undefined)[];
@@ -43,21 +44,31 @@ export interface GroundingRemoteTargets {
 const legacyPrUrlRepo = /github\.com\/([^/]+)\/([^/]+)\/pull\//i;
 const legacyPrUrlNumber = /\/pull\/(\d+)/;
 
-function canonicalOrNull(value: string | null | undefined): string | null {
-  if (!value) return null;
-  try { return canonicalGithubRepo(value); } catch { return null; }
+/**
+ * Canonical form of a repository string. A non-empty string that is not a
+ * canonical `owner/repo` identity (a dot segment, a percent-encoded or
+ * otherwise escaped name, an owner containing '/') is `unresolved`: the
+ * legacy handlers pass such strings to GitHub verbatim, and GitHub may
+ * resolve them to a repository the guard cannot name, so the caller fails
+ * closed on it.
+ */
+function canonicalCandidate(value: string | null | undefined): { repo: string | null; unresolved: boolean } {
+  if (typeof value !== "string" || value.length === 0) return { repo: null, unresolved: false };
+  try { return { repo: canonicalGithubRepo(value), unresolved: false }; } catch { return { repo: null, unresolved: true }; }
 }
 
-/** Repository and PR number a PR URL names, each null when it names none. */
-export function prUrlTarget(url: string | null | undefined): { repo: string | null; prNumber: number | null } {
-  if (!url) return { repo: null, prNumber: null };
+/**
+ * Repository and PR number a PR URL names, each null when it names none.
+ * `unresolved` is true when the URL names a repository in the legacy shape
+ * that is not a canonical identity.
+ */
+export function prUrlTarget(url: string | null | undefined): { repo: string | null; prNumber: number | null; unresolved: boolean } {
+  if (!url) return { repo: null, prNumber: null, unresolved: false };
   const repoMatch = legacyPrUrlRepo.exec(url);
   const numberMatch = legacyPrUrlNumber.exec(url);
   const prNumber = numberMatch ? Number(numberMatch[1]) : null;
-  return {
-    repo: repoMatch ? canonicalOrNull(`${repoMatch[1]}/${repoMatch[2]}`) : null,
-    prNumber: prNumber !== null && Number.isSafeInteger(prNumber) ? prNumber : null,
-  };
+  const repo = repoMatch ? canonicalCandidate(`${repoMatch[1]}/${repoMatch[2]}`) : { repo: null, unresolved: false };
+  return { ...repo, prNumber: prNumber !== null && Number.isSafeInteger(prNumber) ? prNumber : null };
 }
 
 /**
@@ -67,21 +78,43 @@ export function prUrlTarget(url: string | null | undefined): { repo: string | nu
  * none), but the task's deliverable repository, its stored PR URL and the
  * request's own fields are included too, so a request that names one target
  * while the handler acts on another is still checked against both.
+ * `unresolved` is true when any of those repository strings is non-empty but
+ * not canonical (see canonicalCandidate).
  */
 export function remoteOperationCandidates(task: GroundingScopeTask, targets: GroundingRemoteTargets = {}) {
   const stored = prUrlTarget(task.prUrl);
   const requested = (targets.prUrls ?? []).map(prUrlTarget);
   const repos = new Set<string>();
+  let unresolved = false;
   for (const value of [...(targets.repos ?? []), task.deliverableRepo, task.project.githubRepo]) {
-    const repo = canonicalOrNull(value);
-    if (repo !== null) repos.add(repo);
+    const candidate = canonicalCandidate(value);
+    if (candidate.repo !== null) repos.add(candidate.repo);
+    if (candidate.unresolved) unresolved = true;
   }
-  for (const target of [stored, ...requested]) if (target.repo !== null) repos.add(target.repo);
+  for (const target of [stored, ...requested]) {
+    if (target.repo !== null) repos.add(target.repo);
+    if (target.unresolved) unresolved = true;
+  }
   const prNumbers = new Set<number>();
   for (const value of [...(targets.prNumbers ?? []), task.prNumber, stored.prNumber, ...requested.map(target => target.prNumber)]) {
     if (typeof value === "number" && Number.isSafeInteger(value)) prNumbers.add(value);
   }
-  return { repos, prNumbers };
+  return { repos, prNumbers, unresolved };
+}
+
+/**
+ * Whether another operation currently owns the repository fence of any
+ * candidate repository. A legacy handler that performed its GitHub effect in
+ * such a repository would then fail its own task write on the fence, leaving
+ * the effect without its recorded outcome, so the caller refuses before the
+ * effect instead. This is a point-in-time read: a fence acquired after it is
+ * not seen.
+ */
+export async function candidateRepositoryFenceOwned(db: PrismaClient | Prisma.TransactionClient, task: GroundingScopeTask, targets: GroundingRemoteTargets = {}): Promise<boolean> {
+  const { repos } = remoteOperationCandidates(task, targets);
+  if (repos.size === 0) return false;
+  const owned = await db.groundingGithubRepositoryFence.findFirst({ where: { repo: { in: [...repos] }, ownerId: { not: null } }, select: { repo: true } });
+  return owned !== null;
 }
 
 /**
@@ -90,8 +123,9 @@ export function remoteOperationCandidates(task: GroundingScopeTask, targets: Gro
  * repository (see remoteOperationCandidates) belongs to an enforced project,
  * OR any candidate (repository, PR number) pair is shared with a protected,
  * EXTERNAL_V1 or held peer (reusing protectedGithubPeerIds rather than
- * duplicating that SQL). A missing scope fails closed: everything is
- * enforced.
+ * duplicating that SQL), OR any candidate repository string is not a
+ * canonical identity (it cannot be compared, so it fails closed). A missing
+ * scope fails closed too: everything is enforced.
  */
 export async function isEnforcedRemoteOperation(
   db: PrismaClient | Prisma.TransactionClient,
@@ -101,7 +135,8 @@ export async function isEnforcedRemoteOperation(
 ): Promise<boolean> {
   if (!scope) return true;
   if (scope.projectIds.has(task.projectId)) return true;
-  const { repos, prNumbers } = remoteOperationCandidates(task, targets);
+  const { repos, prNumbers, unresolved } = remoteOperationCandidates(task, targets);
+  if (unresolved) return true;
   for (const repo of repos) if (scope.repos.has(repo)) return true;
   if (prNumbers.size === 0) return false;
   const peerIds = new Set<string>();

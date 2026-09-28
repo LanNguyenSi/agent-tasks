@@ -182,6 +182,19 @@ githubRouter.post(
 
     const body = c.req.valid("json");
 
+    // The operation key may arrive as the Idempotency-Key header or as the
+    // body idempotencyKey, in the same format. When both are present they
+    // must name the same key; otherwise the request is ambiguous and rejected.
+    const headerKey = c.req.header("Idempotency-Key");
+    const parsedHeaderKey = headerKey === undefined ? undefined : idempotencyKeySchema.safeParse(headerKey);
+    if (parsedHeaderKey?.success === false) {
+      return c.json({ error: "validation_error", message: "Invalid Idempotency-Key header" }, 400);
+    }
+    if (parsedHeaderKey?.data !== undefined && body.idempotencyKey !== undefined && parsedHeaderKey.data !== body.idempotencyKey) {
+      return c.json({ error: "validation_error", message: "Idempotency-Key header and body idempotencyKey differ" }, 400);
+    }
+    const idempotencyKey = parsedHeaderKey?.data ?? body.idempotencyKey;
+
     // 1. Find the task and verify it exists
     const task = await prisma.task.findUnique({
       where: { id: body.taskId },
@@ -243,7 +256,7 @@ githubRouter.post(
       {
         projectId: task.project.id,
         verb: "pull_requests_create",
-        idempotencyKey: body.idempotencyKey,
+        idempotencyKey,
         payload: body,
       },
       async () => {

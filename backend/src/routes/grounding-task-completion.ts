@@ -15,7 +15,7 @@ import { isReviewState } from "../services/default-workflow.js";
 import { buildExternalGroundingHint, selectGroundingRouteContext } from "../services/grounding-route-context.js";
 import { SCOPES } from "../services/scopes.js";
 import type { GroundingRouteTransport, OperationInput } from "../services/grounding-operations.js";
-import { isEnforcedRemoteOperation, type GroundingEnforcedScope } from "../services/grounding-scope.js";
+import { candidateRepositoryFenceOwned, isEnforcedRemoteOperation, type GroundingEnforcedScope } from "../services/grounding-scope.js";
 
 interface GroundingCompletionBaseDependencies {
   db: PrismaClient;
@@ -115,6 +115,9 @@ export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletio
             const targets = { prUrls: [typeof body.prUrl === "string" ? body.prUrl : null], prNumbers: [typeof body.prNumber === "number" ? body.prNumber : null] };
             const guarded = enforceRemote && remote && await isEnforcedRemoteOperation(deps.db, deps.scope, task, targets);
             if (guarded) return c.json({ error: "grounding_enrollment_required" }, 409);
+            // A legacy merge in a repository whose fence another operation
+            // owns would reach GitHub and then fail its own task write.
+            if (enforceRemote && remote && await candidateRepositoryFenceOwned(deps.db, task, targets)) return c.json({ error: "grounding_finalization_pending" }, 409);
             return next();
           }
         }

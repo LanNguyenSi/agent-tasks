@@ -181,6 +181,27 @@ it("enabled startup refuses when a project outside the enforced scope shares a r
   await store.db.project.delete({ where: { id: other.id } });
 });
 
+it("enabled startup refuses when an enforced project's repository is not a canonical identity", async () => {
+  const alias = `acme/%72${repo.slice("acme/r".length)}`;
+  await store.db.project.update({ where: { id: projectId }, data: { githubRepo: alias } });
+  try {
+    await expect(app()).rejects.toThrow("Grounding runtime startup refused");
+    expect(fetch).not.toHaveBeenCalled();
+  } finally { await store.db.project.update({ where: { id: projectId }, data: { githubRepo: repo } }); }
+});
+it.each(["a percent-encoded alias of the enforced repository", "a dot-segment repository"])("enabled startup refuses when a project outside the enforced scope stores %s", async kind => {
+  const githubRepo = kind === "a dot-segment repository" ? "other/." : `acme/%72${repo.slice("acme/r".length)}`;
+  const other = await store.db.project.create({ data: { teamId: ids.team, name: "Non-canonical", slug: randomUUID(), githubRepo } });
+  try {
+    const before = await snapshot();
+    await expect(app()).rejects.toThrow("Grounding runtime startup refused");
+    expect(await snapshot()).toEqual(before); expect(fetch).not.toHaveBeenCalled();
+  } finally { await store.db.project.delete({ where: { id: other.id } }); }
+});
+it("enabled startup accepts a project without a repository next to the enforced scope", async () => {
+  const other = await store.db.project.create({ data: { teamId: ids.team, name: "No repository", slug: randomUUID(), githubRepo: null } });
+  try { await expect(app()).resolves.toBeDefined(); } finally { await store.db.project.delete({ where: { id: other.id } }); }
+});
 it("enabled startup accepts a disjoint repo on an unscoped project", async () => {
   await store.db.project.create({ data: { teamId: ids.team, name: "Disjoint", slug: randomUUID(), githubRepo: `other/disjoint_${randomUUID().replaceAll("-", "")}` } });
   const target = await app();
