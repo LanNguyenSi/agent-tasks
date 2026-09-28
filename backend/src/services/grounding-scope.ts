@@ -124,19 +124,20 @@ export async function candidateRepositoryFenceOwned(db: PrismaClient | Prisma.Tr
  * a PR URL in the legacy shape) while sharing one of these PR numbers (its
  * own, or its PR URL's). protectedGithubPeerIds matches canonical
  * repositories only, so such a peer could be an alias of a candidate
- * repository without being seen; the caller fails closed on it. The query is
- * driven from the enrollment and hold tables, so it reads peer-class tasks
- * only, never every task, and stops at the first match.
+ * repository without being seen; the caller fails closed on it. The peer ids
+ * are collected from the enrollment and hold tables first and the tasks are
+ * then read by id, so the query reads peer-class tasks only, never every
+ * task, and stops at the first match.
  */
 export async function nonCanonicalPeerSharesPr(db: PrismaClient | Prisma.TransactionClient, input: { prNumbers: Iterable<number>; excludeTaskId: string }): Promise<boolean> {
   const numbers = [...input.prNumbers].map(String);
   if (numbers.length === 0) return false;
   const rows = await db.$queryRaw<{ id: string }[]>`
     SELECT t.id FROM tasks t JOIN projects p ON p.id = t."projectId"
-    WHERE t.id IN (
+    WHERE t.id = ANY (ARRAY(
         SELECT "taskId" FROM grounding_cohorts WHERE protected OR mode = 'EXTERNAL_V1'
         UNION SELECT "taskId" FROM grounding_bindings
-        UNION SELECT "taskId" FROM grounding_migration_states WHERE held)
+        UNION SELECT "taskId" FROM grounding_migration_states WHERE held))
       AND t.id <> ${input.excludeTaskId}
       AND (t."prNumber"::numeric = ANY(${numbers}::numeric[])
         OR substring(t."prUrl" from '/pull/([0-9]+)')::numeric = ANY(${numbers}::numeric[]))
