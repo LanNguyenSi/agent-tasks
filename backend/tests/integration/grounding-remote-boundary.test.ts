@@ -450,6 +450,13 @@ describe("a task's comment on its own PR", () => {
     await store.db.task.update({ where: { id: requester.taskId }, data: { prUrl: pullUrl(canonicalRepo(), prNumber) } });
     expect(await comment(scope, requester.taskId, repo, prNumber)).toEqual(refused);
   });
+  it("the task's PR number in another enforced repository is not its own PR", async () => {
+    const repo = canonicalRepo(); const other = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "comment", repo, prNumber);
+    await store.db.task.update({ where: { id: requester.taskId }, data: { prUrl: null } });
+    const scope: GroundingEnforcedScope = { projectIds: new Set([requester.projectId]), repos: new Set([repo, other]) };
+    expect(await comment(scope, requester.taskId, other, prNumber)).toEqual(refused);
+  });
   it("a task outside the scope does not comment on its own PR in an enforced repository", async () => {
     const repo = canonicalRepo(); const prNumber = uniquePr();
     const requester = await requesterTask(store.db, "comment", repo, prNumber);
