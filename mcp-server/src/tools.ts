@@ -76,14 +76,36 @@ const MAX_GROUNDING_RECEIPT_BYTES = 32_768;
 // therefore NOT stable across separate calls — it makes a first attempt
 // safe but does nothing for a retry. To make a network-timeout retry
 // idempotent, generate the key yourself up front and pass the SAME value
-// on both the original call and the retry.
+// on both the original call and the retry. That reuse only buys idempotent-
+// retry protection where the RECEIVING route enforces operation keys: the
+// two GitHub PR verbs always do (both the always-mounted legacy
+// `/api/github/pull-requests*` routes and the provisioned Grounding router
+// dedupe on the key and reject a reused key against a different payload
+// with 409); task_finish/task_merge/task_abandon do so only for a
+// provisioned Grounding-enrolled task on an enabled backend. Against an
+// unconfigured (legacy) backend, or an unprovisioned task on an enabled
+// backend, those three never have their key read at all — the request
+// reaches the plain legacy completion handler, which offers no key-based
+// retry deduping regardless of what is passed.
 const OPERATION_KEY_HINT =
-  " Optional, 1-128 chars of letters, digits, '.', '_', ':', '-'. When omitted, a fresh key is generated for this single call — safe for a one-off attempt, but a regenerated key differs every call, so it does not make a retry idempotent. To retry the exact same operation safely (e.g. after a network timeout), generate your own key up front and pass that same value again on the retry.";
+  " Optional, 1-128 chars of letters, digits, '.', '_', ':', '-'. When omitted, a fresh key is generated for this single call. Reusing the same key on a retry only makes that retry idempotent where the backend enforces operation keys — a provisioned Grounding-enrolled task on an enabled backend. Against an unconfigured (legacy) backend, or an unprovisioned task on an enabled backend, this key is not read at all, so passing the same value again does not make the retry idempotent there.";
+
+// pull_requests_merge's own hint: same 1-128 key format as OPERATION_KEY_HINT
+// above (field name idempotencyKey, not operationKey), but — unlike the
+// three task-completion verbs — its retry-safety is unconditional: both the
+// legacy github.ts route and the provisioned Grounding router dedupe on the
+// key and reject a reused key against a different payload with 409 (see
+// `pull_requests_create`'s own description for the identical mechanism).
+const MERGE_KEY_HINT =
+  " Optional, 1-128 chars of letters, digits, '.', '_', ':', '-'. When omitted, a fresh key is generated for this single call — safe for a one-off attempt, but a regenerated key differs every call, so it does not make a retry idempotent. To retry the exact same operation safely (e.g. after a network timeout), generate your own key up front and pass that same value again on the retry; the backend replays the stored 2xx response on a repeated key and rejects the same key + a different payload with 409, whether or not Grounding is provisioned.";
 
 // pull_requests_create's own key-format note (see createIdempotencyKey()
-// above for why this tool's format differs from the other four).
+// above for why this tool's format differs from the other four). Its
+// retry-safety is unconditional for the same reason as pull_requests_merge
+// above: the legacy github.ts route dedupes on the key regardless of
+// Grounding provisioning.
 const CREATE_KEY_HINT =
-  " Optional, 1-255 printable ASCII chars, no whitespace. When omitted, a fresh key is generated for this single call — safe for a one-off attempt, but a regenerated key differs every call, so it does not make a retry idempotent. To retry the exact same operation safely (e.g. after a network timeout), generate your own key up front and pass that same value again on the retry.";
+  " Optional, 1-255 printable ASCII chars, no whitespace. When omitted, a fresh key is generated for this single call — safe for a one-off attempt, but a regenerated key differs every call, so it does not make a retry idempotent. To retry the exact same operation safely (e.g. after a network timeout), generate your own key up front and pass that same value again on the retry; the backend replays the stored 2xx response on a repeated key and rejects the same key + a different payload with 409, whether or not Grounding is provisioned.";
 
 /** Resolves the operation key to actually send: the caller's explicit key
  *  when given (already validated against the same 1-128 char format by the
@@ -1091,7 +1113,7 @@ export function buildTools(
     def({
       name: "pull_requests_merge",
       description:
-        "GitHub-identifier merge variant (taskId + owner + repo + prNumber). Prefer `task_merge` when you already hold the taskId — it derives owner/repo/PR number from the task, enforces the same self-merge gate, and avoids having to pass GitHub metadata around. Requires `github:pr_merge` scope for agent callers. Supports `idempotencyKey` (see `pull_requests_create`) for retry-safety across network timeouts." + OPERATION_KEY_HINT,
+        "GitHub-identifier merge variant (taskId + owner + repo + prNumber). Prefer `task_merge` when you already hold the taskId — it derives owner/repo/PR number from the task, enforces the same self-merge gate, and avoids having to pass GitHub metadata around. Requires `github:pr_merge` scope for agent callers. Supports `idempotencyKey` (see `pull_requests_create`) for retry-safety across network timeouts." + MERGE_KEY_HINT,
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),

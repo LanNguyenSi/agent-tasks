@@ -354,8 +354,32 @@ function buildServer(token: string): McpServer {
   // header-safe printable-ASCII format (see createIdempotencyKey).
   const operationKey = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
   const createIdempotencyKey = z.string().regex(/^[\x21-\x7E]{1,255}$/);
+  // Each hint below is prefixed with the exact input field name it
+  // documents ("operationKey:"/"idempotencyKey:") so it reads as "this
+  // parameter is optional", not "this tool call is optional" — the field
+  // itself is named a few words earlier in the same description string.
+  //
+  // Retry-safety is NOT the same guarantee for all five tools. The GitHub PR
+  // routes (pull_requests_create/merge) always dedupe on the key: the
+  // always-mounted legacy `/api/github/pull-requests*` routes replay the
+  // stored 2xx response on a repeated key and reject a reused key against a
+  // different payload with 409, whether or not Grounding is provisioned. The
+  // three task-completion verbs enforce this only for a provisioned
+  // Grounding-enrolled task on an enabled backend: against an unconfigured
+  // (legacy) backend, or an unprovisioned task on an enabled backend,
+  // `grounding-task-completion.ts` never reads the `Idempotency-Key` header
+  // at all and calls `next()` into the plain legacy handler
+  // (`backend/src/routes/tasks.ts`), which offers no key-based retry
+  // deduping regardless of what the caller passes.
+  const UNCONDITIONAL_RETRY_TAIL =
+    " When omitted, a fresh key is generated for this single call — safe for a one-off attempt, but a regenerated key differs every call, so it does not make a retry idempotent. To retry the exact same operation safely (e.g. after a network timeout), generate your own key up front and pass that same value again on the retry; the backend replays the stored 2xx response on a repeated key and rejects the same key + a different payload with 409, whether or not Grounding is provisioned.";
   const OPERATION_KEY_HINT =
-    " Optional. When omitted, a fresh key is generated for this single call — safe for a one-off attempt, but a regenerated key differs every call, so it does not make a retry idempotent. To retry the exact same operation safely (e.g. after a network timeout), generate your own key up front and pass that same value again on the retry.";
+    " operationKey: optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." +
+    " When omitted, a fresh key is generated for this single call. Reusing the same key on a retry only makes that retry idempotent where the backend enforces operation keys — a provisioned Grounding-enrolled task on an enabled backend. Against an unconfigured (legacy) backend, or an unprovisioned task on an enabled backend, this key is not read at all, so passing the same value again does not make the retry idempotent there.";
+  const MERGE_IDEMPOTENCY_KEY_HINT =
+    ` idempotencyKey: optional, 1-128 chars of letters, digits, '.', '_', ':', '-'.${UNCONDITIONAL_RETRY_TAIL}`;
+  const CREATE_KEY_HINT =
+    ` idempotencyKey: optional, 1-255 printable ASCII chars, no whitespace.${UNCONDITIONAL_RETRY_TAIL}`;
   const resolveOperationKey = (explicit: string | undefined): string => explicit ?? randomUUID();
   const completionHeaders = (key: string) => ({ "Idempotency-Key": key });
 
@@ -731,7 +755,7 @@ function buildServer(token: string): McpServer {
     "pull_requests_create",
     {
       description:
-        "Create a GitHub pull request bound to a task via delegation. The backend dispatches the create call through a team member who has connected GitHub and enabled 'Allow agents to create PRs'; on success the task's branchName, prUrl, and prNumber are patched server-side. Requires token scope tasks:update. base defaults to 'main' — pass the repo's actual default branch (e.g. 'master') explicitly if it differs." + OPERATION_KEY_HINT,
+        "Create a GitHub pull request bound to a task via delegation. The backend dispatches the create call through a team member who has connected GitHub and enabled 'Allow agents to create PRs'; on success the task's branchName, prUrl, and prNumber are patched server-side. Requires token scope tasks:update. base defaults to 'main' — pass the repo's actual default branch (e.g. 'master') explicitly if it differs." + CREATE_KEY_HINT,
       inputSchema: {
         taskId: uuid(),
         owner: z.string().min(1),
@@ -762,7 +786,7 @@ function buildServer(token: string): McpServer {
     "pull_requests_merge",
     {
       description:
-        "Merge a GitHub pull request via delegation and auto-transition the linked task to 'done'. Dispatched through a team member with 'Allow agents to merge PRs' consent. Idempotent on PRs that are already merged. Requires token scope tasks:transition. mergeMethod defaults to 'squash'. REQUIRES the task to be in 'review' state (or already 'done' for re-entry) — tasks in 'open' / 'in_progress' are rejected with 403. If the project has `requireDistinctReviewer` enabled, the merge caller must not be the task's claimant and must have already taken the review lock via tasks_transition→review plus the review-claim flow. To bypass these gates, a team admin can force-transition the task to 'done' via tasks_transition with force=true first, then call this tool." + OPERATION_KEY_HINT,
+        "Merge a GitHub pull request via delegation and auto-transition the linked task to 'done'. Dispatched through a team member with 'Allow agents to merge PRs' consent. Idempotent on PRs that are already merged. Requires token scope tasks:transition. mergeMethod defaults to 'squash'. REQUIRES the task to be in 'review' state (or already 'done' for re-entry) — tasks in 'open' / 'in_progress' are rejected with 403. If the project has `requireDistinctReviewer` enabled, the merge caller must not be the task's claimant and must have already taken the review lock via tasks_transition→review plus the review-claim flow. To bypass these gates, a team admin can force-transition the task to 'done' via tasks_transition with force=true first, then call this tool." + MERGE_IDEMPOTENCY_KEY_HINT,
       inputSchema: {
         taskId: uuid(),
         owner: z.string().min(1),

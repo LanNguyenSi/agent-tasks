@@ -502,6 +502,71 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     expect(recorded[0].idempotencyKey).toBe(bodyKey);
   });
 
+  // Format-narrowing coverage: pull_requests_create's idempotencyKey uses
+  // the wider createIdempotencyKey pattern (printable ASCII, 1-255, may
+  // contain '/'), while pull_requests_merge and the three task_* verbs keep
+  // the tighter operationKey pattern (1-128 chars of [A-Za-z0-9._:-]). A
+  // mutant that widens pull_requests_merge's schema to createIdempotencyKey
+  // would let a 200-char key through and dispatch the merge call — the
+  // "rejected" test below catches that.
+  it("pull_requests_create forwards a 200-char printable-ASCII idempotencyKey containing '/' unchanged, as both header and body", async () => {
+    const key = `${"a/".repeat(99)}aa`; // 200 chars, contains '/', outside operationKey's charset
+    expect(key).toHaveLength(200);
+    await callTool("pull_requests_create", {
+      taskId: TASK_ID,
+      owner: "o",
+      repo: "r",
+      head: "b",
+      title: "t",
+      idempotencyKey: key,
+    });
+    expect(recorded[0]).toMatchObject({ method: "POST", path: "/api/github/pull-requests" });
+    expect(recorded[0].idempotencyKey).toBe(key);
+    expect((recorded[0].body as { idempotencyKey?: string }).idempotencyKey).toBe(key);
+  });
+
+  it("rejects a pull_requests_create idempotencyKey containing whitespace before self-dispatch", async () => {
+    const response = await mcpRequest(
+      app,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "pull_requests_create", arguments: { taskId: TASK_ID, owner: "o", repo: "r", head: "b", title: "t", idempotencyKey: "has a space" } } },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
+  it.each([
+    { name: "pull_requests_merge", args: { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 }, keyField: "idempotencyKey" },
+    { name: "task_merge", args: { taskId: TASK_ID }, keyField: "operationKey" },
+  ])("rejects a 129-char $keyField on $name before self-dispatch", async ({ name, args, keyField }) => {
+    const key = "a".repeat(129);
+    const response = await mcpRequest(
+      app,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { ...args, [keyField]: key } } },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
+  it("rejects a 200-char idempotencyKey on pull_requests_merge before self-dispatch", async () => {
+    // Guards against a mutant that widens pull_requests_merge's schema from
+    // operationKey to createIdempotencyKey: a 200-char all-letter key is
+    // valid under the wide format but exceeds operationKey's 128-char cap,
+    // so it must still be rejected locally, before any self-dispatch call.
+    const key = "a".repeat(200);
+    const response = await mcpRequest(
+      app,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "pull_requests_merge", arguments: { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1, idempotencyKey: key } } },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
   it("rejects an oversized multibyte receipt before it reaches the REST route", async () => {
     const taskId = "33333333-3333-3333-3333-333333333333";
     const response = await mcpRequest(app, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "task_grounding_receipt_upload", arguments: { taskId, attemptId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", session: { id: "producer", revision: 1 }, receipt: "😀".repeat(8_193) } } }, { Authorization: "Bearer good_token" });

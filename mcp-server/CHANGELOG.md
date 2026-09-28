@@ -8,14 +8,34 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 and `pull_requests_merge` now always send an operation/idempotency key —
 the caller's explicit value when given, otherwise a fresh one generated
 per call (`crypto.randomUUID()`), so an unconfigured (legacy) backend
-still works unchanged (it accepts and ignores the header/field it does
-not require) while a provisioned Grounding backend always receives one.
-A generated key is NOT stable across separate calls — it makes a single
-attempt safe but does nothing for a retry; pass your own key explicitly
-to make a retry after a network timeout idempotent.
+still works unchanged while a provisioned Grounding backend always
+receives one. The legacy `/api/tasks/:id/{finish,merge,abandon}` routes
+have no key field at all and never read the `Idempotency-Key` header,
+so they simply ignore it. The legacy `/api/github/pull-requests*` routes
+do NOT ignore their body `idempotencyKey` field: they use it for their
+own dedupe (one stored row per `(project, verb, key)`, pruned by the
+existing idempotency TTL sweep) — only the header is unread there, not
+the body field the PR tools also send.
 
-`pull_requests_merge`'s `idempotencyKey` keeps the previous format
-(`/^[A-Za-z0-9._:-]{1,128}$/`) unchanged. `pull_requests_create`'s
+A generated key is NOT stable across separate calls — it makes a single
+attempt safe but does nothing for a retry. Passing your own key explicitly
+on both the original call and the retry only makes that retry idempotent
+where the receiving backend route actually enforces operation keys: the two
+`pull_requests_*` verbs always dedupe on the key (the always-mounted legacy
+`/api/github/pull-requests*` routes and the provisioned Grounding router
+both replay the stored 2xx response on a repeated key and reject a reused
+key against a different payload with 409), while `task_finish`/`task_merge`/
+`task_abandon` enforce this only for a provisioned Grounding-enrolled task
+on an enabled backend — against an unconfigured (legacy) backend, or an
+unprovisioned task on an enabled backend, the key is not read at all and
+the retry is not deduped.
+
+This package's own `pull_requests_merge` `idempotencyKey` keeps its
+previous format (`/^[A-Za-z0-9._:-]{1,128}$/`) unchanged (the
+backend-hosted remote MCP route at `POST /api/mcp` is a separate,
+hand-maintained peer surface with its own, separately-versioned format
+change — see the root `CHANGELOG.md` for that route's own breaking
+narrowing). `pull_requests_create`'s
 `idempotencyKey` is narrowed from "any string, trimmed, 1-255 chars" to
 header-safe printable ASCII with no whitespace (`\x21-\x7E`, 1-255
 chars) — this is a breaking narrowing versus the previous unrestricted

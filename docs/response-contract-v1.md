@@ -504,13 +504,23 @@ GitHub verbs also mirror it into the request body, so the legacy, unprovisioned
 the caller omits the key, mcp-server generates a fresh one (`crypto.randomUUID()`)
 for that single call, so provisioned completion is never left keyless — but a
 generated key is NOT stable across separate calls: it makes a first attempt safe,
-not a retry. To make a network-timeout retry of the SAME operation idempotent,
-the caller generates its own key up front and passes that same value again on
-the retry; reusing a key for a genuinely different operation is a caller error
-the backend rejects as a conflict once the payloads differ — true only for the
-provisioned Grounding completion routes and the GitHub PR routes, which both
-enforce same-key-same-payload; an unprovisioned (legacy) task route accepts
-and simply ignores the key, so it has no such conflict to reject.
+not a retry.
+
+Reusing the same key on a network-timeout retry only makes that retry
+idempotent where the receiving route actually enforces operation keys. The
+GitHub PR routes always do, whether or not Grounding is provisioned: the
+always-mounted legacy `/api/github/pull-requests*` routes replay the stored
+2xx response for a repeated key and reject a reused key against a different
+payload with `409` (`grounding-github.ts` mirrors the same check for its own
+transport); the provisioned Grounding router enforces the equivalent
+same-key-same-payload check independently. The task-completion routes
+(`task_finish`/`task_merge`/`task_abandon`) enforce this only for a
+provisioned Grounding-enrolled task on an enabled backend. Against an
+unconfigured (legacy) backend, or an unprovisioned task on an enabled
+backend, the `Idempotency-Key` header is never read at all — the request
+reaches the plain legacy completion handler (`backend/src/routes/tasks.ts`),
+which offers no key-based retry deduping regardless of what the caller
+passes, so reusing a key there does not make the retry idempotent.
 
 ## Versioning and rollout
 

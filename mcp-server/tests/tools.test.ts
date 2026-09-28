@@ -1041,19 +1041,41 @@ describe("buildTools", () => {
     },
   );
 
-  it("pull_requests_create accepts a 200-char printable-ASCII idempotencyKey", async () => {
-    fetchMock.mockResolvedValue(ok({ pullRequest: { number: 1, url: "u", title: "t" } }));
-    const key = "a".repeat(200);
-    await tool("pull_requests_create").handler({
-      taskId: TASK_ID,
-      owner: "o",
-      repo: "r",
-      head: "b",
-      title: "t",
-      idempotencyKey: key,
-    } as never);
-    const [, init] = fetchMock.mock.calls[0];
-    expect(init.headers["Idempotency-Key"]).toBe(key);
+  // These two go through parseArgs (the tool's own zod inputShape) FIRST,
+  // not just the handler: calling the handler directly (as an earlier
+  // version of this test did) bypasses schema validation entirely, so a
+  // regression that narrows createIdempotencyKey's pattern back down to
+  // operationKey's tighter 1-128 charset/length would go undetected. The
+  // handler call that follows exists only to assert the header/body
+  // forwarding, never to stand in for the schema check.
+  it.each([
+    { label: "200-char printable-ASCII", key: "a".repeat(200) },
+    { label: "a key with chars outside the 1-128 operationKey set", key: "k/+=~!" },
+  ])(
+    "pull_requests_create accepts $label idempotencyKey, validated against its own zod schema",
+    async ({ key }) => {
+      const args = parseArgs("pull_requests_create", {
+        taskId: TASK_ID,
+        owner: "o",
+        repo: "r",
+        head: "b",
+        title: "t",
+        idempotencyKey: key,
+      });
+      fetchMock.mockResolvedValue(ok({ pullRequest: { number: 1, url: "u", title: "t" } }));
+      await tool("pull_requests_create").handler(args as never);
+      const [, init] = fetchMock.mock.calls[0];
+      expect(init.headers["Idempotency-Key"]).toBe(key);
+      expect(JSON.parse(init.body).idempotencyKey).toBe(key);
+    },
+  );
+
+  it("pull_requests_create rejects a 256-char idempotencyKey locally, before any network call", () => {
+    const key = "a".repeat(256);
+    expect(() =>
+      parseArgs("pull_requests_create", { taskId: TASK_ID, owner: "o", repo: "r", head: "b", title: "t", idempotencyKey: key }),
+    ).toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each(["has a space", "nön-ascii"])(
@@ -1522,6 +1544,17 @@ describe("buildTools", () => {
     await tool(name).handler(args as never);
     const [, init] = fetchMock.mock.calls[0];
     expect(init.headers["Idempotency-Key"]).toBe("retry-key-1");
+    // task_finish's outgoing request body carries only the fields the
+    // caller actually passed (result/prUrl/outcome/autoMerge/mergeMethod),
+    // all optional; with only taskId + operationKey given, that body is
+    // empty. This assertion was dropped when the old task_finish-only test
+    // was folded into this it.each (round 2); restored here for task_finish.
+    // (task_abandon's own empty-body contract has its own dedicated test
+    // below; task_merge's body is not asserted here, unchanged from before
+    // the fold.)
+    if (name === "task_finish") {
+      expect(init.body).toBe("{}");
+    }
   });
 
   it("sends the strict empty JSON body required by keyed abandonment", async () => {
