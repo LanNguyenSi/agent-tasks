@@ -11,6 +11,7 @@ import { GroundingFinalizationService } from "../../src/services/grounding-final
 import { GroundingGithubCreateService } from "../../src/services/grounding-github-create.js";
 import { githubCreateCorrelationMarker, type GroundingGithubCreateProvider } from "../../src/services/grounding-github-create-provider.js";
 import { GroundingAttemptsService } from "../../src/services/grounding-attempts.js";
+import type { GroundingEnforcedScope } from "../../src/services/grounding-scope.js";
 import { completionFixture, completionStore, completionActor } from "../helpers/grounding-completion-fixtures.js";
 import { ids, session } from "../helpers/grounding-fixtures.js";
 import * as audit from "../../src/services/audit.js";
@@ -34,11 +35,35 @@ beforeEach(async () => {
   f.proof.repo = `acme/${repo}`;
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-const app = (service = f.service, githubCreate?: GroundingGithubCreateService) => createApp("", f.attempts, { db: store.db, service, githubCreate });
+// f.projectId/its repo is the file's default "enforced" project throughout: the
+// same shape the runtime would derive from a creationPolicy naming it. Tests
+// that need an unscoped task pass an explicit narrower/empty scope instead.
+const defaultScope = (): GroundingEnforcedScope => ({ projectIds: new Set([f.projectId]), repos: new Set([`acme/${repo}`]) });
+const emptyScope: GroundingEnforcedScope = { projectIds: new Set(), repos: new Set() };
+const app = (service = f.service, githubCreate?: GroundingGithubCreateService, scope: GroundingEnforcedScope = defaultScope()) => createApp("", f.attempts, { db: store.db, service, githubCreate, scope });
 function request(body: unknown = {}, path = "/api/github/pull-requests/42/merge", key: string | null = "route-operation", auth: string | null = token) {
   return new Request(`http://localhost${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...(key === null ? {} : { "Idempotency-Key": key }), ...(auth === null ? {} : { Authorization: `Bearer ${auth}` }) }, body: JSON.stringify(body) });
 }
 const mergeBody = () => ({ taskId: f.taskId, owner: "acme", repo });
+/** A genuinely unscoped, unrelated task/project: no shared repo or project id
+ * with the default enforced scope, and no protected/EXTERNAL_V1/held peer. */
+async function unscopedTask() {
+  const u = await completionFixture(store);
+  await store.db.groundingBinding.delete({ where: { taskId: u.taskId } });
+  await store.db.groundingCohort.delete({ where: { taskId: u.taskId } });
+  const ownRepo = `other-org/${randomUUID().replaceAll("-", "")}`;
+  await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo: ownRepo } });
+  await store.db.task.update({ where: { id: u.taskId }, data: { status: "in_progress", prNumber: 99, prUrl: `https://github.com/${ownRepo}/pull/99` } });
+  return Object.assign(u, { ownRepo });
+}
+/** A protected/EXTERNAL_V1 peer living at its own, otherwise-unscoped repo. */
+async function protectedPeerElsewhere() {
+  const g = await completionFixture(store);
+  const peerRepo = `guardian/${randomUUID().replaceAll("-", "")}`;
+  await store.db.project.update({ where: { id: g.projectId }, data: { githubRepo: peerRepo } });
+  await store.db.task.update({ where: { id: g.taskId }, data: { status: "review", prNumber: 7, prUrl: `https://github.com/${peerRepo}/pull/7` } });
+  return { peerRepo, prNumber: 7, taskId: g.taskId };
+}
 async function peer() {
   const p = await completionFixture(store);
   f.issuer.trust[0] = { ...f.issuer.trust[0], projectIds: [...f.issuer.trust[0].projectIds, p.projectId] }; p.issuer = f.issuer;
@@ -130,6 +155,58 @@ it.each(["direct", "task", "work", "review", "self"])("D018 configured unprovisi
   const body = kind === "direct" ? mergeBody() : kind === "task" ? {} : { autoMerge: true, ...(kind === "work" ? {} : { outcome: "approve" }) };
   const before = await f.task(); const result = await app().fetch(request(body, path));
   expect(result.status).toBe(409); expect(await result.json()).toEqual({ error: "grounding_enrollment_required" }); expect(await f.task()).toEqual(before); expect(f.merge).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
+});
+it("SE-01 unscoped unprotected task reaches legacy handlers on all three paths without an Idempotency-Key", async () => {
+  const u = await unscopedTask();
+  const a = app(f.service, undefined, emptyScope);
+  const mergeResult = await a.fetch(request({ taskId: u.taskId, owner: "acme", repo: "irrelevant" }, "/api/github/pull-requests/1/merge", null));
+  expect(mergeResult.status).toBe(403); expect(await mergeResult.json()).toMatchObject({ error: "forbidden" });
+  const taskMergeResult = await a.fetch(request({}, `/api/tasks/${u.taskId}/merge`, null));
+  expect(taskMergeResult.status).toBe(409); expect(await taskMergeResult.json()).toMatchObject({ error: "bad_state" });
+  const finishResult = await a.fetch(request({ autoMerge: true }, `/api/tasks/${u.taskId}/finish`, null));
+  expect(finishResult.status).toBe(403); expect(await finishResult.json()).toMatchObject({ error: "autonomous_mode_required" });
+  expect(await store.db.groundingBinding.findUnique({ where: { taskId: u.taskId } })).toBeNull();
+  expect(await store.db.groundingCohort.findUnique({ where: { taskId: u.taskId } })).toBeNull();
+  expect(await store.db.groundingOperation.count({ where: { taskId: u.taskId } })).toBe(0);
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+});
+it("SE-01 unscoped task whose repo equals an enforced project's repo still rejects on all three paths", async () => {
+  const u = await unscopedTask();
+  await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo: `acme/${repo}` } });
+  await store.db.task.update({ where: { id: u.taskId }, data: { prNumber: 55, prUrl: `https://github.com/acme/${repo}/pull/55` } });
+  const a = app();
+  const before = await store.db.task.findUniqueOrThrow({ where: { id: u.taskId } });
+  const mergeResult = await a.fetch(request({ taskId: u.taskId, owner: "acme", repo }, "/api/github/pull-requests/55/merge", null));
+  expect(mergeResult.status).toBe(409); expect(await mergeResult.json()).toEqual({ error: "grounding_enrollment_required" });
+  const taskMergeResult = await a.fetch(request({}, `/api/tasks/${u.taskId}/merge`, null));
+  expect(taskMergeResult.status).toBe(409); expect(await taskMergeResult.json()).toEqual({ error: "grounding_enrollment_required" });
+  const finishResult = await a.fetch(request({ autoMerge: true }, `/api/tasks/${u.taskId}/finish`, null));
+  expect(finishResult.status).toBe(409); expect(await finishResult.json()).toEqual({ error: "grounding_enrollment_required" });
+  expect(await store.db.task.findUniqueOrThrow({ where: { id: u.taskId } })).toEqual(before);
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+});
+it("SE-01 unscoped task sharing a PR with a protected peer still rejects on all three paths", async () => {
+  const peer = await protectedPeerElsewhere();
+  const u = await unscopedTask();
+  await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo: peer.peerRepo } });
+  await store.db.task.update({ where: { id: u.taskId }, data: { prNumber: peer.prNumber, prUrl: `https://github.com/${peer.peerRepo}/pull/${peer.prNumber}` } });
+  const a = app(f.service, undefined, emptyScope);
+  const before = await store.db.task.findUniqueOrThrow({ where: { id: u.taskId } });
+  const mergeResult = await a.fetch(request({ taskId: u.taskId, owner: peer.peerRepo.split("/")[0]!, repo: peer.peerRepo.split("/")[1]! }, `/api/github/pull-requests/${peer.prNumber}/merge`, null));
+  expect(mergeResult.status).toBe(409); expect(await mergeResult.json()).toEqual({ error: "grounding_enrollment_required" });
+  const taskMergeResult = await a.fetch(request({}, `/api/tasks/${u.taskId}/merge`, null));
+  expect(taskMergeResult.status).toBe(409); expect(await taskMergeResult.json()).toEqual({ error: "grounding_enrollment_required" });
+  const finishResult = await a.fetch(request({ autoMerge: true }, `/api/tasks/${u.taskId}/finish`, null));
+  expect(finishResult.status).toBe(409); expect(await finishResult.json()).toEqual({ error: "grounding_enrollment_required" });
+  expect(await store.db.task.findUniqueOrThrow({ where: { id: u.taskId } })).toEqual(before);
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+});
+it("SE-01 a held unscoped task still rejects regardless of scope", async () => {
+  const u = await unscopedTask();
+  await store.db.groundingMigrationState.create({ data: { taskId: u.taskId, projectId: u.projectId, held: true, revision: 1 } });
+  const a = app(f.service, undefined, emptyScope);
+  const result = await a.fetch(request({}, `/api/tasks/${u.taskId}/merge`, null));
+  expect(result.status).toBe(409); expect(await result.json()).toMatchObject({ error: "grounding_task_held" });
 });
 it("configured unrelated unprovisioned local finish preserves compatibility", async () => {
   await store.db.groundingBinding.delete({ where: { taskId: f.taskId } }); await store.db.groundingCohort.delete({ where: { taskId: f.taskId } });

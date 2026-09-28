@@ -15,12 +15,15 @@ import { isReviewState } from "../services/default-workflow.js";
 import { buildExternalGroundingHint, selectGroundingRouteContext } from "../services/grounding-route-context.js";
 import { SCOPES } from "../services/scopes.js";
 import type { GroundingRouteTransport, OperationInput } from "../services/grounding-operations.js";
+import { emptyGroundingScope, isEnforcedRemoteOperation, type GroundingEnforcedScope } from "../services/grounding-scope.js";
 
 export interface GroundingTaskCompletionDependencies {
   db: PrismaClient;
   service?: GroundingFinalizationService;
   creationPolicy?: GroundingCreationPolicy;
   githubCreate?: GroundingGithubCreateService;
+  /** Enforced scope for fresh remote operations on an UNPROVISIONED task (SE-01). Defaults to nothing enforced. */
+  scope?: GroundingEnforcedScope;
 }
 const methodSchema = z.enum(["squash", "merge", "rebase"]).default("squash");
 const finishSchema = z.object({
@@ -92,7 +95,8 @@ export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletio
         if (!existing) {
           const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
           if (context.mode === "UNPROVISIONED") {
-            if (enforceRemote && remote) return c.json({ error: "grounding_enrollment_required" }, 409);
+            const guarded = enforceRemote && remote && await isEnforcedRemoteOperation(deps.db, deps.scope ?? emptyGroundingScope, task);
+            if (guarded) return c.json({ error: "grounding_enrollment_required" }, 409);
             return next();
           }
         }

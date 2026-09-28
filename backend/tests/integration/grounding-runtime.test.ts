@@ -124,6 +124,33 @@ it("configured routing protects previously unprovisioned remote operations witho
   expect(await snapshot()).toEqual(before); expect(fetch).not.toHaveBeenCalled();
 });
 
+it("enabled config with empty trust and creationPolicy behaves like legacy on all three remote paths", async () => {
+  const target = await app(store.db, { enabled: true, audience: "consumer.test", trust: [], creationPolicy: [] });
+  const task = await store.db.task.create({ data: { projectId, title: "Legacy equivalent", status: "in_progress", claimedByAgentId: ids.agent } });
+  const finish = await target.request(request(`/tasks/${task.id}/finish`, { autoMerge: true }));
+  expect(finish.status).toBe(403); expect(await finish.json()).toMatchObject({ error: "autonomous_mode_required" });
+  const merge = await target.request(request(`/tasks/${task.id}/merge`, {}));
+  expect(merge.status).toBe(409); expect(await merge.json()).toMatchObject({ error: "bad_state" });
+  const direct = await target.request(request(`/github/pull-requests/1/merge`, { taskId: task.id, owner: "acme", repo: "irrelevant" }));
+  expect(direct.status).toBe(403); expect(await direct.json()).toMatchObject({ error: "forbidden" });
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("enabled startup refuses when a project outside the enforced scope shares a repo with an enforced project", async () => {
+  const other = await store.db.project.create({ data: { teamId: ids.team, name: "Shares repo", slug: randomUUID(), githubRepo: repo.toUpperCase() } });
+  const before = await snapshot();
+  await expect(app()).rejects.toThrow("Grounding runtime startup refused");
+  expect(await snapshot()).toEqual(before); expect(fetch).not.toHaveBeenCalled();
+  await store.db.project.delete({ where: { id: other.id } });
+});
+
+it("enabled startup accepts a disjoint repo on an unscoped project", async () => {
+  await store.db.project.create({ data: { teamId: ids.team, name: "Disjoint", slug: randomUUID(), githubRepo: `other/disjoint_${randomUUID().replaceAll("-", "")}` } });
+  const target = await app();
+  const created = await target.request(request(`/projects/${projectId}/tasks`, { title: "Still enrolls" }));
+  expect(created.status).toBe(201);
+});
+
 it("real app uses shared trust for issue, signed receipt and successful completion", async () => {
   const target = await app();
   const created = await target.request(request(`/projects/${projectId}/tasks`, { title: "Protected completion" }, human));
@@ -194,7 +221,10 @@ it("real composed CODE_HEAD creation and grouped GitHub merge retain one databas
 });
 
 it("signed issue creation enrolls selected projects and preserves unselected behavior and exact dedup", async () => {
-  const other = await store.db.project.create({ data: { teamId: ids.team, name: "Unselected", slug: randomUUID(), githubRepo: repo } });
+  // An unselected project may no longer share a repo with an enforced one
+  // (SE-02): give it its own repo, so the webhook fans out only to the
+  // enrolled project below and the unselected one sees no task at all.
+  const other = await store.db.project.create({ data: { teamId: ids.team, name: "Unselected", slug: randomUUID(), githubRepo: `${repo}-unselected` } });
   const target = await app(); const delivery = randomUUID(); const before = await snapshot();
   expect((await target.request(webhook(delivery, false))).status).toBe(401); expect(await snapshot()).toEqual(before);
   expect((await target.request(webhook(delivery))).status).toBe(200);
@@ -202,8 +232,7 @@ it("signed issue creation enrolls selected projects and preserves unselected beh
   expect(task).toMatchObject({ title: "[GH #17] New issue", description: "Original description", status: "open" });
   expect(await store.db.groundingBinding.findUniqueOrThrow({ where: { taskId: task.id } })).toMatchObject({ subjectMode: "TASK_SPEC" });
   expect(await store.db.groundingCohort.findUniqueOrThrow({ where: { taskId: task.id } })).toMatchObject({ mode: "EXTERNAL_V1" });
-  const unselected = await store.db.task.findFirstOrThrow({ where: { projectId: other.id } });
-  expect(unselected.status).toBe("open"); expect(await store.db.groundingBinding.findUnique({ where: { taskId: unselected.id } })).toBeNull();
+  expect(await store.db.task.count({ where: { projectId: other.id } })).toBe(0);
   expect((await snapshot()).signals).toHaveLength(0);
   const after = await snapshot();
   const duplicate = await target.request(webhook(delivery)); expect(await duplicate.json()).toMatchObject({ duplicate: true });

@@ -17,6 +17,7 @@ sources:
   - docker-compose.prod.yml
   - frontend/package.json
   - backend/src/routes/grounding-github.ts
+  - backend/src/services/grounding-scope.ts
 ---
 
 npm workspaces monorepo (`package.json` workspaces: `backend`, `frontend`, `mcp-server`, `mcp-bridge`, `cli`). This doc covers the four deployables; `@agent-tasks/cli` is a fifth workspace (a standalone REST CLI client) not detailed here.

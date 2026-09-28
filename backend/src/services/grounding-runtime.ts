@@ -4,8 +4,9 @@ import { GroundingAttemptsService, type GroundingAttemptsConfig } from "./ground
 import { GroundingGithubMergeService } from "./grounding-github-merge.js";
 import { GroundingGithubCreateService } from "./grounding-github-create.js";
 import { GroundingMigrationService } from "./grounding-migration.js";
-import { assertGithubFenceInstalled } from "./grounding-github-fence.js";
+import { assertGithubFenceInstalled, canonicalGithubRepo } from "./grounding-github-fence.js";
 import { groundingSettings } from "./grounding-verification.js";
+import type { GroundingEnforcedScope } from "./grounding-scope.js";
 import type { GroundingTaskCompletionDependencies } from "../routes/grounding-task-completion.js";
 
 // History in any grounding table requires configured routing, even OFF, inactive
@@ -42,13 +43,33 @@ export async function composeGroundingRuntime(raw: string | undefined, db: Prism
     for (const selection of runtime.creationPolicy) groundingSettings(config, selection.projectId);
     await assertGithubFenceInstalled(db);
     const projectIds = runtime.creationPolicy.map(entry => entry.projectId);
-    const projects = await db.project.findMany({ where: { id: { in: projectIds } }, select: { id: true } });
+    const projects = await db.project.findMany({ where: { id: { in: projectIds } }, select: { id: true, githubRepo: true } });
     if (projects.length !== projectIds.length) throw new Error("Unknown grounding project");
+    // Enforced scope = the creationPolicy project ids, plus the canonical
+    // GitHub repos those same projects own. A repo an unscoped project also
+    // claims would make enforcement ambiguous at the repo boundary, so
+    // startup refuses that configuration outright (SE-02) rather than ever
+    // resolving it per-request.
+    const enforcedProjectIds = new Set(projectIds);
+    const enforcedRepos = new Set<string>();
+    for (const project of projects) {
+      if (!project.githubRepo) continue;
+      try { enforcedRepos.add(canonicalGithubRepo(project.githubRepo)); } catch { /* an unparseable stored repo can never match a canonical form */ }
+    }
+    if (enforcedRepos.size > 0) {
+      const conflicts = await db.$queryRaw<{ id: string }[]>`
+        SELECT p.id FROM projects p
+        WHERE p.id NOT IN (${Prisma.join([...enforcedProjectIds])})
+          AND grounding_github_repo(p."githubRepo") IN (${Prisma.join([...enforcedRepos])})
+      `;
+      if (conflicts.length > 0) throw new Error("Grounding enforced project shares a repository with an unscoped project");
+    }
+    const scope: GroundingEnforcedScope = Object.freeze({ projectIds: enforcedProjectIds, repos: enforcedRepos });
     return {
       attempts: new GroundingAttemptsService({ db, config }),
       completion: {
         db, service: new GroundingGithubMergeService({ db, config }),
-        githubCreate: new GroundingGithubCreateService({ db }), creationPolicy: runtime.creationPolicy,
+        githubCreate: new GroundingGithubCreateService({ db }), creationPolicy: runtime.creationPolicy, scope,
       },
       migration: new GroundingMigrationService({ db, config }),
     };
