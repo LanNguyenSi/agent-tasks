@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-09-27T20:11:24Z
+timestamp: 2026-09-28T06:05:07Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -17,6 +17,7 @@ sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
   - backend/src/services/grounding-github-merge.ts
+  - backend/src/services/grounding-scope.ts
   - backend/src/services/grounding-github-fence.ts
   - backend/src/services/grounding-github-webhook.ts
   - backend/src/services/grounding-github-observation-context.ts
@@ -90,12 +91,25 @@ one. Only a wholly RESERVED, provably undispatched group can be cancelled, with
 the original actor's current authority and a nonblank reason. Cancellation and
 dispatch serialize, and a new operation needs a new key and evidence decision.
 
-Configured fresh remote merges require explicit server enrollment. Missing
-enrollment returns `409 grounding_enrollment_required` for task merge, GitHub
-merge and finish with `autoMerge`. Compatibility tasks may be explicitly
-enrolled as OFF or LEGACY_LOCAL; external evidence is not mandatory for every
-task. A read showing no protected peers is not permission to fall through to a
-legacy remote write, because a peer could join after that read. Existing durable
+Configured fresh remote merges require explicit server enrollment only inside
+the enforced scope derived from `creationPolicy` at startup: the task's own
+project is selected, its effective repository belongs to a selected project,
+or it is bound to or grouped with a protected/`EXTERNAL_V1`/held peer
+(`grounding-scope.ts`, reusing the merge service's peer-discovery SQL rather
+than duplicating it). Missing enrollment inside that scope returns
+`409 grounding_enrollment_required` for task merge, GitHub merge and finish
+with `autoMerge`, including when no operation key is supplied; outside it the
+same request reaches the unchanged legacy handler instead, and an enabled
+configuration with empty trust and an empty `creationPolicy` is equivalent to
+the unconfigured app for every project. Startup itself refuses when a project
+outside the enforced scope shares a GitHub repository with an enforced one,
+so the enforced/legacy boundary is never ambiguous per request. Compatibility
+tasks may be explicitly enrolled as OFF or LEGACY_LOCAL; external evidence is
+not mandatory for every task. The peer read that decides scope is
+point-in-time, not a lock: a peer that joins after that read is accepted as a
+residual race (an admin rebinding a protected task's repository or PR
+concurrently with an in-flight legacy merge of that same PR), not fenced by
+it. Existing durable
 operations keep their recovery path. Production enrollment and rollout remain
 separate prerequisites; active legacy workers must be excluded before enabling
 the configured lane.

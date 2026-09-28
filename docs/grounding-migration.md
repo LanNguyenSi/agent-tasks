@@ -65,20 +65,52 @@ Audience, issuer and key identifiers are 1–128 letters, digits, `.`, `_`, `:` 
 
 Before opening its listener or scheduling the idempotency sweep, the real
 server awaits read-only grounding startup admission. Disabled startup requires
-all grounding tables to exist and be empty. Any history in any grounding table
-requires enabled configuration, including OFF and legacy cohorts, completed
-commands or deliveries, and inactive repository fences. Missing tables or failed
-queries abort startup. Once such history exists, removing the configuration is
-not a rollback: restore valid configuration and a compatible consumer. Do not
-delete history to obtain an unconfigured startup.
+all grounding tables to exist. Almost any row in any grounding table requires
+enabled configuration, including OFF and legacy cohorts and completed commands
+or deliveries. Two rows are exempted from that rule on their own: an *unowned*
+GitHub repository-fence row and a non-`ACTIVE` fence-intent row. The
+repository-fence SQL trigger bumps a fence row on any ordinary task write that
+carries a GitHub repo, whether or not grounding is ever configured, so an
+unowned fence alone is not real grounding history. An *owned* fence or an
+`ACTIVE` intent — meaning a configured lane actually reserved it — still counts
+as history and still requires enabled configuration, and every other grounding
+table is checked exactly as before. Missing tables or failed queries abort
+startup. Once real history exists, removing the configuration is not a
+rollback: restore valid configuration and a compatible consumer. Do not delete
+history to obtain an unconfigured startup. Installing without ever configuring
+grounding needs no special handling; real grounding history still needs
+enabled configuration.
 
 Enabled startup validates the canonical schema-local SQL fence installation and
-selected project existence, then creates attempts, grouped merge/completion,
-PR creation, and migration services using one frozen configuration and the same
-Prisma database. Configured routing applies globally, including previously
-unprovisioned tasks: fresh remote merges require explicit enrollment. Existing
-history is never enrolled implicitly. Local compatibility behavior and existing
-authorization remain as described in the [receipt contract](grounding-receipt-contract.md).
+selected project existence, then derives the enforced scope from
+`creationPolicy`: the selected project ids, plus the canonical GitHub
+repository each of those projects owns. Startup then refuses when a project
+outside that enforced scope shares a (case-normalized) GitHub repository with
+an enforced one — the boundary between enforced and legacy routing must never
+be ambiguous per request; a project created after startup is not covered by
+this check. It then creates attempts, grouped merge/completion, PR creation,
+and migration services using one frozen configuration, scope, and the same
+Prisma database.
+
+Configured routing does not apply globally. A fresh remote operation (task
+merge, finish with `autoMerge`, GitHub PR merge) on a task with no existing
+keyed durable history returns `409 grounding_enrollment_required` only when
+the task's project is in the enforced scope, its effective repository belongs
+to an enforced project, or it is bound to or grouped with a protected,
+`EXTERNAL_V1` or held peer. Otherwise it reaches the same unchanged legacy
+handler, including when no operation key is supplied. An enabled configuration
+with an empty trust list and an empty `creationPolicy` is therefore equivalent
+to the unconfigured runtime for every project — the shape a first deploy
+should use before any project is actually selected. Existing history is never
+enrolled implicitly. Local compatibility behavior and existing authorization
+remain as described in the [receipt contract](grounding-receipt-contract.md).
+
+The peer check above is a point-in-time read, not a lock. It accepts a
+residual race: an administrator who rebinds a protected task's repository or
+PR concurrently with a legacy merge already in flight against that same PR is
+not fenced by that read. Closing it would mean serializing every legacy write
+against the administrative rebind path, which this design deliberately does
+not do; the race is accepted, not eliminated.
 
 The same selection enrolls new REST tasks, import rows, and signed GitHub
 issue-created tasks atomically with their creation. Agent REST creation still

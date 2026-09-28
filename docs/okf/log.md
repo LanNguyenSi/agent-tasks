@@ -1,5 +1,32 @@
 # Change log
 
+## 2026-09-28 (scoped grounding enforcement)
+
+Grounding enforcement was project-scoped: an enabled configuration's
+`409 grounding_enrollment_required` gate on a fresh remote operation (task
+merge, GitHub merge, finish with `autoMerge`) now fires only when the task's
+project is inside the configured `creationPolicy` scope, its effective
+repository belongs to a selected project, or it is bound to or grouped with a
+protected/`EXTERNAL_V1`/held peer — a change from the previous global
+enforcement, made in `backend/src/routes/grounding-task-completion.ts`,
+`backend/src/routes/grounding-github.ts`, `backend/src/services/grounding-runtime.ts`
+and a new `backend/src/services/grounding-scope.ts` (which also lifted the
+merge service's peer-discovery SQL into a shared, exported helper). Startup
+now also refuses when a project outside the enforced scope shares a GitHub
+repository with an enforced one. `architecture.md`, `workflow-gates.md`,
+`governance-merge.md`, `reconcile-done-but-open.md`, `backend.md` and
+`deploy.md` each stated or implied the old global-enforcement behavior and
+were re-verified against the changed routes/service and re-stamped;
+`docs/grounding-migration.md` and `docs/grounding-receipt-contract.md` (both
+outside this bundle) were corrected the same way.
+
+Separately, unconfigured (grounding-disabled) startup admission stopped
+treating an unowned GitHub repository-fence row or a non-`ACTIVE` fence-intent
+row as grounding history on its own, since the repository-fence SQL trigger
+bumps an unowned fence row on any ordinary GitHub-linked task write whether or
+not grounding is ever configured. `backend.md` and `deploy.md` were corrected
+for this too, in the same pass.
+
 ## 2026-09-26 (re-verification, adr/ and diagrams/ move into docs/)
 
 Moving root `adr/` and `diagrams/` into `docs/adr/` and `docs/diagrams/`

@@ -168,12 +168,29 @@ orphan binding, database failure or missing required configured service fails
 closed. The absence of enrollment does not select OFF or LEGACY_LOCAL.
 
 Configured fresh remote operations—task merge, GitHub merge and finish with
-`autoMerge`—require explicit server enrollment. Without it they return
-`409 grounding_enrollment_required` before a remote effect. An informational
-read showing no protected peers cannot authorize a legacy fallback: membership
-could change after that read. Existing durable operations retain their
-operation-bound recovery path. Unprovisioned local completion and the original
-unconfigured application retain their defined compatibility behavior.
+`autoMerge`—on a task with no existing keyed durable operation require
+explicit server enrollment only when that task is inside the enforced scope:
+its project is one of `creationPolicy`'s selected projects, its effective
+repository belongs to one of those projects, or it is bound to or grouped with
+a protected, `EXTERNAL_V1` or held peer. Inside that scope they return
+`409 grounding_enrollment_required` before a remote effect, including when no
+operation key is supplied. Outside it the request reaches the same unchanged
+legacy handler instead. An enabled configuration with an empty trust list and
+an empty `creationPolicy` therefore behaves like the unconfigured application
+for every project. Startup itself refuses to start when a project outside the
+enforced scope shares a GitHub repository with an enforced one, so the
+scope/legacy boundary is never ambiguous per request; a project created after
+startup is not covered by that check. The peer read above is informational
+and point-in-time, not a lock: it accepts a residual race where an
+administrator rebinds a protected task's repository or PR concurrently with a
+legacy merge already in flight against that same PR, rather than fencing it.
+Existing durable operations retain their operation-bound recovery path.
+Unprovisioned local completion and the original unconfigured application
+retain their defined compatibility behavior. PR creation is not itself
+enrollment-gated; a caller that supplies no operation key at all only falls
+through to the legacy creator when the task is outside the enforced scope
+described above, instead of being forced to invent a key it has no other
+reason to send.
 
 Server-only enrollment must exclude active legacy requests and workers before
 activation. Explicit OFF or LEGACY_LOCAL enrollment provides compatibility
@@ -182,7 +199,9 @@ installation do not themselves enroll production tasks or qualify a rollout.
 
 `createApp(corsOrigins, grounding?, completion?)` selects configured guards when
 either grounding dependency is supplied. `completion` carries `db`, optional
-`service`, optional `githubCreate`, and optional `creationPolicy`. Remote merge
+`service`, optional `githubCreate`, optional `creationPolicy`, and optional
+`scope` (the enforced project ids and their canonical GitHub repos; an omitted
+`scope` enforces nothing, matching a legacy-equivalent deployment). Remote merge
 requires `service` to be a `GroundingGithubMergeService`; the base finalization
 service alone is insufficient. PR creation requires an explicitly supplied
 `GroundingGithubCreateService` in `githubCreate`. Missing capability returns
@@ -489,7 +508,9 @@ The new boundary reports reservation conflicts as
 `409 grounding_finalization_pending`, including on existing C02 routes.
 Changed-key identity returns `409 grounding_operation_conflict`; failed shared
 transition preconditions return `409 precondition_failed`. Historical unconfigured routes retain their error shapes. Configured
-unprovisioned fresh remote merges return `409 grounding_enrollment_required`;
+unprovisioned fresh remote merges return `409 grounding_enrollment_required`
+only inside the enforced scope described above, and reach the unchanged
+historical route otherwise;
 provisioned completion requests use their documented transport and grounding
 error responses.
 

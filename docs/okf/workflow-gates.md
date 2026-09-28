@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-09-27T20:11:24Z
+timestamp: 2026-09-28T06:05:07Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -21,6 +21,7 @@ sources:
   - backend/prisma/schema.prisma
   - backend/src/services/confidence-gate.ts
   - backend/src/routes/grounding-github.ts
+  - backend/src/services/grounding-scope.ts
   - docs/grounding-receipt-contract.md
 ---
 
@@ -77,7 +78,19 @@ historical unprovisioned handlers remain separate, and a configured app's
 fresh remote operation (task merge, GitHub merge, finish with `autoMerge`) on
 an unenrolled task returns `409 grounding_enrollment_required` before any
 remote effect rather than falling back to the unprovisioned handler
-(`grounding-task-completion.ts:95`, `routes/grounding-github.ts:71`). See the
+(`grounding-task-completion.ts:99`, `routes/grounding-github.ts:104`) — but
+only when that task's project is in the configured `creationPolicy` scope,
+its effective repository belongs to a selected project, or it is bound to or
+grouped with a protected/`EXTERNAL_V1`/held peer (`grounding-scope.ts`).
+Outside that scope, including without an operation key, the same request
+falls back to the unprovisioned handler instead; an enabled configuration
+with empty trust and an empty `creationPolicy` is equivalent to the
+unconfigured app for every project. Startup refuses when a project outside
+the enforced scope shares a GitHub repository with an enforced one. The
+scope check's peer read is point-in-time, not a lock, and accepts one
+residual race: an admin rebinding a protected task's repository or PR
+concurrently with an in-flight legacy merge of that same PR is not fenced by
+it. See the
 [shared receipt consumer contract](../grounding-receipt-contract.md).
 
 An independent administrative hold is checked before cohort selection or unprovisioned fallback. It blocks fresh task completion and evidence use, including force/override paths; the database guard freezes all task-row updates and deletes. Existing claims and cohort history remain stored. See [migration and resume](../grounding-migration.md).

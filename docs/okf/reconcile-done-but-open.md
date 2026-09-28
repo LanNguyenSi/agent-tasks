@@ -3,7 +3,7 @@ type: runbook
 title: "Reconciling a task whose PR merged but the record is stuck open"
 description: "Recover a configured merge with its original operation and exact GitHub proof; retain the separate historical task lifecycle repair flow."
 tags: [reconcile, task-lifecycle, idempotency, runbook]
-timestamp: 2026-09-27T20:11:24Z
+timestamp: 2026-09-28T06:05:07Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/default-workflow.ts
@@ -15,6 +15,7 @@ sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
   - backend/src/services/grounding-github-merge.ts
+  - backend/src/services/grounding-scope.ts
   - backend/src/services/grounding-github-fence.ts
   - backend/src/services/grounding-github-webhook.ts
   - backend/src/services/grounding-github-observation-context.ts
@@ -83,9 +84,15 @@ and assessment for the appropriate finish, approve or merge intent. Every
 protected peer linked to the PR must satisfy its own merge decision. A new
 standalone merge requires a review state; neither a terminal task nor a bare
 merge SHA permits creating a historical decision. Configured fresh remote
-merge requests without enrollment return `409 grounding_enrollment_required`;
-compatibility requires explicit OFF or LEGACY_LOCAL server enrollment, not a
-fallback selected from task metadata.
+merge requests without enrollment return `409 grounding_enrollment_required`
+only when the task is inside the enforced scope (its project is selected by
+`creationPolicy`, its effective repository belongs to a selected project, or
+it is bound to or grouped with a protected/`EXTERNAL_V1`/held peer); outside
+that scope, including without an operation key, the request reaches the
+unchanged legacy handler instead, so an enabled configuration with empty
+trust and an empty `creationPolicy` behaves like the unconfigured app for
+every project. Compatibility requires explicit OFF or LEGACY_LOCAL server
+enrollment, not a fallback selected from task metadata.
 
 A configured positive webhook for a provisioned task is a pending, audited
 observation. Even a valid receipt does not let that delivery complete the task.
