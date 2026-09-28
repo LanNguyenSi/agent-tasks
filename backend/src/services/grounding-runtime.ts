@@ -32,13 +32,12 @@ export async function composeGroundingRuntime(raw: string | undefined, db: Prism
       // The GitHub repository-fence trigger (grounding-github-fence.sql) fires
       // on every ordinary task write that carries a GitHub repo, whether or
       // not grounding is ever configured, bumping an unowned
-      // grounding_github_repository_fences row. That row alone is not real
-      // grounding history, so it (and a non-ACTIVE grounding_github_fence_intents
-      // row, its historical counterpart) is exempted below; an OWNED fence or
-      // an ACTIVE intent still means a configured lane actually reserved one.
+      // grounding_github_repository_fences row. Only such an unowned fence row
+      // is exempted below; an owned fence, and any row at all in
+      // grounding_github_fence_intents or another grounding table, is still
+      // grounding history.
       const predicates = groundingStateTables.map(table => {
         if (table === "grounding_github_repository_fences") return Prisma.sql`EXISTS (SELECT 1 FROM grounding_github_repository_fences WHERE "ownerId" IS NOT NULL)`;
-        if (table === "grounding_github_fence_intents") return Prisma.sql`EXISTS (SELECT 1 FROM grounding_github_fence_intents WHERE state = 'ACTIVE')`;
         return Prisma.sql`EXISTS (SELECT 1 FROM ${Prisma.raw(table)})`;
       });
       const rows = await db.$queryRaw<{ present: boolean }[]>(Prisma.sql`SELECT (${Prisma.join(predicates, " OR ")}) AS present`);
@@ -59,8 +58,9 @@ export async function composeGroundingRuntime(raw: string | undefined, db: Prism
     // Enforced scope = the creationPolicy project ids, plus the canonical
     // GitHub repos those same projects own. A repo an unscoped project also
     // claims would make enforcement ambiguous at the repo boundary, so
-    // startup refuses that configuration outright (SE-02) rather than ever
-    // resolving it per-request.
+    // startup refuses that configuration outright rather than ever
+    // resolving it per-request. Projects created or re-pointed after
+    // startup are not re-validated.
     const enforcedProjectIds = new Set(projectIds);
     const enforcedRepos = new Set<string>();
     for (const project of projects) {

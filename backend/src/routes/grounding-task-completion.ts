@@ -15,15 +15,27 @@ import { isReviewState } from "../services/default-workflow.js";
 import { buildExternalGroundingHint, selectGroundingRouteContext } from "../services/grounding-route-context.js";
 import { SCOPES } from "../services/scopes.js";
 import type { GroundingRouteTransport, OperationInput } from "../services/grounding-operations.js";
-import { emptyGroundingScope, isEnforcedRemoteOperation, type GroundingEnforcedScope } from "../services/grounding-scope.js";
+import { isEnforcedRemoteOperation, type GroundingEnforcedScope } from "../services/grounding-scope.js";
 
-export interface GroundingTaskCompletionDependencies {
+interface GroundingCompletionBaseDependencies {
   db: PrismaClient;
-  service?: GroundingFinalizationService;
   creationPolicy?: GroundingCreationPolicy;
   githubCreate?: GroundingGithubCreateService;
-  /** Enforced scope for fresh remote operations on an UNPROVISIONED task (SE-01). Defaults to nothing enforced. */
-  scope?: GroundingEnforcedScope;
+}
+/**
+ * `scope` is the enforced scope for fresh remote operations on an
+ * UNPROVISIONED task. It is required whenever a completion service is wired,
+ * so no configured runtime can silently enforce nothing; where it is absent,
+ * the guard fails closed and enforces every task.
+ */
+export type GroundingTaskCompletionDependencies = GroundingCompletionBaseDependencies & (
+  | { service?: undefined; scope?: GroundingEnforcedScope }
+  | { service: GroundingFinalizationService; scope: GroundingEnforcedScope }
+);
+
+/** Runtime counterpart of the type rule above, for callers that bypass it. */
+export function assertGroundingScopeWired(deps: { service?: unknown; scope?: unknown }) {
+  if (deps.service !== undefined && deps.scope === undefined) throw new Error("Grounding completion service requires an enforced scope");
 }
 const methodSchema = z.enum(["squash", "merge", "rebase"]).default("squash");
 const finishSchema = z.object({
@@ -72,6 +84,7 @@ async function calibrate(result: unknown) {
 
 /** Configured remote effects require explicit enrollment and the grouped service. */
 export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletionDependencies = { db: prisma }, enforceRemote = deps.service !== undefined) {
+  assertGroundingScopeWired(deps);
   const router = new Hono<{ Variables: AppVariables }>();
   for (const endpoint of ["finish", "merge", "abandon"] as const) {
     router.post(`/tasks/:id/${endpoint}`, async (c, next) => {
@@ -95,7 +108,12 @@ export function createGroundingTaskCompletionRouter(deps: GroundingTaskCompletio
         if (!existing) {
           const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
           if (context.mode === "UNPROVISIONED") {
-            const guarded = enforceRemote && remote && await isEnforcedRemoteOperation(deps.db, deps.scope ?? emptyGroundingScope, task);
+            // A body PR URL (finish Mode A) or PR number is a target the legacy
+            // handler may merge instead of the task's stored PR, so it is a
+            // candidate too.
+            const body = typeof raw === "object" && raw !== null ? raw as Record<string, unknown> : {};
+            const targets = { prUrls: [typeof body.prUrl === "string" ? body.prUrl : null], prNumbers: [typeof body.prNumber === "number" ? body.prNumber : null] };
+            const guarded = enforceRemote && remote && await isEnforcedRemoteOperation(deps.db, deps.scope, task, targets);
             if (guarded) return c.json({ error: "grounding_enrollment_required" }, 409);
             return next();
           }

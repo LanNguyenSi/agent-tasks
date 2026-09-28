@@ -40,7 +40,7 @@ beforeEach(async () => {
   harness.wrapper.getLedgerSummary.mockReset().mockRejectedValue(new Error("ledger must not run"));
 });
 afterEach(() => { harness.db = store.db; vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-function app(creationPolicy?: GroundingCreationPolicy) { return createApp("", f.attempts, { db: store.db, service: f.service, creationPolicy }); }
+function app(creationPolicy?: GroundingCreationPolicy) { return createApp("", f.attempts, { db: store.db, service: f.service, creationPolicy, scope: { projectIds: new Set([f.projectId]), repos: new Set<string>() } }); }
 function request(body: unknown, endpoint = "transition", auth = token, key: string | null = "operation") {
   return new Request(`http://localhost/api/tasks/${f.taskId}${endpoint === "patch" || endpoint === "delete" ? "" : `/${endpoint}`}`, { method: endpoint === "patch" ? "PATCH" : endpoint === "delete" ? "DELETE" : "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth}`, ...(key ? { "Idempotency-Key": key } : {}) }, ...(endpoint === "delete" ? {} : { body: JSON.stringify(body) }) });
 }
@@ -303,7 +303,7 @@ async function queuedAuthority(kind: "issue" | "upload" | "complete" | "patch" |
   } });
   const { GroundingAttemptsService } = await import("../../src/services/grounding-attempts.js");
   const attempts = new GroundingAttemptsService({ db: scheduled, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, headProvider: f.headProvider });
-  const a = createApp("", attempts, { db: scheduled, service: f.make(scheduled), ...(kind === "create" ? { creationPolicy: selected() } : {}) });
+  const a = createApp("", attempts, { db: scheduled, service: f.make(scheduled), scope: { projectIds: new Set([f.projectId]), repos: new Set<string>() }, ...(kind === "create" ? { creationPolicy: selected() } : {}) });
   const before = await snapshot(); const count = await store.db.task.count();
   const req = kind === "release" ? request({}, "release", token, null) : kind === "issue" ? request({ version: 1, endpoint: "transition", target: "review" }, "grounding-attempts/direct", auth, null)
     : kind === "upload" ? request({ session, receipt: prepared!.receipt }, `grounding-attempts/${prepared!.challenge.attemptId}/receipt`, auth, null)

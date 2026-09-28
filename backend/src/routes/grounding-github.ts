@@ -6,8 +6,8 @@ import { GroundingGithubMergeService } from "../services/grounding-github-merge.
 import { GroundingAccessError, groundingAuthority, unavailable } from "../services/grounding-context.js";
 import { selectGroundingRouteContext } from "../services/grounding-route-context.js";
 import { canonicalGithubRepo } from "../services/grounding-github-fence.js";
-import { emptyGroundingScope, isEnforcedRemoteOperation } from "../services/grounding-scope.js";
-import { type GroundingTaskCompletionDependencies, groundingCompletionErrorResponse, groundingCompletionRouteResponse } from "./grounding-task-completion.js";
+import { isEnforcedRemoteOperation } from "../services/grounding-scope.js";
+import { assertGroundingScopeWired, type GroundingTaskCompletionDependencies, groundingCompletionErrorResponse, groundingCompletionRouteResponse } from "./grounding-task-completion.js";
 
 const mergeKey = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
 const createKey = z.string().trim().min(1).max(255);
@@ -30,45 +30,63 @@ function agent(c: Context<{ Variables: AppVariables }>, scopes: string[]): Actor
   return actor?.type === "agent" && scopes.every(scope => actor.scopes.includes(scope)) ? actor : null;
 }
 /** Best-effort canonicalization for a request-supplied owner/repo pair; an
- * invalid pair identifies no explicit repo and falls back to the task's own. */
+ * invalid pair adds no candidate, and the task's own repositories still do. */
 function explicitRepo(owner: string, repo: string): string | null {
   try { return canonicalGithubRepo(`${owner}/${repo}`); } catch { return null; }
 }
 
+/**
+ * Replace the request body the next handler reads with one carrying `key` as
+ * its idempotencyKey. Hono caches the body text as a promise (its declared
+ * type says string); json() re-parses that cached text on every call.
+ */
+function forwardBodyKey(c: Context<{ Variables: AppVariables }>, raw: unknown, key: string) {
+  const text = JSON.stringify({ ...raw as Record<string, unknown>, idempotencyKey: key });
+  c.req.bodyCache = { text: Promise.resolve(text) as unknown as string };
+}
+
 /** Mounted before the legacy GitHub writer whenever any Grounding capability is configured. */
 export function createGroundingGithubRouter(deps: GroundingTaskCompletionDependencies) {
+  assertGroundingScopeWired(deps);
   const router = new Hono<{ Variables: AppVariables }>();
   router.post("/pull-requests", async (c, next) => {
     const actor = agent(c, ["tasks:update", "github:pr_create"]);
     if (!actor) return c.json({ error: "forbidden" }, 403);
     let taskId = "";
     try {
-      const input = createBody.safeParse(await c.req.json());
+      const raw: unknown = await c.req.json();
+      const input = createBody.safeParse(raw);
       if (!input.success) return c.json({ error: "validation_error" }, 400);
       taskId = input.data.taskId;
       const operationKey = key(c, input.data.idempotencyKey, createKey);
       if ("error" in operationKey) return c.json({ error: operationKey.error }, operationKey.status);
-      // PR creation was never enrollment-gated (unlike merge/finish/github-merge):
-      // any caller that actually supplies a key keeps using the grouped create
-      // service exactly as before, whatever the task's scope. Only a caller with
-      // NO key at all — previously always forced into 400 — now falls through to
-      // the legacy creator when the task is outside the enforced scope, instead
-      // of being forced to invent a key it has no other reason to send.
-      if (!("value" in operationKey)) {
+      const keyValue = "value" in operationKey ? operationKey.value : undefined;
+      // Durable create history for this key, or any unfinished create on the
+      // task, stays with the grouped create service that owns it.
+      const history = await deps.db.groundingGithubCreateOperation.findFirst({
+        where: { taskId, OR: [...(keyValue === undefined ? [] : [{ key: keyValue }]), { state: { in: ["RESERVED", "DISPATCHED"] } }] },
+        select: { id: true },
+      });
+      if (!history) {
         const task = await deps.db.task.findUnique({ where: { id: taskId }, include: { project: true } });
         if (!task) throw new GroundingAccessError("not_found", 404);
         if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403);
         const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
         if (context.mode === "UNPROVISIONED") {
-          const repo = explicitRepo(input.data.owner, input.data.repo);
-          const guarded = await isEnforcedRemoteOperation(deps.db, deps.scope ?? emptyGroundingScope, task, { repo: repo ?? undefined });
-          if (!guarded) return next();
+          const guarded = await isEnforcedRemoteOperation(deps.db, deps.scope, task, { repos: [explicitRepo(input.data.owner, input.data.repo)] });
+          // Outside the enforced scope PR creation is the legacy creator's,
+          // keyed or not. The legacy creator reads its key only from the
+          // body, so a header key is forwarded there.
+          if (!guarded) {
+            if (keyValue !== undefined) forwardBodyKey(c, raw, keyValue);
+            return next();
+          }
         }
-        return c.json({ error: "grounding_operation_key_required", message: "Supply a unique Idempotency-Key for this logical operation; reuse it only for identical retries." }, 400);
       }
+      if (keyValue === undefined) return c.json({ error: "grounding_operation_key_required", message: "Supply a unique Idempotency-Key for this logical operation; reuse it only for identical retries." }, 400);
       if (!deps.githubCreate) unavailable();
       const { taskId: _taskId, idempotencyKey: _key, ...request } = input.data;
-      const result = await deps.githubCreate.createOrResume(taskId, actor, operationKey.value, request);
+      const result = await deps.githubCreate.createOrResume(taskId, actor, keyValue, request);
       if (result.replayed) c.header("X-Idempotent-Replay", "true");
       return c.json(result.body, result.status);
     } catch (error) {
@@ -99,8 +117,10 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
         if (!await groundingAuthority.canWrite(actor, task.projectId, deps.db)) throw new GroundingAccessError("forbidden", 403);
         const context = await selectGroundingRouteContext(deps.db, { taskId, projectId: task.projectId });
         if (context.mode === "UNPROVISIONED") {
-          const repo = explicitRepo(parsed.data.owner, parsed.data.repo);
-          const guarded = await isEnforcedRemoteOperation(deps.db, deps.scope ?? emptyGroundingScope, task, { repo: repo ?? undefined, prNumber });
+          // The legacy handler merges the project's repository and the task's
+          // PR number (the path number only when the task has none), ignoring
+          // the body owner/repo, so every one of those is a candidate target.
+          const guarded = await isEnforcedRemoteOperation(deps.db, deps.scope, task, { repos: [explicitRepo(parsed.data.owner, parsed.data.repo)], prNumbers: [prNumber] });
           if (guarded) return c.json({ error: "grounding_enrollment_required" }, 409);
           return next();
         }

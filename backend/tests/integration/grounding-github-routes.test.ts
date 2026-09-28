@@ -139,7 +139,7 @@ it("N13 ambiguous head proof remains pending; bare autoMergeSha never grants fre
 });
 it.each(["attempts-only", "no-service", "base-only"])("incomplete %s configuration closes every GitHub writer", async kind => {
   const base = new GroundingFinalizationService({ db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, headProvider: f.headProvider, mergeProvider: { merge: f.merge, read: f.read } });
-  const a = kind === "attempts-only" ? createApp("", f.attempts) : createApp("", f.attempts, { db: store.db, ...(kind === "base-only" ? { service: base } : {}) });
+  const a = kind === "attempts-only" ? createApp("", f.attempts) : createApp("", f.attempts, kind === "base-only" ? { db: store.db, service: base, scope: defaultScope() } : { db: store.db });
   await f.evidence("merge");
   expect((await a.fetch(request(mergeBody()))).status).toBe(503);
   expect((await a.fetch(request({}, `/api/tasks/${f.taskId}/merge`))).status).toBe(503);
@@ -156,21 +156,27 @@ it.each(["direct", "task", "work", "review", "self"])("D018 configured unprovisi
   const before = await f.task(); const result = await app().fetch(request(body, path));
   expect(result.status).toBe(409); expect(await result.json()).toEqual({ error: "grounding_enrollment_required" }); expect(await f.task()).toEqual(before); expect(f.merge).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
 });
-it("SE-01 unscoped unprotected task reaches legacy handlers on all three paths without an Idempotency-Key", async () => {
+const fetchCalls = () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map(call => String(call[0]));
+it("an unscoped unprotected task reaches the legacy handlers on all three remote paths without an Idempotency-Key", async () => {
   const u = await unscopedTask();
   const a = app(f.service, undefined, emptyScope);
-  const mergeResult = await a.fetch(request({ taskId: u.taskId, owner: "acme", repo: "irrelevant" }, "/api/github/pull-requests/1/merge", null));
-  expect(mergeResult.status).toBe(403); expect(await mergeResult.json()).toMatchObject({ error: "forbidden" });
   const taskMergeResult = await a.fetch(request({}, `/api/tasks/${u.taskId}/merge`, null));
   expect(taskMergeResult.status).toBe(409); expect(await taskMergeResult.json()).toMatchObject({ error: "bad_state" });
   const finishResult = await a.fetch(request({ autoMerge: true }, `/api/tasks/${u.taskId}/finish`, null));
   expect(finishResult.status).toBe(403); expect(await finishResult.json()).toMatchObject({ error: "autonomous_mode_required" });
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+  // A done task passes the legacy status gates, so the legacy merge reaches
+  // GitHub: at the project repository and the task's own PR, not the path PR
+  // or the body owner/repo.
+  await store.db.task.update({ where: { id: u.taskId }, data: { status: "done" } });
+  const mergeResult = await a.fetch(request({ taskId: u.taskId, owner: "acme", repo: "irrelevant" }, "/api/github/pull-requests/1/merge", null));
+  expect(mergeResult.status).toBe(502); expect(await mergeResult.json()).toMatchObject({ error: "github_error", message: "GitHub API unreachable: external HTTP disabled" });
+  expect(fetchCalls()).toEqual([`https://api.github.com/repos/${u.ownRepo}/pulls/99/merge`]);
   expect(await store.db.groundingBinding.findUnique({ where: { taskId: u.taskId } })).toBeNull();
   expect(await store.db.groundingCohort.findUnique({ where: { taskId: u.taskId } })).toBeNull();
   expect(await store.db.groundingOperation.count({ where: { taskId: u.taskId } })).toBe(0);
-  expect(globalThis.fetch).not.toHaveBeenCalled();
 });
-it("SE-01 unscoped task whose repo equals an enforced project's repo still rejects on all three paths", async () => {
+it("an unscoped task whose repo equals an enforced project's repo still rejects on all three paths", async () => {
   const u = await unscopedTask();
   await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo: `acme/${repo}` } });
   await store.db.task.update({ where: { id: u.taskId }, data: { prNumber: 55, prUrl: `https://github.com/acme/${repo}/pull/55` } });
@@ -185,7 +191,7 @@ it("SE-01 unscoped task whose repo equals an enforced project's repo still rejec
   expect(await store.db.task.findUniqueOrThrow({ where: { id: u.taskId } })).toEqual(before);
   expect(globalThis.fetch).not.toHaveBeenCalled();
 });
-it("SE-01 unscoped task sharing a PR with a protected peer still rejects on all three paths", async () => {
+it("an unscoped task sharing a PR with a protected peer still rejects on all three paths", async () => {
   const peer = await protectedPeerElsewhere();
   const u = await unscopedTask();
   await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo: peer.peerRepo } });
@@ -201,12 +207,138 @@ it("SE-01 unscoped task sharing a PR with a protected peer still rejects on all 
   expect(await store.db.task.findUniqueOrThrow({ where: { id: u.taskId } })).toEqual(before);
   expect(globalThis.fetch).not.toHaveBeenCalled();
 });
-it("SE-01 a held unscoped task still rejects regardless of scope", async () => {
+it("a held unscoped task still rejects regardless of scope", async () => {
   const u = await unscopedTask();
   await store.db.groundingMigrationState.create({ data: { taskId: u.taskId, projectId: u.projectId, held: true, revision: 1 } });
   const a = app(f.service, undefined, emptyScope);
   const result = await a.fetch(request({}, `/api/tasks/${u.taskId}/merge`, null));
   expect(result.status).toBe(409); expect(await result.json()).toMatchObject({ error: "grounding_task_held" });
+});
+
+// Targets the legacy handler acts on that differ from the ones the request
+// names. Each one must be guarded before any GitHub call.
+async function unscopedAt(projectRepo: string, prNumber: number | null, status = "done") {
+  const u = await unscopedTask();
+  await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo: projectRepo } });
+  await store.db.task.update({ where: { id: u.taskId }, data: { status, prNumber, prUrl: prNumber === null ? null : `https://github.com/${projectRepo}/pull/${prNumber}` } });
+  return u;
+}
+async function expectEnrollmentRequired(response: Response) {
+  expect(response.status).toBe(409); expect(await response.json()).toEqual({ error: "grounding_enrollment_required" });
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+}
+it("github merge naming another path PR is guarded when the task's own PR is a protected peer's", async () => {
+  const peer = await protectedPeerElsewhere();
+  const u = await unscopedAt(peer.peerRepo, peer.prNumber);
+  const [owner, name] = peer.peerRepo.split("/");
+  await expectEnrollmentRequired(await app(f.service, undefined, emptyScope).fetch(request({ taskId: u.taskId, owner, repo: name }, "/api/github/pull-requests/1/merge", null)));
+});
+it("github merge with a decoy body repo is guarded when the path PR is a protected peer's in the project repo", async () => {
+  const peer = await protectedPeerElsewhere();
+  const u = await unscopedAt(peer.peerRepo, null);
+  await expectEnrollmentRequired(await app(f.service, undefined, emptyScope).fetch(request({ taskId: u.taskId, owner: "decoy", repo: "decoy" }, `/api/github/pull-requests/${peer.prNumber}/merge`, null)));
+});
+it("github merge with a decoy body repo is guarded when the project repo is an enforced repository", async () => {
+  const u = await unscopedAt(`acme/${repo}`, null);
+  await expectEnrollmentRequired(await app().fetch(request({ taskId: u.taskId, owner: "decoy", repo: "decoy" }, "/api/github/pull-requests/55/merge", null)));
+});
+it("finish autoMerge is guarded when the body PR URL names a protected peer's PR", async () => {
+  const peer = await protectedPeerElsewhere();
+  const u = await unscopedAt(peer.peerRepo, 99, "in_progress");
+  await store.db.project.update({ where: { id: u.projectId }, data: { governanceMode: "AUTONOMOUS" } });
+  await expectEnrollmentRequired(await app(f.service, undefined, emptyScope).fetch(request({ autoMerge: true, prUrl: `https://github.com/${peer.peerRepo}/pull/${peer.prNumber}` }, `/api/tasks/${u.taskId}/finish`, null)));
+});
+it("github merge naming another path PR is guarded when the task's own PR is a held peer's", async () => {
+  const h = await completionFixture(store);
+  await store.db.groundingBinding.delete({ where: { taskId: h.taskId } });
+  await store.db.groundingCohort.delete({ where: { taskId: h.taskId } });
+  const heldRepo = `held/${randomUUID().replaceAll("-", "")}`;
+  await store.db.project.update({ where: { id: h.projectId }, data: { githubRepo: heldRepo } });
+  await store.db.task.update({ where: { id: h.taskId }, data: { status: "review", prNumber: 8, prUrl: `https://github.com/${heldRepo}/pull/8` } });
+  await store.db.groundingMigrationState.create({ data: { taskId: h.taskId, projectId: h.projectId, held: true, revision: 1 } });
+  const u = await unscopedAt(heldRepo, 8);
+  const [owner, name] = heldRepo.split("/");
+  await expectEnrollmentRequired(await app(f.service, undefined, emptyScope).fetch(request({ taskId: u.taskId, owner, repo: name }, "/api/github/pull-requests/2/merge", null)));
+});
+it("an enforced project without a GitHub repository still rejects on every remote path", async () => {
+  const u = await unscopedTask();
+  await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo: null } });
+  await store.db.task.update({ where: { id: u.taskId }, data: { status: "done", prNumber: 3, prUrl: null } });
+  const a = app(f.service, undefined, { projectIds: new Set([u.projectId]), repos: new Set() });
+  await expectEnrollmentRequired(await a.fetch(request({}, `/api/tasks/${u.taskId}/merge`, null)));
+  await expectEnrollmentRequired(await a.fetch(request({ taskId: u.taskId, owner: "elsewhere", repo: "unrelated" }, "/api/github/pull-requests/3/merge", null)));
+});
+it("a task whose only repository is its PR URL's is guarded when that repository is enforced", async () => {
+  const u = await unscopedTask();
+  await store.db.project.update({ where: { id: u.projectId }, data: { githubRepo: null } });
+  await store.db.task.update({ where: { id: u.taskId }, data: { status: "done", deliverableRepo: null, prNumber: 55, prUrl: `https://github.com/acme/${repo}/pull/55` } });
+  await expectEnrollmentRequired(await app().fetch(request({}, `/api/tasks/${u.taskId}/merge`, null)));
+});
+it("a peer whose PR is recorded only in its PR URL still guards the shared PR", async () => {
+  const peer = await protectedPeerElsewhere();
+  await store.db.task.update({ where: { id: peer.taskId }, data: { prNumber: null } });
+  const u = await unscopedAt(peer.peerRepo, peer.prNumber);
+  await expectEnrollmentRequired(await app(f.service, undefined, emptyScope).fetch(request({}, `/api/tasks/${u.taskId}/merge`, null)));
+});
+
+// PR creation outside the enforced scope belongs to the legacy creator.
+function legacyCreateResponse(ownRepo: string, number = 5) {
+  return vi.fn(async () => Response.json({ number, html_url: `https://github.com/${ownRepo}/pull/${number}`, title: "Create" }, { status: 201 }));
+}
+it("a keyless create inside the enforced scope requires a key and one outside it reaches the legacy creator", async () => {
+  const inside = await unscopedTask();
+  const [insideOwner, insideName] = inside.ownRepo.split("/");
+  const scoped = await app(f.service, undefined, { projectIds: new Set([inside.projectId]), repos: new Set() }).fetch(request({ taskId: inside.taskId, owner: insideOwner, repo: insideName, head: "feature", title: "Create" }, "/api/github/pull-requests", null));
+  expect(scoped.status).toBe(400); expect(await scoped.json()).toMatchObject({ error: "grounding_operation_key_required" });
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+  const outside = await unscopedTask();
+  const [owner, name] = outside.ownRepo.split("/");
+  vi.stubGlobal("fetch", legacyCreateResponse(outside.ownRepo));
+  const legacy = await app(f.service, undefined, emptyScope).fetch(request({ taskId: outside.taskId, owner, repo: name, head: "feature", title: "Create" }, "/api/github/pull-requests", null));
+  expect(legacy.status).toBe(201);
+  expect(await legacy.json()).toEqual({ pullRequest: { number: 5, url: `https://github.com/${outside.ownRepo}/pull/5`, title: "Create" }, task: { id: outside.taskId, branchName: "feature", prUrl: `https://github.com/${outside.ownRepo}/pull/5`, prNumber: 5 } });
+  expect(fetchCalls()).toEqual([`https://api.github.com/repos/${outside.ownRepo}/pulls`]);
+  expect(await store.db.groundingGithubCreateOperation.count({ where: { taskId: outside.taskId } })).toBe(0);
+});
+it("a keyed create for an unscoped task reaches the legacy creator with the header key in its body", async () => {
+  const u = await unscopedTask();
+  const [owner, name] = u.ownRepo.split("/");
+  vi.stubGlobal("fetch", legacyCreateResponse(u.ownRepo));
+  const a = app(f.service, new GroundingGithubCreateService({ db: store.db }), emptyScope);
+  const body = { taskId: u.taskId, owner, repo: name, head: "feature", title: "Create" };
+  const first = await a.fetch(request(body, "/api/github/pull-requests", "mcp-generated-key"));
+  expect(first.status).toBe(201); expect(first.headers.get("X-Idempotent-Replay")).toBeNull();
+  expect(await store.db.toolInvocation.findUnique({ where: { projectId_verb_idempotencyKey: { projectId: u.projectId, verb: "pull_requests_create", idempotencyKey: "mcp-generated-key" } } })).toMatchObject({ statusCode: 201 });
+  const retry = await a.fetch(request(body, "/api/github/pull-requests", "mcp-generated-key"));
+  expect(retry.status).toBe(201); expect(retry.headers.get("X-Idempotent-Replay")).toBe("true");
+  expect(fetchCalls()).toEqual([`https://api.github.com/repos/${u.ownRepo}/pulls`]);
+  expect(await store.db.groundingGithubCreateOperation.count({ where: { taskId: u.taskId } })).toBe(0);
+  expect(await store.db.groundingGithubFenceIntent.count({ where: { taskId: u.taskId } })).toBe(0);
+});
+it("a failed keyed legacy create for an unscoped task leaves no owned fence and sibling writes succeed", async () => {
+  const u = await unscopedTask();
+  const sibling = await store.db.task.create({ data: { projectId: u.projectId, title: "Unrelated sibling", status: "open" } });
+  const [owner, name] = u.ownRepo.split("/");
+  const a = app(f.service, new GroundingGithubCreateService({ db: store.db }), emptyScope);
+  const result = await a.fetch(request({ taskId: u.taskId, owner, repo: name, head: "feature", title: "Create" }, "/api/github/pull-requests", "mcp-generated-key"));
+  expect(result.status).toBe(500);
+  expect(fetchCalls()).toEqual([`https://api.github.com/repos/${u.ownRepo}/pulls`]);
+  expect(await store.db.groundingGithubCreateOperation.count({ where: { taskId: u.taskId } })).toBe(0);
+  expect(await store.db.groundingGithubFenceIntent.count({ where: { taskId: u.taskId } })).toBe(0);
+  expect(await store.db.groundingGithubRepositoryFence.findUnique({ where: { repo: u.ownRepo } })).toMatchObject({ ownerId: null });
+  await store.db.task.update({ where: { id: sibling.id }, data: { title: "Sibling edit" } });
+  expect(await store.db.task.findUniqueOrThrow({ where: { id: sibling.id } })).toMatchObject({ title: "Sibling edit" });
+});
+it("a keyed create with durable create history keeps using the grouped create service", async () => {
+  const u = await unscopedTask();
+  const [owner, name] = u.ownRepo.split("/");
+  const a = app(f.service, new GroundingGithubCreateService({ db: store.db }), emptyScope);
+  const body = { taskId: u.taskId, owner, repo: name, head: "feature", title: "Create" };
+  const intent = await store.db.groundingGithubFenceIntent.create({ data: { id: randomUUID(), repo: u.ownRepo, kind: "PR_CREATE", taskId: u.taskId, state: "COMPLETED" } });
+  await store.db.groundingGithubCreateOperation.create({ data: { id: intent.id, taskId: u.taskId, projectId: u.projectId, key: "mcp-generated-key", actorId: ids.agent, actorUserId: ids.user, actorTeamId: ids.team, fingerprint: "0".repeat(64), request: { owner, repo: name, head: "feature", base: "main", title: "Create" }, delegateUserId: ids.user, state: "COMPLETED" } });
+  const result = await a.fetch(request(body, "/api/github/pull-requests", "mcp-generated-key"));
+  expect(result.status).toBe(409); expect(await result.json()).toMatchObject({ error: "grounding_operation_conflict" });
+  expect(globalThis.fetch).not.toHaveBeenCalled();
 });
 it("configured unrelated unprovisioned local finish preserves compatibility", async () => {
   await store.db.groundingBinding.delete({ where: { taskId: f.taskId } }); await store.db.groundingCohort.delete({ where: { taskId: f.taskId } });
@@ -267,7 +399,7 @@ it("ST1-M1 grouped mounted default head accepts canonical GitHub casing without 
   expect(JSON.parse(before.contextBytes.toString()).deliverable.repo).toBe(storedRepo);
   f.proof.repo = storedRepo;
   const service = new GroundingGithubMergeService({ ...deps, mergeProvider: { merge: f.merge, read: f.read }, deliverSignal: f.deliverSignal });
-  const result = await createApp("", attempts, { db: store.db, service }).fetch(request(mergeBody())); expect(result.status).toBe(200); expect(f.merge).toHaveBeenCalledOnce();
+  const result = await createApp("", attempts, { db: store.db, service, scope: defaultScope() }).fetch(request(mergeBody())); expect(result.status).toBe(200); expect(f.merge).toHaveBeenCalledOnce();
   expect((await store.db.groundingAttempt.findUniqueOrThrow({ where: { id: challenge.attemptId } })).contextBytes).toEqual(before.contextBytes); expect(fetcher).toHaveBeenCalled();
 });
 

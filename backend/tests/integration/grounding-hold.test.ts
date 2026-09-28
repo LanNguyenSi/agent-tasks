@@ -61,7 +61,7 @@ it("direct force transition rejects a held unprovisioned task", async () => {
   const task = await store.db.task.create({ data: { projectId: f.projectId, title: "Historical", status: "in_progress" } });
   await migration().execute(task.id, admin, hold);
   const app = new Hono<{ Variables: AppVariables }>(); app.use("*", async (c, next) => { c.set("actor", admin); await next(); });
-  app.route("/api", createGroundingDirectTaskRouter({ db: store.db, service: f.service }));
+  app.route("/api", createGroundingDirectTaskRouter({ db: store.db, service: f.service, scope: { projectIds: new Set([f.projectId]), repos: new Set<string>() } }));
   const response = await app.request(`/api/tasks/${task.id}/transition`, { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "force" }, body: JSON.stringify({ toStatus: "done", force: true, reason: "Admin request" }) });
   expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "grounding_task_held" });
   expect(await store.db.task.findUnique({ where: { id: task.id } })).toEqual(task);

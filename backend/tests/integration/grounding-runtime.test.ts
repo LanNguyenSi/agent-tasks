@@ -87,11 +87,10 @@ it.each(["off cohort", "completed delivery"])("disabled startup refuses %s witho
   } finally { await isolated.close(); }
 }, 60000);
 
-// SE-04: the repository-fence trigger fires on every ordinary GitHub-linked
-// task write whether or not grounding is configured, so an unowned fence row
-// (and a non-ACTIVE fence intent, its historical counterpart) is no longer
-// treated as grounding history on its own; every other grounding table is
-// still checked exactly as before.
+// The repository-fence trigger fires on every ordinary GitHub-linked task
+// write whether or not grounding is configured, so an unowned fence row alone
+// is not treated as grounding history; every other grounding table, fence
+// intents included, is still checked exactly as before.
 it("disabled startup accepts an unowned repository fence produced by an ordinary GitHub-linked task write", async () => {
   const isolated = await groundingPostgres();
   try {
@@ -104,7 +103,7 @@ it("disabled startup accepts an unowned repository fence produced by an ordinary
     expect(await composeGroundingRuntime("", isolated.db)).toEqual({});
   } finally { await isolated.close(); }
 }, 60000);
-it.each(["owned fence", "active intent", "other table row"])("disabled startup still refuses %s despite an otherwise-exempt unowned fence", async kind => {
+it.each(["owned fence", "active intent", "released intent", "other table row"])("disabled startup still refuses %s despite an otherwise-exempt unowned fence", async kind => {
   const isolated = await groundingPostgres();
   try {
     await isolated.db.team.create({ data: { id: ids.team, name: "History", slug: "history" } });
@@ -114,6 +113,7 @@ it.each(["owned fence", "active intent", "other table row"])("disabled startup s
       const intent = await isolated.db.groundingGithubFenceIntent.create({ data: { id: randomUUID(), repo: "acme/history", kind: "MERGE", taskId: ids.task, state: "COMPLETED" } });
       await isolated.db.groundingGithubRepositoryFence.update({ where: { repo: "acme/history" }, data: { ownerId: intent.id } });
     }
+    if (kind === "released intent") await isolated.db.groundingGithubFenceIntent.create({ data: { id: randomUUID(), repo: "acme/other", kind: "PR_CREATE", taskId: ids.task, state: "RELEASED" } });
     if (kind === "active intent") await isolated.db.groundingGithubFenceIntent.create({ data: { id: randomUUID(), repo: "acme/other", kind: "PR_CREATE", taskId: ids.task, state: "ACTIVE" } });
     if (kind === "other table row") await isolated.db.groundingGithubWebhookDelivery.create({ data: { deliveryId: "history", event: "ping", fingerprint: "a".repeat(64), result: { received: true }, completedAt: new Date() } });
     await expect(composeGroundingRuntime("", isolated.db)).rejects.toThrow("Grounding runtime startup refused");
@@ -156,16 +156,21 @@ it("configured routing protects previously unprovisioned remote operations witho
   expect(await snapshot()).toEqual(before); expect(fetch).not.toHaveBeenCalled();
 });
 
-it("enabled config with empty trust and creationPolicy behaves like legacy on all three remote paths", async () => {
+it("enabled config with empty trust and creationPolicy routes all three remote paths to the legacy handlers", async () => {
   const target = await app(store.db, { enabled: true, audience: "consumer.test", trust: [], creationPolicy: [] });
-  const task = await store.db.task.create({ data: { projectId, title: "Legacy equivalent", status: "in_progress", claimedByAgentId: ids.agent } });
+  const task = await store.db.task.create({ data: { projectId, title: "Legacy routing", status: "in_progress", claimedByAgentId: ids.agent, prNumber: 5, prUrl: `https://github.com/${repo}/pull/5` } });
   const finish = await target.request(request(`/tasks/${task.id}/finish`, { autoMerge: true }));
   expect(finish.status).toBe(403); expect(await finish.json()).toMatchObject({ error: "autonomous_mode_required" });
   const merge = await target.request(request(`/tasks/${task.id}/merge`, {}));
   expect(merge.status).toBe(409); expect(await merge.json()).toMatchObject({ error: "bad_state" });
-  const direct = await target.request(request(`/github/pull-requests/1/merge`, { taskId: task.id, owner: "acme", repo: "irrelevant" }));
-  expect(direct.status).toBe(403); expect(await direct.json()).toMatchObject({ error: "forbidden" });
   expect(fetch).not.toHaveBeenCalled();
+  // A done task passes the legacy status gates, so the legacy merge reaches
+  // GitHub at the project repository and the task's own PR.
+  await store.db.task.update({ where: { id: task.id }, data: { status: "done" } });
+  const direct = await target.request(request(`/github/pull-requests/1/merge`, { taskId: task.id, owner: "acme", repo: "irrelevant" }));
+  expect(direct.status).toBe(502); expect(await direct.json()).toMatchObject({ error: "github_error", message: "GitHub API unreachable: unexpected network request" });
+  expect(vi.mocked(fetch).mock.calls.map(call => String(call[0]))).toEqual([`https://api.github.com/repos/${repo}/pulls/5/merge`]);
+  expect(await store.db.groundingOperation.count({ where: { taskId: task.id } })).toBe(0);
 });
 
 it("enabled startup refuses when a project outside the enforced scope shares a repo with an enforced project", async () => {
@@ -253,18 +258,20 @@ it("real composed CODE_HEAD creation and grouped GitHub merge retain one databas
 });
 
 it("signed issue creation enrolls selected projects and preserves unselected behavior and exact dedup", async () => {
-  // An unselected project may no longer share a repo with an enforced one
-  // (SE-02): give it its own repo, so the webhook fans out only to the
-  // enrolled project below and the unselected one sees no task at all.
-  const other = await store.db.project.create({ data: { teamId: ids.team, name: "Unselected", slug: randomUUID(), githubRepo: `${repo}-unselected` } });
-  const target = await app(); const delivery = randomUUID(); const before = await snapshot();
+  // Startup refuses an unselected project that shares an enforced repository,
+  // but it does not re-validate projects created after startup; this one
+  // shares the repository and receives the same webhook fan-out.
+  const target = await app();
+  const other = await store.db.project.create({ data: { teamId: ids.team, name: "Unselected", slug: randomUUID(), githubRepo: repo } });
+  const delivery = randomUUID(); const before = await snapshot();
   expect((await target.request(webhook(delivery, false))).status).toBe(401); expect(await snapshot()).toEqual(before);
   expect((await target.request(webhook(delivery))).status).toBe(200);
   const task = await store.db.task.findFirstOrThrow({ where: { projectId } });
   expect(task).toMatchObject({ title: "[GH #17] New issue", description: "Original description", status: "open" });
   expect(await store.db.groundingBinding.findUniqueOrThrow({ where: { taskId: task.id } })).toMatchObject({ subjectMode: "TASK_SPEC" });
   expect(await store.db.groundingCohort.findUniqueOrThrow({ where: { taskId: task.id } })).toMatchObject({ mode: "EXTERNAL_V1" });
-  expect(await store.db.task.count({ where: { projectId: other.id } })).toBe(0);
+  const unselected = await store.db.task.findFirstOrThrow({ where: { projectId: other.id } });
+  expect(unselected.status).toBe("open"); expect(await store.db.groundingBinding.findUnique({ where: { taskId: unselected.id } })).toBeNull();
   expect((await snapshot()).signals).toHaveLength(0);
   const after = await snapshot();
   const duplicate = await target.request(webhook(delivery)); expect(await duplicate.json()).toMatchObject({ duplicate: true });

@@ -47,7 +47,7 @@ beforeEach(async () => {
   await store.db.user.update({ where: { id: ids.user }, data: { allowAgentPrCreate: true, allowAgentPrMerge: true } });
 });
 afterEach(async () => { await checks._clearCheckCache(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-function app(service = f.service) { return createApp("http://localhost", f.attempts, { db: store.db, service }); }
+function app(service = f.service) { return createApp("http://localhost", f.attempts, { db: store.db, service, scope: { projectIds: new Set([f.projectId]), repos: new Set<string>() } }); }
 function request(body: unknown = {}, endpoint = "finish", key: string | null = "operation", authorization: string | null = token) {
   return new Request(`http://localhost/api/tasks/${f.taskId}/${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json", ...(key ? { "Idempotency-Key": key } : {}), ...(authorization ? { Authorization: `Bearer ${authorization}` } : {}) }, body: JSON.stringify(body) });
 }
@@ -482,7 +482,7 @@ it("R1-H1 actual route default head and CI readers use merge-only delegation con
   const deps = { db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now };
   const attempts = new GroundingAttemptsService(deps);
   const service = new GroundingGithubMergeService({ ...deps, mergeProvider: { merge: f.merge, read: f.read }, deliverSignal: f.deliverSignal });
-  const a = createApp("", attempts, { db: store.db, service }); await routeEvidence(a);
+  const a = createApp("", attempts, { db: store.db, service, scope: { projectIds: new Set([f.projectId]), repos: new Set<string>() } }); await routeEvidence(a);
   expect((await a.fetch(request({}, "merge"))).status).toBe(200); expect(f.merge).toHaveBeenCalledOnce();
   expect(fetcher.mock.calls.some(([url]) => String(url).includes("/check-runs"))).toBe(true);
   expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/pulls/42")).length).toBeGreaterThan(1);
