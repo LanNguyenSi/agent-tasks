@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-28T06:05:07Z
+timestamp: 2026-09-28T06:59:39Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -38,21 +38,27 @@ selection reaches the historical compatibility routes; on a configured app, a
 task without server enrollment keeps that same compatibility behavior for
 local completion, but a fresh remote operation (task merge, GitHub merge,
 finish with `autoMerge`) instead returns `409 grounding_enrollment_required`
-before any remote effect (`grounding-task-completion.ts:99`,
-`routes/grounding-github.ts:104`) — only when the task's project is in the
-configured `creationPolicy` scope, its effective repository belongs to a
-selected project, or it is bound to or grouped with a protected/
-`EXTERNAL_V1`/held peer (`grounding-scope.ts`, reusing the merge service's
-peer predicate). Outside that scope, including without an operation key, the
-same request reaches the historical route instead; the unconfigured default
-app has no such gate either way. An enabled configuration with empty trust and
-an empty `creationPolicy` is therefore equivalent to the unconfigured app for
-every project. Startup itself refuses when a project outside the enforced
-scope shares a GitHub repository with an enforced one, so the enforced/legacy
-boundary is never ambiguous per request. That scope check is a point-in-time
-read, not a lock, so it accepts one residual race: an admin rebinding a
-protected task's repository or PR concurrently with an in-flight legacy merge
-of that same PR is not fenced by it. Invalid enrollment,
+before any remote effect (`grounding-task-completion.ts:117`,
+`routes/grounding-github.ts:124`) when the task's project is in the configured
+`creationPolicy` scope, or when any repository or PR number the legacy handler
+could act on (request owner/repo and PR URL, deliverable, project and stored
+PR URL repository; path, task and PR URL number) belongs to a selected project
+or is shared with a protected/`EXTERNAL_V1`/held peer (`grounding-scope.ts`,
+reusing the merge service's peer predicate). Otherwise, including without an
+operation key, the same request reaches the historical route; an unprovisioned
+task's PR create outside that scope reaches the legacy creator even with a key,
+which is forwarded as the body `idempotencyKey`. The unconfigured default app
+has no such gate either way. Remote merge and PR-create routing outside the
+enforced scope therefore match legacy, but enabling configuration writes
+grounding history (webhook deliveries, for example), so a later unconfigured
+restart is refused and enabling is one-way; rollback means keeping an enabled
+configuration with empty trust and an empty `creationPolicy`. Startup itself
+refuses when a project outside the enforced scope shares a GitHub repository
+with an enforced one; a project created or re-pointed after startup is not
+re-checked. The scope check is a point-in-time read, not a lock, so it accepts
+one residual race: an admin rebinding a protected task's repository or PR
+concurrently with an in-flight legacy merge of that same PR is not fenced by
+it. Invalid enrollment,
 orphan binding, unavailable trusted service, and database errors fail closed.
 There is no agent enrollment endpoint. An explicitly injected human-admin migration service supplies audited hold, legacy repair, external migration and readiness-checked resume. The server loads explicit runtime selection from `GROUNDING_RUNTIME_CONFIG`;
 empty creation policy does not activate enrollment; before server-only enrollment of legacy work, active

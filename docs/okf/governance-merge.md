@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-09-28T06:05:07Z
+timestamp: 2026-09-28T06:59:39Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -91,19 +91,28 @@ one. Only a wholly RESERVED, provably undispatched group can be cancelled, with
 the original actor's current authority and a nonblank reason. Cancellation and
 dispatch serialize, and a new operation needs a new key and evidence decision.
 
-Configured fresh remote merges require explicit server enrollment only inside
-the enforced scope derived from `creationPolicy` at startup: the task's own
-project is selected, its effective repository belongs to a selected project,
-or it is bound to or grouped with a protected/`EXTERNAL_V1`/held peer
-(`grounding-scope.ts`, reusing the merge service's peer-discovery SQL rather
-than duplicating it). Missing enrollment inside that scope returns
-`409 grounding_enrollment_required` for task merge, GitHub merge and finish
-with `autoMerge`, including when no operation key is supplied; outside it the
-same request reaches the unchanged legacy handler instead, and an enabled
-configuration with empty trust and an empty `creationPolicy` is equivalent to
-the unconfigured app for every project. Startup itself refuses when a project
-outside the enforced scope shares a GitHub repository with an enforced one,
-so the enforced/legacy boundary is never ambiguous per request. Compatibility
+Configured fresh remote merges require explicit server enrollment when the
+task's own project is selected by `creationPolicy` at startup, or when any
+repository or PR number the legacy handler could act on is guarded. Candidate
+repositories are the request's owner/repo, the task's deliverable and project
+repositories, and the repositories of the task's and the request's PR URLs;
+candidate PR numbers are the path number, the task's PR number and the numbers
+of those PR URLs. A candidate repository that belongs to a selected project,
+or a candidate repository and PR number pair shared with a
+protected/`EXTERNAL_V1`/held peer, guards the request (`grounding-scope.ts`,
+reusing the merge service's peer-discovery SQL rather than duplicating it).
+The legacy merge acts on the project repository and the task's PR number, not
+on the body owner/repo, which is why every candidate is checked. A guarded
+request returns `409 grounding_enrollment_required` for task merge, GitHub
+merge and finish with `autoMerge`, including when no operation key is
+supplied; otherwise the same request reaches the unchanged legacy handler.
+Remote merge and PR-create routing outside the enforced scope therefore match
+legacy; enabling configuration still writes grounding history (webhook
+deliveries, for example), so it is one-way, and rollback keeps an enabled
+configuration with empty trust and an empty `creationPolicy`. Startup itself
+refuses when a project outside the enforced scope shares a GitHub repository
+with an enforced one, so the enforced/legacy boundary is never ambiguous per
+request; a project created or re-pointed after startup is not re-checked. Compatibility
 tasks may be explicitly enrolled as OFF or LEGACY_LOCAL; external evidence is
 not mandatory for every task. The peer read that decides scope is
 point-in-time, not a lock: a peer that joins after that read is accepted as a

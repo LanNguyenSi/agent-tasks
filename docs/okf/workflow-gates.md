@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-09-28T06:05:07Z
+timestamp: 2026-09-28T06:59:39Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -78,16 +78,21 @@ historical unprovisioned handlers remain separate, and a configured app's
 fresh remote operation (task merge, GitHub merge, finish with `autoMerge`) on
 an unenrolled task returns `409 grounding_enrollment_required` before any
 remote effect rather than falling back to the unprovisioned handler
-(`grounding-task-completion.ts:99`, `routes/grounding-github.ts:104`) — but
-only when that task's project is in the configured `creationPolicy` scope,
-its effective repository belongs to a selected project, or it is bound to or
-grouped with a protected/`EXTERNAL_V1`/held peer (`grounding-scope.ts`).
-Outside that scope, including without an operation key, the same request
-falls back to the unprovisioned handler instead; an enabled configuration
-with empty trust and an empty `creationPolicy` is equivalent to the
-unconfigured app for every project. Startup refuses when a project outside
-the enforced scope shares a GitHub repository with an enforced one. The
-scope check's peer read is point-in-time, not a lock, and accepts one
+(`grounding-task-completion.ts:117`, `routes/grounding-github.ts:124`) when
+that task's project is in the configured `creationPolicy` scope, or when any
+repository or PR number the legacy handler could act on (request owner/repo
+and PR URL, deliverable, project and stored PR URL repository; path, task and
+PR URL number) belongs to a selected project or is shared with a
+protected/`EXTERNAL_V1`/held peer (`grounding-scope.ts`). Otherwise,
+including without an operation key, the same request falls back to the
+unprovisioned handler. Remote merge and PR-create routing outside the
+enforced scope therefore match legacy; enabling configuration still writes
+grounding history (webhook deliveries, for example), so a later unconfigured
+restart is refused and enabling is one-way, and rollback keeps an enabled
+configuration with empty trust and an empty `creationPolicy`. Startup refuses
+when a project outside the enforced scope shares a GitHub repository with an
+enforced one; a project created or re-pointed after startup is not re-checked.
+The scope check's peer read is point-in-time, not a lock, and accepts one
 residual race: an admin rebinding a protected task's repository or PR
 concurrently with an in-flight legacy merge of that same PR is not fenced by
 it. See the

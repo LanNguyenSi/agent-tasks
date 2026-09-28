@@ -3,7 +3,7 @@ type: runbook
 title: "Reconciling a task whose PR merged but the record is stuck open"
 description: "Recover a configured merge with its original operation and exact GitHub proof; retain the separate historical task lifecycle repair flow."
 tags: [reconcile, task-lifecycle, idempotency, runbook]
-timestamp: 2026-09-28T06:05:07Z
+timestamp: 2026-09-28T06:59:39Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/default-workflow.ts
@@ -85,13 +85,15 @@ protected peer linked to the PR must satisfy its own merge decision. A new
 standalone merge requires a review state; neither a terminal task nor a bare
 merge SHA permits creating a historical decision. Configured fresh remote
 merge requests without enrollment return `409 grounding_enrollment_required`
-only when the task is inside the enforced scope (its project is selected by
-`creationPolicy`, its effective repository belongs to a selected project, or
-it is bound to or grouped with a protected/`EXTERNAL_V1`/held peer); outside
-that scope, including without an operation key, the request reaches the
-unchanged legacy handler instead, so an enabled configuration with empty
-trust and an empty `creationPolicy` behaves like the unconfigured app for
-every project. Compatibility requires explicit OFF or LEGACY_LOCAL server
+only when the task's project is selected by `creationPolicy`, or when any
+repository or PR number the legacy handler could act on (request, task and PR
+URL targets alike) belongs to a selected project or is shared with a
+protected/`EXTERNAL_V1`/held peer; otherwise, including without an operation
+key, the request reaches the unchanged legacy handler. Remote merge and
+PR-create routing outside the enforced scope therefore match legacy, but
+enabling configuration writes grounding history (webhook deliveries, for
+example), so it is one-way; rollback keeps an enabled configuration with empty
+trust and an empty `creationPolicy`. Compatibility requires explicit OFF or LEGACY_LOCAL server
 enrollment, not a fallback selected from task metadata.
 
 A configured positive webhook for a provisioned task is a pending, audited
