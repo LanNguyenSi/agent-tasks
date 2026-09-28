@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-09-28T11:20:25Z
+timestamp: 2026-09-28T13:30:23Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -88,27 +88,40 @@ outside it the untouched request falls back to the unprovisioned handler,
 including without an operation key (`grounding-task-completion.ts:118`,
 `routes/grounding-github.ts:141`). The unprovisioned handler's transition
 gates run as before; the handler is unchanged except for a target check at its
-effect boundary (`grounding-scope.ts:93`): with configuration enabled,
+effect boundary (`grounding-scope.ts:107`): with configuration enabled,
 `performPrMerge` checks the exact repository and PR number right before the
-GitHub merge call (`services/github-merge.ts:112`), and the legacy PR creator
+GitHub merge call (`services/github-merge.ts:114`), and the legacy PR creator
 and commenter check the repository (and PR) they post to
-(`routes/github.ts:267`, `routes/github.ts:759`). The check refuses with
+(`routes/github.ts:267`, `routes/github.ts:768`). The check refuses with
 `409 grounding_enrollment_required` a repository string that is not exactly
-canonical, an enforced repository, or a protected/`EXTERNAL_V1`/bound/held
-task's PR (including such a task whose own repository string is not canonical
-and that shares the number), and refuses a merge or create whose repository
-fence another operation owns with `409 grounding_finalization_pending`;
-comments take no fence. The configured GitHub create and merge routes check
+canonical, an enforced repository, a protected/`EXTERNAL_V1`/bound/held task's
+PR (including such a task whose own repository string is not canonical and
+that shares the number), and a merge or create whose requesting task is itself
+such a task, whatever PR number it sends; it refuses a merge or create with
+`409 grounding_finalization_pending` when another operation owns the fence of
+the target repository or of any repository the legacy task write's fence
+trigger checks for the requesting task (its effective repository, stored PR
+URL repository and own active PR-create intents' repositories). Comments write
+no task and take no fence; a task that is protected, `EXTERNAL_V1` or bound,
+or whose project is enforced, may comment on its own stored PR even in an
+enforced repository unless it is held, and any other peer on that PR still
+refuses it, so enforced repositories must not run comment-triggered merge or
+deploy automation. With configuration enabled a GitHub redirect on any of the
+three legacy writes (a renamed or transferred repository) is answered with
+`409 github_redirect_refused` instead of being followed
+(`services/github-merge.ts:156`, `routes/github.ts:297`,
+`routes/github.ts:791`). The configured GitHub create and merge routes check
 the caller's project access with the legacy rule right after the task lookup,
 before any Grounding read or lock (`routes/grounding-github.ts:82`,
 `routes/grounding-github.ts:130`), so a caller without access gets the legacy
 handler's own 403. Outside the enforced scope they read only the task id and a
 well-formed key for the history lookup, then hand the request to the legacy
 handler unmodified; the principal differences from the unconfigured app are
-the boundary and in-scope refusals, the agent-scope admission check that runs
-first, a transient `503 grounding_verification_unavailable` from the
-Serializable routing read, and the GitHub merge route's `503` retry message.
-Enabling configuration still writes grounding history (webhook deliveries, for
+the boundary and in-scope refusals, the refusal of renamed or transferred
+repository writes, the agent-scope admission check that runs first, a
+transient `503 grounding_verification_unavailable` from the Serializable
+routing read, and the GitHub merge route's `503` retry message. Enabling
+configuration still writes grounding history (webhook deliveries, for
 example), so a later unconfigured restart is refused and enabling is one-way,
 and rollback keeps an enabled configuration with empty trust and an empty
 `creationPolicy`. Startup itself refuses when a project outside the enforced
@@ -120,7 +133,7 @@ point-in-time, one database round trip before the GitHub call, and two
 residual races within that window are accepted: a change after the read that
 makes some task a protected/`EXTERNAL_V1`/held peer of the targeted PR (an
 admin rebinding a repository or PR, a migration hold, an enrollment) is not
-seen, and a grouped operation that acquires the target repository fence after
+seen, and a grouped operation that acquires one of the checked fences after
 the read lets the legacy GitHub effect happen while the legacy task write
 fails on the fence (a merge lands with the task still in review; a create
 leaves an unlinked PR). See the [shared receipt consumer

@@ -71,6 +71,25 @@ re-verified and gained one sentence each (the composed check, the creation
 router's access order); `claim-model.md` was re-verified against the edited
 `tasks.ts` and receipt contract (its claims did not change) and re-stamped.
 
+The effect-boundary check then took in every repository the legacy task
+write's fence trigger checks. A merge or create is refused with
+`409 grounding_finalization_pending` when another operation owns the fence of
+the target repository or of any repository of the requesting task (its
+effective repository, stored PR URL repository and own active PR-create
+intents' repositories), and with `409 grounding_enrollment_required` when the
+requesting task is itself protected/`EXTERNAL_V1`/bound/held, whatever PR
+number it sends. A task that is protected, `EXTERNAL_V1` or bound, or whose
+project is enforced, may comment on its own stored PR unless it is held, and
+enforced repositories must not run comment-triggered merge or deploy
+automation. With configuration enabled, the legacy merge, create and comment
+writes are sent with `redirect: "manual"` and a GitHub redirect (a renamed or
+transferred repository) is refused with `409 github_redirect_refused`; the
+unconfigured app still follows redirects. `architecture.md`, `backend.md`,
+`governance-merge.md`, `reconcile-done-but-open.md` and `workflow-gates.md`
+were updated, re-verified against the changed scope service and legacy
+writers and re-stamped; `claim-model.md` was re-verified against the edited
+receipt contract (its claims did not change) and re-stamped.
+
 Separately, unconfigured (grounding-disabled) startup admission stopped
 treating an unowned GitHub repository-fence row as grounding history on its
 own, since the repository-fence SQL trigger bumps such a row on any ordinary
