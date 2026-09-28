@@ -129,7 +129,7 @@ describe("performPrMerge — foreign-deliverable hard refusal", () => {
   });
 });
 
-describe("performPrMerge — Grounding effect-boundary guard", () => {
+describe("performPrMerge: Grounding effect-boundary guard", () => {
   const success = () => vi.fn().mockResolvedValue(new Response(JSON.stringify({ sha: "abc123", merged: true }), { status: 200 }));
 
   it("hands the guard exactly the repository and PR number it merges, right before the GitHub call", async () => {
