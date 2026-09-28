@@ -169,28 +169,38 @@ closed. The absence of enrollment does not select OFF or LEGACY_LOCAL.
 
 Configured fresh remote operations—task merge, GitHub merge and finish with
 `autoMerge`—on a task with no existing keyed durable operation require
-explicit server enrollment only when that task is inside the enforced scope:
-its project is one of `creationPolicy`'s selected projects, its effective
-repository belongs to one of those projects, or it is bound to or grouped with
-a protected, `EXTERNAL_V1` or held peer. Inside that scope they return
+explicit server enrollment when that task's project is one of
+`creationPolicy`'s selected projects, or when any target the legacy handler
+could act on is guarded. The candidate repositories are the request's
+owner/repo, the task's deliverable repository, its project repository, and the
+repository of the task's or the request's PR URL; the candidate PR numbers are
+the path number, the task's PR number, and the number of the task's or the
+request's PR URL. A request is guarded when any candidate repository belongs to
+a selected project, or when any candidate repository and PR number pair is
+shared with a protected, `EXTERNAL_V1` or held peer. Guarded requests return
 `409 grounding_enrollment_required` before a remote effect, including when no
-operation key is supplied. Outside it the request reaches the same unchanged
-legacy handler instead. An enabled configuration with an empty trust list and
-an empty `creationPolicy` therefore behaves like the unconfigured application
-for every project. Startup itself refuses to start when a project outside the
+operation key is supplied. Otherwise the request reaches the same unchanged
+legacy handler. Startup itself refuses to start when a project outside the
 enforced scope shares a GitHub repository with an enforced one, so the
-scope/legacy boundary is never ambiguous per request; a project created after
-startup is not covered by that check. The peer read above is informational
-and point-in-time, not a lock: it accepts a residual race where an
-administrator rebinds a protected task's repository or PR concurrently with a
-legacy merge already in flight against that same PR, rather than fencing it.
+scope/legacy boundary is never ambiguous per request; a project created or
+re-pointed after startup is not covered by that check. The peer read above is
+informational and point-in-time, not a lock: it accepts a residual race where
+an administrator rebinds a protected task's repository or PR concurrently with
+a legacy merge already in flight against that same PR, rather than fencing it.
 Existing durable operations retain their operation-bound recovery path.
 Unprovisioned local completion and the original unconfigured application
-retain their defined compatibility behavior. PR creation is not itself
-enrollment-gated; a caller that supplies no operation key at all only falls
-through to the legacy creator when the task is outside the enforced scope
-described above, instead of being forced to invent a key it has no other
-reason to send.
+retain their defined compatibility behavior.
+
+PR creation for an unprovisioned task that is not guarded by the same scope,
+repository and peer checks reaches the legacy creator with or without an
+operation key; a header key is forwarded to it as the body `idempotencyKey`, so
+legacy key replay applies. A key with durable grounding create history, and
+any task with an unfinished grounding create, stay with the grouped create
+service. Remote merge and PR-create routing outside the enforced scope
+therefore match the legacy application. Enabling configuration still writes
+grounding history, for example webhook deliveries, so a later unconfigured
+restart is refused and enabling is one-way; rollback means keeping an enabled
+configuration with empty trust and an empty `creationPolicy`.
 
 Server-only enrollment must exclude active legacy requests and workers before
 activation. Explicit OFF or LEGACY_LOCAL enrollment provides compatibility
@@ -199,9 +209,10 @@ installation do not themselves enroll production tasks or qualify a rollout.
 
 `createApp(corsOrigins, grounding?, completion?)` selects configured guards when
 either grounding dependency is supplied. `completion` carries `db`, optional
-`service`, optional `githubCreate`, optional `creationPolicy`, and optional
-`scope` (the enforced project ids and their canonical GitHub repos; an omitted
-`scope` enforces nothing, matching a legacy-equivalent deployment). Remote merge
+`service`, optional `githubCreate`, optional `creationPolicy`, and `scope` (the
+enforced project ids and their canonical GitHub repos). `scope` is required
+whenever `service` is supplied; router construction throws without it, and a
+guard that runs without a scope enforces every task. Remote merge
 requires `service` to be a `GroundingGithubMergeService`; the base finalization
 service alone is insufficient. PR creation requires an explicitly supplied
 `GroundingGithubCreateService` in `githubCreate`. Missing capability returns
@@ -216,7 +227,8 @@ dependencies by default.
 | `POST /api/github/pull-requests` | Agent `tasks:update` and `github:pr_create`; body `taskId`, `owner`, `repo`, `head`, `title`, optional `base` (default `main`) and `body` (default empty). Success remains `201 {pullRequest, task}`. |
 
 Both GitHub endpoints require an `Idempotency-Key` header or body
-`idempotencyKey`; supplying both with different normalized values returns
+`idempotencyKey`, except for an unprovisioned task routed to the legacy handler
+as described above; supplying both with different normalized values returns
 `409 grounding_operation_conflict`. Merge keys are 1–128 token characters;
 create keys are trimmed, nonempty and at most 255 characters. Repository/PR
 input never silently rewrites a merge seed's authoritative binding. Pending

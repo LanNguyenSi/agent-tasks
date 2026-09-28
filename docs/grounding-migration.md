@@ -65,45 +65,59 @@ Audience, issuer and key identifiers are 1–128 letters, digits, `.`, `_`, `:` 
 
 Before opening its listener or scheduling the idempotency sweep, the real
 server awaits read-only grounding startup admission. Disabled startup requires
-all grounding tables to exist. Almost any row in any grounding table requires
-enabled configuration, including OFF and legacy cohorts and completed commands
-or deliveries. Two rows are exempted from that rule on their own: an *unowned*
-GitHub repository-fence row and a non-`ACTIVE` fence-intent row. The
-repository-fence SQL trigger bumps a fence row on any ordinary task write that
-carries a GitHub repo, whether or not grounding is ever configured, so an
-unowned fence alone is not real grounding history. An *owned* fence or an
-`ACTIVE` intent — meaning a configured lane actually reserved it — still counts
-as history and still requires enabled configuration, and every other grounding
-table is checked exactly as before. Missing tables or failed queries abort
-startup. Once real history exists, removing the configuration is not a
-rollback: restore valid configuration and a compatible consumer. Do not delete
-history to obtain an unconfigured startup. Installing without ever configuring
-grounding needs no special handling; real grounding history still needs
-enabled configuration.
+all grounding tables to exist. Any row in any grounding table requires enabled
+configuration, including OFF and legacy cohorts, completed commands or
+deliveries, and every fence-intent row whatever its state. The one exemption is
+an *unowned* GitHub repository-fence row: the repository-fence SQL trigger
+bumps such a row on any ordinary task write that carries a GitHub repo, whether
+or not grounding is ever configured, so it alone is not grounding history. An
+*owned* fence still counts as history, and every other grounding table is
+checked exactly as before. Missing tables or failed queries abort startup.
+Once real history exists, removing the configuration is not a rollback:
+restore valid configuration and a compatible consumer. Do not delete history to
+obtain an unconfigured startup. Installing without ever configuring grounding
+needs no special handling.
 
 Enabled startup validates the canonical schema-local SQL fence installation and
 selected project existence, then derives the enforced scope from
 `creationPolicy`: the selected project ids, plus the canonical GitHub
 repository each of those projects owns. Startup then refuses when a project
 outside that enforced scope shares a (case-normalized) GitHub repository with
-an enforced one — the boundary between enforced and legacy routing must never
-be ambiguous per request; a project created after startup is not covered by
-this check. It then creates attempts, grouped merge/completion, PR creation,
-and migration services using one frozen configuration, scope, and the same
-Prisma database.
+an enforced one, so the boundary between enforced and legacy routing is never
+ambiguous per request; a project created or re-pointed after startup is not
+covered by this check. It then creates attempts, grouped merge/completion, PR
+creation, and migration services using one frozen configuration, scope, and
+the same Prisma database.
 
 Configured routing does not apply globally. A fresh remote operation (task
 merge, finish with `autoMerge`, GitHub PR merge) on a task with no existing
-keyed durable history returns `409 grounding_enrollment_required` only when
-the task's project is in the enforced scope, its effective repository belongs
-to an enforced project, or it is bound to or grouped with a protected,
-`EXTERNAL_V1` or held peer. Otherwise it reaches the same unchanged legacy
-handler, including when no operation key is supplied. An enabled configuration
-with an empty trust list and an empty `creationPolicy` is therefore equivalent
-to the unconfigured runtime for every project — the shape a first deploy
-should use before any project is actually selected. Existing history is never
-enrolled implicitly. Local compatibility behavior and existing authorization
-remain as described in the [receipt contract](grounding-receipt-contract.md).
+keyed durable history returns `409 grounding_enrollment_required` when the
+task's project is in the enforced scope, or when any target the legacy handler
+could act on is guarded. Those targets are every candidate repository (the
+request's owner/repo, the task's deliverable repository, its project
+repository, and the repository of the task's or the request's PR URL) and
+every candidate PR number (the path number, the task's PR number, and the
+number of the task's or the request's PR URL). The request is guarded when any
+candidate repository belongs to an enforced project, or when any candidate
+repository and PR number pair is shared with a protected, `EXTERNAL_V1` or
+held peer. Otherwise it reaches the same unchanged legacy handler, including
+when no operation key is supplied. PR creation for an unprovisioned task
+outside the enforced scope is routed the same way: with or without an
+operation key it reaches the legacy creator, which receives a header key as
+its body `idempotencyKey`. A key that already has durable grounding create
+history, or a task with an unfinished grounding create, stays with the grouped
+create service.
+
+Remote merge and PR-create routing outside the enforced scope therefore match
+the legacy application, but enabling the configuration is not free of side
+effects: an enabled runtime writes grounding history (webhook deliveries, for
+example) even for projects outside the scope, and a later unconfigured restart
+refuses that history. Enabling configuration is therefore one-way. Rollback
+from a first enabled deploy means keeping an enabled configuration with an
+empty trust list and an empty `creationPolicy`, not removing it. Existing
+history is never enrolled implicitly. Local compatibility behavior and
+existing authorization remain as described in the
+[receipt contract](grounding-receipt-contract.md).
 
 The peer check above is a point-in-time read, not a lock. It accepts a
 residual race: an administrator who rebinds a protected task's repository or
