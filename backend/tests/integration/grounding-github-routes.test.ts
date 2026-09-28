@@ -582,7 +582,7 @@ it("a provisioned task outside the enforced scope keeps keyless create and merge
 // Outside the enforced scope the legacy handlers receive the request exactly
 // as sent: the same response configured and unconfigured, including inputs the
 // Grounding contract would reject (key format, strict body, path number).
-async function sameAsUnconfigured(send: (target: ReturnType<typeof createApp>) => Promise<Response>) {
+async function sameAsUnconfigured(send: (target: ReturnType<typeof createApp>) => Response | Promise<Response>) {
   const configured = await send(app(f.service, new GroundingGithubCreateService({ db: store.db }), emptyScope));
   const configuredCalls = fetchCalls();
   (globalThis.fetch as ReturnType<typeof vi.fn>).mockClear();
