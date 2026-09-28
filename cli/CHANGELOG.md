@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tasks finish`, `tasks abandon`, `github pr create` and `github pr merge`
+  gain an optional `--operation-key <key>` flag and now always send an
+  `Idempotency-Key` header (and, for the two `github pr` commands, the
+  same value as the `idempotencyKey` body field) on every call. When the
+  flag is omitted, a fresh key is generated per invocation. A generated key
+  is not stable across separate calls; pass the same `--operation-key`
+  value again to retry a timed-out call idempotently. This closes the gap
+  where a task or PR operation on a provisioned or pilot-scoped project (with
+  `GROUNDING_RUNTIME_CONFIG` enabled) previously reached the backend with no
+  operation key and got a `400 grounding_operation_key_required`.
 - `tasks create` gains `--debug-flavor` / `--no-debug-flavor` and
   `--depends-on <task-id>` (repeatable), bringing the human CLI to parity
   with the REST and MCP create surfaces. `--debug-flavor` forces

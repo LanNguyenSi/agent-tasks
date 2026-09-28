@@ -88,6 +88,25 @@ agent-tasks tasks abandon <task-id>
 | `--outcome <approve\|request_changes>` | review-claim only | Mutually exclusive with `--pr-url` |
 | `--auto-merge` | approve only | Rejected with `request_changes` |
 | `--merge-method <merge\|squash\|rebase>` | with `--auto-merge` | Default: squash |
+| `--operation-key <key>` | both | Idempotency key for this finish; see [Idempotency keys](#idempotency-keys) below |
+
+`tasks abandon` and `github pr create`/`github pr merge` also accept `--operation-key`; see
+[Idempotency keys](#idempotency-keys).
+
+## Idempotency keys
+
+`tasks finish`, `tasks abandon`, `github pr create` and `github pr merge` each send an
+`Idempotency-Key` on every call, a fresh, randomly generated one when `--operation-key` is
+omitted. A generated key is unique to that single invocation, so it does not by itself make a
+retry idempotent: to retry the exact same operation safely (for example after a network
+timeout), generate your own key up front and pass that same value again on the retry via
+`--operation-key`.
+
+```bash
+agent-tasks tasks finish <task-id> --outcome approve --operation-key finish-<task-id>-1
+# a timed-out call can be retried with the identical key:
+agent-tasks tasks finish <task-id> --outcome approve --operation-key finish-<task-id>-1
+```
 
 ## Tasks (read + create)
 

@@ -190,6 +190,12 @@ tasks
     "--merge-method <method>",
     "Merge method: merge | squash | rebase (default: squash)",
   )
+  .option(
+    "--operation-key <key>",
+    "Idempotency key for this finish (1-128 chars: letters, digits, '.', '_', ':', '-'). " +
+      "A fresh key is generated per invocation when omitted; to retry a timed-out finish " +
+      "idempotently, pass the same --operation-key again.",
+  )
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
@@ -231,20 +237,26 @@ tasks
     if (opts.autoMerge) body.autoMerge = true;
     if (opts.mergeMethod) body.mergeMethod = opts.mergeMethod as api.MergeMethod;
 
-    const result = await api.taskFinish(config, resolvedId, body);
+    const result = await api.taskFinish(config, resolvedId, body, opts.operationKey);
     console.log(formatTask(result.task, mode));
   });
 
 tasks
   .command("abandon <task-id>")
   .description("Release a claim without finishing (v2)")
+  .option(
+    "--operation-key <key>",
+    "Idempotency key for this abandon (1-128 chars: letters, digits, '.', '_', ':', '-'). " +
+      "A fresh key is generated per invocation when omitted; to retry a timed-out abandon " +
+      "idempotently, pass the same --operation-key again.",
+  )
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
     const mode = getMode(opts);
     const config = loadConfig();
     const resolvedId = await resolveTaskId(config, taskId);
-    const { task } = await api.taskAbandon(config, resolvedId);
+    const { task } = await api.taskAbandon(config, resolvedId, opts.operationKey);
     console.log(formatTask(task, mode));
   });
 
@@ -732,6 +744,12 @@ githubPr
   .requiredOption("--base <branch>", "Base branch")
   .requiredOption("--title <title>", "PR title")
   .option("--body <text>", "PR body")
+  .option(
+    "--operation-key <key>",
+    "Idempotency key for this create (1-255 printable ASCII chars, no whitespace). " +
+      "A fresh key is generated per invocation when omitted; to retry a timed-out create " +
+      "idempotently, pass the same --operation-key again.",
+  )
   .option("--json", "JSON output")
   .action(async (opts) => {
     const config = loadConfig();
@@ -743,7 +761,7 @@ githubPr
       base: opts.base,
       title: opts.title,
       body: opts.body,
-    });
+    }, opts.operationKey);
     if (opts.json) {
       console.log(JSON.stringify(pr, null, 2));
     } else {
@@ -762,6 +780,12 @@ githubPr
     "Merge method: merge | squash | rebase (default: squash)",
     "squash",
   )
+  .option(
+    "--operation-key <key>",
+    "Idempotency key for this merge (1-128 chars: letters, digits, '.', '_', ':', '-'). " +
+      "A fresh key is generated per invocation when omitted; to retry a timed-out merge " +
+      "idempotently, pass the same --operation-key again.",
+  )
   .option("--json", "JSON output")
   .action(async (prNumberStr, opts) => {
     const prNumber = Number(prNumberStr);
@@ -779,7 +803,7 @@ githubPr
       owner: opts.owner,
       repo: opts.repo,
       merge_method: opts.method as "merge" | "squash" | "rebase",
-    });
+    }, opts.operationKey);
     if (opts.json) {
       console.log(JSON.stringify(result, null, 2));
     } else {

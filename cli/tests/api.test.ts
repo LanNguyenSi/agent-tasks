@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  InvalidOperationKeyError,
   createTask,
   taskPickup,
   taskStart,
   taskFinish,
   taskAbandon,
+  createPullRequest,
+  mergePullRequest,
   submitPr,
   getEffectiveGates,
   listProjectTasks,
@@ -169,6 +172,60 @@ describe("taskFinish", () => {
       taskFinish(config, "t1", { outcome: "approve" }),
     ).rejects.toBeInstanceOf(ApiError);
   });
+
+  it("forwards an explicit operation key unchanged as the Idempotency-Key header", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "done", priority: "MEDIUM" } }),
+    );
+    await taskFinish(config, "t1", { outcome: "approve" }, "my-retry-key.1:a");
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.headers["Idempotency-Key"]).toBe("my-retry-key.1:a");
+  });
+
+  it("generates a fresh Idempotency-Key when the operation key is omitted", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "done", priority: "MEDIUM" } }),
+    );
+    await taskFinish(config, "t1", { outcome: "approve" });
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.headers["Idempotency-Key"]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it("generates a different key on each invocation", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "done", priority: "MEDIUM" } }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "done", priority: "MEDIUM" } }),
+    );
+    await taskFinish(config, "t1", { outcome: "approve" });
+    await taskFinish(config, "t1", { outcome: "approve" });
+    const key1 = fetchMock.mock.calls[0]![1].headers["Idempotency-Key"];
+    const key2 = fetchMock.mock.calls[1]![1].headers["Idempotency-Key"];
+    expect(key1).not.toBe(key2);
+  });
+
+  it("rejects an invalid operation key before making any request", async () => {
+    await expect(
+      taskFinish(config, "t1", { outcome: "approve" }, "has a space"),
+    ).rejects.toBeInstanceOf(InvalidOperationKeyError);
+    await expect(
+      taskFinish(config, "t1", { outcome: "approve" }, "a".repeat(129)),
+    ).rejects.toBeInstanceOf(InvalidOperationKeyError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("also sends the operation key when finishing with autoMerge", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "done", priority: "MEDIUM" } }),
+    );
+    await taskFinish(config, "t1", { outcome: "approve", autoMerge: true }, "merge-key");
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.headers["Idempotency-Key"]).toBe("merge-key");
+    expect(JSON.parse(init.body)).toMatchObject({ autoMerge: true });
+  });
 });
 
 describe("taskAbandon", () => {
@@ -179,6 +236,135 @@ describe("taskAbandon", () => {
     await taskAbandon(config, "t1");
     expect(fetchMock.mock.calls[0]![0]).toBe("http://api.test/api/tasks/t1/abandon");
     expect(fetchMock.mock.calls[0]![1].method).toBe("POST");
+  });
+
+  it("forwards an explicit operation key unchanged", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "LOW" } }),
+    );
+    await taskAbandon(config, "t1", "abandon-key_1");
+    expect(fetchMock.mock.calls[0]![1].headers["Idempotency-Key"]).toBe("abandon-key_1");
+  });
+
+  it("generates a fresh key when omitted, different across invocations", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "LOW" } }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ task: { id: "t1", title: "x", status: "open", priority: "LOW" } }),
+    );
+    await taskAbandon(config, "t1");
+    await taskAbandon(config, "t1");
+    const key1 = fetchMock.mock.calls[0]![1].headers["Idempotency-Key"];
+    const key2 = fetchMock.mock.calls[1]![1].headers["Idempotency-Key"];
+    expect(key1).toBeTruthy();
+    expect(key1).not.toBe(key2);
+  });
+
+  it("rejects an invalid operation key before making any request", async () => {
+    await expect(taskAbandon(config, "t1", "bad key")).rejects.toBeInstanceOf(
+      InvalidOperationKeyError,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("createPullRequest", () => {
+  const input = {
+    taskId: "t1",
+    owner: "o",
+    repo: "r",
+    head: "feat/x",
+    base: "main",
+    title: "Add x",
+  };
+
+  it("forwards an explicit operation key unchanged in the header and the body", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ pullRequest: { number: 1, url: "https://github.com/o/r/pull/1" } }),
+    );
+    await createPullRequest(config, input, "create-key!");
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.headers["Idempotency-Key"]).toBe("create-key!");
+    expect(JSON.parse(init.body)).toMatchObject({ idempotencyKey: "create-key!" });
+  });
+
+  it("generates a fresh key when omitted, sent identically in both places", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ pullRequest: { number: 1, url: "https://github.com/o/r/pull/1" } }),
+    );
+    await createPullRequest(config, input);
+    const [, init] = fetchMock.mock.calls[0]!;
+    const headerKey = init.headers["Idempotency-Key"];
+    expect(headerKey).toBeTruthy();
+    expect(JSON.parse(init.body).idempotencyKey).toBe(headerKey);
+  });
+
+  it("generates a different key on each invocation", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ pullRequest: { number: 1, url: "https://github.com/o/r/pull/1" } }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ pullRequest: { number: 2, url: "https://github.com/o/r/pull/2" } }),
+    );
+    await createPullRequest(config, input);
+    await createPullRequest(config, input);
+    const key1 = fetchMock.mock.calls[0]![1].headers["Idempotency-Key"];
+    const key2 = fetchMock.mock.calls[1]![1].headers["Idempotency-Key"];
+    expect(key1).not.toBe(key2);
+  });
+
+  it("rejects an invalid operation key (whitespace, or 256 chars) before making any request", async () => {
+    await expect(createPullRequest(config, input, "has space")).rejects.toBeInstanceOf(
+      InvalidOperationKeyError,
+    );
+    await expect(createPullRequest(config, input, "a".repeat(256))).rejects.toBeInstanceOf(
+      InvalidOperationKeyError,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("mergePullRequest", () => {
+  const input = { taskId: "t1", owner: "o", repo: "r", merge_method: "squash" as const };
+
+  it("forwards an explicit operation key unchanged in the header and the body", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ merged: true, sha: "abc" }));
+    await mergePullRequest(config, 1, input, "merge-key.1");
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.headers["Idempotency-Key"]).toBe("merge-key.1");
+    expect(JSON.parse(init.body)).toMatchObject({ idempotencyKey: "merge-key.1" });
+  });
+
+  it("generates a fresh key when omitted, sent identically in both places", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ merged: true }));
+    await mergePullRequest(config, 1, input);
+    const [, init] = fetchMock.mock.calls[0]!;
+    const headerKey = init.headers["Idempotency-Key"];
+    expect(headerKey).toBeTruthy();
+    expect(JSON.parse(init.body).idempotencyKey).toBe(headerKey);
+  });
+
+  it("generates a different key on each invocation", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ merged: true }));
+    fetchMock.mockResolvedValueOnce(jsonResponse({ merged: true }));
+    await mergePullRequest(config, 1, input);
+    await mergePullRequest(config, 1, input);
+    const key1 = fetchMock.mock.calls[0]![1].headers["Idempotency-Key"];
+    const key2 = fetchMock.mock.calls[1]![1].headers["Idempotency-Key"];
+    expect(key1).not.toBe(key2);
+  });
+
+  it("rejects an invalid operation key (129 chars) before making any request", async () => {
+    await expect(
+      mergePullRequest(config, 1, input, "a".repeat(129)),
+    ).rejects.toBeInstanceOf(InvalidOperationKeyError);
+    // Merge uses the tighter format: printable-ASCII-but-not-alnum chars like
+    // '!' are valid for pr create but invalid here.
+    await expect(
+      mergePullRequest(config, 1, input, "has!bang"),
+    ).rejects.toBeInstanceOf(InvalidOperationKeyError);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
