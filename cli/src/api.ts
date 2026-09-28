@@ -1,12 +1,51 @@
 /**
  * Thin API client for agent-tasks.
  */
+import { randomUUID } from "node:crypto";
 import type { Config } from "./config.js";
 
 export class ApiError extends Error {
   constructor(public status: number, public body: unknown) {
     super(`API error ${status}: ${typeof body === "object" ? JSON.stringify(body) : body}`);
   }
+}
+
+// ── Operation keys (Idempotency-Key) ────────────────────────────────────────
+//
+// taskFinish, taskAbandon and mergePullRequest use the tighter format (it
+// matches the Grounding router's own pattern for those endpoints,
+// backend/src/routes/grounding-task-completion.ts and
+// grounding-github.ts's mergeKey); createPullRequest uses the relaxed
+// printable-ASCII format, a header-safe subset of the backend's own bounds
+// (\x21-\x7E, 1-255: grounding-github.ts's createKey and the legacy
+// github.ts body-field bound both accept a wider byte range, but a header
+// value can't safely carry whitespace or control bytes, so this format is
+// narrower than what the backend itself accepts). A caller-supplied
+// --operation-key is validated against the endpoint's own format and
+// forwarded unchanged; when omitted, a fresh UUID is generated for that
+// single call, so every one of these four calls always reaches the backend
+// with a key.
+export const OPERATION_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+export const PR_OPERATION_KEY_PATTERN = /^[\x21-\x7E]{1,255}$/;
+
+export class InvalidOperationKeyError extends Error {}
+
+// Exported so a caller (the CLI's own action handlers) can validate
+// --operation-key up front, before doing any other work such as resolving
+// an id prefix, without having to duplicate the pattern-match logic.
+export function assertValidOperationKey(explicit: string | undefined, pattern: RegExp, flagHint: string): void {
+  if (explicit === undefined) return;
+  if (!pattern.test(explicit)) {
+    throw new InvalidOperationKeyError(
+      `Invalid --operation-key for ${flagHint}: must match ${pattern}`,
+    );
+  }
+}
+
+function resolveOperationKey(explicit: string | undefined, pattern: RegExp, flagHint: string): string {
+  if (explicit === undefined) return randomUUID();
+  assertValidOperationKey(explicit, pattern, flagHint);
+  return explicit;
 }
 
 async function request<T>(config: Config, path: string, init?: RequestInit): Promise<T> {
@@ -487,19 +526,26 @@ export async function taskFinish(
   config: Config,
   taskId: string,
   body: FinishInput,
+  operationKey?: string,
 ): Promise<FinishResult> {
+  const key = resolveOperationKey(operationKey, OPERATION_KEY_PATTERN, "finish");
   return request<FinishResult>(
     config,
     `/api/tasks/${taskId}/finish`,
-    { method: "POST", body: JSON.stringify(body) },
+    { method: "POST", body: JSON.stringify(body), headers: { "Idempotency-Key": key } },
   );
 }
 
-export async function taskAbandon(config: Config, taskId: string): Promise<{ task: Task }> {
+export async function taskAbandon(
+  config: Config,
+  taskId: string,
+  operationKey?: string,
+): Promise<{ task: Task }> {
+  const key = resolveOperationKey(operationKey, OPERATION_KEY_PATTERN, "abandon");
   return request<{ task: Task }>(
     config,
     `/api/tasks/${taskId}/abandon`,
-    { method: "POST" },
+    { method: "POST", headers: { "Idempotency-Key": key } },
   );
 }
 
@@ -590,11 +636,17 @@ export interface CreatePullRequestInput {
 export async function createPullRequest(
   config: Config,
   input: CreatePullRequestInput,
+  operationKey?: string,
 ): Promise<PullRequestRef> {
+  const key = resolveOperationKey(operationKey, PR_OPERATION_KEY_PATTERN, "pr create");
   const { pullRequest } = await request<{ pullRequest: PullRequestRef }>(
     config,
     "/api/github/pull-requests",
-    { method: "POST", body: JSON.stringify(input) },
+    {
+      method: "POST",
+      body: JSON.stringify({ ...input, idempotencyKey: key }),
+      headers: { "Idempotency-Key": key },
+    },
   );
   return pullRequest;
 }
@@ -613,11 +665,17 @@ export async function mergePullRequest(
   config: Config,
   prNumber: number,
   input: MergePullRequestInput,
+  operationKey?: string,
 ): Promise<{ merged: boolean; sha?: string; message?: string }> {
+  const key = resolveOperationKey(operationKey, OPERATION_KEY_PATTERN, "pr merge");
   return request<{ merged: boolean; sha?: string; message?: string }>(
     config,
     `/api/github/pull-requests/${prNumber}/merge`,
-    { method: "POST", body: JSON.stringify(input) },
+    {
+      method: "POST",
+      body: JSON.stringify({ ...input, idempotencyKey: key }),
+      headers: { "Idempotency-Key": key },
+    },
   );
 }
 

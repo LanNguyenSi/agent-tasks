@@ -56,6 +56,8 @@ expectedFinishState: IN_REVIEW
 
 **v2 verb API (preferred).** `pickup`, `tasks start`, `tasks finish`, `tasks abandon`, `tasks submit-pr`. These mirror the agent-tasks MCP tools one-for-one and are the canonical shape for agent automation. `tasks finish` is polymorphic: pass `--pr-url` for a work-claim, `--outcome approve` (or `request_changes`) for a review-claim. See [docs/commands.md](docs/commands.md#tasks-v2-verbs) for the flag matrix.
 
+`tasks finish`, `tasks abandon`, `github pr create` and `github pr merge` all accept an optional `--operation-key <key>` and always send an `Idempotency-Key`. Omit it and a fresh key is generated for that one invocation, safe for a one-off call, but a regenerated key differs every time, so it does not make a retry idempotent on its own. To retry a timed-out call idempotently, generate your own key up front and pass that same `--operation-key` value again on the retry -- this holds for the two `github pr` commands on both the grounding and the legacy route (a retry sent while the first call is still in flight may run once more), and for `tasks finish`/`tasks abandon` only for a grounding-provisioned task; elsewhere the legacy handler ignores the key and a retry just re-runs the call. See [docs/commands.md#idempotency-keys](docs/commands.md#idempotency-keys).
+
 **v1 aliases (deprecated).** `tasks claim`, `tasks release`, `tasks status`, `review *` still work but emit a one-line stderr deprecation warning on first use. They will be removed in a future release. See [docs/commands.md](docs/commands.md#deprecated-v1-commands) for the migration table.
 
 ## Typical agent loop

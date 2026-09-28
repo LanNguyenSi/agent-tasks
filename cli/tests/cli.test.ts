@@ -147,6 +147,182 @@ describe("tasks finish argument validation", () => {
     expect(res.status).toBe(1);
     expect(res.stderr).toContain("--merge-method must be one of merge, squash, rebase");
   });
+
+  it("rejects an invalid --operation-key before any network call", () => {
+    const res = run([
+      "tasks",
+      "finish",
+      "00000000-0000-0000-0000-000000000000",
+      "--outcome",
+      "approve",
+      "--operation-key",
+      "has a space",
+    ]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("Invalid --operation-key");
+  });
+});
+
+describe("tasks abandon --operation-key validation", () => {
+  it("rejects an invalid --operation-key before any network call", () => {
+    const res = run([
+      "tasks",
+      "abandon",
+      "00000000-0000-0000-0000-000000000000",
+      "--operation-key",
+      "a".repeat(129),
+    ]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("Invalid --operation-key");
+  });
+});
+
+describe("github pr create/merge --operation-key validation", () => {
+  it("rejects an invalid --operation-key on pr create before any network call", () => {
+    const res = run([
+      "github",
+      "pr",
+      "create",
+      "--task",
+      "00000000-0000-0000-0000-000000000000",
+      "--owner",
+      "o",
+      "--repo",
+      "r",
+      "--head",
+      "feat/x",
+      "--base",
+      "main",
+      "--title",
+      "Add x",
+      "--operation-key",
+      "has a space",
+    ]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("Invalid --operation-key");
+  });
+
+  it("rejects an invalid --operation-key on pr merge before any network call", () => {
+    const res = run([
+      "github",
+      "pr",
+      "merge",
+      "1",
+      "--task",
+      "00000000-0000-0000-0000-000000000000",
+      "--owner",
+      "o",
+      "--repo",
+      "r",
+      "--operation-key",
+      "!not-allowed",
+    ]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("Invalid --operation-key");
+  });
+});
+
+describe("wiring: tasks finish --auto-merge sends the operation key", () => {
+  it("forwards --operation-key as the Idempotency-Key header on a finish with --auto-merge", async () => {
+    let receivedHeader: string | undefined;
+    const { endpoint, close } = await startStubServer((req, res) => {
+      receivedHeader = req.headers["idempotency-key"] as string | undefined;
+      respondJson(res, 200, {
+        task: { id: "00000000-0000-0000-0000-000000000000", title: "x", status: "done", priority: "MEDIUM" },
+      });
+    });
+    try {
+      const res = await runAgainst(endpoint, [
+        "tasks",
+        "finish",
+        "00000000-0000-0000-0000-000000000000",
+        "--outcome",
+        "approve",
+        "--auto-merge",
+        "--operation-key",
+        "wiring-key.1",
+      ]);
+      expect(res.stderr).toBe("");
+      expect(res.status).toBe(0);
+      expect(receivedHeader).toBe("wiring-key.1");
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("wiring: tasks abandon sends the operation key", () => {
+  it("forwards --operation-key as the Idempotency-Key header on abandon", async () => {
+    let receivedHeader: string | undefined;
+    const { endpoint, close } = await startStubServer((req, res) => {
+      receivedHeader = req.headers["idempotency-key"] as string | undefined;
+      respondJson(res, 200, {
+        task: { id: "00000000-0000-0000-0000-000000000000", title: "x", status: "open", priority: "LOW" },
+      });
+    });
+    try {
+      const res = await runAgainst(endpoint, [
+        "tasks",
+        "abandon",
+        "00000000-0000-0000-0000-000000000000",
+        "--operation-key",
+        "abandon-wiring-key.1",
+      ]);
+      expect(res.stderr).toBe("");
+      expect(res.status).toBe(0);
+      expect(receivedHeader).toBe("abandon-wiring-key.1");
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("wiring: --operation-key is validated before an id prefix is resolved", () => {
+  it("rejects an invalid --operation-key on finish with zero requests, even with an id prefix", async () => {
+    let requestCount = 0;
+    const { endpoint, close } = await startStubServer((_req, res) => {
+      requestCount += 1;
+      respondJson(res, 200, { matches: [] });
+    });
+    try {
+      const res = await runAgainst(endpoint, [
+        "tasks",
+        "finish",
+        "abc12345",
+        "--outcome",
+        "approve",
+        "--operation-key",
+        "has a space",
+      ]);
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain("Invalid --operation-key");
+      expect(requestCount).toBe(0);
+    } finally {
+      await close();
+    }
+  });
+
+  it("rejects an invalid --operation-key on abandon with zero requests, even with an id prefix", async () => {
+    let requestCount = 0;
+    const { endpoint, close } = await startStubServer((_req, res) => {
+      requestCount += 1;
+      respondJson(res, 200, { matches: [] });
+    });
+    try {
+      const res = await runAgainst(endpoint, [
+        "tasks",
+        "abandon",
+        "abc12345",
+        "--operation-key",
+        "has a space",
+      ]);
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain("Invalid --operation-key");
+      expect(requestCount).toBe(0);
+    } finally {
+      await close();
+    }
+  });
 });
 
 describe("tasks create option surface", () => {
