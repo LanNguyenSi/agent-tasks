@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-28T07:54:48Z
+timestamp: 2026-09-28T08:35:48Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -39,7 +39,7 @@ task without server enrollment keeps that same compatibility behavior for
 local completion, but a fresh remote operation (task merge, GitHub merge,
 finish with `autoMerge`) instead returns `409 grounding_enrollment_required`
 before any remote effect (`grounding-task-completion.ts:117`,
-`routes/grounding-github.ts:151`) when the task's project is in the configured
+`routes/grounding-github.ts:150`) when the task's project is in the configured
 `creationPolicy` scope, or when any repository or PR number the legacy handler
 could act on (request owner/repo and PR URL, deliverable, project and stored
 PR URL repository; path, task and PR URL number) belongs to a selected project

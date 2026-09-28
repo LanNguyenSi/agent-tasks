@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-09-28T07:54:48Z
+timestamp: 2026-09-28T08:35:48Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -78,7 +78,7 @@ historical unprovisioned handlers remain separate, and a configured app's
 fresh remote operation (task merge, GitHub merge, finish with `autoMerge`) on
 an unenrolled task returns `409 grounding_enrollment_required` before any
 remote effect rather than falling back to the unprovisioned handler
-(`grounding-task-completion.ts:117`, `routes/grounding-github.ts:151`) when
+(`grounding-task-completion.ts:117`, `routes/grounding-github.ts:150`) when
 that task's project is in the configured `creationPolicy` scope, or when any
 repository or PR number the legacy handler could act on (request owner/repo
 and PR URL, deliverable, project and stored PR URL repository; path, task and
