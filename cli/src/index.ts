@@ -193,8 +193,10 @@ tasks
   .option(
     "--operation-key <key>",
     "Idempotency key for this finish (1-128 chars: letters, digits, '.', '_', ':', '-'). " +
-      "A fresh key is generated per invocation when omitted; to retry a timed-out finish " +
-      "idempotently, pass the same --operation-key again.",
+      "A fresh key is generated per invocation when omitted; passing the same --operation-key " +
+      "again makes a retry idempotent only where the backend enforces operation keys " +
+      "(a provisioned or pilot-scoped grounding project) -- a legacy finish ignores the key, " +
+      "so a retry there just re-runs the finish.",
   )
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
@@ -252,8 +254,10 @@ tasks
   .option(
     "--operation-key <key>",
     "Idempotency key for this abandon (1-128 chars: letters, digits, '.', '_', ':', '-'). " +
-      "A fresh key is generated per invocation when omitted; to retry a timed-out abandon " +
-      "idempotently, pass the same --operation-key again.",
+      "A fresh key is generated per invocation when omitted; passing the same --operation-key " +
+      "again makes a retry idempotent only where the backend enforces operation keys " +
+      "(a provisioned or pilot-scoped grounding project) -- a legacy abandon ignores the key, " +
+      "so a retry there just re-runs the abandon.",
   )
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
