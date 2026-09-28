@@ -46,6 +46,7 @@
  * in `triologue-agent-gateway`.
  */
 
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -342,20 +343,65 @@ function buildServer(token: string): McpServer {
     },
   );
 
+  // Same five-tool key contract as the stdio package
+  // (mcp-server/src/tools.ts): task_finish/task_merge/task_abandon and
+  // pull_requests_create/pull_requests_merge always send an
+  // operation/idempotency key (the caller's explicit value when given,
+  // otherwise a fresh one generated per call), so an unconfigured
+  // (legacy) backend keeps working unchanged while a provisioned
+  // Grounding backend always receives one. pull_requests_merge is narrowed
+  // to the operationKey format because the Grounding merge route requires
+  // it; pull_requests_create uses the more permissive header-safe
+  // printable-ASCII format (createIdempotencyKey).
   const operationKey = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
-  const completionHeaders = (key: string | undefined) => key === undefined ? undefined : { "Idempotency-Key": key };
+  const createIdempotencyKey = z.string().regex(/^[\x21-\x7E]{1,255}$/);
+  // Each hint below starts with the input field name it documents
+  // ("operationKey:" / "idempotencyKey:") so the word "optional" reads as
+  // "this parameter is optional", not "this tool call is optional".
+  //
+  // Retry-safety differs between the five tools. The GitHub PR routes
+  // (pull_requests_create/merge) always dedupe on the key: the legacy
+  // `/api/github/pull-requests*` routes store one tool_invocations row per
+  // successful call (pruned by the idempotency TTL sweep), replay the stored
+  // 2xx response with `_idempotent_replay: true` on a same-key retry, and
+  // reject the same key with a different payload with 409
+  // (services/idempotency.ts); the Grounding GitHub router keys its durable
+  // operation on the same value. The three task-completion verbs dedupe only
+  // where the backend enforces operation keys, that is for a provisioned
+  // task on a backend with Grounding configured. On an unconfigured backend,
+  // or for an unprovisioned task, the completion request either reaches the
+  // legacy handler in `tasks.ts`, which ignores the key, or, for a remote
+  // merge (task_merge, or task_finish with autoMerge) where grounding
+  // enforcement applies to the task, is refused with 409
+  // grounding_enrollment_required before any effect. Either way, reusing
+  // the key does not make the retry idempotent there.
+  const GENERATED_KEY_NOTE =
+    " When omitted, a fresh key is generated for this single call; a generated key differs on every call, so it does not make a retry idempotent.";
+  const PR_RETRY_NOTE =
+    " To retry the same operation safely (for example after a network timeout), generate your own key up front and pass the same value on the retry: the backend replays the stored 2xx response for a repeated key and rejects the same key with a different payload with 409, whether or not Grounding is provisioned.";
+  const OPERATION_KEY_HINT =
+    " operationKey: optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." +
+    GENERATED_KEY_NOTE +
+    " Reusing your own key on a retry makes that retry idempotent only where the backend enforces operation keys (a provisioned task on a Grounding-configured backend). On an unconfigured backend, or for an unprovisioned task, the key is ignored and a retry is not deduplicated.";
+  const MERGE_IDEMPOTENCY_KEY_HINT =
+    " idempotencyKey: optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." + GENERATED_KEY_NOTE + PR_RETRY_NOTE;
+  const CREATE_KEY_HINT =
+    " idempotencyKey: optional, 1-255 printable ASCII chars, no whitespace." + GENERATED_KEY_NOTE + PR_RETRY_NOTE;
+  const resolveOperationKey = (explicit: string | undefined): string => explicit ?? randomUUID();
+  const completionHeaders = (key: string) => ({ "Idempotency-Key": key });
 
   server.registerTool(
     "task_finish",
     {
-      description: "Finish a task. Provisioned external-grounding tasks require operationKey; reuse that key only for the same retry.",
+      description: "Finish a task. Provisioned external-grounding completion always receives a key." + OPERATION_KEY_HINT,
       inputSchema: {
         taskId: uuid(), result: z.string().max(5000).optional(), prUrl: httpUrl().optional(),
         outcome: z.enum(["approve", "request_changes"]).optional(), autoMerge: z.boolean().optional(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(), operationKey: operationKey.optional(),
       },
     },
-    async ({ taskId, operationKey: key, ...body }) => {
+    async ({ taskId, operationKey: explicitKey, ...body }) => {
+      const key = resolveOperationKey(explicitKey);
       try { return textResult(await callSelf(`/api/tasks/${taskId}/finish`, { method: "POST", body, headers: completionHeaders(key) }, token)); }
       catch (e) { return errorResult(e); }
     },
@@ -364,10 +410,11 @@ function buildServer(token: string): McpServer {
   server.registerTool(
     "task_merge",
     {
-      description: "Merge the task's registered pull request. Provisioned external-grounding tasks require operationKey; reuse that key only for the same retry.",
+      description: "Merge the task's registered pull request. Provisioned external-grounding merge always receives a key." + OPERATION_KEY_HINT,
       inputSchema: { taskId: uuid(), mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(), operationKey: operationKey.optional() },
     },
-    async ({ taskId, mergeMethod, operationKey: key }) => {
+    async ({ taskId, mergeMethod, operationKey: explicitKey }) => {
+      const key = resolveOperationKey(explicitKey);
       try { return textResult(await callSelf(`/api/tasks/${taskId}/merge`, { method: "POST", body: { ...(mergeMethod === undefined ? {} : { mergeMethod }) }, headers: completionHeaders(key) }, token)); }
       catch (e) { return errorResult(e); }
     },
@@ -376,10 +423,11 @@ function buildServer(token: string): McpServer {
   server.registerTool(
     "task_abandon",
     {
-      description: "Release the active task claim. Provisioned external-grounding tasks require operationKey; reuse that key only for the same retry.",
+      description: "Release the active task claim. Provisioned external-grounding abandonment always receives a key." + OPERATION_KEY_HINT,
       inputSchema: { taskId: uuid(), operationKey: operationKey.optional() },
     },
-    async ({ taskId, operationKey: key }) => {
+    async ({ taskId, operationKey: explicitKey }) => {
+      const key = resolveOperationKey(explicitKey);
       try { return textResult(await callSelf(`/api/tasks/${taskId}/abandon`, { method: "POST", body: {}, headers: completionHeaders(key) }, token)); }
       catch (e) { return errorResult(e); }
     },
@@ -714,7 +762,7 @@ function buildServer(token: string): McpServer {
     "pull_requests_create",
     {
       description:
-        "Create a GitHub pull request bound to a task via delegation. The backend dispatches the create call through a team member who has connected GitHub and enabled 'Allow agents to create PRs'; on success the task's branchName, prUrl, and prNumber are patched server-side. Requires token scope tasks:update. base defaults to 'main' — pass the repo's actual default branch (e.g. 'master') explicitly if it differs.",
+        "Create a GitHub pull request bound to a task via delegation. The backend dispatches the create call through a team member who has connected GitHub and enabled 'Allow agents to create PRs'; on success the task's branchName, prUrl, and prNumber are patched server-side. Requires token scope tasks:update. base defaults to 'main' — pass the repo's actual default branch (e.g. 'master') explicitly if it differs." + CREATE_KEY_HINT,
       inputSchema: {
         taskId: uuid(),
         owner: z.string().min(1),
@@ -723,14 +771,15 @@ function buildServer(token: string): McpServer {
         base: z.string().min(1).optional(),
         title: z.string().min(1),
         body: z.string().optional(),
-        idempotencyKey: z.string().trim().min(1).max(255).optional(),
+        idempotencyKey: createIdempotencyKey.optional(),
       },
     },
-    async (args) => {
+    async ({ idempotencyKey, ...rest }) => {
+      const key = resolveOperationKey(idempotencyKey);
       try {
         const r = await callSelf(
           "/api/github/pull-requests",
-          { method: "POST", body: args },
+          { method: "POST", body: { ...rest, idempotencyKey: key }, headers: completionHeaders(key) },
           token,
         );
         return textResult(r);
@@ -744,19 +793,20 @@ function buildServer(token: string): McpServer {
     "pull_requests_merge",
     {
       description:
-        "Merge a GitHub pull request via delegation and auto-transition the linked task to 'done'. Dispatched through a team member with 'Allow agents to merge PRs' consent. Idempotent on PRs that are already merged. Requires token scope tasks:transition. mergeMethod defaults to 'squash'. REQUIRES the task to be in 'review' state (or already 'done' for re-entry) — tasks in 'open' / 'in_progress' are rejected with 403. If the project has `requireDistinctReviewer` enabled, the merge caller must not be the task's claimant and must have already taken the review lock via tasks_transition→review plus the review-claim flow. To bypass these gates, a team admin can force-transition the task to 'done' via tasks_transition with force=true first, then call this tool.",
+        "Merge a GitHub pull request via delegation and auto-transition the linked task to 'done'. Dispatched through a team member with 'Allow agents to merge PRs' consent. Idempotent on PRs that are already merged. Requires token scope tasks:transition. mergeMethod defaults to 'squash'. REQUIRES the task to be in 'review' state (or already 'done' for re-entry) — tasks in 'open' / 'in_progress' are rejected with 403. If the project has `requireDistinctReviewer` enabled, the merge caller must not be the task's claimant and must have already taken the review lock via tasks_transition→review plus the review-claim flow. To bypass these gates, a team admin can force-transition the task to 'done' via tasks_transition with force=true first, then call this tool." + MERGE_IDEMPOTENCY_KEY_HINT,
       inputSchema: {
         taskId: uuid(),
         owner: z.string().min(1),
         repo: z.string().min(1),
         prNumber: z.number().int().positive(),
         mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
-        idempotencyKey: z.string().trim().min(1).max(255).optional(),
+        idempotencyKey: operationKey.optional(),
       },
     },
-    async ({ prNumber, mergeMethod, ...rest }) => {
+    async ({ prNumber, mergeMethod, idempotencyKey, ...rest }) => {
+      const key = resolveOperationKey(idempotencyKey);
       try {
-        const body: Record<string, unknown> = { ...rest };
+        const body: Record<string, unknown> = { ...rest, idempotencyKey: key };
         if (mergeMethod !== undefined) {
           // Backend field is snake_case `merge_method`; MCP tool uses
           // camelCase for wire-format consistency with the other tools.
@@ -764,7 +814,7 @@ function buildServer(token: string): McpServer {
         }
         const r = await callSelf(
           `/api/github/pull-requests/${prNumber}/merge`,
-          { method: "POST", body },
+          { method: "POST", body, headers: completionHeaders(key) },
           token,
         );
         return textResult(r);

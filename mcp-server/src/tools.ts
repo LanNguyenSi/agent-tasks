@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z, ZodRawShape } from "zod";
 import { AgentTasksClient, AgentTasksApiError, ProjectSlugNotFoundError } from "./client.js";
 import { WORKFLOW_PRIMER } from "./primer.js";
@@ -59,7 +60,66 @@ const priorityEnum = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 
 const uuid = () => z.string().uuid();
 const operationKey = () => z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
+// pull_requests_create's idempotencyKey: printable ASCII without whitespace
+// (\x21-\x7E only), 1-255 chars. That is a header-safe subset of the legacy
+// bound (the github.ts body field: any string, trimmed, 1-255 chars), which
+// the Grounding router's createKey (backend/src/routes/grounding-github.ts)
+// repeats. pull_requests_merge is narrowed to the operationKey format
+// because the Grounding merge route requires it.
+const createIdempotencyKey = () => z.string().regex(/^[\x21-\x7E]{1,255}$/);
 const MAX_GROUNDING_RECEIPT_BYTES = 32_768;
+
+// Description suffixes for the five operation-key inputs below
+// (task_finish/task_merge/task_abandon's `operationKey`, pull_requests_
+// create/merge's `idempotencyKey`). A generated key is fresh per call and
+// therefore not stable across separate calls: it makes a first attempt safe
+// but does nothing for a retry. To make a network-timeout retry idempotent,
+// the caller generates the key up front and passes the same value on both
+// the original call and the retry. That reuse only helps where the
+// receiving route enforces operation keys, which differs per tool:
+// - The two GitHub PR verbs always dedupe on the key. The legacy
+//   `/api/github/pull-requests*` routes store one tool_invocations row per
+//   successful call (pruned by the idempotency TTL sweep), replay the stored
+//   2xx response with `_idempotent_replay: true` on a same-key retry, and
+//   reject the same key with a different payload with 409
+//   (backend/src/services/idempotency.ts); the Grounding GitHub router keys
+//   its durable operation on the same value.
+// - task_finish/task_merge/task_abandon dedupe only where the backend
+//   enforces operation keys: a provisioned task on a Grounding-configured
+//   backend. On an unconfigured backend, or for an unprovisioned task, the
+//   request either reaches the legacy completion handler, which ignores the
+//   key, or, for a remote merge (task_merge, or task_finish with autoMerge)
+//   where grounding enforcement applies to the task, is refused with 409
+//   grounding_enrollment_required before any effect.
+const GENERATED_KEY_NOTE =
+  " When omitted, a fresh key is generated for this single call; a generated key differs on every call, so it does not make a retry idempotent.";
+const PR_RETRY_NOTE =
+  " To retry the same operation safely (for example after a network timeout), generate your own key up front and pass the same value on the retry: the backend replays the stored 2xx response for a repeated key and rejects the same key with a different payload with 409, whether or not Grounding is provisioned.";
+
+// task_finish/task_merge/task_abandon: attached to the operationKey field
+// itself via .describe().
+const OPERATION_KEY_HINT =
+  " Optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." +
+  GENERATED_KEY_NOTE +
+  " Reusing your own key on a retry makes that retry idempotent only where the backend enforces operation keys (a provisioned task on a Grounding-configured backend). On an unconfigured backend, or for an unprovisioned task, the key is ignored and a retry is not deduplicated.";
+
+// pull_requests_merge/pull_requests_create: appended to the tool
+// description, so each starts with the field name to keep "optional" from
+// reading as "this tool call is optional". Same 1-128 format as
+// OPERATION_KEY_HINT for merge; create's wider format is explained at
+// createIdempotencyKey() above.
+const MERGE_KEY_HINT =
+  " idempotencyKey: optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." + GENERATED_KEY_NOTE + PR_RETRY_NOTE;
+const CREATE_KEY_HINT =
+  " idempotencyKey: optional, 1-255 printable ASCII chars, no whitespace." + GENERATED_KEY_NOTE + PR_RETRY_NOTE;
+
+/** Resolves the operation key to actually send: the caller's explicit key
+ *  when given (already validated by the calling tool's own zod schema),
+ *  otherwise a freshly generated one so every call reaches the backend with
+ *  a key even when the caller supplies none. */
+function resolveOperationKey(explicit: string | undefined): string {
+  return explicit ?? randomUUID();
+}
 
 // ── Receipt contract (docs/response-contract-v1.md) ─────────────────────────
 //
@@ -376,7 +436,7 @@ export function buildTools(
         outcome: z.enum(["approve", "request_changes"]).optional(),
         autoMerge: z.boolean().optional(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
-        operationKey: operationKey().optional().describe("Required by provisioned external-grounding completion. Reuse the same key only to retry the same operation."),
+        operationKey: operationKey().optional().describe("Provisioned external-grounding completion always receives a key." + OPERATION_KEY_HINT),
         include: includeSchema,
       },
       handler: async ({ taskId, include, operationKey, ...body }) => {
@@ -388,7 +448,8 @@ export function buildTools(
         if (body.result !== undefined && looksLikeStructuredWrapper(body.result)) {
           throw new Error(serializeTeachingError(resultMustBePlainStringError("task_finish")));
         }
-        const response = await wrap(() => client.finishTask(taskId, body, operationKey), "task_finish");
+        const key = resolveOperationKey(operationKey);
+        const response = await wrap(() => client.finishTask(taskId, body, key), "task_finish");
         if (include?.includes("task")) return response;
         return receiptForFinish(response as FinishResponse);
       },
@@ -540,9 +601,10 @@ export function buildTools(
       name: "task_abandon",
       description:
         "Explicit bail-out: release the active claim on a task without finishing. A work claim on an in_progress task returns it to open; a review claim simply releases the review lock. Use this sparingly — task_finish is the normal path. Separate intent from finish so audit trails distinguish abandonment from completion.\n\nReturns a receipt by default ({ ok, task: { id, status } }). Pass include:[\"task\"] for the full backend object.",
-      inputShape: { taskId: uuid(), operationKey: operationKey().optional().describe("Required by provisioned external-grounding abandonment. Reuse it only to retry the same operation."), include: includeSchema },
+      inputShape: { taskId: uuid(), operationKey: operationKey().optional().describe("Provisioned external-grounding abandonment always receives a key." + OPERATION_KEY_HINT), include: includeSchema },
       handler: async ({ taskId, operationKey, include }) => {
-        const response = await wrap(() => client.abandonTask(taskId, operationKey));
+        const key = resolveOperationKey(operationKey);
+        const response = await wrap(() => client.abandonTask(taskId, key));
         if (include?.includes("task")) return response;
         return receiptForAbandon(response as AbandonResponse);
       },
@@ -694,11 +756,12 @@ export function buildTools(
       inputShape: {
         taskId: uuid(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),
-        operationKey: operationKey().optional().describe("Required by provisioned external-grounding merge. Reuse the same key only to retry the same operation."),
+        operationKey: operationKey().optional().describe("Provisioned external-grounding merge always receives a key." + OPERATION_KEY_HINT),
         include: includeSchema,
       },
       handler: async ({ taskId, mergeMethod, operationKey, include }) => {
-        const response = await wrap(() => client.mergeTask(taskId, mergeMethod, operationKey));
+        const key = resolveOperationKey(operationKey);
+        const response = await wrap(() => client.mergeTask(taskId, mergeMethod, key));
         if (include?.includes("task")) return response;
         return receiptForMerge(response as MergeResponse);
       },
@@ -1037,7 +1100,7 @@ export function buildTools(
     def({
       name: "pull_requests_create",
       description:
-        "Create a pull request on behalf of a team member with GitHub connected. Requires `github:pr_create` scope for agent callers plus an operator who has opted in via 'Allow agents to create PRs' in Settings. The task is updated with `branchName`, `prUrl`, `prNumber` on success. The historic alternative — agents running `gh pr create` themselves and passing the URL into `task_finish { prUrl }` — still works and remains a supported fallback for orgs that prefer not to share a GitHub identity with agent-tasks. Pass `idempotencyKey` (client-generated, any unique string ≤255 chars) to make the call safe to retry after a network timeout — the backend replays the stored 2xx response on subsequent calls with the same key, and rejects the same key + different payload with 409.",
+        "Create a pull request on behalf of a team member with GitHub connected. Requires `github:pr_create` scope for agent callers plus an operator who has opted in via 'Allow agents to create PRs' in Settings. The task is updated with `branchName`, `prUrl`, `prNumber` on success. The historic alternative — agents running `gh pr create` themselves and passing the URL into `task_finish { prUrl }` — still works and remains a supported fallback for orgs that prefer not to share a GitHub identity with agent-tasks." + CREATE_KEY_HINT,
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),
@@ -1046,33 +1109,39 @@ export function buildTools(
         base: z.string().min(1).optional(),
         title: z.string().min(1),
         body: z.string().optional(),
-        idempotencyKey: z.string().trim().min(1).max(255).optional(),
+        idempotencyKey: createIdempotencyKey().optional(),
       },
-      handler: async (input) => wrap(() => client.createPullRequest(input), "pull_requests_create"),
+      handler: async ({ idempotencyKey, ...rest }) => {
+        const key = resolveOperationKey(idempotencyKey);
+        return wrap(() => client.createPullRequest({ ...rest, idempotencyKey: key }), "pull_requests_create");
+      },
     }),
     def({
       name: "pull_requests_merge",
       description:
-        "GitHub-identifier merge variant (taskId + owner + repo + prNumber). Prefer `task_merge` when you already hold the taskId — it derives owner/repo/PR number from the task, enforces the same self-merge gate, and avoids having to pass GitHub metadata around. Requires `github:pr_merge` scope for agent callers. Supports `idempotencyKey` (see `pull_requests_create`) for retry-safety across network timeouts.",
+        "GitHub-identifier merge variant (taskId + owner + repo + prNumber). Prefer `task_merge` when you already hold the taskId — it derives owner/repo/PR number from the task, enforces the same self-merge gate, and avoids having to pass GitHub metadata around. Requires `github:pr_merge` scope for agent callers. Supports `idempotencyKey` (see `pull_requests_create`) for retry-safety across network timeouts." + MERGE_KEY_HINT,
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),
         repo: z.string().min(1),
         prNumber: z.number().int().positive(),
         mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
-        idempotencyKey: z.string().trim().min(1).max(255).optional(),
+        idempotencyKey: operationKey().optional(),
       },
-      handler: async ({ mergeMethod, ...rest }) =>
-        wrap(() =>
+      handler: async ({ mergeMethod, idempotencyKey, ...rest }) => {
+        const key = resolveOperationKey(idempotencyKey);
+        return wrap(() =>
           client.mergePullRequest({
             ...rest,
+            idempotencyKey: key,
             // The backend schema field is snake_case `merge_method`. The
             // MCP tool surface uses camelCase `mergeMethod` to match the
             // convention of the other MCP tools (branchName, prUrl, etc.)
             // and translates here at the client boundary.
             ...(mergeMethod !== undefined ? { merge_method: mergeMethod } : {}),
           }),
-        ),
+        );
+      },
     }),
     def({
       name: "pull_requests_comment",

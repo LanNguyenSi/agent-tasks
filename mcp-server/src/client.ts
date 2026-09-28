@@ -587,6 +587,16 @@ export class AgentTasksClient {
   // depend on the GitHub delegation token of a user who has connected
   // GitHub and opted in to PR actions — see backend/src/routes/github.ts.
 
+  // Both the configured Grounding router (backend/src/routes/
+  // grounding-github.ts, mounted at /api/github when any Grounding
+  // capability is configured) and the always-mounted legacy router
+  // (backend/src/routes/github.ts) accept `idempotencyKey` as a body
+  // field. Only the Grounding router additionally reads an
+  // `Idempotency-Key` header (preferred there when both are present, and
+  // required there when the body field is absent). Sending the identical
+  // value in both keeps the legacy router's own body-based dedupe working
+  // unchanged while also satisfying the Grounding router's header
+  // requirement.
   createPullRequest(input: {
     taskId: string;
     owner: string;
@@ -597,7 +607,8 @@ export class AgentTasksClient {
     body?: string;
     idempotencyKey?: string;
   }) {
-    return this.request<unknown>("POST", "/api/github/pull-requests", input);
+    return this.request<unknown>("POST", "/api/github/pull-requests", input,
+      input.idempotencyKey === undefined ? undefined : { "Idempotency-Key": input.idempotencyKey });
   }
 
   mergePullRequest(input: {
@@ -613,6 +624,7 @@ export class AgentTasksClient {
       "POST",
       `/api/github/pull-requests/${prNumber}/merge`,
       body,
+      body.idempotencyKey === undefined ? undefined : { "Idempotency-Key": body.idempotencyKey },
     );
   }
 

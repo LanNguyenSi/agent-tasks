@@ -421,6 +421,239 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     expect(response.body).toMatchObject({ result: { content: [{ text: expect.stringContaining('"pending": true') }] } });
   });
 
+  // Operation/idempotency-key coverage for the five remote-MCP tools that
+  // now always send a key (see mcp.ts's resolveOperationKey): the caller's
+  // explicit key is forwarded unchanged, and an omitted key is replaced by
+  // a freshly generated one so a provisioned Grounding backend always
+  // receives one while an unconfigured (legacy) backend keeps working
+  // (it just ignores the header/field it does not require).
+  const TASK_ID = "33333333-3333-3333-3333-333333333333";
+
+  it.each([
+    { name: "task_finish", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/finish` },
+    { name: "task_merge", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/merge` },
+    { name: "task_abandon", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/abandon` },
+  ])("$name forwards an explicit operationKey as Idempotency-Key unchanged", async ({ name, args, path }) => {
+    await callTool(name, { ...args, operationKey: "explicit-key-1" });
+    expect(recorded[0]).toMatchObject({ method: "POST", path });
+    expect(recorded[0].idempotencyKey).toBe("explicit-key-1");
+  });
+
+  it.each([
+    { name: "task_finish", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/finish` },
+    { name: "task_merge", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/merge` },
+    { name: "task_abandon", args: { taskId: TASK_ID }, path: `/api/tasks/${TASK_ID}/abandon` },
+  ])("$name generates an Idempotency-Key header when operationKey is omitted", async ({ name, args, path }) => {
+    await callTool(name, args);
+    expect(recorded[0]).toMatchObject({ method: "POST", path });
+    expect(recorded[0].idempotencyKey).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+  });
+
+  it.each(["task_finish", "task_merge", "task_abandon"])(
+    "%s generates a DIFFERENT Idempotency-Key on each call when operationKey is omitted",
+    async (name) => {
+      await callTool(name, { taskId: TASK_ID });
+      await callTool(name, { taskId: TASK_ID });
+      expect(recorded).toHaveLength(2);
+      expect(recorded[0].idempotencyKey).toBeTruthy();
+      expect(recorded[1].idempotencyKey).toBeTruthy();
+      expect(recorded[0].idempotencyKey).not.toBe(recorded[1].idempotencyKey);
+    },
+  );
+
+  it("pull_requests_create forwards an explicit idempotencyKey unchanged, as both header and body", async () => {
+    await callTool("pull_requests_create", {
+      taskId: TASK_ID,
+      owner: "o",
+      repo: "r",
+      head: "b",
+      title: "t",
+      idempotencyKey: "explicit-key-2",
+    });
+    expect(recorded[0]).toMatchObject({ method: "POST", path: "/api/github/pull-requests" });
+    expect(recorded[0].idempotencyKey).toBe("explicit-key-2");
+    expect((recorded[0].body as { idempotencyKey?: string }).idempotencyKey).toBe("explicit-key-2");
+  });
+
+  it("pull_requests_create generates an idempotencyKey (header + body) when omitted", async () => {
+    await callTool("pull_requests_create", { taskId: TASK_ID, owner: "o", repo: "r", head: "b", title: "t" });
+    const bodyKey = (recorded[0].body as { idempotencyKey?: string }).idempotencyKey;
+    expect(bodyKey).toBeTruthy();
+    expect(recorded[0].idempotencyKey).toBe(bodyKey);
+  });
+
+  it("pull_requests_merge forwards an explicit idempotencyKey unchanged, as both header and body", async () => {
+    await callTool("pull_requests_merge", {
+      taskId: TASK_ID,
+      owner: "o",
+      repo: "r",
+      prNumber: 1,
+      idempotencyKey: "explicit-key-3",
+    });
+    expect(recorded[0]).toMatchObject({ method: "POST", path: "/api/github/pull-requests/1/merge" });
+    expect(recorded[0].idempotencyKey).toBe("explicit-key-3");
+    expect((recorded[0].body as { idempotencyKey?: string }).idempotencyKey).toBe("explicit-key-3");
+  });
+
+  it("pull_requests_merge generates an idempotencyKey (header + body) when omitted", async () => {
+    await callTool("pull_requests_merge", { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 });
+    const bodyKey = (recorded[0].body as { idempotencyKey?: string }).idempotencyKey;
+    expect(bodyKey).toBeTruthy();
+    expect(recorded[0].idempotencyKey).toBe(bodyKey);
+  });
+
+  // Format-narrowing coverage: pull_requests_create's idempotencyKey uses
+  // the wider createIdempotencyKey pattern (printable ASCII, 1-255, may
+  // contain '/'), while pull_requests_merge and the three task_* verbs use
+  // the operationKey pattern (1-128 chars of [A-Za-z0-9._:-]). A
+  // mutant that widens pull_requests_merge's schema to createIdempotencyKey
+  // would let a 200-char key through and dispatch the merge call; the
+  // 200-char merge test below catches that.
+  it("pull_requests_create forwards a 200-char printable-ASCII idempotencyKey containing '/' unchanged, as both header and body", async () => {
+    const key = `${"a/".repeat(99)}aa`; // 200 chars, contains '/', outside operationKey's charset
+    expect(key).toHaveLength(200);
+    await callTool("pull_requests_create", {
+      taskId: TASK_ID,
+      owner: "o",
+      repo: "r",
+      head: "b",
+      title: "t",
+      idempotencyKey: key,
+    });
+    expect(recorded[0]).toMatchObject({ method: "POST", path: "/api/github/pull-requests" });
+    expect(recorded[0].idempotencyKey).toBe(key);
+    expect((recorded[0].body as { idempotencyKey?: string }).idempotencyKey).toBe(key);
+  });
+
+  // Accept side of both length caps: a key at exactly the upper bound is
+  // dispatched unchanged, so a lowered cap (1-200 for create, 1-100 for the
+  // operationKey format) fails here.
+  it("pull_requests_create dispatches a 255-char printable-ASCII idempotencyKey (the upper bound) unchanged, as both header and body", async () => {
+    const key = "a/~".repeat(85);
+    expect(key).toHaveLength(255);
+    await callTool("pull_requests_create", {
+      taskId: TASK_ID,
+      owner: "o",
+      repo: "r",
+      head: "b",
+      title: "t",
+      idempotencyKey: key,
+    });
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({ method: "POST", path: "/api/github/pull-requests" });
+    expect(recorded[0].idempotencyKey).toBe(key);
+    expect((recorded[0].body as { idempotencyKey?: string }).idempotencyKey).toBe(key);
+  });
+
+  it.each([
+    { name: "pull_requests_merge", args: { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 }, keyField: "idempotencyKey", path: "/api/github/pull-requests/1/merge", inBody: true },
+    { name: "task_finish", args: { taskId: TASK_ID }, keyField: "operationKey", path: `/api/tasks/${TASK_ID}/finish`, inBody: false },
+    { name: "task_merge", args: { taskId: TASK_ID }, keyField: "operationKey", path: `/api/tasks/${TASK_ID}/merge`, inBody: false },
+    { name: "task_abandon", args: { taskId: TASK_ID }, keyField: "operationKey", path: `/api/tasks/${TASK_ID}/abandon`, inBody: false },
+  ])("$name dispatches a 128-char $keyField (the upper bound) unchanged", async ({ name, args, keyField, path, inBody }) => {
+    const key = "Az09._:-".repeat(16);
+    expect(key).toHaveLength(128);
+    await callTool(name, { ...args, [keyField]: key });
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({ method: "POST", path });
+    expect(recorded[0].idempotencyKey).toBe(key);
+    expect((recorded[0].body as { idempotencyKey?: string }).idempotencyKey).toBe(inBody ? key : undefined);
+  });
+
+  it("rejects a pull_requests_create idempotencyKey containing whitespace before self-dispatch", async () => {
+    const response = await mcpRequest(
+      app,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "pull_requests_create", arguments: { taskId: TASK_ID, owner: "o", repo: "r", head: "b", title: "t", idempotencyKey: "has a space" } } },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
+  // Reject side of pull_requests_create's length cap and ASCII-only charset.
+  it.each([
+    { label: "a 256-char", key: "a".repeat(256) },
+    { label: "a non-ASCII", key: "nön-ascii" },
+    { label: "an empty", key: "" },
+  ])("rejects $label pull_requests_create idempotencyKey before self-dispatch", async ({ key }) => {
+    const response = await mcpRequest(
+      app,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "pull_requests_create", arguments: { taskId: TASK_ID, owner: "o", repo: "r", head: "b", title: "t", idempotencyKey: key } } },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
+  it.each([
+    { name: "pull_requests_merge", args: { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 }, keyField: "idempotencyKey" },
+    { name: "task_finish", args: { taskId: TASK_ID }, keyField: "operationKey" },
+    { name: "task_merge", args: { taskId: TASK_ID }, keyField: "operationKey" },
+    { name: "task_abandon", args: { taskId: TASK_ID }, keyField: "operationKey" },
+  ])("rejects a 129-char $keyField on $name before self-dispatch", async ({ name, args, keyField }) => {
+    const key = "a".repeat(129);
+    const response = await mcpRequest(
+      app,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { ...args, [keyField]: key } } },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
+  // Charset reject side of the operationKey format: '/' is printable ASCII
+  // (valid for pull_requests_create) but outside [A-Za-z0-9._:-].
+  it.each([
+    { name: "pull_requests_merge", args: { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 }, keyField: "idempotencyKey" },
+    { name: "task_finish", args: { taskId: TASK_ID }, keyField: "operationKey" },
+    { name: "task_merge", args: { taskId: TASK_ID }, keyField: "operationKey" },
+    { name: "task_abandon", args: { taskId: TASK_ID }, keyField: "operationKey" },
+  ])("rejects a $keyField containing '/' on $name before self-dispatch", async ({ name, args, keyField }) => {
+    const response = await mcpRequest(
+      app,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { ...args, [keyField]: "a/b" } } },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
+  it.each([
+    { name: "pull_requests_merge", args: { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 }, keyField: "idempotencyKey" },
+    { name: "task_finish", args: { taskId: TASK_ID }, keyField: "operationKey" },
+    { name: "task_merge", args: { taskId: TASK_ID }, keyField: "operationKey" },
+    { name: "task_abandon", args: { taskId: TASK_ID }, keyField: "operationKey" },
+  ])("rejects a $keyField that is empty on $name before self-dispatch", async ({ name, args, keyField }) => {
+    const response = await mcpRequest(
+      app,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { ...args, [keyField]: "" } } },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
+  it("rejects a 200-char idempotencyKey on pull_requests_merge before self-dispatch", async () => {
+    // Guards against a mutant that widens pull_requests_merge's schema from
+    // operationKey to createIdempotencyKey: a 200-char all-letter key is
+    // valid under the wide format but exceeds operationKey's 128-char cap,
+    // so it must still be rejected locally, before any self-dispatch call.
+    const key = "a".repeat(200);
+    const response = await mcpRequest(
+      app,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "pull_requests_merge", arguments: { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1, idempotencyKey: key } } },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
   it("rejects an oversized multibyte receipt before it reaches the REST route", async () => {
     const taskId = "33333333-3333-3333-3333-333333333333";
     const response = await mcpRequest(app, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "task_grounding_receipt_upload", arguments: { taskId, attemptId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", session: { id: "producer", revision: 1 }, receipt: "😀".repeat(8_193) } } }, { Authorization: "Bearer good_token" });
