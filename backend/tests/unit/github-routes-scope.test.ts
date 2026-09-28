@@ -56,6 +56,8 @@ function makeApp(actor: Actor) {
   const app = new Hono<{ Variables: AppVariables }>();
   app.use("*", async (c, next) => {
     c.set("actor", actor);
+    // An unconfigured application: its legacy handlers run no Grounding guard.
+    c.set("groundingRemoteTargetGuard", null);
     await next();
   });
   app.route("/", githubRouter);

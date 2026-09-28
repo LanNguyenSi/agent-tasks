@@ -1,6 +1,6 @@
 import { assertGroundingNotHeld } from "./grounding-hold.js";
 import { randomUUID } from "node:crypto";
-import { Prisma, type GroundingGithubMergeGroup, type GroundingOperation } from "@prisma/client";
+import { Prisma, type GroundingGithubMergeGroup, type GroundingOperation, type PrismaClient } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
 import { GroundingFinalizationService } from "./grounding-finalization.js";
 import { groundingDecisionDigest, type GroundingAfterCommit, type GroundingCompletionDependencies, type GroundingDecision } from "./grounding-completion.js";
@@ -12,6 +12,7 @@ import { acquireGithubFence, assertGithubFenceOwned, canonicalGithubRepo, releas
 import { githubGroundingMergeProvider, groundingMergeConsent, mergeIdentitySchema, type GroundingMergeProvider, type MergeIdentity, type MergeProof } from "./grounding-merge-provider.js";
 import { isTerminalState } from "./default-workflow.js";
 import { logGroundingDecision } from "./audit.js";
+import { groundingPeerTaskIds } from "./grounding-scope.js";
 
 function binding(task: GroundingTask) {
   const repo = task.deliverableRepo ?? task.project.githubRepo;
@@ -27,6 +28,23 @@ function exactProof(remote: MergeIdentity, proof: MergeProof) {
 function pending() { return { state: "DISPATCHED", pending: true }; }
 const completed = (state: string) => state === "COMPLETED" || state === "CANCELLED";
 
+/**
+ * Ids of tasks that are protected, EXTERNAL_V1, bound, or held and whose
+ * effective repository (deliverable/project repo, or PR URL repo) matches
+ * `repo`. The peer ids come from the enrollment and hold tables first
+ * (groundingPeerTaskIds, shared with the effect-boundary guard in
+ * grounding-scope.ts) and the tasks are then read by id, so the query never
+ * scans every task. discover() folds its own seed task in unconditionally
+ * regardless of protection status.
+ */
+export async function protectedGithubPeerIds(db: Prisma.TransactionClient | PrismaClient, input: { repo: string }) {
+  return db.$queryRaw<{ id: string }[]>`
+    SELECT t.id FROM tasks t JOIN projects p ON p.id = t."projectId"
+    WHERE t.id = ANY (${groundingPeerTaskIds})
+      AND (grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) = ${input.repo} OR grounding_github_pr_repo(t."prUrl") = ${input.repo})
+  `;
+}
+
 /** Configured opt-in service. A peer authorizes the shared merge, never its own completion effects. */
 export class GroundingGithubMergeService extends GroundingFinalizationService {
   private readonly groupProvider: GroundingMergeProvider;
@@ -36,14 +54,7 @@ export class GroundingGithubMergeService extends GroundingFinalizationService {
 
   private async discover(db: Prisma.TransactionClient, seed: GroundingTask) {
     const remote = binding(seed);
-    const relevant = await db.$queryRaw<{ id: string }[]>`
-      SELECT t.id FROM tasks t JOIN projects p ON p.id = t."projectId"
-      LEFT JOIN grounding_cohorts c ON c."taskId" = t.id LEFT JOIN grounding_bindings b ON b."taskId" = t.id
-      LEFT JOIN grounding_migration_states h ON h."taskId" = t.id
-      WHERE t.id = ${seed.id} OR ((c.protected OR c.mode = 'EXTERNAL_V1' OR b."taskId" IS NOT NULL OR h.held) AND (
-        grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) = ${remote.canonicalRepo} OR grounding_github_pr_repo(t."prUrl") = ${remote.canonicalRepo}
-      ))
-    `;
+    const relevant = [{ id: seed.id }, ...await protectedGithubPeerIds(db, { repo: remote.canonicalRepo })];
     const candidates = await db.task.findMany({ where: { id: { in: relevant.map(task => task.id) } }, include: { project: true, groundingCohort: true, groundingBinding: true, groundingMigrationState: true }, orderBy: { id: "asc" } });
     const result: GroundingTask[] = [];
     for (const task of candidates) {

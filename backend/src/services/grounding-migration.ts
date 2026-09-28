@@ -36,6 +36,12 @@ export class GroundingMigrationService {
     const request = parsed.data;
     const fingerprint = createHash("sha256").update(canonicalGroundingJson(request)).digest("hex");
     return groundingTransaction(this.deps.db, async db => {
+      // Admission before any Grounding read or lock: the task row, then the
+      // lock-free admin predicate, so a caller without it gets one 403 whatever
+      // the task's Grounding state. The locked check below repeats it.
+      const admitted = z.string().uuid().safeParse(taskId).success ? await db.task.findUnique({ where: { id: taskId }, select: { projectId: true } }) : null;
+      if (!admitted) throw new GroundingAccessError("not_found", 404);
+      if (actor.type !== "human" || !await hasProjectRole(actor, admitted.projectId, "ADMIN", db)) throw new GroundingAccessError("forbidden", 403);
       const task = await lockGroundingTask(db, taskId);
       await lockGroundingAuthority(db, actor, task.projectId);
       if (actor.type !== "human" || !await hasProjectRole(actor, task.projectId, "ADMIN", db)) throw new GroundingAccessError("forbidden", 403);
