@@ -641,10 +641,15 @@ it("the legacy creator accepts the same key in header and body and replays it fr
   expect(fetchCalls()).toEqual([`https://api.github.com/repos/${u.ownRepo}/pulls`]);
 });
 it("a finish with a malformed Idempotency-Key and an unknown body field reaches the legacy handler unchanged", async () => {
-  const tasks = [await unscopedTask(), await unscopedTask()];
-  const result = await sameAsUnconfigured(target => target.fetch(request({ result: "done", unknownField: true }, `/api/tasks/${tasks.shift()!.taskId}/finish`, "not a key/")));
-  expect(result.configured.status).toBe(result.unconfigured.status);
-  expect(result.configured.body).toMatchObject({ kind: "work", targetStatus: "review" });
-  expect(result.unconfigured.body).toMatchObject({ kind: "work", targetStatus: "review" });
+  // An unclaimed task makes the legacy handler reject the finish without side
+  // effects, so both applications see the same task state.
+  const u = await unscopedTask();
+  await store.db.task.update({ where: { id: u.taskId }, data: { claimedByAgentId: null } });
+  const before = await store.db.task.findUniqueOrThrow({ where: { id: u.taskId } });
+  const result = await sameAsUnconfigured(target => target.fetch(request({ result: "done", unknownField: true }, `/api/tasks/${u.taskId}/finish`, "not a key/")));
+  expect(result.configured).toEqual(result.unconfigured);
+  expect(result.configured.status).toBeGreaterThanOrEqual(400);
+  expect(result.configured.body).not.toMatchObject({ error: expect.stringMatching(/^grounding_/) });
+  expect(await store.db.task.findUniqueOrThrow({ where: { id: u.taskId } })).toEqual(before);
   expect(result.configuredCalls).toEqual([]);
 });
