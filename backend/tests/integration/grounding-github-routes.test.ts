@@ -15,6 +15,7 @@ import type { GroundingEnforcedScope } from "../../src/services/grounding-scope.
 import { completionFixture, completionStore, completionActor } from "../helpers/grounding-completion-fixtures.js";
 import { ids, session } from "../helpers/grounding-fixtures.js";
 import * as audit from "../../src/services/audit.js";
+import { GroundingReceiptVerificationError } from "../../src/services/grounding-receipt.js";
 
 let store: Awaited<ReturnType<typeof completionStore>>;
 let f: Awaited<ReturnType<typeof completionFixture>>;
@@ -652,4 +653,28 @@ it("a finish with a malformed Idempotency-Key and an unknown body field reaches 
   expect(result.configured.body).not.toMatchObject({ error: expect.stringMatching(/^grounding_/) });
   expect(await store.db.task.findUniqueOrThrow({ where: { id: u.taskId } })).toEqual(before);
   expect(result.configuredCalls).toEqual([]);
+});
+
+// A reservation that keeps failing to serialize while a concurrent same-key
+// request reserved and dispatched the operation is answered from that
+// operation's durable history, as a retry would be.
+it.each(["completed", "dispatched"])("a failed reservation whose key has %s durable history answers from that history", async state => {
+  await f.evidence("merge"); const a = app();
+  if (state === "dispatched") f.merge.mockRejectedValueOnce(new Error("pending"));
+  const first = await a.fetch(request(mergeBody())); expect(first.status).toBe(state === "completed" ? 200 : 202);
+  const saved = await first.json();
+  const lookup = vi.spyOn(f.service, "lookupRouteOperation").mockResolvedValueOnce(null);
+  const reserve = vi.spyOn(f.service, "reserveMerge").mockRejectedValueOnce(new GroundingReceiptVerificationError("grounding_verification_unavailable"));
+  const result = await a.fetch(request(mergeBody()));
+  expect(reserve).toHaveBeenCalledOnce(); expect(lookup).toHaveBeenCalledTimes(2);
+  if (state === "completed") { expect(result.status).toBe(200); expect(await result.json()).toEqual(saved); expect(result.headers.get("X-Idempotent-Replay")).toBe("true"); }
+  else { expect(result.status).toBe(202); expect(await result.json()).toEqual({ state: "DISPATCHED", pending: true }); }
+  expect(f.merge).toHaveBeenCalledOnce();
+});
+it("a failed reservation without durable history for its key still fails", async () => {
+  await f.evidence("merge");
+  vi.spyOn(f.service, "reserveMerge").mockRejectedValueOnce(new GroundingReceiptVerificationError("grounding_verification_unavailable"));
+  const result = await app().fetch(request(mergeBody()));
+  expect(result.status).toBe(503); expect(await result.json()).toMatchObject({ error: "grounding_verification_unavailable" });
+  expect(f.merge).not.toHaveBeenCalled();
 });

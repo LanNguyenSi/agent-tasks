@@ -170,7 +170,20 @@ export function createGroundingGithubRouter(deps: GroundingTaskCompletionDepende
         // resolves; an UNPROVISIONED task is never merged fresh here.
         if (context.mode === "UNPROVISIONED") return c.json({ error: "grounding_enrollment_required" }, 409);
         if (!keyValue) return c.json({ error: "grounding_operation_key_required", message: "Supply a unique Idempotency-Key for this logical operation; reuse it only for identical retries." }, 400);
-        await service.reserveMerge(taskId, actor, keyValue, { action: "merge", method: parsed.data.merge_method, route: { kind: "github_merge", transport: buildTransport(keyValue) } });
+        try { await service.reserveMerge(taskId, actor, keyValue, { action: "merge", method: parsed.data.merge_method, route: { kind: "github_merge", transport: buildTransport(keyValue) } }); }
+        catch (error) {
+          if (error instanceof GroundingAccessError && Number(error.status) !== 503) throw error;
+          // A concurrent same-key request may have reserved and dispatched the
+          // operation while this reservation kept failing to serialize; its
+          // durable history then answers this request as a retry would.
+          const current = await service.lookupRouteOperation(taskId, actor, keyValue, buildTransport(keyValue));
+          if (current?.state === "DISPATCHED") return c.json({ state: "DISPATCHED", pending: true }, 202);
+          if (current?.state === "COMPLETED" || current?.state === "CANCELLED") {
+            c.header("X-Idempotent-Replay", "true");
+            return groundingCompletionRouteResponse(c, current.result);
+          }
+          throw error;
+        }
       }
       const activeKey = keyValue!;
       if (previous?.state === "COMPLETED" || previous?.state === "CANCELLED") {
