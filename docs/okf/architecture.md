@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-28T13:30:23Z
+timestamp: 2026-09-28T13:36:04Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -74,7 +74,8 @@ repository unless it is held, since there is no Grounding comment path; any
 other peer on that PR still refuses it. Everything is read in one statement
 driven by the enrollment and hold tables (`grounding-scope.ts:71`). With
 configuration enabled the three legacy writes are sent with
-`redirect: "manual"`, and a GitHub redirect (a renamed or transferred
+`redirect: "manual"` (`backend/src/services/github-merge.ts:126`, `backend/src/routes/github.ts:282`,
+`backend/src/routes/github.ts:778`), and a GitHub redirect (a renamed or transferred
 repository) is answered with `409 github_redirect_refused` instead of being
 followed (`grounding-scope.ts:167`, `services/github-merge.ts:156`,
 `routes/github.ts:297`, `routes/github.ts:791`); the unconfigured app keeps

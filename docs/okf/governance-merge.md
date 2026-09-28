@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-09-28T13:30:23Z
+timestamp: 2026-09-28T13:36:04Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -131,7 +131,8 @@ automation. Grouped merge discovery and the boundary read the same peer-class
 ids from the enrollment and hold tables (`grounding-scope.ts:71`,
 `grounding-github-merge.ts:40`), and the boundary reads everything in one
 statement. With configuration enabled the three legacy writes go out with
-`redirect: "manual"`, and a GitHub redirect (a renamed or transferred
+`redirect: "manual"` (`backend/src/services/github-merge.ts:126`, `backend/src/routes/github.ts:282`,
+`backend/src/routes/github.ts:778`), and a GitHub redirect (a renamed or transferred
 repository) is answered with `409 github_redirect_refused` instead of being
 followed (`services/github-merge.ts:156`, `routes/github.ts:297`,
 `routes/github.ts:791`). The configured GitHub create and merge
