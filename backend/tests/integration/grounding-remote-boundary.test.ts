@@ -24,7 +24,7 @@ import { performPrMerge } from "../../src/services/github-merge.js";
 import { githubRouter } from "../../src/routes/github.js";
 import { completionFixture, completionStore, completionActor } from "../helpers/grounding-completion-fixtures.js";
 import { ids } from "../helpers/grounding-fixtures.js";
-import { aliasOf, canonicalRepo, githubStub, mergeSites, ownFence, peerTask, pullUrl, remoteSites, requesterTask, siteRequest, siteWrite, uniquePr, type PeerClass, type RemoteSite } from "../helpers/grounding-remote-sites.js";
+import { aliasOf, canonicalRepo, enrollTask, githubStub, mergeSites, mixedCase, ownFence, ownIntentFence, peerTask, pullUrl, remoteSites, requesterTask, siteRequest, siteWrite, uniquePr, type PeerClass, type RemoteSite } from "../helpers/grounding-remote-sites.js";
 import type { AppVariables } from "../../src/types/hono.js";
 
 let store: Awaited<ReturnType<typeof completionStore>>;
@@ -73,24 +73,30 @@ const nonPeerConditions: Record<string, (repo: string, pr: number) => PeerRow> =
   "peer on another PR of the repository": repo => { const other = uniquePr(); return ["held", repo, other, pullUrl(repo, other)]; },
   "peer on the same PR number of another repository": (_repo, pr) => { const other = canonicalRepo(); return ["held", other, pr, pullUrl(other, pr)]; },
 };
-const conditions = ["control", "enforced repository", "non-canonical repository", "owned fence", ...Object.keys(peerConditions), ...Object.keys(nonPeerConditions)];
+// The mixed-case cells send the target in a casing other than the lowercase
+// canonical identity the fence and peer rows are stored under.
+const mixedCaseFence = "mixed-case target, lowercase owned fence";
+const mixedCasePeer = "mixed-case target, lowercase peer row";
+const conditions = ["control", "enforced repository", "non-canonical repository", "owned fence", mixedCaseFence, mixedCasePeer, ...Object.keys(peerConditions), ...Object.keys(nonPeerConditions)];
 async function arrange(site: RemoteSite, condition: string) {
-  const repo = condition === "non-canonical repository" ? aliasOf(canonicalRepo()) : canonicalRepo();
+  const canonical = canonicalRepo();
+  const repo = condition === "non-canonical repository" ? aliasOf(canonical) : condition === mixedCaseFence || condition === mixedCasePeer ? mixedCase(canonical) : canonical;
   const prNumber = uniquePr();
   const scope = emptyScope();
   if (condition === "enforced repository") (scope.repos as Set<string>).add(repo.toLowerCase());
   const peer = peerConditions[condition] ?? nonPeerConditions[condition];
   if (peer) { const [kind, peerRepo, peerPr, peerUrl] = peer(repo, prNumber); await peerTask(store.db, kind, { repo: peerRepo, prNumber: peerPr, prUrl: peerUrl }); }
+  if (condition === mixedCasePeer) await peerTask(store.db, "held", { repo: canonical, prNumber, prUrl: null });
   const requester = await requesterTask(store.db, site, repo, targetPr(site, prNumber));
-  if (condition === "owned fence") await ownFence(store.db, repo);
+  if (condition === "owned fence" || condition === mixedCaseFence) await ownFence(store.db, canonical);
   return { requester, repo, prNumber, scope };
 }
 /** Which refusal the guard gives at a site, or null where the target reaches GitHub. */
 function expected(site: RemoteSite, condition: string): string | null {
   if (condition === "enforced repository" || condition === "non-canonical repository") return "grounding_enrollment_required";
-  if (condition === "owned fence") return site === "comment" ? null : "grounding_finalization_pending";
+  if (condition === "owned fence" || condition === mixedCaseFence) return site === "comment" ? null : "grounding_finalization_pending";
   // A create sends no PR number, so no peer PR can be its target.
-  if (condition in peerConditions) return site === "create" ? null : "grounding_enrollment_required";
+  if (condition in peerConditions || condition === mixedCasePeer) return site === "create" ? null : "grounding_enrollment_required";
   return null;
 }
 
@@ -246,20 +252,226 @@ describe("exact target", () => {
   });
 });
 
-describe("enrolled tasks on the legacy comment route", () => {
-  it("an EXTERNAL_V1 task's comment on its own PR is refused, since no Grounding comment path exists", async () => {
-    const enrolled = await completionFixture(store, "EXTERNAL_V1", deps => new GroundingGithubMergeService(deps));
-    const repo = canonicalRepo();
-    await store.db.project.update({ where: { id: enrolled.projectId }, data: { githubRepo: repo } });
-    await store.db.task.update({ where: { id: enrolled.taskId }, data: { prUrl: pullUrl(repo, 42) } });
+describe("fence of the requesting task's own repositories", () => {
+  // The legacy task write's fence trigger checks every repository of the task
+  // (its effective repository, its stored PR URL repository and its own active
+  // PR-create intents), not only the one the GitHub write goes to; a fence
+  // another operation owns on any of them would fail that write after the
+  // GitHub effect.
+  it.each(mergeSites)("%s: an owned fence on the task's stored PR URL repository refuses the merge of its project repository", async site => {
+    const repo = canonicalRepo(); const stored = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, site, repo, prNumber);
+    await store.db.task.update({ where: { id: requester.taskId }, data: { prUrl: pullUrl(stored, prNumber) } });
+    await ownFence(store.db, stored);
     const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
-    const response = await configured().fetch(siteRequest("comment", enrolled.taskId, repo, 42, token));
-    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "grounding_enrollment_required" });
+    const before = await store.db.task.findUniqueOrThrow({ where: { id: requester.taskId } });
+    const response = await configured().fetch(siteRequest(site, requester.taskId, repo, prNumber, token));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "grounding_finalization_pending", message: expect.any(String) });
     expect(github.calls).toEqual([]);
-    // The same comment on another PR of that repository goes through.
-    const other = await configured().fetch(siteRequest("comment", enrolled.taskId, repo, uniquePr(), token));
+    expect(await store.db.task.findUniqueOrThrow({ where: { id: requester.taskId } })).toEqual(before);
+  });
+  it("github-merge on a review task: an owned fence on the stored PR URL repository refuses the merge", async () => {
+    const repo = canonicalRepo(); const stored = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "github-merge", repo, prNumber);
+    await store.db.task.update({ where: { id: requester.taskId }, data: { status: "review", claimedByAgentId: null, reviewClaimedByAgentId: ids.agent, prUrl: pullUrl(stored, prNumber) } });
+    await ownFence(store.db, stored);
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured().fetch(siteRequest("github-merge", requester.taskId, repo, prNumber, token));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "grounding_finalization_pending", message: expect.any(String) });
+    expect(github.calls).toEqual([]);
+  });
+  it("create: an owned fence on the stored PR URL repository of a task without a project repository refuses a create elsewhere", async () => {
+    const stored = canonicalRepo(); const target = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "create", stored, prNumber);
+    await store.db.project.update({ where: { id: requester.projectId }, data: { githubRepo: null } });
+    await ownFence(store.db, stored);
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const before = await store.db.task.findUniqueOrThrow({ where: { id: requester.taskId } });
+    const response = await configured().fetch(siteRequest("create", requester.taskId, target, 1, token));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "grounding_finalization_pending", message: expect.any(String) });
+    expect(github.calls).toEqual([]);
+    expect(await store.db.task.findUniqueOrThrow({ where: { id: requester.taskId } })).toEqual(before);
+  });
+  it.each(["task-merge", "create"] as const)("%s: a fence the task's own active PR-create intent owns elsewhere refuses the write", async site => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, site, repo, targetPr(site, prNumber));
+    await ownIntentFence(store.db, requester.taskId, canonicalRepo());
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured().fetch(siteRequest(site, requester.taskId, repo, prNumber, token));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "grounding_finalization_pending", message: expect.any(String) });
+    expect(github.calls).toEqual([]);
+  });
+  it("a merge-kind intent of the task on an unrelated repository is not a repository its task write checks", async () => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "task-merge", repo, prNumber);
+    await ownIntentFence(store.db, requester.taskId, canonicalRepo(), "MERGE");
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured().fetch(siteRequest("task-merge", requester.taskId, repo, prNumber, token));
+    expect(response.status).toBe(200);
+    expect(github.writes()).toEqual([siteWrite("task-merge", repo, prNumber)]);
+  });
+  it("a create whose mixed-case target is fenced under its lowercase identity is refused, with no project repository to match", async () => {
+    const canonical = canonicalRepo();
+    const requester = await requesterTask(store.db, "create", canonicalRepo(), null);
+    await store.db.project.update({ where: { id: requester.projectId }, data: { githubRepo: null } });
+    await ownFence(store.db, canonical);
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured().fetch(siteRequest("create", requester.taskId, mixedCase(canonical), 1, token));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "grounding_finalization_pending", message: expect.any(String) });
+    expect(github.calls).toEqual([]);
+  });
+});
+
+describe("exact repository string sent", () => {
+  // The check runs on the string that goes into the GitHub URL, so a string
+  // with surrounding whitespace is refused rather than trimmed into a
+  // different identity.
+  it.each([["a leading space in the owner", " ", ""], ["a trailing no-break space in the name", "", " "]] as const)("create: %s is refused before GitHub", async (_label, ownerPad, namePad) => {
+    const requester = await requesterTask(store.db, "create", canonicalRepo(), null);
+    await store.db.project.update({ where: { id: requester.projectId }, data: { githubRepo: null } });
+    const [owner, name] = canonicalRepo().split("/");
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured().fetch(siteRequest("create", requester.taskId, `${ownerPad}${owner}/${name}${namePad}`, 1, token));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "grounding_enrollment_required", message: expect.any(String) });
+    expect(github.calls).toEqual([]);
+  });
+  it.each([["a leading space in the owner", " ", ""], ["a trailing no-break space in the name", "", " "]] as const)("comment: %s is refused before GitHub", async (_label, ownerPad, namePad) => {
+    const requester = await requesterTask(store.db, "comment", canonicalRepo(), null);
+    const [owner, name] = canonicalRepo().split("/");
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured().fetch(siteRequest("comment", requester.taskId, `${ownerPad}${owner}/${name}${namePad}`, uniquePr(), token));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "grounding_enrollment_required", message: expect.any(String) });
+    expect(github.calls).toEqual([]);
+  });
+  it.each(mergeSites)("%s: a project repository with surrounding whitespace is refused before GitHub", async site => {
+    const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, site, ` ${canonicalRepo()}\t`, prNumber);
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured().fetch(siteRequest(site, requester.taskId, requester.repo.trim(), prNumber, token));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "grounding_enrollment_required", message: expect.any(String) });
+    expect(github.calls).toEqual([]);
+  });
+});
+
+describe("requesting task that became a peer after routing", () => {
+  // The router handed the task on as unprovisioned; a merge or create is
+  // refused once it is protected, EXTERNAL_V1, bound or held, whatever PR
+  // number the handler sends.
+  it.each(["held", "protected", "external", "bound"] as const)("github-merge on a task without a stored PR, %s after routing, is refused on the path number", async kind => {
+    const repo = canonicalRepo();
+    const requester = await requesterTask(store.db, "github-merge", repo, null);
+    harness.afterRouting = async () => { harness.afterRouting = null; await enrollTask(store.db, kind, requester.taskId, requester.projectId); };
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured().fetch(siteRequest("github-merge", requester.taskId, repo, uniquePr(), token));
+    expect(harness.afterRouting).toBeNull();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "grounding_enrollment_required", message: expect.any(String) });
+    expect(github.calls).toEqual([]);
+  });
+  it("create by a task held after routing is refused", async () => {
+    const repo = canonicalRepo();
+    const requester = await requesterTask(store.db, "create", repo, null);
+    harness.afterRouting = async () => { harness.afterRouting = null; await enrollTask(store.db, "held", requester.taskId, requester.projectId); };
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured().fetch(siteRequest("create", requester.taskId, repo, 1, token));
+    expect(harness.afterRouting).toBeNull();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "grounding_enrollment_required", message: expect.any(String) });
+    expect(github.calls).toEqual([]);
+  });
+});
+
+describe("a task's comment on its own PR", () => {
+  // There is no Grounding comment path, so a task that is itself protected,
+  // EXTERNAL_V1 or bound, or whose project is enforced, comments on its own
+  // stored PR through the legacy commenter. A hold freezes the task; another
+  // peer on the PR, another PR of an enforced repository and another peer's PR
+  // stay refused.
+  async function enrolledTask() {
+    const enrolled = await completionFixture(store, "EXTERNAL_V1", deps => new GroundingGithubMergeService(deps));
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    await store.db.project.update({ where: { id: enrolled.projectId }, data: { githubRepo: repo } });
+    await store.db.task.update({ where: { id: enrolled.taskId }, data: { prNumber, prUrl: pullUrl(repo, prNumber) } });
+    return { taskId: enrolled.taskId, projectId: enrolled.projectId, repo, prNumber };
+  }
+  const enforcedScope = (repo: string, projectId?: string): GroundingEnforcedScope => ({ projectIds: new Set(projectId ? [projectId] : []), repos: new Set([repo]) });
+  async function comment(scope: GroundingEnforcedScope, taskId: string, repo: string, prNumber: number) {
+    const github = githubStub(); vi.stubGlobal("fetch", github.fetcher);
+    const response = await configured(scope).fetch(siteRequest("comment", taskId, repo, prNumber, token));
+    return { status: response.status, body: await response.json(), calls: github.calls };
+  }
+  const refused = { status: 409, body: { error: "grounding_enrollment_required", message: expect.any(String) }, calls: [] };
+  it("an EXTERNAL_V1 task comments on its own PR, in an enforced repository as well", async () => {
+    const task = await enrolledTask();
+    for (const scope of [emptyScope(), enforcedScope(task.repo)]) {
+      const answer = await comment(scope, task.taskId, task.repo, task.prNumber);
+      expect(answer.status).toBe(201);
+      expect(answer.calls).toEqual([siteWrite("comment", task.repo, task.prNumber)]);
+    }
+  });
+  it("a task of an enforced project comments on its own PR in its enforced repository", async () => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "comment", repo, prNumber);
+    const answer = await comment(enforcedScope(repo, requester.projectId), requester.taskId, repo, prNumber);
+    expect(answer.status).toBe(201);
+    expect(answer.calls).toEqual([siteWrite("comment", repo, prNumber)]);
+  });
+  it("another peer's PR in the task's repository stays refused", async () => {
+    const task = await enrolledTask(); const other = uniquePr();
+    await peerTask(store.db, "held", { repo: task.repo, prNumber: other, prUrl: pullUrl(task.repo, other) });
+    expect(await comment(emptyScope(), task.taskId, task.repo, other)).toEqual(refused);
+  });
+  it("the task's own PR stays refused while another peer also names it", async () => {
+    const task = await enrolledTask();
+    await peerTask(store.db, "held", { repo: task.repo, prNumber: task.prNumber, prUrl: null });
+    expect(await comment(emptyScope(), task.taskId, task.repo, task.prNumber)).toEqual(refused);
+  });
+  it("another PR of the enforced repository stays refused, with or without a stored PR URL", async () => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "comment", repo, prNumber);
+    expect(await comment(enforcedScope(repo, requester.projectId), requester.taskId, repo, uniquePr())).toEqual(refused);
+    await store.db.task.update({ where: { id: requester.taskId }, data: { prUrl: null } });
+    expect(await comment(enforcedScope(repo, requester.projectId), requester.taskId, repo, uniquePr())).toEqual(refused);
+  });
+  it("a PR URL naming another PR or another repository does not make the PR the task's own", async () => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "comment", repo, prNumber);
+    const scope = enforcedScope(repo, requester.projectId);
+    await store.db.task.update({ where: { id: requester.taskId }, data: { prUrl: pullUrl(repo, uniquePr()) } });
+    expect(await comment(scope, requester.taskId, repo, prNumber)).toEqual(refused);
+    await store.db.task.update({ where: { id: requester.taskId }, data: { prUrl: pullUrl(canonicalRepo(), prNumber) } });
+    expect(await comment(scope, requester.taskId, repo, prNumber)).toEqual(refused);
+  });
+  it("a task outside the scope does not comment on its own PR in an enforced repository", async () => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "comment", repo, prNumber);
+    expect(await comment(enforcedScope(repo), requester.taskId, repo, prNumber)).toEqual(refused);
+  });
+  it("a held task's comment on its own PR stays refused", async () => {
+    const repo = canonicalRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "comment", repo, prNumber);
+    await enrollTask(store.db, "held", requester.taskId, requester.projectId);
+    expect(await comment(emptyScope(), requester.taskId, repo, prNumber)).toEqual(refused);
+  });
+  it("an enrolled or held task's comment on an unrelated PR is not refused by its own class", async () => {
+    const task = await enrolledTask();
+    const other = await comment(emptyScope(), task.taskId, task.repo, uniquePr());
     expect(other.status).toBe(201);
-    expect(github.writes()).toHaveLength(1);
+    const repo = canonicalRepo();
+    const held = await requesterTask(store.db, "comment", repo, uniquePr());
+    await enrollTask(store.db, "held", held.taskId, held.projectId);
+    const unrelated = uniquePr();
+    const answer = await comment(emptyScope(), held.taskId, repo, unrelated);
+    expect(answer.status).toBe(201);
+    expect(answer.calls).toEqual([siteWrite("comment", repo, unrelated)]);
   });
 });
 

@@ -16,6 +16,8 @@ export type RemoteSite = (typeof remoteSites)[number];
 let nextPr = 300000;
 export const uniquePr = () => ++nextPr;
 export const canonicalRepo = () => `acme/r${randomUUID().replaceAll("-", "")}`;
+/** The same repository identity with every other character upper-cased. */
+export const mixedCase = (repo: string) => [...repo].map((ch, index) => (index % 2 ? ch.toUpperCase() : ch)).join("");
 /** The same repository with its name's first character percent-encoded. */
 export const aliasOf = (repo: string) => { const [owner, name] = repo.split("/"); return `${owner}/%${name!.charCodeAt(0).toString(16)}${name!.slice(1)}`; };
 
@@ -87,6 +89,11 @@ export async function peerTask(db: PrismaClient, kind: PeerClass, row: { repo: s
   const projectId = randomUUID(); const taskId = randomUUID();
   await db.project.create({ data: { id: projectId, teamId: ids.team, name: "Peer", slug: randomUUID(), githubRepo: row.repo } });
   await db.task.create({ data: { id: taskId, projectId, title: "Peer", status: "review", prNumber: row.prNumber, prUrl: row.prUrl } });
+  await enrollTask(db, kind, taskId, projectId);
+  return { taskId, projectId };
+}
+/** Puts an existing task in the given Grounding class (no rows for "none"). */
+export async function enrollTask(db: PrismaClient, kind: PeerClass, taskId: string, projectId: string) {
   if (kind === "protected") await db.groundingCohort.create({ data: { taskId, projectId, mode: "LEGACY_LOCAL", protected: true, provenance: "test-server", legacySessionId: "legacy.session", legacyPhase: "claim-evaluation" } });
   // An unprotected EXTERNAL_V1 cohort row is not a valid enrollment, which is
   // exactly why it isolates the EXTERNAL_V1 condition from protection.
@@ -94,9 +101,14 @@ export async function peerTask(db: PrismaClient, kind: PeerClass, row: { repo: s
   if (kind === "off") await db.groundingCohort.create({ data: { taskId, projectId, mode: "OFF", protected: false, provenance: "test-server" } });
   if (kind === "bound") await db.groundingBinding.create({ data: { taskId, projectId, audience: "consumer.test", protected: true, subjectMode: "CODE_HEAD", policyId: GROUNDING_POLICY.id, policyRevision: GROUNDING_POLICY.revision, policySha256: GROUNDING_POLICY.sha256 } });
   if (kind === "held" || kind === "released") await db.groundingMigrationState.create({ data: { taskId, projectId, held: kind === "held", revision: 1 } });
-  return { taskId, projectId };
 }
 export const pullUrl = (repo: string, prNumber: number) => `https://github.com/${repo}/pull/${prNumber}`;
+
+/** An active fence intent of the task, a PR create by default, owns `repo`'s fence. */
+export async function ownIntentFence(db: PrismaClient, taskId: string, repo: string, kind: "PR_CREATE" | "MERGE" = "PR_CREATE") {
+  const intent = await db.groundingGithubFenceIntent.create({ data: { id: randomUUID(), repo: repo.toLowerCase(), kind, taskId, state: "ACTIVE" } });
+  await db.groundingGithubRepositoryFence.upsert({ where: { repo: repo.toLowerCase() }, create: { repo: repo.toLowerCase(), ownerId: intent.id }, update: { ownerId: intent.id } });
+}
 
 /** Another operation owns `repo`'s fence. */
 export async function ownFence(db: PrismaClient, repo: string) {

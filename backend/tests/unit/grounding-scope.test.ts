@@ -3,7 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { Context } from "hono";
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: {} }));
 vi.mock("../../src/config/index.js", () => ({ config: { NODE_ENV: "test", SESSION_SECRET: "test-secret-which-is-long-enough-1234", TRUSTED_PROXY_HOPS: 0 } }));
-import { createGroundingRemoteTargetGuard, exactGithubRepo, groundingProjectEnforced, groundingRemoteGuardFor, groundingRemoteTargetRefusal, type GroundingEnforcedScope, type GroundingRemoteTarget } from "../../src/services/grounding-scope.js";
+import { createGroundingRemoteTargetGuard, exactGithubRepo, groundingPeerTaskIds, groundingProjectEnforced, groundingRedirectRefusal, groundingRemoteGuardFor, groundingRemoteTargetRefusal, isGithubRedirect, type GroundingEnforcedScope, type GroundingRemoteTarget } from "../../src/services/grounding-scope.js";
 import { assertGroundingScopeWired, createGroundingTaskCompletionRouter, type GroundingTaskCompletionDependencies } from "../../src/routes/grounding-task-completion.js";
 import { createGroundingGithubRouter } from "../../src/routes/grounding-github.js";
 import { GroundingFinalizationService } from "../../src/services/grounding-finalization.js";
@@ -13,9 +13,11 @@ import type { AppVariables } from "../../src/types/hono.js";
 const untouchedDb = new Proxy({}, { get: () => { throw new Error("database must not be queried"); } }) as unknown as PrismaClient;
 const emptyScope: GroundingEnforcedScope = { projectIds: new Set(), repos: new Set() };
 const target = (overrides: Partial<GroundingRemoteTarget> = {}): GroundingRemoteTarget => ({ repo: "acme/widget", prNumber: 7, kind: "merge", taskId: "task", ...overrides });
-/** A database whose single boundary statement answers with the given flags. */
-function answering(row: { peer: boolean; fenced: boolean } | undefined) {
-  const $queryRaw = vi.fn(async (..._args: unknown[]) => (row ? [row] : []));
+type BoundaryRow = { requesterPeer: boolean; ownPr: boolean; peer: boolean; fenced: boolean };
+const clear: BoundaryRow = { requesterPeer: false, ownPr: false, peer: false, fenced: false };
+/** A database whose single boundary statement answers with the given flags (the rest false). */
+function answering(row: Partial<BoundaryRow> | undefined) {
+  const $queryRaw = vi.fn(async (..._args: unknown[]) => (row ? [{ ...clear, ...row }] : []));
   return { db: { $queryRaw } as unknown as PrismaClient, $queryRaw };
 }
 /** The values bound into the boundary statement (a tagged template call), in order. */
@@ -42,11 +44,27 @@ describe("effect-boundary refusal", () => {
       expect(await groundingRemoteTargetRefusal(untouchedDb, emptyScope, target({ repo, kind }))).toMatchObject({ error: "grounding_enrollment_required", status: 409 });
     }
   });
-  it("refuses a repository an enforced project owns, in any casing, before any query", async () => {
+  it("refuses a merge or create on a repository an enforced project owns, in any casing, before any query", async () => {
     const scope: GroundingEnforcedScope = { projectIds: new Set(), repos: new Set(["acme/widget"]) };
-    for (const kind of ["merge", "create", "comment"] as const) {
+    for (const kind of ["merge", "create"] as const) {
       expect(await groundingRemoteTargetRefusal(untouchedDb, scope, target({ repo: "ACME/Widget", kind }))).toMatchObject({ error: "grounding_enrollment_required" });
     }
+  });
+  it("refuses a comment on an enforced repository unless the statement finds the requesting task's own PR, and never past another peer", async () => {
+    const scope: GroundingEnforcedScope = { projectIds: new Set(), repos: new Set(["acme/widget"]) };
+    const comment = target({ repo: "ACME/Widget", kind: "comment" });
+    expect(await groundingRemoteTargetRefusal(answering({}).db, scope, comment)).toMatchObject({ error: "grounding_enrollment_required", status: 409 });
+    expect(await groundingRemoteTargetRefusal(answering({ ownPr: true }).db, scope, comment)).toBeNull();
+    expect(await groundingRemoteTargetRefusal(answering({ ownPr: true, peer: true }).db, scope, comment)).toMatchObject({ error: "grounding_enrollment_required" });
+    expect(await groundingRemoteTargetRefusal(answering({ ownPr: true }).db, emptyScope, comment)).toBeNull();
+  });
+  it("refuses a merge or create when the requesting task is itself a peer, whatever PR it sends", async () => {
+    for (const kind of ["merge", "create"] as const) {
+      expect(await groundingRemoteTargetRefusal(answering({ requesterPeer: true }).db, emptyScope, target({ kind, prNumber: kind === "create" ? undefined : 7 }))).toMatchObject({ error: "grounding_enrollment_required", status: 409 });
+    }
+  });
+  it("does not refuse a comment for the requesting task's own class or for a fence", async () => {
+    expect(await groundingRemoteTargetRefusal(answering({ requesterPeer: true, fenced: true }).db, emptyScope, target({ kind: "comment" }))).toBeNull();
   });
   it("refuses a peer's PR as enrollment required, ahead of an owned fence", async () => {
     const { db } = answering({ peer: true, fenced: true });
@@ -64,19 +82,25 @@ describe("effect-boundary refusal", () => {
     const { db } = answering(undefined);
     expect(await groundingRemoteTargetRefusal(db, emptyScope, target())).toMatchObject({ error: "grounding_enrollment_required" });
   });
-  it("reads peer and fence in one statement, binding the canonical repository, the exact PR number and the fence flag", async () => {
-    const merge = answering({ peer: false, fenced: false });
-    await groundingRemoteTargetRefusal(merge.db, emptyScope, target({ repo: "Acme/Widget", prNumber: 12 }));
+  it("reads everything in one statement, binding the canonical repository, the exact PR number, the task, the scope's projects and the kind at every position", async () => {
+    const scope: GroundingEnforcedScope = { projectIds: new Set(["project-a", "project-b"]), repos: new Set() };
+    const peers = groundingPeerTaskIds;
+    // In statement order: the requester's peer flag; its own-PR test (comment
+    // flag, peer ids, scope projects, PR number, repository twice, PR number);
+    // the requester's id; the peer test (PR number, peer ids, requester id, PR
+    // number twice, repository twice); the fence flag and the target's fence.
+    const binding = (comment: boolean, pr: string | null, repo: string, taskId: string) =>
+      [peers, comment, peers, ["project-a", "project-b"], pr, repo, repo, pr, taskId, pr, peers, taskId, pr, pr, repo, repo, !comment, repo];
+    const merge = answering({});
+    await groundingRemoteTargetRefusal(merge.db, scope, target({ repo: "Acme/Widget", prNumber: 12, taskId: "task-1" }));
     expect(merge.$queryRaw).toHaveBeenCalledOnce();
-    expect(bound(merge.$queryRaw)).toEqual(expect.arrayContaining(["acme/widget", "12", true]));
-    const comment = answering({ peer: false, fenced: false });
-    await groundingRemoteTargetRefusal(comment.db, emptyScope, target({ kind: "comment" }));
-    expect(bound(comment.$queryRaw)).toContain(false);
-    expect(bound(comment.$queryRaw)).not.toContain(true);
-    const create = answering({ peer: false, fenced: false });
-    await groundingRemoteTargetRefusal(create.db, emptyScope, target({ kind: "create", prNumber: undefined }));
-    expect(bound(create.$queryRaw)).toContain(null);
-    expect(bound(create.$queryRaw)).toContain(true);
+    expect(bound(merge.$queryRaw)).toEqual(binding(false, "12", "acme/widget", "task-1"));
+    const comment = answering({});
+    await groundingRemoteTargetRefusal(comment.db, scope, target({ repo: "ACME/widget", kind: "comment", taskId: "task-2" }));
+    expect(bound(comment.$queryRaw)).toEqual(binding(true, "7", "acme/widget", "task-2"));
+    const create = answering({});
+    await groundingRemoteTargetRefusal(create.db, scope, target({ repo: "acme/WIDGET", kind: "create", prNumber: undefined, taskId: "task-3" }));
+    expect(bound(create.$queryRaw)).toEqual(binding(false, null, "acme/widget", "task-3"));
   });
   it("binds the guard to its scope and database", async () => {
     const { db, $queryRaw } = answering({ peer: false, fenced: true });
@@ -84,6 +108,21 @@ describe("effect-boundary refusal", () => {
     expect(await guard(target())).toMatchObject({ error: "grounding_finalization_pending" });
     expect($queryRaw).toHaveBeenCalledOnce();
     expect(await createGroundingRemoteTargetGuard({ db: untouchedDb, scope: undefined })(target())).toMatchObject({ error: "grounding_enrollment_required" });
+  });
+});
+
+describe("redirect answers to a legacy write", () => {
+  it.each([301, 302, 303, 307, 308])("treats a %i answer as a redirect", status => {
+    expect(isGithubRedirect(new Response(null, { status, headers: { Location: "/repositories/1" } }))).toBe(true);
+  });
+  it.each([200, 201, 204, 404, 405, 422, 500])("does not treat a %i answer as a redirect", status => {
+    expect(isGithubRedirect(new Response(null, { status }))).toBe(false);
+  });
+  it("treats an opaque redirect as a redirect", () => {
+    expect(isGithubRedirect({ type: "opaqueredirect", status: 0 } as Response)).toBe(true);
+  });
+  it("refuses with a 409 github_redirect_refused and a message", () => {
+    expect(groundingRedirectRefusal).toEqual({ error: "github_redirect_refused", status: 409, message: expect.stringContaining("renamed or transferred") });
   });
 });
 

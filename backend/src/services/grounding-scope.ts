@@ -79,42 +79,100 @@ export const groundingPeerTaskIds = Prisma.sql`ARRAY(
  * missing scope refuses every target. Otherwise the target is refused with
  * `grounding_enrollment_required` when its repository string is not a
  * canonical identity, when the repository belongs to an enforced project, or
- * when the PR is a peer's: a protected, EXTERNAL_V1, bound or held task
- * (including the requesting task itself, should it have become one) whose
+ * when the PR is a peer's: a protected, EXTERNAL_V1, bound or held task whose
  * effective repository or PR URL repository is the target repository and
  * whose own PR number or PR URL number is the target number, or such a task
  * whose repository string is not canonical (so it could be an alias of the
- * target repository) sharing the number. A merge or create whose repository
- * fence another operation owns is refused with `grounding_finalization_pending`,
- * because the legacy task write would then fail on the fence after the GitHub
- * effect. Comments take no fence. Peer and fence are read in one statement,
- * so the only window before the GitHub call is that one round trip.
+ * target repository) sharing the number. A merge or create is refused the same
+ * way when the requesting task is itself such a task, whatever PR number it
+ * sends: the router handed it on as unprovisioned, so it became one since.
+ *
+ * A comment may reach the requesting task's own stored PR (its PR number, in
+ * its effective repository, matching its PR URL when it has one) even in an
+ * enforced repository, when that task is protected, EXTERNAL_V1 or bound, or
+ * its project is enforced, and it is not held; any other peer on that PR
+ * still refuses it. There is no Grounding comment path, so this is the only
+ * way such a task comments on its own PR.
+ *
+ * A merge or create is refused with `grounding_finalization_pending` when
+ * another operation owns the fence of the target repository or of any
+ * repository the legacy task write's fence trigger checks for the requesting
+ * task (`grounding_github_task_repos`: its effective repository, its stored PR
+ * URL repository and the repositories its own active PR-create intents
+ * fence), because that task write would then fail on the fence after the
+ * GitHub effect. Comments write no task, so they take no fence. Everything is
+ * read in one statement, without the trigger's project lock, so the only
+ * window before the GitHub call is that one round trip.
  */
 export async function groundingRemoteTargetRefusal(db: PrismaClient | Prisma.TransactionClient, scope: GroundingEnforcedScope | undefined, target: GroundingRemoteTarget): Promise<GroundingRemoteRefusal | null> {
   if (!scope) return refusal("grounding_enrollment_required");
   const repo = exactGithubRepo(target.repo);
   if (repo === null) return refusal("grounding_enrollment_required");
-  if (scope.repos.has(repo)) return refusal("grounding_enrollment_required");
+  const comment = target.kind === "comment";
+  // Only the statement below can tell whether a comment goes to the requesting
+  // task's own PR, which an enforced repository does not refuse.
+  const enforced = scope.repos.has(repo);
+  if (enforced && !comment) return refusal("grounding_enrollment_required");
   const pr = target.prNumber === undefined ? null : String(target.prNumber);
-  const fenced = target.kind !== "comment";
-  const [row] = await db.$queryRaw<{ peer: boolean; fenced: boolean }[]>`
+  const fenced = !comment;
+  const [row] = await db.$queryRaw<{ requesterPeer: boolean; ownPr: boolean; peer: boolean; fenced: boolean }[]>`
+    WITH requester AS (
+      SELECT t.id,
+        t.id = ANY (${groundingPeerTaskIds}) AS peer,
+        (${comment}
+          AND NOT EXISTS (SELECT 1 FROM grounding_migration_states WHERE "taskId" = t.id AND held)
+          AND (t.id = ANY (${groundingPeerTaskIds}) OR t."projectId" = ANY (${[...scope.projectIds]}::text[]))
+          AND t."prNumber"::numeric = ${pr}::numeric
+          AND grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) = ${repo}
+          AND (t."prUrl" IS NULL OR (grounding_github_pr_repo(t."prUrl") = ${repo}
+            AND substring(t."prUrl" from '/pull/([0-9]+)')::numeric = ${pr}::numeric))) IS TRUE AS "ownPr",
+        ARRAY[coalesce(grounding_github_repo(t."deliverableRepo"), grounding_github_repo(p."githubRepo")),
+          grounding_github_pr_repo(t."prUrl")] || grounding_github_intent_repos(t.id) AS repos
+      FROM tasks t JOIN projects p ON p.id = t."projectId"
+      WHERE t.id = ${target.taskId}
+    )
     SELECT
+      coalesce(r.peer, false) AS "requesterPeer",
+      coalesce(r."ownPr", false) AS "ownPr",
       (${pr}::numeric IS NOT NULL AND EXISTS (
         SELECT 1 FROM tasks t JOIN projects p ON p.id = t."projectId"
         WHERE t.id = ANY (${groundingPeerTaskIds})
+          AND (t.id <> ${target.taskId} OR r."ownPr" IS NOT TRUE)
           AND (t."prNumber"::numeric = ${pr}::numeric
             OR substring(t."prUrl" from '/pull/([0-9]+)')::numeric = ${pr}::numeric)
           AND (grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) = ${repo}
             OR grounding_github_pr_repo(t."prUrl") = ${repo}
             OR (coalesce(t."deliverableRepo", p."githubRepo") <> '' AND grounding_github_repo(coalesce(t."deliverableRepo", p."githubRepo")) IS NULL)
             OR (t."prUrl" ~* 'github[.]com/[^/]+/[^/]+/pull/' AND grounding_github_pr_repo(t."prUrl") IS NULL)))) AS peer,
-      (${fenced} AND EXISTS (
-        SELECT 1 FROM grounding_github_repository_fences WHERE repo = ${repo} AND "ownerId" IS NOT NULL)) AS fenced
+      (${fenced} AND (EXISTS (
+        SELECT 1 FROM grounding_github_repository_fences WHERE repo = ${repo} AND "ownerId" IS NOT NULL)
+        OR EXISTS (
+        SELECT 1 FROM grounding_github_repository_fences WHERE repo = ANY (r.repos) AND "ownerId" IS NOT NULL))) AS fenced
+    FROM (VALUES (1)) AS statement LEFT JOIN requester r ON true
   `;
   if (!row) return refusal("grounding_enrollment_required");
   if (row.peer) return refusal("grounding_enrollment_required");
+  if (comment) return enforced && !row.ownPr ? refusal("grounding_enrollment_required") : null;
+  if (row.requesterPeer) return refusal("grounding_enrollment_required");
   if (row.fenced) return refusal("grounding_finalization_pending");
   return null;
+}
+
+/**
+ * With Grounding configured, a legacy GitHub write goes out with
+ * `redirect: "manual"`, and a redirect answer (GitHub's answer for a renamed
+ * or transferred repository) is refused instead of followed: following it
+ * would send the write to a repository the effect-boundary check never saw.
+ * GitHub performs no write when it answers with a redirect.
+ */
+export const groundingRedirectRefusal = {
+  error: "github_redirect_refused",
+  status: 409,
+  message: "GitHub redirected this write, so the repository was renamed or transferred. With Grounding configured, GitHub writes do not follow redirects; point the project or request at the repository's current name and retry.",
+} as const;
+/** Whether a GitHub answer to a write sent with `redirect: "manual"` is a redirect. */
+export function isGithubRedirect(response: Response): boolean {
+  return response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400);
 }
 
 /** The guard an enabled runtime installs for every legacy remote handler. */
