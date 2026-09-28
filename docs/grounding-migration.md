@@ -84,8 +84,11 @@ selected project existence, then derives the enforced scope from
 repository each of those projects owns. Startup then refuses when a project
 outside that enforced scope shares a (case-normalized) GitHub repository with
 an enforced one, so the boundary between enforced and legacy routing is never
-ambiguous per request; a project created or re-pointed after startup is not
-covered by this check. It then creates attempts, grouped merge/completion, PR
+ambiguous per request. It also refuses when an enforced project's repository
+is not a canonical `owner/repo` identity and, while the enforced scope owns a
+repository, when any project's repository is not canonical (an escaped name
+could be an alias of an enforced repository). A project created or re-pointed
+after startup is not covered by these checks. It then creates attempts, grouped merge/completion, PR
 creation, and migration services using one frozen configuration, scope, and
 the same Prisma database.
 
@@ -100,17 +103,29 @@ every candidate PR number (the path number, the task's PR number, and the
 number of the task's or the request's PR URL). The request is guarded when any
 candidate repository belongs to an enforced project, or when any candidate
 repository and PR number pair is shared with a protected, `EXTERNAL_V1` or
-held peer. Otherwise it reaches the same unchanged legacy handler, including
-when no operation key is supplied. PR creation for an unprovisioned task
-outside the enforced scope is routed the same way: with or without an
-operation key it reaches the legacy creator, which receives a header key as
-its body `idempotencyKey`. A key that already has durable grounding create
-history, or a task with an unfinished grounding create, stays with the grouped
-create service.
+held peer. A candidate repository string that is not a canonical `owner/repo`
+identity (a dot segment, a percent-encoded name, an owner containing `/`)
+cannot be compared, so it makes the request guarded as well. When the request
+is not guarded but another operation owns the repository fence of any
+candidate repository, it returns `409 grounding_finalization_pending` before
+any GitHub call, because the legacy handler could not record its effect.
+Otherwise it reaches the same unchanged legacy handler, including when no
+operation key is supplied. PR creation for an unprovisioned task outside the
+enforced scope is routed the same way: with or without an operation key it
+reaches the legacy creator, which reads the key from the `Idempotency-Key`
+header or the body `idempotencyKey`. A key that already has durable grounding
+create history, or a task with an unfinished grounding create, stays with the
+grouped create service; a guarded create follows the grouped create contract.
 
-Remote merge and PR-create routing outside the enforced scope therefore match
-the legacy application, but enabling the configuration is not free of side
-effects: an enabled runtime writes grounding history (webhook deliveries, for
+To decide, the GitHub create and merge routes read only the task id, the body
+owner/repo, any well-formed key for the durable-history lookup, and the path
+PR number parsed as the legacy handler parses it. A request routed to the
+legacy handler reaches it unmodified: the Grounding key format, strict body,
+path and header/body key checks apply only to requests the Grounding services
+handle. Outside the enforced scope the differences from the unconfigured
+application are therefore the guarded and fenced refusals above and the agent
+and scope admission check that runs before routing. Enabling the configuration
+is also not free of side effects: an enabled runtime writes grounding history (webhook deliveries, for
 example) even for projects outside the scope, and a later unconfigured restart
 refuses that history. Enabling configuration is therefore one-way. Rollback
 from a first enabled deploy means keeping an enabled configuration with an
@@ -119,12 +134,16 @@ history is never enrolled implicitly. Local compatibility behavior and
 existing authorization remain as described in the
 [receipt contract](grounding-receipt-contract.md).
 
-The peer check above is a point-in-time read, not a lock. It accepts a
-residual race: an administrator who rebinds a protected task's repository or
-PR concurrently with a legacy merge already in flight against that same PR is
-not fenced by that read. Closing it would mean serializing every legacy write
-against the administrative rebind path, which this design deliberately does
-not do; the race is accepted, not eliminated.
+The scope, peer and fence checks above are point-in-time reads, not locks. They
+accept a residual race: any change between that read and the legacy handler's
+GitHub call that would have made the request guarded is not seen. That covers
+every change that makes some task a protected, `EXTERNAL_V1` or held peer of
+the targeted PR or repository, for example an administrator rebinding a
+task's repository or PR, a migration hold placed on a task, or a task's
+enrollment, and a grouped operation acquiring a candidate repository's fence
+after the read. Closing it would mean serializing every legacy remote write
+against those paths, which this design deliberately does not do; the race is
+accepted, not eliminated.
 
 The same selection enrolls new REST tasks, import rows, and signed GitHub
 issue-created tasks atomically with their creation. Agent REST creation still

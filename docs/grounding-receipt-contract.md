@@ -177,27 +177,45 @@ repository of the task's or the request's PR URL; the candidate PR numbers are
 the path number, the task's PR number, and the number of the task's or the
 request's PR URL. A request is guarded when any candidate repository belongs to
 a selected project, or when any candidate repository and PR number pair is
-shared with a protected, `EXTERNAL_V1` or held peer. Guarded requests return
+shared with a protected, `EXTERNAL_V1` or held peer, or when any candidate
+repository string is not a canonical `owner/repo` identity (a dot segment, a
+percent-encoded name, an owner containing `/`). Guarded requests return
 `409 grounding_enrollment_required` before a remote effect, including when no
-operation key is supplied. Otherwise the request reaches the same unchanged
-legacy handler. Startup itself refuses to start when a project outside the
-enforced scope shares a GitHub repository with an enforced one, so the
-scope/legacy boundary is never ambiguous per request; a project created or
-re-pointed after startup is not covered by that check. The peer read above is
-informational and point-in-time, not a lock: it accepts a residual race where
-an administrator rebinds a protected task's repository or PR concurrently with
-a legacy merge already in flight against that same PR, rather than fencing it.
+operation key is supplied. A request that is not guarded returns
+`409 grounding_finalization_pending` before any GitHub call when another
+operation owns the repository fence of any candidate repository; otherwise it
+reaches the same unchanged legacy handler. Startup itself refuses to start
+when a project outside the enforced scope shares a GitHub repository with an
+enforced one, when an enforced project's repository is not canonical, and,
+while the enforced scope owns a repository, when any project's repository is
+not canonical, so the scope/legacy boundary is never ambiguous per request; a
+project created or re-pointed after startup is not covered by those checks.
+The scope, peer and fence reads above are point-in-time, not locks. They
+accept a residual race: any change between the read and the legacy handler's
+GitHub call that would have made the request guarded is not seen, which
+covers every change that makes some task a protected, `EXTERNAL_V1` or held
+peer of the targeted PR or repository (an administrator rebinding a task's
+repository or PR, a migration hold, a task's enrollment) and a grouped
+operation acquiring a candidate repository's fence after the read.
 Existing durable operations retain their operation-bound recovery path.
 Unprovisioned local completion and the original unconfigured application
 retain their defined compatibility behavior.
 
 PR creation for an unprovisioned task that is not guarded by the same scope,
 repository and peer checks reaches the legacy creator with or without an
-operation key; a header key is forwarded to it as the body `idempotencyKey`, so
-legacy key replay applies. A key with durable grounding create history, and
-any task with an unfinished grounding create, stay with the grouped create
-service. Remote merge and PR-create routing outside the enforced scope
-therefore match the legacy application. Enabling configuration still writes
+operation key; the legacy creator reads the key from the `Idempotency-Key`
+header or the body `idempotencyKey` (both present must be equal), so legacy
+key replay applies. A key with durable grounding create history, and any task
+with an unfinished grounding create, stay with the grouped create service; a
+guarded create follows the grouped create contract. To decide, the GitHub
+create and merge routes read only the task id, the body owner/repo, any
+well-formed key for the durable-history lookup, and the path PR number parsed
+as the legacy handler parses it; a request handed to the legacy handler
+reaches it unmodified, and the Grounding key format, strict body, path and
+header/body key checks apply only to requests the Grounding services handle.
+Outside the enforced scope the remaining differences from the unconfigured
+application are the guarded and fenced refusals and the agent and scope
+admission check that runs before routing. Enabling configuration still writes
 grounding history, for example webhook deliveries, so a later unconfigured
 restart is refused and enabling is one-way; rollback means keeping an enabled
 configuration with empty trust and an empty `creationPolicy`.
