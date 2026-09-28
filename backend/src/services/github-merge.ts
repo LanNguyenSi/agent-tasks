@@ -151,8 +151,8 @@ export async function performPrMerge(
     return { ok: false, error: "github_error", message: `GitHub API unreachable: ${message}`, status: 502 };
   }
 
-  // A redirect names a repository the check above never saw; GitHub merged
-  // nothing, and the write is not re-sent there.
+  // A redirect answer is not a merge result: re-sending the PUT would reach a
+  // repository the check above never saw, so it is refused instead.
   if (groundingGuard && isGithubRedirect(ghResponse)) {
     await ghResponse.body?.cancel().catch(() => undefined);
     void logAuditEvent({

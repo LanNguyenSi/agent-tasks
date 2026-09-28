@@ -163,7 +163,6 @@ export async function groundingRemoteTargetRefusal(db: PrismaClient | Prisma.Tra
  * `redirect: "manual"`, and a redirect answer (GitHub's answer for a renamed
  * or transferred repository) is refused instead of followed: following it
  * would send the write to a repository the effect-boundary check never saw.
- * GitHub performs no write when it answers with a redirect.
  */
 export const groundingRedirectRefusal = {
   error: "github_redirect_refused",

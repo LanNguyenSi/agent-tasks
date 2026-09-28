@@ -292,8 +292,8 @@ githubRouter.post(
               }),
             },
           );
-          // A redirect names a repository the check above never saw; GitHub
-          // created nothing, and the POST is not re-sent there.
+          // A redirect answer is not a created PR: re-sending the POST would
+          // reach a repository the check above never saw, so it is refused.
           if (groundingGuard && isGithubRedirect(ghResponse)) {
             await ghResponse.body?.cancel().catch(() => undefined);
             return { status: groundingRedirectRefusal.status, body: { error: groundingRedirectRefusal.error, message: groundingRedirectRefusal.message } as const };
@@ -786,8 +786,8 @@ githubRouter.post(
           },
         );
 
-        // A redirect names a repository the check above never saw; GitHub
-        // posted nothing, and the comment is not re-sent there.
+        // A redirect answer is not a posted comment: re-sending the POST would
+        // reach a repository the check above never saw, so it is refused.
         if (groundingGuard && isGithubRedirect(ghResponse)) {
           await ghResponse.body?.cancel().catch(() => undefined);
           return { status: groundingRedirectRefusal.status, body: { error: groundingRedirectRefusal.error, message: groundingRedirectRefusal.message } as const };
