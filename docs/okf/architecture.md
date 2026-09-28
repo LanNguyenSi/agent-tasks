@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-09-28T21:05:54Z
+timestamp: 2026-09-28T21:16:37Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
