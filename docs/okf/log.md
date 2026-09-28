@@ -1,5 +1,13 @@
 # Change log
 
+## 2026-09-28 (re-stamp after the operation-key merges)
+
+`task-lifecycle.md` and `claim-model.md` were re-stamped without content
+changes. Their sources `mcp-server/src/tools.ts` and `cli/src/api.ts` did not
+change against the state both documents were verified against; only the
+squash-merge commits that landed them on master carry later dates, which made
+the staleness check report both documents as stale.
+
 ## 2026-09-28 (scoped grounding enforcement)
 
 Grounding enforcement was project-scoped: an enabled configuration's
