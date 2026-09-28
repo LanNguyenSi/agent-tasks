@@ -132,14 +132,14 @@ write no task and take no fence. A create sends no PR number, so the peer
 check does not apply to it. A legacy gate that refuses first answers as in the
 unconfigured application.
 
-There is no Grounding comment path, so a task may comment through the legacy
-commenter on its own stored PR (its PR number, in its effective repository,
-matching its stored PR URL when it has one) when it is protected,
-`EXTERNAL_V1` or bound, or its project is in the enforced scope, even in an
-enforced repository, unless it is held. Another peer on that PR, another PR of
-an enforced repository and another peer's PR stay refused. Such a comment
-reaches GitHub, so an enforced repository must not run comment-triggered
-merge or deploy automation.
+A comment is refused on an enforced repository and on a protected,
+`EXTERNAL_V1`, bound or held task's PR whoever sends it, including a task
+commenting on the PR it stores: an agent can set a task's PR number and
+repository, so they prove no authorship. As defense in depth, an enforced
+repository must still not run comment-triggered merge or deploy automation.
+The check governs only the GitHub writes agent-tasks sends; direct GitHub
+access outside agent-tasks (tokens, the GitHub UI, other apps) is not governed
+by it.
 
 With configuration enabled the three legacy writes do not follow a GitHub
 redirect. GitHub redirects a write to a renamed or transferred repository to

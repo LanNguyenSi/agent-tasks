@@ -212,14 +212,14 @@ governance, cross-repository or delegation checks) answers exactly as in the
 unconfigured application, and a keyed legacy replay of a stored `2xx` response
 makes no GitHub call and is returned without a check.
 
-There is no Grounding comment path, so a task may comment through the legacy
-commenter on its own stored PR: the PR number it stores, in its effective
-repository, matching its stored PR URL when it has one. That holds when the
-task is protected, `EXTERNAL_V1` or bound, or its project is in the enforced
-scope, even in an enforced repository, unless the task is held. Another peer on
-that PR, another PR of an enforced repository and another peer's PR stay
-refused. Because such a comment reaches GitHub, an enforced repository must
-not run comment-triggered merge or deploy automation.
+A comment is refused on an enforced repository and on a protected,
+`EXTERNAL_V1`, bound or held task's PR whoever sends it, including a task
+commenting on the PR it stores: an agent can set a task's PR number and
+repository, so they prove no authorship. As defense in depth, an enforced
+repository must still not run comment-triggered merge or deploy automation.
+The check governs only the GitHub writes agent-tasks sends; direct GitHub
+access outside agent-tasks (tokens, the GitHub UI, other apps) is not governed
+by it.
 
 With configuration enabled, the three legacy writes (merge `PUT`, PR create
 `POST`, PR comment `POST`) are sent with `redirect: "manual"`. GitHub answers a
