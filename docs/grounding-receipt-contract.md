@@ -171,15 +171,19 @@ Configured fresh remote operations—task merge, GitHub merge and finish with
 `autoMerge`—on a task with no existing keyed durable operation require
 explicit server enrollment when that task's project is one of
 `creationPolicy`'s selected projects, or when any target the legacy handler
-could act on is guarded. The candidate repositories are the request's
+could act on is guarded. The candidate repositories are a PR create request's
 owner/repo, the task's deliverable repository, its project repository, and the
-repository of the task's or the request's PR URL; the candidate PR numbers are
-the path number, the task's PR number, and the number of the task's or the
-request's PR URL. A request is guarded when any candidate repository belongs to
-a selected project, or when any candidate repository and PR number pair is
-shared with a protected, `EXTERNAL_V1` or held peer, or when any candidate
-repository string is not a canonical `owner/repo` identity (a dot segment, a
-percent-encoded name, an owner containing `/`). Guarded requests return
+repository of the task's or the request's PR URL (a GitHub merge request's
+body owner/repo is not one: the legacy merger never sends it to GitHub); the
+candidate PR numbers are the path number, the task's PR number, and the number
+of the task's or the request's PR URL. A request is guarded when any candidate
+repository belongs to a selected project, or when any candidate repository and
+PR number pair is shared with a protected, `EXTERNAL_V1` or held peer, or when
+any candidate repository string is not a canonical `owner/repo` identity (a
+dot segment, a percent-encoded name, an owner containing `/`), or when a
+protected, `EXTERNAL_V1`, bound or held task whose own effective repository or
+PR URL repository is not canonical shares a candidate PR number (it cannot be
+matched by repository). Guarded requests return
 `409 grounding_enrollment_required` before a remote effect, including when no
 operation key is supplied. A request that is not guarded returns
 `409 grounding_finalization_pending` before any GitHub call when another
@@ -190,13 +194,16 @@ enforced one, when an enforced project's repository is not canonical, and,
 while the enforced scope owns a repository, when any project's repository is
 not canonical, so the scope/legacy boundary is never ambiguous per request; a
 project created or re-pointed after startup is not covered by those checks.
-The scope, peer and fence reads above are point-in-time, not locks. They
-accept a residual race: any change between the read and the legacy handler's
-GitHub call that would have made the request guarded is not seen, which
-covers every change that makes some task a protected, `EXTERNAL_V1` or held
-peer of the targeted PR or repository (an administrator rebinding a task's
-repository or PR, a migration hold, a task's enrollment) and a grouped
-operation acquiring a candidate repository's fence after the read.
+The scope, peer and fence reads above are point-in-time, not locks, and two
+residual races are accepted. Any change between the read and the legacy
+handler's GitHub call that would have made the request guarded is not seen,
+which covers every change that makes some task a protected, `EXTERNAL_V1` or
+held peer of the targeted PR or repository (an administrator rebinding a
+task's repository or PR, a migration hold, a task's enrollment). A grouped
+operation that acquires a candidate repository's fence after the read is not
+seen either: the legacy GitHub effect then happens and the legacy task write
+fails on the fence, so a merge can land on GitHub while the task stays in
+review, and a PR create can leave a PR that is not linked to its task.
 Existing durable operations retain their operation-bound recovery path.
 Unprovisioned local completion and the original unconfigured application
 retain their defined compatibility behavior.
@@ -208,17 +215,24 @@ header or the body `idempotencyKey` (both present must be equal), so legacy
 key replay applies. A key with durable grounding create history, and any task
 with an unfinished grounding create, stay with the grouped create service; a
 guarded create follows the grouped create contract. To decide, the GitHub
-create and merge routes read only the task id, the body owner/repo, any
-well-formed key for the durable-history lookup, and the path PR number parsed
-as the legacy handler parses it; a request handed to the legacy handler
-reaches it unmodified, and the Grounding key format, strict body, path and
-header/body key checks apply only to requests the Grounding services handle.
-Outside the enforced scope the remaining differences from the unconfigured
-application are the guarded and fenced refusals and the agent and scope
-admission check that runs before routing. Enabling configuration still writes
-grounding history, for example webhook deliveries, so a later unconfigured
-restart is refused and enabling is one-way; rollback means keeping an enabled
-configuration with empty trust and an empty `creationPolicy`.
+create and merge routes read only the task id, the body owner/repo (for PR
+creation), any well-formed key for the durable-history lookup, and the path PR
+number parsed as the legacy handler parses it; a request handed to the legacy
+handler reaches it unmodified, and the Grounding key format, strict body, path
+and header/body key checks apply only to requests the Grounding services
+handle. Both routes check the caller's project access, with the legacy
+handler's own access rule, right after looking up the task and before reading
+or locking any Grounding state; a missing task or a caller without access
+reaches the legacy handler's own `404` or `403`. Outside the enforced scope the
+principal differences from the unconfigured application are the guarded and
+fenced refusals, the agent and scope admission check that runs before
+routing, a transient `503 grounding_verification_unavailable` when the
+Serializable routing read cannot be serialized, and the retry message a
+Grounding-path `503` carries on the GitHub merge route. Enabling
+configuration still writes grounding history, for example webhook deliveries,
+so a later unconfigured restart is refused and enabling is one-way; rollback
+means keeping an enabled configuration with empty trust and an empty
+`creationPolicy`.
 
 Server-only enrollment must exclude active legacy requests and workers before
 activation. Explicit OFF or LEGACY_LOCAL enrollment provides compatibility
