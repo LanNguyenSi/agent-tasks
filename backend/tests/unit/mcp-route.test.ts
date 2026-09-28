@@ -507,8 +507,8 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
   // contain '/'), while pull_requests_merge and the three task_* verbs keep
   // the tighter operationKey pattern (1-128 chars of [A-Za-z0-9._:-]). A
   // mutant that widens pull_requests_merge's schema to createIdempotencyKey
-  // would let a 200-char key through and dispatch the merge call — the
-  // "rejected" test below catches that.
+  // would let a 200-char key through and dispatch the merge call; the
+  // 200-char merge test below catches that.
   it("pull_requests_create forwards a 200-char printable-ASCII idempotencyKey containing '/' unchanged, as both header and body", async () => {
     const key = `${"a/".repeat(99)}aa`; // 200 chars, contains '/', outside operationKey's charset
     expect(key).toHaveLength(200);
@@ -538,7 +538,9 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
 
   it.each([
     { name: "pull_requests_merge", args: { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 }, keyField: "idempotencyKey" },
+    { name: "task_finish", args: { taskId: TASK_ID }, keyField: "operationKey" },
     { name: "task_merge", args: { taskId: TASK_ID }, keyField: "operationKey" },
+    { name: "task_abandon", args: { taskId: TASK_ID }, keyField: "operationKey" },
   ])("rejects a 129-char $keyField on $name before self-dispatch", async ({ name, args, keyField }) => {
     const key = "a".repeat(129);
     const response = await mcpRequest(

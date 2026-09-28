@@ -1041,13 +1041,11 @@ describe("buildTools", () => {
     },
   );
 
-  // These two go through parseArgs (the tool's own zod inputShape) FIRST,
-  // not just the handler: calling the handler directly (as an earlier
-  // version of this test did) bypasses schema validation entirely, so a
-  // regression that narrows createIdempotencyKey's pattern back down to
-  // operationKey's tighter 1-128 charset/length would go undetected. The
-  // handler call that follows exists only to assert the header/body
-  // forwarding, never to stand in for the schema check.
+  // Acceptance goes through parseArgs (the tool's own zod inputShape) first:
+  // calling the handler directly bypasses schema validation, so a regression
+  // that narrows createIdempotencyKey back to operationKey's 1-128 charset
+  // would go undetected. The handler call only asserts header/body
+  // forwarding.
   it.each([
     { label: "200-char printable-ASCII", key: "a".repeat(200) },
     { label: "a key with chars outside the 1-128 operationKey set", key: "k/+=~!" },
@@ -1544,17 +1542,17 @@ describe("buildTools", () => {
     await tool(name).handler(args as never);
     const [, init] = fetchMock.mock.calls[0];
     expect(init.headers["Idempotency-Key"]).toBe("retry-key-1");
-    // task_finish's outgoing request body carries only the fields the
-    // caller actually passed (result/prUrl/outcome/autoMerge/mergeMethod),
-    // all optional; with only taskId + operationKey given, that body is
-    // empty. This assertion was dropped when the old task_finish-only test
-    // was folded into this it.each (round 2); restored here for task_finish.
-    // (task_abandon's own empty-body contract has its own dedicated test
-    // below; task_merge's body is not asserted here, unchanged from before
-    // the fold.)
-    if (name === "task_finish") {
-      expect(init.body).toBe("{}");
-    }
+  });
+
+  it("task_finish with only taskId + operationKey sends an empty JSON body and the key as a header", async () => {
+    // The key travels only in the Idempotency-Key header; it must never leak
+    // into task_finish's body, which carries only the optional fields the
+    // caller actually passed (none here).
+    fetchMock.mockResolvedValue(ok({ kind: "work", task: { id: "t1", status: "review" } }));
+    await tool("task_finish").handler({ taskId: TASK_ID, operationKey: "retry-key-1" } as never);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["Idempotency-Key"]).toBe("retry-key-1");
+    expect(init.body).toBe("{}");
   });
 
   it("sends the strict empty JSON body required by keyed abandonment", async () => {

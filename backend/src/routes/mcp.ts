@@ -346,40 +346,43 @@ function buildServer(token: string): McpServer {
   // Same five-tool key contract as the stdio package
   // (mcp-server/src/tools.ts): task_finish/task_merge/task_abandon and
   // pull_requests_create/pull_requests_merge always send an
-  // operation/idempotency key — the caller's explicit value when given,
-  // otherwise a fresh one generated per call — so an unconfigured
+  // operation/idempotency key (the caller's explicit value when given,
+  // otherwise a fresh one generated per call), so an unconfigured
   // (legacy) backend keeps working unchanged while a provisioned
   // Grounding backend always receives one. pull_requests_merge keeps the
   // tighter format below; pull_requests_create uses the more permissive
   // header-safe printable-ASCII format (see createIdempotencyKey).
   const operationKey = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
   const createIdempotencyKey = z.string().regex(/^[\x21-\x7E]{1,255}$/);
-  // Each hint below is prefixed with the exact input field name it
-  // documents ("operationKey:"/"idempotencyKey:") so it reads as "this
-  // parameter is optional", not "this tool call is optional" — the field
-  // itself is named a few words earlier in the same description string.
+  // Each hint below starts with the input field name it documents
+  // ("operationKey:" / "idempotencyKey:") so the word "optional" reads as
+  // "this parameter is optional", not "this tool call is optional".
   //
-  // Retry-safety is NOT the same guarantee for all five tools. The GitHub PR
-  // routes (pull_requests_create/merge) always dedupe on the key: the
-  // always-mounted legacy `/api/github/pull-requests*` routes replay the
-  // stored 2xx response on a repeated key and reject a reused key against a
-  // different payload with 409, whether or not Grounding is provisioned. The
-  // three task-completion verbs enforce this only for a provisioned
-  // Grounding-enrolled task on an enabled backend: against an unconfigured
-  // (legacy) backend, or an unprovisioned task on an enabled backend,
-  // `grounding-task-completion.ts` never reads the `Idempotency-Key` header
-  // at all and calls `next()` into the plain legacy handler
-  // (`backend/src/routes/tasks.ts`), which offers no key-based retry
-  // deduping regardless of what the caller passes.
-  const UNCONDITIONAL_RETRY_TAIL =
-    " When omitted, a fresh key is generated for this single call — safe for a one-off attempt, but a regenerated key differs every call, so it does not make a retry idempotent. To retry the exact same operation safely (e.g. after a network timeout), generate your own key up front and pass that same value again on the retry; the backend replays the stored 2xx response on a repeated key and rejects the same key + a different payload with 409, whether or not Grounding is provisioned.";
+  // Retry-safety differs between the five tools. The GitHub PR routes
+  // (pull_requests_create/merge) always dedupe on the key: the legacy
+  // `/api/github/pull-requests*` routes store one tool_invocations row per
+  // successful call (pruned by the idempotency TTL sweep), replay the stored
+  // 2xx response with `_idempotent_replay: true` on a same-key retry, and
+  // reject the same key with a different payload with 409
+  // (services/idempotency.ts); the Grounding GitHub router keys its durable
+  // operation on the same value. The three task-completion verbs dedupe only
+  // where the backend enforces operation keys, that is for a provisioned
+  // task on a backend with Grounding configured. On an unconfigured backend,
+  // or for an unprovisioned task, the completion request reaches the legacy
+  // handler in `tasks.ts`, which ignores the key, so reusing it does not
+  // make the retry idempotent there.
+  const GENERATED_KEY_NOTE =
+    " When omitted, a fresh key is generated for this single call; a generated key differs on every call, so it does not make a retry idempotent.";
+  const PR_RETRY_NOTE =
+    " To retry the same operation safely (for example after a network timeout), generate your own key up front and pass the same value on the retry: the backend replays the stored 2xx response for a repeated key and rejects the same key with a different payload with 409, whether or not Grounding is provisioned.";
   const OPERATION_KEY_HINT =
     " operationKey: optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." +
-    " When omitted, a fresh key is generated for this single call. Reusing the same key on a retry only makes that retry idempotent where the backend enforces operation keys — a provisioned Grounding-enrolled task on an enabled backend. Against an unconfigured (legacy) backend, or an unprovisioned task on an enabled backend, this key is not read at all, so passing the same value again does not make the retry idempotent there.";
+    GENERATED_KEY_NOTE +
+    " Reusing your own key on a retry makes that retry idempotent only where the backend enforces operation keys (a provisioned task on a Grounding-configured backend). On an unconfigured backend, or for an unprovisioned task, the key is ignored and a retry is not deduplicated.";
   const MERGE_IDEMPOTENCY_KEY_HINT =
-    ` idempotencyKey: optional, 1-128 chars of letters, digits, '.', '_', ':', '-'.${UNCONDITIONAL_RETRY_TAIL}`;
+    " idempotencyKey: optional, 1-128 chars of letters, digits, '.', '_', ':', '-'." + GENERATED_KEY_NOTE + PR_RETRY_NOTE;
   const CREATE_KEY_HINT =
-    ` idempotencyKey: optional, 1-255 printable ASCII chars, no whitespace.${UNCONDITIONAL_RETRY_TAIL}`;
+    " idempotencyKey: optional, 1-255 printable ASCII chars, no whitespace." + GENERATED_KEY_NOTE + PR_RETRY_NOTE;
   const resolveOperationKey = (explicit: string | undefined): string => explicit ?? randomUUID();
   const completionHeaders = (key: string) => ({ "Idempotency-Key": key });
 
