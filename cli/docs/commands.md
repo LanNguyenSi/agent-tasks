@@ -102,19 +102,21 @@ retry idempotent: to retry the exact same operation safely (for example after a 
 timeout), generate your own key up front and pass that same value again on the retry via
 `--operation-key`.
 
-Retry idempotency via a repeated `--operation-key` holds everywhere for `github pr create` and
-`github pr merge`: the backend stores the key with the response and, on a same-key retry with
+Retry idempotency via a repeated `--operation-key` holds for `github pr create` and
+`github pr merge` on both the grounding and the legacy route: the backend stores the key with the response and, on a same-key retry with
 the same payload, replays the stored response instead of re-running the operation. A same key
-retried with a *different* payload gets a `409` instead of a silent mismatch. For `tasks finish`
+retried with a *different* payload gets a `409` instead of a silent mismatch. The legacy route
+stores the key only after the call completes, so a retry sent while the first call is still in
+flight may run once more. For `tasks finish`
 and `tasks abandon`, that guarantee holds only where the backend enforces operation keys (a
-provisioned or pilot-scoped grounding project); on any other task -- including an UNPROVISIONED
+grounding-provisioned task); on any other task -- including an UNPROVISIONED
 task on an otherwise-enabled backend -- the legacy completion handler ignores the
 `Idempotency-Key` header, so a retry there runs the operation again rather than replaying.
 
 ```bash
-agent-tasks tasks finish <task-id> --outcome approve --operation-key finish-<task-id>-1
+agent-tasks github pr merge 42 --task <task-id> --owner o --repo r --operation-key merge-42-1
 # a timed-out call can be retried with the identical key:
-agent-tasks tasks finish <task-id> --outcome approve --operation-key finish-<task-id>-1
+agent-tasks github pr merge 42 --task <task-id> --owner o --repo r --operation-key merge-42-1
 ```
 
 ## Tasks (read + create)

@@ -18,10 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (with `GROUNDING_RUNTIME_CONFIG` enabled) previously reached the backend
   with no operation key and got a `400 grounding_operation_key_required`.
   Passing the same `--operation-key` value again on retry makes that retry
-  idempotent for `github pr create` and `github pr merge` unconditionally,
-  and for `tasks finish`/`tasks abandon` only where the backend enforces
-  operation keys (a provisioned or pilot-scoped grounding project); see the
-  legacy-compatibility note below for what happens elsewhere.
+  idempotent for `github pr create` and `github pr merge` on both the
+  grounding and the legacy route (a retry sent while the first call is still
+  in flight may run once more; the legacy dedupe covers retry-after-completion),
+  and for `tasks finish`/`tasks abandon` only for a grounding-provisioned task;
+  see the legacy-compatibility note below for what happens elsewhere.
   - Legacy compatibility: `tasks finish` and `tasks abandon` reach the
     backend's legacy task-completion handlers unchanged on any task the
     grounding runtime doesn't enforce, including an UNPROVISIONED task on an

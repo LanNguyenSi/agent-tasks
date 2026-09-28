@@ -741,3 +741,27 @@ describe("withProject", () => {
     expect(tasks[0]).not.toHaveProperty("project");
   });
 });
+
+describe("operation key format edges", () => {
+  const prInput = { taskId: "t1", owner: "o", repo: "r", head: "feat/x", base: "main", title: "Add x" };
+  const mergeInput = { taskId: "t1", owner: "o", repo: "r", merge_method: "squash" as const };
+
+  it("rejects an empty explicit key on the tight format before any request", async () => {
+    await expect(taskFinish(config, "t1", { prUrl: "https://github.com/o/r/pull/1" }, "")).rejects.toBeInstanceOf(
+      InvalidOperationKeyError,
+    );
+    await expect(mergePullRequest(config, 1, mergeInput, "")).rejects.toBeInstanceOf(InvalidOperationKeyError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty explicit key on the pr-create format before any request", async () => {
+    await expect(createPullRequest(config, prInput, "")).rejects.toBeInstanceOf(InvalidOperationKeyError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects '/' in the tight format (finish, abandon, pr merge)", async () => {
+    await expect(taskAbandon(config, "t1", "a/b")).rejects.toBeInstanceOf(InvalidOperationKeyError);
+    await expect(mergePullRequest(config, 1, mergeInput, "a/b")).rejects.toBeInstanceOf(InvalidOperationKeyError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

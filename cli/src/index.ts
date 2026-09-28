@@ -195,7 +195,7 @@ tasks
     "Idempotency key for this finish (1-128 chars: letters, digits, '.', '_', ':', '-'). " +
       "A fresh key is generated per invocation when omitted; passing the same --operation-key " +
       "again makes a retry idempotent only where the backend enforces operation keys " +
-      "(a provisioned or pilot-scoped grounding project) -- a legacy finish ignores the key, " +
+      "(a grounding-provisioned task); a legacy finish ignores the key, " +
       "so a retry there just re-runs the finish.",
   )
   .option("--json", "JSON output")
@@ -256,7 +256,7 @@ tasks
     "Idempotency key for this abandon (1-128 chars: letters, digits, '.', '_', ':', '-'). " +
       "A fresh key is generated per invocation when omitted; passing the same --operation-key " +
       "again makes a retry idempotent only where the backend enforces operation keys " +
-      "(a provisioned or pilot-scoped grounding project) -- a legacy abandon ignores the key, " +
+      "(a grounding-provisioned task); a legacy abandon ignores the key, " +
       "so a retry there just re-runs the abandon.",
   )
   .option("--json", "JSON output")
