@@ -256,6 +256,33 @@ and validate an isolated restored database with the intended configuration and
 canonical SQL. A passing startup does not prove backup restoration, writer
 exclusion, producer key isolation, or production rollout readiness.
 
+## Runtime database role
+
+The fence and hold guarantees are enforced by triggers. A connection that is a
+superuser, has `BYPASSRLS`, or owns the tables can switch them off
+(`session_replication_role = replica`, `ALTER TABLE ... DISABLE TRIGGER`), so
+writer exclusion needs a backend role that can do neither. In
+`docker-compose.prod.yml`, set `POSTGRES_APP_USER` and `POSTGRES_APP_PASSWORD`
+to a role created along these lines, run by the owner role:
+
+```sql
+CREATE ROLE agent_tasks_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION PASSWORD '...';
+GRANT CONNECT ON DATABASE agent_tasks TO agent_tasks_app;
+GRANT USAGE ON SCHEMA public TO agent_tasks_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO agent_tasks_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO agent_tasks_app;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO agent_tasks_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE agent_tasks IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO agent_tasks_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE agent_tasks IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO agent_tasks_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE agent_tasks IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO agent_tasks_app;
+```
+
+`migrate` keeps the owner role, since `prisma db push` and the fence SQL need
+it; the default privileges make tables and functions it creates later usable
+by the runtime role. Anyone holding the owner role's password can still bypass
+the triggers, so that credential stays with operators. Unset, both variables
+fall back to the owner role.
+
 ## Audited administrative commands
 
 `POST /api/tasks/:id/grounding-migration` is available only when a
