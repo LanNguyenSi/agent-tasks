@@ -24,7 +24,7 @@ import {
   isForeignDeliverable,
 } from "../services/gates/index.js";
 import { performPrMerge } from "../services/github-merge.js";
-import { groundingRemoteGuardFor } from "../services/grounding-scope.js";
+import { groundingRedirectRefusal, groundingRemoteGuardFor, isGithubRedirect } from "../services/grounding-scope.js";
 import { SCOPES } from "../services/scopes.js";
 import { withIdempotency } from "../services/idempotency.js";
 
@@ -277,6 +277,9 @@ githubRouter.post(
             `https://api.github.com/repos/${body.owner}/${body.repo}/pulls`,
             {
               method: "POST",
+              // With Grounding configured a redirect (a renamed or transferred
+              // repository) is answered below instead of followed.
+              ...(groundingGuard ? { redirect: "manual" as const } : {}),
               headers: {
                 ...githubHeaders(delegationUser.githubAccessToken),
                 "Content-Type": "application/json",
@@ -289,6 +292,12 @@ githubRouter.post(
               }),
             },
           );
+          // A redirect names a repository the check above never saw; GitHub
+          // created nothing, and the POST is not re-sent there.
+          if (groundingGuard && isGithubRedirect(ghResponse)) {
+            await ghResponse.body?.cancel().catch(() => undefined);
+            return { status: groundingRedirectRefusal.status, body: { error: groundingRedirectRefusal.error, message: groundingRedirectRefusal.message } as const };
+          }
           ghBody = await parseGitHubResponseBody(ghResponse);
 
           const isTransientFailure =
@@ -764,6 +773,9 @@ githubRouter.post(
           `https://api.github.com/repos/${body.owner}/${body.repo}/issues/${prNumber}/comments`,
           {
             method: "POST",
+            // With Grounding configured a redirect (a renamed or transferred
+            // repository) is answered below instead of followed.
+            ...(groundingGuard ? { redirect: "manual" as const } : {}),
             headers: {
               Authorization: `Bearer ${delegationUser.githubAccessToken}`,
               Accept: "application/vnd.github+json",
@@ -773,6 +785,13 @@ githubRouter.post(
             body: JSON.stringify({ body: body.body }),
           },
         );
+
+        // A redirect names a repository the check above never saw; GitHub
+        // posted nothing, and the comment is not re-sent there.
+        if (groundingGuard && isGithubRedirect(ghResponse)) {
+          await ghResponse.body?.cancel().catch(() => undefined);
+          return { status: groundingRedirectRefusal.status, body: { error: groundingRedirectRefusal.error, message: groundingRedirectRefusal.message } as const };
+        }
 
         if (!ghResponse.ok) {
           const ghError = (await ghResponse
