@@ -41,6 +41,10 @@ beforeAll(async () => {
       received.push(`${req.method} ${url}`);
       const renamed = /^\/repos\/acme\/old-[^/]+(\/.*)$/.exec(url);
       if (renamed) { res.writeHead(307, { Location: `/repositories/77${renamed[1]}` }); res.end(); return; }
+      // A write to "acme/status-<code>-*" is answered with that status and no
+      // Location header, so no redirect can be followed.
+      const answered = req.method !== "GET" ? /^\/repos\/acme\/status-(\d{3})-[^/]+\//.exec(url) : null;
+      if (answered) { res.writeHead(Number(answered[1]), { "Content-Type": "application/json" }); res.end(JSON.stringify({ message: `Status ${answered[1]}` })); return; }
       const json = (status: number, body: unknown) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
       if (req.method === "PUT" && /^\/repositories\/77\/pulls\/\d+\/merge$/.test(url)) return json(200, { sha: "d".repeat(40), merged: true, message: "Pull Request successfully merged" });
       if (req.method === "POST" && url === "/repositories/77/pulls") return json(201, { number: 501, html_url: "https://github.com/acme/pilot/pull/501", title: "Create" });
@@ -105,5 +109,48 @@ describe("a GitHub redirect on a legacy write", () => {
     // request the unconfigured application sent before.
     expect(writeInits).toHaveLength(1);
     expect(Object.keys(writeInits[0]!)).toEqual(["method", "headers", "body"]);
+  });
+});
+
+describe("which GitHub answers count as a redirect", () => {
+  const answeredRepo = (status: number) => `acme/status-${status}-${uniquePr()}`;
+  const requesterFor = (site: RemoteSite, repo: string, prNumber: number) => requesterTask(store.db, site, repo, site === "create" || site === "comment" ? null : prNumber);
+  it.each(remoteSites)("%s: the configured application refuses a 300 answer as a redirect", async site => {
+    const repo = answeredRepo(300); const prNumber = uniquePr();
+    const requester = await requesterFor(site, repo, prNumber);
+    const response = await configured().fetch(siteRequest(site, requester.taskId, repo, prNumber, token));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "github_redirect_refused", message: expect.stringContaining("renamed or transferred") });
+    expect(writesOf(received)).toEqual([firstWrite(site, repo, prNumber)]);
+  });
+  it.each(remoteSites)("%s: the configured application answers a 400 answer as the GitHub error it is, not as a redirect", async site => {
+    const repo = answeredRepo(400); const prNumber = uniquePr();
+    const requester = await requesterFor(site, repo, prNumber);
+    const response = await configured().fetch(siteRequest(site, requester.taskId, repo, prNumber, token));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "github_error", message: expect.stringContaining("Status 400") });
+  });
+  it("a refused merge redirect writes exactly one github.pr_merge_failed audit event", async () => {
+    const repo = renamedRepo(); const prNumber = uniquePr();
+    const requester = await requesterTask(store.db, "task-merge", repo, prNumber);
+    const response = await configured().fetch(siteRequest("task-merge", requester.taskId, repo, prNumber, token));
+    expect(response.status).toBe(409);
+    const failures = () => store.db.auditLog.findMany({ where: { taskId: requester.taskId, action: "github.pr_merge_failed" } });
+    await vi.waitFor(async () => expect((await failures()).length).toBeGreaterThan(0));
+    // The audit write is not awaited; a second one would land within this wait.
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const rows = await failures();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.payload).toMatchObject({ prNumber, githubStatus: 307, githubMessage: "github_redirect_refused" });
+  });
+  it.each(remoteSites)("%s: the unconfigured application answers a final 307 it cannot follow as a GitHub error with that status", async site => {
+    const repo = answeredRepo(307); const prNumber = uniquePr();
+    const requester = await requesterFor(site, repo, prNumber);
+    const before = await store.db.task.findUniqueOrThrow({ where: { id: requester.taskId } });
+    const response = await createApp("").fetch(siteRequest(site, requester.taskId, repo, prNumber, token));
+    expect(response.status).toBe(307);
+    expect(await response.json()).toMatchObject({ error: "github_error", message: "GitHub API error: Status 307" });
+    expect(writesOf(received)).toEqual([firstWrite(site, repo, prNumber)]);
+    expect(await store.db.task.findUniqueOrThrow({ where: { id: requester.taskId } })).toEqual(before);
   });
 });
