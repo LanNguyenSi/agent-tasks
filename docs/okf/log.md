@@ -1,5 +1,112 @@
 # Change log
 
+## 2026-09-28 (scoped grounding enforcement)
+
+Grounding enforcement was project-scoped: an enabled configuration's
+`409 grounding_enrollment_required` gate on a fresh remote operation (task
+merge, GitHub merge, finish with `autoMerge`) on an unprovisioned task now
+fires only when the task's project is inside the configured `creationPolicy`
+scope, or when any repository or PR number the legacy handler could act on
+(request, task and PR URL targets) belongs to a selected project or is shared
+with a protected/`EXTERNAL_V1`/held peer. That replaced the previous global
+enforcement, in `backend/src/routes/grounding-task-completion.ts`,
+`backend/src/routes/grounding-github.ts`, `backend/src/services/grounding-runtime.ts`
+and a new `backend/src/services/grounding-scope.ts` (which also lifted the
+merge service's peer-discovery SQL into a shared, exported helper). An
+unprovisioned task's PR create outside that scope now reaches the legacy
+creator even with an operation key. Startup now also refuses when a project
+outside the enforced scope shares a GitHub repository with an enforced one.
+A repository string among those targets that is not a canonical `owner/repo`
+identity is guarded too, and a legacy fall-through whose candidate repository
+fence another operation owns is refused with `409
+grounding_finalization_pending` before any GitHub call. Outside the scope the
+GitHub create and merge routes read only the task id, body owner/repo, a
+well-formed history key and the legacy-parsed path number, then hand the
+request to the legacy handler unmodified (the legacy creator now also reads the
+`Idempotency-Key` header); the principal differences from the unconfigured
+app are those refusals, the agent-scope admission check, a transient routing
+`503` and the GitHub merge route's retry message. Enabling configuration
+writes grounding history and is therefore one-way; the
+docs no longer call an enabled, empty configuration equivalent to the
+unconfigured app. `architecture.md`, `workflow-gates.md`,
+`governance-merge.md`, `reconcile-done-but-open.md`, `backend.md` and
+`deploy.md` each stated or implied the old behavior and were re-verified
+against the changed routes/service and re-stamped;
+`docs/grounding-migration.md` and `docs/grounding-receipt-contract.md` (both
+outside this bundle) were corrected the same way.
+
+The configured GitHub create and merge routes then moved their project-access
+check ahead of every Grounding read, so a caller without project access gets
+the legacy handler's own `403` whatever the task's Grounding state; the GitHub
+merge route stopped counting the body owner/repo as a candidate (the legacy
+merger never sends it to GitHub); and `grounding-scope.ts` gained a
+fail-closed check for a protected/`EXTERNAL_V1`/bound/held peer whose own
+repository string is not canonical and that shares a candidate PR number. The
+fence-acquisition race was described as an accepted residual with its
+consequence. `architecture.md`, `workflow-gates.md`, `governance-merge.md`,
+`reconcile-done-but-open.md` and `backend.md` were re-verified against the
+changed routes and scope service and re-stamped; `claim-model.md` was
+re-verified against the edited receipt contract (its claims did not change) and
+re-stamped.
+
+The target checks then moved from the routers to the effect boundary. The
+routers keep only exact decisions (admission, task lookup, access, durable
+history, enrollment mode, and whether the task's own project is in scope) and
+no longer derive candidate repositories and PR numbers from the request and
+the task. Instead, with configuration enabled, `performPrMerge` checks the
+exact repository and PR number right before the GitHub merge call, and the
+legacy PR creator and commenter check the repository (and PR) they post to;
+the check refuses a non-canonical repository string, an enforced repository,
+a protected/`EXTERNAL_V1`/bound/held peer's PR (alias peers included) and, for
+merges and creates, an owned repository fence, reading peer and fence in one
+statement. `createApp` hands the check to every request and the unconfigured
+app hands none. The grouped merge peer lookup now reads peer ids from the
+enrollment and hold tables first. The attempt and migration routes now check
+access before the task lock, and the creation router before its
+`creationPolicy` selection. `architecture.md`, `backend.md`,
+`governance-merge.md`, `reconcile-done-but-open.md` and `workflow-gates.md`
+were rewritten for the effect-boundary design and re-verified against the
+changed routes, services and wiring; `deploy.md` and `task-lifecycle.md` were
+re-verified and gained one sentence each (the composed check, the creation
+router's access order); `claim-model.md` was re-verified against the edited
+`tasks.ts` and receipt contract (its claims did not change) and re-stamped.
+
+The effect-boundary check then took in every repository the legacy task
+write's fence trigger checks. A merge or create is refused with
+`409 grounding_finalization_pending` when another operation owns the fence of
+the target repository or of any repository of the requesting task (its
+effective repository, stored PR URL repository and own active PR-create
+intents' repositories), and with `409 grounding_enrollment_required` when the
+requesting task is itself protected/`EXTERNAL_V1`/bound/held, whatever PR
+number it sends. A comment is refused on an enforced repository and on a
+peer's PR whoever sends it, the PR the requesting task stores included; as
+defense in depth, enforced repositories must still not run comment-triggered
+merge or deploy automation, and direct GitHub access outside agent-tasks is
+not governed by the check. With configuration enabled, the legacy merge, create and comment
+writes are sent with `redirect: "manual"` and a GitHub redirect (a renamed or
+transferred repository) is refused with `409 github_redirect_refused`; the
+unconfigured app still follows redirects. `architecture.md`, `backend.md`,
+`governance-merge.md`, `reconcile-done-but-open.md` and `workflow-gates.md`
+were updated, re-verified against the changed scope service and legacy
+writers and re-stamped; `claim-model.md` was re-verified against the edited
+receipt contract (its claims did not change) and re-stamped.
+
+The comment check was then re-verified as strict: a comment on the PR the
+requesting task stores is refused like any other comment on an enforced
+repository or a peer's PR, and the check's line citations moved with the
+scope service. `architecture.md`, `backend.md`, `governance-merge.md`,
+`reconcile-done-but-open.md` and `workflow-gates.md` were re-verified against
+the changed scope service and re-stamped; `claim-model.md` was re-verified
+against the edited receipt contract (its claims did not change) and
+re-stamped.
+
+Separately, unconfigured (grounding-disabled) startup admission stopped
+treating an unowned GitHub repository-fence row as grounding history on its
+own, since the repository-fence SQL trigger bumps such a row on any ordinary
+GitHub-linked task write whether or not grounding is ever configured. Fence
+intents are not exempt. `backend.md` and `deploy.md` were corrected for this
+too, in the same pass.
+
 ## 2026-09-26 (re-verification, adr/ and diagrams/ move into docs/)
 
 Moving root `adr/` and `diagrams/` into `docs/adr/` and `docs/diagrams/`

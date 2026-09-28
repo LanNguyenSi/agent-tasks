@@ -24,6 +24,7 @@ import {
   isForeignDeliverable,
 } from "../services/gates/index.js";
 import { performPrMerge } from "../services/github-merge.js";
+import { groundingRedirectRefusal, groundingRemoteGuardFor, isGithubRedirect } from "../services/grounding-scope.js";
 import { SCOPES } from "../services/scopes.js";
 import { withIdempotency } from "../services/idempotency.js";
 
@@ -182,6 +183,19 @@ githubRouter.post(
 
     const body = c.req.valid("json");
 
+    // The operation key may arrive as the Idempotency-Key header or as the
+    // body idempotencyKey, in the same format. When both are present they
+    // must name the same key; otherwise the request is ambiguous and rejected.
+    const headerKey = c.req.header("Idempotency-Key");
+    const parsedHeaderKey = headerKey === undefined ? undefined : idempotencyKeySchema.safeParse(headerKey);
+    if (parsedHeaderKey?.success === false) {
+      return c.json({ error: "validation_error", message: "Invalid Idempotency-Key header" }, 400);
+    }
+    if (parsedHeaderKey?.data !== undefined && body.idempotencyKey !== undefined && parsedHeaderKey.data !== body.idempotencyKey) {
+      return c.json({ error: "validation_error", message: "Idempotency-Key header and body idempotencyKey differ" }, 400);
+    }
+    const idempotencyKey = parsedHeaderKey?.data ?? body.idempotencyKey;
+
     // 1. Find the task and verify it exists
     const task = await prisma.task.findUnique({
       where: { id: body.taskId },
@@ -239,14 +253,21 @@ githubRouter.post(
     // and does NOT create a second PR on GitHub. Gate checks above run on
     // every retry (they're pure + cheap; the caller learns the current
     // answer, not a stale one).
+    const groundingGuard = groundingRemoteGuardFor(c);
     const outcome = await withIdempotency<unknown>(
       {
         projectId: task.project.id,
         verb: "pull_requests_create",
-        idempotencyKey: body.idempotencyKey,
+        idempotencyKey,
         payload: body,
       },
       async () => {
+        // Grounding effect-boundary check on exactly the repository the POST
+        // below is sent to.
+        if (groundingGuard) {
+          const refused = await groundingGuard({ repo: `${body.owner}/${body.repo}`, kind: "create", taskId: task.id });
+          if (refused) return { status: refused.status, body: { error: refused.error, message: refused.message } as const };
+        }
         let ghResponse: Response | undefined;
         let ghBody: unknown;
         let existingPullRequest: ExistingPullRequest | undefined;
@@ -256,6 +277,9 @@ githubRouter.post(
             `https://api.github.com/repos/${body.owner}/${body.repo}/pulls`,
             {
               method: "POST",
+              // With Grounding configured a redirect (a renamed or transferred
+              // repository) is answered below instead of followed.
+              ...(groundingGuard ? { redirect: "manual" as const } : {}),
               headers: {
                 ...githubHeaders(delegationUser.githubAccessToken),
                 "Content-Type": "application/json",
@@ -268,6 +292,12 @@ githubRouter.post(
               }),
             },
           );
+          // A redirect answer is not a created PR: re-sending the POST would
+          // reach a repository the check above never saw, so it is refused.
+          if (groundingGuard && isGithubRedirect(ghResponse)) {
+            await ghResponse.body?.cancel().catch(() => undefined);
+            return { status: groundingRedirectRefusal.status, body: { error: groundingRedirectRefusal.error, message: groundingRedirectRefusal.message } as const };
+          }
           ghBody = await parseGitHubResponseBody(ghResponse);
 
           const isTransientFailure =
@@ -606,6 +636,7 @@ githubRouter.post(
           { ...task, prNumber: task.prNumber ?? prNumber },
           body.merge_method,
           actor,
+          groundingRemoteGuardFor(c),
         );
 
         if (!mergeResult.ok) {
@@ -723,6 +754,7 @@ githubRouter.post(
     // twice. GitHub itself does NOT de-dupe comments — two successful
     // creates produce two visible comments on the PR — so without this the
     // retry-after-timeout path genuinely duplicates user-facing content.
+    const groundingGuard = groundingRemoteGuardFor(c);
     const outcome = await withIdempotency<unknown>(
       {
         projectId: task.project.id,
@@ -731,10 +763,19 @@ githubRouter.post(
         payload: { ...body, prNumber },
       },
       async () => {
+        // Grounding effect-boundary check on exactly the repository and PR
+        // number the comment is posted to. Comments take no repository fence.
+        if (groundingGuard) {
+          const refused = await groundingGuard({ repo: `${body.owner}/${body.repo}`, prNumber, kind: "comment", taskId: task.id });
+          if (refused) return { status: refused.status, body: { error: refused.error, message: refused.message } as const };
+        }
         const ghResponse = await fetch(
           `https://api.github.com/repos/${body.owner}/${body.repo}/issues/${prNumber}/comments`,
           {
             method: "POST",
+            // With Grounding configured a redirect (a renamed or transferred
+            // repository) is answered below instead of followed.
+            ...(groundingGuard ? { redirect: "manual" as const } : {}),
             headers: {
               Authorization: `Bearer ${delegationUser.githubAccessToken}`,
               Accept: "application/vnd.github+json",
@@ -744,6 +785,13 @@ githubRouter.post(
             body: JSON.stringify({ body: body.body }),
           },
         );
+
+        // A redirect answer is not a posted comment: re-sending the POST would
+        // reach a repository the check above never saw, so it is refused.
+        if (groundingGuard && isGithubRedirect(ghResponse)) {
+          await ghResponse.body?.cancel().catch(() => undefined);
+          return { status: groundingRedirectRefusal.status, body: { error: groundingRedirectRefusal.error, message: groundingRedirectRefusal.message } as const };
+        }
 
         if (!ghResponse.ok) {
           const ghError = (await ghResponse
@@ -801,7 +849,7 @@ githubRouter.post(
     }
     return c.json(
       outcome.body,
-      outcome.status as 201 | 400 | 403 | 404 | 422 | 500,
+      outcome.status as 201 | 400 | 403 | 404 | 409 | 422 | 500,
     );
   },
 );

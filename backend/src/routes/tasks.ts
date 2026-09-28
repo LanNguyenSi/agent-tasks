@@ -95,6 +95,7 @@ import {
 import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES, parseOwnerRepo } from "../services/transition-rules.js";
 import { performPrMerge } from "../services/github-merge.js";
+import { groundingRemoteGuardFor } from "../services/grounding-scope.js";
 import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
 import {
   checkDistinctReviewerGate,
@@ -1152,7 +1153,7 @@ export const importTaskSchema = createTaskSchema.omit({ workflowId: true, depend
   description: z.string().max(50_000).optional(),
 });
 
-const batchImportSchema = z.object({
+export const batchImportSchema = z.object({
   tasks: z.array(importTaskSchema).min(1).max(200),
 });
 
@@ -2829,7 +2830,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           403,
         );
       }
-      const mergeResult = await performPrMerge(task, mergeMethod, actor);
+      const mergeResult = await performPrMerge(task, mergeMethod, actor, groundingRemoteGuardFor(c));
       if (!mergeResult.ok) {
         const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
         return c.json(
@@ -3095,7 +3096,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           403,
         );
       }
-      const mergeResult = await performPrMerge(task, selfApprMergeMethod, actor);
+      const mergeResult = await performPrMerge(task, selfApprMergeMethod, actor, groundingRemoteGuardFor(c));
       if (!mergeResult.ok) {
         const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
         return c.json(
@@ -3557,6 +3558,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       { ...task, prNumber: prNumber ?? task.prNumber },
       workMergeMethod,
       actor,
+      groundingRemoteGuardFor(c),
     );
     if (!mergeResult.ok) {
       const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
@@ -4401,7 +4403,7 @@ taskRouter.post(
     }
 
     const { mergeMethod } = c.req.valid("json");
-    const mergeResult = await performPrMerge(task, mergeMethod, actor);
+    const mergeResult = await performPrMerge(task, mergeMethod, actor, groundingRemoteGuardFor(c));
     if (!mergeResult.ok) {
       const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
       return c.json(

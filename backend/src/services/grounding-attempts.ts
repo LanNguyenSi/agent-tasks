@@ -64,6 +64,18 @@ export class GroundingAttemptsService {
     return lockGroundingTask(db, taskId);
   }
 
+  /**
+   * Route admission before any Grounding read or lock: the task row, then the
+   * lock-free project write predicate. A caller without access gets one 403
+   * whatever the task's Grounding state; the locked checks that follow repeat
+   * the authorization under the task lock.
+   */
+  private async admit(db: Prisma.TransactionClient, taskId: string, actor: Actor): Promise<void> {
+    const task = uuid.safeParse(taskId).success ? await db.task.findUnique({ where: { id: taskId }, select: { projectId: true } }) : null;
+    if (!task) throw new GroundingAccessError("not_found", 404);
+    if (!await this.admissionAuthority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);
+  }
+
   private async authorizeTask(task: GroundingTask, actor: Actor, db: Prisma.TransactionClient, authority = this.authority): Promise<void> {
     if ((actor.type === "agent" && !actor.scopes.includes("tasks:transition")) || !await authority.canWrite(actor, task.projectId, db))
       throw new GroundingAccessError("forbidden", 403);
@@ -91,6 +103,7 @@ export class GroundingAttemptsService {
   /** Pre-parse admission grants only one of the installed route capabilities. */
   async authorizeRouteIssue(taskId: string, actor: Actor): Promise<void> {
     return this.transaction(async db => {
+      await this.admit(db, taskId, actor);
       const task = await this.lock(db, taskId);
       try { await this.authorizeTask(task, actor, db); }
       catch (error) {
@@ -101,6 +114,7 @@ export class GroundingAttemptsService {
   }
 
   private async receiptIntent(db: Prisma.TransactionClient, taskId: string, attemptId: string, actor: Actor): Promise<{ intent: GroundingIntent; direct: GroundingDirectDescriptor | null }> {
+    await this.admit(db, taskId, actor);
     const task = await this.lock(db, taskId);
     if (!await this.authority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);
     const attempt = await db.groundingAttempt.findUnique({ where: { id: attemptId } });
@@ -171,6 +185,7 @@ export class GroundingAttemptsService {
   }
   async authorizeDirectIssue(taskId: string, actor: Actor) {
     return this.transaction(async db => {
+      await this.admit(db, taskId, actor);
       const task = await this.lock(db, taskId);
       if ((actor.type === "agent" && !actor.scopes.includes("tasks:transition")) || !await this.authority.canWrite(actor, task.projectId, db)) throw new GroundingAccessError("forbidden", 403);
     });

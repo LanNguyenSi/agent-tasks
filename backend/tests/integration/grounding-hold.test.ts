@@ -18,6 +18,7 @@ const harness = vi.hoisted(() => ({ db: null as PrismaClient | null }));
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: new Proxy({}, { get: (_target, property) => { const value = Reflect.get(harness.db!, property); return typeof value === "function" ? value.bind(harness.db) : value; } }) }));
 vi.mock("../../src/config/index.js", () => ({ config: { NODE_ENV: "test", SESSION_SECRET: "test-secret-which-is-long-enough-1234", TRUSTED_PROXY_HOPS: 0 } }));
 import { createApp } from "../../src/app.js";
+import { createGroundingRemoteTargetGuard } from "../../src/services/grounding-scope.js";
 import { createSessionToken } from "../../src/services/session.js";
 
 let store: Awaited<ReturnType<typeof completionStore>>;
@@ -61,7 +62,8 @@ it("direct force transition rejects a held unprovisioned task", async () => {
   const task = await store.db.task.create({ data: { projectId: f.projectId, title: "Historical", status: "in_progress" } });
   await migration().execute(task.id, admin, hold);
   const app = new Hono<{ Variables: AppVariables }>(); app.use("*", async (c, next) => { c.set("actor", admin); await next(); });
-  app.route("/api", createGroundingDirectTaskRouter({ db: store.db, service: f.service }));
+  const scope = { projectIds: new Set([f.projectId]), repos: new Set<string>() };
+  app.route("/api", createGroundingDirectTaskRouter({ db: store.db, service: f.service, scope, remoteGuard: createGroundingRemoteTargetGuard({ db: store.db, scope }) }));
   const response = await app.request(`/api/tasks/${task.id}/transition`, { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "force" }, body: JSON.stringify({ toStatus: "done", force: true, reason: "Admin request" }) });
   expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "grounding_task_held" });
   expect(await store.db.task.findUnique({ where: { id: task.id } })).toEqual(task);

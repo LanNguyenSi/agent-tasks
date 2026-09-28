@@ -6,6 +6,7 @@ vi.mock("../../src/lib/prisma.js", () => ({ prisma: new Proxy({}, { get: (_targe
 vi.mock("../../src/config/index.js", () => ({ config: { NODE_ENV: "test", SESSION_SECRET: "test-secret-which-is-long-enough-1234", TRUSTED_PROXY_HOPS: 0 } }));
 vi.mock("../../src/services/grounding-client.js", () => ({ getGroundingClient: () => harness.wrapper }));
 import { createApp } from "../../src/app.js";
+import { createGroundingRemoteTargetGuard } from "../../src/services/grounding-scope.js";
 import { completionStore, completionFixture, completionActor as actor } from "../helpers/grounding-completion-fixtures.js";
 import { ids, session } from "../helpers/grounding-fixtures.js";
 import type { GroundingChallenge } from "../../src/services/grounding-attempts.js";
@@ -40,7 +41,7 @@ beforeEach(async () => {
   harness.wrapper.getLedgerSummary.mockReset().mockRejectedValue(new Error("ledger must not run"));
 });
 afterEach(() => { harness.db = store.db; vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-function app(creationPolicy?: GroundingCreationPolicy) { return createApp("", f.attempts, { db: store.db, service: f.service, creationPolicy }); }
+function app(creationPolicy?: GroundingCreationPolicy) { const scope = { projectIds: new Set([f.projectId]), repos: new Set<string>() }; return createApp("", f.attempts, { db: store.db, service: f.service, creationPolicy, scope, remoteGuard: createGroundingRemoteTargetGuard({ db: store.db, scope }) }); }
 function request(body: unknown, endpoint = "transition", auth = token, key: string | null = "operation") {
   return new Request(`http://localhost/api/tasks/${f.taskId}${endpoint === "patch" || endpoint === "delete" ? "" : `/${endpoint}`}`, { method: endpoint === "patch" ? "PATCH" : endpoint === "delete" ? "DELETE" : "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth}`, ...(key ? { "Idempotency-Key": key } : {}) }, ...(endpoint === "delete" ? {} : { body: JSON.stringify(body) }) });
 }
@@ -303,7 +304,8 @@ async function queuedAuthority(kind: "issue" | "upload" | "complete" | "patch" |
   } });
   const { GroundingAttemptsService } = await import("../../src/services/grounding-attempts.js");
   const attempts = new GroundingAttemptsService({ db: scheduled, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, headProvider: f.headProvider });
-  const a = createApp("", attempts, { db: scheduled, service: f.make(scheduled), ...(kind === "create" ? { creationPolicy: selected() } : {}) });
+  const scope = { projectIds: new Set([f.projectId]), repos: new Set<string>() };
+  const a = createApp("", attempts, { db: scheduled, service: f.make(scheduled), scope, remoteGuard: createGroundingRemoteTargetGuard({ db: scheduled, scope }), ...(kind === "create" ? { creationPolicy: selected() } : {}) });
   const before = await snapshot(); const count = await store.db.task.count();
   const req = kind === "release" ? request({}, "release", token, null) : kind === "issue" ? request({ version: 1, endpoint: "transition", target: "review" }, "grounding-attempts/direct", auth, null)
     : kind === "upload" ? request({ session, receipt: prepared!.receipt }, `grounding-attempts/${prepared!.challenge.attemptId}/receipt`, auth, null)

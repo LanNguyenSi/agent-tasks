@@ -234,6 +234,8 @@ function makeApp(actor: Actor = AGENT) {
   const app = new Hono<{ Variables: AppVariables }>();
   app.use("*", async (c, next) => {
     c.set("actor", actor);
+    // An unconfigured application: its legacy handlers run no Grounding guard.
+    c.set("groundingRemoteTargetGuard", null);
     await next();
   });
   app.route("/", taskRouter);
@@ -4009,6 +4011,7 @@ describe("task_finish autoMerge", () => {
       expect.objectContaining({ id: soloTask.id, prNumber: 10 }),
       "rebase",
       expect.objectContaining({ type: "agent" }),
+      null,
     );
   });
 

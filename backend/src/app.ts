@@ -6,7 +6,8 @@ import { GroundingGithubWebhookService } from "./services/grounding-github-webho
 import { createGroundingCreationRouter } from "./routes/grounding-creation.js";
 import { prisma } from "./lib/prisma.js";
 import { createGroundingDirectTaskRouter } from "./routes/grounding-direct-tasks.js";
-import { createGroundingTaskCompletionRouter, type GroundingTaskCompletionDependencies } from "./routes/grounding-task-completion.js";
+import { assertGroundingScopeWired, createGroundingTaskCompletionRouter, type GroundingTaskCompletionDependencies } from "./routes/grounding-task-completion.js";
+import { createGroundingRemoteTargetGuard, type GroundingRemoteTargetGuard } from "./services/grounding-scope.js";
 import { createGroundingRouter } from "./routes/grounding.js";
 import type { GroundingAttemptsService } from "./services/grounding-attempts.js";
 import { Hono } from "hono";
@@ -37,6 +38,15 @@ import type { AppVariables } from "./types/hono.js";
 export function createApp(corsOrigins: string, grounding?: GroundingAttemptsService, completion?: GroundingTaskCompletionDependencies, migration?: GroundingMigrationService): Hono<{ Variables: AppVariables }> {
   const configured = grounding !== undefined || completion !== undefined || migration !== undefined;
   const groundingDb = completion?.db ?? prisma;
+  // The effect-boundary guard every legacy remote handler (merge, PR create,
+  // PR comment) runs on the exact GitHub target it sends. A completion service
+  // must come with its guard (startup refuses otherwise); a configuration
+  // without one gets a guard with no scope, which refuses every target; the
+  // unconfigured application gets none, so its legacy handlers are unchanged.
+  if (completion) assertGroundingScopeWired(completion);
+  const remoteGuard: GroundingRemoteTargetGuard | null = configured
+    ? completion?.remoteGuard ?? createGroundingRemoteTargetGuard({ db: groundingDb, scope: undefined })
+    : null;
   const app = new Hono<{ Variables: AppVariables }>();
 
   // Structured logger w/ AsyncLocalStorage-backed per-request context.
@@ -45,6 +55,10 @@ export function createApp(corsOrigins: string, grounding?: GroundingAttemptsServ
   // method, path — plus actorId/actorType (after auth) and verb (in
   // /api/mcp). See lib/logger.ts and middleware/request-context.ts.
   app.use("*", requestContextMiddleware);
+  app.use("*", async (c, next) => {
+    c.set("groundingRemoteTargetGuard", remoteGuard);
+    await next();
+  });
 
   // App-wide request-body-size ceiling (hardening, 769df3c4). Runs before
   // any router/validator so an oversized body is rejected at the transport
