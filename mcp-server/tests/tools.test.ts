@@ -1088,6 +1088,16 @@ describe("buildTools", () => {
     },
   );
 
+  it("pull_requests_create and pull_requests_merge reject an empty idempotencyKey locally, before any network call", () => {
+    expect(() =>
+      parseArgs("pull_requests_create", { taskId: TASK_ID, owner: "o", repo: "r", head: "b", title: "t", idempotencyKey: "" }),
+    ).toThrow();
+    expect(() =>
+      parseArgs("pull_requests_merge", { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1, idempotencyKey: "" }),
+    ).toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("pull_requests_merge rejects a 129-char idempotencyKey locally (narrowed to the 1-128 operationKey format)", () => {
     const key = "a".repeat(129);
     expect(() =>
@@ -1622,6 +1632,7 @@ describe("buildTools", () => {
     ["task_finish", "task_merge", "task_abandon"].flatMap((name) => [
       { name, label: "a 129-char operationKey", key: "a".repeat(129) },
       { name, label: "an operationKey containing '/'", key: "a/b" },
+      { name, label: "an empty operationKey", key: "" },
     ]),
   )("$name rejects $label locally, before any network call", ({ name, key }) => {
     expect(() => parseArgs(name, { taskId: TASK_ID, operationKey: key })).toThrow(/"operationKey"/);

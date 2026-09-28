@@ -575,6 +575,7 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
   it.each([
     { label: "a 256-char", key: "a".repeat(256) },
     { label: "a non-ASCII", key: "nön-ascii" },
+    { label: "an empty", key: "" },
   ])("rejects $label pull_requests_create idempotencyKey before self-dispatch", async ({ key }) => {
     const response = await mcpRequest(
       app,
@@ -614,6 +615,22 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     const response = await mcpRequest(
       app,
       { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { ...args, [keyField]: "a/b" } } },
+      { Authorization: "Bearer good_token" },
+    );
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(0);
+    expect(response.body).toMatchObject({ result: { isError: true, content: [{ text: expect.stringContaining("Invalid arguments") }] } });
+  });
+
+  it.each([
+    { name: "pull_requests_merge", args: { taskId: TASK_ID, owner: "o", repo: "r", prNumber: 1 }, keyField: "idempotencyKey" },
+    { name: "task_finish", args: { taskId: TASK_ID }, keyField: "operationKey" },
+    { name: "task_merge", args: { taskId: TASK_ID }, keyField: "operationKey" },
+    { name: "task_abandon", args: { taskId: TASK_ID }, keyField: "operationKey" },
+  ])("rejects a $keyField that is empty on $name before self-dispatch", async ({ name, args, keyField }) => {
+    const response = await mcpRequest(
+      app,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { ...args, [keyField]: "" } } },
       { Authorization: "Bearer good_token" },
     );
     expect(response.status).toBe(200);

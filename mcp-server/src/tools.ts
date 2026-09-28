@@ -1100,7 +1100,7 @@ export function buildTools(
     def({
       name: "pull_requests_create",
       description:
-        "Create a pull request on behalf of a team member with GitHub connected. Requires `github:pr_create` scope for agent callers plus an operator who has opted in via 'Allow agents to create PRs' in Settings. The task is updated with `branchName`, `prUrl`, `prNumber` on success. The historic alternative — agents running `gh pr create` themselves and passing the URL into `task_finish { prUrl }` — still works and remains a supported fallback for orgs that prefer not to share a GitHub identity with agent-tasks. `idempotencyKey` makes the call safe to retry after a network timeout — the backend replays the stored 2xx response on subsequent calls with the same key, and rejects the same key + different payload with 409." + CREATE_KEY_HINT,
+        "Create a pull request on behalf of a team member with GitHub connected. Requires `github:pr_create` scope for agent callers plus an operator who has opted in via 'Allow agents to create PRs' in Settings. The task is updated with `branchName`, `prUrl`, `prNumber` on success. The historic alternative — agents running `gh pr create` themselves and passing the URL into `task_finish { prUrl }` — still works and remains a supported fallback for orgs that prefer not to share a GitHub identity with agent-tasks." + CREATE_KEY_HINT,
       inputShape: {
         taskId: uuid(),
         owner: z.string().min(1),
