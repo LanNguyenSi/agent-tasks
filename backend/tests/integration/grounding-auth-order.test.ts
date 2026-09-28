@@ -8,6 +8,7 @@ vi.mock("../../src/services/confidence-telemetry.js", () => ({ recordBounceBack:
 import { createApp } from "../../src/app.js";
 import { GroundingGithubMergeService } from "../../src/services/grounding-github-merge.js";
 import { GroundingMigrationService } from "../../src/services/grounding-migration.js";
+import { GroundingAttemptsService } from "../../src/services/grounding-attempts.js";
 import { createGroundingRemoteTargetGuard, type GroundingEnforcedScope } from "../../src/services/grounding-scope.js";
 import { createSessionToken } from "../../src/services/session.js";
 import { completionFixture, completionStore, completionActor } from "../helpers/grounding-completion-fixtures.js";
@@ -62,9 +63,12 @@ async function taskIn(state: State, scope: GroundingEnforcedScope) {
   if (state === "in scope") (scope.projectIds as Set<string>).add(projectId);
   return { taskId, projectId, repo };
 }
+// Every service runs on the logged client, so the query log sees each
+// statement a router or service issues for the request.
 function application(scope: GroundingEnforcedScope, selected: string[] = []) {
   const config = { audience: "consumer.test", trust: () => f.issuer.trust };
-  return createApp("", f.attempts, { db: logged, service: f.service, scope, remoteGuard: createGroundingRemoteTargetGuard({ db: logged, scope }), creationPolicy: selected.map(projectId => ({ projectId, subjectMode: "TASK_SPEC" as const })) }, new GroundingMigrationService({ db: logged, config }));
+  const attempts = new GroundingAttemptsService({ db: logged, config, now: () => f.now, headProvider: f.headProvider });
+  return createApp("", attempts, { db: logged, service: f.make(logged), scope, remoteGuard: createGroundingRemoteTargetGuard({ db: logged, scope }), creationPolicy: selected.map(projectId => ({ projectId, subjectMode: "TASK_SPEC" as const })) }, new GroundingMigrationService({ db: logged, config }));
 }
 function request(method: string, path: string, body: unknown, auth: string, key: string | null = "auth-order-key") {
   return new Request(`http://localhost${path}`, { method, headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth}`, ...(key ? { "Idempotency-Key": key } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
