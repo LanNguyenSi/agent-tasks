@@ -3,7 +3,7 @@ type: module
 title: "backend: Hono API + Prisma"
 description: "Route layout, service/gate split, and the token-hash auth middleware behind every request."
 tags: [backend, hono, prisma, auth, routes]
-timestamp: 2026-09-28T16:42:00Z
+timestamp: 2026-09-29T04:26:34Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -77,8 +77,12 @@ Related: `architecture.md`, `claim-model.md`, `workflow-gates.md`, `governance-m
 **Shared grounding completion** (`grounding-completion.ts`, `grounding-finalization.ts`):
 server-only APIs use explicit persisted cohorts and immutable operations, own
 concrete task/claim effects and mandatory transactional audit, and consume
-external receipts atomically. The remote path reserves an exact source head,
-claims one durable dispatch and uses read-only recovery after uncertain effects.
+external receipts atomically. The remote path reserves an exact source head
+(equal to the signed head for a `CODE_HEAD` receipt; a `TASK_SPEC` receipt
+signs no head, and the reserved head is still sent to GitHub as the expected
+`sha`), compares the stored PR URL with the effective repository
+case-insensitively and the PR number exactly (`githubPrUrlMatches` in
+`grounding-github-fence.ts`), claims one durable dispatch and uses read-only recovery after uncertain effects.
 Undispatched reservations can be audited-cancelled. The shared context mutation
 helper locks parent projects then sorted tasks, rejects unresolved reservations
 and commits actual writes, invalidation and audit together. Unprovisioned local

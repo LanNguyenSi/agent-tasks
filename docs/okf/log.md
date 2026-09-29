@@ -1,5 +1,19 @@
 # Change log
 
+## 2026-09-29 (grounded merge of TASK_SPEC tasks)
+
+`backend.md`, `governance-merge.md` and `workflow-gates.md` were re-verified
+against the grounded merge change in `grounding-completion.ts`,
+`grounding-github-merge.ts`, `grounding-github-fence.ts`,
+`grounding-context.ts`, `grounding-completion-gates.ts`,
+`grounding-finalization.ts` and `grounding-route-effects.ts`, and updated: a
+`TASK_SPEC` receipt signs no head, so the reservation skips the signed-head
+comparison for it while still reserving the observed head and sending it as
+the expected `sha`; stored PR URLs are compared with the effective repository
+case-insensitively and with the exact PR number. `reconcile-done-but-open.md`
+and `claim-model.md` were re-verified against the same sources and the updated
+receipt contract without content changes. All five were re-stamped.
+
 ## 2026-09-28 (runtime database role)
 
 `deploy.md` was re-verified against `docker-compose.prod.yml`, whose backend
