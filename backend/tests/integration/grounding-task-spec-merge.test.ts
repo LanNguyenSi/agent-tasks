@@ -109,7 +109,7 @@ it("TASK_SPEC merge is refused without any remote write when the PR head changes
   expect((await f.task()).status).toBe("review");
 });
 
-it("TASK_SPEC merge is refused when the signed context carries a code head the binding does not attest", async () => {
+it("TASK_SPEC merge is refused when the stored signed context no longer matches its reprojection", async () => {
   await toReview();
   const attempt = await store.db.groundingAttempt.findFirstOrThrow({ where: { taskId: f.taskId, state: "ACTIVE" } });
   const context = JSON.parse(attempt.contextBytes.toString("utf8"));
