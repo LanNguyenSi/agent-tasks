@@ -8,7 +8,7 @@ import { canonicalGroundingJson, GroundingAccessError, groundingWorkflow, mismat
 import type { GroundingDecision } from "./grounding-completion.js";
 import type { OperationRequest } from "./grounding-operations.js";
 import { isReviewState, isTerminalState } from "./default-workflow.js";
-import { canonicalGithubRepo } from "./grounding-github-fence.js";
+import { canonicalGithubRepo, sameGithubPrUrl } from "./grounding-github-fence.js";
 
 const text = z.string().max(32768);
 const contextSchema = z.object({
@@ -65,7 +65,9 @@ export async function buildGroundingRoutePlan(db: Prisma.TransactionClient, task
     if ((finish.result ?? null) !== request.result || finish.mergeMethod !== request.method || finish.autoMerge !== remote || (finish.outcome && finish.outcome !== request.action)) throw new GroundingAccessError("bad_state", 409);
   } else if (kind === "task_merge" && (body.data as { mergeMethod: string }).mergeMethod !== request.method) throw new GroundingAccessError("bad_state", 409);
   // Inline PR submission cannot replace the authoritative deliverable covered by the receipt.
-  if ((transport.body.prUrl !== undefined && transport.body.prUrl !== task.prUrl) ||
+  // The same PR spelled with a different owner/repo case is the same deliverable.
+  const prUrl = transport.body.prUrl;
+  if ((prUrl !== undefined && prUrl !== task.prUrl && !(typeof prUrl === "string" && sameGithubPrUrl(prUrl, task.prUrl))) ||
       (transport.body.prNumber !== undefined && transport.body.prNumber !== task.prNumber)) mismatch();
   const holdsReview = actor.type === "agent" ? task.reviewClaimedByAgentId === actor.tokenId : task.reviewClaimedByUserId === actor.userId;
   if ((kind === "review_finish" && !holdsReview) || (kind === "self_approve_finish" && (task.reviewClaimedByAgentId || task.reviewClaimedByUserId))) throw new GroundingAccessError("forbidden", 403);

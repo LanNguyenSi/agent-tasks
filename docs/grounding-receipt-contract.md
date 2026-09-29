@@ -126,8 +126,15 @@ The subject digest is lowercase SHA-256 over UTF-8 bytes of the following JSON p
 
 Metadata, debug suggestions, comments, labels, priority, result text and display/audit timestamps do not enter this projection. Changing any projected value requires a new context. A first challenge uses revision 1; later issuance increments the protected revision when its projection bytes differ from the last issued projection. Issuance without a projection change retains the revision but always creates a fresh attempt and nonce. Upload rederives the current bytes and rejects divergence, including on an exact retry. Participating writers invalidate context atomically through the mutation protocol below, including configured PR-create and webhook binding updates. Local reprojection also detects current drift from other writers, but cannot detect a change that was reverted between observations. The repository fence separately excludes conflicting writes while a GitHub operation is active.
 
-`CODE_HEAD` requires a positive registered PR number and the exact canonical
-GitHub PR URL for the registered effective repository. Finish/approve and
+`CODE_HEAD` requires a positive registered PR number and a canonical
+GitHub PR URL for the registered effective repository: scheme, host, path
+shape and PR number are exact, while owner/repo compare case-insensitively,
+because the grounded PR create route stores the lowercased URL even when the
+project keeps a mixed-case repository name. The same PR URL identity applies
+wherever a grounded merge, finish or merge recovery checks the stored PR URL
+against the effective repository and PR number; the required-CI gate checks it
+against the project repository. A repository name with surrounding whitespace
+never matches. Finish/approve and
 generic attempt reads use the existing `allowAgentPrCreate` delegation consent.
 The REST standalone task-merge route uses `allowAgentPrMerge` for its head and
 CI reads, matching its merge authority; create consent is not a substitute.
@@ -425,13 +432,22 @@ required roles and review governance, plus its authoritative cohort's evidence.
 No general claim requirement is added where the standalone merge policy does
 not require one. The seed preserves its requested route semantics. All members
 reserve their exact repository, PR, source head, method and local context in
-one transaction. Receipt-backed reservations retain their same-task receipt
+one transaction. For a `CODE_HEAD` receipt the source head observed at
+reservation must equal the head the receipt signed. A `TASK_SPEC` receipt
+attests the task specification and signs no head (`deliverable.headSha` is
+null), so it skips only that comparison, and only when both the protected
+binding and the signed context are `TASK_SPEC`; the observed head is still
+reserved and dispatch sends it as the expected source `sha`, so a head change
+between reservation and merge fails instead of merging different code. The
+ungrouped finalization service applies the same rule. Receipt-backed reservations retain their same-task receipt
 foreign keys; cohort reservation pointers exclude competing completion,
 challenge issuance, receipt uploads and participating mutations.
 
 Required CI uses the existing check-run classification and cache policy. Its
-reported SHA must equal the fresh authorized head sample, receipt reprojection
-and final dispatch head for every participant. A cached earlier head blocks
+reported SHA must equal the fresh authorized head sample and the final dispatch
+head for every participant; for a `CODE_HEAD` receipt it must also equal the
+signed head of the receipt reprojection, while a `TASK_SPEC` receipt signs no
+head and binds CI through the head reserved for dispatch. A cached earlier head blocks
 until normal cache refresh. OFF, legacy or grounding-only overrides do not
 skip CI, merge consent or ordinary transition requirements. `prMerged` is
 discharged only by exact merged proof.

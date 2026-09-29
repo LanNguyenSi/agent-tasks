@@ -1,4 +1,4 @@
-import { canonicalGithubRepo } from "./grounding-github-fence.js";
+import { canonicalGithubRepo, githubPrUrlMatches } from "./grounding-github-fence.js";
 import { lockGroundingAuthority } from "./grounding-direct-authority.js";
 import { prisma } from "../lib/prisma.js";
 import { createHash } from "node:crypto";
@@ -208,7 +208,7 @@ export async function projectGroundingContext(
   let headSha: string | null = null;
   if (binding.subjectMode === "CODE_HEAD") {
     if (!repo || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || !Number.isSafeInteger(task.prNumber) || (task.prNumber ?? 0) <= 0 ||
-        task.prUrl !== `https://github.com/${repo}/pull/${task.prNumber}`) unavailable();
+        !githubPrUrlMatches(task.prUrl, repo, task.prNumber)) unavailable();
     try { headSha = await headProvider({ actor, teamId: task.project.teamId, repo, prNumber: task.prNumber!, ...(db ? { db } : {}) }); }
     catch { unavailable(); }
     if (!/^[0-9a-f]{40}$/.test(headSha)) unavailable();

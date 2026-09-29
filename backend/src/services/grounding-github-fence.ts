@@ -13,6 +13,33 @@ export function canonicalGithubRepo(value: string): string {
   return repo.toLowerCase();
 }
 
+const githubPrUrl = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)$/;
+/** Canonical identity of a strict GitHub PR URL; host and path shape exact, owner/repo case-folded. */
+function githubPrIdentity(prUrl: string | null | undefined): { repo: string; number: string } | null {
+  const url = githubPrUrl.exec(prUrl ?? "");
+  if (!url) return null;
+  try { return { repo: canonicalGithubRepo(url[1]!), number: url[2]! }; } catch { return null; }
+}
+/**
+ * Whether a stored PR URL names exactly `repo` pull `prNumber`. The grounded
+ * PR create route stores the canonical (lowercased) URL while the project may
+ * keep a mixed-case name, so owner/repo compare case-insensitively; the PR
+ * number must match exactly and the repository must carry no surrounding
+ * whitespace.
+ */
+export function githubPrUrlMatches(prUrl: string | null | undefined, repo: string | null | undefined, prNumber: number | null | undefined): boolean {
+  const identity = githubPrIdentity(prUrl);
+  // canonicalGithubRepo trims; a stored repository with surrounding whitespace is not the one the URL names.
+  if (!identity || !repo || repo !== repo.trim() || !Number.isSafeInteger(prNumber) || (prNumber ?? 0) <= 0 || identity.number !== String(prNumber)) return false;
+  try { return identity.repo === canonicalGithubRepo(repo); } catch { return false; }
+}
+/** Two PR URLs name the same pull request: identical strings, or equal canonical identities. */
+export function sameGithubPrUrl(left: string | null | undefined, right: string | null | undefined): boolean {
+  if (left === right) return true;
+  const a = githubPrIdentity(left); const b = githubPrIdentity(right);
+  return a !== null && b !== null && a.repo === b.repo && a.number === b.number;
+}
+
 /** Check the actual schema-local triggers, including disabled/misdirected installs. */
 export async function assertGithubFenceInstalled(tx: Prisma.TransactionClient): Promise<void> {
   const rows = await tx.$queryRaw<{ count: bigint }[]>`

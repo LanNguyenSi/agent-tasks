@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-09-28T16:42:00Z
+timestamp: 2026-09-29T04:57:47Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -60,8 +60,17 @@ eligible `allowAgentPrMerge` delegate, a review state with one terminal workflow
 edge, required roles, review governance, and its cohort's evidence decision.
 Merge head and CI reads use merge delegation consent. No general work or review
 claim is added where the standalone route permits a non-claimant merger.
-Required CI must refer to the same fresh source head as the receipt and every
-other participant. OFF, legacy enrollment and grounding-only overrides do not
+Required CI must refer to the same fresh source head as every other
+participant and, for a `CODE_HEAD` receipt, as the receipt. A `CODE_HEAD`
+receipt's signed head must equal the source head reserved for the merge. A
+`TASK_SPEC` receipt attests the task specification and signs no head, so only
+that comparison is skipped, and only when both the binding and the signed
+context are `TASK_SPEC` (`assertAttemptMergeHead` in `grounding-completion.ts`);
+the reserved head is still re-read at dispatch and sent to GitHub as the
+expected `sha`. The stored PR URL must name the effective repository
+(case-insensitively; the grounded create route stores it lowercased; a
+repository name with surrounding whitespace never matches) and the exact PR
+number. OFF, legacy enrollment and grounding-only overrides do not
 skip CI or ordinary merge gates.
 
 The seed retains its requested task/finish/GitHub route semantics. Other

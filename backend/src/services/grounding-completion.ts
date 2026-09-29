@@ -17,6 +17,7 @@ import { evaluateGroundingGate } from "./gates/grounding-gate.js";
 import { getGroundingClient, type GroundingClient } from "./grounding-client.js";
 import { isReviewState, isWorkState, isTerminalState, requestChangesTarget } from "./default-workflow.js";
 import { groundingMergeConsent, mergeIdentitySchema, type MergeIdentity } from "./grounding-merge-provider.js";
+import { githubPrUrlMatches } from "./grounding-github-fence.js";
 import { logGroundingDecision } from "./audit.js";
 import { checkReviewApprovalGate, checkSelfMergeGate } from "./review-gate.js";
 import { buildGroundingRoutePlan, applyGroundingRoutePlan, type GroundingRoutePlan } from "./grounding-route-effects.js";
@@ -279,14 +280,10 @@ export class GroundingCompletionService {
       if (!isTerminalState(def, decision.to)) badState();
       await groundingMergeConsent(db, actor, task.project.teamId);
       const repo = task.deliverableRepo ?? task.project.githubRepo;
-      if (!repo || task.prUrl !== `https://github.com/${repo}/pull/${task.prNumber}`) unavailable();
+      if (!repo || !githubPrUrlMatches(task.prUrl, repo, task.prNumber)) unavailable();
       const remote = mergeIdentitySchema.parse({ repo, prNumber: task.prNumber, headSha: await this.requestHead(request)({ actor, teamId: task.project.teamId, repo, prNumber: task.prNumber!, db }), method: request.method });
       if (decision.ciHeadSha !== null && decision.ciHeadSha !== remote.headSha) throw new GroundingDecisionError("precondition_failed");
-      if (decision.attemptId) {
-        const attempt = await db.groundingAttempt.findUniqueOrThrow({ where: { id: decision.attemptId } });
-        const context = JSON.parse(attempt.contextBytes.toString("utf8"));
-        if (context.deliverable.headSha !== remote.headSha) mismatch();
-      }
+      if (decision.attemptId) await assertAttemptMergeHead(db, task.id, decision.attemptId, remote.headSha);
       const operation = await this.record(db, task, actor, key, request, decision, remote);
       const changed = await db.groundingCohort.updateMany({ where: { taskId, reservationId: null }, data: { reservationId: operation.id } });
       if (changed.count !== 1) mismatch();
@@ -294,6 +291,22 @@ export class GroundingCompletionService {
       return { operationId: operation.id, state: operation.state, result: operation.result };
     });
   }
+}
+
+/**
+ * The merge head observed at reservation must be the head the receipt signed.
+ * A TASK_SPEC receipt attests the task specification and signs no head
+ * (`deliverable.headSha` is null), so it has nothing to compare; the observed
+ * head is still recorded on the reservation and the merge dispatch sends it as
+ * the expected head, so a head change before the merge fails instead of
+ * merging different code. Every other binding keeps the exact comparison.
+ */
+export async function assertAttemptMergeHead(db: Prisma.TransactionClient, taskId: string, attemptId: string, head: string) {
+  const attempt = await db.groundingAttempt.findUniqueOrThrow({ where: { id: attemptId } });
+  const context = JSON.parse(attempt.contextBytes.toString("utf8"));
+  const binding = await db.groundingBinding.findUnique({ where: { taskId } });
+  const specOnly = binding?.subjectMode === "TASK_SPEC" && context.protection?.subjectMode === "TASK_SPEC" && context.deliverable.headSha === null;
+  if (!specOnly && context.deliverable.headSha !== head) mismatch();
 }
 
 /** Local snapshot is independent of mutable display metadata and remote receipt TTL. */

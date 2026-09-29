@@ -6,6 +6,7 @@ import { findDelegationUser } from "./github-delegation.js";
 import { evaluateTransitionRules, GITHUB_BACKED_RULES, type TransitionRule } from "./transition-rules.js";
 import { fetchCheckRunStatus } from "./github-checks.js";
 import { GroundingDecisionError } from "./grounding-transaction.js";
+import { githubPrUrlMatches } from "./grounding-github-fence.js";
 
 export async function completionGates(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, target: GroundingTarget, definition: unknown, authority: GroundingAuthority, remote: boolean, headProvider: GroundingHeadProvider) {
   return evaluateCompletionGates(db, task, actor, target, definition, authority, remote, headProvider, "allowAgentPrCreate");
@@ -34,7 +35,7 @@ async function evaluateCompletionGates(db: Prisma.TransactionClient, task: Groun
     try {
       const repo = task.project.githubRepo;
       if (!repo || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || !Number.isSafeInteger(task.prNumber) || (task.prNumber ?? 0) <= 0 ||
-          task.prUrl !== `https://github.com/${repo}/pull/${task.prNumber}` || !githubToken) throw new GroundingDecisionError("precondition_failed");
+          !githubPrUrlMatches(task.prUrl, repo, task.prNumber) || !githubToken) throw new GroundingDecisionError("precondition_failed");
       const [owner, name] = repo.split("/");
       // Retain the existing classification/cache policy, but never accept a
       // cached prior PR head as evidence for the fresh decision head.
