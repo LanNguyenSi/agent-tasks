@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-09-29T04:26:34Z
+timestamp: 2026-09-29T04:57:47Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
@@ -68,7 +68,8 @@ semantic edge and retains current access/claim, role, review and CI checks.
 Required CI retains the existing classification/cache policy and additionally
 binds the reported CI SHA to the freshly observed decision, the signed head of
 a `CODE_HEAD` receipt and the reserved head. Its stored PR URL check compares
-owner/repo case-insensitively and the PR number exactly. Cached prior-head green results block until normal refresh.
+with the project repository, owner/repo case-insensitively, and the PR number
+exactly; a repository name with surrounding whitespace never matches. Cached prior-head green results block until normal refresh.
 Unknown rules fail closed at this boundary. Local foreign-deliverable rule
 skips retain their existing meaning and are recorded in the decision audit;
 remote foreign merges are refused. An explicit human-admin grounding override

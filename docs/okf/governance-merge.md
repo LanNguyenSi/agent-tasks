@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-09-29T04:26:34Z
+timestamp: 2026-09-29T04:57:47Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -68,8 +68,9 @@ that comparison is skipped, and only when both the binding and the signed
 context are `TASK_SPEC` (`assertAttemptMergeHead` in `grounding-completion.ts`);
 the reserved head is still re-read at dispatch and sent to GitHub as the
 expected `sha`. The stored PR URL must name the effective repository
-(case-insensitively; the grounded create route stores it lowercased) and the
-exact PR number. OFF, legacy enrollment and grounding-only overrides do not
+(case-insensitively; the grounded create route stores it lowercased; a
+repository name with surrounding whitespace never matches) and the exact PR
+number. OFF, legacy enrollment and grounding-only overrides do not
 skip CI or ordinary merge gates.
 
 The seed retains its requested task/finish/GitHub route semantics. Other

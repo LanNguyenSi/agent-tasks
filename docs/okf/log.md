@@ -1,5 +1,16 @@
 # Change log
 
+## 2026-09-29 (PR URL identity and required-CI wording)
+
+`governance-merge.md` and `workflow-gates.md` were re-verified against
+`grounding-github-fence.ts`, whose PR URL identity check now refuses a
+repository name with surrounding whitespace, and against the updated receipt
+contract, and updated: the required-CI gate compares the stored PR URL with the
+project repository, and a repository name with surrounding whitespace never
+matches. `backend.md`, `claim-model.md` and `reconcile-done-but-open.md` were
+re-verified against the same sources without content changes. All five were
+re-stamped.
+
 ## 2026-09-29 (grounded merge of TASK_SPEC tasks)
 
 `backend.md`, `governance-merge.md` and `workflow-gates.md` were re-verified
