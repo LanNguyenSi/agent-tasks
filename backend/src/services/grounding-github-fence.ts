@@ -24,11 +24,13 @@ function githubPrIdentity(prUrl: string | null | undefined): { repo: string; num
  * Whether a stored PR URL names exactly `repo` pull `prNumber`. The grounded
  * PR create route stores the canonical (lowercased) URL while the project may
  * keep a mixed-case name, so owner/repo compare case-insensitively; the PR
- * number must match exactly.
+ * number must match exactly and the repository must carry no surrounding
+ * whitespace.
  */
 export function githubPrUrlMatches(prUrl: string | null | undefined, repo: string | null | undefined, prNumber: number | null | undefined): boolean {
   const identity = githubPrIdentity(prUrl);
-  if (!identity || !repo || !Number.isSafeInteger(prNumber) || (prNumber ?? 0) <= 0 || identity.number !== String(prNumber)) return false;
+  // canonicalGithubRepo trims; a stored repository with surrounding whitespace is not the one the URL names.
+  if (!identity || !repo || repo !== repo.trim() || !Number.isSafeInteger(prNumber) || (prNumber ?? 0) <= 0 || identity.number !== String(prNumber)) return false;
   try { return identity.repo === canonicalGithubRepo(repo); } catch { return false; }
 }
 /** Two PR URLs name the same pull request: identical strings, or equal canonical identities. */

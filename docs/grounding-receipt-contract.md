@@ -131,8 +131,10 @@ GitHub PR URL for the registered effective repository: scheme, host, path
 shape and PR number are exact, while owner/repo compare case-insensitively,
 because the grounded PR create route stores the lowercased URL even when the
 project keeps a mixed-case repository name. The same PR URL identity applies
-wherever a grounded merge, finish, CI gate or merge recovery checks the stored
-PR URL against the effective repository and PR number. Finish/approve and
+wherever a grounded merge, finish or merge recovery checks the stored PR URL
+against the effective repository and PR number; the required-CI gate checks it
+against the project repository. A repository name with surrounding whitespace
+never matches. Finish/approve and
 generic attempt reads use the existing `allowAgentPrCreate` delegation consent.
 The REST standalone task-merge route uses `allowAgentPrMerge` for its head and
 CI reads, matching its merge authority; create consent is not a substitute.
@@ -442,8 +444,10 @@ foreign keys; cohort reservation pointers exclude competing completion,
 challenge issuance, receipt uploads and participating mutations.
 
 Required CI uses the existing check-run classification and cache policy. Its
-reported SHA must equal the fresh authorized head sample, receipt reprojection
-and final dispatch head for every participant. A cached earlier head blocks
+reported SHA must equal the fresh authorized head sample and the final dispatch
+head for every participant; for a `CODE_HEAD` receipt it must also equal the
+signed head of the receipt reprojection, while a `TASK_SPEC` receipt signs no
+head and binds CI through the head reserved for dispatch. A cached earlier head blocks
 until normal cache refresh. OFF, legacy or grounding-only overrides do not
 skip CI, merge consent or ordinary transition requirements. `prMerged` is
 discharged only by exact merged proof.

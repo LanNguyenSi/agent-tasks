@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { beforeAll, afterAll, beforeEach, afterEach, it, expect, vi } from "vitest";
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 const harness = vi.hoisted(() => ({ db: null as PrismaClient | null }));
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: new Proxy({}, { get: (_target, property) => { const value = Reflect.get(harness.db!, property); return typeof value === "function" ? value.bind(harness.db) : value; } }) }));
 vi.mock("../../src/config/index.js", () => ({ config: { NODE_ENV: "test", SESSION_SECRET: "test-secret-which-is-long-enough-1234", TRUSTED_PROXY_HOPS: 0 } }));
@@ -13,6 +13,8 @@ import { githubCreateCorrelationMarker, type GroundingGithubCreateProvider } fro
 import { createGroundingRemoteTargetGuard, type GroundingEnforcedScope } from "../../src/services/grounding-scope.js";
 import { completionFixture, completionStore, completionActor } from "../helpers/grounding-completion-fixtures.js";
 import { ids } from "../helpers/grounding-fixtures.js";
+import { defaultWorkflowDefinition } from "../../src/services/default-workflow.js";
+import { _clearCheckCache } from "../../src/services/github-checks.js";
 
 /**
  * Grounded merge of a task whose binding attests the task specification
@@ -54,8 +56,12 @@ function createService() {
 }
 const app = () => createApp("", f.attempts, { db: store.db, service: f.service, githubCreate: createService(), scope: scope(), remoteGuard: createGroundingRemoteTargetGuard({ db: store.db, scope: scope() }) });
 
-/** Grounded create, grounded finish, merge attempt: the state the merge route then acts on. */
-async function toReview(a = app()) {
+/**
+ * Grounded create, grounded finish, merge attempt: the state the merge route
+ * then acts on. `beforeMerge` changes the task or workflow before the merge
+ * attempt, so the receipt signs the changed state.
+ */
+async function toReview(a = app(), beforeMerge: () => Promise<void> = async () => {}) {
   const created = await a.fetch(send("/api/github/pull-requests", { taskId: f.taskId, owner, repo: name, head: "spec", base: "main", title: "Spec PR" }, "create"));
   expect(created.status).toBe(201);
   const stored = await f.task();
@@ -65,6 +71,7 @@ async function toReview(a = app()) {
   const finished = await a.fetch(send(`/api/tasks/${f.taskId}/finish`, {}, "finish"));
   expect(finished.status).toBe(200);
   expect((await f.task()).status).toBe("review");
+  await beforeMerge();
   await f.evidence("merge");
   return a;
 }
@@ -86,10 +93,10 @@ it("TASK_SPEC grounded create, finish and merge completes the task and merges at
 });
 
 it.each([
-  ["project-case URL of the bound PR", (repo: string) => `https://github.com/${repo}/pull/42`, 200],
-  ["URL of another PR number", (repo: string) => `https://github.com/${repo}/pull/43`, 409],
-  ["URL of another repository", (repo: string) => `https://github.com/${repo}x/pull/42`, 409],
-] as const)("grounded finish carrying the %s answers %d", async (_case, prUrl, status) => {
+  ["project-case URL of the bound PR", 200, (repo: string) => `https://github.com/${repo}/pull/42`],
+  ["URL of another PR number", 409, (repo: string) => `https://github.com/${repo}/pull/43`],
+  ["URL of another repository", 409, (repo: string) => `https://github.com/${repo}x/pull/42`],
+] as const)("grounded finish carrying the %s answers %d", async (_case, status, prUrl) => {
   const a = app();
   expect((await a.fetch(send("/api/github/pull-requests", { taskId: f.taskId, owner, repo: name, head: "spec", base: "main", title: "Spec PR" }, "create"))).status).toBe(201);
   await f.evidence("finish");
@@ -174,7 +181,7 @@ it.each(["base", "group"] as const)("CODE_HEAD %s merge accepts the lowercased P
 it.each([
   ["different repository", (repo: string) => `https://github.com/${repo.toLowerCase()}x/pull/42`],
   ["different number", (repo: string) => `https://github.com/${repo.toLowerCase()}/pull/43`],
-] as const)("base merge refuses a PR URL naming a %s before any remote read", async (_case, prUrl) => {
+] as const)("CODE_HEAD base merge: the receipt projection refuses a PR URL naming a %s before any remote read", async (_case, prUrl) => {
   const c = await codeHead("base", repo => `https://github.com/${repo.toLowerCase()}/pull/42`);
   await c.evidence("merge");
   await store.db.task.update({ where: { id: c.taskId }, data: { prUrl: prUrl(c.repo) } });
@@ -186,7 +193,64 @@ it.each([
 it.each([
   ["different repository", (repo: string) => `https://github.com/${repo.toLowerCase()}x/pull/42`],
   ["different number", (repo: string) => `https://github.com/${repo.toLowerCase()}/pull/43`],
-] as const)("CODE_HEAD merge attempt refuses a PR URL naming a %s", async (_case, prUrl) => {
+] as const)("CODE_HEAD merge attempt: the receipt projection refuses a PR URL naming a %s", async (_case, prUrl) => {
   const c = await codeHead("base", prUrl);
   await expect(c.evidence("merge")).rejects.toMatchObject({ code: "grounding_verification_unavailable" });
+});
+
+/** Required CI on review -> done, with check runs green only at the head the grounded create reported. */
+async function requireCi() {
+  await _clearCheckCache();
+  const definition = defaultWorkflowDefinition();
+  for (const edge of definition.transitions) if (edge.from === "review" && edge.to === "done") edge.requires = ["ciGreen"];
+  await store.db.workflow.create({ data: { projectId: f.projectId, name: "Required CI", isDefault: true, definition: definition as unknown as Prisma.InputJsonValue } });
+  const fetcher = vi.fn(async (url: string | URL | Request) => {
+    const path = String(url);
+    if (path.includes(`/commits/${f.head}/check-runs`)) return Response.json({ total_count: 1, check_runs: [{ status: "completed", conclusion: "success" }] });
+    if (path.includes("/check-runs")) return Response.json({ total_count: 1, check_runs: [{ status: "completed", conclusion: "failure" }] });
+    if (path.endsWith("/pulls/42")) return Response.json({ head: { sha: f.head }, state: "open", merged: false });
+    throw new Error(`Unexpected test request: ${path}`);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  return fetcher;
+}
+const baseService = () => new GroundingFinalizationService({ db: store.db, config: { audience: "consumer.test", trust: () => f.issuer.trust }, now: () => f.now, headProvider: f.headProvider, mergeProvider: { merge: f.merge, read: f.read }, deliverSignal: vi.fn(async () => {}) });
+
+it("TASK_SPEC merge passes the required-CI gate with the lowercased PR URL of a mixed-case project repository", async () => {
+  let fetcher: Awaited<ReturnType<typeof requireCi>> | undefined;
+  const a = await toReview(app(), async () => { fetcher = await requireCi(); });
+  const result = await a.fetch(send(`/api/tasks/${f.taskId}/merge`, {}, "merge"));
+  expect({ status: result.status, body: await result.json() }).toMatchObject({ status: 200, body: { merged: true } });
+  expect(fetcher!.mock.calls.some(([url]) => String(url).includes(`/commits/${f.head}/check-runs`))).toBe(true);
+  expect((await f.task()).status).toBe("done");
+  expect(f.merge).toHaveBeenCalledExactlyOnceWith({ repo: `${owner}/${name}`, prNumber: 42, headSha: f.head, method: "squash" }, "test-only");
+});
+
+it("TASK_SPEC required-CI gate refuses a stored PR URL naming another PR number", async () => {
+  await toReview(app(), async () => {
+    await requireCi();
+    await store.db.task.update({ where: { id: f.taskId }, data: { prUrl: `https://github.com/${`${owner}/${name}`.toLowerCase()}/pull/43` } });
+  });
+  await expect(baseService().reserveMerge(f.taskId, actor, "base-merge", taskMerge)).rejects.toMatchObject({ code: "precondition_failed" });
+  expect(await store.db.groundingOperation.count({ where: { taskId: f.taskId, key: "base-merge" } })).toBe(0);
+  expect(f.merge).not.toHaveBeenCalled();
+  expect((await f.task()).status).toBe("review");
+});
+
+it.each([
+  ["base", "another PR number", "grounding_verification_unavailable", (repo: string) => `https://github.com/${repo.toLowerCase()}/pull/43`],
+  ["base", "another repository", "grounding_verification_unavailable", (repo: string) => `https://github.com/${repo.toLowerCase()}x/pull/42`],
+  ["group", "another PR number", "grounding_receipt_mismatch", (repo: string) => `https://github.com/${repo.toLowerCase()}/pull/43`],
+  ["group", "another repository", "grounding_receipt_mismatch", (repo: string) => `https://github.com/${repo.toLowerCase()}x/pull/42`],
+] as const)("TASK_SPEC %s merge reservation refuses a signed PR URL naming %s with %s before any head read", async (factory, _case, code, prUrl) => {
+  await toReview(app(), async () => { await store.db.task.update({ where: { id: f.taskId }, data: { prUrl: prUrl(`${owner}/${name}`) } }); });
+  const context = JSON.parse((await store.db.groundingAttempt.findFirstOrThrow({ where: { taskId: f.taskId, state: "ACTIVE" } })).contextBytes.toString("utf8"));
+  expect(context.deliverable.prUrl).toBe(prUrl(`${owner}/${name}`));
+  f.headProvider.mockClear();
+  const service = factory === "base" ? baseService() : f.service;
+  await expect(service.reserveMerge(f.taskId, actor, "merge", taskMerge)).rejects.toMatchObject({ code });
+  expect(f.headProvider).not.toHaveBeenCalled();
+  expect(await store.db.groundingOperation.count({ where: { taskId: f.taskId, key: "merge" } })).toBe(0);
+  expect(f.merge).not.toHaveBeenCalled();
+  expect((await f.task()).status).toBe("review");
 });

@@ -36,6 +36,9 @@ it.each([
   ["dot segment", "https://github.com/acme/../pull/42", "acme/..", 42],
   ["missing url", null, "acme/repo", 42],
   ["missing repo", "https://github.com/acme/repo/pull/42", null, 42],
+  ["repo with leading space", "https://github.com/acme/repo/pull/42", " acme/repo", 42],
+  ["repo with trailing space", "https://github.com/acme/repo/pull/42", "acme/repo ", 42],
+  ["repo with trailing newline", "https://github.com/acme/repo/pull/42", "acme/repo\n", 42],
   ["missing number", "https://github.com/acme/repo/pull/42", "acme/repo", null],
 ] as const)("PR URL identity rejects %s", (_case, url, repo, number) => {
   expect(githubPrUrlMatches(url, repo, number)).toBe(false);
