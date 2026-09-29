@@ -6,6 +6,7 @@ import { GroundingCompletionService, groundingDecisionDigest, type GroundingComp
 import { operationAccess, findOperation, operationRequest, type OperationInput } from "./grounding-operations.js";
 import { lockGroundingTask, invalidateGroundingContext, GroundingDecisionError } from "./grounding-transaction.js";
 import { canonicalGroundingJson, groundingWorkflow, projectGroundingContext, GroundingAccessError, mismatch } from "./grounding-context.js";
+import { githubPrUrlMatches } from "./grounding-github-fence.js";
 import { groundingMergeConsent, githubGroundingMergeProvider, matchesGroundingMerge, mergeIdentitySchema, type GroundingMergeProvider } from "./grounding-merge-provider.js";
 
 /** Remote effects happen only after the durable dispatch claim commits. */
@@ -116,7 +117,7 @@ export class GroundingFinalizationService extends GroundingCompletionService {
       const decision = operation.decision as unknown as GroundingDecision;
       // Participating writers cannot alter this snapshot while it is reserved.
       // State disagreement from an old/nonparticipating writer stays unresolved.
-      if (task.status !== decision.from || (task.deliverableRepo ?? task.project.githubRepo) !== recovery.identity.repo || task.prNumber !== recovery.identity.prNumber || task.prUrl !== `https://github.com/${recovery.identity.repo}/pull/${recovery.identity.prNumber}`) mismatch();
+      if (task.status !== decision.from || (task.deliverableRepo ?? task.project.githubRepo) !== recovery.identity.repo || task.prNumber !== recovery.identity.prNumber || !githubPrUrlMatches(task.prUrl, recovery.identity.repo, recovery.identity.prNumber)) mismatch();
       const { definition } = await groundingWorkflow(db, task);
       if (groundingDecisionDigest(task, cohort, definition, decision.target) !== decision.localDigest) mismatch();
       if (decision.attemptId && decision.target) {

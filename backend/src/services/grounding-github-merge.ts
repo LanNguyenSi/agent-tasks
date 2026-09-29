@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma, type GroundingGithubMergeGroup, type GroundingOperation, type PrismaClient } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
 import { GroundingFinalizationService } from "./grounding-finalization.js";
-import { groundingDecisionDigest, type GroundingAfterCommit, type GroundingCompletionDependencies, type GroundingDecision } from "./grounding-completion.js";
+import { assertAttemptMergeHead, groundingDecisionDigest, type GroundingAfterCommit, type GroundingCompletionDependencies, type GroundingDecision } from "./grounding-completion.js";
 import { canonicalGroundingJson, groundingWorkflow, projectGroundingContext, mismatch, GroundingAccessError, type GroundingTask } from "./grounding-context.js";
 import { requireGroundingCohort } from "./grounding-cohort.js";
 import { findOperation, groundingActorId, operationFingerprint, operationRequest, routeTransportFingerprint, type GroundingRouteTransport, type OperationInput, type OperationRequest } from "./grounding-operations.js";
@@ -179,10 +179,7 @@ export class GroundingGithubMergeService extends GroundingFinalizationService {
         if (sharedHead !== undefined && memberIdentity.headSha !== sharedHead) mismatch();
         sharedHead = memberIdentity.headSha;
         if (decision.ciHeadSha !== null && decision.ciHeadSha !== sharedHead) mismatch();
-        if (decision.attemptId) {
-          const attempt = await db.groundingAttempt.findUniqueOrThrow({ where: { id: decision.attemptId } });
-          if (JSON.parse(attempt.contextBytes.toString("utf8")).deliverable.headSha !== sharedHead) mismatch();
-        }
+        if (decision.attemptId) await assertAttemptMergeHead(db, task.id, decision.attemptId, sharedHead);
         reservations.push({ task, request: childRequest, decision, identity: memberIdentity });
       }
       if (!sharedHead || !reservations.some(row => row.task.id === taskId)) mismatch();
