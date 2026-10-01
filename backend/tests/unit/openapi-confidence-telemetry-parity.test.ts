@@ -15,7 +15,7 @@ import {
 } from "../../src/services/confidence-telemetry.js";
 
 describe("OpenAPI ConfidenceTelemetryAggregates schema <-> real aggregator parity", () => {
-  const rows: ConfidenceTelemetryRow[] = [{ scoreAtClaim: 65, finalStatus: "done", bounceBackCount: 1 }];
+  const rows: ConfidenceTelemetryRow[] = [{ scoreAtClaim: 65, finalStatus: "done", bounceBackCount: 1, clarificationCount: 2 }];
   const claimEvents: ClaimEventRow[] = [
     { action: "task.claim_override_used", createdAt: new Date("2026-08-10T00:00:00Z") },
   ];
@@ -24,17 +24,19 @@ describe("OpenAPI ConfidenceTelemetryAggregates schema <-> real aggregator parit
   const aggregatesSchema = openApiSpec.components.schemas.ConfidenceTelemetryAggregates;
   const weekBucketSchema = openApiSpec.components.schemas.ConfidenceTelemetryWeekBucket;
   const bounceBandSchema = openApiSpec.components.schemas.ConfidenceTelemetryScoreBandBounceBack;
+  const clarificationBandSchema = openApiSpec.components.schemas.ConfidenceTelemetryScoreBandClarification;
   const doneBandSchema = openApiSpec.components.schemas.ConfidenceTelemetryScoreBandDoneRate;
 
   it("documents exactly the top-level keys computeConfidenceTelemetryAggregates returns", () => {
     expect(Object.keys(aggregatesSchema.properties).sort()).toEqual(Object.keys(assembled).sort());
   });
 
-  it("required lists every top-level field (all five are always populated, even if empty/zero)", () => {
+  it("required lists every top-level field (all six are always populated, even if empty/zero)", () => {
     expect([...aggregatesSchema.required].sort()).toEqual(
       [
         "overrideRatePerWeek",
         "bounceBackByScoreBand",
+        "clarificationByScoreBand",
         "doneRateByScoreBand",
         "lowScoreSuccesses",
         "highScoreFailures",
@@ -54,6 +56,21 @@ describe("OpenAPI ConfidenceTelemetryAggregates schema <-> real aggregator parit
     expect(Object.keys(bounceBandSchema.properties).sort()).toEqual(
       Object.keys(assembled.bounceBackByScoreBand[0]!).sort(),
     );
+  });
+
+  it("ConfidenceTelemetryScoreBandClarification documents exactly the keys one clarificationByScoreBand entry has", () => {
+    expect(assembled.clarificationByScoreBand.length).toBeGreaterThan(0);
+    expect(Object.keys(clarificationBandSchema.properties).sort()).toEqual(
+      Object.keys(assembled.clarificationByScoreBand[0]!).sort(),
+    );
+    expect([...clarificationBandSchema.required].sort()).toEqual(
+      Object.keys(assembled.clarificationByScoreBand[0]!).sort(),
+    );
+  });
+
+  it("the OpenAPI texts no longer claim only three of the four signals are aggregated", () => {
+    const json = JSON.stringify(openApiSpec);
+    expect(json).not.toContain("three of the four");
   });
 
   it("ConfidenceTelemetryScoreBandDoneRate documents exactly the keys one doneRateByScoreBand entry has", () => {

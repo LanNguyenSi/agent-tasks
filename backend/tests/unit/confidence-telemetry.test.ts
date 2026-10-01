@@ -33,6 +33,7 @@ import {
   scoreBand,
   computeConfidenceTelemetryAggregates,
   recordBounceBack,
+  recordClarification,
   recordTerminalSnapshot,
   LOW_SCORE_MAX,
   HIGH_SCORE_MIN,
@@ -91,18 +92,18 @@ describe("computeConfidenceTelemetryAggregates — fixture-driven", () => {
   // services/confidence-telemetry.ts's header comment).
   const rows: ConfidenceTelemetryRow[] = [
     // low band (< LOW_SCORE_MAX=60): one success (counts toward lowScoreSuccesses), one failure
-    { scoreAtClaim: 55, finalStatus: DONE_STATUS, bounceBackCount: 2 },
-    { scoreAtClaim: 58, finalStatus: "abandoned", bounceBackCount: 0 },
+    { scoreAtClaim: 55, finalStatus: DONE_STATUS, bounceBackCount: 2, clarificationCount: 4 },
+    { scoreAtClaim: 58, finalStatus: "abandoned", bounceBackCount: 0, clarificationCount: 0 },
     // mid band 60-70
-    { scoreAtClaim: 65, finalStatus: DONE_STATUS, bounceBackCount: 1 },
-    { scoreAtClaim: 69, finalStatus: DONE_STATUS, bounceBackCount: 3 },
+    { scoreAtClaim: 65, finalStatus: DONE_STATUS, bounceBackCount: 1, clarificationCount: 1 },
+    { scoreAtClaim: 69, finalStatus: DONE_STATUS, bounceBackCount: 3, clarificationCount: 2 },
     // mid band 70-80, one still in flight (no verdict yet)
-    { scoreAtClaim: 72, finalStatus: null, bounceBackCount: 1 },
+    { scoreAtClaim: 72, finalStatus: null, bounceBackCount: 1, clarificationCount: 5 },
     // high band (>= HIGH_SCORE_MIN=90): one success, one failure (counts toward highScoreFailures)
-    { scoreAtClaim: 95, finalStatus: DONE_STATUS, bounceBackCount: 0 },
-    { scoreAtClaim: 92, finalStatus: "abandoned", bounceBackCount: 0 },
+    { scoreAtClaim: 95, finalStatus: DONE_STATUS, bounceBackCount: 0, clarificationCount: 0 },
+    { scoreAtClaim: 92, finalStatus: "abandoned", bounceBackCount: 0, clarificationCount: 3 },
     // human claim / OFF-mode project — no scoreAtClaim on record, must be excluded entirely
-    { scoreAtClaim: null, finalStatus: DONE_STATUS, bounceBackCount: 0 },
+    { scoreAtClaim: null, finalStatus: DONE_STATUS, bounceBackCount: 0, clarificationCount: 9 },
   ];
 
   const claimEvents: ClaimEventRow[] = [
@@ -122,6 +123,23 @@ describe("computeConfidenceTelemetryAggregates — fixture-driven", () => {
       { weekStart: "2026-08-10", overrideCount: 1, totalClaims: 3, rate: 1 / 3 },
       { weekStart: "2026-08-17", overrideCount: 0, totalClaims: 1, rate: 0 },
     ]);
+  });
+
+  it("clarificationByScoreBand groups by band, excludes the row without scoreAtClaim (its count of 9 must not leak in), sorted ascending", () => {
+    expect(aggregates.clarificationByScoreBand).toEqual([
+      { band: "50-60", taskCount: 2, avgClarificationCount: 2 }, // (4+0)/2
+      { band: "60-70", taskCount: 2, avgClarificationCount: 1.5 }, // (1+2)/2
+      { band: "70-80", taskCount: 1, avgClarificationCount: 5 },
+      { band: "90-100", taskCount: 2, avgClarificationCount: 1.5 }, // (0+3)/2
+    ]);
+  });
+
+  it("clarificationByScoreBand is empty when no row has a scoreAtClaim", () => {
+    const empty = computeConfidenceTelemetryAggregates(
+      [{ scoreAtClaim: null, finalStatus: null, bounceBackCount: 0, clarificationCount: 3 }],
+      [],
+    );
+    expect(empty.clarificationByScoreBand).toEqual([]);
   });
 
   it("bounceBackByScoreBand groups by band, includes the still-in-flight row, sorted ascending", () => {
@@ -170,6 +188,7 @@ describe("computeConfidenceTelemetryAggregates — fixture-driven", () => {
     expect(empty).toEqual({
       overrideRatePerWeek: [],
       bounceBackByScoreBand: [],
+      clarificationByScoreBand: [],
       doneRateByScoreBand: [],
       lowScoreSuccesses: 0,
       highScoreFailures: 0,
@@ -191,8 +210,8 @@ describe("computeConfidenceTelemetryAggregates — score classification boundary
   // claim that highScoreFailures is non-zero in practice.
   it("HIGH_SCORE_MIN (90) is an INCLUSIVE lower bound: exactly 90 + non-done counts as a high-score failure, exactly 90 + done does not", () => {
     const rows: ConfidenceTelemetryRow[] = [
-      { scoreAtClaim: 90, finalStatus: "abandoned", bounceBackCount: 0 },
-      { scoreAtClaim: 90, finalStatus: DONE_STATUS, bounceBackCount: 0 },
+      { scoreAtClaim: 90, finalStatus: "abandoned", bounceBackCount: 0, clarificationCount: 0 },
+      { scoreAtClaim: 90, finalStatus: DONE_STATUS, bounceBackCount: 0, clarificationCount: 0 },
     ];
     const aggregates = computeConfidenceTelemetryAggregates(rows, []);
     expect(aggregates.highScoreFailures).toBe(1);
@@ -204,11 +223,70 @@ describe("computeConfidenceTelemetryAggregates — score classification boundary
 
   it("LOW_SCORE_MAX (60) is an EXCLUSIVE upper bound: 59 + done counts as a low-score success, exactly 60 + done does not", () => {
     const rows: ConfidenceTelemetryRow[] = [
-      { scoreAtClaim: 59, finalStatus: DONE_STATUS, bounceBackCount: 0 },
-      { scoreAtClaim: 60, finalStatus: DONE_STATUS, bounceBackCount: 0 },
+      { scoreAtClaim: 59, finalStatus: DONE_STATUS, bounceBackCount: 0, clarificationCount: 0 },
+      { scoreAtClaim: 60, finalStatus: DONE_STATUS, bounceBackCount: 0, clarificationCount: 0 },
     ];
     const aggregates = computeConfidenceTelemetryAggregates(rows, []);
     expect(aggregates.lowScoreSuccesses).toBe(1);
+  });
+});
+
+describe("recordClarification", () => {
+  it("upserts once per call: create starts the count at 1 with the claim snapshot, update increments by 1", async () => {
+    prismaMocks.auditLogFindFirst
+      .mockResolvedValueOnce({ payload: { score: 72, threshold: 65 } })
+      .mockResolvedValueOnce(null);
+    prismaMocks.confidenceTelemetryUpsert.mockResolvedValue({});
+
+    await recordClarification("task-c1", "proj-1");
+
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledWith({
+      where: { taskId: "task-c1" },
+      create: {
+        taskId: "task-c1",
+        projectId: "proj-1",
+        clarificationCount: 1,
+        scoreAtClaim: 72,
+        effectiveThreshold: 65,
+        overrideUsed: false,
+      },
+      update: { clarificationCount: { increment: 1 } },
+    });
+    expect(loggerMocks.error).not.toHaveBeenCalled();
+  });
+
+  it("swallows an upsert error and logs it, never throws", async () => {
+    prismaMocks.auditLogFindFirst.mockResolvedValue(null);
+    prismaMocks.confidenceTelemetryUpsert.mockRejectedValue(new Error("db unreachable"));
+
+    await expect(recordClarification("task-c2", "proj-1")).resolves.toBeUndefined();
+    expect(loggerMocks.error).toHaveBeenCalledWith(
+      expect.objectContaining({ component: "confidence-telemetry", op: "recordClarification", taskId: "task-c2" }),
+      expect.any(String),
+    );
+  });
+
+  it("swallows a snapshot-lookup error and logs it, never throws", async () => {
+    prismaMocks.auditLogFindFirst.mockRejectedValue(new Error("audit lookup failed"));
+
+    await expect(recordClarification("task-c3", "proj-1")).resolves.toBeUndefined();
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+    expect(loggerMocks.error).toHaveBeenCalledWith(
+      expect.objectContaining({ op: "recordClarification", taskId: "task-c3" }),
+      expect.any(String),
+    );
+  });
+
+  it("retries once on a P2002 unique-constraint race and then takes the update branch", async () => {
+    prismaMocks.auditLogFindFirst.mockResolvedValue(null);
+    const p2002 = new Prisma.PrismaClientKnownRequestError("unique", { code: "P2002", clientVersion: "test" });
+    prismaMocks.confidenceTelemetryUpsert.mockRejectedValueOnce(p2002).mockResolvedValueOnce({});
+
+    await recordClarification("task-c4", "proj-1");
+
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledTimes(2);
+    expect(loggerMocks.error).not.toHaveBeenCalled();
   });
 });
 

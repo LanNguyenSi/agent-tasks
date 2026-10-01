@@ -1,5 +1,24 @@
 # Change log
 
+## 2026-10-01 (clarification signal, per-task workflow)
+
+The comment route in `tasks.ts` now loads the task's own workflow before
+classifying the task's state, and the clarification wording in `docs.ts`, the
+`schema.prisma` comment and `confidence-telemetry.ts` was made precise. The
+same eight docs as in the previous entry were re-verified against these
+changes; none of their claims changed. All were re-stamped.
+
+## 2026-10-01 (clarification signal)
+
+`architecture.md` was re-verified against `docs.ts` (the `/docs` Swagger UI
+route moved down by the new OpenAPI schema and its citation was re-pointed).
+`backend.md`, `claim-model.md`, `workflow-gates.md`, `auth.md`,
+`governance-merge.md`, `reconcile-done-but-open.md` and `task-lifecycle.md`
+were re-verified against the new clarification counter in the comment route
+of `tasks.ts`, the telemetry select in `projects.ts` and the new
+`ConfidenceTelemetry.clarificationCount` column; none of their claims changed.
+All were re-stamped.
+
 ## 2026-10-01 (riskModifiers write path)
 
 `confidence-scorer.md` was re-verified against `confidence.ts` and updated: the

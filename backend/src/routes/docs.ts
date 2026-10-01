@@ -431,6 +431,15 @@ export const openApiSpec = {
         },
         required: ["band", "taskCount", "avgBounceBackCount"],
       },
+      ConfidenceTelemetryScoreBandClarification: {
+        type: "object",
+        properties: {
+          band: { type: "string", example: "70-80" },
+          taskCount: { type: "integer", minimum: 0, example: 6 },
+          avgClarificationCount: { type: "number", minimum: 0, description: "Mean clarificationCount across this band's tasks: comments an agent claim-holder posted while the task was in a work state other than review (in_progress in the built-in and template workflows).", example: 1.5 },
+        },
+        required: ["band", "taskCount", "avgClarificationCount"],
+      },
       ConfidenceTelemetryScoreBandDoneRate: {
         type: "object",
         properties: {
@@ -443,10 +452,11 @@ export const openApiSpec = {
       ConfidenceTelemetryAggregates: {
         type: "object",
         description:
-          "M5 (task 698eeb01) calibration telemetry, collected from task_finish's review-approve snapshot hook and the confidence-gate audit trail. Aggregates three of the four calibration signals named by the milestone (review bounce-backs, override frequency, score-vs-outcome by band); the fourth, agent clarification requests, is intentionally not modeled here — see services/confidence-telemetry.ts's header comment (MED-3, batch 18 review). COLLECTION ONLY — no field here feeds an automatic weight/threshold adjustment; a future, deliberately separate milestone calibrates against this data. See services/confidence-telemetry.ts.",
+          "M5 (task 698eeb01) calibration telemetry, collected from task_finish's review-approve snapshot hook, the comment route and the confidence-gate audit trail. Aggregates all four calibration signals named by the milestone (review bounce-backs, agent clarification comments, override frequency, score-vs-outcome by band). A clarification is a comment posted via POST /tasks/{id}/comments by an agent that holds the task's active work claim while the task is in a work state other than review (in_progress in the built-in and template workflows); human claim-holders, reviewers and comments in review do not count. COLLECTION ONLY - no field here feeds an automatic weight/threshold adjustment; a future, deliberately separate milestone calibrates against this data. See services/confidence-telemetry.ts.",
         properties: {
           overrideRatePerWeek: { type: "array", items: { $ref: "#/components/schemas/ConfidenceTelemetryWeekBucket" } },
           bounceBackByScoreBand: { type: "array", items: { $ref: "#/components/schemas/ConfidenceTelemetryScoreBandBounceBack" } },
+          clarificationByScoreBand: { type: "array", items: { $ref: "#/components/schemas/ConfidenceTelemetryScoreBandClarification" } },
           doneRateByScoreBand: { type: "array", items: { $ref: "#/components/schemas/ConfidenceTelemetryScoreBandDoneRate" } },
           lowScoreSuccesses: { type: "integer", minimum: 0, description: "Terminal tasks with scoreAtClaim < 60 and finalStatus == 'done'.", example: 2 },
           highScoreFailures: { type: "integer", minimum: 0, description: "Terminal tasks with scoreAtClaim >= 90 and finalStatus != 'done'. STRUCTURALLY 0 today (HIGH-2, batch 18 review): finalStatus can only ever be 'done' in production right now, so no row can ever satisfy 'finalStatus != done' — a 0 here is not evidence of good calibration, it reflects there being only one reachable terminal outcome to measure against. Will start varying only once a non-done terminal disposition exists (filed as a follow-up).", example: 0 },
@@ -454,6 +464,7 @@ export const openApiSpec = {
         required: [
           "overrideRatePerWeek",
           "bounceBackByScoreBand",
+          "clarificationByScoreBand",
           "doneRateByScoreBand",
           "lowScoreSuccesses",
           "highScoreFailures",
@@ -1001,7 +1012,7 @@ export const openApiSpec = {
         tags: ["Projects"],
         summary: "Calibration telemetry aggregates (M5, collection-only)",
         description:
-          "Read-only. Aggregates three of the four calibration signals task_finish's review-approve snapshot hook collects (services/confidence-telemetry.ts): review bounce-backs, override frequency, and score-vs-outcome cross-referencing by score band. The fourth signal (agent clarification requests) is intentionally not modeled — see services/confidence-telemetry.ts's header comment (MED-3, batch 18 review). COLLECTS ONLY — nothing here or in this milestone auto-adjusts a threshold, weight, or riskModifiers config; a future, deliberately separate milestone calibrates against this data once enough volume exists. `scoreAtClaim` is null (and so excluded from the score-banded aggregates) for tasks claimed by a human, or claimed under an enforcementMode=OFF project — the confidence gate never evaluates either case, so there is nothing to snapshot. `highScoreFailures` is structurally 0 and every populated `doneRateByScoreBand` band's `doneRate` is structurally 1.0 today, since `finalStatus` can only ever be 'done' in production right now (HIGH-2, batch 18 review) — see the field-level descriptions below.",
+          "Read-only. Aggregates all four calibration signals collected by services/confidence-telemetry.ts: review bounce-backs (task_finish snapshot hook), agent clarification comments (a comment posted via POST /tasks/{id}/comments by an agent that holds the task's active work claim while the task is in a work state; human claim-holders, reviewers and comments in review do not count), override frequency, and score-vs-outcome cross-referencing by score band. COLLECTS ONLY - nothing here or in this milestone auto-adjusts a threshold, weight, or riskModifiers config; a future, deliberately separate milestone calibrates against this data once enough volume exists. `scoreAtClaim` is null (and so excluded from the score-banded aggregates) for tasks claimed by a human, or claimed under an enforcementMode=OFF project - the confidence gate never evaluates either case, so there is nothing to snapshot. `highScoreFailures` is structurally 0 and every populated `doneRateByScoreBand` band's `doneRate` is structurally 1.0 today, since `finalStatus` can only ever be 'done' in production right now (HIGH-2, batch 18 review) - see the field-level descriptions below.",
         security: [{ bearerAuth: [] }],
         parameters: [
           {

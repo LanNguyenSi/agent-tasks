@@ -3,25 +3,23 @@
  * overlay's "Milestone 5" names as future weight-tuning inputs, so a later,
  * DELIBERATELY SEPARATE milestone can calibrate the confidence-gate weights
  * against real outcomes. This milestone only COLLECTS — nothing here ever
- * auto-adjusts a threshold, a weight, or a project's `riskModifiers`. Only
- * THREE of the four are aggregated by `computeConfidenceTelemetryAggregates`
- * / the read endpoint today (see signal 2 below and MED-3, batch 18 review).
+ * auto-adjusts a threshold, a weight, or a project's `riskModifiers`. All
+ * four are aggregated by `computeConfidenceTelemetryAggregates` / the read
+ * endpoint (signal 2 via `recordClarification`, see below).
  *
  *   1. Review bounce-backs           -> `recordBounceBack` (task_finish
  *      outcome request_changes, cumulative per task across the rework loop)
- *   2. Agent clarification requests  -> NOT modeled here, and NOT because the
- *      data is already queryable elsewhere (a prior version of this comment
- *      claimed the `Comment` table alone was sufficient — that was wrong,
- *      corrected MED-3, batch 18 review): `Task` carries only the CURRENT
- *      claim (`claimedByAgentId`/`claimedByUserId`), and every terminal
- *      transition NULLS it, so which agent authored a given `Comment` on a
- *      task that has since changed hands or finished cannot be reconstructed
- *      from `Task` alone — it would need a join against the `AuditLog`
- *      claim-history trail (`task.claimed`/`task.released`/`task.reviewed`)
- *      to attribute each comment to the claim-holder at the time it was
- *      posted. That reconstruction is real work, not a free read, and is
- *      explicitly OUT OF SCOPE for this milestone — a follow-up task, not
- *      built here.
+ *   2. Agent clarification requests  -> `recordClarification`
+ *      (`clarificationCount`). Counted LIVE at comment time, while the claim
+ *      still exists, because every terminal transition NULLS
+ *      `claimedByAgentId`/`claimedAt` and attributing a past comment to its
+ *      claim-holder afterwards would need an `AuditLog` join. A comment
+ *      counts only when it is posted through `POST /tasks/:id/comments`
+ *      (`tasks_comment` / `task_note`) by an AGENT that holds the task's
+ *      active work claim (`actor.tokenId === task.claimedByAgentId`) while
+ *      the task sits in a work state. Human claim-holders, reviewers,
+ *      comments in review, system comments and review-route comments do not
+ *      count. Rows that predate the column read as 0.
  *   3. Override frequency            -> read directly off `AuditLog`'s
  *      `task.claim_override_used` rows, grouped per project per week, by
  *      `computeConfidenceTelemetryAggregates`'s `overrideRatePerWeek`.
@@ -189,6 +187,30 @@ export async function recordBounceBack(taskId: string, projectId: string): Promi
 }
 
 /**
+ * Best-effort, fail-open counter for signal 2 (agent clarification comments).
+ * The caller decides eligibility (agent claim-holder, work state); this only
+ * upserts: increments `clarificationCount` on the task's row, or creates the
+ * row with a count of 1 and whatever claim-time snapshot is available now.
+ * A failure (including the snapshot lookup) is logged and swallowed, so the
+ * comment that triggered it is never blocked or altered.
+ */
+export async function recordClarification(taskId: string, projectId: string): Promise<void> {
+  try {
+    const claimFields = await resolveClaimSnapshotFields(taskId);
+    await upsertConfidenceTelemetryWithRetry({
+      where: { taskId },
+      create: { taskId, projectId, clarificationCount: 1, ...claimFields },
+      update: { clarificationCount: { increment: 1 } },
+    });
+  } catch (err) {
+    logger.error(
+      { component: "confidence-telemetry", op: "recordClarification", taskId, projectId, errMessage: (err as Error).message },
+      "confidence telemetry clarification count failed - comment is posted regardless",
+    );
+  }
+}
+
+/**
  * Best-effort, fail-open snapshot write for a `task_finish` review-approve
  * outcome that reached a terminal transition (`isTerminalState` at the
  * caller). Called from BOTH the review-finish and self-approve branches,
@@ -247,8 +269,9 @@ export async function recordTerminalSnapshot(params: {
  * this task, even if a later reclaim superseded it — an override having
  * happened at all is the durable signal, not just the most recent claim.
  *
- * Not exported: internal to this module's two snapshot writers. Callers
- * that need it get it via `recordBounceBack` / `recordTerminalSnapshot`.
+ * Not exported: internal to this module's three snapshot writers. Callers
+ * that need it get it via `recordBounceBack`, `recordTerminalSnapshot` or
+ * `recordClarification`.
  */
 async function resolveClaimSnapshotFields(taskId: string): Promise<{
   scoreAtClaim: number | null;
@@ -280,6 +303,7 @@ export interface ConfidenceTelemetryRow {
   scoreAtClaim: number | null;
   finalStatus: string | null;
   bounceBackCount: number;
+  clarificationCount: number;
 }
 
 export interface ClaimEventRow {
@@ -300,6 +324,12 @@ export interface ScoreBandBounceBack {
   avgBounceBackCount: number;
 }
 
+export interface ScoreBandClarification {
+  band: string;
+  taskCount: number;
+  avgClarificationCount: number;
+}
+
 export interface ScoreBandDoneRate {
   band: string;
   taskCount: number;
@@ -309,6 +339,7 @@ export interface ScoreBandDoneRate {
 export interface ConfidenceTelemetryAggregates {
   overrideRatePerWeek: WeekBucket[];
   bounceBackByScoreBand: ScoreBandBounceBack[];
+  clarificationByScoreBand: ScoreBandClarification[];
   doneRateByScoreBand: ScoreBandDoneRate[];
   lowScoreSuccesses: number;
   highScoreFailures: number;
@@ -377,6 +408,22 @@ export function computeConfidenceTelemetryAggregates(
       avgBounceBackCount: taskCount > 0 ? totalBounceBack / taskCount : 0,
     }));
 
+  const clarificationBuckets = new Map<string, { taskCount: number; totalClarification: number }>();
+  for (const row of scored) {
+    const band = scoreBand(row.scoreAtClaim);
+    const bucket = clarificationBuckets.get(band) ?? { taskCount: 0, totalClarification: 0 };
+    bucket.taskCount += 1;
+    bucket.totalClarification += row.clarificationCount;
+    clarificationBuckets.set(band, bucket);
+  }
+  const clarificationByScoreBand: ScoreBandClarification[] = [...clarificationBuckets.entries()]
+    .sort(([a], [b]) => bandLower(a) - bandLower(b))
+    .map(([band, { taskCount, totalClarification }]) => ({
+      band,
+      taskCount,
+      avgClarificationCount: taskCount > 0 ? totalClarification / taskCount : 0,
+    }));
+
   // doneRateByScoreBand only counts rows that actually reached a terminal
   // transition (finalStatus set) — a task still mid-rework has no verdict yet.
   const terminal = scored.filter((r) => r.finalStatus !== null);
@@ -403,5 +450,12 @@ export function computeConfidenceTelemetryAggregates(
     (r) => r.scoreAtClaim >= HIGH_SCORE_MIN && r.finalStatus !== DONE_STATUS,
   ).length;
 
-  return { overrideRatePerWeek, bounceBackByScoreBand, doneRateByScoreBand, lowScoreSuccesses, highScoreFailures };
+  return {
+    overrideRatePerWeek,
+    bounceBackByScoreBand,
+    clarificationByScoreBand,
+    doneRateByScoreBand,
+    lowScoreSuccesses,
+    highScoreFailures,
+  };
 }

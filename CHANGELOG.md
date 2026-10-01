@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `GET /api/projects/:id/telemetry/confidence` now aggregates the fourth M5 calibration signal as `clarificationByScoreBand` (`band`, `taskCount`, `avgClarificationCount`). A clarification is a comment posted through `POST /api/tasks/:id/comments` (`tasks_comment` / `task_note`) by an agent that holds the task's active work claim while the task is in a work state other than review (`in_progress` in the built-in and template workflows); human claim-holders, reviewers, comments in review and system comments do not count. The counter is the new additive `ConfidenceTelemetry.clarificationCount` column (default 0), incremented at comment time and fail-open: a telemetry error is logged and never changes the comment response (task 568d4d74).
 - `PATCH /api/projects/:id` accepts `riskModifiers`, the write path for the M3 risk modifiers that were previously readable only (task 05b5eba8). The object takes any subset of `touchesAuth`, `touchesDatabase`, `touchesPersonalData` and `productionImpact`; each value is an integer 0-100 and the values may not sum to more than 100. An unknown key, a negative or non-integer value, a value above 100 or a sum above 100 returns `400` and writes nothing; `null` clears the stored value. A change is audited as `project.updated`. The OpenAPI document describes the field on the Project schema and the PATCH body.
 
 ### Changed

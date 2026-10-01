@@ -685,6 +685,13 @@ model ConfidenceTelemetry {
   scoreAtClaim       Int?
   effectiveThreshold Int?
   bounceBackCount    Int      @default(0)
+  // Agent clarification comments: comments posted via POST /tasks/:id/comments
+  // by an agent that holds the task's active work claim while the task is in a
+  // work state other than review (in_progress in the built-in and template
+  // workflows). Incremented live at comment time (the claim is nulled on
+  // terminal transitions, so it cannot be reconstructed later). Fail-open,
+  // like the other counters; rows written before this column read as 0.
+  clarificationCount Int      @default(0)
   overrideUsed       Boolean  @default(false)
   // Terminal `task.status` at the last snapshot write. LOW-9 (batch 18
   // review): the state vocabulary is server-side LOCKED (routes/workflows.ts
