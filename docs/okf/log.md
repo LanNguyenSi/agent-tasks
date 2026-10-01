@@ -1,5 +1,17 @@
 # Change log
 
+## 2026-10-01 (finalDisposition)
+
+`workflow-gates.md` was re-verified against `tasks.ts` and its line citations
+after the creator-abandon route were shifted to the new positions (the route
+gained a post-commit telemetry call, the restore branch of the `PATCH` handler
+gained one). `backend.md`, `claim-model.md`, `auth.md`, `governance-merge.md`,
+`reconcile-done-but-open.md`, `task-lifecycle.md` and `architecture.md` were
+re-verified against the new `ConfidenceTelemetry.finalDisposition` column, the
+disposition writers, the telemetry select in `projects.ts` and the reworded
+OpenAPI telemetry text in `docs.ts`; none of their claims changed. All eight
+were re-stamped.
+
 ## 2026-10-01 (clarification signal, per-task workflow)
 
 The comment route in `tasks.ts` now loads the task's own workflow before
