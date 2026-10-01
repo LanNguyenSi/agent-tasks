@@ -171,6 +171,15 @@ describe("GET /projects/:id/telemetry/confidence", () => {
     }
   });
 
+  it("selects finalDisposition alongside finalStatus", async () => {
+    await makeApp(HUMAN_ACTOR).request(`/projects/${PROJECT_ID}/telemetry/confidence`);
+    expect(prismaMocks.confidenceTelemetryFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ finalDisposition: true, finalStatus: true }),
+      }),
+    );
+  });
+
   it("selects clarificationCount alongside the other signal columns", async () => {
     await makeApp(HUMAN_ACTOR).request(`/projects/${PROJECT_ID}/telemetry/confidence`);
     expect(prismaMocks.confidenceTelemetryFindMany).toHaveBeenCalledWith(
@@ -182,9 +191,8 @@ describe("GET /projects/:id/telemetry/confidence", () => {
 
   it("returns fixture-driven aggregates end to end, pinning the score-band boundaries on both sides", async () => {
     prismaMocks.confidenceTelemetryFindMany.mockResolvedValue([
-      // HIGH-2 (batch 18 review): "abandoned" exercises a finalStatus
-      // production cannot reach today (see services/confidence-telemetry.ts's
-      // header comment) — used here to pin the aggregator's non-done branch.
+      // "abandoned" as a finalStatus pins the aggregator's non-done branch via
+      // the finalStatus fallback (finalDisposition absent on this row).
       { scoreAtClaim: 59, finalStatus: "abandoned", bounceBackCount: 0, clarificationCount: 0 }, // just below the 60-70 band
       { scoreAtClaim: 60, finalStatus: "done", bounceBackCount: 1, clarificationCount: 3 }, // lower edge of 60-70 (inclusive)
       { scoreAtClaim: 69, finalStatus: "done", bounceBackCount: 0, clarificationCount: 1 }, // still inside 60-70

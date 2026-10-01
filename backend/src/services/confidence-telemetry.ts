@@ -27,34 +27,34 @@
  *      this task's claim EVER force-overridden), not the week-bucketed
  *      signal itself.
  *   4. Low-score success / high-score failure -> `scoreAtClaim` cross-
- *      referenced against `finalStatus`, surfaced as `lowScoreSuccesses` /
- *      `highScoreFailures` plus the per-band breakdowns.
- *
- *      HIGH-2 (batch 18 review): `finalStatus` can currently only ever be
- *      `"done"` in production. `routes/workflows.ts`'s `FIXED_TERMINAL_STATES`
- *      locks the terminal-state set to `{"done"}` server-side (the state
- *      vocabulary itself is fixed, not just its terminal flag), and no verb
- *      writes any other terminal disposition — `task_abandon` resets
- *      `status` back to the workflow's `initialState`, it does not write
- *      `"abandoned"`. Until a non-done terminal disposition exists (a filed
- *      follow-up), `highScoreFailures` is STRUCTURALLY 0 and
- *      `doneRateByScoreBand`'s `doneRate` is STRUCTURALLY 1.0 for every
- *      band with any terminal tasks in it — that is not evidence the
- *      confidence gate is well-calibrated, it is an artifact of there being
- *      only one reachable terminal outcome to measure against. This module
- *      and its tests still exercise a non-"done" `finalStatus` (fixture rows
- *      commented accordingly) to keep the aggregator's logic correct AHEAD
- *      of that write-path follow-up landing, per the "collect first" design
- *      — it is read-side support for a state production cannot reach yet,
- *      not a claim that the gap is already closed.
- *
- *      Update (task 7a1360da follow-up, batch 19 round 2): `POST
- *      /tasks/:id/creator-abandon` now DOES write `status: "abandoned"` in
- *      production, but only ever on an OPEN, UNCLAIMED task, which has no
- *      `scoreAtClaim` snapshot to finalize — so this aggregate still stays
- *      single-outcome, just by omission (no candidate row exists) now
- *      rather than by construction (no other terminal value existed) as
- *      claimed above.
+ *      referenced against the task's outcome, surfaced as `lowScoreSuccesses`
+ *      / `highScoreFailures` plus the per-band breakdowns. The outcome is
+ *      `finalDisposition ?? finalStatus`:
+ *        - `finalDisposition` "done" is written by `recordTerminalSnapshot`
+ *          (review-approve at a terminal transition; create and update).
+ *        - `finalDisposition` "abandoned" is written by
+ *          `recordAbandonDisposition` after a successful creator-abandon
+ *          (`POST /tasks/:id/creator-abandon`). The realistic failure path
+ *          is: an agent claims (a gate-scored snapshot lands in the audit
+ *          trail), gives up via `task_abandon` (the task is open again), and
+ *          the creator then creator-abandons it. A creator-abandon of a task
+ *          that never had a scored claim writes nothing (no row is created).
+ *        - `clearDisposition` nulls it when a project admin restores an
+ *          abandoned task to the initial state (the task is no longer
+ *          terminal); it never creates a row. An abandoned -> reopened ->
+ *          reclaimed -> done sequence ends with "done" because the terminal
+ *          upsert overwrites.
+ *        - `task_abandon` and `POST /tasks/:id/release` only release a claim
+ *          (status goes back to the initial state): they are not terminal
+ *          and write no disposition. A backlog discard is never hooked: a
+ *          backlog task is never claimable, so it cannot have a score
+ *          snapshot.
+ *        - `finalStatus` stays "done"-only (the status vocabulary is fixed);
+ *          rows that predate `finalDisposition` keep counting as done via the
+ *          `??` fallback.
+ *      Only a task with a recorded scored claim can move `highScoreFailures`
+ *      or the non-done share of `doneRateByScoreBand`; both start varying
+ *      only as such tasks are creator-abandoned.
  *
  * `scoreAtClaim` / `effectiveThreshold` / `overrideUsed` are sourced from the
  * confidence-gate's OWN audit trail (`task.claim_would_block_shadow` /
@@ -118,8 +118,10 @@ async function upsertConfidenceTelemetryWithRetry(
 export const LOW_SCORE_MAX = 60;
 /** Score-at-claim at/above this is "high" for `highScoreFailures` (inclusive lower bound). */
 export const HIGH_SCORE_MIN = 90;
-/** The `finalStatus` value that counts as a success in `doneRateByScoreBand`. */
+/** The outcome (`finalDisposition ?? finalStatus`) that counts as a success in `doneRateByScoreBand`. */
 export const DONE_STATUS = "done";
+/** The `finalDisposition` written for a creator-abandoned task (a failure outcome). */
+export const ABANDONED_DISPOSITION = "abandoned";
 
 /** Width of each score band in `bounceBackByScoreBand` / `doneRateByScoreBand`, e.g. "60-70". */
 const BAND_WIDTH = 10;
@@ -246,15 +248,70 @@ export async function recordTerminalSnapshot(params: {
       ...(claimFields.effectiveThreshold !== null ? { effectiveThreshold: claimFields.effectiveThreshold } : {}),
       overrideUsed: claimFields.overrideUsed,
     };
+    // A terminal review-approve at the done status is the "done" disposition.
+    // Writing it in BOTH create and update lets a reclaimed-then-done task
+    // overwrite an earlier "abandoned" disposition.
+    const dispositionFields = finalStatus === DONE_STATUS ? { finalDisposition: DONE_STATUS } : {};
     await upsertConfidenceTelemetryWithRetry({
       where: { taskId },
-      create: { taskId, projectId, finalStatus, taskType, ...claimFields },
-      update: { finalStatus, taskType, ...updateClaimFields },
+      create: { taskId, projectId, finalStatus, taskType, ...dispositionFields, ...claimFields },
+      update: { finalStatus, taskType, ...dispositionFields, ...updateClaimFields },
     });
   } catch (err) {
     logger.error(
       { component: "confidence-telemetry", op: "recordTerminalSnapshot", taskId, projectId, errMessage: (err as Error).message },
       "confidence telemetry terminal snapshot failed — task_finish transition proceeds regardless",
+    );
+  }
+}
+
+/**
+ * Best-effort, fail-open disposition write for a successful creator-abandon.
+ * Called post-commit by `POST /tasks/:id/creator-abandon`, never inside the
+ * status transaction. An existing row is updated to `finalDisposition`
+ * "abandoned" (`finalStatus` is left untouched). A new row is created only
+ * when `resolveClaimSnapshotFields` finds a scored claim (`scoreAtClaim !==
+ * null`: the task was once gate-evaluated and claimed); otherwise nothing is
+ * written, since an unscored row carries no score-vs-outcome signal.
+ */
+export async function recordAbandonDisposition(taskId: string, projectId: string): Promise<void> {
+  try {
+    const claimFields = await resolveClaimSnapshotFields(taskId);
+    if (claimFields.scoreAtClaim !== null) {
+      await upsertConfidenceTelemetryWithRetry({
+        where: { taskId },
+        create: { taskId, projectId, finalDisposition: ABANDONED_DISPOSITION, ...claimFields },
+        update: { finalDisposition: ABANDONED_DISPOSITION },
+      });
+    } else {
+      await prisma.confidenceTelemetry.updateMany({
+        where: { taskId },
+        data: { finalDisposition: ABANDONED_DISPOSITION },
+      });
+    }
+  } catch (err) {
+    logger.error(
+      { component: "confidence-telemetry", op: "recordAbandonDisposition", taskId, projectId, errMessage: (err as Error).message },
+      "confidence telemetry abandon disposition failed - creator-abandon proceeds regardless",
+    );
+  }
+}
+
+/**
+ * Best-effort, fail-open reset of `finalDisposition` to null for a task that
+ * is no longer terminal (an abandoned task restored to the initial state).
+ * `updateMany` so it never creates a row and a missing row is a no-op.
+ */
+export async function clearDisposition(taskId: string): Promise<void> {
+  try {
+    await prisma.confidenceTelemetry.updateMany({
+      where: { taskId },
+      data: { finalDisposition: null },
+    });
+  } catch (err) {
+    logger.error(
+      { component: "confidence-telemetry", op: "clearDisposition", taskId, errMessage: (err as Error).message },
+      "confidence telemetry disposition clear failed - restore proceeds regardless",
     );
   }
 }
@@ -302,6 +359,8 @@ async function resolveClaimSnapshotFields(taskId: string): Promise<{
 export interface ConfidenceTelemetryRow {
   scoreAtClaim: number | null;
   finalStatus: string | null;
+  /** Absent/null on rows that predate the column; the outcome falls back to `finalStatus`. */
+  finalDisposition?: string | null;
   bounceBackCount: number;
   clarificationCount: number;
 }
@@ -425,14 +484,17 @@ export function computeConfidenceTelemetryAggregates(
     }));
 
   // doneRateByScoreBand only counts rows that actually reached a terminal
-  // transition (finalStatus set) — a task still mid-rework has no verdict yet.
-  const terminal = scored.filter((r) => r.finalStatus !== null);
+  // outcome (finalDisposition ?? finalStatus set): a task still mid-rework
+  // has no verdict yet. The outcome falls back to finalStatus so rows that
+  // predate finalDisposition (finalStatus "done") keep counting as done.
+  const outcomeOf = (r: ConfidenceTelemetryRow): string | null => r.finalDisposition ?? r.finalStatus;
+  const terminal = scored.filter((r) => outcomeOf(r) !== null);
   const doneBuckets = new Map<string, { taskCount: number; doneCount: number }>();
   for (const row of terminal) {
     const band = scoreBand(row.scoreAtClaim);
     const bucket = doneBuckets.get(band) ?? { taskCount: 0, doneCount: 0 };
     bucket.taskCount += 1;
-    if (row.finalStatus === DONE_STATUS) bucket.doneCount += 1;
+    if (outcomeOf(row) === DONE_STATUS) bucket.doneCount += 1;
     doneBuckets.set(band, bucket);
   }
   const doneRateByScoreBand: ScoreBandDoneRate[] = [...doneBuckets.entries()]
@@ -444,10 +506,10 @@ export function computeConfidenceTelemetryAggregates(
     }));
 
   const lowScoreSuccesses = terminal.filter(
-    (r) => r.scoreAtClaim < LOW_SCORE_MAX && r.finalStatus === DONE_STATUS,
+    (r) => r.scoreAtClaim < LOW_SCORE_MAX && outcomeOf(r) === DONE_STATUS,
   ).length;
   const highScoreFailures = terminal.filter(
-    (r) => r.scoreAtClaim >= HIGH_SCORE_MIN && r.finalStatus !== DONE_STATUS,
+    (r) => r.scoreAtClaim >= HIGH_SCORE_MIN && outcomeOf(r) !== DONE_STATUS,
   ).length;
 
   return {

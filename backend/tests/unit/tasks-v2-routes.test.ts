@@ -45,6 +45,7 @@ const prismaMocks = vi.hoisted(() => ({
   // properties of undefined" from an unmocked model — see the "M5 snapshot
   // hook" describe block for the explicit fail-open pin).
   confidenceTelemetryUpsert: vi.fn().mockResolvedValue({}),
+  confidenceTelemetryUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
   auditLogFindFirst: vi.fn().mockResolvedValue(null),
 }));
 
@@ -77,6 +78,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     },
     confidenceTelemetry: {
       upsert: prismaMocks.confidenceTelemetryUpsert,
+      updateMany: prismaMocks.confidenceTelemetryUpdateMany,
     },
     auditLog: {
       findFirst: prismaMocks.auditLogFindFirst,
@@ -303,6 +305,11 @@ const baseTask = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Telemetry writers default to resolving cleanly; a test that makes one
+  // reject must not leak that into the next test.
+  prismaMocks.confidenceTelemetryUpsert.mockReset().mockResolvedValue({});
+  prismaMocks.confidenceTelemetryUpdateMany.mockReset().mockResolvedValue({ count: 0 });
+  prismaMocks.auditLogFindFirst.mockReset().mockResolvedValue(null);
   accessMocks.hasProjectAccess.mockResolvedValue(true);
   prismaMocks.taskUpdate.mockImplementation(
     ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
@@ -7396,5 +7403,212 @@ describe("GET /tasks/:id — pre-existing over-limit templateData round-trips un
     const body = (await res.json()) as { task: { templateData: { goal: string } } };
     expect(body.task.templateData.goal).toBe(overLimitValue);
     expect(body.task.templateData.goal.length).toBe(50_001);
+  });
+});
+
+// ── M5 signal 4: finalDisposition hooks on the abandon paths ────────────────
+//
+// creator-abandon records the "abandoned" disposition, the admin restore
+// clears it, and the claim-release verbs write nothing. All telemetry writes
+// are post-commit and fail-open.
+describe("finalDisposition hooks: creator-abandon, restore, claim release", () => {
+  const AGENT_WITH_UPDATE: Actor = { ...AGENT, scopes: [...AGENT.scopes, "tasks:update"] };
+  const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+  const OPEN_UNCLAIMED = {
+    ...baseTask,
+    id: "task-1",
+    status: "open",
+    createdByAgentId: "agent-1",
+    createdByUserId: null,
+    claimedByAgentId: null,
+    claimedByUserId: null,
+    claimedAt: null,
+    reviewClaimedByAgentId: null,
+    reviewClaimedByUserId: null,
+  };
+
+  function creatorAbandon() {
+    return makeApp(AGENT_WITH_UPDATE).request("/tasks/task-1/creator-abandon", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+  }
+
+  function queueCreatorAbandonFetches() {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(OPEN_UNCLAIMED)
+      .mockResolvedValueOnce({ ...OPEN_UNCLAIMED, status: "abandoned" });
+  }
+
+  // The telemetry module reads the claim snapshot off the audit trail.
+  function scoredClaimOnAuditTrail() {
+    prismaMocks.auditLogFindFirst.mockImplementation(
+      ({ where }: { where: { action: unknown } }) =>
+        Promise.resolve(typeof where.action === "object" ? { payload: { score: 95, threshold: 70 } } : null),
+    );
+  }
+
+  it("creator-abandon of a task with a scored claim upserts finalDisposition abandoned", async () => {
+    scoredClaimOnAuditTrail();
+    queueCreatorAbandonFetches();
+
+    const res = await creatorAbandon();
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { taskId: "task-1" },
+        create: expect.objectContaining({ taskId: "task-1", projectId: "proj-1", finalDisposition: "abandoned", scoreAtClaim: 95 }),
+        update: { finalDisposition: "abandoned" },
+      }),
+    );
+  });
+
+  it("creator-abandon of a never-claimed task (no scored snapshot) creates no telemetry row", async () => {
+    queueCreatorAbandonFetches();
+
+    const res = await creatorAbandon();
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+    // It may update an existing row (none here: count 0), never create one.
+    expect(prismaMocks.confidenceTelemetryUpdateMany).toHaveBeenCalledWith({
+      where: { taskId: "task-1" },
+      data: { finalDisposition: "abandoned" },
+    });
+  });
+
+  it("a failed creator-abandon (409, wrong state) writes no disposition", async () => {
+    scoredClaimOnAuditTrail();
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...OPEN_UNCLAIMED, claimedByAgentId: "agent-1" });
+
+    const res = await creatorAbandon();
+
+    expect(res.status).toBe(409);
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+    expect(prismaMocks.confidenceTelemetryUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("a creator-abandon that loses the CAS race (409) writes no disposition", async () => {
+    scoredClaimOnAuditTrail();
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(OPEN_UNCLAIMED);
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await creatorAbandon();
+
+    expect(res.status).toBe(409);
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+    expect(prismaMocks.confidenceTelemetryUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("fail-open: when the disposition writers throw, creator-abandon still returns its success response and logs the error", async () => {
+    const { logger } = await import("../../src/lib/logger.js");
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      scoredClaimOnAuditTrail();
+      prismaMocks.confidenceTelemetryUpsert.mockRejectedValue(new Error("telemetry db down"));
+      queueCreatorAbandonFetches();
+
+      const res = await creatorAbandon();
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { task: { status: string } };
+      expect(body.task.status).toBe("abandoned");
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ component: "confidence-telemetry", op: "recordAbandonDisposition", taskId: "task-1" }),
+        expect.any(String),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("PATCH restore abandoned -> initial state clears finalDisposition on the existing row and creates none", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "abandoned" });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "open" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.confidenceTelemetryUpdateMany).toHaveBeenCalledWith({
+      where: { taskId: "task-1" },
+      data: { finalDisposition: null },
+    });
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+  });
+
+  it("PATCH restore: a non-admin 403 clears nothing", async () => {
+    accessMocks.isProjectAdmin.mockResolvedValueOnce(false);
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "abandoned" });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "open" }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(prismaMocks.confidenceTelemetryUpdateMany).not.toHaveBeenCalled();
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+  });
+
+  it("PATCH restore is fail-open: a throwing clear still returns 200 and logs the error", async () => {
+    const { logger } = await import("../../src/lib/logger.js");
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      prismaMocks.confidenceTelemetryUpdateMany.mockRejectedValue(new Error("telemetry db down"));
+      prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "abandoned" });
+      prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+      const res = await makeApp(HUMAN).request("/tasks/task-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "open" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ op: "clearDisposition", taskId: "task-1" }),
+        expect.any(String),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("POST /tasks/:id/abandon (claim release) writes no disposition", async () => {
+    scoredClaimOnAuditTrail();
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce({ ...baseTask, status: "in_progress", claimedByAgentId: "agent-1" })
+      .mockResolvedValueOnce({ ...baseTask, status: "open", claimedByAgentId: null });
+
+    const res = await makeApp().request("/tasks/task-1/abandon", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+    expect(prismaMocks.confidenceTelemetryUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("PATCH backlog discard (never claimable, no score snapshot) writes no disposition", async () => {
+    scoredClaimOnAuditTrail();
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "backlog" });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "abandoned" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+    expect(prismaMocks.confidenceTelemetryUpdateMany).not.toHaveBeenCalled();
   });
 });

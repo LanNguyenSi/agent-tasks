@@ -693,16 +693,22 @@ model ConfidenceTelemetry {
   // like the other counters; rows written before this column read as 0.
   clarificationCount Int      @default(0)
   overrideUsed       Boolean  @default(false)
-  // Terminal `task.status` at the last snapshot write. LOW-9 (batch 18
-  // review): the state vocabulary is server-side LOCKED (routes/workflows.ts
-  // FIXED_STATE_NAMES / FIXED_TERMINAL_STATES) — there is no such thing as a
-  // "custom workflow's terminal state name" (a prior version of this comment
-  // claimed there was); the only value this column can hold in production
-  // today is `"done"`. Null until the task actually reaches a terminal
-  // review-approve transition; a task that is only ever bounced back
-  // (request_changes) has a row with bounceBackCount > 0 and finalStatus
-  // still null.
+  // Terminal `task.status` at the last review-approve snapshot write. LOW-9
+  // (batch 18 review): the state vocabulary is server-side LOCKED
+  // (routes/workflows.ts FIXED_STATE_NAMES / FIXED_TERMINAL_STATES), so the
+  // only value this column holds in production is `"done"`. Null until the
+  // task reaches a terminal review-approve transition; a task that is only
+  // bounced back (request_changes) or only creator-abandoned keeps it null.
+  // Non-done outcomes live in `finalDisposition` below, not here.
   finalStatus        String?
+  // Terminal disposition of the task: `"done"` (written with the terminal
+  // review-approve snapshot) or `"abandoned"` (written after a successful
+  // creator-abandon of a task that had a gate-scored claim). Null means not
+  // terminal, or reopened (a restore from abandoned back to the initial state
+  // clears it). Read side: outcome = finalDisposition ?? finalStatus, so rows
+  // that predate this column (finalStatus "done", finalDisposition null) keep
+  // counting as done. Additive and nullable; no backfill.
+  finalDisposition   String?
   // Echoes templateData.taskType at snapshot time (task_type semantics are
   // stable once set; not re-validated here — same unvalidated-Json read
   // posture as Project.taskTypeThresholds).

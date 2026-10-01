@@ -65,7 +65,7 @@ import {
 } from "../lib/confidence.js";
 import { resolveEnforcementMode } from "../lib/enforcement-mode.js";
 import { evaluateConfidenceGate, deriveNextActions } from "../services/confidence-gate.js";
-import { recordBounceBack, recordClarification, recordTerminalSnapshot } from "../services/confidence-telemetry.js";
+import { clearDisposition, recordAbandonDisposition, recordBounceBack, recordClarification, recordTerminalSnapshot } from "../services/confidence-telemetry.js";
 import {
   getLlmRewriteClient,
   RewriteSuggestionTruncatedError,
@@ -4110,9 +4110,10 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
 // model.md documents `status` as a free String, enforced only at these
 // input-schema edges). But this route IS the first thing that makes that
 // value reachable in production: before it, no verb ever wrote a non-"done"
-// terminal disposition (see services/confidence-telemetry.ts:36-43's
-// HIGH-2 note — `task_abandon` resets `status` back to `initialState`, it
-// never writes "abandoned"), so the "abandoned disappears from views /
+// terminal disposition (`task_abandon` resets `status` back to
+// `initialState`, it never writes "abandoned"; see the signal 4 note in
+// services/confidence-telemetry.ts for the disposition this route now
+// records), so the "abandoned disappears from views /
 // blockedBy never unblocks on it" gaps below were latent, not exercised,
 // until this route existed to write the value at all.
 //
@@ -4219,6 +4220,12 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
   if (abandonResult.count === 0) {
     return conflict(c, CREATOR_ABANDON_STATE_CONFLICT_MESSAGE);
   }
+
+  // M5 signal 4: the task is now terminal-abandoned. Post-commit and
+  // fail-open (recordAbandonDisposition logs and swallows its own errors), so
+  // a telemetry failure never changes the response below. Writes nothing for
+  // a task that never had a scored claim.
+  await recordAbandonDisposition(task.id, task.projectId);
 
   // updateMany cannot use `include`, so re-fetch the freshly written row.
   const updated = await prisma.task.findUnique({
@@ -5220,6 +5227,10 @@ taskRouter.patch("/tasks/:id", async (c) => {
         },
       });
       if (!reopenMutation.changed) return conflict(c, "Task is no longer abandoned");
+      // M5 signal 4: the task is no longer terminal. Post-commit and fail-open
+      // (clearDisposition logs and swallows its own errors); it only resets an
+      // existing telemetry row and never creates one.
+      await clearDisposition(task.id);
       updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
       if (!updated) return notFound(c);
     } else {
