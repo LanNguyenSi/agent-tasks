@@ -92,6 +92,8 @@ export default function ProjectSettingsPage() {
   const [settingsPresets, setSettingsPresets] = useState<TemplatePreset[]>([]);
   const [settingsGovernanceMode, setSettingsGovernanceMode] =
     useState<GovernanceMode>("AWAITS_CONFIRMATION");
+  const [settingsAllowNonCreatorRespec, setSettingsAllowNonCreatorRespec] =
+    useState(false);
   const [settingsWebhookUrl, setSettingsWebhookUrl] = useState("");
   const [settingsWebhookHasSecret, setSettingsWebhookHasSecret] =
     useState(false);
@@ -133,6 +135,7 @@ export default function ProjectSettingsPage() {
                 ? "REQUIRES_DISTINCT_REVIEWER"
                 : "AWAITS_CONFIRMATION"),
         );
+        setSettingsAllowNonCreatorRespec(proj.allowNonCreatorRespec ?? false);
         setSettingsWebhookUrl(proj.notificationWebhookUrl ?? "");
         setSettingsWebhookHasSecret(!!proj.hasNotificationWebhookSecret);
         setSettingsWebhookSecret(null);
@@ -175,6 +178,7 @@ export default function ProjectSettingsPage() {
         taskTemplate: tpl,
         confidenceThreshold: settingsThreshold,
         governanceMode: settingsGovernanceMode,
+        allowNonCreatorRespec: settingsAllowNonCreatorRespec,
         ...webhookPatch,
       });
       setProject(updated);
@@ -244,6 +248,24 @@ export default function ProjectSettingsPage() {
                 value={settingsGovernanceMode}
                 onChange={setSettingsGovernanceMode}
               />
+              <label
+                // eslint-disable-next-line no-restricted-syntax
+                style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-sm)", cursor: "pointer", marginTop: "var(--space-3)" }} /* dynamic: inline row */
+              >
+                <input
+                  type="checkbox"
+                  checked={settingsAllowNonCreatorRespec}
+                  onChange={(e) =>
+                    setSettingsAllowNonCreatorRespec(e.target.checked)
+                  }
+                />
+                Allow agents to respec open tasks they did not create
+              </label>
+              <p className="proj-section-desc">
+                Backlog tasks can always be respecced by any agent with
+                project access. Once a task leaves the backlog, only its
+                creator may respec it unless this is enabled.
+              </p>
             </div>
           </Card>
 

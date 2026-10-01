@@ -103,6 +103,8 @@ export interface Project {
   notificationWebhookUrl: string | null;
   /** True iff a signing secret is configured. The raw secret is never returned by the API — PATCH with a new value to rotate. */
   hasNotificationWebhookSecret: boolean;
+  /** When true, any agent with project access may respec an open task it did not create (POST /tasks/:id/respec). Optional because older API responses may omit it; treat `undefined` as `false`. */
+  allowNonCreatorRespec?: boolean;
   createdAt: string;
   /** Source of the user's access to this project. `"team"` means the
    * project is in a team the user is a member of; `"project"` means
@@ -562,6 +564,8 @@ export async function updateProject(
     notificationWebhookUrl?: string | null;
     /** Set, replace, or clear the HMAC signing secret. Never returned on read. Empty string is "clear". */
     notificationWebhookSecret?: string | null;
+    /** Let any agent with project access respec open tasks it did not create. Project-admin only server-side. */
+    allowNonCreatorRespec?: boolean;
   },
 ): Promise<Project> {
   const data = await request<{ project: Project }>(`/api/projects/${id}`, {
