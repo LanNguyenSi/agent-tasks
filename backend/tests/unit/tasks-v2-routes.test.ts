@@ -7461,7 +7461,7 @@ describe("finalDisposition hooks: creator-abandon, restore, claim release", () =
       expect.objectContaining({
         where: { taskId: "task-1" },
         create: expect.objectContaining({ taskId: "task-1", projectId: "proj-1", finalDisposition: "abandoned", scoreAtClaim: 95 }),
-        update: { finalDisposition: "abandoned" },
+        update: expect.objectContaining({ finalDisposition: "abandoned", scoreAtClaim: 95 }),
       }),
     );
   });

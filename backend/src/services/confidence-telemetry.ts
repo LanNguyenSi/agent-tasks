@@ -243,11 +243,7 @@ export async function recordTerminalSnapshot(params: {
     // (the AuditLog query behind it is "did an override event EVER happen",
     // which can only go false -> true, never back) so it is always safe to
     // include as-is.
-    const updateClaimFields = {
-      ...(claimFields.scoreAtClaim !== null ? { scoreAtClaim: claimFields.scoreAtClaim } : {}),
-      ...(claimFields.effectiveThreshold !== null ? { effectiveThreshold: claimFields.effectiveThreshold } : {}),
-      overrideUsed: claimFields.overrideUsed,
-    };
+    const updateClaimFields = nonNullClaimFields(claimFields);
     // A terminal review-approve at the done status is the "done" disposition.
     // Writing it in BOTH create and update lets a reclaimed-then-done task
     // overwrite an earlier "abandoned" disposition.
@@ -281,7 +277,10 @@ export async function recordAbandonDisposition(taskId: string, projectId: string
       await upsertConfidenceTelemetryWithRetry({
         where: { taskId },
         create: { taskId, projectId, finalDisposition: ABANDONED_DISPOSITION, ...claimFields },
-        update: { finalDisposition: ABANDONED_DISPOSITION },
+        // Refresh the claim snapshot like recordTerminalSnapshot does, so an
+        // existing unscored row picks up the score of the claim that is now
+        // being creator-abandoned.
+        update: { finalDisposition: ABANDONED_DISPOSITION, ...nonNullClaimFields(claimFields) },
       });
     } else {
       await prisma.confidenceTelemetry.updateMany({
@@ -317,6 +316,23 @@ export async function clearDisposition(taskId: string): Promise<void> {
 }
 
 /**
+ * Claim-snapshot fields safe to spread into an upsert `update`: a null
+ * `scoreAtClaim` / `effectiveThreshold` is omitted so a previously recorded
+ * value is never clobbered; `overrideUsed` is monotonic and always included.
+ */
+function nonNullClaimFields(claimFields: {
+  scoreAtClaim: number | null;
+  effectiveThreshold: number | null;
+  overrideUsed: boolean;
+}): { scoreAtClaim?: number; effectiveThreshold?: number; overrideUsed: boolean } {
+  return {
+    ...(claimFields.scoreAtClaim !== null ? { scoreAtClaim: claimFields.scoreAtClaim } : {}),
+    ...(claimFields.effectiveThreshold !== null ? { effectiveThreshold: claimFields.effectiveThreshold } : {}),
+    overrideUsed: claimFields.overrideUsed,
+  };
+}
+
+/**
  * Resolve `scoreAtClaim` / `effectiveThreshold` / `overrideUsed` for a task
  * from the confidence-gate's existing audit trail. `scoreAtClaim` /
  * `effectiveThreshold` come from the MOST RECENT of the three claim-snapshot
@@ -326,9 +342,9 @@ export async function clearDisposition(taskId: string): Promise<void> {
  * this task, even if a later reclaim superseded it — an override having
  * happened at all is the durable signal, not just the most recent claim.
  *
- * Not exported: internal to this module's three snapshot writers. Callers
- * that need it get it via `recordBounceBack`, `recordTerminalSnapshot` or
- * `recordClarification`.
+ * Not exported: internal to this module's four snapshot writers. Callers
+ * that need it get it via `recordBounceBack`, `recordTerminalSnapshot`,
+ * `recordAbandonDisposition` or `recordClarification`.
  */
 async function resolveClaimSnapshotFields(taskId: string): Promise<{
   scoreAtClaim: number | null;

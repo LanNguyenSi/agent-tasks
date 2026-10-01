@@ -456,7 +456,7 @@ describe("recordTerminalSnapshot - finalDisposition", () => {
 });
 
 describe("recordAbandonDisposition", () => {
-  it("with a scored claim snapshot: upserts, create carries the claim fields and abandoned, update sets only finalDisposition", async () => {
+  it("with a scored claim snapshot: upserts, create and update both carry the claim snapshot and abandoned", async () => {
     prismaMocks.auditLogFindFirst
       .mockResolvedValueOnce({ payload: { score: 95, threshold: 70 } })
       .mockResolvedValueOnce(null);
@@ -475,10 +475,27 @@ describe("recordAbandonDisposition", () => {
         effectiveThreshold: 70,
         overrideUsed: false,
       },
-      update: { finalDisposition: "abandoned" },
+      update: { finalDisposition: "abandoned", scoreAtClaim: 95, effectiveThreshold: 70, overrideUsed: false },
     });
     expect(prismaMocks.confidenceTelemetryUpdateMany).not.toHaveBeenCalled();
     expect(loggerMocks.error).not.toHaveBeenCalled();
+  });
+
+  it("update refreshes the claim snapshot incl. overrideUsed so an existing unscored row gets the score", async () => {
+    prismaMocks.auditLogFindFirst
+      .mockResolvedValueOnce({ payload: { score: 88, threshold: 70 } })
+      .mockResolvedValueOnce({ id: "override-event" });
+    prismaMocks.confidenceTelemetryUpsert.mockResolvedValue({});
+
+    await recordAbandonDisposition("task-a5", "proj-1");
+
+    const arg = prismaMocks.confidenceTelemetryUpsert.mock.calls[0]![0] as { update: Record<string, unknown> };
+    expect(arg.update).toEqual({
+      finalDisposition: "abandoned",
+      scoreAtClaim: 88,
+      effectiveThreshold: 70,
+      overrideUsed: true,
+    });
   });
 
   it("without a scored claim snapshot: updates an existing row only and never creates one", async () => {
@@ -568,6 +585,15 @@ describe("computeConfidenceTelemetryAggregates - finalDisposition outcome", () =
     const aggregates = computeConfidenceTelemetryAggregates(rows, []);
     expect(aggregates.highScoreFailures).toBe(1);
     expect(aggregates.doneRateByScoreBand).toEqual([{ band: "90-100", taskCount: 2, doneRate: 0.5 }]);
+  });
+
+  it("finalDisposition takes precedence over finalStatus: a done status with an abandoned disposition is a failure", () => {
+    const rows: ConfidenceTelemetryRow[] = [
+      { scoreAtClaim: 95, finalStatus: DONE_STATUS, finalDisposition: "abandoned", bounceBackCount: 0, clarificationCount: 0 },
+    ];
+    const aggregates = computeConfidenceTelemetryAggregates(rows, []);
+    expect(aggregates.highScoreFailures).toBe(1);
+    expect(aggregates.doneRateByScoreBand).toEqual([{ band: "90-100", taskCount: 1, doneRate: 0 }]);
   });
 
   it("a legacy row (finalStatus done, finalDisposition null) still counts as done", () => {
