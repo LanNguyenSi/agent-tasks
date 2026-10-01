@@ -7,7 +7,7 @@ import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { conflict, forbidden, notFound } from "../middleware/error.js";
 import { ensureDefaultBoardForProject } from "../services/board-default.js";
-import { taskTemplateSchema, taskTypeThresholdsSchema } from "../lib/confidence.js";
+import { riskModifiersSchema, taskTemplateSchema, taskTypeThresholdsSchema } from "../lib/confidence.js";
 import {
   hasProjectAccess,
   hasProjectRole,
@@ -69,6 +69,11 @@ const updateProjectSchema = createProjectSchema.partial().omit({ teamId: true, s
   // Unknown taskType keys are rejected (see taskTypeThresholdsSchema); null
   // clears any existing overrides, mirroring taskTemplate's nullable().optional().
   taskTypeThresholds: taskTypeThresholdsSchema,
+  // M3 (task 05b5eba8): opt-in risk-modifier points read by
+  // resolveTriggeredRiskModifiers. Unknown names, non-integer, out-of-range
+  // values and a sum above 100 are rejected (see riskModifiersSchema); null
+  // clears the stored config.
+  riskModifiers: riskModifiersSchema,
   // scorer-v2 (T5): per-project confidence-gate enforcement level.
   enforcementMode: z.enum(["OFF", "WARN", "BLOCK"]).optional(),
   // Required to flip a project TO `BLOCK` (the gate enforces it; this is not a
@@ -473,10 +478,11 @@ projectRouter.get("/projects/:id/telemetry/confidence", async (c) => {
 type ProjectPatch = z.infer<typeof updateProjectSchema>;
 
 function projectPatchData(body: ProjectPatch, project: Project): Prisma.ProjectUpdateInput {
-  const { taskTemplate, taskTypeThresholds, notificationWebhookUrl, notificationWebhookSecret, acknowledgeShadowReport: _ack, ...rest } = body;
+  const { taskTemplate, taskTypeThresholds, riskModifiers, notificationWebhookUrl, notificationWebhookSecret, acknowledgeShadowReport: _ack, ...rest } = body;
   const data: Prisma.ProjectUpdateInput = { ...rest };
   if (taskTemplate !== undefined) data.taskTemplate = taskTemplate === null ? Prisma.JsonNull : taskTemplate;
   if (taskTypeThresholds !== undefined) data.taskTypeThresholds = taskTypeThresholds === null ? Prisma.JsonNull : taskTypeThresholds;
+  if (riskModifiers !== undefined) data.riskModifiers = riskModifiers === null ? Prisma.JsonNull : riskModifiers;
   if (notificationWebhookUrl !== undefined) data.notificationWebhookUrl = notificationWebhookUrl === "" ? null : notificationWebhookUrl;
   if (notificationWebhookSecret !== undefined) data.notificationWebhookSecret = notificationWebhookSecret === "" ? null : notificationWebhookSecret;
   if (body.governanceMode !== undefined) {
@@ -507,6 +513,7 @@ function projectPatchAuditChanges(body: ProjectPatch, project: Project): Record<
   if (body.requireDistinctReviewer !== undefined && body.requireDistinctReviewer !== project.requireDistinctReviewer) changes.requireDistinctReviewer = { from: project.requireDistinctReviewer, to: body.requireDistinctReviewer };
   if (body.confidenceThreshold !== undefined && body.confidenceThreshold !== project.confidenceThreshold) changes.confidenceThreshold = { from: project.confidenceThreshold, to: body.confidenceThreshold };
   if (body.taskTypeThresholds !== undefined && canonicalJsonString(body.taskTypeThresholds) !== canonicalJsonString(project.taskTypeThresholds)) changes.taskTypeThresholds = { from: project.taskTypeThresholds, to: body.taskTypeThresholds };
+  if (body.riskModifiers !== undefined && canonicalJsonString(body.riskModifiers) !== canonicalJsonString(project.riskModifiers)) changes.riskModifiers = { from: project.riskModifiers, to: body.riskModifiers };
   if (body.enforcementMode !== undefined && body.enforcementMode !== project.enforcementMode) changes.enforcementMode = { from: project.enforcementMode, to: body.enforcementMode };
   if (body.soloMode !== undefined && body.soloMode !== project.soloMode) changes.soloMode = { from: project.soloMode, to: body.soloMode };
   if (body.governanceMode !== undefined && body.governanceMode !== project.governanceMode) changes.governanceMode = { from: project.governanceMode, to: body.governanceMode };

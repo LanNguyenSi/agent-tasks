@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `PATCH /api/projects/:id` accepts `riskModifiers`, the write path for the M3 risk modifiers that were previously readable only (task 05b5eba8). The object takes any subset of `touchesAuth`, `touchesDatabase`, `touchesPersonalData` and `productionImpact`; each value is an integer 0-100 and the values may not sum to more than 100. An unknown key, a negative or non-integer value, a value above 100 or a sum above 100 returns `400` and writes nothing; `null` clears the stored value. A change is audited as `project.updated`. The OpenAPI document describes the field on the Project schema and the PATCH body.
+
 ### Changed
 
 - `docker-compose.prod.yml` lets the backend connect as a separate runtime database role through the optional `POSTGRES_APP_USER` and `POSTGRES_APP_PASSWORD` variables, while `migrate` keeps the owner role. A role that is not a superuser and owns no table cannot disable the grounding fence and hold triggers; it can still write the fence and hold tables, so this does not guard against arbitrary SQL run as the backend. Set both variables or neither; unset, the backend connects as before; see "Runtime database role" in `docs/grounding-migration.md` for the grants.
