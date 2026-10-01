@@ -171,15 +171,24 @@ describe("GET /projects/:id/telemetry/confidence", () => {
     }
   });
 
+  it("selects clarificationCount alongside the other signal columns", async () => {
+    await makeApp(HUMAN_ACTOR).request(`/projects/${PROJECT_ID}/telemetry/confidence`);
+    expect(prismaMocks.confidenceTelemetryFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ clarificationCount: true, bounceBackCount: true }),
+      }),
+    );
+  });
+
   it("returns fixture-driven aggregates end to end, pinning the score-band boundaries on both sides", async () => {
     prismaMocks.confidenceTelemetryFindMany.mockResolvedValue([
       // HIGH-2 (batch 18 review): "abandoned" exercises a finalStatus
       // production cannot reach today (see services/confidence-telemetry.ts's
       // header comment) — used here to pin the aggregator's non-done branch.
-      { scoreAtClaim: 59, finalStatus: "abandoned", bounceBackCount: 0 }, // just below the 60-70 band
-      { scoreAtClaim: 60, finalStatus: "done", bounceBackCount: 1 }, // lower edge of 60-70 (inclusive)
-      { scoreAtClaim: 69, finalStatus: "done", bounceBackCount: 0 }, // still inside 60-70
-      { scoreAtClaim: 70, finalStatus: "done", bounceBackCount: 0 }, // rolled into 70-80 (upper bound exclusive)
+      { scoreAtClaim: 59, finalStatus: "abandoned", bounceBackCount: 0, clarificationCount: 0 }, // just below the 60-70 band
+      { scoreAtClaim: 60, finalStatus: "done", bounceBackCount: 1, clarificationCount: 3 }, // lower edge of 60-70 (inclusive)
+      { scoreAtClaim: 69, finalStatus: "done", bounceBackCount: 0, clarificationCount: 1 }, // still inside 60-70
+      { scoreAtClaim: 70, finalStatus: "done", bounceBackCount: 0, clarificationCount: 0 }, // rolled into 70-80 (upper bound exclusive)
     ]);
     prismaMocks.auditLogFindMany.mockResolvedValue([
       { action: "task.claim_confidence_recorded", createdAt: new Date("2026-08-10T00:00:00Z") },
@@ -192,6 +201,7 @@ describe("GET /projects/:id/telemetry/confidence", () => {
       aggregates: {
         overrideRatePerWeek: Array<{ weekStart: string; overrideCount: number; totalClaims: number; rate: number }>;
         bounceBackByScoreBand: Array<{ band: string; taskCount: number; avgBounceBackCount: number }>;
+        clarificationByScoreBand: Array<{ band: string; taskCount: number; avgClarificationCount: number }>;
         doneRateByScoreBand: Array<{ band: string; taskCount: number; doneRate: number }>;
         lowScoreSuccesses: number;
         highScoreFailures: number;
@@ -205,6 +215,11 @@ describe("GET /projects/:id/telemetry/confidence", () => {
       { band: "50-60", taskCount: 1, avgBounceBackCount: 0 },
       { band: "60-70", taskCount: 2, avgBounceBackCount: 0.5 },
       { band: "70-80", taskCount: 1, avgBounceBackCount: 0 },
+    ]);
+    expect(body.aggregates.clarificationByScoreBand).toEqual([
+      { band: "50-60", taskCount: 1, avgClarificationCount: 0 },
+      { band: "60-70", taskCount: 2, avgClarificationCount: 2 }, // (3+1)/2
+      { band: "70-80", taskCount: 1, avgClarificationCount: 0 },
     ]);
     expect(body.aggregates.doneRateByScoreBand).toEqual([
       { band: "50-60", taskCount: 1, doneRate: 0 },

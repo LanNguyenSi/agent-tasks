@@ -65,7 +65,7 @@ import {
 } from "../lib/confidence.js";
 import { resolveEnforcementMode } from "../lib/enforcement-mode.js";
 import { evaluateConfidenceGate, deriveNextActions } from "../services/confidence-gate.js";
-import { recordBounceBack, recordTerminalSnapshot } from "../services/confidence-telemetry.js";
+import { recordBounceBack, recordClarification, recordTerminalSnapshot } from "../services/confidence-telemetry.js";
 import {
   getLlmRewriteClient,
   RewriteSuggestionTruncatedError,
@@ -6306,6 +6306,27 @@ taskRouter.post("/tasks/:id/comments", zValidator("json", createCommentSchema), 
       authorAgent: { select: { id: true, name: true } },
     },
   });
+
+  // M5 signal 2: an agent claim-holder's comment while the task is in a work
+  // state counts as a clarification. Everything here is fail-open: the comment
+  // already exists, so neither a workflow lookup error nor the telemetry write
+  // (recordClarification logs and swallows its own errors) may change the 201
+  // below. The cheap holder check runs first so the workflow lookup is only
+  // paid by actual claim-holder comments.
+  try {
+    if (actor.type === "agent" && task.claimedByAgentId === actor.tokenId) {
+      const effectiveDef = await resolveEffectiveDefinition(task, prisma);
+      // isWorkState alone also admits the review state; clarifications are work-phase only.
+      if (isWorkState(effectiveDef, task.status) && !isReviewState(effectiveDef, task.status)) {
+        await recordClarification(task.id, task.projectId);
+      }
+    }
+  } catch (err) {
+    logger.error(
+      { component: "confidence-telemetry", op: "recordClarification", taskId: task.id, errMessage: (err as Error).message },
+      "clarification eligibility check failed - comment is posted regardless",
+    );
+  }
 
   void logAuditEvent({
     action: "task.commented",
