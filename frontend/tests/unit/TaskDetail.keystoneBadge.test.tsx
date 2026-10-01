@@ -64,8 +64,7 @@ function makeTask(over: Partial<Task> = {}): Task {
 }
 
 // templateFields must be a truthy object to render the "Agent Template"
-// section; description/templateData are both empty above so the score is
-// 0 and always below the threshold used in these tests.
+// section.
 const TEMPLATE_FIELDS = {};
 
 const baseProps = {
@@ -78,7 +77,6 @@ const baseProps = {
   onClose: () => {},
   onError: () => {},
 };
-
 
 // Empty task: no acceptance criteria and no verification path, so the AC
 // keystone is violated (blocking). The verifiable task below clears it.
