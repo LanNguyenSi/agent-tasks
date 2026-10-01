@@ -3,7 +3,7 @@ type: invariant
 title: "Confidence scorer: authoritative backend + hand-mirrored frontend"
 description: "backend/src/lib/confidence.ts is the source of truth; the frontend copy is a manually kept-in-sync mirror, now enforced live in CI by a cross-package parity test over a shared fixture corpus."
 tags: [confidence, scorer, invariant, keep-in-sync]
-timestamp: 2026-10-01T06:50:00Z
+timestamp: 2026-10-01T06:55:27Z
 sources:
   - backend/src/lib/confidence.ts
   - frontend/src/lib/confidence.ts

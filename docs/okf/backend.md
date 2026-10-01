@@ -3,7 +3,7 @@ type: module
 title: "backend: Hono API + Prisma"
 description: "Route layout, service/gate split, and the token-hash auth middleware behind every request."
 tags: [backend, hono, prisma, auth, routes]
-timestamp: 2026-10-01T06:50:00Z
+timestamp: 2026-10-01T06:55:27Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -68,7 +68,7 @@ the protected transaction; existing callers retain their singleton default.
 Exact byte projection, limits and error behavior are documented in [the receipt
 contract](../grounding-receipt-contract.md).
 
-**Project settings PATCH** (`backend/src/routes/projects.ts`): `PATCH /api/projects/:id` is human-only and requires the project ADMIN role. Its `riskModifiers` field (the write path for the M3 modifiers) is validated by `riskModifiersSchema` from `backend/src/lib/confidence.ts` (see `confidence-scorer.md`), stored as `Prisma.JsonNull` when cleared with `null`, and audited as `project.updated` only when the canonical (key-order-insensitive) value changes, the same handling as `taskTypeThresholds`.
+**Project settings PATCH** (`backend/src/routes/projects.ts`): `PATCH /api/projects/:id` is human-only and requires the ADMIN role (on the project or its team). Its `riskModifiers` field (the write path for the M3 modifiers) is validated by `riskModifiersSchema` from `backend/src/lib/confidence.ts` (see `confidence-scorer.md`), stored as `Prisma.JsonNull` when cleared with `null`, and audited as `project.updated` only when the canonical (key-order-insensitive) value changes, the same handling as `taskTypeThresholds`.
 
 **Gate registry** (`backend/src/services/gates/`): a small discovery-only registry (`types.ts` `GateCode` enum: `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) so a project can introspect *which* gates would fire before calling a verb (`GET /api/projects/:id/effective-gates`, MCP `projects_get_effective_gates`). Enforcement itself still lives inline in the route handlers, not in this registry. The separate legacy finish gate accepts only the pinned wrapper's `claim-evaluation` and terminal `complete` phases with a session and ledger evidence; its phase compatibility is not an evaluated-outcome result.
 
