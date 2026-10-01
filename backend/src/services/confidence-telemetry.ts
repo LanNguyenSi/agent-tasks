@@ -269,8 +269,9 @@ export async function recordTerminalSnapshot(params: {
  * this task, even if a later reclaim superseded it — an override having
  * happened at all is the durable signal, not just the most recent claim.
  *
- * Not exported: internal to this module's two snapshot writers. Callers
- * that need it get it via `recordBounceBack` / `recordTerminalSnapshot`.
+ * Not exported: internal to this module's three snapshot writers. Callers
+ * that need it get it via `recordBounceBack`, `recordTerminalSnapshot` or
+ * `recordClarification`.
  */
 async function resolveClaimSnapshotFields(taskId: string): Promise<{
   scoreAtClaim: number | null;

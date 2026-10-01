@@ -436,7 +436,7 @@ export const openApiSpec = {
         properties: {
           band: { type: "string", example: "70-80" },
           taskCount: { type: "integer", minimum: 0, example: 6 },
-          avgClarificationCount: { type: "number", minimum: 0, description: "Mean clarificationCount across this band's tasks: comments an agent claim-holder posted while the task was in a work state (in_progress).", example: 1.5 },
+          avgClarificationCount: { type: "number", minimum: 0, description: "Mean clarificationCount across this band's tasks: comments an agent claim-holder posted while the task was in a work state other than review (in_progress in the built-in and template workflows).", example: 1.5 },
         },
         required: ["band", "taskCount", "avgClarificationCount"],
       },
@@ -452,7 +452,7 @@ export const openApiSpec = {
       ConfidenceTelemetryAggregates: {
         type: "object",
         description:
-          "M5 (task 698eeb01) calibration telemetry, collected from task_finish's review-approve snapshot hook, the comment route and the confidence-gate audit trail. Aggregates all four calibration signals named by the milestone (review bounce-backs, agent clarification comments, override frequency, score-vs-outcome by band). A clarification is a comment posted via POST /tasks/{id}/comments by an agent that holds the task's active work claim while the task is in a work state (in_progress); human claim-holders, reviewers and comments in review do not count. COLLECTION ONLY - no field here feeds an automatic weight/threshold adjustment; a future, deliberately separate milestone calibrates against this data. See services/confidence-telemetry.ts.",
+          "M5 (task 698eeb01) calibration telemetry, collected from task_finish's review-approve snapshot hook, the comment route and the confidence-gate audit trail. Aggregates all four calibration signals named by the milestone (review bounce-backs, agent clarification comments, override frequency, score-vs-outcome by band). A clarification is a comment posted via POST /tasks/{id}/comments by an agent that holds the task's active work claim while the task is in a work state other than review (in_progress in the built-in and template workflows); human claim-holders, reviewers and comments in review do not count. COLLECTION ONLY - no field here feeds an automatic weight/threshold adjustment; a future, deliberately separate milestone calibrates against this data. See services/confidence-telemetry.ts.",
         properties: {
           overrideRatePerWeek: { type: "array", items: { $ref: "#/components/schemas/ConfidenceTelemetryWeekBucket" } },
           bounceBackByScoreBand: { type: "array", items: { $ref: "#/components/schemas/ConfidenceTelemetryScoreBandBounceBack" } },

@@ -16,6 +16,7 @@ const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
   commentCreate: vi.fn(),
   workflowFindFirst: vi.fn(),
+  workflowFindUnique: vi.fn(),
   confidenceTelemetryUpsert: vi.fn(),
   auditLogFindFirst: vi.fn(),
 }));
@@ -24,7 +25,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
     task: { findUnique: prismaMocks.taskFindUnique },
     comment: { create: prismaMocks.commentCreate },
-    workflow: { findFirst: prismaMocks.workflowFindFirst },
+    workflow: { findFirst: prismaMocks.workflowFindFirst, findUnique: prismaMocks.workflowFindUnique },
     confidenceTelemetry: { upsert: prismaMocks.confidenceTelemetryUpsert },
     auditLog: { findFirst: prismaMocks.auditLogFindFirst },
   },
@@ -157,11 +158,82 @@ describe("POST /tasks/:id/comments - clarification counting", () => {
     expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
   });
 
+  it("does not count an agent claim-holder's comment on a task in the initial state", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({ ...TASK, status: "open" });
+    const res = await postComment(CLAIM_HOLDER);
+    expect(res.status).toBe(201);
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+  });
+
   it("does not count when the task is in a terminal state even if a stale claim id is present", async () => {
     prismaMocks.taskFindUnique.mockResolvedValue({ ...TASK, status: "done" });
     const res = await postComment(CLAIM_HOLDER);
     expect(res.status).toBe(201);
     expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+  });
+});
+
+// A definition whose initial state is `todo`: a task whose status is `open`
+// is then a plain work state, while under the built-in definition `open` is
+// the initial state. Only the resolved effective definition can tell them apart.
+const CUSTOM_DEFINITION = {
+  initialState: "todo",
+  states: [
+    { name: "todo", terminal: false },
+    { name: "open", terminal: false },
+    { name: "review", terminal: false },
+    { name: "done", terminal: true },
+  ],
+  transitions: [
+    { from: "todo", to: "open", label: "start", requiredRole: "any" },
+    { from: "open", to: "review", label: "finish", requiredRole: "any" },
+    { from: "review", to: "done", label: "approve", requiredRole: "any" },
+  ],
+};
+
+describe("POST /tasks/:id/comments - effective workflow definition", () => {
+  it("uses the task's own workflow when workflowId is set", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({ ...TASK, status: "open", workflowId: "wf-1" });
+    prismaMocks.workflowFindUnique.mockResolvedValue({ id: "wf-1", definition: CUSTOM_DEFINITION });
+
+    const res = await postComment(CLAIM_HOLDER);
+
+    expect(res.status).toBe(201);
+    expect(prismaMocks.workflowFindUnique).toHaveBeenCalledWith({ where: { id: "wf-1" } });
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the project-default workflow row when the task has no workflowId", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({ ...TASK, status: "open" });
+    prismaMocks.workflowFindFirst.mockResolvedValue({ id: "wf-d", definition: CUSTOM_DEFINITION });
+
+    const res = await postComment(CLAIM_HOLDER);
+
+    expect(res.status).toBe(201);
+    expect(prismaMocks.workflowFindUnique).not.toHaveBeenCalled();
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not load a per-task workflow for a non-holder", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({ ...TASK, status: "open", workflowId: "wf-1" });
+    const res = await postComment(OTHER_AGENT);
+    expect(res.status).toBe(201);
+    expect(prismaMocks.workflowFindUnique).not.toHaveBeenCalled();
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+  });
+
+  it("returns 201 and logs when the per-task workflow lookup throws", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({ ...TASK, workflowId: "wf-1" });
+    prismaMocks.workflowFindUnique.mockRejectedValue(new Error("workflow load failed"));
+
+    const res = await postComment(CLAIM_HOLDER);
+
+    expect(res.status).toBe(201);
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+    expect(loggerMocks.error).toHaveBeenCalledWith(
+      expect.objectContaining({ op: "recordClarification", taskId: "task-1" }),
+      expect.any(String),
+    );
   });
 });
 

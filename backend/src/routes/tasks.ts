@@ -6315,7 +6315,13 @@ taskRouter.post("/tasks/:id/comments", zValidator("json", createCommentSchema), 
   // paid by actual claim-holder comments.
   try {
     if (actor.type === "agent" && task.claimedByAgentId === actor.tokenId) {
-      const effectiveDef = await resolveEffectiveDefinition(task, prisma);
+      // The comment route loads the task without its workflow relation, so
+      // fetch the per-task workflow here (one extra lookup, only on this
+      // branch) to let resolveEffectiveDefinition honour task.workflowId.
+      const taskWorkflow = task.workflowId
+        ? await prisma.workflow.findUnique({ where: { id: task.workflowId } })
+        : null;
+      const effectiveDef = await resolveEffectiveDefinition({ ...task, workflow: taskWorkflow }, prisma);
       // isWorkState alone also admits the review state; clarifications are work-phase only.
       if (isWorkState(effectiveDef, task.status) && !isReviewState(effectiveDef, task.status)) {
         await recordClarification(task.id, task.projectId);
