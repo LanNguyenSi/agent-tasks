@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { beforeAll, afterAll, beforeEach, afterEach, it, expect, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
-const harness = vi.hoisted(() => ({ db: null as PrismaClient | null, wrapper: { start: vi.fn(), getLedgerSummary: vi.fn() }, bounce: vi.fn(), terminal: vi.fn() }));
+const harness = vi.hoisted(() => ({ db: null as PrismaClient | null, wrapper: { start: vi.fn(), getLedgerSummary: vi.fn() }, bounce: vi.fn(), terminal: vi.fn(), clarification: vi.fn(), abandonDisposition: vi.fn(), clearDisposition: vi.fn() }));
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: new Proxy({}, { get: (_target, property) => { const value = Reflect.get(harness.db!, property); return typeof value === "function" ? value.bind(harness.db) : value; } }) }));
 vi.mock("../../src/config/index.js", () => ({ config: { NODE_ENV: "test", SESSION_SECRET: "test-secret-which-is-long-enough-1234", TRUSTED_PROXY_HOPS: 0 } }));
 vi.mock("../../src/services/grounding-client.js", () => ({ getGroundingClient: () => harness.wrapper }));
-vi.mock("../../src/services/confidence-telemetry.js", () => ({ recordBounceBack: harness.bounce, recordTerminalSnapshot: harness.terminal }));
+vi.mock("../../src/services/confidence-telemetry.js", () => ({ recordBounceBack: harness.bounce, recordTerminalSnapshot: harness.terminal, recordClarification: harness.clarification, recordAbandonDisposition: harness.abandonDisposition, clearDisposition: harness.clearDisposition }));
 import { createApp } from "../../src/app.js";
 import { createGroundingRemoteTargetGuard } from "../../src/services/grounding-scope.js";
 import { completionStore, completionFixture, completionActor as actor } from "../helpers/grounding-completion-fixtures.js";
