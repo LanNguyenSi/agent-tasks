@@ -26,7 +26,7 @@ export async function startNodeServer(app: Hono): Promise<RunningServer> {
             new Promise<void>((done, fail) => {
               // Drop keep-alive and any still-open response sockets so close()
               // cannot hang the test process on a leftover connection.
-              server.closeAllConnections();
+              if ("closeAllConnections" in server) server.closeAllConnections();
               server.close((err) => (err ? fail(err) : done()));
             }),
         });
