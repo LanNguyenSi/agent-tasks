@@ -4,6 +4,8 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+- `task_respec` and its teaching error now describe both eligible states, `open` and `backlog`. The conflict mapper accepts both old and new backend 409 messages during staggered deployment.
+
 **BREAKING**: `task_finish`, `task_merge`, `task_abandon`, `pull_requests_create`
 and `pull_requests_merge` now always send an operation/idempotency key: the
 caller's explicit value when given, otherwise a fresh one generated per call

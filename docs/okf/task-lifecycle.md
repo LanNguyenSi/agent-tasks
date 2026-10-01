@@ -3,7 +3,7 @@ type: overview
 title: "The v2 verb surface and the happy-path task lifecycle"
 description: "task_create, task_pickup, task_start, task_finish, task_merge, task_abandon, the polymorphic MCP-oriented verbs layered over the classic REST CRUD, plus lazy debugFlavor classification and the backlog status for agent-created work."
 tags: [task-lifecycle, mcp, verbs, overview, backlog]
-timestamp: 2026-10-01T11:36:22Z
+timestamp: 2026-10-01T15:12:20Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/routes/grounding-direct-tasks.ts
@@ -30,7 +30,7 @@ An explicitly selected, server-owned dormant grounding creation policy can inter
 
 **`task_creator_abandon`** (`POST /tasks/:id/creator-abandon`, task 7a1360da) is `task_abandon`'s sibling for a task that was never claimed at all: it retires an OPEN, UNCLAIMED task straight to `status: "abandoned"` (a value outside the six happy-path states above), agent-only and creator-only, no `force`. Off the happy path by design (a mistaken task filed in the wrong project, not a claim to release) — see `mcp-server.md`'s tool list. Since task backlog-v1, creator-abandon also accepts backlog tasks (agent creator discarding their own backlog draft before human review). `abandoned` is recoverable only by a project admin, via `PATCH /tasks/:id { status: <initialState> }`; every other transition out of it 400s.
 
-**`task_respec` backlog draft space**: `POST /tasks/:id/respec` (spec update/clarification) is normally creator-only once a task reaches `open` status, to prevent spec-drift from confusing agents mid-claim. In backlog, `task_respec` is allowed for any caller (agent or human), since backlog is an unreviewed draft space: an agent can clarify their own backlog proposal, and a human can update the spec before promoting to `open`. Once promoted out of backlog, respec reverts to creator-only.
+**`task_respec` backlog draft space**: `POST /tasks/:id/respec` (spec update/clarification) works only while a task is fully unclaimed and in `open` or `backlog`. In backlog, any agent with project access and `tasks:update` may respec regardless of creator or `allowNonCreatorRespec`; a human needs project write access. Once promoted to `open`, the creator-only rule applies to agents unless `allowNonCreatorRespec` is enabled. Humans with project write access have no creator restriction in either status.
 
 **`debugFlavor` lazy classification**: a task's `metadata.debugFlavor` (boolean) can be set explicitly at `task_create` time (skips the heuristic entirely) or is otherwise left unset and classified lazily, the *first* `task_pickup` or `task_start` call that touches the task runs `deriveDebugFlavor`, which calls the pure `detectDebugFlavor` heuristic (title/description/labels) and persists the result into `metadata`. `isFresh` (metadata had no `debugFlavor` yet) gates whether the write happens; `?reclassify=true` forces a re-run and, if the result differs from what was persisted, emits a `task.debugFlavor.reclassified` audit event. For an unprovisioned or explicitly legacy task, a `true` result may trigger the legacy grounding-session hint through `GroundingClient`.
 

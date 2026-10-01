@@ -572,12 +572,16 @@ describe("mapBackendError catalog", () => {
   });
 
   // ── 7. respec_conflict ──────────────────────────────────────────────────
-  it("respec_conflict: a claimed/non-open task on task_respec maps to task_abandon/task_respec", () => {
+  it.each([
+    "Task must be open and unclaimed to respec",
+    "Task must be open or backlog and unclaimed to respec",
+  ])("respec_conflict: the old or new backend 409 text maps to task_abandon/task_respec: %s", (message) => {
     const err = mapBackendError(409, {
       error: "conflict",
-      message: "Task must be open and unclaimed to respec",
+      message,
     });
     expect(err.error.code).toBe("respec_conflict");
+    expect(err.error.recipe).toContain("open or backlog");
     expect(err.error.allowedNext).toEqual(["task_abandon", "task_respec"]);
     assertAllowedNextRegistered(err, registered);
   });
