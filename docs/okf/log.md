@@ -1,5 +1,15 @@
 # Change log
 
+## 2026-10-01 (respec descriptions and teaching error)
+
+Re-verified `workflow-gates.md`, `reconcile-done-but-open.md`,
+`architecture.md`, `task-lifecycle.md`, `mcp-server.md`,
+`governance-merge.md`, `backend.md` and `claim-model.md` against their
+changed sources. The respec lifecycle text now states the backlog agent
+exception, open creator rule and human write-access rule; `mcp-server.md`
+citations follow the shifted teaching-error lines. The other docs' claims
+remain unchanged.
+
 ## 2026-10-01 (finalDisposition)
 
 `workflow-gates.md`: every `tasks.ts` line citation (transition-gate helper,

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- The respec OpenAPI description and 409 message now reflect that unclaimed tasks in either `open` or `backlog` can be edited. In backlog, an agent with project access and `tasks:update` may respec regardless of creator; in open, the creator rule still applies unless `allowNonCreatorRespec` is enabled. Humans with project write access are not subject to the creator rule.
+
 ### Added
 
 - `ConfidenceTelemetry` gains the additive, nullable `finalDisposition` column (`done` | `abandoned`, null = not terminal or reopened), so the M5 low-score-success and high-score-failure signal can see a non-done outcome. A terminal review-approve writes `done`; a successful `POST /api/tasks/:id/creator-abandon` writes `abandoned` (an existing row is updated; a new row is created only when the task had a gate-scored claim); an admin restore from `abandoned` to the initial state resets it to null and never creates a row. `task_abandon`, `POST /api/tasks/:id/release` and the backlog discard write nothing. The read side uses `finalDisposition ?? finalStatus` as the outcome, so `highScoreFailures` and `doneRateByScoreBand` are no longer structurally constant, and rows written before the column keep counting as done. All writes are post-commit and fail-open. The OpenAPI text drops the old "structurally 0 / 1.0" notes (task ef70cab1).

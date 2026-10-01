@@ -354,6 +354,11 @@ describe("WORKFLOW_PRIMER (workflow_primer verb)", () => {
     expect(WORKFLOW_PRIMER).not.toContain("—");
   });
 
+  it("describes respec conflicts using both eligible unclaimed states", () => {
+    expect(WORKFLOW_PRIMER).toContain("task_respec on a task that is claimed or neither open nor backlog");
+    expect(WORKFLOW_PRIMER).toContain("unclaimed backlog task for any agent with project access and tasks:update");
+  });
+
   it("carries no per-task data (no UUID-shaped taskId)", () => {
     expect(WORKFLOW_PRIMER).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
   });

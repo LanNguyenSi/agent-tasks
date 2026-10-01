@@ -724,19 +724,20 @@ function forceAdminOnlyError(message: string): TeachingError {
   });
 }
 
-// 7. Description immutability. task_respec only edits an OPEN, unclaimed
-// task; any other state is rejected with 409 `conflict` (backend/src/
-// routes/tasks.ts, RESPEC_STATE_CONFLICT_MESSAGE = "Task must be open and
-// unclaimed to respec"). The backend's own code ("conflict") is shared with
-// other unrelated 409s (middleware/error.ts's generic conflict() helper),
+// 7. Description immutability. task_respec edits an open or backlog,
+// unclaimed task; any other state is rejected with 409 `conflict` (backend/src/
+// routes/tasks.ts, RESPEC_STATE_CONFLICT_MESSAGE). Keep matching the old
+// "open and unclaimed" text as well as the current "open or backlog and
+// unclaimed" text while backend and MCP server versions may differ.
+// The backend's generic "conflict" code is shared with unrelated 409s,
 // so this entry is message-pattern matched and mints its own code.
-const RESPEC_CONFLICT_PATTERN = /open and unclaimed to respec/i;
+const RESPEC_CONFLICT_PATTERN = /open(?: or backlog)? and unclaimed to respec/i;
 
 function respecConflictError(message: string): TeachingError {
   return buildTeachingError({
     code: "respec_conflict",
     message,
-    recipe: "task_respec only works on an open, unclaimed task; call task_abandon first if you hold the claim, then retry task_respec",
+    recipe: "task_respec works on an open or backlog, unclaimed task; call task_abandon first if you hold the claim, then retry task_respec",
     allowedNext: ["task_abandon", "task_respec"],
   });
 }

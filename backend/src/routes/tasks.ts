@@ -5431,7 +5431,7 @@ function respecAuditValue(value: unknown): unknown {
   };
 }
 
-const RESPEC_STATE_CONFLICT_MESSAGE = "Task must be open and unclaimed to respec";
+const RESPEC_STATE_CONFLICT_MESSAGE = "Task must be open or backlog and unclaimed to respec";
 
 taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), async (c) => {
   const actor = c.get("actor") as Actor;

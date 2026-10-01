@@ -6480,6 +6480,7 @@ describe("POST /tasks/:id/respec", () => {
       prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...RESPEC_TASK, status });
       const res = await respecRequest(AGENT_WITH_UPDATE, { description: "x" });
       expect(res.status).toBe(409);
+      expect((await res.json()).message).toBe("Task must be open or backlog and unclaimed to respec");
       expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
     },
   );

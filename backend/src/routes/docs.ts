@@ -1478,9 +1478,9 @@ export const openApiSpec = {
     "/api/tasks/{id}/respec": {
       post: {
         tags: ["Tasks"],
-        summary: "Correct description/templateData on an open, unclaimed task",
+        summary: "Correct description/templateData on an open or backlog, unclaimed task",
         description:
-          "Updates ONLY description and/or templateData — no other field (title included) is respec-able. The task must be status=open and unclaimed (work and review) or this returns 409. Agents: requires scope tasks:update, and by default only the task's own creator may respec it (the project's allowNonCreatorRespec flag relaxes that to any agent with project access). Humans: project write access is sufficient, no creator restriction. Every actually-changed field is audited with its full before/after value (capped per field beyond 8KB serialized). The response's `confidence` is re-scored on the new values and is purely informational — it never blocks the respec.",
+          "Updates ONLY description and/or templateData — no other field (title included) is respec-able. The task must be unclaimed (work and review), with status=open or status=backlog, or this returns 409. Agents: requires scope tasks:update and project access. In backlog, any such agent may respec, regardless of who created the task or the project's allowNonCreatorRespec flag. In open, only the task's creator may respec by default; allowNonCreatorRespec relaxes that to any agent with project access. Humans: project write access is sufficient in either status, with no creator restriction. Every actually-changed field is audited with its full before/after value (capped per field beyond 8KB serialized). The response's `confidence` is re-scored on the new values and is purely informational — it never blocks the respec.",
         security: [{ bearerAuth: [] }],
         parameters: [
           {
