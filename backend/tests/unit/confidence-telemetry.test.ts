@@ -16,12 +16,16 @@ import { Prisma } from "@prisma/client";
 
 const prismaMocks = vi.hoisted(() => ({
   confidenceTelemetryUpsert: vi.fn(),
+  confidenceTelemetryUpdateMany: vi.fn(),
   auditLogFindFirst: vi.fn(),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
-    confidenceTelemetry: { upsert: prismaMocks.confidenceTelemetryUpsert },
+    confidenceTelemetry: {
+      upsert: prismaMocks.confidenceTelemetryUpsert,
+      updateMany: prismaMocks.confidenceTelemetryUpdateMany,
+    },
     auditLog: { findFirst: prismaMocks.auditLogFindFirst },
   },
 }));
@@ -35,6 +39,8 @@ import {
   recordBounceBack,
   recordClarification,
   recordTerminalSnapshot,
+  recordAbandonDisposition,
+  clearDisposition,
   LOW_SCORE_MAX,
   HIGH_SCORE_MIN,
   DONE_STATUS,
@@ -81,15 +87,10 @@ describe("computeConfidenceTelemetryAggregates — fixture-driven", () => {
   // doneRateByScoreBand/lowScoreSuccesses/highScoreFailures but still counted
   // in bounceBackByScoreBand.
   //
-  // HIGH-2 (batch 18 review): the "abandoned" rows below exercise a
-  // finalStatus this pure aggregator must handle correctly, but which
-  // production cannot actually produce today — routes/workflows.ts locks
-  // the terminal-state set to {"done"} and no verb writes any other
-  // terminal disposition (task_abandon resets status to the workflow's
-  // initialState, it does not write "abandoned"). This is deliberate
-  // read-side support ahead of that write-path follow-up, not a claim that
-  // highScoreFailures is non-zero in practice today (see
-  // services/confidence-telemetry.ts's header comment).
+  // The "abandoned" rows below carry a non-done finalStatus, which production
+  // no longer writes (a creator-abandon sets finalDisposition instead). They
+  // still pin the aggregator's finalStatus fallback for rows without a
+  // finalDisposition; the disposition-driven cases are in their own describe.
   const rows: ConfidenceTelemetryRow[] = [
     // low band (< LOW_SCORE_MAX=60): one success (counts toward lowScoreSuccesses), one failure
     { scoreAtClaim: 55, finalStatus: DONE_STATUS, bounceBackCount: 2, clarificationCount: 4 },
@@ -203,11 +204,8 @@ describe("computeConfidenceTelemetryAggregates — fixture-driven", () => {
 // 92/58 sit strictly inside their bands either way the comparison operator
 // reads. Isolated fixtures below pin both operators directly at the boundary.
 describe("computeConfidenceTelemetryAggregates — score classification boundary pins (MED-4)", () => {
-  // HIGH-2 (batch 18 review): as in the fixture-driven suite above, the
-  // "abandoned" finalStatus below exercises a state production cannot reach
-  // today (see services/confidence-telemetry.ts's header comment) — used
-  // here purely to pin the aggregator's own boundary comparison, not as a
-  // claim that highScoreFailures is non-zero in practice.
+  // The "abandoned" finalStatus below is used purely to pin the aggregator's
+  // own boundary comparison through the finalStatus fallback.
   it("HIGH_SCORE_MIN (90) is an INCLUSIVE lower bound: exactly 90 + non-done counts as a high-score failure, exactly 90 + done does not", () => {
     const rows: ConfidenceTelemetryRow[] = [
       { scoreAtClaim: 90, finalStatus: "abandoned", bounceBackCount: 0, clarificationCount: 0 },
@@ -424,5 +422,201 @@ describe("recordBounceBack / recordTerminalSnapshot — fail-open contract", () 
 
     expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledTimes(1);
     expect(loggerMocks.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("recordTerminalSnapshot - finalDisposition", () => {
+  it("writes finalDisposition done in BOTH the create and the update argument when finalStatus is done", async () => {
+    prismaMocks.auditLogFindFirst.mockResolvedValue(null);
+    prismaMocks.confidenceTelemetryUpsert.mockResolvedValue({});
+
+    await recordTerminalSnapshot({ taskId: "task-d1", projectId: "proj-1", finalStatus: "done", taskType: null });
+
+    const arg = prismaMocks.confidenceTelemetryUpsert.mock.calls[0]![0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    expect(arg.create.finalDisposition).toBe("done");
+    expect(arg.update.finalDisposition).toBe("done");
+  });
+
+  it("does not write finalDisposition for a non-done finalStatus", async () => {
+    prismaMocks.auditLogFindFirst.mockResolvedValue(null);
+    prismaMocks.confidenceTelemetryUpsert.mockResolvedValue({});
+
+    await recordTerminalSnapshot({ taskId: "task-d2", projectId: "proj-1", finalStatus: "abandoned", taskType: null });
+
+    const arg = prismaMocks.confidenceTelemetryUpsert.mock.calls[0]![0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    expect("finalDisposition" in arg.create).toBe(false);
+    expect("finalDisposition" in arg.update).toBe(false);
+  });
+});
+
+describe("recordAbandonDisposition", () => {
+  it("with a scored claim snapshot: upserts, create and update both carry the claim snapshot and abandoned", async () => {
+    prismaMocks.auditLogFindFirst
+      .mockResolvedValueOnce({ payload: { score: 95, threshold: 70 } })
+      .mockResolvedValueOnce(null);
+    prismaMocks.confidenceTelemetryUpsert.mockResolvedValue({});
+
+    await recordAbandonDisposition("task-a1", "proj-1");
+
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.confidenceTelemetryUpsert).toHaveBeenCalledWith({
+      where: { taskId: "task-a1" },
+      create: {
+        taskId: "task-a1",
+        projectId: "proj-1",
+        finalDisposition: "abandoned",
+        scoreAtClaim: 95,
+        effectiveThreshold: 70,
+        overrideUsed: false,
+      },
+      update: { finalDisposition: "abandoned", scoreAtClaim: 95, effectiveThreshold: 70, overrideUsed: false },
+    });
+    expect(prismaMocks.confidenceTelemetryUpdateMany).not.toHaveBeenCalled();
+    expect(loggerMocks.error).not.toHaveBeenCalled();
+  });
+
+  it("update refreshes the claim snapshot incl. overrideUsed so an existing unscored row gets the score", async () => {
+    prismaMocks.auditLogFindFirst
+      .mockResolvedValueOnce({ payload: { score: 88, threshold: 70 } })
+      .mockResolvedValueOnce({ id: "override-event" });
+    prismaMocks.confidenceTelemetryUpsert.mockResolvedValue({});
+
+    await recordAbandonDisposition("task-a5", "proj-1");
+
+    const arg = prismaMocks.confidenceTelemetryUpsert.mock.calls[0]![0] as { update: Record<string, unknown> };
+    expect(arg.update).toEqual({
+      finalDisposition: "abandoned",
+      scoreAtClaim: 88,
+      effectiveThreshold: 70,
+      overrideUsed: true,
+    });
+  });
+
+  it("without a scored claim snapshot: updates an existing row only and never creates one", async () => {
+    prismaMocks.auditLogFindFirst.mockResolvedValue(null);
+    prismaMocks.confidenceTelemetryUpdateMany.mockResolvedValue({ count: 0 });
+
+    await recordAbandonDisposition("task-a2", "proj-1");
+
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+    expect(prismaMocks.confidenceTelemetryUpdateMany).toHaveBeenCalledWith({
+      where: { taskId: "task-a2" },
+      data: { finalDisposition: "abandoned" },
+    });
+  });
+
+  it("swallows an upsert error and logs it, never throws", async () => {
+    prismaMocks.auditLogFindFirst.mockResolvedValue({ payload: { score: 95, threshold: 70 } });
+    prismaMocks.confidenceTelemetryUpsert.mockRejectedValue(new Error("db down"));
+
+    await expect(recordAbandonDisposition("task-a3", "proj-1")).resolves.toBeUndefined();
+    expect(loggerMocks.error).toHaveBeenCalledWith(
+      expect.objectContaining({ op: "recordAbandonDisposition", taskId: "task-a3" }),
+      expect.any(String),
+    );
+  });
+
+  it("swallows an updateMany error and logs it, never throws", async () => {
+    prismaMocks.auditLogFindFirst.mockResolvedValue(null);
+    prismaMocks.confidenceTelemetryUpdateMany.mockRejectedValue(new Error("db down"));
+
+    await expect(recordAbandonDisposition("task-a4", "proj-1")).resolves.toBeUndefined();
+    expect(loggerMocks.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("clearDisposition", () => {
+  it("nulls finalDisposition via updateMany and never upserts", async () => {
+    prismaMocks.confidenceTelemetryUpdateMany.mockResolvedValue({ count: 1 });
+
+    await clearDisposition("task-c9");
+
+    expect(prismaMocks.confidenceTelemetryUpdateMany).toHaveBeenCalledWith({
+      where: { taskId: "task-c9" },
+      data: { finalDisposition: null },
+    });
+    expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
+  });
+
+  it("swallows an updateMany error and logs it, never throws", async () => {
+    prismaMocks.confidenceTelemetryUpdateMany.mockRejectedValue(new Error("db down"));
+
+    await expect(clearDisposition("task-c10")).resolves.toBeUndefined();
+    expect(loggerMocks.error).toHaveBeenCalledWith(
+      expect.objectContaining({ op: "clearDisposition", taskId: "task-c10" }),
+      expect.any(String),
+    );
+  });
+});
+
+describe("finalDisposition sequence", () => {
+  it("abandon, then clear, then a done terminal snapshot ends with finalDisposition done in the last upsert update", async () => {
+    prismaMocks.auditLogFindFirst.mockResolvedValue({ payload: { score: 95, threshold: 70 } });
+    prismaMocks.confidenceTelemetryUpsert.mockResolvedValue({});
+    prismaMocks.confidenceTelemetryUpdateMany.mockResolvedValue({ count: 1 });
+
+    await recordAbandonDisposition("task-s1", "proj-1");
+    await clearDisposition("task-s1");
+    await recordTerminalSnapshot({ taskId: "task-s1", projectId: "proj-1", finalStatus: "done", taskType: null });
+
+    const upserts = prismaMocks.confidenceTelemetryUpsert.mock.calls;
+    expect(upserts).toHaveLength(2);
+    expect((upserts[0]![0] as { update: Record<string, unknown> }).update.finalDisposition).toBe("abandoned");
+    expect(prismaMocks.confidenceTelemetryUpdateMany).toHaveBeenCalledWith({
+      where: { taskId: "task-s1" },
+      data: { finalDisposition: null },
+    });
+    expect((upserts[1]![0] as { update: Record<string, unknown> }).update.finalDisposition).toBe("done");
+  });
+});
+
+describe("computeConfidenceTelemetryAggregates - finalDisposition outcome", () => {
+  it("an abandoned-disposition row with no finalStatus is a high-score failure and pulls the band doneRate below 1", () => {
+    const rows: ConfidenceTelemetryRow[] = [
+      { scoreAtClaim: 95, finalStatus: null, finalDisposition: "abandoned", bounceBackCount: 0, clarificationCount: 0 },
+      { scoreAtClaim: 91, finalStatus: DONE_STATUS, finalDisposition: DONE_STATUS, bounceBackCount: 0, clarificationCount: 0 },
+    ];
+    const aggregates = computeConfidenceTelemetryAggregates(rows, []);
+    expect(aggregates.highScoreFailures).toBe(1);
+    expect(aggregates.doneRateByScoreBand).toEqual([{ band: "90-100", taskCount: 2, doneRate: 0.5 }]);
+  });
+
+  it("finalDisposition takes precedence over finalStatus: a done status with an abandoned disposition is a failure", () => {
+    const rows: ConfidenceTelemetryRow[] = [
+      { scoreAtClaim: 95, finalStatus: DONE_STATUS, finalDisposition: "abandoned", bounceBackCount: 0, clarificationCount: 0 },
+    ];
+    const aggregates = computeConfidenceTelemetryAggregates(rows, []);
+    expect(aggregates.highScoreFailures).toBe(1);
+    expect(aggregates.doneRateByScoreBand).toEqual([{ band: "90-100", taskCount: 1, doneRate: 0 }]);
+  });
+
+  it("a legacy row (finalStatus done, finalDisposition null) still counts as done", () => {
+    const rows: ConfidenceTelemetryRow[] = [
+      { scoreAtClaim: 55, finalStatus: DONE_STATUS, finalDisposition: null, bounceBackCount: 0, clarificationCount: 0 },
+      { scoreAtClaim: 95, finalStatus: DONE_STATUS, finalDisposition: null, bounceBackCount: 0, clarificationCount: 0 },
+    ];
+    const aggregates = computeConfidenceTelemetryAggregates(rows, []);
+    expect(aggregates.lowScoreSuccesses).toBe(1);
+    expect(aggregates.highScoreFailures).toBe(0);
+    expect(aggregates.doneRateByScoreBand).toEqual([
+      { band: "50-60", taskCount: 1, doneRate: 1 },
+      { band: "90-100", taskCount: 1, doneRate: 1 },
+    ]);
+  });
+
+  it("a row with both finalStatus and finalDisposition null is not terminal", () => {
+    const rows: ConfidenceTelemetryRow[] = [
+      { scoreAtClaim: 95, finalStatus: null, finalDisposition: null, bounceBackCount: 2, clarificationCount: 0 },
+    ];
+    const aggregates = computeConfidenceTelemetryAggregates(rows, []);
+    expect(aggregates.doneRateByScoreBand).toEqual([]);
+    expect(aggregates.highScoreFailures).toBe(0);
+    expect(aggregates.bounceBackByScoreBand).toEqual([{ band: "90-100", taskCount: 1, avgBounceBackCount: 2 }]);
   });
 });

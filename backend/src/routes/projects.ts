@@ -454,7 +454,7 @@ projectRouter.get("/projects/:id/telemetry/confidence", async (c) => {
     // telemetry ACTIVITY in the period, not merely ones created before it.
     prisma.confidenceTelemetry.findMany({
       where: { projectId, updatedAt: { gte: periodStart } },
-      select: { scoreAtClaim: true, finalStatus: true, bounceBackCount: true, clarificationCount: true },
+      select: { scoreAtClaim: true, finalStatus: true, finalDisposition: true, bounceBackCount: true, clarificationCount: true },
     }),
     prisma.auditLog.findMany({
       where: {

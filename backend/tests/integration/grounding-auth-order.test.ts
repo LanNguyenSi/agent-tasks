@@ -4,7 +4,7 @@ import { PrismaClient } from "@prisma/client";
 const harness = vi.hoisted(() => ({ db: null as PrismaClient | null }));
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: new Proxy({}, { get: (_target, property) => { const value = Reflect.get(harness.db!, property); return typeof value === "function" ? value.bind(harness.db) : value; } }) }));
 vi.mock("../../src/config/index.js", () => ({ config: { NODE_ENV: "test", SESSION_SECRET: "test-secret-which-is-long-enough-1234", TRUSTED_PROXY_HOPS: 0 } }));
-vi.mock("../../src/services/confidence-telemetry.js", () => ({ recordBounceBack: vi.fn(), recordTerminalSnapshot: vi.fn() }));
+vi.mock("../../src/services/confidence-telemetry.js", () => ({ recordBounceBack: vi.fn(), recordTerminalSnapshot: vi.fn(), recordClarification: vi.fn(), recordAbandonDisposition: vi.fn(), clearDisposition: vi.fn() }));
 import { createApp } from "../../src/app.js";
 import { GroundingGithubMergeService } from "../../src/services/grounding-github-merge.js";
 import { GroundingMigrationService } from "../../src/services/grounding-migration.js";

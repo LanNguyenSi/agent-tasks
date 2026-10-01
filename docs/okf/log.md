@@ -1,5 +1,20 @@
 # Change log
 
+## 2026-10-01 (finalDisposition)
+
+`workflow-gates.md`: every `tasks.ts` line citation (transition-gate helper,
+start, finish, claim, transition route, force `isProjectAdmin`, forced audit,
+`PATCH` route and gate call, and the four cross-repo `prUrl` guard sites) was
+re-checked with `rg` against the current file and corrected to its actual
+position; the stale file-size footnote was reworded without a line count or
+date. `backend.md`, `claim-model.md`, `auth.md`, `governance-merge.md`,
+`reconcile-done-but-open.md`, `task-lifecycle.md` and `architecture.md` were
+re-verified against the new `ConfidenceTelemetry.finalDisposition` column, the
+disposition writers (including the claim-snapshot refresh in the abandon
+writer), the telemetry select in `projects.ts` and the reworded OpenAPI
+telemetry text in `docs.ts`; none of their claims changed. All eight were
+re-stamped.
+
 ## 2026-10-01 (clarification signal, per-task workflow)
 
 The comment route in `tasks.ts` now loads the task's own workflow before
