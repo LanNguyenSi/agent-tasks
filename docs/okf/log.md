@@ -1,5 +1,22 @@
 # Change log
 
+## 2026-10-01 (riskModifiers write path)
+
+`confidence-scorer.md` was re-verified against `confidence.ts` and updated: the
+file gained `riskModifiersSchema`, the validator for the new `riskModifiers`
+field on `PATCH /projects/:id`, and its line count changed. `backend.md` was
+re-verified against `projects.ts` and gained a short description of that PATCH
+field and its audit handling. `architecture.md` was re-verified against
+`docs.ts` and its Swagger UI route line anchor was re-pointed. All three were
+re-stamped.
+
+After review, `backend.md`, `confidence-scorer.md`, `claim-model.md` and
+`workflow-gates.md` were re-verified against comment-only edits in
+`confidence.ts` and `schema.prisma` (the riskModifiers comments now name the
+write path) and re-stamped, as were `architecture.md` and `auth.md`, which list
+`docs.ts` and `schema.prisma`; `backend.md` now says the PATCH needs the ADMIN
+role on the project or its team.
+
 ## 2026-09-29 (PR URL identity and required-CI wording)
 
 `governance-merge.md` and `workflow-gates.md` were re-verified against

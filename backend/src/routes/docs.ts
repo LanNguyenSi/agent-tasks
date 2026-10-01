@@ -1,6 +1,19 @@
 import { Hono } from "hono";
-import { SUGGESTED_TASK_TYPE_THRESHOLDS } from "../lib/confidence.js";
+import { MAX_RISK_MODIFIER_POINTS_SUM, RISK_MODIFIER_NAMES, SUGGESTED_TASK_TYPE_THRESHOLDS } from "../lib/confidence.js";
 import { GateCode } from "../services/gates/index.js";
+
+// Shared by the Project schema and the PATCH /api/projects/{id} body so the
+// documented bounds cannot drift from riskModifiersSchema (lib/confidence.ts).
+const RISK_MODIFIERS_SCHEMA = {
+  type: "object",
+  nullable: true,
+  description: `Optional opt-in risk-modifier points (M3). Each triggered modifier adds its points to the resolved base threshold (clamped to 100). Any subset of the four names; each value is an integer 0-100 and the values must sum to at most ${MAX_RISK_MODIFIER_POINTS_SUM}. PATCH rejects unknown keys, negative or non-integer values, values above 100 and a sum above ${MAX_RISK_MODIFIER_POINTS_SUM} with 400; null clears the stored value.`,
+  properties: Object.fromEntries(
+    RISK_MODIFIER_NAMES.map((name) => [name, { type: "integer", minimum: 0, maximum: 100 }]),
+  ),
+  additionalProperties: false,
+} as const;
+
 
 export const docsRouter = new Hono();
 
@@ -220,6 +233,7 @@ export const openApiSpec = {
             description: "Template configuration with field toggles and reusable presets",
           },
           confidenceThreshold: { type: "integer", minimum: 0, maximum: 100, default: 60, description: "Minimum confidence score for agent claims" },
+          riskModifiers: RISK_MODIFIERS_SCHEMA,
           taskTypeThresholds: {
             type: "object",
             nullable: true,
@@ -787,6 +801,54 @@ export const openApiSpec = {
       },
     },
     "/api/projects/{id}": {
+      patch: {
+        tags: ["Projects"],
+        summary: "Update project settings",
+        description:
+          "Humans with project ADMIN only. Partial update: only the fields present are changed. The body is documented here only for riskModifiers. The other updatable fields are defined by updateProjectSchema in backend/src/routes/projects.ts and are not described here yet; the Project schema is the response shape, not the update body, and non-updatable fields such as slug or teamId are ignored.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: { riskModifiers: RISK_MODIFIERS_SCHEMA },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Project updated",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { project: { $ref: "#/components/schemas/Project" } },
+                  required: ["project"],
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Validation error (for riskModifiers: unknown key, negative, non-integer or above 100 value, or a sum above 100)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
       get: {
         tags: ["Projects"],
         summary: "Get project by ID",

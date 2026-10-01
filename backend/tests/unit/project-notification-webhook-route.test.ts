@@ -99,6 +99,7 @@ const baseProject = {
   // Prisma returns null (not undefined) for an unset Json? column; the
   // fixture must match that shape (review round-2 finding 5).
   taskTypeThresholds: null,
+  riskModifiers: null,
   enforcementMode: null,
   requireDistinctReviewer: false,
   soloMode: true,
@@ -619,6 +620,89 @@ describe("PATCH /projects/:id — taskTypeThresholds (M2, task b8629b99)", () =>
       body: JSON.stringify({ taskTypeThresholds: { docs: 60, security: 90 } }),
     });
 
+    expect(mockLogAuditEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("PATCH /projects/:id riskModifiers (M3 write path, task 05b5eba8)", () => {
+  const PROJECT_URL = "/projects/11111111-1111-1111-1111-111111111111";
+
+  function patchRiskModifiers(riskModifiers: unknown) {
+    return makeApp().request(PROJECT_URL, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ riskModifiers }),
+    });
+  }
+
+  it("accepts a valid object, persists it via prisma.update and returns it", async () => {
+    const config = { touchesAuth: 10, touchesDatabase: 5, touchesPersonalData: 10, productionImpact: 10 };
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, riskModifiers: config });
+
+    const res = await patchRiskModifiers(config);
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.projectUpdate).toHaveBeenCalledWith({
+      where: { id: "11111111-1111-1111-1111-111111111111" },
+      data: expect.objectContaining({ riskModifiers: config }),
+    });
+    expect(((await res.json()) as { project: { riskModifiers: unknown } }).project.riskModifiers).toEqual(config);
+  });
+
+  it("accepts a subset and the boundary values 0 and a sum of exactly 100", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+    for (const config of [{}, { touchesAuth: 0 }, { touchesAuth: 100 }, { touchesAuth: 50, productionImpact: 50 }]) {
+      prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, riskModifiers: config });
+      expect((await patchRiskModifiers(config)).status).toBe(200);
+    }
+  });
+
+  it("accepts null to clear the stored value (Prisma.JsonNull, not JS null)", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue({ ...baseProject, riskModifiers: { touchesAuth: 10 } });
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, riskModifiers: null });
+
+    const res = await patchRiskModifiers(null);
+
+    expect(res.status).toBe(200);
+    const call = prismaMocks.projectUpdate.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data.riskModifiers).toBe(Prisma.JsonNull);
+  });
+
+  it.each([
+    ["an unknown modifier name", { touchesNothing: 5 }, /touchesNothing|unrecognized/i],
+    ["a negative value", { touchesAuth: -1 }, /touchesAuth/],
+    ["a non-integer value", { touchesAuth: 1.5 }, /touchesAuth/],
+    ["a value above 100", { touchesAuth: 101 }, /touchesAuth/],
+    ["a sum above 100", { touchesAuth: 50, touchesDatabase: 30, productionImpact: 21 }, /sum/],
+  ])("rejects %s with 400, a descriptive message and no write", async (_name, config, message) => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+
+    const res = await patchRiskModifiers(config);
+
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(await res.json())).toMatch(message);
+    expect(prismaMocks.projectUpdate).not.toHaveBeenCalled();
+  });
+
+  it("audits a riskModifiers change and does not audit a reordered re-send", async () => {
+    prismaMocks.projectFindUnique.mockResolvedValue(baseProject);
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, riskModifiers: { touchesAuth: 10 } });
+    await patchRiskModifiers({ touchesAuth: 10 });
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "project.updated",
+        payload: { changes: expect.objectContaining({ riskModifiers: { from: null, to: { touchesAuth: 10 } } }) },
+      }),
+    );
+
+    vi.clearAllMocks();
+    prismaMocks.projectFindUnique.mockResolvedValue({
+      ...baseProject,
+      riskModifiers: { touchesAuth: 10, productionImpact: 5 },
+    });
+    prismaMocks.projectUpdate.mockResolvedValue({ ...baseProject, riskModifiers: { productionImpact: 5, touchesAuth: 10 } });
+    await patchRiskModifiers({ productionImpact: 5, touchesAuth: 10 });
     expect(mockLogAuditEvent).not.toHaveBeenCalled();
   });
 });

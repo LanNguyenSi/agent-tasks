@@ -201,8 +201,8 @@ model Project {
   // other key is inert. Each triggered modifier ADDS its points on top of
   // the M2-resolved base threshold (taskTypeThresholds -> confidenceThreshold
   // -> global default); modifiers stack additively
-  // (ClaimPolicyEvaluator#evaluate). No write-time validation schema yet —
-  // there is no settings endpoint for this field in this milestone; read
+  // (ClaimPolicyEvaluator#evaluate). Writes are validated by riskModifiersSchema
+  // on PATCH /projects/:id (backend/src/lib/confidence.ts); read
   // paths degrade unvalidated/malformed entries to "not triggered" (same
   // posture as taskTypeThresholds).
   riskModifiers            Json?

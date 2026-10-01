@@ -1278,6 +1278,37 @@ export const RISK_MODIFIER_NAMES = [
 
 export type RiskModifierName = (typeof RISK_MODIFIER_NAMES)[number];
 
+/** Upper bound for the SUM of all configured risk-modifier points. Every
+ *  value is also capped at 100 individually; the sum cap keeps a config from
+ *  being able to stack past the 100 ceiling of any effective threshold. */
+export const MAX_RISK_MODIFIER_POINTS_SUM = 100;
+
+// Validates a PATCH /projects/:id `riskModifiers` write (the write path for
+// the read side in resolveTriggeredRiskModifiers below). Strict: an unknown
+// key is REJECTED, never silently dropped, so a typo in a PATCH body is a 400
+// instead of a permanent no-op. Any subset of the four RISK_MODIFIER_NAMES is
+// valid (including `{}`); every value is an integer 0-100 and the configured
+// values may not sum to more than MAX_RISK_MODIFIER_POINTS_SUM. `null` clears
+// the stored config.
+export const riskModifiersSchema = z
+  .object({
+    touchesAuth: z.number().int().min(0).max(100).optional(),
+    touchesDatabase: z.number().int().min(0).max(100).optional(),
+    touchesPersonalData: z.number().int().min(0).max(100).optional(),
+    productionImpact: z.number().int().min(0).max(100).optional(),
+  })
+  .strict()
+  .refine(
+    (config) =>
+      RISK_MODIFIER_NAMES.reduce((sum, name) => sum + (config[name] ?? 0), 0) <=
+      MAX_RISK_MODIFIER_POINTS_SUM,
+    {
+      message: `riskModifiers values must sum to at most ${MAX_RISK_MODIFIER_POINTS_SUM}`,
+    },
+  )
+  .nullable()
+  .optional();
+
 // Per-modifier text trigger, matched against the task's OWN `description`
 // only — never title, templateData, or the goal+context equivalent
 // `calculateConfidence` uses for its description-quality score. Literal
@@ -1334,8 +1365,8 @@ export type ResolvedRiskModifiers = {
  *
  * `riskModifiers` reaches this function the same way `taskTypeThresholds`
  * does: an unvalidated `unknown` read off a Prisma `Json?` column, never
- * re-validated on read (there is no write-time schema for it yet — no
- * settings endpoint exists in this milestone). A missing/non-object config
+ * re-validated on read (writes go through riskModifiersSchema on PATCH
+ * /projects/:id; rows written before that are not re-checked). A missing/non-object config
  * degrades to "no modifiers ever trigger" (opt-in); a present but
  * non-finite/negative point value for an otherwise-triggered name is
  * skipped — that name is NOT reported as triggered and contributes 0,
