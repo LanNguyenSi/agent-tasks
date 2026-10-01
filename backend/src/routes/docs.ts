@@ -805,7 +805,7 @@ export const openApiSpec = {
         tags: ["Projects"],
         summary: "Update project settings",
         description:
-          "Humans with project ADMIN only. Partial update: only the fields present are changed. The body is documented here for riskModifiers; the other updatable fields are those of the Project schema.",
+          "Humans with project ADMIN only. Partial update: only the fields present are changed. The body is documented here only for riskModifiers. The other updatable fields are defined by updateProjectSchema in backend/src/routes/projects.ts and are not described here yet; the Project schema is the response shape, not the update body, and non-updatable fields such as slug or teamId are ignored.",
         security: [{ bearerAuth: [] }],
         parameters: [
           {

@@ -1365,8 +1365,8 @@ export type ResolvedRiskModifiers = {
  *
  * `riskModifiers` reaches this function the same way `taskTypeThresholds`
  * does: an unvalidated `unknown` read off a Prisma `Json?` column, never
- * re-validated on read (there is no write-time schema for it yet — no
- * settings endpoint exists in this milestone). A missing/non-object config
+ * re-validated on read (writes go through riskModifiersSchema on PATCH
+ * /projects/:id; rows written before that are not re-checked). A missing/non-object config
  * degrades to "no modifiers ever trigger" (opt-in); a present but
  * non-finite/negative point value for an otherwise-triggered name is
  * skipped — that name is NOT reported as triggered and contributes 0,
