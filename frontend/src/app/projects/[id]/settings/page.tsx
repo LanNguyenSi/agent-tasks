@@ -263,8 +263,8 @@ export default function ProjectSettingsPage() {
               </label>
               <p className="proj-section-desc">
                 Backlog tasks can always be respecced by any agent with
-                project access. Once a task is open, only its creator may
-                respec it unless this is enabled.
+                project access. Once a task leaves the backlog, only its
+                creator may respec it unless this is enabled.
               </p>
             </div>
           </Card>
