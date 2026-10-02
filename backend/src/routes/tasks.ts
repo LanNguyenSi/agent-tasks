@@ -5066,7 +5066,9 @@ taskRouter.patch("/tasks/:id", async (c) => {
       // stays false — "abandoned" is not a recognized engine terminal
       // state, same as creator-abandon's own write).
       isBacklogDiscardTransition = true;
-    } else if (previousStatus === "open" && targetStatus === "backlog") {
+    } else if (targetStatus === "backlog") {
+      // previousStatus is "open" here: the guard at the top of this block
+      // refuses backlog from every other status.
       // ── Backlog demote: take a promoted task back out of the claimable
       // pool (task 7c64e80c) ───────────────────────────────────────────
       //
