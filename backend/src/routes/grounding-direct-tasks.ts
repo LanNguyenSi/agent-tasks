@@ -3,6 +3,7 @@ import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { AppVariables } from "../types/hono.js";
+import type { GroundingAfterCommit } from "../services/grounding-completion.js";
 import type { GroundingTaskCompletionDependencies } from "./grounding-task-completion.js";
 import { GroundingAccessError, groundingAuthority, groundingWorkflow, unavailable } from "../services/grounding-context.js";
 import { GroundingReceiptVerificationError } from "../services/grounding-receipt.js";
@@ -13,6 +14,7 @@ import { approveTarget, requestChangesTarget } from "../services/default-workflo
 import type { GroundingDirectDescriptor } from "../services/grounding-direct-context.js";
 import { resolveDirectGroundingTarget } from "../services/grounding-direct-context.js";
 import type { GroundingRouteTransport, OperationInput } from "../services/grounding-operations.js";
+import { clearDisposition } from "../services/confidence-telemetry.js";
 
 function routeError(error: unknown, c: Context<{ Variables: AppVariables }>, descriptor?: GroundingDirectDescriptor) {
   if (error instanceof z.ZodError) return c.json({ error: "validation_error", details: error.issues }, 400);
@@ -57,8 +59,17 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
         // No-op status and result/commentary writes do not create a completion attempt.
         if (endpoint === "patch" && (!("status" in body) || body.status === undefined || body.status === task.status)) return c.json(await mutateDirectTask(deps.db, task, actor, "patch", body));
         // The C04 recovery adapter already joins the atomic mutation protocol.
+        // Hand-off keeps the telemetry hook in the REST handler: it clears
+        // finalDisposition post-commit when an admin restores the task. The
+        // decision above rests on a read taken before the task lock, so a task
+        // that turns abandoned in between is reopened by the service below;
+        // the observer passed to dispose() covers that race.
         if (endpoint === "patch" && task.status === "abandoned") return next();
         if (!deps.service) unavailable();
+        // A backlog discard (backlog -> abandoned) lands in dispose() below and
+        // writes no finalDisposition, like the REST discard: a backlog task has
+        // no scored claim (a task only reaches backlog at creation and is never
+        // claimed there). No other direct edge reaches abandoned.
         const { def } = await groundingWorkflow(deps.db, task);
         const to = endpoint === "review" ? ("action" in body && body.action === "approve" ? approveTarget(def, task.status) : requestChangesTarget(def, task.status)) : (body as { status: string }).status;
         if (!to) throw new GroundingAccessError("bad_state", 409);
@@ -67,7 +78,14 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
         const resolved = await resolveDirectGroundingTarget(deps.db, task, actor, descriptor, undefined, forced);
         if (resolved.success && !key) return c.json({ error: "grounding_operation_key_required", message: "Supply Idempotency-Key for this logical completion." }, 400);
         const input: OperationInput = { action: resolved.action, route: { kind: "direct", transport, direct: descriptor }, ...(forced ? { overrideReason: (body as { forceReason?: string }).forceReason ?? "" } : {}) };
-        const result = resolved.success ? await deps.service.complete(taskId, actor, key!, input) : await deps.service.dispose(taskId, actor, key ?? randomUUID(), input);
+        // Runs once, after the committing invocation, and the service swallows its errors.
+        const reopenedFromAbandoned: GroundingAfterCommit = async committed => {
+          const operationId = z.object({ operationId: z.string() }).parse(committed).operationId;
+          const operation = await deps.db.groundingOperation.findUnique({ where: { id: operationId } });
+          const decision = z.object({ from: z.string(), to: z.string() }).parse(operation?.decision);
+          if (decision.from === "abandoned" && decision.to !== "abandoned") await clearDisposition(taskId);
+        };
+        const result = resolved.success ? await deps.service.complete(taskId, actor, key!, input) : await deps.service.dispose(taskId, actor, key ?? randomUUID(), input, reopenedFromAbandoned);
         return c.json(z.object({ route: z.record(z.unknown()) }).parse(result).route);
       } catch (error) { return routeError(error, c, descriptor); }
     });

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- On a provisioned-grounding project, an admin restore out of `abandoned` that the grounding service itself performs (a restore that races a concurrent abandon) now clears `finalDisposition` after the commit, like the REST restore. Tests also pin that grounded creator-abandon and admin restore write and clear it post-commit and fail-open. Responses are unchanged.
 - The respec OpenAPI description and 409 message now reflect that unclaimed tasks in either `open` or `backlog` can be edited. In backlog, an agent with project access and `tasks:update` may respec regardless of creator; in open, the creator rule still applies unless `allowNonCreatorRespec` is enabled. Humans with project write access are not subject to the creator rule.
 
 ### Added

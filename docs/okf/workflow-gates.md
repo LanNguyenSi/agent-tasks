@@ -3,7 +3,7 @@ type: invariant
 title: "v2 transition gates: precondition rules, branch folding, cross-repo guard"
 description: "branchPresent/prPresent/ciGreen/prMerged return 422 precondition_failed; branchName is folded atomically into task_start's claim; prUrl payloads are checked against the project's linked repo."
 tags: [workflow, gates, transitions, precondition]
-timestamp: 2026-10-01T15:12:20Z
+timestamp: 2026-10-02T07:34:06Z
 sources:
   - backend/src/services/grounding-completion.ts
   - backend/src/services/grounding-finalization.ts
