@@ -4,6 +4,12 @@ import type { Actor } from "../types/auth.js";
 import { GroundingAccessError, groundingAuthority, groundingWorkflow, mismatch, type GroundingAuthority, type GroundingTask } from "./grounding-context.js";
 import { isReviewState, isTerminalState, approveTarget, requestChangesTarget } from "./default-workflow.js";
 import { checkReviewApprovalGate } from "./review-gate.js";
+import { DEMOTE_STATE_CONFLICT_MESSAGE } from "./task-demote.js";
+
+/** A demote refused because the task is claimed or its status changed under the lock: a bad_state 409 that carries the same message as the REST demote. */
+export class GroundingDemoteRefused extends GroundingAccessError {
+  constructor() { super("bad_state", 409); this.message = DEMOTE_STATE_CONFLICT_MESSAGE; }
+}
 
 export const directDescriptorSchema = z.object({
   version: z.literal(1), endpoint: z.enum(["transition", "patch", "review"]),
@@ -33,13 +39,19 @@ export async function resolveDirectGroundingTarget(db: Prisma.TransactionClient,
   const discard = direct.endpoint === "patch" && task.status === "backlog" && to === "abandoned";
   const promote = direct.endpoint === "patch" && task.status === "backlog" && to === "open";
   const reopen = direct.endpoint === "patch" && task.status === "abandoned" && to === def.initialState;
+  // Mirrors the REST demote: only the literal "open" may move to backlog, and never while any claim is held.
+  const demoteTarget = direct.endpoint === "patch" && to === "backlog";
+  const demote = demoteTarget && task.status === "open";
+  if (demote && (task.claimedByUserId || task.claimedByAgentId || task.reviewClaimedByUserId || task.reviewClaimedByAgentId)) throw new GroundingDemoteRefused();
+  // The route already answered 400 for a non-open source and no-ops a backlog one; a non-open locked row here means a task_start or a concurrent demote won the race.
+  if (demoteTarget && !demote) throw new GroundingDemoteRefused();
   if (reopen && !await authority.hasRole(actor, task.projectId, "ADMIN", db)) throw new GroundingAccessError("forbidden", 403);
   const edge = def.transitions.find(t => t.from === task.status && t.to === to);
-  if (!edge && !discard && !promote && !reopen) throw new GroundingAccessError("bad_state", 409);
+  if (!edge && !discard && !promote && !reopen && !demote) throw new GroundingAccessError("bad_state", 409);
   if (edge?.requiredRole && !await authority.hasRole(actor, task.projectId, edge.requiredRole, db)) throw new GroundingAccessError("forbidden", 403);
   const terminal = isTerminalState(def, to);
   // A discard is a disposition even when a custom workflow includes abandoned as terminal.
-  const success = !discard && !promote && !reopen && to !== "abandoned" && (terminal || isReviewState(def, to));
+  const success = !discard && !promote && !reopen && !demote && to !== "abandoned" && (terminal || isReviewState(def, to));
   if (direct.endpoint === "review") {
     if (task.status !== "review" || ![approveTarget(def, task.status), requestChangesTarget(def, task.status)].includes(to)) throw new GroundingAccessError("bad_state", 409);
     const holdsReview = actor.type === "agent" ? task.reviewClaimedByAgentId === actor.tokenId : task.reviewClaimedByUserId === actor.userId;
@@ -47,5 +59,5 @@ export async function resolveDirectGroundingTarget(db: Prisma.TransactionClient,
     if (!checkReviewApprovalGate(task, actor, task.project).allowed) throw new GroundingAccessError("forbidden", 403);
   } else if (fromReview && terminal && !force && !checkReviewApprovalGate(task, actor, task.project).allowed) throw new GroundingAccessError("forbidden", 403);
   const action = success ? fromReview ? "approve" as const : "finish" as const : "transition" as const;
-  return { target: { workflowId, from: task.status, to, action: action === "transition" ? "approve" as const : action }, definition, def, action, success, terminal, special: discard ? "task.backlog_discarded" as const : promote ? "task.backlog_promoted" as const : reopen ? "task.unabandoned" as const : null };
+  return { target: { workflowId, from: task.status, to, action: action === "transition" ? "approve" as const : action }, definition, def, action, success, terminal, special: discard ? "task.backlog_discarded" as const : promote ? "task.backlog_promoted" as const : reopen ? "task.unabandoned" as const : demote ? "task.backlog_demoted" as const : null };
 }
