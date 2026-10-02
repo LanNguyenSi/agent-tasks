@@ -41,7 +41,7 @@ The reverse move, **demote**, takes a task promoted by mistake from `open` back 
 - it needs the same project write tier as promote and discard; agents cannot demote, because the `status` field is closed to them,
 - it applies to an `open` task with no work or review claim: it answers `409` while anyone holds a claim, and a `task_start` that claims first wins the race and makes the demote answer `409`,
 - from every status other than `open` it answers `400`, also when the project stores an older workflow definition with an edge into `backlog` or an initial state of `backlog`,
-- a grounding-enrolled task is not supported yet and answers `409` `bad_state`,
+- a grounding-enrolled task follows the same rules (`400` from a status other than `open`, `409` with the same message while a claim is held, including when a claim or status change lands after the request was read), and a successful demote is audited and acknowledges the signals the same way,
 - after a successful demote the task's pending signals are acknowledged, so they stop waking agents.
 
 Together with the confidence gate this closes the loop on agent-generated work: agents may propose tasks at any time, but nothing an agent wrote enters the claimable pool without a human decision. Full state chart in [docs/state-machines.md](state-machines.md).

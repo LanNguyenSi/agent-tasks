@@ -47,6 +47,7 @@ import {
   type GroundingRouteContext,
 } from "../services/grounding-route-context.js";
 import { GroundingAccessError } from "../services/grounding-context.js";
+import { DEMOTE_STATE_CONFLICT_MESSAGE, demoteSourceStatusMessage } from "../services/task-demote.js";
 
 // Signals that become meaningless once the underlying task is `done`.
 // Outcome-notification signals (`task_approved`, `changes_requested`,
@@ -4770,9 +4771,6 @@ taskRouter.post("/tasks/:id/suggest-rewrite", async (c) => {
 
 // ── Update task ───────────────────────────────────────────────────────────────
 
-const DEMOTE_STATE_CONFLICT_MESSAGE =
-  "Task must be open with no work or review claim to move it back to backlog";
-
 taskRouter.patch("/tasks/:id", async (c) => {
   const actor = c.get("actor") as Actor;
   const task = await prisma.task.findUnique({
@@ -4983,7 +4981,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
       return c.json(
         {
           error: "bad_request",
-          message: `Transition from '${previousStatus}' to 'backlog' is not allowed; only an open task can be moved back to backlog`,
+          message: demoteSourceStatusMessage(previousStatus),
         },
         400,
       );

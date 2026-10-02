@@ -17,6 +17,33 @@ the abandon and demote text. The claims of `backend.md`,
 `governance-merge.md`, `reconcile-done-but-open.md` and `claim-model.md` did
 not change (the `tasks.ts` edit is a comment only). All six were re-stamped.
 
+## 2026-10-02 (grounded demote, concurrent demote)
+
+Re-verified `task-lifecycle.md` and `workflow-gates.md` against the resolver change: a grounded demote whose locked row is already `backlog` (a concurrent demote won) now refuses with the claim-refusal `409` message; `task-lifecycle.md` names that race. `task-lifecycle.md`, `workflow-gates.md` and `backend.md` (its direct-adapter demote sentence still holds) re-stamped.
+
+## 2026-10-02 (grounded demote, status race)
+
+Re-verified the docs that list `grounding-direct-context.ts` and
+`grounding-direct-tasks.ts` against the resolver change: a demote whose locked
+row is no longer `open` now answers the REST demote's claim-refusal `409` message, also when a concurrent demote already moved it to `backlog`.
+`task-lifecycle.md` now attributes the `400` for a non-open source to the
+route's pre-lock check and names the race answer; the other claims did not
+change. All docs of the grounded demote entry below were re-stamped.
+
+## 2026-10-02 (grounded demote)
+
+Re-verified `task-lifecycle.md`, `backend.md`, `workflow-gates.md`,
+`claim-model.md`, `architecture.md`, `governance-merge.md` and
+`reconcile-done-but-open.md` against the grounded open to backlog demote: the
+direct-route resolver now has a demote case, the route plan acknowledges the
+task's signals and may record `task.backlog_demoted`, and the refusal texts
+moved to `services/task-demote.ts`. `task-lifecycle.md` no longer says an
+enrolled task cannot be demoted, `backend.md` and `workflow-gates.md` mention
+the grounded lane, and the `tasks.ts` line citations in `workflow-gates.md`
+were re-pointed after the moved constant and the added import. The claims of
+`claim-model.md`, `architecture.md`, `governance-merge.md` and
+`reconcile-done-but-open.md` did not change. All of them were re-stamped.
+
 ## 2026-10-02 (backlog demote)
 
 Re-verified `task-lifecycle.md`, `claim-model.md`, `workflow-gates.md`,
