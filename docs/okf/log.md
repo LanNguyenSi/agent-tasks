@@ -1,3 +1,5 @@
+- 2026-10-02T07:54:24Z, task 7c64e80c: re-stamped after merging master; `architecture.md`, `backend.md`, `governance-merge.md`, `reconcile-done-but-open.md`, `task-lifecycle.md`, `workflow-gates.md` list sources that master changed in the meantime. The merged changes come from separately reviewed tasks and none contradicts these docs' claims, so no body text changed.
+
 # Change log
 
 ## 2026-10-02 (backlog demote)
