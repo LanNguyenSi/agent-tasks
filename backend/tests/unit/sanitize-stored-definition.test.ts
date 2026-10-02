@@ -62,18 +62,70 @@ describe("sanitizeStoredDefinition", () => {
   it("skips a remapped edge that would duplicate an existing open edge to the same target", () => {
     const def: WorkflowDefinitionShape = {
       ...legacy,
-      states: [...legacy.states, { name: "open", label: "Open", terminal: false }],
+      states: [
+        ...legacy.states,
+        { name: "open", label: "Open", terminal: false },
+        { name: "plan", label: "Plan", terminal: false },
+      ],
       transitions: [
         { from: "open", to: "spec", label: "Existing" },
         { from: "backlog", to: "spec", label: "Legacy start" },
-        { from: "backlog", to: "review", label: "Legacy fast track" },
+        { from: "backlog", to: "plan", label: "Legacy second start" },
       ],
     };
     const out = sanitizeStoredDefinition(def);
     expect(out.transitions).toEqual([
       { from: "open", to: "spec", label: "Existing" },
-      { from: "open", to: "review", label: "Legacy fast track" },
+      { from: "open", to: "plan", label: "Legacy second start" },
     ]);
+  });
+
+  it("remaps only the legacy start edge: an edge out of backlog to a terminal state is dropped, in either order", () => {
+    const start = { from: "backlog", to: "spec", label: "Start scoping" };
+    const stray = { from: "backlog", to: "done", label: "Close parked" };
+    const rest = [
+      { from: "spec", to: "review" },
+      { from: "review", to: "done" },
+    ];
+    for (const transitions of [[start, stray, ...rest], [stray, start, ...rest]]) {
+      const out = sanitizeStoredDefinition({ ...legacy, transitions });
+      expect(out.transitions).toEqual([{ from: "open", to: "spec", label: "Start scoping" }, ...rest]);
+    }
+  });
+
+  it("drops an edge out of backlog to a review state, judged on the definition before the remap", () => {
+    // "review" is a review state of the sanitized definition (it leads to the
+    // terminal done and is no direct target of open). On the stored
+    // definition it would not count as one, because backlog -> review makes
+    // it a direct target of the stored initial state.
+    const out = sanitizeStoredDefinition({
+      ...legacy,
+      transitions: [
+        { from: "backlog", to: "review", label: "Fast track" },
+        { from: "backlog", to: "spec", label: "Start scoping" },
+        { from: "spec", to: "review" },
+        { from: "review", to: "done" },
+      ],
+    });
+    expect(out.transitions).toEqual([
+      { from: "open", to: "spec", label: "Start scoping" },
+      { from: "spec", to: "review" },
+      { from: "review", to: "done" },
+    ]);
+  });
+
+  it("remaps nothing when the stored states are not a list, so no target can be judged", () => {
+    const def = {
+      initialState: "backlog",
+      states: undefined,
+      transitions: [
+        { from: "backlog", to: "spec" },
+        { from: "spec", to: "done" },
+      ],
+    } as unknown as WorkflowDefinitionShape;
+    const out = sanitizeStoredDefinition(def);
+    expect(out.initialState).toBe("open");
+    expect(out.transitions).toEqual([{ from: "spec", to: "done" }]);
   });
 
   it("skips a second remapped edge to the same target and a remapped edge that would loop on open", () => {

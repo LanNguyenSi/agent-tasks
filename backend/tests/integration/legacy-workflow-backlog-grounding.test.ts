@@ -14,6 +14,9 @@
  *     the sanitizer remaps from backlog to open is usable on the grounded
  *     direct paths too (mounted /transition and human PATCH open -> spec), and
  *     its stored gates still apply;
+ *   - a stray edge out of backlog to a terminal or review state is dropped,
+ *     not remapped: the mounted /transition and the human PATCH from open to
+ *     its target answer bad_state and leave the task open;
  *   - controls: promote of an enrolled backlog task still works, and a valid
  *     custom workflow keeps its own initial state for the grounded abandon.
  */
@@ -227,6 +230,34 @@ describe("grounding-enrolled task on a stored legacy workflow definition", () =>
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toBe("precondition_failed");
     expect((await f.task()).status).toBe("open");
+  });
+
+  it("a stray edge out of backlog to a terminal or review state is no edge from open on the grounded direct paths", async () => {
+    for (const to of ["done", "review"]) {
+      await store.db.workflow.deleteMany({ where: { projectId: f.projectId } });
+      await storeWorkflow({
+        initialState: "backlog",
+        states: ["backlog", "spec", "review", "done"].map((name) => ({ name, label: name, terminal: name === "done" })),
+        transitions: [
+          { from: "backlog", to, label: "Stray" },
+          { from: "backlog", to: "spec", label: "Start scoping" },
+          { from: "spec", to: "review" },
+          { from: "review", to: "done" },
+        ],
+      });
+
+      await setStatus("open", true);
+      const transition = await agentPost("transition", { status: to });
+      expect(transition.status).toBe(409);
+      expect(((await transition.json()) as { error: string }).error).toBe("bad_state");
+      expect((await f.task()).status).toBe("open");
+
+      await setStatus("open", false);
+      const patch = await humanPatch(to);
+      expect(patch.status).toBe(409);
+      expect(((await patch.json()) as { error: string }).error).toBe("bad_state");
+      expect((await f.task()).status).toBe("open");
+    }
   });
 
   it("controls: promote of an enrolled backlog task works, and a valid custom workflow keeps its own initial state", async () => {

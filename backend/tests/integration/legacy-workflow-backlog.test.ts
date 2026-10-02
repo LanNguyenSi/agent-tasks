@@ -12,6 +12,10 @@
  *     backlog to open, never to backlog;
  *   - POST /tasks/:id/finish (review request_changes) never picks an edge
  *     into backlog as its target;
+ *   - on a legacy definition with a second, stray edge out of backlog to a
+ *     terminal or review state, only the start edge leaves open: an open task
+ *     cannot reach done or review through the stray edge, and /start lands in
+ *     the start edge's target whatever the edge order;
  *   - controls: valid workflows behave as before and the human promote,
  *     demote and discard still work.
  */
@@ -468,6 +472,77 @@ describe("a stray edge out of backlog in a definition that never started in back
     expect((await post(human, `/tasks/${taskId}/transition`, { status: "in_progress" })).status).toBe(200);
     expect(await statusOf(taskId)).toBe("in_progress");
   });
+});
+
+// A legacy shape (initialState backlog) with the start edge and a second,
+// stray edge out of backlog to a terminal or a review state.
+function legacyWithStray(stray: { from: string; to: string; label: string }, strayFirst: boolean) {
+  const start = { from: "backlog", to: "spec", label: "Start scoping" };
+  return {
+    initialState: "backlog",
+    states: ["backlog", "spec", "review", "done"].map((name) => ({ name, label: name, terminal: name === "done" })),
+    transitions: [
+      ...(strayFirst ? [stray, start] : [start, stray]),
+      { from: "spec", to: "review", label: "Submit" },
+      { from: "spec", to: "backlog", label: "Release" },
+      { from: "review", to: "done", label: "Approve" },
+    ],
+  };
+}
+const strayToDone = { from: "backlog", to: "done", label: "Close parked" };
+const strayToReview = { from: "backlog", to: "review", label: "Fast track" };
+
+describe("a legacy definition with a second edge out of backlog: only the start edge leaves open", () => {
+  for (const strayFirst of [false, true]) {
+    const order = strayFirst ? "stray edge listed first" : "start edge listed first";
+
+    it(`an open task cannot reach done through a stray backlog -> done edge (${order})`, async () => {
+      const projectId = await seedProject(legacyWithStray(strayToDone, strayFirst));
+      const unclaimed = await seedTask(projectId, { status: "open" });
+      const claimed = await seedTask(projectId, { status: "open", claimedByAgentId: agentTokenId, claimedAt: new Date() });
+      const byHuman = await seedTask(projectId, { status: "open" });
+      const byPatch = await seedTask(projectId, { status: "open" });
+
+      expect((await post(agent, `/tasks/${unclaimed}/transition`, { status: "done" })).status).toBe(400);
+      expect((await post(agent, `/tasks/${claimed}/transition`, { status: "done" })).status).toBe(400);
+      expect((await post(human, `/tasks/${byHuman}/transition`, { status: "done" })).status).toBe(400);
+      expect((await patchStatus(human, byPatch, "done")).status).toBe(400);
+
+      for (const id of [unclaimed, claimed, byHuman, byPatch]) expect(await statusOf(id)).toBe("open");
+    });
+
+    it(`an open task cannot reach review through a stray backlog -> review edge (${order})`, async () => {
+      const projectId = await seedProject(legacyWithStray(strayToReview, strayFirst));
+      const unclaimed = await seedTask(projectId, { status: "open" });
+      const claimed = await seedTask(projectId, { status: "open", claimedByAgentId: agentTokenId, claimedAt: new Date() });
+      const byHuman = await seedTask(projectId, { status: "open" });
+      const byPatch = await seedTask(projectId, { status: "open" });
+
+      expect((await post(agent, `/tasks/${unclaimed}/transition`, { status: "review" })).status).toBe(400);
+      expect((await post(agent, `/tasks/${claimed}/transition`, { status: "review" })).status).toBe(400);
+      expect((await post(human, `/tasks/${byHuman}/transition`, { status: "review" })).status).toBe(400);
+      expect((await patchStatus(human, byPatch, "review")).status).toBe(400);
+
+      for (const id of [unclaimed, claimed, byHuman, byPatch]) expect(await statusOf(id)).toBe("open");
+    });
+
+    for (const [name, stray] of [
+      ["done", strayToDone],
+      ["review", strayToReview],
+    ] as const) {
+      it(`agent and human /start on an open task land in spec, not ${name} (${order})`, async () => {
+        const projectId = await seedProject(legacyWithStray(stray, strayFirst));
+        const byAgent = await seedTask(projectId, { status: "open" });
+        const byHuman = await seedTask(projectId, { status: "open" });
+
+        expect((await post(agent, `/tasks/${byAgent}/start`, {})).status).toBe(200);
+        expect((await post(human, `/tasks/${byHuman}/start`, {})).status).toBe(200);
+
+        expect(await statusOf(byAgent)).toBe("spec");
+        expect(await statusOf(byHuman)).toBe("spec");
+      });
+    }
+  }
 });
 
 describe("controls: valid workflows and the three human verbs", () => {
