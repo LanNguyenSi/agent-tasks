@@ -422,6 +422,42 @@ it("grounded admin restore response is unchanged when the disposition writer fai
   expect((await f.task()).status).toBe("open"); write.mockRestore(); expect(await disposition()).toBe("abandoned");
 });
 
+// The direct middleware chooses the REST hand-off from a read taken before the
+// task lock. A task that turns abandoned after that read is reopened by the
+// grounding service itself, which must clear the disposition after its commit.
+async function staleAdminRestore(staleStatus: string) {
+  const original = store.db.task.findUnique.bind(store.db.task) as (args: unknown) => Promise<Record<string, unknown> | null>;
+  const stale = vi.spyOn(store.db.task, "findUnique").mockImplementationOnce((async (args: unknown) => ({ ...(await original(args)), status: staleStatus })) as never);
+  const patch = await adminPatch({ status: "open" }); patch.headers.set("Idempotency-Key", "stale-restore-1");
+  const response = await app().fetch(patch); stale.mockRestore(); return response;
+}
+
+it.each(["in_progress", "backlog"] as const)("grounded restore decided on a stale %s read clears the disposition after the status commit", async staleStatus => {
+  const seen = await realDispositionWriters(); await seedTelemetry("abandoned");
+  await store.db.task.update({ where: { id: f.taskId }, data: { status: "abandoned", claimedByAgentId: null } });
+  const response = await staleAdminRestore(staleStatus); expect(response.status).toBe(200);
+  expect((await response.json()).task.status).toBe("open");
+  expect(harness.clearDisposition).toHaveBeenCalledExactlyOnceWith(f.taskId); expect(seen.clear).toEqual(["open"]);
+  expect(await disposition()).toBeNull(); expect(harness.abandonDisposition).not.toHaveBeenCalled();
+});
+
+it("grounded restore decided on a stale read keeps its response when the disposition writer fails", async () => {
+  await realDispositionWriters(); await seedTelemetry("abandoned");
+  await store.db.task.update({ where: { id: f.taskId }, data: { status: "abandoned", claimedByAgentId: null } });
+  const write = vi.spyOn(store.db.confidenceTelemetry, "updateMany").mockRejectedValue(new Error("telemetry unavailable"));
+  const response = await staleAdminRestore("in_progress"); expect(response.status).toBe(200);
+  expect((await response.json()).task.status).toBe("open"); expect(write).toHaveBeenCalled();
+  expect((await f.task()).status).toBe("open"); write.mockRestore(); expect(await disposition()).toBe("abandoned");
+});
+
+it("grounded backlog discard decided on a fresh read never clears a disposition", async () => {
+  await realDispositionWriters(); await seedTelemetry(null);
+  await store.db.task.update({ where: { id: f.taskId }, data: { status: "backlog", claimedByAgentId: null } });
+  const patch = await adminPatch({ status: "abandoned" }); patch.headers.set("Idempotency-Key", "discard-1");
+  expect((await app().fetch(patch)).status).toBe(200);
+  expect(harness.clearDisposition).not.toHaveBeenCalled();
+});
+
 // A backlog discard goes through the grounding service, not the REST handler.
 // It stays unhooked like the REST discard: a backlog task has no scored claim.
 it("grounded backlog discard reaches abandoned without touching the disposition", async () => {
