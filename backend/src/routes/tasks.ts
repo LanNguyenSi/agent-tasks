@@ -4969,6 +4969,24 @@ taskRouter.patch("/tasks/:id", async (c) => {
     const targetStatus = body.status;
     didStatusChange = true;
 
+    // ── Backlog is reachable by exactly one move: open -> backlog (demote) ──
+    //
+    // Checked before the effective definition is even resolved, so it holds
+    // for every workflow. A stored definition is read without re-validation
+    // (resolveEffectiveDefinition casts it), and an old one can still carry
+    // an edge into backlog or an initialState of backlog; without this guard
+    // the unabandon branch and the generic transition lookup below could then
+    // write backlog from spec or abandoned, leaving a claimed backlog task.
+    if (targetStatus === "backlog" && previousStatus !== "open") {
+      return c.json(
+        {
+          error: "bad_request",
+          message: `Transition from '${previousStatus}' to 'backlog' is not allowed; only an open task can be moved back to backlog`,
+        },
+        400,
+      );
+    }
+
     const effectiveDef = await resolveEffectiveDefinition(task, prisma);
 
     // ── Unabandon: the one recovery path out of the `abandoned` sink ──────

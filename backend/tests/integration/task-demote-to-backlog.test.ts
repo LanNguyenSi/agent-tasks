@@ -318,3 +318,54 @@ describe("demote against a real database", () => {
     }
   });
 });
+
+describe("stored legacy workflow definitions (read without re-validation)", () => {
+  // The retired coding-agent template had initialState "backlog" and an edge
+  // spec -> backlog; rows saved from it are never re-validated on read, so the
+  // generic transition lookup and the unabandon branch could reach backlog.
+  it("PATCH to backlog from every non-open status is 400 and leaves the row unchanged, even with an edge into backlog", async () => {
+    const legacyProjectId = randomUUID();
+    await db.project.create({ data: { id: legacyProjectId, teamId, name: "Legacy", slug: randomUUID() } });
+    await db.workflow.create({
+      data: {
+        projectId: legacyProjectId,
+        name: "legacy",
+        isDefault: true,
+        definition: {
+          initialState: "backlog",
+          states: [
+            { name: "backlog", label: "Backlog", terminal: false },
+            { name: "spec", label: "Spec", terminal: false },
+            { name: "in_progress", label: "In progress", terminal: false },
+            { name: "review", label: "Review", terminal: false },
+            { name: "done", label: "Done", terminal: true },
+          ],
+          transitions: [
+            { from: "backlog", to: "spec" },
+            { from: "spec", to: "backlog", label: "Release" },
+            { from: "spec", to: "in_progress" },
+            { from: "in_progress", to: "review" },
+            { from: "review", to: "done" },
+          ],
+        },
+      },
+    });
+
+    for (const status of ["spec", "in_progress", "review", "done", "abandoned"]) {
+      for (const claimed of [false, true]) {
+        const taskId = await seedTask({
+          projectId: legacyProjectId,
+          status,
+          ...(claimed ? { claimedByUserId: userId, claimedAt: new Date() } : {}),
+        });
+        const res = await demote(taskId);
+        expect(res.status, `${status}${claimed ? " (claimed)" : ""}`).toBe(400);
+        const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+        expect(row.status).toBe(status);
+        expect(row.claimedByUserId).toBe(claimed ? userId : null);
+      }
+    }
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+});
+
