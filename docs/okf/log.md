@@ -2,6 +2,19 @@
 
 # Change log
 
+## 2026-10-02 (stored legacy workflow definitions, start edge only)
+
+Re-verified `workflow-gates.md` and `reconcile-done-but-open.md` against the
+sanitizer in `default-workflow.ts`, which now remaps from `backlog` only an
+edge whose target is neither a terminal nor a review state.
+`workflow-gates.md` now states that rule, the invariant that an open task can
+never reach a terminal or review state through a remapped edge, that a task
+enters `backlog` at creation or by demote and leaves it only by promote or
+discard, and names `GET /projects/:projectId/effective-workflow` and
+`POST /workflows/:id/validate-transition` as readers that still answer from
+the stored definition. The claims of `reconcile-done-but-open.md` did not
+change. Both were re-stamped.
+
 ## 2026-10-02 (stored legacy workflow definitions, remap rule)
 
 Re-verified `workflow-gates.md`, `backend.md`, `governance-merge.md` and
