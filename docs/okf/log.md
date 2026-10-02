@@ -4,9 +4,11 @@
 
 Re-verified `backend.md`, `reconcile-done-but-open.md`, `governance-merge.md`,
 `task-lifecycle.md`, `workflow-gates.md` and `architecture.md` against the
-changed grounding sources (comments only). `task-lifecycle.md` now states
-that the grounded creator-abandon and admin restore reuse the REST handlers
-and their post-commit `finalDisposition` write and clear. The other docs'
+changed grounding sources. `task-lifecycle.md` now states that the grounded
+creator-abandon and admin restore reuse the REST handlers and their
+post-commit `finalDisposition` write and clear, and that a restore the
+grounding service performs after the middleware's pre-lock read went stale
+clears it through an after-commit observer on `dispose()`. The other docs'
 claims remain unchanged.
 
 ## 2026-10-01 (respec descriptions and teaching error)
