@@ -1,5 +1,5 @@
 /**
- * PATCH /tasks/:id { status: "backlog" } — the human-only "demote" special case
+ * PATCH /tasks/:id { status: "backlog" }: the human-only "demote" special case
  * (agent-tasks task 7c64e80c): an OPEN task with no work or review claim goes
  * back to backlog, behind a compare-and-swap, with its own audit action and
  * its pending signals acknowledged.
