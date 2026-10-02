@@ -21,6 +21,17 @@ the pinned `409` for a grounding-enrolled task are now stated in
 re-pointed again after the inserted guard, and the seven docs whose sources
 changed were re-stamped.
 
+## 2026-10-02 (grounded finalDisposition)
+
+Re-verified `backend.md`, `reconcile-done-but-open.md`, `governance-merge.md`,
+`task-lifecycle.md`, `workflow-gates.md` and `architecture.md` against the
+changed grounding sources. `task-lifecycle.md` now states that the grounded
+creator-abandon and admin restore reuse the REST handlers and their
+post-commit `finalDisposition` write and clear, and that a restore the
+grounding service performs after the middleware's pre-lock read went stale
+clears it through an after-commit observer on `dispose()`. The other docs'
+claims remain unchanged.
+
 ## 2026-10-01 (respec descriptions and teaching error)
 
 Re-verified `workflow-gates.md`, `reconcile-done-but-open.md`,

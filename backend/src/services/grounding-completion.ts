@@ -131,10 +131,21 @@ export class GroundingCompletionService {
       ({ skippedRules, ciHeadSha } = await completionGates(db, task, actor, edge, definition, this.authority, false, this.head));
       data = { status: to, ...clearReview, ...(request.route && request.result !== null ? { result: request.result } : {}) };
     } else if (request.action === "creator_abandon") {
+      // No route builds this action (callers exist only in tests), so no
+      // finalDisposition write is wired here. A real creator-abandon goes
+      // through POST /tasks/:id/creator-abandon in routes/tasks.ts, which
+      // records the disposition post-commit. Wire the same write here if a
+      // caller is ever added (task 170bd23b).
       if (actor.type !== "agent" || task.createdByAgentId !== actor.tokenId) forbidden();
       if (!["open", "backlog"].includes(task.status) || task.claimedByUserId || task.claimedByAgentId || task.reviewClaimedByUserId || task.reviewClaimedByAgentId) badState();
       data = { status: "abandoned" };
     } else if (request.action === "reopen") {
+      // No route builds this action either. An admin restore arrives as PATCH
+      // abandoned -> initial state, which the direct middleware hands to the
+      // REST handler in routes/tasks.ts (it clears the disposition post-commit).
+      // The same restore also lands in the direct branch above when the task
+      // turns abandoned after the middleware's pre-lock read; the route's
+      // after-commit observer clears the disposition there (task 170bd23b).
       if (actor.type !== "human" || !await this.authority.hasRole(actor, task.projectId, "ADMIN", db)) forbidden();
       if (task.status !== "abandoned" || task.claimedByUserId || task.claimedByAgentId || task.reviewClaimedByUserId || task.reviewClaimedByAgentId) badState();
       data = { status: def.initialState };
