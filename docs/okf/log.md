@@ -1,5 +1,14 @@
 # Change log
 
+## 2026-10-02 (grounded finalDisposition)
+
+Re-verified `backend.md`, `reconcile-done-but-open.md`, `governance-merge.md`,
+`task-lifecycle.md`, `workflow-gates.md` and `architecture.md` against the
+changed grounding sources (comments only). `task-lifecycle.md` now states
+that the grounded creator-abandon and admin restore reuse the REST handlers
+and their post-commit `finalDisposition` write and clear. The other docs'
+claims remain unchanged.
+
 ## 2026-10-01 (respec descriptions and teaching error)
 
 Re-verified `workflow-gates.md`, `reconcile-done-but-open.md`,

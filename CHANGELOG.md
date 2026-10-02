@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Tests now pin that grounded creator-abandon and admin restore write and clear `finalDisposition` post-commit and fail-open, and that no other grounded route reaches or leaves `abandoned`. No behaviour change.
 - The respec OpenAPI description and 409 message now reflect that unclaimed tasks in either `open` or `backlog` can be edited. In backlog, an agent with project access and `tasks:update` may respec regardless of creator; in open, the creator rule still applies unless `allowNonCreatorRespec` is enabled. Humans with project write access are not subject to the creator rule.
 
 ### Added
