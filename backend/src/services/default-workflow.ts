@@ -161,14 +161,19 @@ export function defaultWorkflowDefinition(): WorkflowDefinitionShape {
  * grounding direct writers put a task into backlog.
  *
  * This is the one place the stored shape is made safe, applied on every
- * read of a stored definition: edges into backlog are dropped, edges out of
- * backlog are remapped to leave from "open" (so the legacy start edge
- * backlog -> spec becomes open -> spec), a backlog state is dropped, and an
- * initialState of backlog becomes "open" (an "open" state is added when the
- * legacy definition lacks one, so the initial state always names a defined
- * state). A definition that does not
- * mention backlog is returned untouched (same object), so valid workflows
- * behave exactly as before. The stored row is never rewritten.
+ * read of a stored definition. The rule: sanitizing never adds a path that
+ * the stored definition did not already offer from a state a task can
+ * actually be in, except the one path the legacy template needs to stay
+ * usable. Concretely: edges into backlog are dropped and a backlog state is
+ * dropped. When the stored initialState is backlog (the legacy shape, where
+ * "open" takes backlog's place as the entry state), the initialState becomes
+ * "open", an "open" state is added when the definition lacks one, and edges
+ * out of backlog are remapped to leave from "open" (so the legacy start edge
+ * backlog -> spec becomes open -> spec). When the stored initialState is
+ * anything else, edges out of backlog are dropped like edges into it: a stray
+ * backlog -> done edge must not become a shortcut from open. A definition
+ * that does not mention backlog is returned untouched (same object), so valid
+ * workflows behave exactly as before. The stored row is never rewritten.
  */
 export const BACKLOG_STATE = "backlog";
 const SANITIZED_INITIAL_STATE = "open";
@@ -184,14 +189,15 @@ function mentionsBacklog(def: WorkflowDefinitionShape): boolean {
 
 /**
  * Edges into backlog are dropped. Edges out of backlog are remapped to leave
- * from "open" instead, keeping label, requires, requiredRole and every other
- * field, so the legacy start edge (backlog -> spec) becomes open -> spec and
- * tasks that rest in "open" can still be started. A remapped edge that would
- * duplicate an edge from "open" to the same target (an existing one, or an
- * earlier remapped one) is skipped, as is one that would become a self loop.
+ * from "open" only when `remapOutOfBacklog` is set (the stored initialState
+ * is backlog); otherwise they are dropped too. A remapped edge keeps label,
+ * requires, requiredRole and every other field. One that would duplicate an
+ * edge from "open" to the same target (an existing one, or an earlier
+ * remapped one) is skipped, as is one that would become a self loop.
  */
-function remapBacklogEdges(
+function sanitizeBacklogEdges(
   transitions: WorkflowDefinitionShape["transitions"],
+  remapOutOfBacklog: boolean,
 ): WorkflowDefinitionShape["transitions"] {
   const taken = new Set(
     transitions.filter((t) => t.from === SANITIZED_INITIAL_STATE && t.to !== BACKLOG_STATE).map((t) => t.to),
@@ -203,6 +209,7 @@ function remapBacklogEdges(
       out.push(t);
       continue;
     }
+    if (!remapOutOfBacklog) continue;
     if (t.to === SANITIZED_INITIAL_STATE || taken.has(t.to)) continue;
     taken.add(t.to);
     out.push({ ...t, from: SANITIZED_INITIAL_STATE });
@@ -220,25 +227,26 @@ export function sanitizeStoredDefinition(
   const def = stored as WorkflowDefinitionShape;
   if (!mentionsBacklog(def)) return def;
 
+  const legacyInitial = def.initialState === BACKLOG_STATE;
   const states = Array.isArray(def.states) ? def.states.filter((s) => s.name !== BACKLOG_STATE) : def.states;
-  const initialState = def.initialState === BACKLOG_STATE ? SANITIZED_INITIAL_STATE : def.initialState;
-  const transitions = Array.isArray(def.transitions) ? remapBacklogEdges(def.transitions) : def.transitions;
-  // The "open" state must exist whenever the initial state or a remapped edge names it.
-  const needsOpen =
-    initialState === SANITIZED_INITIAL_STATE ||
-    (Array.isArray(transitions) && transitions.some((t) => t.from === SANITIZED_INITIAL_STATE));
+  const initialState = legacyInitial ? SANITIZED_INITIAL_STATE : def.initialState;
+  const transitions = Array.isArray(def.transitions)
+    ? sanitizeBacklogEdges(def.transitions, legacyInitial)
+    : def.transitions;
+  // Only the legacy shape gets an "open" state: its initial state and its
+  // remapped edges name it. Any other definition keeps its own states.
   const sanitized: WorkflowDefinitionShape = {
     ...def,
     initialState,
     states:
-      Array.isArray(states) && needsOpen && !states.some((s) => s.name === SANITIZED_INITIAL_STATE)
+      Array.isArray(states) && legacyInitial && !states.some((s) => s.name === SANITIZED_INITIAL_STATE)
         ? [...states, { name: SANITIZED_INITIAL_STATE, label: "Open", terminal: false }]
         : states,
     transitions,
   };
   logger.warn(
     { component: "workflow", op: "sanitizeStoredDefinition", ...source },
-    "stored workflow definition references backlog; edges into backlog and the backlog state were dropped, edges out of backlog now leave from open, and the initial state is open (backlog is reachable only by promote, demote and discard)",
+    "stored workflow definition references backlog; edges into backlog and the backlog state were dropped, edges out of backlog leave from open when the initial state was backlog (now open) and are dropped otherwise (backlog is reachable only by promote, demote and discard)",
   );
   return sanitized;
 }

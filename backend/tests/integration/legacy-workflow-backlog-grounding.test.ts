@@ -10,6 +10,10 @@
  *     and leaves the task alone;
  *   - the direct PATCH restore of an abandoned task targets open only, never a
  *     stored initialState of backlog;
+ *   - on the full retired coding-agent template, the legacy start edge that
+ *     the sanitizer remaps from backlog to open is usable on the grounded
+ *     direct paths too (mounted /transition and human PATCH open -> spec), and
+ *     its stored gates still apply;
  *   - controls: promote of an enrolled backlog task still works, and a valid
  *     custom workflow keeps its own initial state for the grounded abandon.
  */
@@ -62,6 +66,30 @@ const legacyDefinition = {
     { from: "spec", to: "implement" },
     { from: "implement", to: "review" },
     { from: "review", to: "done" },
+  ],
+};
+
+// The full retired coding-agent template as stored: the only start edge
+// leaves backlog, so the sanitized view turns it into open -> spec.
+const codingAgentDefinition = {
+  initialState: "backlog",
+  states: ["backlog", "spec", "plan", "implement", "test", "review", "done"].map((name) => ({
+    name,
+    label: name,
+    terminal: name === "done",
+  })),
+  transitions: [
+    { from: "backlog", to: "spec", label: "Start scoping", requiredRole: "any" },
+    { from: "spec", to: "plan", label: "Spec complete" },
+    { from: "spec", to: "backlog", label: "Release" },
+    { from: "plan", to: "implement", label: "Plan approved" },
+    { from: "plan", to: "spec", label: "Back to spec" },
+    { from: "implement", to: "test", label: "Ready for test" },
+    { from: "implement", to: "plan", label: "Replan" },
+    { from: "test", to: "review", label: "Ready for review" },
+    { from: "test", to: "implement", label: "Tests failed" },
+    { from: "review", to: "done", label: "Approve" },
+    { from: "review", to: "implement", label: "Request changes" },
   ],
 };
 
@@ -169,6 +197,36 @@ describe("grounding-enrolled task on a stored legacy workflow definition", () =>
 
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect((await f.task()).status).toBe("abandoned");
+  });
+
+  it("the remapped start edge of the full template works on the grounded direct paths", async () => {
+    await storeWorkflow(codingAgentDefinition);
+    await setStatus("open", true);
+    const transition = await agentPost("transition", { status: "spec" });
+    expect(transition.status).toBe(200);
+    expect((await f.task()).status).toBe("spec");
+
+    await setStatus("open", false);
+    const patch = await humanPatch("spec");
+    expect(patch.status).toBe(200);
+    expect((await f.task()).status).toBe("spec");
+  });
+
+  it("the remapped start edge keeps its stored gates on the grounded direct path", async () => {
+    await storeWorkflow({
+      ...codingAgentDefinition,
+      transitions: codingAgentDefinition.transitions.map((t) =>
+        t.from === "backlog" ? { ...t, requires: ["branchPresent"] } : t,
+      ),
+    });
+    await store.db.task.update({ where: { id: f.taskId }, data: { branchName: null } });
+    await setStatus("open", true);
+
+    const res = await agentPost("transition", { status: "spec" });
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe("precondition_failed");
+    expect((await f.task()).status).toBe("open");
   });
 
   it("controls: promote of an enrolled backlog task works, and a valid custom workflow keeps its own initial state", async () => {

@@ -121,8 +121,10 @@ export async function groundingWorkflow(db: Prisma.TransactionClient, task: Grou
   const parsed = definitionSchema.safeParse(definition);
   if (!parsed.success) unavailable();
   // `definition` stays as stored: receipts and digests bind the stored JSON.
-  // Every decision (edges, initial state, reopen target) reads `def`, with a
-  // stored backlog edge or initial state dropped (see sanitizeStoredDefinition).
+  // Every decision (edges, initial state, reopen target) reads `def`: edges
+  // into backlog are dropped, edges out of backlog are remapped to leave from
+  // open only for a stored initial state of backlog (dropped otherwise), and
+  // that initial state is mapped to open (see sanitizeStoredDefinition).
   const def = sanitizeStoredDefinition(parsed.data, { workflowId: workflows[0]?.id ?? null, projectId: task.projectId }) as typeof parsed.data;
   if (new Set(def.states.map(s => s.name)).size !== def.states.length ||
       !def.states.some(s => s.name === def.initialState) ||

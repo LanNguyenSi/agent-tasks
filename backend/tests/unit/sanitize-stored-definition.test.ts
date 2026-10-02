@@ -124,6 +124,66 @@ describe("sanitizeStoredDefinition", () => {
     ]);
   });
 
+  it("adds the open state for a backlog initial state even when no edge leaves backlog", () => {
+    const def: WorkflowDefinitionShape = {
+      initialState: "backlog",
+      states: [
+        { name: "backlog", label: "Backlog", terminal: false },
+        { name: "spec", label: "Spec", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [{ from: "spec", to: "done" }],
+    };
+    const out = sanitizeStoredDefinition(def);
+    expect(out.initialState).toBe("open");
+    expect(out.states.map((s) => s.name)).toEqual(["spec", "done", "open"]);
+    expect(out.transitions).toEqual([{ from: "spec", to: "done" }]);
+  });
+
+  it("drops, not remaps, an edge out of backlog when the stored initial state is open", () => {
+    const def: WorkflowDefinitionShape = {
+      initialState: "open",
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "review", label: "Review", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "open", to: "in_progress" },
+        { from: "in_progress", to: "review" },
+        { from: "review", to: "done" },
+        { from: "open", to: "backlog", label: "Park" },
+        { from: "backlog", to: "done", label: "Close parked" },
+      ],
+    };
+    const out = sanitizeStoredDefinition(def);
+    expect(out.initialState).toBe("open");
+    expect(out.transitions).toEqual([
+      { from: "open", to: "in_progress" },
+      { from: "in_progress", to: "review" },
+      { from: "review", to: "done" },
+    ]);
+  });
+
+  it("drops a stray edge out of backlog and adds no open state when the stored initial state is custom", () => {
+    const def: WorkflowDefinitionShape = {
+      initialState: "queued",
+      states: [
+        { name: "queued", label: "Queued", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "queued", to: "done" },
+        { from: "backlog", to: "done", label: "Close parked" },
+      ],
+    };
+    const out = sanitizeStoredDefinition(def);
+    expect(out.initialState).toBe("queued");
+    expect(out.states.map((s) => s.name)).toEqual(["queued", "done"]);
+    expect(out.transitions).toEqual([{ from: "queued", to: "done" }]);
+  });
+
   it("does not mutate the stored object", () => {
     const stored = structuredClone(legacy);
     sanitizeStoredDefinition(stored);

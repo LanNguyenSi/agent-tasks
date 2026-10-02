@@ -423,6 +423,53 @@ describe("a stored legacy edge out of backlog does not let anything but promote 
   });
 });
 
+describe("a stray edge out of backlog in a definition that never started in backlog", () => {
+  it("is dropped, not remapped: an open task cannot jump to done by /transition or PATCH", async () => {
+    const projectId = await seedProject({
+      initialState: "open",
+      states: ["open", "in_progress", "review", "done", "backlog"].map((name) => ({
+        name,
+        label: name,
+        terminal: name === "done",
+      })),
+      transitions: [
+        { from: "open", to: "in_progress" },
+        { from: "in_progress", to: "review" },
+        { from: "review", to: "done" },
+        { from: "open", to: "backlog", label: "Park" },
+        { from: "backlog", to: "done", label: "Close parked" },
+      ],
+    });
+    const byHuman = await seedTask(projectId, { status: "open" });
+    const byAgent = await seedTask(projectId, { status: "open", claimedByAgentId: agentTokenId, claimedAt: new Date() });
+    const byPatch = await seedTask(projectId, { status: "open" });
+
+    expect((await post(human, `/tasks/${byHuman}/transition`, { status: "done" })).status).toBe(400);
+    expect((await post(agent, `/tasks/${byAgent}/transition`, { status: "done" })).status).toBe(400);
+    expect((await patchStatus(human, byPatch, "done")).status).toBe(400);
+
+    expect(await statusOf(byHuman)).toBe("open");
+    expect(await statusOf(byAgent)).toBe("open");
+    expect(await statusOf(byPatch)).toBe("open");
+  });
+
+  it("keeps the definition's own edges: the open task still moves to in_progress", async () => {
+    const projectId = await seedProject({
+      initialState: "open",
+      states: ["open", "in_progress", "done"].map((name) => ({ name, label: name, terminal: name === "done" })),
+      transitions: [
+        { from: "open", to: "in_progress" },
+        { from: "in_progress", to: "done" },
+        { from: "backlog", to: "done", label: "Close parked" },
+      ],
+    });
+    const taskId = await seedTask(projectId, { status: "open" });
+
+    expect((await post(human, `/tasks/${taskId}/transition`, { status: "in_progress" })).status).toBe(200);
+    expect(await statusOf(taskId)).toBe("in_progress");
+  });
+});
+
 describe("controls: valid workflows and the three human verbs", () => {
   it("with no stored workflow, /abandon and /release reset to open and /transition follows the default edges", async () => {
     const projectId = await seedProject(null);
