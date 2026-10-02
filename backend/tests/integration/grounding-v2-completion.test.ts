@@ -450,12 +450,12 @@ it("grounded restore decided on a stale read keeps its response when the disposi
   expect((await f.task()).status).toBe("open"); write.mockRestore(); expect(await disposition()).toBe("abandoned");
 });
 
-it("grounded backlog discard decided on a fresh read never clears a disposition", async () => {
-  await realDispositionWriters(); await seedTelemetry(null);
+it.each(["abandoned", "open"] as const)("grounded backlog move to %s through the service never clears a disposition", async to => {
+  await realDispositionWriters(); await seedTelemetry("abandoned");
   await store.db.task.update({ where: { id: f.taskId }, data: { status: "backlog", claimedByAgentId: null } });
-  const patch = await adminPatch({ status: "abandoned" }); patch.headers.set("Idempotency-Key", "discard-1");
-  expect((await app().fetch(patch)).status).toBe(200);
-  expect(harness.clearDisposition).not.toHaveBeenCalled();
+  const patch = await adminPatch({ status: to }); patch.headers.set("Idempotency-Key", "backlog-move-1");
+  expect((await app().fetch(patch)).status).toBe(200); expect((await f.task()).status).toBe(to);
+  expect(harness.clearDisposition).not.toHaveBeenCalled(); expect(await disposition()).toBe("abandoned");
 });
 
 // A backlog discard goes through the grounding service, not the REST handler.
