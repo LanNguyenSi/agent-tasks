@@ -2,6 +2,62 @@
 
 # Change log
 
+## 2026-10-02 (merge of master: generic status compare-and-swap)
+
+Merged master (the generic status write compare-and-swap) into the branch for
+stored legacy workflow definitions. `workflow-gates.md` keeps the master text
+of its 422 paragraph with the `tasks.ts` line citations after the `PATCH`
+backlog guard comment re-pointed by two lines; `task-lifecycle.md` keeps the
+sanitizer sentence of this branch and the compare-and-swap sentence of
+master. The claims of `backend.md`, `claim-model.md`, `governance-merge.md`
+and `reconcile-done-but-open.md` did not change. All six were re-stamped.
+
+## 2026-10-02 (stored legacy workflow definitions, start edge only)
+
+Re-verified `workflow-gates.md` and `reconcile-done-but-open.md` against the
+sanitizer in `default-workflow.ts`, which now remaps from `backlog` only an
+edge whose target is neither a terminal nor a review state.
+`workflow-gates.md` now states that rule, the invariant that an open task can
+never reach a terminal or review state through a remapped edge, that a task
+enters `backlog` at creation or by demote and leaves it only by promote or
+discard, and names `GET /projects/:projectId/effective-workflow` and
+`POST /workflows/:id/validate-transition` as readers that still answer from
+the stored definition. The claims of `reconcile-done-but-open.md` did not
+change, nor did those of `backend.md`, which lists `backend/src/services` as
+a source (its services summary still names `default-workflow.ts` as part of
+the workflow engine). All three were re-stamped.
+
+## 2026-10-02 (stored legacy workflow definitions, remap rule)
+
+Re-verified `workflow-gates.md`, `backend.md`, `governance-merge.md` and
+`reconcile-done-but-open.md` against the narrowed sanitizer in
+`default-workflow.ts`, the comment in `grounding-context.ts` and the edge
+lookup in `grounding-completion-gates.ts`. `workflow-gates.md` now states that
+edges out of `backlog` are remapped to leave from `open` only when the stored
+initial state is `backlog` and are dropped otherwise, that the grounded direct
+paths find the remapped start edge with its stored gates, and that a task in
+`backlog` leaves it through promote or discard; it lists
+`grounding-completion-gates.ts` as a source, and its `tasks.ts` line
+citations were re-pointed in the merge of master. The claims of the other three
+did not change. All four were re-stamped, and so was `claim-model.md`: it lists
+`tasks.ts`, which the merged master change touched (a moved demote message
+constant and its import); none of its claims depends on that.
+
+## 2026-10-02 (stored legacy workflow definitions)
+
+Re-verified `workflow-gates.md`, `task-lifecycle.md`, `backend.md`,
+`governance-merge.md`, `reconcile-done-but-open.md` and `claim-model.md` against the
+sanitizing read of stored workflow definitions in `default-workflow.ts` and
+`grounding-context.ts`. `workflow-gates.md` now states that a stored
+definition with `backlog` as its initial state or as an edge endpoint is
+sanitized on every read (edges into `backlog` are dropped, edges out of it
+leave from `open` instead), which writers that covers, and the two readers
+that keep their own behaviour; its `tasks.ts` line citations after the
+`PATCH` guard comment were re-pointed. `task-lifecycle.md` points to it from
+the abandon and demote text. The claims of `backend.md`,
+`governance-merge.md`, `reconcile-done-but-open.md` and `claim-model.md` did
+not change (the `tasks.ts` edit is a comment only). All six were re-stamped.
+
 ## 2026-10-02 (generic status write compare-and-swap)
 
 Re-verified `workflow-gates.md`, `task-lifecycle.md`, `backend.md`, `claim-model.md`, `governance-merge.md` and `reconcile-done-but-open.md` against the change to `backend/src/routes/tasks.ts`: `POST /tasks/:id/transition` and the human `PATCH /tasks/:id` status lane now write with an `updateMany` guarded on the status the handler read and answer `409` when no row matched. `workflow-gates.md` gained a paragraph on it and its `tasks.ts` line citations were re-pointed to the shifted code; `task-lifecycle.md` now says promote and discard use the same guarded write. The claims of `backend.md`, `claim-model.md`, `governance-merge.md` and `reconcile-done-but-open.md` did not change. All six were re-stamped.

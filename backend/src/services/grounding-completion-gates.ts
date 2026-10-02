@@ -7,6 +7,7 @@ import { evaluateTransitionRules, GITHUB_BACKED_RULES, type TransitionRule } fro
 import { fetchCheckRunStatus } from "./github-checks.js";
 import { GroundingDecisionError } from "./grounding-transaction.js";
 import { githubPrUrlMatches } from "./grounding-github-fence.js";
+import { sanitizeStoredDefinition } from "./default-workflow.js";
 
 export async function completionGates(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, target: GroundingTarget, definition: unknown, authority: GroundingAuthority, remote: boolean, headProvider: GroundingHeadProvider) {
   return evaluateCompletionGates(db, task, actor, target, definition, authority, remote, headProvider, "allowAgentPrCreate");
@@ -15,7 +16,10 @@ export async function taskMergeCompletionGates(db: Prisma.TransactionClient, tas
   return evaluateCompletionGates(db, task, actor, target, definition, authority, remote, headProvider, "allowAgentPrMerge");
 }
 async function evaluateCompletionGates(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, target: GroundingTarget, definition: unknown, authority: GroundingAuthority, remote: boolean, headProvider: GroundingHeadProvider, consent: "allowAgentPrCreate" | "allowAgentPrMerge") {
-  const parsed = z.object({ transitions: z.array(z.object({ from: z.string(), to: z.string(), requiredRole: z.enum(["ADMIN", "HUMAN_MEMBER", "REVIEWER", "any"]).optional(), requires: z.array(z.string()).optional() })) }).safeParse(definition);
+  // The edge is looked up in the sanitized view the target was chosen from, so
+  // a legacy start edge remapped from backlog to open is found with its gates.
+  // Callers keep passing the stored JSON, which digests and receipts still bind.
+  const parsed = z.object({ transitions: z.array(z.object({ from: z.string(), to: z.string(), requiredRole: z.enum(["ADMIN", "HUMAN_MEMBER", "REVIEWER", "any"]).optional(), requires: z.array(z.string()).optional() })) }).safeParse(sanitizeStoredDefinition(definition));
   if (!parsed.success) unavailable();
   const edge = parsed.data.transitions.find(t => t.from === target.from && t.to === target.to);
   if (!edge) throw new GroundingAccessError("bad_state", 409);

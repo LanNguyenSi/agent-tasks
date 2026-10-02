@@ -11,6 +11,8 @@
  * tasks.ts can handle both the custom-workflow and no-workflow paths.
  */
 
+import { logger } from "../lib/logger.js";
+
 export interface DefaultTransition {
   to: string;
   label: string;
@@ -148,6 +150,133 @@ export function defaultWorkflowDefinition(): WorkflowDefinitionShape {
 }
 
 /**
+ * `backlog` is not a workflow state. A task enters it at creation (agent
+ * task creation is routed there) or by the human demote verb, and leaves it
+ * only by the human promote or discard verb, which the PATCH handler writes
+ * directly; never through a workflow edge or a workflow's initial state.
+ * `workflowDefinitionSchema` (routes/workflows.ts) rejects any such
+ * definition on save, but definitions stored before that lock can still
+ * carry one (the retired coding-agent template: initialState backlog and
+ * edges such as spec -> backlog). Read as stored, they let
+ * POST /tasks/:id/transition, the claim-abandon and release routes and the
+ * grounding direct writers move a task into or out of backlog.
+ *
+ * This is the one place the stored shape is made safe, applied on every
+ * read of a stored definition. Edges into backlog and a backlog state are
+ * dropped. When the stored initialState is backlog (the legacy shape, where
+ * "open" takes backlog's place as the entry state), the initialState becomes
+ * "open" and an "open" state is added when the definition lacks one. Edges
+ * out of backlog are dropped, with one exception: in the legacy shape, an
+ * edge out of backlog whose target is neither a terminal state nor a review
+ * state (the legacy start edge, such as backlog -> spec) is remapped to leave
+ * from "open". Any other edge out of backlog (such as backlog -> done or
+ * backlog -> review), and every edge out of backlog when the stored
+ * initialState is anything else, is dropped.
+ *
+ * The invariant: an open task can never reach a terminal or review state
+ * through a remapped edge; the only path the sanitizer adds is the legacy
+ * start edge from open to a non-terminal, non-review state. A definition
+ * that does not mention backlog is returned untouched (same object), so
+ * valid workflows behave exactly as before. The stored row is never
+ * rewritten.
+ */
+export const BACKLOG_STATE = "backlog";
+const SANITIZED_INITIAL_STATE = "open";
+
+function mentionsBacklog(def: WorkflowDefinitionShape): boolean {
+  return (
+    def.initialState === BACKLOG_STATE ||
+    (Array.isArray(def.states) && def.states.some((s) => s.name === BACKLOG_STATE)) ||
+    (Array.isArray(def.transitions) &&
+      def.transitions.some((t) => t.from === BACKLOG_STATE || t.to === BACKLOG_STATE))
+  );
+}
+
+/**
+ * Edges into backlog are dropped. Edges out of backlog are dropped too,
+ * except when `remapOutOfBacklog` is set (the stored initialState is
+ * backlog): then an edge whose target is neither terminal nor review is
+ * remapped to leave from "open". Terminal and review are the repo's own
+ * predicates (isTerminalState, isReviewState), judged on the sanitized
+ * definition before any remap: initial state "open", the states without
+ * backlog, and only the edges that touch backlog at neither end. Judged on
+ * the stored definition (initial state backlog) or after the remap (initial
+ * state open), every target of an edge from the initial state fails
+ * isReviewState's "not a direct target of the initial state" clause, so a
+ * review target would never be recognised. When the states are not a list,
+ * no target can be judged and nothing is remapped. A remapped edge keeps
+ * label, requires, requiredRole and every other field. One that would
+ * duplicate an edge from "open" to the same target (an existing one, or an
+ * earlier remapped one) is skipped, as is one that would become a self loop.
+ */
+function sanitizeBacklogEdges(
+  transitions: WorkflowDefinitionShape["transitions"],
+  remapOutOfBacklog: boolean,
+  states: unknown,
+): WorkflowDefinitionShape["transitions"] {
+  const judge: WorkflowDefinitionShape | null = Array.isArray(states)
+    ? {
+        initialState: SANITIZED_INITIAL_STATE,
+        states: states as WorkflowDefinitionShape["states"],
+        transitions: transitions.filter((t) => t.from !== BACKLOG_STATE && t.to !== BACKLOG_STATE),
+      }
+    : null;
+  const taken = new Set(
+    transitions.filter((t) => t.from === SANITIZED_INITIAL_STATE && t.to !== BACKLOG_STATE).map((t) => t.to),
+  );
+  const out: WorkflowDefinitionShape["transitions"] = [];
+  for (const t of transitions) {
+    if (t.to === BACKLOG_STATE) continue;
+    if (t.from !== BACKLOG_STATE) {
+      out.push(t);
+      continue;
+    }
+    if (!remapOutOfBacklog) continue;
+    if (judge === null) continue;
+    if (isTerminalState(judge, t.to)) continue;
+    if (isReviewState(judge, t.to)) continue;
+    if (t.to === SANITIZED_INITIAL_STATE || taken.has(t.to)) continue;
+    taken.add(t.to);
+    out.push({ ...t, from: SANITIZED_INITIAL_STATE });
+  }
+  return out;
+}
+
+export function sanitizeStoredDefinition(
+  stored: unknown,
+  source?: { workflowId?: string | null; projectId?: string },
+): WorkflowDefinitionShape {
+  if (stored === null || typeof stored !== "object" || Array.isArray(stored)) {
+    return stored as WorkflowDefinitionShape;
+  }
+  const def = stored as WorkflowDefinitionShape;
+  if (!mentionsBacklog(def)) return def;
+
+  const legacyInitial = def.initialState === BACKLOG_STATE;
+  const states = Array.isArray(def.states) ? def.states.filter((s) => s.name !== BACKLOG_STATE) : def.states;
+  const initialState = legacyInitial ? SANITIZED_INITIAL_STATE : def.initialState;
+  const transitions = Array.isArray(def.transitions)
+    ? sanitizeBacklogEdges(def.transitions, legacyInitial, states)
+    : def.transitions;
+  // Only the legacy shape gets an "open" state: its initial state and its
+  // remapped edges name it. Any other definition keeps its own states.
+  const sanitized: WorkflowDefinitionShape = {
+    ...def,
+    initialState,
+    states:
+      Array.isArray(states) && legacyInitial && !states.some((s) => s.name === SANITIZED_INITIAL_STATE)
+        ? [...states, { name: SANITIZED_INITIAL_STATE, label: "Open", terminal: false }]
+        : states,
+    transitions,
+  };
+  logger.warn(
+    { component: "workflow", op: "sanitizeStoredDefinition", ...source },
+    "stored workflow definition references backlog; edges into backlog and the backlog state were dropped; when the initial state was backlog (now open), an edge out of backlog to a non-terminal, non-review state leaves from open; every other edge out of backlog was dropped (backlog is left only by promote and discard)",
+  );
+  return sanitized;
+}
+
+/**
  * Resolve which state `task_finish` should target for a task currently in
  * `in_progress`. Used by the v2 MCP surface so agents know up-front whether
  * their finish will go to `review` or straight to `done`.
@@ -170,13 +299,16 @@ export async function resolveEffectiveDefinition(
   prismaClient: { workflow: { findFirst: (...args: any[]) => Promise<{ definition: unknown } | null> } },
 ): Promise<WorkflowDefinitionShape> {
   if (task.workflowId && task.workflow) {
-    return task.workflow.definition as unknown as WorkflowDefinitionShape;
+    return sanitizeStoredDefinition(task.workflow.definition, {
+      workflowId: task.workflowId,
+      projectId: task.projectId,
+    });
   }
   const projectDefault = await prismaClient.workflow.findFirst({
     where: { projectId: task.projectId, isDefault: true },
   });
   return projectDefault
-    ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
+    ? sanitizeStoredDefinition(projectDefault.definition, { projectId: task.projectId })
     : defaultWorkflowDefinition();
 }
 
@@ -306,6 +438,6 @@ export async function resolveProjectEffectiveDefinition(
     where: { projectId, isDefault: true },
   });
   return projectDefault
-    ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
+    ? sanitizeStoredDefinition(projectDefault.definition, { projectId })
     : defaultWorkflowDefinition();
 }
