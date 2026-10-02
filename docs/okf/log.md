@@ -13,7 +13,9 @@ enters `backlog` at creation or by demote and leaves it only by promote or
 discard, and names `GET /projects/:projectId/effective-workflow` and
 `POST /workflows/:id/validate-transition` as readers that still answer from
 the stored definition. The claims of `reconcile-done-but-open.md` did not
-change. Both were re-stamped.
+change, nor did those of `backend.md`, which lists `backend/src/services` as
+a source (its services summary still names `default-workflow.ts` as part of
+the workflow engine). All three were re-stamped.
 
 ## 2026-10-02 (stored legacy workflow definitions, remap rule)
 
