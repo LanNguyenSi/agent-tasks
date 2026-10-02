@@ -457,6 +457,36 @@ describe("a stray edge out of backlog in a definition that never started in back
     expect(await statusOf(byPatch)).toBe("open");
   });
 
+  it("is dropped, not remapped, when it targets a work state: an open task cannot jump to it", async () => {
+    const projectId = await seedProject({
+      initialState: "open",
+      states: ["open", "in_progress", "blocked", "review", "done", "backlog"].map((name) => ({
+        name,
+        label: name,
+        terminal: name === "done",
+      })),
+      transitions: [
+        { from: "open", to: "in_progress" },
+        { from: "in_progress", to: "blocked" },
+        { from: "blocked", to: "in_progress" },
+        { from: "in_progress", to: "review" },
+        { from: "review", to: "done" },
+        { from: "backlog", to: "blocked", label: "Resume parked" },
+      ],
+    });
+    const byHuman = await seedTask(projectId, { status: "open" });
+    const byAgent = await seedTask(projectId, { status: "open", claimedByAgentId: agentTokenId, claimedAt: new Date() });
+    const byPatch = await seedTask(projectId, { status: "open" });
+
+    expect((await post(human, `/tasks/${byHuman}/transition`, { status: "blocked" })).status).toBe(400);
+    expect((await post(agent, `/tasks/${byAgent}/transition`, { status: "blocked" })).status).toBe(400);
+    expect((await patchStatus(human, byPatch, "blocked")).status).toBe(400);
+
+    expect(await statusOf(byHuman)).toBe("open");
+    expect(await statusOf(byAgent)).toBe("open");
+    expect(await statusOf(byPatch)).toBe("open");
+  });
+
   it("keeps the definition's own edges: the open task still moves to in_progress", async () => {
     const projectId = await seedProject({
       initialState: "open",

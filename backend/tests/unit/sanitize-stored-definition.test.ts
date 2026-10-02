@@ -193,20 +193,25 @@ describe("sanitizeStoredDefinition", () => {
   });
 
   it("drops, not remaps, an edge out of backlog when the stored initial state is open", () => {
+    // backlog -> blocked targets a work state that open does not reach yet:
+    // only the initial state keeps it from being remapped.
     const def: WorkflowDefinitionShape = {
       initialState: "open",
       states: [
         { name: "open", label: "Open", terminal: false },
         { name: "in_progress", label: "In progress", terminal: false },
+        { name: "blocked", label: "Blocked", terminal: false },
         { name: "review", label: "Review", terminal: false },
         { name: "done", label: "Done", terminal: true },
       ],
       transitions: [
         { from: "open", to: "in_progress" },
         { from: "in_progress", to: "review" },
+        { from: "blocked", to: "in_progress" },
         { from: "review", to: "done" },
         { from: "open", to: "backlog", label: "Park" },
         { from: "backlog", to: "done", label: "Close parked" },
+        { from: "backlog", to: "blocked", label: "Resume parked" },
       ],
     };
     const out = sanitizeStoredDefinition(def);
@@ -214,6 +219,7 @@ describe("sanitizeStoredDefinition", () => {
     expect(out.transitions).toEqual([
       { from: "open", to: "in_progress" },
       { from: "in_progress", to: "review" },
+      { from: "blocked", to: "in_progress" },
       { from: "review", to: "done" },
     ]);
   });
@@ -223,17 +229,23 @@ describe("sanitizeStoredDefinition", () => {
       initialState: "queued",
       states: [
         { name: "queued", label: "Queued", terminal: false },
+        { name: "blocked", label: "Blocked", terminal: false },
         { name: "done", label: "Done", terminal: true },
       ],
       transitions: [
         { from: "queued", to: "done" },
+        { from: "blocked", to: "queued" },
         { from: "backlog", to: "done", label: "Close parked" },
+        { from: "backlog", to: "blocked", label: "Resume parked" },
       ],
     };
     const out = sanitizeStoredDefinition(def);
     expect(out.initialState).toBe("queued");
-    expect(out.states.map((s) => s.name)).toEqual(["queued", "done"]);
-    expect(out.transitions).toEqual([{ from: "queued", to: "done" }]);
+    expect(out.states.map((s) => s.name)).toEqual(["queued", "blocked", "done"]);
+    expect(out.transitions).toEqual([
+      { from: "queued", to: "done" },
+      { from: "blocked", to: "queued" },
+    ]);
   });
 
   it("does not mutate the stored object", () => {
