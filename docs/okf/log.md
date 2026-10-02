@@ -2,6 +2,10 @@
 
 # Change log
 
+## 2026-10-02 (generic status write compare-and-swap)
+
+Re-verified `workflow-gates.md`, `task-lifecycle.md`, `backend.md`, `claim-model.md`, `governance-merge.md` and `reconcile-done-but-open.md` against the change to `backend/src/routes/tasks.ts`: `POST /tasks/:id/transition` and the human `PATCH /tasks/:id` status lane now write with an `updateMany` guarded on the status the handler read and answer `409` when no row matched. `workflow-gates.md` gained a paragraph on it and its `tasks.ts` line citations were re-pointed to the shifted code; `task-lifecycle.md` now says promote and discard use the same guarded write. The claims of `backend.md`, `claim-model.md`, `governance-merge.md` and `reconcile-done-but-open.md` did not change. All six were re-stamped.
+
 ## 2026-10-02 (grounded demote, concurrent demote)
 
 Re-verified `task-lifecycle.md` and `workflow-gates.md` against the resolver change: a grounded demote whose locked row is already `backlog` (a concurrent demote won) now refuses with the claim-refusal `409` message; `task-lifecycle.md` names that race. `task-lifecycle.md`, `workflow-gates.md` and `backend.md` (its direct-adapter demote sentence still holds) re-stamped.
