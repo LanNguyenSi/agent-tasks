@@ -124,6 +124,18 @@ describe("demote of a grounding-enrolled task", () => {
     expect((await f.task()).status).toBe("open");
   });
 
+  it.each(["in_progress", "abandoned"])("refuses inside the locked write with the REST text when the locked row is %s and unclaimed (status race)", async from => {
+    await store.db.task.update({ where: { id: f.taskId }, data: { status: from, claimedByAgentId: null, claimedAt: null } });
+    const signal = await pendingSignal();
+    const transport = { endpoint: "patch" as const, body: { status: "backlog" } };
+    await expect(
+      f.service.dispose(f.taskId, admin, `status-race-${from}`, { action: "transition", route: { kind: "direct", transport, direct: { version: 1, endpoint: "patch", target: "backlog" } } }),
+    ).rejects.toMatchObject({ code: "bad_state", status: 409, message: CLAIM_MESSAGE });
+    expect((await f.task()).status).toBe(from);
+    expect(await store.db.auditLog.count({ where: { taskId: f.taskId, action: "task.backlog_demoted" } })).toBe(0);
+    expect((await store.db.signal.findUniqueOrThrow({ where: { id: signal.id } })).acknowledgedAt).toBeNull();
+  });
+
   it.each(["in_progress", "review", "abandoned"])("answers 400 for a demote from %s", async from => {
     await store.db.task.update({ where: { id: f.taskId }, data: { status: from, claimedByAgentId: null, claimedAt: null } });
     const res = await patch(f.taskId, "backlog");

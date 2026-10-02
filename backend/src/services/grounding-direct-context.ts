@@ -6,7 +6,7 @@ import { isReviewState, isTerminalState, approveTarget, requestChangesTarget } f
 import { checkReviewApprovalGate } from "./review-gate.js";
 import { DEMOTE_STATE_CONFLICT_MESSAGE } from "./task-demote.js";
 
-/** A demote refused because the task is claimed: a bad_state 409 that carries the same message as the REST demote. */
+/** A demote refused because the task is claimed or its status changed under the lock: a bad_state 409 that carries the same message as the REST demote. */
 export class GroundingDemoteRefused extends GroundingAccessError {
   constructor() { super("bad_state", 409); this.message = DEMOTE_STATE_CONFLICT_MESSAGE; }
 }
@@ -40,8 +40,11 @@ export async function resolveDirectGroundingTarget(db: Prisma.TransactionClient,
   const promote = direct.endpoint === "patch" && task.status === "backlog" && to === "open";
   const reopen = direct.endpoint === "patch" && task.status === "abandoned" && to === def.initialState;
   // Mirrors the REST demote: only the literal "open" may move to backlog, and never while any claim is held.
-  const demote = direct.endpoint === "patch" && task.status === "open" && to === "backlog";
+  const demoteTarget = direct.endpoint === "patch" && to === "backlog";
+  const demote = demoteTarget && task.status === "open";
   if (demote && (task.claimedByUserId || task.claimedByAgentId || task.reviewClaimedByUserId || task.reviewClaimedByAgentId)) throw new GroundingDemoteRefused();
+  // The route already answered 400 for a non-open source; a non-open locked row here means a task_start (or similar) won the race.
+  if (demoteTarget && !demote && task.status !== "backlog") throw new GroundingDemoteRefused();
   if (reopen && !await authority.hasRole(actor, task.projectId, "ADMIN", db)) throw new GroundingAccessError("forbidden", 403);
   const edge = def.transitions.find(t => t.from === task.status && t.to === to);
   if (!edge && !discard && !promote && !reopen && !demote) throw new GroundingAccessError("bad_state", 409);
