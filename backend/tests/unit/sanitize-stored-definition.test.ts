@@ -30,13 +30,63 @@ describe("sanitizeStoredDefinition", () => {
     expect(sanitizeStoredDefinition(def)).toBe(def);
   });
 
-  it("drops every edge into or out of backlog and the backlog state", () => {
+  it("drops every edge into backlog and the backlog state, and remaps the edge out of backlog to leave from open", () => {
     const out = sanitizeStoredDefinition(legacy);
     expect(out.transitions).toEqual([
+      { from: "open", to: "spec" },
       { from: "spec", to: "review" },
       { from: "review", to: "done" },
     ]);
     expect(out.states.map((s) => s.name)).not.toContain("backlog");
+    expect(out.transitions.some((t) => t.from === "backlog" || t.to === "backlog")).toBe(false);
+  });
+
+  it("keeps label, requires, requiredRole and extra fields on a remapped edge", () => {
+    const def: WorkflowDefinitionShape = {
+      ...legacy,
+      transitions: [
+        { from: "backlog", to: "spec", label: "Start scoping", requires: ["branchPresent"], requiredRole: "any" },
+        { from: "spec", to: "review" },
+      ],
+    };
+    const out = sanitizeStoredDefinition(def);
+    expect(out.transitions[0]).toEqual({
+      from: "open",
+      to: "spec",
+      label: "Start scoping",
+      requires: ["branchPresent"],
+      requiredRole: "any",
+    });
+  });
+
+  it("skips a remapped edge that would duplicate an existing open edge to the same target", () => {
+    const def: WorkflowDefinitionShape = {
+      ...legacy,
+      states: [...legacy.states, { name: "open", label: "Open", terminal: false }],
+      transitions: [
+        { from: "open", to: "spec", label: "Existing" },
+        { from: "backlog", to: "spec", label: "Legacy start" },
+        { from: "backlog", to: "review", label: "Legacy fast track" },
+      ],
+    };
+    const out = sanitizeStoredDefinition(def);
+    expect(out.transitions).toEqual([
+      { from: "open", to: "spec", label: "Existing" },
+      { from: "open", to: "review", label: "Legacy fast track" },
+    ]);
+  });
+
+  it("skips a second remapped edge to the same target and a remapped edge that would loop on open", () => {
+    const def: WorkflowDefinitionShape = {
+      ...legacy,
+      transitions: [
+        { from: "backlog", to: "spec", label: "first" },
+        { from: "backlog", to: "spec", label: "second" },
+        { from: "backlog", to: "open", label: "loop" },
+      ],
+    };
+    const out = sanitizeStoredDefinition(def);
+    expect(out.transitions).toEqual([{ from: "open", to: "spec", label: "first" }]);
   });
 
   it("maps an initialState of backlog to open and adds the open state when it is missing", () => {

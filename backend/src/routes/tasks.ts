@@ -4972,11 +4972,13 @@ taskRouter.patch("/tasks/:id", async (c) => {
     // ── Backlog is reachable by exactly one move: open -> backlog (demote) ──
     //
     // Checked before the effective definition is even resolved, so it holds
-    // for every workflow. A stored definition is read without re-validation
-    // (resolveEffectiveDefinition casts it), and an old one can still carry
-    // an edge into backlog or an initialState of backlog; without this guard
-    // the unabandon branch and the generic transition lookup below could then
-    // write backlog from spec or abandoned, leaving a claimed backlog task.
+    // for every workflow. resolveEffectiveDefinition sanitizes the backlog
+    // references of a stored definition (sanitizeStoredDefinition drops edges
+    // into backlog and remaps its initialState and start edge), so an old
+    // definition no longer offers a way in; this guard stays as the explicit
+    // rule so the unabandon branch and the generic transition lookup below
+    // can never write backlog from spec or abandoned, leaving a claimed
+    // backlog task.
     if (targetStatus === "backlog" && previousStatus !== "open") {
       return c.json(
         {

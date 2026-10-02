@@ -178,19 +178,21 @@ describe("grounding-enrolled task on a stored legacy workflow definition", () =>
     expect((await f.task()).status).toBe("open");
 
     await store.db.workflow.deleteMany({ where: { projectId: f.projectId } });
+    // A stored workflow whose initial state is neither open nor backlog: the
+    // sanitizer must leave it alone, so the grounded abandon resets to it.
     await storeWorkflow({
-      initialState: "open",
+      initialState: "queued",
       states: [
-        { name: "open", label: "Open", terminal: false },
+        { name: "queued", label: "Queued", terminal: false },
         { name: "in_progress", label: "In progress", terminal: false },
         { name: "review", label: "Review", terminal: false },
         { name: "done", label: "Done", terminal: true },
       ],
-      transitions: [{ from: "open", to: "in_progress" }, { from: "in_progress", to: "done" }],
+      transitions: [{ from: "queued", to: "in_progress" }, { from: "in_progress", to: "done" }],
     });
     await setStatus("in_progress");
     const res = await agentPost("abandon");
     expect(res.status).toBe(200);
-    expect((await f.task()).status).toBe("open");
+    expect((await f.task()).status).toBe("queued");
   });
 });

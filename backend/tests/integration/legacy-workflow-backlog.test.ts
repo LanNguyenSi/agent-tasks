@@ -109,6 +109,30 @@ const legacyDefinition = {
   ],
 };
 
+// The full retired coding-agent template as stored: backlog is the initial
+// state and the only start edge leaves backlog.
+const codingAgentDefinition = {
+  initialState: "backlog",
+  states: ["backlog", "spec", "plan", "implement", "test", "review", "done"].map((name) => ({
+    name,
+    label: name,
+    terminal: name === "done",
+  })),
+  transitions: [
+    { from: "backlog", to: "spec", label: "Start scoping", requiredRole: "any" },
+    { from: "spec", to: "plan", label: "Spec complete" },
+    { from: "spec", to: "backlog", label: "Release" },
+    { from: "plan", to: "implement", label: "Plan approved" },
+    { from: "plan", to: "spec", label: "Back to spec" },
+    { from: "implement", to: "test", label: "Ready for test" },
+    { from: "implement", to: "plan", label: "Replan" },
+    { from: "test", to: "review", label: "Ready for review" },
+    { from: "test", to: "implement", label: "Tests failed" },
+    { from: "review", to: "done", label: "Approve" },
+    { from: "review", to: "implement", label: "Request changes" },
+  ],
+};
+
 function makeApp(actor: Actor) {
   const app = new Hono<{ Variables: AppVariables }>();
   app.use("*", async (c, next) => {
@@ -298,6 +322,103 @@ describe("a stored legacy workflow definition cannot move a task into backlog", 
     const res = await patchStatus(human, taskId, "open");
 
     expect(res.status).toBe(200);
+    expect(await statusOf(taskId)).toBe("open");
+  });
+});
+
+describe("a project that stores the full retired coding-agent template can still start work", () => {
+  it("the start edge leaves open: a created (open) task starts into spec", async () => {
+    const projectId = await seedProject(codingAgentDefinition);
+    const taskId = await seedTask(projectId, { status: "open" });
+
+    const res = await post(human, `/tasks/${taskId}/start`, {});
+
+    expect(res.status).toBe(200);
+    expect(await statusOf(taskId)).toBe("spec");
+  });
+
+  it("an agent start on an open task claims it and lands in spec", async () => {
+    const projectId = await seedProject(codingAgentDefinition);
+    const taskId = await seedTask(projectId, { status: "open" });
+
+    const res = await post(agent, `/tasks/${taskId}/start`, {});
+
+    expect(res.status).toBe(200);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("spec");
+    expect(row.claimedByAgentId).toBe(agentTokenId);
+  });
+
+  it("a released task returns to open and can be started again into spec", async () => {
+    const projectId = await seedProject(codingAgentDefinition);
+    const taskId = await seedTask(projectId, {
+      status: "implement",
+      claimedByAgentId: agentTokenId,
+      claimedAt: new Date(),
+    });
+
+    const released = await post(agent, `/tasks/${taskId}/release`);
+    expect(released.status).toBe(200);
+    expect(await statusOf(taskId)).toBe("open");
+
+    const started = await post(human, `/tasks/${taskId}/start`, {});
+    expect(started.status).toBe(200);
+    expect(await statusOf(taskId)).toBe("spec");
+  });
+
+  it("an abandoned task returns to open and can be started again into spec", async () => {
+    const projectId = await seedProject(codingAgentDefinition);
+    const taskId = await seedTask(projectId, {
+      status: "spec",
+      claimedByAgentId: agentTokenId,
+      claimedAt: new Date(),
+    });
+
+    expect((await post(agent, `/tasks/${taskId}/abandon`)).status).toBe(200);
+    expect(await statusOf(taskId)).toBe("open");
+
+    const started = await post(human, `/tasks/${taskId}/start`, {});
+    expect(started.status).toBe(200);
+    expect(await statusOf(taskId)).toBe("spec");
+  });
+
+  it("a mid-pipeline task still moves along its stored edges", async () => {
+    const projectId = await seedProject(codingAgentDefinition);
+    const taskId = await seedTask(projectId, { status: "spec", claimedByAgentId: agentTokenId, claimedAt: new Date() });
+
+    expect((await post(agent, `/tasks/${taskId}/transition`, { status: "plan" })).status).toBe(200);
+    expect(await statusOf(taskId)).toBe("plan");
+  });
+});
+
+describe("a stored legacy edge out of backlog does not let anything but promote leave backlog", () => {
+  it("a human POST /start on a backlog task leaves it in backlog", async () => {
+    const projectId = await seedProject(codingAgentDefinition);
+    const taskId = await seedTask(projectId, { status: "backlog" });
+
+    const res = await post(human, `/tasks/${taskId}/start`, {});
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(await statusOf(taskId)).toBe("backlog");
+  });
+
+  it("POST /transition backlog -> spec answers 400 and leaves the task in backlog", async () => {
+    const projectId = await seedProject(codingAgentDefinition);
+    const taskId = await seedTask(projectId, { status: "backlog" });
+
+    const res = await post(human, `/tasks/${taskId}/transition`, { status: "spec" });
+
+    expect(res.status).toBe(400);
+    expect(await statusOf(taskId)).toBe("backlog");
+  });
+
+  it("PATCH backlog -> spec is refused and the human promote still works", async () => {
+    const projectId = await seedProject(codingAgentDefinition);
+    const taskId = await seedTask(projectId, { status: "backlog" });
+
+    expect((await patchStatus(human, taskId, "spec")).status).toBe(400);
+    expect(await statusOf(taskId)).toBe("backlog");
+    expect((await patchStatus(human, taskId, "open")).status).toBe(200);
     expect(await statusOf(taskId)).toBe("open");
   });
 });

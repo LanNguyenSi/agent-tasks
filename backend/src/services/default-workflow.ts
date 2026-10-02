@@ -161,10 +161,12 @@ export function defaultWorkflowDefinition(): WorkflowDefinitionShape {
  * grounding direct writers put a task into backlog.
  *
  * This is the one place the stored shape is made safe, applied on every
- * read of a stored definition: edges into or out of backlog are dropped, a
- * backlog state is dropped, and an initialState of backlog becomes "open"
- * (an "open" state is added when the legacy definition lacks one, so the
- * initial state always names a defined state). A definition that does not
+ * read of a stored definition: edges into backlog are dropped, edges out of
+ * backlog are remapped to leave from "open" (so the legacy start edge
+ * backlog -> spec becomes open -> spec), a backlog state is dropped, and an
+ * initialState of backlog becomes "open" (an "open" state is added when the
+ * legacy definition lacks one, so the initial state always names a defined
+ * state). A definition that does not
  * mention backlog is returned untouched (same object), so valid workflows
  * behave exactly as before. The stored row is never rewritten.
  */
@@ -180,6 +182,34 @@ function mentionsBacklog(def: WorkflowDefinitionShape): boolean {
   );
 }
 
+/**
+ * Edges into backlog are dropped. Edges out of backlog are remapped to leave
+ * from "open" instead, keeping label, requires, requiredRole and every other
+ * field, so the legacy start edge (backlog -> spec) becomes open -> spec and
+ * tasks that rest in "open" can still be started. A remapped edge that would
+ * duplicate an edge from "open" to the same target (an existing one, or an
+ * earlier remapped one) is skipped, as is one that would become a self loop.
+ */
+function remapBacklogEdges(
+  transitions: WorkflowDefinitionShape["transitions"],
+): WorkflowDefinitionShape["transitions"] {
+  const taken = new Set(
+    transitions.filter((t) => t.from === SANITIZED_INITIAL_STATE && t.to !== BACKLOG_STATE).map((t) => t.to),
+  );
+  const out: WorkflowDefinitionShape["transitions"] = [];
+  for (const t of transitions) {
+    if (t.to === BACKLOG_STATE) continue;
+    if (t.from !== BACKLOG_STATE) {
+      out.push(t);
+      continue;
+    }
+    if (t.to === SANITIZED_INITIAL_STATE || taken.has(t.to)) continue;
+    taken.add(t.to);
+    out.push({ ...t, from: SANITIZED_INITIAL_STATE });
+  }
+  return out;
+}
+
 export function sanitizeStoredDefinition(
   stored: unknown,
   source?: { workflowId?: string | null; projectId?: string },
@@ -192,20 +222,23 @@ export function sanitizeStoredDefinition(
 
   const states = Array.isArray(def.states) ? def.states.filter((s) => s.name !== BACKLOG_STATE) : def.states;
   const initialState = def.initialState === BACKLOG_STATE ? SANITIZED_INITIAL_STATE : def.initialState;
+  const transitions = Array.isArray(def.transitions) ? remapBacklogEdges(def.transitions) : def.transitions;
+  // The "open" state must exist whenever the initial state or a remapped edge names it.
+  const needsOpen =
+    initialState === SANITIZED_INITIAL_STATE ||
+    (Array.isArray(transitions) && transitions.some((t) => t.from === SANITIZED_INITIAL_STATE));
   const sanitized: WorkflowDefinitionShape = {
     ...def,
     initialState,
     states:
-      Array.isArray(states) && !states.some((s) => s.name === initialState)
-        ? [...states, { name: initialState, label: "Open", terminal: false }]
+      Array.isArray(states) && needsOpen && !states.some((s) => s.name === SANITIZED_INITIAL_STATE)
+        ? [...states, { name: SANITIZED_INITIAL_STATE, label: "Open", terminal: false }]
         : states,
-    transitions: Array.isArray(def.transitions)
-      ? def.transitions.filter((t) => t.from !== BACKLOG_STATE && t.to !== BACKLOG_STATE)
-      : def.transitions,
+    transitions,
   };
   logger.warn(
     { component: "workflow", op: "sanitizeStoredDefinition", ...source },
-    "stored workflow definition references backlog; backlog edges, state and initial state were dropped on read (backlog is reachable only by promote, demote and discard)",
+    "stored workflow definition references backlog; edges into backlog and the backlog state were dropped, edges out of backlog now leave from open, and the initial state is open (backlog is reachable only by promote, demote and discard)",
   );
   return sanitized;
 }
