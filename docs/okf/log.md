@@ -2,6 +2,20 @@
 
 # Change log
 
+## 2026-10-02 (stored legacy workflow definitions, remap rule)
+
+Re-verified `workflow-gates.md`, `backend.md`, `governance-merge.md` and
+`reconcile-done-but-open.md` against the narrowed sanitizer in
+`default-workflow.ts`, the comment in `grounding-context.ts` and the edge
+lookup in `grounding-completion-gates.ts`. `workflow-gates.md` now states that
+edges out of `backlog` are remapped to leave from `open` only when the stored
+initial state is `backlog` and are dropped otherwise, that the grounded direct
+paths find the remapped start edge with its stored gates, and that a task in
+`backlog` leaves it through promote or discard; it lists
+`grounding-completion-gates.ts` as a source, and its `tasks.ts` line
+citations were re-pointed in the merge of master. The claims of the other three
+did not change. All four were re-stamped.
+
 ## 2026-10-02 (stored legacy workflow definitions)
 
 Re-verified `workflow-gates.md`, `task-lifecycle.md`, `backend.md`,
