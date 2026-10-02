@@ -397,6 +397,25 @@ describe("PATCH /tasks/:id { status: 'backlog' }: race with a concurrent claim",
     expect(prismaMocks.signalUpdateMany).not.toHaveBeenCalled();
   });
 
+  it.each(CLAIM_COLUMNS)(
+    "a %s claim that lands before the locked re-check (status still open): 409, the CAS write is never attempted",
+    async (column) => {
+      store.beforeTransaction = () => {
+        store.row = { ...store.row, [column]: "racer" };
+      };
+
+      const res = await patchStatus(makeApp(), "backlog");
+
+      expect(res.status).toBe(409);
+      expect(store.transactionOpened).toBe(1);
+      expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+      expect(store.row.status).toBe("open");
+      expect(store.row[column]).toBe("racer");
+      expect(logAuditEvent).not.toHaveBeenCalled();
+      expect(prismaMocks.signalUpdateMany).not.toHaveBeenCalled();
+    },
+  );
+
   it("claim lands between the re-check and the write: the CAS matches zero rows (409), the claim survives, no backlog task with a claim", async () => {
     store.afterRevalidate = () => {
       store.row = { ...store.row, claimedByAgentId: "agent-racer" };
