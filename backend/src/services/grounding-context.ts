@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import type { GroundingBinding, Prisma, Project, Task } from "@prisma/client";
 import { z } from "zod";
 import type { Actor } from "../types/auth.js";
-import { approveTarget, defaultWorkflowDefinition, expectedFinishStateFromDefinition, isReviewState, isTerminalState, isWorkState } from "./default-workflow.js";
+import { approveTarget, defaultWorkflowDefinition, expectedFinishStateFromDefinition, isReviewState, isTerminalState, isWorkState, sanitizeStoredDefinition } from "./default-workflow.js";
 import { checkReviewApprovalGate, checkSelfMergeGate } from "./review-gate.js";
 import { resolveGovernanceMode } from "../lib/governance-mode.js";
 import { findDelegationUser } from "./github-delegation.js";
@@ -120,7 +120,10 @@ export async function groundingWorkflow(db: Prisma.TransactionClient, task: Grou
   const definition: unknown = workflows[0]?.definition ?? defaultWorkflowDefinition();
   const parsed = definitionSchema.safeParse(definition);
   if (!parsed.success) unavailable();
-  const def = parsed.data;
+  // `definition` stays as stored: receipts and digests bind the stored JSON.
+  // Every decision (edges, initial state, reopen target) reads `def`, with a
+  // stored backlog edge or initial state dropped (see sanitizeStoredDefinition).
+  const def = sanitizeStoredDefinition(parsed.data, { workflowId: workflows[0]?.id ?? null, projectId: task.projectId }) as typeof parsed.data;
   if (new Set(def.states.map(s => s.name)).size !== def.states.length ||
       !def.states.some(s => s.name === def.initialState) ||
       def.transitions.some(t => !def.states.some(s => s.name === t.from) || !def.states.some(s => s.name === t.to))) unavailable();

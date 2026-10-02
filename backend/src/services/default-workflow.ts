@@ -11,6 +11,8 @@
  * tasks.ts can handle both the custom-workflow and no-workflow paths.
  */
 
+import { logger } from "../lib/logger.js";
+
 export interface DefaultTransition {
   to: string;
   label: string;
@@ -148,6 +150,67 @@ export function defaultWorkflowDefinition(): WorkflowDefinitionShape {
 }
 
 /**
+ * `backlog` is not a workflow state. It is reached only by the three human
+ * verbs (promote, demote, discard) that write it directly in the PATCH
+ * handler, never through a workflow edge or a workflow's initial state.
+ * `workflowDefinitionSchema` (routes/workflows.ts) rejects any such
+ * definition on save, but definitions stored before that lock can still
+ * carry one (the retired coding-agent template: initialState backlog and
+ * edges such as spec -> backlog). Read as stored, they let
+ * POST /tasks/:id/transition, the claim-abandon and release routes and the
+ * grounding direct writers put a task into backlog.
+ *
+ * This is the one place the stored shape is made safe, applied on every
+ * read of a stored definition: edges into or out of backlog are dropped, a
+ * backlog state is dropped, and an initialState of backlog becomes "open"
+ * (an "open" state is added when the legacy definition lacks one, so the
+ * initial state always names a defined state). A definition that does not
+ * mention backlog is returned untouched (same object), so valid workflows
+ * behave exactly as before. The stored row is never rewritten.
+ */
+export const BACKLOG_STATE = "backlog";
+const SANITIZED_INITIAL_STATE = "open";
+
+function mentionsBacklog(def: WorkflowDefinitionShape): boolean {
+  return (
+    def.initialState === BACKLOG_STATE ||
+    (Array.isArray(def.states) && def.states.some((s) => s.name === BACKLOG_STATE)) ||
+    (Array.isArray(def.transitions) &&
+      def.transitions.some((t) => t.from === BACKLOG_STATE || t.to === BACKLOG_STATE))
+  );
+}
+
+export function sanitizeStoredDefinition(
+  stored: unknown,
+  source?: { workflowId?: string | null; projectId?: string },
+): WorkflowDefinitionShape {
+  if (stored === null || typeof stored !== "object" || Array.isArray(stored)) {
+    return stored as WorkflowDefinitionShape;
+  }
+  const def = stored as WorkflowDefinitionShape;
+  if (!mentionsBacklog(def)) return def;
+
+  const states = Array.isArray(def.states) ? def.states.filter((s) => s.name !== BACKLOG_STATE) : def.states;
+  const initialState = def.initialState === BACKLOG_STATE ? SANITIZED_INITIAL_STATE : def.initialState;
+  const sanitized: WorkflowDefinitionShape = {
+    ...def,
+    initialState,
+    states:
+      Array.isArray(states) && !states.some((s) => s.name === initialState)
+        ? [...states, { name: initialState, label: "Open", terminal: false }]
+        : states,
+    transitions: Array.isArray(def.transitions)
+      ? def.transitions.filter((t) => t.from !== BACKLOG_STATE && t.to !== BACKLOG_STATE)
+      : def.transitions,
+  };
+  logger.warn(
+    { component: "workflow", op: "sanitizeStoredDefinition", ...source },
+    "stored workflow definition references backlog; backlog edges, state and initial state were dropped on read (backlog is reachable only by promote, demote and discard)",
+  );
+  return sanitized;
+}
+
+/**
  * Resolve which state `task_finish` should target for a task currently in
  * `in_progress`. Used by the v2 MCP surface so agents know up-front whether
  * their finish will go to `review` or straight to `done`.
@@ -170,13 +233,16 @@ export async function resolveEffectiveDefinition(
   prismaClient: { workflow: { findFirst: (...args: any[]) => Promise<{ definition: unknown } | null> } },
 ): Promise<WorkflowDefinitionShape> {
   if (task.workflowId && task.workflow) {
-    return task.workflow.definition as unknown as WorkflowDefinitionShape;
+    return sanitizeStoredDefinition(task.workflow.definition, {
+      workflowId: task.workflowId,
+      projectId: task.projectId,
+    });
   }
   const projectDefault = await prismaClient.workflow.findFirst({
     where: { projectId: task.projectId, isDefault: true },
   });
   return projectDefault
-    ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
+    ? sanitizeStoredDefinition(projectDefault.definition, { projectId: task.projectId })
     : defaultWorkflowDefinition();
 }
 
@@ -306,6 +372,6 @@ export async function resolveProjectEffectiveDefinition(
     where: { projectId, isDefault: true },
   });
   return projectDefault
-    ? (projectDefault.definition as unknown as WorkflowDefinitionShape)
+    ? sanitizeStoredDefinition(projectDefault.definition, { projectId })
     : defaultWorkflowDefinition();
 }
