@@ -4,7 +4,7 @@
 
 ## 2026-10-02 (grounded demote, concurrent demote)
 
-Re-verified `task-lifecycle.md` and `workflow-gates.md` against the resolver change: a grounded demote whose locked row is already `backlog` (a concurrent demote won) now refuses with the claim-refusal `409` message; `task-lifecycle.md` names that race. Both re-stamped.
+Re-verified `task-lifecycle.md` and `workflow-gates.md` against the resolver change: a grounded demote whose locked row is already `backlog` (a concurrent demote won) now refuses with the claim-refusal `409` message; `task-lifecycle.md` names that race. `task-lifecycle.md`, `workflow-gates.md` and `backend.md` (its direct-adapter demote sentence still holds) re-stamped.
 
 ## 2026-10-02 (grounded demote, status race)
 
