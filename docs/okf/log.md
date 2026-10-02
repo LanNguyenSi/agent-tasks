@@ -1,5 +1,19 @@
 # Change log
 
+## 2026-10-02 (backlog demote)
+
+Re-verified `task-lifecycle.md`, `claim-model.md`, `workflow-gates.md`,
+`frontend.md`, `architecture.md`, `backend.md`, `governance-merge.md` and
+`reconcile-done-but-open.md` against the new open to backlog demote in
+`PATCH /tasks/:id`, its audit event and signal acknowledgement, the
+"Move to backlog" row action and header action, and the OpenAPI text.
+`task-lifecycle.md`, `claim-model.md`, `workflow-gates.md` and `frontend.md`
+now describe the demote; every `tasks.ts` line citation in
+`workflow-gates.md` and the `docs.ts` citation in `architecture.md` were
+re-pointed after the inserted lines, and the `tasks/page.tsx` line count in
+`frontend.md` was corrected. The claims of `backend.md`, `governance-merge.md`
+and `reconcile-done-but-open.md` did not change. All of them were re-stamped.
+
 ## 2026-10-01 (respec descriptions and teaching error)
 
 Re-verified `workflow-gates.md`, `reconcile-done-but-open.md`,

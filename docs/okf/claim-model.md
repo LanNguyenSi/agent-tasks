@@ -3,7 +3,7 @@ type: invariant
 title: "Claim model: task_pickup resolution order, backlog filtering, and single-active-claim"
 description: "Signals, then review, then open work, then idle; backlog is invisible to pickup; priority desc/createdAt asc; blockedBy filtering; one active claim per agent enforced in both pickup and start; status is an unconstrained free String; backlog tasks require human promotion before agent claim."
 tags: [claim, pickup, status, dependencies, backlog]
-timestamp: 2026-10-01T15:12:20Z
+timestamp: 2026-10-02T07:18:18Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/grounding-route-context.ts
@@ -19,7 +19,7 @@ sources:
   - docs/grounding-receipt-contract.md
 ---
 
-**Backlog filtering in pickup**: `POST /tasks/pickup` does not return backlog tasks at any point in its resolution order. A task in `backlog` status is invisible to both the signals branch (backlog tasks emit no `task_available` signal; see `task-lifecycle.md`) and the open-work branch. Backlog tasks are intended for human review before agent pickup; see `task-lifecycle.md` for the human promote/discard surface. **D18 revision**: the CLI's id-prefix resolver (`cli/src/resolve.ts`, `cli/src/api.ts`'s `searchTaskPool`) can now resolve backlog-task IDs by prefix -- `CLAIMABLE_VALID_STATUSES` on `/api/tasks/claimable` accepts `backlog` as an explicit-search value (see the "List claimable tasks" block comment in `backend/src/routes/tasks.ts`). This is discovery only: the implicit no-params "what can I claim right now?" default still excludes backlog entirely, and a resolved backlog task's id still 403s `backlog_not_promoted` at `/tasks/:id/start`/`/tasks/:id/claim` until a human promotes it. The web UI and MCP clients could already manipulate backlog tasks directly by full UUID; only the CLI's prefix-search discoverability was the gap.
+**Backlog filtering in pickup**: `POST /tasks/pickup` does not return backlog tasks at any point in its resolution order. A task in `backlog` status is invisible to both the signals branch (backlog tasks emit no `task_available` signal; see `task-lifecycle.md`) and the open-work branch. Backlog tasks are intended for human review before agent pickup; see `task-lifecycle.md` for the human promote/discard surface. A human can also demote an unclaimed `open` task back to `backlog`; it then leaves the pool the same way and its pending `task_available` signals are acknowledged, so pickup's signal branch no longer surfaces them. **D18 revision**: the CLI's id-prefix resolver (`cli/src/resolve.ts`, `cli/src/api.ts`'s `searchTaskPool`) can now resolve backlog-task IDs by prefix -- `CLAIMABLE_VALID_STATUSES` on `/api/tasks/claimable` accepts `backlog` as an explicit-search value (see the "List claimable tasks" block comment in `backend/src/routes/tasks.ts`). This is discovery only: the implicit no-params "what can I claim right now?" default still excludes backlog entirely, and a resolved backlog task's id still 403s `backlog_not_promoted` at `/tasks/:id/start`/`/tasks/:id/claim` until a human promotes it. The web UI and MCP clients could already manipulate backlog tasks directly by full UUID; only the CLI's prefix-search discoverability was the gap.
 
 **`POST /tasks/pickup`** (agent-only; humans get `400 bad_request`, told to use `/tasks/claimable` instead) resolves "what should I do next?" in this fixed order, first hit wins:
 
