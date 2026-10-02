@@ -2,6 +2,18 @@
 
 # Change log
 
+## 2026-10-02 (stored legacy workflow definitions)
+
+Re-verified `workflow-gates.md`, `task-lifecycle.md`, `backend.md`,
+`governance-merge.md` and `reconcile-done-but-open.md` against the
+sanitizing read of stored workflow definitions in `default-workflow.ts` and
+`grounding-context.ts`. `workflow-gates.md` now states that a stored
+definition with `backlog` as its initial state or as an edge endpoint is
+sanitized on every read, which writers that covers, and the two readers that
+keep their own behaviour; `task-lifecycle.md` points to it from the abandon
+and demote text. The claims of `backend.md`, `governance-merge.md` and
+`reconcile-done-but-open.md` did not change. All five were re-stamped.
+
 ## 2026-10-02 (backlog demote)
 
 Re-verified `task-lifecycle.md`, `claim-model.md`, `workflow-gates.md`,
