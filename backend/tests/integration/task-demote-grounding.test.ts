@@ -1,10 +1,10 @@
 /**
- * Pins the current behaviour of the human "demote" PATCH (open -> backlog) for
- * a grounding-enrolled task (agent-tasks task 7c64e80c): the direct-route
- * middleware intercepts the PATCH and its resolver has no demote case, so the
- * request answers 409 bad_state and the task stays open. Grounded demote is a
- * follow-up; this test makes the limitation explicit and fails loudly when it
- * changes. The promote of an enrolled backlog task is the control.
+ * Human "demote" PATCH (open -> backlog) for a grounding-enrolled task
+ * (agent-tasks task bf896c1d). The direct-route middleware intercepts the
+ * PATCH; the demote follows the REST demote rules: only an open, fully
+ * unclaimed task moves, with the audit event task.backlog_demoted and every
+ * pending signal acknowledged. The promote of an enrolled backlog task is the
+ * control.
  */
 import { type PrismaClient } from "@prisma/client";
 import { beforeAll, afterAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
@@ -71,13 +71,67 @@ function patch(taskId: string, status: string) {
   });
 }
 
+const CLAIM_MESSAGE = "Task must be open with no work or review claim to move it back to backlog";
+const claimColumns = {
+  claimedByAgentId: { claimedByAgentId: ids.agent },
+  claimedByUserId: { claimedByUserId: ids.user },
+  reviewClaimedByAgentId: { reviewClaimedByAgentId: ids.agent },
+  reviewClaimedByUserId: { reviewClaimedByUserId: ids.user },
+} as const;
+
+async function openUnclaimed() {
+  await store.db.task.update({ where: { id: f.taskId }, data: { status: "open", claimedByAgentId: null, claimedAt: null } });
+}
+async function pendingSignal() {
+  return store.db.signal.create({ data: { type: "task_available", taskId: f.taskId, projectId: f.projectId, recipientAgentId: ids.agent, context: {} } });
+}
+
 describe("demote of a grounding-enrolled task", () => {
-  it("answers 409 bad_state and leaves an open, unclaimed enrolled task open (grounded demote is not supported yet)", async () => {
-    await store.db.task.update({ where: { id: f.taskId }, data: { status: "open", claimedByAgentId: null, claimedAt: null } });
+  it("moves an open, unclaimed enrolled task to backlog, audits task.backlog_demoted and acknowledges pending signals", async () => {
+    await openUnclaimed();
+    const signal = await pendingSignal();
+    const res = await patch(f.taskId, "backlog");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { task: { status: string } };
+    expect(body.task.status).toBe("backlog");
+    expect((await f.task()).status).toBe("backlog");
+    const audit = await store.db.auditLog.findMany({ where: { taskId: f.taskId, action: "task.backlog_demoted" } });
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.payload).toMatchObject({ from: "open", to: "backlog", actorType: "human", via: "patch" });
+    expect((await store.db.signal.findUniqueOrThrow({ where: { id: signal.id } })).acknowledgedAt).not.toBeNull();
+  });
+
+  it.each(Object.keys(claimColumns) as Array<keyof typeof claimColumns>)("answers 409 with the claim message and changes nothing when %s is set", async column => {
+    await openUnclaimed();
+    await store.db.task.update({ where: { id: f.taskId }, data: claimColumns[column] });
+    const signal = await pendingSignal();
     const res = await patch(f.taskId, "backlog");
     expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toBe("bad_state");
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.message).toBe(CLAIM_MESSAGE);
     expect((await f.task()).status).toBe("open");
+    expect(await store.db.auditLog.count({ where: { taskId: f.taskId, action: "task.backlog_demoted" } })).toBe(0);
+    expect((await store.db.signal.findUniqueOrThrow({ where: { id: signal.id } })).acknowledgedAt).toBeNull();
+  });
+
+  it("refuses inside the locked write when a claim lands after the route read (service-level race)", async () => {
+    await openUnclaimed();
+    await store.db.task.update({ where: { id: f.taskId }, data: { claimedByAgentId: ids.agent } });
+    const transport = { endpoint: "patch" as const, body: { status: "backlog" } };
+    await expect(
+      f.service.dispose(f.taskId, admin, "race-key", { action: "transition", route: { kind: "direct", transport, direct: { version: 1, endpoint: "patch", target: "backlog" } } }),
+    ).rejects.toMatchObject({ code: "bad_state", status: 409, message: CLAIM_MESSAGE });
+    expect((await f.task()).status).toBe("open");
+  });
+
+  it.each(["in_progress", "review", "abandoned"])("answers 400 for a demote from %s", async from => {
+    await store.db.task.update({ where: { id: f.taskId }, data: { status: from, claimedByAgentId: null, claimedAt: null } });
+    const res = await patch(f.taskId, "backlog");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toBe(`Transition from '${from}' to 'backlog' is not allowed; only an open task can be moved back to backlog`);
+    expect((await f.task()).status).toBe(from);
   });
 
   it("control: promote of an enrolled backlog task still works", async () => {

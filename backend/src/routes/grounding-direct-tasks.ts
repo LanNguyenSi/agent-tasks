@@ -12,12 +12,14 @@ import { directPatchSchema, directReviewSchema, directTransitionSchema } from ".
 import { directAgentPatchSchema, directRespecSchema, mutateDirectTask, rejectEnrolledDelete } from "../services/grounding-direct-mutations.js";
 import { approveTarget, requestChangesTarget } from "../services/default-workflow.js";
 import type { GroundingDirectDescriptor } from "../services/grounding-direct-context.js";
-import { resolveDirectGroundingTarget } from "../services/grounding-direct-context.js";
+import { GroundingDemoteRefused, resolveDirectGroundingTarget } from "../services/grounding-direct-context.js";
+import { demoteSourceStatusMessage } from "../services/task-demote.js";
 import type { GroundingRouteTransport, OperationInput } from "../services/grounding-operations.js";
 import { clearDisposition } from "../services/confidence-telemetry.js";
 
 function routeError(error: unknown, c: Context<{ Variables: AppVariables }>, descriptor?: GroundingDirectDescriptor) {
   if (error instanceof z.ZodError) return c.json({ error: "validation_error", details: error.issues }, 400);
+  if (error instanceof GroundingDemoteRefused) return c.json({ error: error.code, message: error.message }, error.status);
   if (error instanceof GroundingAccessError) return c.json({ error: error.code }, error.status);
   if (error instanceof GroundingReceiptVerificationError) return c.json({ error: error.code, ...(descriptor ? { groundingHint: {
     kind: "external_grounding_v1", attempts: { issue: { url: `/api/tasks/${c.req.param("id")}/grounding-attempts/direct`, body: descriptor }, receipt: { url: `/api/tasks/${c.req.param("id")}/grounding-attempts/:attemptId/receipt` } }, completion: { requiredHeader: "Idempotency-Key" },
@@ -58,6 +60,8 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
         }
         // No-op status and result/commentary writes do not create a completion attempt.
         if (endpoint === "patch" && (!("status" in body) || body.status === undefined || body.status === task.status)) return c.json(await mutateDirectTask(deps.db, task, actor, "patch", body));
+        // Backlog is reachable only from open (the REST demote guard): any other source answers 400 with the REST text.
+        if (endpoint === "patch" && (body as { status?: string }).status === "backlog" && task.status !== "open") return c.json({ error: "bad_request", message: demoteSourceStatusMessage(task.status) }, 400);
         // The C04 recovery adapter already joins the atomic mutation protocol.
         // Hand-off keeps the telemetry hook in the REST handler: it clears
         // finalDisposition post-commit when an admin restores the task. The

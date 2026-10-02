@@ -38,7 +38,7 @@ const planSchema = z.object({
   acknowledge: z.boolean(),
   signals: z.array(z.object({ type: z.enum(["review_needed", "changes_requested", "task_approved", "self_merge_notice", "task_available", "task_force_transitioned"]), recipientAgentId: z.string().uuid().nullable(), recipientUserId: z.string().uuid().nullable(), context: contextSchema }).strict()).max(10000),
   comments: z.array(text).max(10),
-  audits: z.array(z.object({ action: z.enum(["task.transitioned", "task.reviewed", "task.released", "task.auto_merged", "task.merged", "task.self_merge_notice_emitted", "task.foreign_pr_linked", "task.transitioned.forced", "task.backlog_discarded", "task.backlog_promoted", "task.unabandoned", "task.created", "task.labels_changed", "task.deliverable_repo_changed"]), payload: z.record(z.unknown()) }).strict()).max(10),
+  audits: z.array(z.object({ action: z.enum(["task.transitioned", "task.reviewed", "task.released", "task.auto_merged", "task.merged", "task.self_merge_notice_emitted", "task.foreign_pr_linked", "task.transitioned.forced", "task.backlog_discarded", "task.backlog_promoted", "task.backlog_demoted", "task.unabandoned", "task.created", "task.labels_changed", "task.deliverable_repo_changed"]), payload: z.record(z.unknown()) }).strict()).max(10),
 }).strict();
 export type GroundingRoutePlan = z.infer<typeof planSchema>;
 
@@ -127,7 +127,7 @@ async function buildDirectPlan(db: Prisma.TransactionClient, task: GroundingTask
   const actorId = actor.type === "agent" ? actor.tokenId : actor.userId;
   const actorName = actor.type === "agent" ? (await db.agentToken.findUnique({ where: { id: actorId }, select: { name: true } }))?.name ?? "Agent" : (await db.user.findUnique({ where: { id: actorId }, select: { name: true } }))?.name ?? "Human";
   const context: z.infer<typeof contextSchema> = { taskTitle: task.title, taskStatus: decision.to, projectSlug: task.project.slug, projectName: task.project.name, branchName: task.branchName, prUrl: task.prUrl, prNumber: task.prNumber, actor: { type: actor.type, name: actorName } };
-  const plan: GroundingRoutePlan = { version: 1, kind: "direct", action: decision.action as GroundingRoutePlan["action"], remote: false, patch: decision.data, response: {}, acknowledge: resolved.success && resolved.terminal, signals: [], comments: [], audits: [] };
+  const plan: GroundingRoutePlan = { version: 1, kind: "direct", action: decision.action as GroundingRoutePlan["action"], remote: false, patch: decision.data, response: {}, acknowledge: (resolved.success && resolved.terminal) || resolved.special === "task.backlog_demoted", signals: [], comments: [], audits: [] };
   if (direct.descriptor.endpoint === "review") {
     const body = direct.body as { action: "approve" | "request_changes"; comment?: string };
     if (body.comment?.trim()) plan.comments.push(`[${body.action === "approve" ? "Approved" : "Changes requested"}] ${body.comment.trim()}`);
