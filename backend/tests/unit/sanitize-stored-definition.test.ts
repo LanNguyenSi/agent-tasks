@@ -103,13 +103,25 @@ describe("sanitizeStoredDefinition", () => {
 
   it("keeps a non-backlog initialState and still drops a stray edge into backlog", () => {
     const def: WorkflowDefinitionShape = {
-      ...defaultWorkflowDefinition(),
-      transitions: [...defaultWorkflowDefinition().transitions, { from: "in_progress", to: "backlog" }],
+      initialState: "queued",
+      states: [
+        { name: "queued", label: "Queued", terminal: false },
+        { name: "in_progress", label: "In progress", terminal: false },
+        { name: "done", label: "Done", terminal: true },
+      ],
+      transitions: [
+        { from: "queued", to: "in_progress" },
+        { from: "in_progress", to: "backlog" },
+        { from: "in_progress", to: "done" },
+      ],
     };
     const out = sanitizeStoredDefinition(def);
-    expect(out.initialState).toBe("open");
-    expect(out.transitions.some((t) => t.to === "backlog")).toBe(false);
-    expect(out.transitions).toHaveLength(def.transitions.length - 1);
+    expect(out.initialState).toBe("queued");
+    expect(out.states.map((s) => s.name)).toEqual(["queued", "in_progress", "done"]);
+    expect(out.transitions).toEqual([
+      { from: "queued", to: "in_progress" },
+      { from: "in_progress", to: "done" },
+    ]);
   });
 
   it("does not mutate the stored object", () => {
