@@ -140,10 +140,12 @@ export class GroundingCompletionService {
       if (!["open", "backlog"].includes(task.status) || task.claimedByUserId || task.claimedByAgentId || task.reviewClaimedByUserId || task.reviewClaimedByAgentId) badState();
       data = { status: "abandoned" };
     } else if (request.action === "reopen") {
-      // Also unreachable from any route: an admin restore arrives as PATCH
+      // No route builds this action either. An admin restore arrives as PATCH
       // abandoned -> initial state, which the direct middleware hands to the
       // REST handler in routes/tasks.ts (it clears the disposition post-commit).
-      // Wire the same clear here if a caller is ever added (task 170bd23b).
+      // The same restore also lands in the direct branch above when the task
+      // turns abandoned after the middleware's pre-lock read; the route's
+      // after-commit observer clears the disposition there (task 170bd23b).
       if (actor.type !== "human" || !await this.authority.hasRole(actor, task.projectId, "ADMIN", db)) forbidden();
       if (task.status !== "abandoned" || task.claimedByUserId || task.claimedByAgentId || task.reviewClaimedByUserId || task.reviewClaimedByAgentId) badState();
       data = { status: def.initialState };
