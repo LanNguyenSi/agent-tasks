@@ -14,6 +14,13 @@ re-pointed after the inserted lines, and the `tasks/page.tsx` line count in
 `frontend.md` was corrected. The claims of `backend.md`, `governance-merge.md`
 and `reconcile-done-but-open.md` did not change. All of them were re-stamped.
 
+Fix round: the guard that answers `400` for a PATCH to `backlog` from any
+status other than `open` (also under a stored legacy workflow definition) and
+the pinned `409` for a grounding-enrolled task are now stated in
+`task-lifecycle.md`; the `tasks.ts` line citations in `workflow-gates.md` were
+re-pointed again after the inserted guard, and the seven docs whose sources
+changed were re-stamped.
+
 ## 2026-10-01 (respec descriptions and teaching error)
 
 Re-verified `workflow-gates.md`, `reconcile-done-but-open.md`,
