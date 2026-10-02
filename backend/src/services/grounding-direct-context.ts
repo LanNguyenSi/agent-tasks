@@ -43,8 +43,8 @@ export async function resolveDirectGroundingTarget(db: Prisma.TransactionClient,
   const demoteTarget = direct.endpoint === "patch" && to === "backlog";
   const demote = demoteTarget && task.status === "open";
   if (demote && (task.claimedByUserId || task.claimedByAgentId || task.reviewClaimedByUserId || task.reviewClaimedByAgentId)) throw new GroundingDemoteRefused();
-  // The route already answered 400 for a non-open source; a non-open locked row here means a task_start (or similar) won the race.
-  if (demoteTarget && !demote && task.status !== "backlog") throw new GroundingDemoteRefused();
+  // The route already answered 400 for a non-open source and no-ops a backlog one; a non-open locked row here means a task_start or a concurrent demote won the race.
+  if (demoteTarget && !demote) throw new GroundingDemoteRefused();
   if (reopen && !await authority.hasRole(actor, task.projectId, "ADMIN", db)) throw new GroundingAccessError("forbidden", 403);
   const edge = def.transitions.find(t => t.from === task.status && t.to === to);
   if (!edge && !discard && !promote && !reopen && !demote) throw new GroundingAccessError("bad_state", 409);

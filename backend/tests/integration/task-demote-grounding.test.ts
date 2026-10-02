@@ -124,7 +124,7 @@ describe("demote of a grounding-enrolled task", () => {
     expect((await f.task()).status).toBe("open");
   });
 
-  it.each(["in_progress", "abandoned"])("refuses inside the locked write with the REST text when the locked row is %s and unclaimed (status race)", async from => {
+  it.each(["in_progress", "review", "abandoned", "backlog"])("refuses inside the locked write with the claim-refusal message when the locked row is %s and unclaimed (status race)", async from => {
     await store.db.task.update({ where: { id: f.taskId }, data: { status: from, claimedByAgentId: null, claimedAt: null } });
     const signal = await pendingSignal();
     const transport = { endpoint: "patch" as const, body: { status: "backlog" } };
