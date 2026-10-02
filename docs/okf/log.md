@@ -2,6 +2,20 @@
 
 # Change log
 
+## 2026-10-02 (grounded demote)
+
+Re-verified `task-lifecycle.md`, `backend.md`, `workflow-gates.md`,
+`claim-model.md`, `architecture.md`, `governance-merge.md` and
+`reconcile-done-but-open.md` against the grounded open to backlog demote: the
+direct-route resolver now has a demote case, the route plan acknowledges the
+task's signals and may record `task.backlog_demoted`, and the refusal texts
+moved to `services/task-demote.ts`. `task-lifecycle.md` no longer says an
+enrolled task cannot be demoted, `backend.md` and `workflow-gates.md` mention
+the grounded lane, and the `tasks.ts` line citations in `workflow-gates.md`
+were re-pointed after the moved constant and the added import. The claims of
+`claim-model.md`, `architecture.md`, `governance-merge.md` and
+`reconcile-done-but-open.md` did not change. All of them were re-stamped.
+
 ## 2026-10-02 (backlog demote)
 
 Re-verified `task-lifecycle.md`, `claim-model.md`, `workflow-gates.md`,
