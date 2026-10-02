@@ -36,6 +36,14 @@ While a task sits in `backlog`:
 
 Only a human moves a task out of `backlog`: **promote** to `open` (board affordance or `PATCH /api/tasks/:id { status: "open" }`, audited as `task.backlog_promoted`) when it is ready for the claimable pool, or **discard** to `abandoned` (audited as `task.backlog_discarded`). No implicit promotion happens on any other event. The creating agent may also retire its own unpromoted draft via `task_creator_abandon`.
 
+The reverse move, **demote**, takes a task promoted by mistake from `open` back to `backlog` (`PATCH /api/tasks/:id { status: "backlog" }`, audited as `task.backlog_demoted`; the board offers it as "Move to backlog"). The rules:
+
+- it needs the same project write tier as promote and discard; agents cannot demote, because the `status` field is closed to them,
+- it applies to an `open` task with no work or review claim: it answers `409` while anyone holds a claim, and a `task_start` that claims first wins the race and makes the demote answer `409`,
+- from every status other than `open` it answers `400`, also when the project stores an older workflow definition with an edge into `backlog` or an initial state of `backlog`,
+- a grounding-enrolled task is not supported yet and answers `409` `bad_state`,
+- after a successful demote the task's pending signals are acknowledged, so they stop waking agents.
+
 Together with the confidence gate this closes the loop on agent-generated work: agents may propose tasks at any time, but nothing an agent wrote enters the claimable pool without a human decision. Full state chart in [docs/state-machines.md](state-machines.md).
 
 ## Transition preconditions
