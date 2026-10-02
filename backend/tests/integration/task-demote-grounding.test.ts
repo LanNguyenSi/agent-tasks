@@ -12,6 +12,7 @@ import { Hono } from "hono";
 import { completionStore, completionFixture } from "../helpers/grounding-completion-fixtures.js";
 import { ids } from "../helpers/grounding-fixtures.js";
 import { createGroundingDirectTaskRouter } from "../../src/routes/grounding-direct-tasks.js";
+import { createGroundingRemoteTargetGuard } from "../../src/services/grounding-scope.js";
 import type { AppVariables } from "../../src/types/hono.js";
 
 const harness = vi.hoisted(() => ({ db: null as PrismaClient | null }));
@@ -57,7 +58,11 @@ function patch(taskId: string, status: string) {
     c.set("groundingRemoteTargetGuard", null);
     await next();
   });
-  app.route("/api", createGroundingDirectTaskRouter({ db: store.db, service: f.service }));
+  const scope = { projectIds: new Set([f.projectId]), repos: new Set<string>() };
+  app.route(
+    "/api",
+    createGroundingDirectTaskRouter({ db: store.db, service: f.service, scope, remoteGuard: createGroundingRemoteTargetGuard({ db: store.db, scope }) }),
+  );
   app.route("/api", taskRouter);
   return app.request(`/api/tasks/${taskId}`, {
     method: "PATCH",
