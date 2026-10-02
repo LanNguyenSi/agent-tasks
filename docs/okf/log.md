@@ -2,6 +2,16 @@
 
 # Change log
 
+## 2026-10-02 (merge of master: generic status compare-and-swap)
+
+Merged master (the generic status write compare-and-swap) into the branch for
+stored legacy workflow definitions. `workflow-gates.md` keeps the master text
+of its 422 paragraph with the `tasks.ts` line citations after the `PATCH`
+backlog guard comment re-pointed by two lines; `task-lifecycle.md` keeps the
+sanitizer sentence of this branch and the compare-and-swap sentence of
+master. The claims of `backend.md`, `claim-model.md`, `governance-merge.md`
+and `reconcile-done-but-open.md` did not change. All six were re-stamped.
+
 ## 2026-10-02 (stored legacy workflow definitions, start edge only)
 
 Re-verified `workflow-gates.md` and `reconcile-done-but-open.md` against the
@@ -47,6 +57,10 @@ that keep their own behaviour; its `tasks.ts` line citations after the
 the abandon and demote text. The claims of `backend.md`,
 `governance-merge.md`, `reconcile-done-but-open.md` and `claim-model.md` did
 not change (the `tasks.ts` edit is a comment only). All six were re-stamped.
+
+## 2026-10-02 (generic status write compare-and-swap)
+
+Re-verified `workflow-gates.md`, `task-lifecycle.md`, `backend.md`, `claim-model.md`, `governance-merge.md` and `reconcile-done-but-open.md` against the change to `backend/src/routes/tasks.ts`: `POST /tasks/:id/transition` and the human `PATCH /tasks/:id` status lane now write with an `updateMany` guarded on the status the handler read and answer `409` when no row matched. `workflow-gates.md` gained a paragraph on it and its `tasks.ts` line citations were re-pointed to the shifted code; `task-lifecycle.md` now says promote and discard use the same guarded write. The claims of `backend.md`, `claim-model.md`, `governance-merge.md` and `reconcile-done-but-open.md` did not change. All six were re-stamped.
 
 ## 2026-10-02 (grounded demote, concurrent demote)
 

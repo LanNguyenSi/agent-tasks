@@ -142,6 +142,13 @@ import { httpUrl } from "../lib/url-guard.js";
 // outright.
 const RESOLVED_BLOCKER_STATUSES: string[] = ["done", "abandoned"];
 
+// Answer for a generic status write (PATCH /tasks/:id with a status, POST
+// /tasks/:id/transition) whose compare-and-swap on the status the handler
+// validated matched no row: another writer changed the status between the
+// handler's read and its write, so the validated transition no longer applies.
+const STATUS_CHANGED_CONFLICT_MESSAGE =
+  "Task status changed before the request completed; reload the task and retry";
+
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
 taskRouter.onError((error, c) => {
   if (error instanceof GroundingAccessError) {
@@ -5320,6 +5327,20 @@ taskRouter.patch("/tasks/:id", async (c) => {
       // updateMany cannot use `include`, so re-fetch the freshly written row.
       updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
       if (!updated) return notFound(c);
+    } else if (body.status !== undefined) {
+      // Compare-and-swap on the status the checks above validated (this also
+      // covers the promote and discard moves and an echoed, unchanged status):
+      // the write only lands while the row still has that status. A concurrent
+      // change in between matches zero rows, so the stale transition answers
+      // 409 and leaves the row alone instead of writing over the newer state.
+      const written = await prisma.task.updateMany({
+        where: { id: task.id, status: previousStatus },
+        data: patchData,
+      });
+      if (written.count === 0) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
+      // updateMany cannot use `include`, so re-fetch the freshly written row.
+      updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
+      if (!updated) return notFound(c);
     } else {
       updated = await prisma.task.update({ where: { id: task.id }, data: patchData, include: taskInclude });
     }
@@ -7143,8 +7164,13 @@ taskRouter.post(
       !isTerminal &&
       status !== previousStatus &&
       isReviewState(effectiveDef, previousStatus);
-    const updated = await prisma.task.update({
-      where: { id: task.id },
+    // Compare-and-swap on the status the checks above validated: the write
+    // only lands while the row still has `previousStatus`. A concurrent status
+    // change between the read and this write matches zero rows, so the stale
+    // transition answers 409 before any claim change, ack, audit event or
+    // signal happens, and the row keeps the newer state.
+    const written = await prisma.task.updateMany({
+      where: { id: task.id, status: previousStatus },
       data: {
         status,
         updatedAt: new Date(),
@@ -7165,8 +7191,14 @@ taskRouter.post(
               }
             : {}),
       },
+    });
+    if (written.count === 0) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
+    // updateMany cannot use `include`, so re-fetch the freshly written row.
+    const updated = await prisma.task.findUnique({
+      where: { id: task.id },
       include: taskInclude,
     });
+    if (!updated) return notFound(c);
 
     // Ack BEFORE emitting outcome signals below — those must survive past
     // the task's terminal state, so we ack the pending work/review asks first.

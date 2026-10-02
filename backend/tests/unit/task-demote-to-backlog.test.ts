@@ -295,11 +295,15 @@ describe("PATCH /tasks/:id { status: 'backlog' }: demote an open, unclaimed task
     expect(accessMocks.hasProjectRole).not.toHaveBeenCalled();
   });
 
-  it("a no-op status (backlog task patched with backlog) is not a demote: 200, no audit, no CAS, no ack", async () => {
+  it("a no-op status (backlog task patched with backlog) is not a demote: 200, no audit, no demote transaction, no ack", async () => {
     store.row = openRow({ status: "backlog" });
     const res = await patchStatus(makeApp(), "backlog");
     expect(res.status).toBe(200);
-    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    // Only the generic status compare-and-swap runs (guarded on the status the
+    // handler read, no claim columns); the demote transaction never opens.
+    expect(store.transactionOpened).toBe(0);
+    expect(prismaMocks.taskUpdateMany).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].where).toEqual({ id: store.row.id, status: "backlog" });
     expect(logAuditEvent).not.toHaveBeenCalled();
     expect(prismaMocks.signalUpdateMany).not.toHaveBeenCalled();
   });
@@ -488,21 +492,25 @@ describe("PATCH /tasks/:id { status: 'backlog' }: race with a concurrent claim",
 });
 
 describe("other paths to backlog and the sibling special cases stay as they were", () => {
-  it("promote (backlog -> open) still writes through the plain update, audits task.backlog_promoted, acknowledges nothing", async () => {
+  it("promote (backlog -> open) writes through the generic status compare-and-swap, audits task.backlog_promoted, acknowledges nothing", async () => {
     store.row = openRow({ status: "backlog" });
     const res = await patchStatus(makeApp(), "open");
     expect(res.status).toBe(200);
-    expect(prismaMocks.taskUpdate).toHaveBeenCalledTimes(1);
-    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    expect(store.transactionOpened).toBe(0);
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(prismaMocks.taskUpdateMany).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].where).toEqual({ id: store.row.id, status: "backlog" });
     expect(logAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "task.backlog_promoted" }));
     expect(prismaMocks.signalUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("discard (backlog -> abandoned) still audits task.backlog_discarded and never touches the demote CAS", async () => {
+  it("discard (backlog -> abandoned) still audits task.backlog_discarded and never opens the demote transaction", async () => {
     store.row = openRow({ status: "backlog" });
     const res = await patchStatus(makeApp(), "abandoned");
     expect(res.status).toBe(200);
-    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    expect(store.transactionOpened).toBe(0);
+    expect(prismaMocks.taskUpdateMany).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].where).toEqual({ id: store.row.id, status: "backlog" });
     expect(logAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "task.backlog_discarded" }));
     expect(prismaMocks.signalUpdateMany).not.toHaveBeenCalled();
   });

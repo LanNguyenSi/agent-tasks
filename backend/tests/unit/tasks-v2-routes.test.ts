@@ -1360,6 +1360,71 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
     expect(signalEmitters.emitTaskAvailableSignal).not.toHaveBeenCalled();
   });
 
+  it("guards the status write on the status it read: the write's where carries id and the previous status", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      claimedByUserId: null,
+      branchName: "feat/test-branch",
+      prUrl: "https://github.com/acme/thing/pull/1",
+      prNumber: 1,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.taskUpdateMany).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].where).toEqual({ id: "task-1", status: "in_progress" });
+  });
+
+  it("a status write that lost the race (compare-and-swap matched no row) answers 409 and audits, acknowledges and signals nothing", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+      ...baseTask,
+      status: "in_progress",
+      claimedByAgentId: "agent-1",
+      claimedByUserId: null,
+      branchName: "feat/test-branch",
+      prUrl: "https://github.com/acme/thing/pull/1",
+      prNumber: 1,
+    });
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe("conflict");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+    expect(prismaMocks.signalUpdateMany).not.toHaveBeenCalled();
+    expect(signalEmitters.emitReviewSignal).not.toHaveBeenCalled();
+    expect(signalEmitters.emitTaskAvailableSignal).not.toHaveBeenCalled();
+  });
+
+  it("a PATCH without a status keeps the plain update (no compare-and-swap)", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "in_progress" });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Renamed" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(prismaMocks.taskUpdate).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("applies a valid status write, clears the work-claim, and audits the transition", async () => {
     prismaMocks.taskFindUnique.mockResolvedValueOnce({
       ...baseTask,
@@ -1380,7 +1445,7 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("done");
     // Dangling-claim fix: PATCH status='done' used to leave the work-claim
     // in place. Terminal writes now clear it, mirroring /transition.
@@ -1416,7 +1481,7 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("done");
     expect(updateCall.data.claimedByAgentId).toBeNull();
     expect(updateCall.data.claimedByUserId).toBeNull();
@@ -1444,7 +1509,7 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("review");
     expect(updateCall.data.claimedByAgentId).toBeUndefined();
     expect(updateCall.data.claimedAt).toBeUndefined();
@@ -1542,7 +1607,7 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
 
     expect(res.status).toBe(200);
     expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.title).toBe("Renamed");
     // Negative control (agent-tasks 05ad9bf3): a no-op status write is not a
     // transition at all, so neither workflow signal may fire.
@@ -1792,6 +1857,8 @@ describe("PATCH /tasks/:id — backlog promote/discard (T-002)", () => {
 
   it("AC1: write-access human promotes backlog->open (200), audits task.backlog_promoted, emits NO signal, and never checks project-admin (D4)", async () => {
     prismaMocks.taskFindUnique.mockResolvedValueOnce(BACKLOG_TASK);
+    // Second read: the row re-fetched after the compare-and-swap write.
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...BACKLOG_TASK, status: "open" });
     prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
 
     const res = await makeApp(HUMAN).request("/tasks/task-1", {
@@ -1803,7 +1870,7 @@ describe("PATCH /tasks/:id — backlog promote/discard (T-002)", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { task: { status: string } };
     expect(body.task.status).toBe("open");
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("open");
 
     expect(logAuditEvent).toHaveBeenCalledWith(
@@ -1845,6 +1912,7 @@ describe("PATCH /tasks/:id — backlog promote/discard (T-002)", () => {
 
   it("AC2: write-access human discards backlog->abandoned (200), audits task.backlog_discarded, and never checks project-admin (D4)", async () => {
     prismaMocks.taskFindUnique.mockResolvedValueOnce(BACKLOG_TASK);
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...BACKLOG_TASK, status: "abandoned" });
     prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
 
     const res = await makeApp(HUMAN).request("/tasks/task-1", {
@@ -1856,7 +1924,7 @@ describe("PATCH /tasks/:id — backlog promote/discard (T-002)", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { task: { status: string } };
     expect(body.task.status).toBe("abandoned");
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("abandoned");
 
     expect(logAuditEvent).toHaveBeenCalledWith(
@@ -2066,7 +2134,7 @@ describe("PATCH /tasks/:id — foreign-deliverable skip evaluates the PENDING de
     // Proves the skip fired instead of a real (fail-closed) evaluation.
     expect(findDelegationUserMock).not.toHaveBeenCalled();
 
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.deliverableRepo).toBe(FOREIGN_REPO);
     expect(updateCall.data.status).toBe("review");
   });
@@ -2835,7 +2903,7 @@ describe("release-ops-no-pr template — task_finish runs without branchName/prU
       body: JSON.stringify({ status: "done" }),
     });
     expect(res.status).toBe(200);
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    const data = prismaMocks.taskUpdateMany.mock.calls[0]![0].data;
     expect(data.status).toBe("done");
   });
 
@@ -4301,6 +4369,50 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     });
   });
 
+  it("transition write is guarded on the status it read; a lost race answers 409 and audits and signals nothing", async () => {
+    const task = {
+      ...baseTask,
+      id: "task-transition-cas-1",
+      status: "review",
+      workflowId: null,
+      workflow: null,
+      claimedByAgentId: "agent-1",
+      claimedByUserId: null,
+      project: { ...baseTask.project, requireDistinctReviewer: false },
+    };
+    prismaMocks.taskFindUnique.mockResolvedValue(task);
+    prismaMocks.workflowFindFirst.mockResolvedValue(null);
+
+    const send = () =>
+      makeTransitionApp(HUMAN).request("/tasks/task-transition-cas-1/transition", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "done" }),
+      });
+
+    // Race won: the write is guarded on the status that was read.
+    const won = await send();
+    expect(won.status).toBe(200);
+    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].where).toEqual({
+      id: "task-transition-cas-1",
+      status: "review",
+    });
+    vi.clearAllMocks();
+
+    // Race lost: the compare-and-swap matches no row.
+    prismaMocks.taskFindUnique.mockResolvedValue(task);
+    prismaMocks.workflowFindFirst.mockResolvedValue(null);
+    prismaMocks.taskUpdateMany.mockResolvedValueOnce({ count: 0 });
+    const lost = await send();
+    expect(lost.status).toBe(409);
+    expect(((await lost.json()) as { error: string }).error).toBe("conflict");
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+    expect(prismaMocks.signalUpdateMany).not.toHaveBeenCalled();
+    expect(signalEmitters.emitReviewSignal).not.toHaveBeenCalled();
+    expect(signalEmitters.emitTaskAvailableSignal).not.toHaveBeenCalled();
+  });
+
   it("terminal transition (in_progress -> done) clears work-claim fields atomically", async () => {
     // Minimal workflow with no gate requires on the in_progress->done edge so
     // the test focuses on claim-clearing, not gate evaluation.
@@ -4353,7 +4465,7 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("done");
     // Work-claim fields must be nulled atomically with the status write.
     expect(updateCall.data.claimedByAgentId).toBeNull();
@@ -4422,7 +4534,7 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("done");
     expect(updateCall.data.claimedByAgentId).toBeNull();
     expect(updateCall.data.claimedAt).toBeNull();
@@ -4482,7 +4594,7 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("review");
     // Neither work-claim NOR review-claim fields may be present in the update
     // data for non-terminal targets.
@@ -4551,7 +4663,7 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("in_progress");
     // Review-claim must be released so the reviewer slot is freed.
     expect(updateCall.data.reviewClaimedByAgentId).toBeNull();
@@ -4612,7 +4724,7 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     });
 
     expect(res.status).toBe(200);
-    const updateCall = prismaMocks.taskUpdate.mock.calls[0]![0];
+    const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.status).toBe("closed");
     // Custom terminal states must also clear work-claim fields.
     expect(updateCall.data.claimedByUserId).toBeNull();
