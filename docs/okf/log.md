@@ -14,7 +14,9 @@ paths find the remapped start edge with its stored gates, and that a task in
 `backlog` leaves it through promote or discard; it lists
 `grounding-completion-gates.ts` as a source, and its `tasks.ts` line
 citations were re-pointed in the merge of master. The claims of the other three
-did not change. All four were re-stamped.
+did not change. All four were re-stamped, and so was `claim-model.md`: it lists
+`tasks.ts`, which the merged master change touched (a moved demote message
+constant and its import); none of its claims depends on that.
 
 ## 2026-10-02 (stored legacy workflow definitions)
 
