@@ -2,6 +2,15 @@
 
 # Change log
 
+## 2026-10-02 (grounded demote, status race)
+
+Re-verified the docs that list `grounding-direct-context.ts` and
+`grounding-direct-tasks.ts` against the resolver change: a demote whose locked
+row is no longer `open` now answers the same `409` message as the REST demote.
+`task-lifecycle.md` now attributes the `400` for a non-open source to the
+route's pre-lock check and names the race answer; the other claims did not
+change. All docs of the grounded demote entry below were re-stamped.
+
 ## 2026-10-02 (grounded demote)
 
 Re-verified `task-lifecycle.md`, `backend.md`, `workflow-gates.md`,
