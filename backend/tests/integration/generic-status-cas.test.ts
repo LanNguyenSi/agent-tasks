@@ -18,7 +18,7 @@ import { groundingPostgres } from "../helpers/grounding-postgres.js";
 
 const shared = vi.hoisted(() => ({
   db: undefined as PrismaClient | undefined,
-  // Runs once, right after the demote handler's first read of the task row.
+  // Runs once, right after the handler under test first reads the task row.
   afterTaskRead: null as (() => Promise<void>) | null,
 }));
 
