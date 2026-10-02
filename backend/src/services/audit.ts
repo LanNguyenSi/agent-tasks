@@ -181,6 +181,12 @@ export type AuditAction =
   // via: "patch" }, same shape as "task.transitioned".
   | "task.backlog_promoted"
   | "task.backlog_discarded"
+  // Backlog demote (PATCH /tasks/:id, human write-tier, task 7c64e80c): the
+  // mirror of promote. Moves an open, fully unclaimed task back to backlog
+  // (out of the claimable pool) behind a compare-and-swap, and acknowledges
+  // its pending signals. Same payload shape as promote: { from: "open", to:
+  // "backlog", actorType: "human", via: "patch" }.
+  | "task.backlog_demoted"
   // Unabandon: the ONE recovery path out of the `abandoned` sink (review
   // finding on task 7a1360da's follow-up). PATCH /tasks/:id, human lane
   // only, project-admin-only, and only `abandoned -> effectiveDef.

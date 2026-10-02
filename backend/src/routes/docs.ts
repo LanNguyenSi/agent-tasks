@@ -1329,7 +1329,7 @@ export const openApiSpec = {
         tags: ["Tasks"],
         summary: "Update task (agent-safe fields)",
         description:
-          "Agents can update: branchName, prUrl, prNumber, result. Requires scope: tasks:update. Humans can update all fields.",
+          "Agents can update: branchName, prUrl, prNumber, result. Requires scope: tasks:update. Humans can update all fields. Humans (project write access) can also move an open task back to backlog with `status: \"backlog\"` (demote): the task must be open with no work or review claim, otherwise this returns 409. Backlog is reachable only by this demote: a status of backlog from any source status other than open returns 400, also when the project stores an older workflow definition with an edge into backlog. The write is a compare-and-swap, so a concurrent task_start cannot leave a claimed backlog task, and the task's pending signals are acknowledged. Agents cannot send status at all (403).",
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1362,6 +1362,14 @@ export const openApiSpec = {
           },
           "403": {
             description: "Missing scope or forbidden fields",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "409": {
+            description: "Demote (open to backlog) refused: the task holds a work or review claim, or lost the claim race.",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorResponse" },

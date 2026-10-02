@@ -1,4 +1,27 @@
+- 2026-10-02T07:54:24Z, task 7c64e80c: re-stamped after merging master; `architecture.md`, `backend.md`, `governance-merge.md`, `reconcile-done-but-open.md`, `task-lifecycle.md`, `workflow-gates.md` list sources that master changed in the meantime. The merged changes come from separately reviewed tasks and none contradicts these docs' claims, so no body text changed.
+
 # Change log
+
+## 2026-10-02 (backlog demote)
+
+Re-verified `task-lifecycle.md`, `claim-model.md`, `workflow-gates.md`,
+`frontend.md`, `architecture.md`, `backend.md`, `governance-merge.md` and
+`reconcile-done-but-open.md` against the new open to backlog demote in
+`PATCH /tasks/:id`, its audit event and signal acknowledgement, the
+"Move to backlog" row action and header action, and the OpenAPI text.
+`task-lifecycle.md`, `claim-model.md`, `workflow-gates.md` and `frontend.md`
+now describe the demote; every `tasks.ts` line citation in
+`workflow-gates.md` and the `docs.ts` citation in `architecture.md` were
+re-pointed after the inserted lines, and the `tasks/page.tsx` line count in
+`frontend.md` was corrected. The claims of `backend.md`, `governance-merge.md`
+and `reconcile-done-but-open.md` did not change. All of them were re-stamped.
+
+Fix round: the guard that answers `400` for a PATCH to `backlog` from any
+status other than `open` (also under a stored legacy workflow definition) and
+the pinned `409` for a grounding-enrolled task are now stated in
+`task-lifecycle.md`; the `tasks.ts` line citations in `workflow-gates.md` were
+re-pointed again after the inserted guard, and the seven docs whose sources
+changed were re-stamped.
 
 ## 2026-10-02 (grounded finalDisposition)
 
