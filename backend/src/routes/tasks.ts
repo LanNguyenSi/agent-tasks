@@ -339,9 +339,12 @@ export const updateTaskSchema = z.object({
   // still 400s there because no workflow definition ever declares a
   // transition INTO "abandoned" (it sits outside the engine's fixed state
   // vocabulary, same as "backlog" itself — see the creator-abandon route's
-  // block comment). "backlog" is deliberately NOT a valid target here: v1
-  // has no demote-back-to-backlog path.
-  status: z.enum(["open", "in_progress", "review", "done", "abandoned"]).optional(),
+  // block comment). "backlog" is reachable ONLY via the open->backlog
+  // "demote" special case in the PATCH handler below (task 7c64e80c): it
+  // passes this schema so the handler can see it, but every other from-state
+  // still 400s there for the same reason as "abandoned" (no workflow
+  // definition declares a transition into "backlog").
+  status: z.enum(["backlog", "open", "in_progress", "review", "done", "abandoned"]).optional(),
   dueAt: z.string().datetime().nullable().optional(),
   branchName: z.string().max(255).nullable().optional(),
   prUrl: httpUrl().nullable().optional(),
@@ -4767,6 +4770,9 @@ taskRouter.post("/tasks/:id/suggest-rewrite", async (c) => {
 
 // ── Update task ───────────────────────────────────────────────────────────────
 
+const DEMOTE_STATE_CONFLICT_MESSAGE =
+  "Task must be open with no work or review claim to move it back to backlog";
+
 taskRouter.patch("/tasks/:id", async (c) => {
   const actor = c.get("actor") as Actor;
   const task = await prisma.task.findUnique({
@@ -4955,6 +4961,8 @@ taskRouter.patch("/tasks/:id", async (c) => {
   // same purpose as isUnabandonTransition, distinct audit actions.
   let isBacklogPromoteTransition = false;
   let isBacklogDiscardTransition = false;
+  // Set only by the open->backlog demote special case below.
+  let isBacklogDemoteTransition = false;
   const transitionSkippedGates: Array<{ rule: TransitionRule; reason: string }> = [];
 
   if (body.status !== undefined && body.status !== previousStatus) {
@@ -5040,6 +5048,39 @@ taskRouter.patch("/tasks/:id", async (c) => {
       // stays false — "abandoned" is not a recognized engine terminal
       // state, same as creator-abandon's own write).
       isBacklogDiscardTransition = true;
+    } else if (previousStatus === "open" && targetStatus === "backlog") {
+      // ── Backlog demote: take a promoted task back out of the claimable
+      // pool (task 7c64e80c) ───────────────────────────────────────────
+      //
+      // The mirror of promote: promote hard-codes backlog -> the literal
+      // "open" (not effectiveDef.initialState), so demote is allowed from
+      // exactly that same literal "open" and from no other status. A custom
+      // workflow cannot make the two differ: workflowDefinitionSchema
+      // (routes/workflows.ts) pins initialState to "open" on every save.
+      //
+      // Same write-tier authz as promote (requireProjectWrite, enforced
+      // above for the whole PATCH); the agent lane never reaches this block
+      // (forbiddenFields rejects `status`). "backlog" is outside the engine's
+      // fixed state vocabulary, so like promote/discard/unabandon this
+      // bypasses the transition graph: no transition edge, no requiredRole.
+      //
+      // Unlike promote, demote must not strand a claim: a task that anyone
+      // holds a work or review claim on is refused here (fast path) and
+      // again, atomically, by the compare-and-swap in the write below, which
+      // is what actually closes the race with task_start.
+      if (
+        task.claimedByUserId ||
+        task.claimedByAgentId ||
+        task.reviewClaimedByUserId ||
+        task.reviewClaimedByAgentId
+      ) {
+        return conflict(c, DEMOTE_STATE_CONFLICT_MESSAGE);
+      }
+      isBacklogDemoteTransition = true;
+      // statusClaimPatch stays {}: the guards above and the CAS guarantee
+      // there is no claim to clear. isTerminalTransition stays false
+      // ("backlog" is not terminal); the pending task_available signals are
+      // acknowledged explicitly after the write instead.
     } else {
       const transition = effectiveDef.transitions.find(
         (t) => t.from === previousStatus && t.to === targetStatus,
@@ -5233,6 +5274,32 @@ taskRouter.patch("/tasks/:id", async (c) => {
       await clearDisposition(task.id);
       updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
       if (!updated) return notFound(c);
+    } else if (isBacklogDemoteTransition) {
+      // Compare-and-swap, same shape as creator-abandon and unabandon: the
+      // row is locked and re-validated inside the transaction, and the write
+      // only lands while the row is STILL open and fully unclaimed. A
+      // task_start that claims between the read above and this write makes
+      // the CAS match zero rows (409) instead of leaving a backlog task with
+      // a claim on it.
+      const demoteMutation = await mutateGroundingRouteContext(prisma, {
+        taskId: task.id, projectId: task.projectId, actor, reason: "patch_demote",
+        revalidate: async (db, lockedTask) => {
+          if (!(await requireProjectWrite(actor, lockedTask.projectId, db))) throw new GroundingAccessError("forbidden", 403);
+          if (lockedTask.status !== "open" || lockedTask.claimedByUserId || lockedTask.claimedByAgentId || lockedTask.reviewClaimedByUserId || lockedTask.reviewClaimedByAgentId)
+            throw new GroundingAccessError("bad_state", 409);
+        },
+        mutate: async (db, lockedTask) => {
+          const value = await db.task.updateMany({
+            where: { id: lockedTask.id, status: "open", claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
+            data: patchData,
+          });
+          return { value, changed: value.count === 1 };
+        },
+      });
+      if (!demoteMutation.changed) return conflict(c, DEMOTE_STATE_CONFLICT_MESSAGE);
+      // updateMany cannot use `include`, so re-fetch the freshly written row.
+      updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
+      if (!updated) return notFound(c);
     } else {
       updated = await prisma.task.update({ where: { id: task.id }, data: patchData, include: taskInclude });
     }
@@ -5245,17 +5312,20 @@ taskRouter.patch("/tasks/:id", async (c) => {
 
   if (didStatusChange) {
     void logAuditEvent({
-      // Unabandon/promote/discard each fire their own dedicated action so
-      // the audit trail can tell these out-of-band recovery/gate writes
-      // apart from an ordinary workflow-engine transition; everything else
-      // about the event shape (from/to/actorType/via) stays identical.
+      // Unabandon/promote/discard/demote each fire their own dedicated
+      // action so the audit trail can tell these out-of-band recovery/gate
+      // writes apart from an ordinary workflow-engine transition;
+      // everything else about the event shape (from/to/actorType/via) stays
+      // identical.
       action: isUnabandonTransition
         ? "task.unabandoned"
         : isBacklogPromoteTransition
           ? "task.backlog_promoted"
           : isBacklogDiscardTransition
             ? "task.backlog_discarded"
-            : "task.transitioned",
+            : isBacklogDemoteTransition
+              ? "task.backlog_demoted"
+              : "task.transitioned",
       actorId: actor.userId,
       projectId: task.projectId,
       taskId: task.id,
@@ -5270,6 +5340,16 @@ taskRouter.patch("/tasks/:id", async (c) => {
   }
 
   if (isTerminalTransition) {
+    await acknowledgeSignalsForTask(task.id);
+  }
+
+  // A demoted task leaves the claimable pool, so every still-pending
+  // signal for it (chiefly the task_available fan-out sent when it was
+  // created or promoted) is stale and must not wake an agent for work it can
+  // no longer pick up. Same mechanism as the terminal case above;
+  // idempotent, and it runs after the committed write like the other call
+  // sites (never inside the transaction).
+  if (isBacklogDemoteTransition) {
     await acknowledgeSignalsForTask(task.id);
   }
 
