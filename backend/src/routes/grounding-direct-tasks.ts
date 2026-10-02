@@ -57,8 +57,13 @@ export function createGroundingDirectTaskRouter(deps: GroundingTaskCompletionDep
         // No-op status and result/commentary writes do not create a completion attempt.
         if (endpoint === "patch" && (!("status" in body) || body.status === undefined || body.status === task.status)) return c.json(await mutateDirectTask(deps.db, task, actor, "patch", body));
         // The C04 recovery adapter already joins the atomic mutation protocol.
+        // Hand-off keeps the telemetry hook in the REST handler: it clears
+        // finalDisposition post-commit when an admin restores the task.
         if (endpoint === "patch" && task.status === "abandoned") return next();
         if (!deps.service) unavailable();
+        // A backlog discard (backlog -> abandoned) lands in dispose() below and
+        // writes no finalDisposition, like the REST discard: a backlog task has
+        // no scored claim. No other direct edge reaches abandoned.
         const { def } = await groundingWorkflow(deps.db, task);
         const to = endpoint === "review" ? ("action" in body && body.action === "approve" ? approveTarget(def, task.status) : requestChangesTarget(def, task.status)) : (body as { status: string }).status;
         if (!to) throw new GroundingAccessError("bad_state", 409);

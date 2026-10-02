@@ -39,11 +39,13 @@ beforeEach(async () => {
   await store.db.groundingFinalization.deleteMany(); await store.db.groundingOperation.deleteMany();
   await store.db.groundingReceipt.deleteMany(); await store.db.groundingAttempt.deleteMany();
   await store.db.groundingBinding.deleteMany(); await store.db.groundingCohort.deleteMany();
+  await store.db.confidenceTelemetry.deleteMany();
   await store.db.task.deleteMany(); await store.db.project.deleteMany();
   f = await completionFixture(store, "EXTERNAL_V1", deps => new GroundingGithubMergeService(deps)); f.ledger.getLedgerSummary.mockRejectedValue(new Error("legacy must not run"));
   harness.wrapper.start.mockReset().mockRejectedValue(new Error("wrapper must not run"));
   harness.wrapper.getLedgerSummary.mockReset().mockRejectedValue(new Error("legacy must not run"));
   harness.bounce.mockReset().mockResolvedValue(undefined); harness.terminal.mockReset().mockResolvedValue(undefined);
+  harness.abandonDisposition.mockReset().mockResolvedValue(undefined); harness.clearDisposition.mockReset().mockResolvedValue(undefined);
   await store.db.agentToken.update({ where: { id: ids.agent }, data: { scopes: [...actor.scopes, "tasks:read"], revokedAt: null } });
   await store.db.user.update({ where: { id: ids.user }, data: { allowAgentPrCreate: true, allowAgentPrMerge: true } });
 });
@@ -367,6 +369,78 @@ it.each(["review/claim", "admin-release"] as const)("N-16 actual %s no-op retain
   if (writer === "admin-release") expect(await response.json()).toMatchObject({ released: { workClaim: false, reviewClaim: false } });
   expect(await snapshot()).toEqual(before);
   expect(await store.db.auditLog.count({ where: { projectId: f.projectId, action: "project.grounding.context_mutated" } })).toBe(0);
+});
+
+// finalDisposition on the grounded paths that reach abandoned or leave it. The
+// real telemetry writers replace the mocks here so the row is observable; each
+// writer records the task status it saw, which proves it ran after the status
+// commit and not inside the grounding transaction.
+async function realDispositionWriters() {
+  const real = await vi.importActual<typeof import("../../src/services/confidence-telemetry.js")>("../../src/services/confidence-telemetry.js");
+  const seen = { abandon: [] as (string | undefined)[], clear: [] as (string | undefined)[] };
+  harness.abandonDisposition.mockImplementation(async (taskId: string, projectId: string) => { seen.abandon.push((await f.task()).status); await real.recordAbandonDisposition(taskId, projectId); });
+  harness.clearDisposition.mockImplementation(async (taskId: string) => { seen.clear.push((await f.task()).status); await real.clearDisposition(taskId); });
+  return seen;
+}
+const disposition = async () => (await store.db.confidenceTelemetry.findUnique({ where: { taskId: f.taskId } }))?.finalDisposition ?? null;
+const seedTelemetry = (finalDisposition: string | null) => store.db.confidenceTelemetry.create({ data: { taskId: f.taskId, projectId: f.projectId, finalDisposition } });
+const adminPatch = async (body: unknown) => new Request(`http://localhost/api/tasks/${f.taskId}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${await createSessionToken(ids.user, "test-secret-which-is-long-enough-1234")}` }, body: JSON.stringify(body) });
+
+it("grounded creator-abandon records the abandoned disposition after the status commit", async () => {
+  const seen = await realDispositionWriters(); await seedTelemetry(null);
+  await store.db.task.update({ where: { id: f.taskId }, data: { status: "open", claimedByAgentId: null } });
+  const response = await app().fetch(request({}, "creator-abandon", null)); expect(response.status).toBe(200);
+  expect((await response.json()).task.status).toBe("abandoned");
+  expect(harness.abandonDisposition).toHaveBeenCalledExactlyOnceWith(f.taskId, f.projectId); expect(seen.abandon).toEqual(["abandoned"]);
+  expect(await disposition()).toBe("abandoned"); expect(harness.clearDisposition).not.toHaveBeenCalled();
+});
+
+it("grounded creator-abandon response is unchanged when the disposition writer fails", async () => {
+  await realDispositionWriters(); await seedTelemetry(null);
+  await store.db.task.update({ where: { id: f.taskId }, data: { status: "open", claimedByAgentId: null } });
+  const write = vi.spyOn(store.db.confidenceTelemetry, "updateMany").mockRejectedValue(new Error("telemetry unavailable"));
+  const response = await app().fetch(request({}, "creator-abandon", null)); expect(response.status).toBe(200);
+  expect((await response.json()).task.status).toBe("abandoned"); expect(write).toHaveBeenCalled();
+  expect((await f.task()).status).toBe("abandoned"); write.mockRestore(); expect(await disposition()).toBeNull();
+});
+
+it("grounded admin restore from abandoned clears the disposition after the status commit", async () => {
+  const seen = await realDispositionWriters(); await seedTelemetry("abandoned");
+  await store.db.task.update({ where: { id: f.taskId }, data: { status: "abandoned", claimedByAgentId: null } });
+  const response = await app().fetch(await adminPatch({ status: "open" })); expect(response.status).toBe(200);
+  expect((await response.json()).task.status).toBe("open");
+  expect(harness.clearDisposition).toHaveBeenCalledExactlyOnceWith(f.taskId); expect(seen.clear).toEqual(["open"]);
+  expect(await disposition()).toBeNull(); expect(harness.abandonDisposition).not.toHaveBeenCalled();
+});
+
+it("grounded admin restore response is unchanged when the disposition writer fails", async () => {
+  await realDispositionWriters(); await seedTelemetry("abandoned");
+  await store.db.task.update({ where: { id: f.taskId }, data: { status: "abandoned", claimedByAgentId: null } });
+  const write = vi.spyOn(store.db.confidenceTelemetry, "updateMany").mockRejectedValue(new Error("telemetry unavailable"));
+  const response = await app().fetch(await adminPatch({ status: "open" })); expect(response.status).toBe(200);
+  expect((await response.json()).task.status).toBe("open"); expect(write).toHaveBeenCalled();
+  expect((await f.task()).status).toBe("open"); write.mockRestore(); expect(await disposition()).toBe("abandoned");
+});
+
+// A backlog discard goes through the grounding service, not the REST handler.
+// It stays unhooked like the REST discard: a backlog task has no scored claim.
+it("grounded backlog discard reaches abandoned without touching the disposition", async () => {
+  await realDispositionWriters(); await seedTelemetry(null);
+  await store.db.task.update({ where: { id: f.taskId }, data: { status: "backlog", claimedByAgentId: null } });
+  expect((await app().fetch(await adminPatch({ status: "abandoned" }))).status).toBe(200);
+  expect((await f.task()).status).toBe("abandoned");
+  expect(harness.abandonDisposition).not.toHaveBeenCalled(); expect(harness.clearDisposition).not.toHaveBeenCalled(); expect(await disposition()).toBeNull();
+});
+
+// The grounding service has creator_abandon and reopen branches, but no route
+// builds those actions. The direct routes must refuse every other way into or
+// out of abandoned, so no unhooked path exists.
+it.each([["open", "abandoned"], ["in_progress", "abandoned"], ["abandoned", "in_progress"]] as const)("grounded direct transition %s to %s is refused and writes no disposition", async (from, to) => {
+  await realDispositionWriters(); await seedTelemetry(from === "abandoned" ? "abandoned" : null);
+  await store.db.task.update({ where: { id: f.taskId }, data: { status: from, claimedByAgentId: null } });
+  const response = await app().fetch(request({ status: to }, "transition", "operation")); expect(response.status).toBe(409);
+  expect((await f.task()).status).toBe(from);
+  expect(harness.abandonDisposition).not.toHaveBeenCalled(); expect(harness.clearDisposition).not.toHaveBeenCalled(); expect(await disposition()).toBe(from === "abandoned" ? "abandoned" : null);
 });
 
 const mergeActor = { ...actor, scopes: ["github:pr_merge"] };
