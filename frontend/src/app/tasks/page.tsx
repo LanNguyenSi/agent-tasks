@@ -178,9 +178,10 @@ function TasksPageInner() {
   const [retryToken, setRetryToken] = useState(0);
   // In-place create flow (project picker + NewTaskModal), see NewTaskFlow.
   const [newTaskOpen, setNewTaskOpen] = useState(false);
-  // Backlog Promote/Discard row actions (see _components/columns.tsx).
-  // busyTaskId disables both buttons on the in-flight row; discardTarget
-  // drives the confirm dialog, mirroring TaskDetail's delete-task confirm.
+  // Backlog Promote/Discard/Move-to-backlog row actions (see
+  // _components/columns.tsx). busyTaskId disables the buttons on the
+  // in-flight row; discardTarget drives the confirm dialog, mirroring
+  // TaskDetail's delete-task confirm.
   const [rowActionBusyId, setRowActionBusyId] = useState<string | null>(null);
   const [discardTarget, setDiscardTarget] = useState<EnrichedTask | null>(null);
   const [rowActionError, setRowActionError] = useState<string | null>(null);
@@ -406,6 +407,24 @@ function TasksPageInner() {
       setRetryToken((t) => t + 1);
     } catch (err) {
       setRowActionError(err instanceof Error ? err.message : "Failed to promote task.");
+    } finally {
+      setRowActionBusyId(null);
+    }
+  }
+
+  // Move an open, unclaimed task back to backlog. The server enforces the
+  // write-tier gate and the no-claim rule atomically; a stale row that was
+  // claimed in the meantime comes back as a 409 and surfaces via
+  // rowActionError. No confirm dialog: unlike discard, the move is
+  // reversible with Promote.
+  async function handleDemote(task: EnrichedTask): Promise<void> {
+    setRowActionBusyId(task.id);
+    setRowActionError(null);
+    try {
+      await updateTask(task.id, { status: "backlog" });
+      setRetryToken((t) => t + 1);
+    } catch (err) {
+      setRowActionError(err instanceof Error ? err.message : "Failed to move task to backlog.");
     } finally {
       setRowActionBusyId(null);
     }
@@ -664,7 +683,7 @@ function TasksPageInner() {
           </div>
         </div>
 
-        {/* Backlog Promote/Discard row action error, dismissible like the fetch banner */}
+        {/* Backlog row action error (promote/discard/move to backlog), dismissible like the fetch banner */}
         {rowActionError && (
           <AlertBanner
             tone="danger"
@@ -737,6 +756,7 @@ function TasksPageInner() {
                   {
                     onPromote: (t) => void handlePromote(t),
                     onDiscard: requestDiscard,
+                    onDemote: (t) => void handleDemote(t),
                     busyTaskId: rowActionBusyId,
                   },
                   pagedTasks,

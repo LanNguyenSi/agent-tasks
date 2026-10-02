@@ -13,6 +13,14 @@
  *   - in_progress claimed by someone else: no transition buttons.
  *   - review: the "Jump to review" affordance.
  *
+ * Move-to-backlog (demote) contract:
+ *   - an open, unclaimed task shows an enabled "Move to backlog"; clicking
+ *     it fires onDemote.
+ *   - an open task with a work claim or a review claim (user or agent) shows
+ *     it disabled, with the reason visible next to it and as its title.
+ *   - it is disabled while a backlog action is in flight.
+ *   - it is absent for every non-open status.
+ *
  * Admin status-override contract:
  *   - non-admin: the override control renders disabled with an inline
  *     reason (never hidden).
@@ -69,6 +77,7 @@ function renderHeader(
     ) => Promise<StatusOverrideResult>;
     onPromote?: () => void;
     onDiscardRequest?: () => void;
+    onDemote?: () => void;
     backlogActionBusy?: boolean;
   } = {},
 ) {
@@ -84,6 +93,7 @@ function renderHeader(
       onDeleteRequest={vi.fn()}
       onPromote={overrides.onPromote ?? vi.fn()}
       onDiscardRequest={overrides.onDiscardRequest ?? vi.fn()}
+      onDemote={overrides.onDemote ?? vi.fn()}
       backlogActionBusy={overrides.backlogActionBusy ?? false}
       onScrollToReview={vi.fn()}
       isProjectAdmin={overrides.isProjectAdmin ?? false}
@@ -174,6 +184,48 @@ describe("TaskHeader transitions", () => {
   it("review state shows the jump affordance", () => {
     renderHeader(makeTask({ status: "review", claimedByUserId: "u-1" }));
     expect(screen.getByRole("button", { name: "Jump to review" })).toBeInTheDocument();
+  });
+});
+
+describe("TaskHeader move to backlog (demote)", () => {
+  const HINT = "Release the claim before moving this task back to backlog";
+
+  it("open + unclaimed shows an enabled Move to backlog that fires onDemote", async () => {
+    const onDemote = vi.fn();
+    renderHeader(makeTask({ status: "open" }), vi.fn(), false, { onDemote });
+    const button = screen.getByRole("button", { name: "Move to backlog" });
+    expect(button).toBeEnabled();
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    await userEvent.click(button);
+    expect(onDemote).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["work claim by a user", { claimedByUserId: "u-2" }],
+    ["work claim by an agent", { claimedByAgentId: "a-1" }],
+    ["review claim by a user", { reviewClaimedByUserId: "u-3" }],
+    ["review claim by an agent", { reviewClaimedByAgentId: "a-2" }],
+  ])("open with a %s: disabled, reason visible and on the button", async (_label, claim) => {
+    const onDemote = vi.fn();
+    renderHeader(makeTask({ status: "open", ...claim } as Partial<Task>), vi.fn(), false, {
+      onDemote,
+    });
+    const button = screen.getByRole("button", { name: "Move to backlog" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("title", HINT);
+    expect(screen.getByText(HINT)).toBeInTheDocument();
+    await userEvent.click(button);
+    expect(onDemote).not.toHaveBeenCalled();
+  });
+
+  it("is disabled while a backlog action is in flight", () => {
+    renderHeader(makeTask({ status: "open" }), vi.fn(), false, { backlogActionBusy: true });
+    expect(screen.getByRole("button", { name: "Move to backlog" })).toBeDisabled();
+  });
+
+  it.each(["backlog", "in_progress", "review", "done"])("is not offered for a %s task", (status) => {
+    renderHeader(makeTask({ status }));
+    expect(screen.queryByRole("button", { name: "Move to backlog" })).not.toBeInTheDocument();
   });
 });
 

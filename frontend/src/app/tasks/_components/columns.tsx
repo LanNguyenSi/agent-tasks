@@ -18,6 +18,7 @@ import { Button } from "../../../components/ui/Button";
 import { type ColumnDef } from "../../../components/ui/Table";
 import { normalizeStatus, toDateLabel } from "../../../lib/taskDisplay";
 import { STATUS_MUTED_IN_LIST } from "../../../lib/status";
+import { DEMOTE_LABEL, demoteBlockedHint } from "../../../lib/backlogDemote";
 
 export type EnrichedTask = Task & { projectName: string };
 
@@ -98,25 +99,29 @@ export const TASK_PAGE_COLUMNS: ColumnDef<EnrichedTask>[] = [
   },
 ];
 
-// Handlers threaded from the page for the backlog Promote/Discard row
-// actions. `busyTaskId` disables both buttons on the row whose action is
-// in flight, mirroring the disabled-while-busy pattern used throughout
-// TaskDetail (e.g. handleAdvance/advanceBusy).
+// Handlers threaded from the page for the backlog row actions: Promote and
+// Discard on backlog rows, Move to backlog (demote) on open rows.
+// `busyTaskId` disables the buttons on the row whose action is in flight,
+// mirroring the disabled-while-busy pattern used throughout TaskDetail
+// (e.g. handleAdvance/advanceBusy).
 export interface BacklogRowActionHandlers {
   onPromote: (task: EnrichedTask) => void;
   onDiscard: (task: EnrichedTask) => void;
+  onDemote: (task: EnrichedTask) => void;
   busyTaskId: string | null;
 }
 
 // Row actions for the /tasks table: Promote (-> open) and Discard
-// (-> abandoned), visible ONLY for backlog tasks. The table row itself is a
+// (-> abandoned) for backlog tasks, and Move to backlog (open -> backlog)
+// for open tasks; the latter is disabled with a hint while the task holds a
+// work or review claim. The table row itself is a
 // clickable link (rowHref, see page.tsx), so each button stops propagation
 // on click and on Enter/Space keydown to keep the row from navigating —
 // same pattern as ProjectRowActions in app/teams/page.tsx.
 // `rows` is the set of currently rendered table rows (the current page).
 // The backlog actions column is only appended when at least one of those
-// rows is a backlog task -- otherwise every project without backlog tasks
-// would carry a permanently empty 16%-wide column.
+// rows is a backlog or an open task -- otherwise a page of in-progress,
+// review or done rows would carry a permanently empty 16%-wide column.
 // TASK_PAGE_COLUMNS' widths sum to 100% on their own (34+12+16+13+13+12).
 // The table uses table-layout: fixed (globals.css .table--fixed) whenever
 // any column declares a width, so percentages are binding, not hints: (a)
@@ -136,8 +141,11 @@ export function buildTaskPageColumns(
   handlers: BacklogRowActionHandlers,
   rows: EnrichedTask[],
 ): ColumnDef<EnrichedTask>[] {
-  const hasBacklogRow = rows.some((t) => normalizeStatus(t.status) === "backlog");
-  if (!hasBacklogRow) return TASK_PAGE_COLUMNS;
+  const hasActionRow = rows.some((t) => {
+    const status = normalizeStatus(t.status);
+    return status === "backlog" || status === "open";
+  });
+  if (!hasActionRow) return TASK_PAGE_COLUMNS;
   const baseColumns = TASK_PAGE_COLUMNS.map((c) =>
     c.key === "title" ? { ...c, width: TITLE_WIDTH_WITH_BACKLOG_ACTIONS } : c,
   );
@@ -149,11 +157,33 @@ export function buildTaskPageColumns(
       headerVisuallyHidden: true,
       width: "16%",
       render: (t) => {
-        if (normalizeStatus(t.status) !== "backlog") return null;
+        const status = normalizeStatus(t.status);
+        if (status !== "backlog" && status !== "open") return null;
         const busy = handlers.busyTaskId === t.id;
         const stopKeyPropagation = (e: KeyboardEvent<HTMLButtonElement>) => {
           if (e.key === "Enter" || e.key === " ") e.stopPropagation();
         };
+        if (status === "open") {
+          const blockedHint = demoteBlockedHint(t);
+          return (
+            <div className="tasks-row-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={busy || blockedHint !== null}
+                title={blockedHint ?? undefined}
+                onClick={(e: MouseEvent<HTMLButtonElement>) => {
+                  e.stopPropagation();
+                  handlers.onDemote(t);
+                }}
+                onKeyDown={stopKeyPropagation}
+              >
+                {DEMOTE_LABEL}
+              </Button>
+            </div>
+          );
+        }
         return (
           <div className="tasks-row-actions">
             <Button

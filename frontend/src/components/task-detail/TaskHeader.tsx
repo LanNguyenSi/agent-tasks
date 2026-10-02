@@ -11,6 +11,7 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import type { Task, User, TransitionRuleFailure } from "@/lib/api";
 import { normalizeStatus } from "@/lib/status";
+import { DEMOTE_LABEL, demoteBlockedHint } from "@/lib/backlogDemote";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { Icon } from "@/components/ui/Icon";
 import DropdownMenu from "@/components/ui/DropdownMenu";
@@ -71,8 +72,13 @@ interface TaskHeaderProps {
   /** Opens the discard confirm dialog for a backlog task (PATCH status
    * "abandoned" on confirm, see TaskDetail's onDiscardRequest handler). */
   onDiscardRequest: () => void;
-  /** True while a promote or discard request for this task is in flight;
-   * disables both buttons, mirroring advanceBusy above. */
+  /** Moves an open, unclaimed task back to backlog (PATCH status
+   * "backlog"). Only rendered when task.status === "open"; disabled with a
+   * hint while a work or review claim exists. The server enforces both the
+   * write-tier gate and the no-claim rule. */
+  onDemote: () => void;
+  /** True while a promote, discard or demote request for this task is in
+   * flight; disables those buttons, mirroring advanceBusy above. */
   backlogActionBusy: boolean;
   /** Scrolls to the review panel section */
   onScrollToReview: () => void;
@@ -109,6 +115,7 @@ export default function TaskHeader({
   onDeleteRequest,
   onPromote,
   onDiscardRequest,
+  onDemote,
   backlogActionBusy,
   onScrollToReview,
   isProjectAdmin,
@@ -218,6 +225,7 @@ export default function TaskHeader({
     }
   }
   const transitionHint = transitions.find((t) => t.hint)?.hint;
+  const demoteHint = demoteBlockedHint(task);
 
   const boardHref =
     teamId && projectId
@@ -306,6 +314,24 @@ export default function TaskHeader({
             >
               Discard
             </button>
+          </>
+        )}
+
+        {/* Open task: move it back out of the claimable pool. Disabled with a
+            visible reason while anyone holds a work or review claim. */}
+        {!isEditing && task.status === "open" && (
+          <>
+            <button
+              type="button"
+              className="td-btn-transition"
+              onClick={onDemote}
+              disabled={backlogActionBusy || demoteHint !== null}
+              title={demoteHint ?? undefined}
+              aria-busy={backlogActionBusy || undefined}
+            >
+              {DEMOTE_LABEL}
+            </button>
+            {demoteHint && <span className="td-transition-hint">{demoteHint}</span>}
           </>
         )}
 

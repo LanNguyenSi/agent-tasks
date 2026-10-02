@@ -8,6 +8,9 @@
  *     row (e.g. open) must not show either button. This is the assertion
  *     the task's mutation probe (inverting/removing the visibility guard)
  *     is expected to turn red.
+ *   - "Move to backlog" (demote) renders ONLY for an open row; it is
+ *     disabled with the reason as its title while the row holds a work or
+ *     review claim, and calls onDemote with the row's task otherwise.
  *   - Clicking Promote calls onPromote with the row's task; clicking
  *     Discard calls onDiscard with the row's task.
  *   - Both buttons are disabled while busyTaskId matches the row.
@@ -55,17 +58,19 @@ function renderActionsCell(
 ) {
   const onPromote = handlers.onPromote ?? vi.fn();
   const onDiscard = handlers.onDiscard ?? vi.fn();
+  const onDemote = handlers.onDemote ?? vi.fn();
   const cols = buildTaskPageColumns(
     {
       onPromote,
       onDiscard,
+      onDemote,
       busyTaskId: handlers.busyTaskId ?? null,
     },
     rows,
   );
   const col = cols.find((c) => c.key === "backlogActions");
   render(<>{col?.render ? col.render(t) : null}</>);
-  return { onPromote, onDiscard };
+  return { onPromote, onDiscard, onDemote };
 }
 
 describe("/tasks backlog row actions", () => {
@@ -104,15 +109,89 @@ describe("/tasks backlog row actions", () => {
     expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
   });
 
+  describe("Move to backlog (demote) on open rows", () => {
+    const HINT = "Release the claim before moving this task back to backlog";
+
+    it("renders Move to backlog, and neither Promote nor Discard, for an open unclaimed task", () => {
+      renderActionsCell(task({ id: "o-1", title: "Open task", status: "open" }));
+      expect(screen.getByRole("button", { name: "Move to backlog" })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Discard" })).not.toBeInTheDocument();
+    });
+
+    it.each(["backlog", "in_progress", "review", "done", "abandoned"])(
+      "does not render Move to backlog for a %s task",
+      (status) => {
+        renderActionsCell(task({ id: "x-1", title: "Other task", status }));
+        expect(screen.queryByRole("button", { name: "Move to backlog" })).not.toBeInTheDocument();
+      },
+    );
+
+    it("clicking Move to backlog calls onDemote with the row's task", async () => {
+      const t = task({ id: "o-2", title: "Open task 2", status: "open" });
+      const { onDemote, onPromote, onDiscard } = renderActionsCell(t);
+      await userEvent.click(screen.getByRole("button", { name: "Move to backlog" }));
+      expect(onDemote).toHaveBeenCalledTimes(1);
+      expect(onDemote).toHaveBeenCalledWith(t);
+      expect(onPromote).not.toHaveBeenCalled();
+      expect(onDiscard).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["work claim by a user", { claimedByUserId: "u-1" }],
+      ["work claim by an agent", { claimedByAgentId: "a-1" }],
+      ["review claim by a user", { reviewClaimedByUserId: "u-2" }],
+      ["review claim by an agent", { reviewClaimedByAgentId: "a-2" }],
+    ])("is disabled with the reason as its title for an open task with a %s", async (_label, claim) => {
+      const t = task({ id: "o-3", title: "Claimed open task", status: "open", ...claim } as Partial<Task> & {
+        id: string;
+        title: string;
+        status: string;
+      });
+      const { onDemote } = renderActionsCell(t);
+      const button = screen.getByRole("button", { name: "Move to backlog" });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", HINT);
+      await userEvent.click(button);
+      expect(onDemote).not.toHaveBeenCalled();
+    });
+
+    it("is disabled while the row's task is busy", () => {
+      const t = task({ id: "o-4", title: "Open task 4", status: "open" });
+      renderActionsCell(t, { busyTaskId: "o-4" });
+      expect(screen.getByRole("button", { name: "Move to backlog" })).toBeDisabled();
+    });
+
+    it("an unclaimed open button carries no title hint", () => {
+      renderActionsCell(task({ id: "o-5", title: "Open task 5", status: "open" }));
+      expect(screen.getByRole("button", { name: "Move to backlog" })).not.toHaveAttribute("title");
+    });
+  });
+
   describe("buildTaskPageColumns -- conditional backlogActions column", () => {
-    it("omits the backlogActions column when no rendered row is backlog", () => {
-      const rows = [task({ id: "o-1", title: "Open task", status: "open" })];
+    it("omits the backlogActions column when no rendered row is backlog or open", () => {
+      const rows = [
+        task({ id: "p-1", title: "Working task", status: "in_progress" }),
+        task({ id: "d-1", title: "Done task", status: "done" }),
+      ];
       const cols = buildTaskPageColumns(
-        { onPromote: vi.fn(), onDiscard: vi.fn(), busyTaskId: null },
+        { onPromote: vi.fn(), onDiscard: vi.fn(), onDemote: vi.fn(), busyTaskId: null },
         rows,
       );
       expect(cols.find((c) => c.key === "backlogActions")).toBeUndefined();
       expect(cols).toHaveLength(TASK_PAGE_COLUMNS.length);
+    });
+
+    it("includes the backlogActions column when the only actionable rows are open (Move to backlog)", () => {
+      const rows = [
+        task({ id: "o-1", title: "Open task", status: "open" }),
+        task({ id: "p-1", title: "Working task", status: "in_progress" }),
+      ];
+      const cols = buildTaskPageColumns(
+        { onPromote: vi.fn(), onDiscard: vi.fn(), onDemote: vi.fn(), busyTaskId: null },
+        rows,
+      );
+      expect(cols.find((c) => c.key === "backlogActions")).toBeDefined();
     });
 
     it("includes the backlogActions column, with a visually-hidden accessible header, when a rendered row is backlog", () => {
@@ -121,7 +200,7 @@ describe("/tasks backlog row actions", () => {
         task({ id: "b-1", title: "Draft task", status: "backlog" }),
       ];
       const cols = buildTaskPageColumns(
-        { onPromote: vi.fn(), onDiscard: vi.fn(), busyTaskId: null },
+        { onPromote: vi.fn(), onDiscard: vi.fn(), onDemote: vi.fn(), busyTaskId: null },
         rows,
       );
       const col = cols.find((c) => c.key === "backlogActions");
@@ -146,7 +225,7 @@ describe("/tasks backlog row actions", () => {
     it("sums declared column widths to exactly 100% when the backlogActions column is present", () => {
       const rows = [task({ id: "b-1", title: "Draft task", status: "backlog" })];
       const cols = buildTaskPageColumns(
-        { onPromote: vi.fn(), onDiscard: vi.fn(), busyTaskId: null },
+        { onPromote: vi.fn(), onDiscard: vi.fn(), onDemote: vi.fn(), busyTaskId: null },
         rows,
       );
       // Assert each column has a width and it's in percentage format.
@@ -198,10 +277,10 @@ describe("/tasks backlog row actions", () => {
     // return the IDENTICAL reference to TASK_PAGE_COLUMNS, not a shallow copy
     // or remapped array. This pins the no-backlog path as untouched by
     // construction (the width rebalance only applies in the present case).
-    it("returns the exact TASK_PAGE_COLUMNS reference when no backlog row is present", () => {
-      const rows = [task({ id: "o-1", title: "Open task", status: "open" })];
+    it("returns the exact TASK_PAGE_COLUMNS reference when no backlog or open row is present", () => {
+      const rows = [task({ id: "p-1", title: "Working task", status: "in_progress" })];
       const cols = buildTaskPageColumns(
-        { onPromote: vi.fn(), onDiscard: vi.fn(), busyTaskId: null },
+        { onPromote: vi.fn(), onDiscard: vi.fn(), onDemote: vi.fn(), busyTaskId: null },
         rows,
       );
       expect(cols).toBe(TASK_PAGE_COLUMNS);
@@ -227,11 +306,11 @@ describe("/tasks backlog row actions", () => {
       // (e.g. wrapping every cell in a span) fails here instead of
       // silently reintroducing the empty "BACKLOG ACTIONS: " label.
       const rows = [
-        task({ id: "o-1", title: "Open task", status: "open" }),
+        task({ id: "p-1", title: "Working task", status: "in_progress" }),
         task({ id: "b-1", title: "Draft task", status: "backlog" }),
       ];
       const cols = buildTaskPageColumns(
-        { onPromote: vi.fn(), onDiscard: vi.fn(), busyTaskId: null },
+        { onPromote: vi.fn(), onDiscard: vi.fn(), onDemote: vi.fn(), busyTaskId: null },
         rows,
       );
       const { container } = render(

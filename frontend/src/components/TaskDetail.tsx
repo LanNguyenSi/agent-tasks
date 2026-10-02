@@ -534,6 +534,21 @@ export default function TaskDetail({
     }
   }
 
+  // Move an open, unclaimed task back to backlog: same direct PATCH lane as
+  // promote/discard. The server refuses (409) when a claim exists or lands
+  // first, which surfaces through onError like any other failure.
+  async function handleDemoteToBacklog() {
+    setBacklogActionBusy(true);
+    try {
+      const updated = await updateTask(task.id, { status: "backlog" });
+      onUpdate(updated);
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setBacklogActionBusy(false);
+    }
+  }
+
   async function handleDiscardBacklog() {
     setBacklogActionBusy(true);
     try {
@@ -734,6 +749,7 @@ export default function TaskDetail({
       onDeleteRequest={() => setShowDeleteTaskConfirm(true)}
       onPromote={() => void handlePromoteBacklog()}
       onDiscardRequest={() => setShowDiscardTaskConfirm(true)}
+      onDemote={() => void handleDemoteToBacklog()}
       backlogActionBusy={backlogActionBusy}
       onScrollToReview={() =>
         reviewSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
