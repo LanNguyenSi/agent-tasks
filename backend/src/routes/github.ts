@@ -27,7 +27,6 @@ import { performPrMerge } from "../services/github-merge.js";
 import { groundingRedirectRefusal, groundingRemoteGuardFor, isGithubRedirect } from "../services/grounding-scope.js";
 import { SCOPES } from "../services/scopes.js";
 import { withIdempotency } from "../services/idempotency.js";
-import { STATUS_VERSION_BUMP } from "../services/task-status-cas.js";
 
 export const githubRouter = new Hono<{ Variables: AppVariables }>();
 
@@ -656,7 +655,7 @@ githubRouter.post(
 
         await prisma.task.update({
           where: { id: body.taskId },
-          data: { status: "done", ...STATUS_VERSION_BUMP },
+          data: { status: "done", statusVersion: { increment: 1 } },
         });
         await acknowledgeSignalsForTask(body.taskId);
         void emitSelfMergeNoticeIfApplicable({
