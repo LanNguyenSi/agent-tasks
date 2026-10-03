@@ -7,6 +7,7 @@ import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import {
   defaultWorkflowDefinition,
+  sanitizeStoredDefinition,
   type WorkflowDefinitionShape,
 } from "../services/default-workflow.js";
 import { RULE_CATALOG } from "../services/transition-rules.js";
@@ -243,7 +244,7 @@ workflowRouter.get("/projects/:projectId/effective-workflow", async (c) => {
     return c.json({
       source: "custom" as const,
       workflowId: custom.id,
-      definition: custom.definition,
+      definition: sanitizeStoredDefinition(custom.definition as unknown as WorkflowDefinitionShape),
     });
   }
 
@@ -642,10 +643,7 @@ workflowRouter.post(
     return forbidden(c, "Access denied");
   }
 
-  const def = workflow.definition as {
-    states: { name: string }[];
-    transitions: { from: string; to: string; requiredRole?: string }[];
-  };
+  const def = sanitizeStoredDefinition(workflow.definition as unknown as WorkflowDefinitionShape);
 
   const transition = def.transitions.find(
     (t) => t.from === body.from && t.to === body.to,
