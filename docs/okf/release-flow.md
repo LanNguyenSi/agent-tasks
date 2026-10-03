@@ -3,7 +3,7 @@ type: runbook
 title: "Cutting a release: three tag axes, one publish workflow"
 description: "v* triggers a GitHub Release; mcp-server-v*/mcp-bridge-v* both drive publish-npm.yml, which requires mcp-server to already be published before mcp-bridge."
 tags: [release, ci, npm, tags]
-timestamp: 2026-10-03T12:52:10Z
+timestamp: 2026-10-03T13:17:32Z
 sources:
   - .github/workflows/release.yml
   - .github/workflows/publish-npm.yml
