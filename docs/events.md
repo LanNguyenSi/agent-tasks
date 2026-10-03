@@ -51,7 +51,7 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 | `task.pr_submitted` | PR opened via `task_submit_pr` (or REST equivalent) |
 | `task.merged` / `task.auto_merged` | PR merged through the API; `auto_merged` fires when the merge was triggered as a side effect of `task_finish { autoMerge: true }` |
 | `task.auto_merge_post_assert_failed` | Post-merge invariant check failed; flagged for human attention |
-| `task.merge_webhook_first` | The PR-merge webhook moved the task to its terminal status between the GitHub merge and the API's own status write; the write completed against that row (payload carries `via` and `mergeSha`) |
+| `task.merge_webhook_first` | Another writer (typically the system's own PR-merge webhook) already moved the task to its terminal status between the GitHub merge and the API's own status write; the write completed against that row (payload carries `via` and `mergeSha`) |
 | `task.merged_status_conflict` | The PR was merged but the task status changed before the API could record it; nothing was written and the request answered 409 `merged_but_status_changed` (payload carries `via`, `mergeSha`, `expectedFrom`, `currentStatus`) |
 | `task.pr_merged.blocked_self_merge` | Self-merge blocked by `REQUIRES_DISTINCT_REVIEWER` gate |
 | `task.self_merge_notice_emitted` | `AWAITS_CONFIRMATION` self-merge succeeded; `self_merge_notice` signal fanned out |

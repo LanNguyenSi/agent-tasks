@@ -619,6 +619,7 @@ describe("POST /tasks/:id/finish compare-and-swaps its status write", () => {
     const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
     expect(row.status).toBe("done");
     expect(row.claimedByUserId).toBeNull();
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.merge_webhook_first" }));
   });
 
   it("work-finish (in_progress -> review): a status change in the window answers 409 and writes nothing", async () => {
@@ -706,6 +707,7 @@ describe("POST /tasks/:id/merge compare-and-swaps its done write", () => {
     expect(row.status).toBe("done");
     expect(row.autoMergeSha).toBe("deadbeef");
     expect(row.claimedByUserId).toBeNull();
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.merge_webhook_first" }));
   });
 });
 
