@@ -17,6 +17,12 @@
 
 # Change log
 
+## 2026-10-03 (deploy.md re-stamp after the staleness-template re-sync)
+
+`deploy.md` lists `okf-staleness.yml` as a source; the comment-only re-sync
+of that workflow made it stale again. Claims unchanged (the doc never
+describes the OKF job); re-stamped.
+
 ## 2026-10-03 (release.yml: step values via env)
 
 `release.yml` now passes the release version into its `run:` scripts through
