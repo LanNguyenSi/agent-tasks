@@ -695,3 +695,8 @@ Initial bundle authored: 13 concept docs (architecture, backend, frontend, mcp-s
 - Trigger: this branch edits `mcp-server/src/tools.ts` (a `sources:` entry of task-lifecycle.md), so the doc goes sources-fresh STALE on commit.
 - Method: read the doc's claims that rest on tools.ts (the verb surface list and the per-verb lifecycle semantics) against the branch diff; the diff touches only the `project_tasks` tool (description, include, projection wiring), none of the lifecycle verbs the doc describes.
 - Verdict: no drift; timestamp bumped without content change.
+
+## 2026-10-03 (status write residual fixes after review)
+
+Re-verified `workflow-gates.md`, `task-lifecycle.md`, `governance-merge.md`, `backend.md`, `claim-model.md` and `reconcile-done-but-open.md` against the follow-up change to `backend/src/routes/tasks.ts`, `backend/src/services/task-status-cas.ts`, `backend/src/services/audit.ts` and `backend/src/services/grounding-github-observation-context.ts`. The writes that follow a PR merge (`/merge` and the autoMerge forms of `/finish`) no longer answer a plain `409` when the PR-merge webhook moved the task to `done` first: they complete against the fresh row, or answer `409 merged_but_status_changed` with a `task.merged_status_conflict` audit event; `/review` stores its comment in the guarded transaction; the observation writer bumps `Task.statusVersion` when it sets a status. `workflow-gates.md` and `task-lifecycle.md` carry the corrected paragraphs and `workflow-gates.md` its re-pointed `tasks.ts` line citations; `governance-merge.md` gained one sentence on the observation writer. The claims of the other three did not change. All six were re-stamped.
+

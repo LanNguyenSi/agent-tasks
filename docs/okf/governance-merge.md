@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-10-03T12:26:13Z
+timestamp: 2026-10-03T13:36:57Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -197,7 +197,9 @@ binding change invalidates assessment context in the same transaction and
 conflicts with an active reservation. An identical binding leaves the current
 attempt intact. Review changes requested and an observed changed source head on
 reopen likewise invalidate affected context; reopening does not invent a task
-status.
+status. An observed write that does set a status bumps `Task.statusVersion` like
+every other status writer, so a generic status write that read the task before
+it loses its compare-and-swap.
 
 Delivery identity, payload fingerprint, observations, task effects and required
 audits commit together. An exact duplicate returns the saved result. Reusing a
