@@ -10,7 +10,8 @@
   108 warnings, 0 notices (exit 0) with `--require-anchors`. Of the
   anchored-run warnings, 108 are anchor-required findings (full citations
   without an anchor); anchoring them is separate work and none of them blocks
-  anything.
+  anything. `deploy.md` lists the workflow among its sources: re-verified (it
+  never describes the OKF job, so its claims are unchanged) and re-stamped.
 
 - 2026-10-02T07:54:24Z, task 7c64e80c: re-stamped after merging master; `architecture.md`, `backend.md`, `governance-merge.md`, `reconcile-done-but-open.md`, `task-lifecycle.md`, `workflow-gates.md` list sources that master changed in the meantime. The merged changes come from separately reviewed tasks and none contradicts these docs' claims, so no body text changed.
 
