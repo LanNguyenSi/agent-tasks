@@ -1,6 +1,50 @@
+- 2026-10-03T12:12:29Z, okf-staleness workflow re-synced from the okf-kit
+  workflow template (fleet convergence ticket fdc01728): the workflow header
+  now names the template as its source instead of calling the file a pattern
+  to keep in sync, the pin moved from okf-kit@0.10.0 to okf-kit@0.16.0,
+  `--require-anchors` joined the invocation, and the job stays warn-only.
+  Measured on the tree before the change with `okf-kit check --json <bundle>`:
+  at okf-kit@0.10.0, 0 errors, 0 warnings, 0 notices (exit 0) plain and 0
+  errors, 108 warnings, 0 notices (exit 0) with `--require-anchors`; at
+  okf-kit@0.16.0, 0 errors, 0 warnings, 0 notices (exit 0) plain and 0 errors,
+  108 warnings, 0 notices (exit 0) with `--require-anchors`. Of the
+  anchored-run warnings, 108 are anchor-required findings (full citations
+  without an anchor); anchoring them is separate work and none of them blocks
+  anything. `deploy.md` lists the workflow among its sources: re-verified (it
+  never describes the OKF job, so its claims are unchanged) and re-stamped.
+
 - 2026-10-02T07:54:24Z, task 7c64e80c: re-stamped after merging master; `architecture.md`, `backend.md`, `governance-merge.md`, `reconcile-done-but-open.md`, `task-lifecycle.md`, `workflow-gates.md` list sources that master changed in the meantime. The merged changes come from separately reviewed tasks and none contradicts these docs' claims, so no body text changed.
 
 # Change log
+
+## 2026-10-03 (deploy.md re-stamp after the staleness-template re-sync)
+
+`deploy.md` lists `okf-staleness.yml` as a source; the comment-only re-sync
+of that workflow made it stale again. Claims unchanged (the doc never
+describes the OKF job); re-stamped.
+
+## 2026-10-03 (merge of master: release.yml env change)
+
+Merged master (release.yml passes its step values through `env:`) into the
+publish-floor branch. `release-flow.md` keeps this branch's publish text and
+master's release.yml description, both still accurate; `deploy.md` lists both
+workflows only as sources. Both re-stamped after the merge.
+
+## 2026-10-03 (release-flow.md quotes the workflow's literal)
+
+`release-flow.md` now quotes the attestation probe as
+`npm view "${pkg}@${version}" dist.attestations`, the literal at the cited
+`publish-npm.yml:93-110`, instead of a `<pkg>@<version>` placeholder the
+literal guard cannot match. Claims unchanged; re-stamped (2026-10-03T12:52:10Z).
+
+## 2026-10-03 (release.yml: step values via env)
+
+`release.yml` now passes the release version into its `run:` scripts through
+`env:` instead of interpolating `${{ }}` expressions into the script text, and
+the changelog `awk` extraction reads it from `ENVIRON`. Re-verified
+`release-flow.md` (its description of the tag-derived version and the `awk`
+section extraction still holds) and `deploy.md` (lists `release.yml` only as
+a source, no claim about it). Both were re-stamped; no body text changed.
 
 ## 2026-10-02 (merge of master: generic status compare-and-swap)
 
