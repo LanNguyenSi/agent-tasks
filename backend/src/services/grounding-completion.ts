@@ -24,6 +24,7 @@ import { buildGroundingRoutePlan, applyGroundingRoutePlan, type GroundingRoutePl
 import { maybeDeliverSignalWebhook } from "./signal.js";
 import { logger } from "../lib/logger.js";
 import { GovernanceMode, resolveGovernanceMode } from "../lib/governance-mode.js";
+import { STATUS_VERSION_BUMP } from "./task-status-cas.js";
 
 export type GroundingAfterCommit = (result: unknown) => Promise<void>;
 
@@ -210,7 +211,7 @@ export class GroundingCompletionService {
   protected async applyDecision(db: Prisma.TransactionClient, task: GroundingTask, operation: GroundingOperation, mergeCommitSha?: string) {
     const decision = operation.decision as unknown as GroundingDecision;
     const { templateData, ...taskData } = decision.data;
-    const changed = await db.task.updateMany({ where: { id: task.id, status: decision.from, claimedByUserId: task.claimedByUserId, claimedByAgentId: task.claimedByAgentId, reviewClaimedByUserId: task.reviewClaimedByUserId, reviewClaimedByAgentId: task.reviewClaimedByAgentId }, data: { ...taskData, ...(templateData !== undefined ? { templateData: templateData === null ? Prisma.JsonNull : templateData } : {}), ...(mergeCommitSha ? { autoMergeSha: mergeCommitSha } : {}) } });
+    const changed = await db.task.updateMany({ where: { id: task.id, status: decision.from, claimedByUserId: task.claimedByUserId, claimedByAgentId: task.claimedByAgentId, reviewClaimedByUserId: task.reviewClaimedByUserId, reviewClaimedByAgentId: task.reviewClaimedByAgentId }, data: { ...taskData, ...STATUS_VERSION_BUMP, ...(templateData !== undefined ? { templateData: templateData === null ? Prisma.JsonNull : templateData } : {}), ...(mergeCommitSha ? { autoMergeSha: mergeCommitSha } : {}) } });
     if (changed.count !== 1) mismatch();
     if (decision.attemptId) {
       const consumed = await db.groundingAttempt.updateMany({ where: { id: decision.attemptId, taskId: task.id, state: "ACTIVE" }, data: { state: "CONSUMED" } });

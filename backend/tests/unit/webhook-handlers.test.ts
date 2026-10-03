@@ -85,7 +85,7 @@ describe("handlePullRequestReviewEvent", () => {
 
     expect(mockTaskUpdate).toHaveBeenCalledWith({
       where: { id: "task-1" },
-      data: { status: "in_progress" },
+      data: { status: "in_progress", statusVersion: { increment: 1 } },
     });
     expect(mockCommentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -177,7 +177,7 @@ describe("handlePullRequestEvent", () => {
 
     expect(mockTaskUpdate).toHaveBeenCalledWith({
       where: { id: "task-1" },
-      data: { status: "review" },
+      data: { status: "review", statusVersion: { increment: 1 } },
     });
     expect(mockCommentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -207,7 +207,7 @@ describe("handlePullRequestEvent", () => {
 
     expect(mockTaskUpdate).toHaveBeenCalledWith({
       where: { id: "task-1" },
-      data: { status: "done" },
+      data: { status: "done", statusVersion: { increment: 1 } },
     });
     // Pending signals for the task are auto-acked so the pickup queue drops them
     expect(mockSignalUpdateMany).toHaveBeenCalledWith({
@@ -223,7 +223,7 @@ describe("handlePullRequestEvent", () => {
 
     expect(mockTaskUpdate).toHaveBeenCalledWith({
       where: { id: "task-1" },
-      data: { status: "review" },
+      data: { status: "review", statusVersion: { increment: 1 } },
     });
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
@@ -241,7 +241,7 @@ describe("handlePullRequestEvent", () => {
 
     expect(mockTaskUpdate).toHaveBeenCalledWith({
       where: { id: "task-1" },
-      data: { status: "review" },
+      data: { status: "review", statusVersion: { increment: 1 } },
     });
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
@@ -254,7 +254,7 @@ describe("handlePullRequestEvent", () => {
 
     expect(mockTaskUpdate).toHaveBeenCalledWith({
       where: { id: "task-1" },
-      data: { status: "review" },
+      data: { status: "review", statusVersion: { increment: 1 } },
     });
   });
 
@@ -266,7 +266,7 @@ describe("handlePullRequestEvent", () => {
 
     expect(mockTaskUpdate).toHaveBeenCalledWith({
       where: { id: "task-1" },
-      data: { status: "done" },
+      data: { status: "done", statusVersion: { increment: 1 } },
     });
   });
 
@@ -388,7 +388,7 @@ describe("handleIssuesEvent", () => {
 
     expect(mockTaskUpdate).toHaveBeenCalledWith({
       where: { id: "task-1" },
-      data: { status: "done" },
+      data: { status: "done", statusVersion: { increment: 1 } },
     });
     expect(mockSignalUpdateMany).toHaveBeenCalledWith({
       where: { taskId: "task-1", acknowledgedAt: null },

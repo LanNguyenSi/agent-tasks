@@ -19,7 +19,7 @@ const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
   taskFindFirst: vi.fn(),
   taskFindMany: vi.fn(),
-  taskUpdate: vi.fn(),
+  taskUpdateMany: vi.fn(),
   signalFindFirst: vi.fn(),
   signalUpdate: vi.fn(),
   signalUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -34,7 +34,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
       findUnique: prismaMocks.taskFindUnique,
       findFirst: prismaMocks.taskFindFirst,
       findMany: prismaMocks.taskFindMany,
-      update: prismaMocks.taskUpdate,
+      updateMany: prismaMocks.taskUpdateMany,
     },
     signal: {
       findFirst: prismaMocks.signalFindFirst,
@@ -115,6 +115,7 @@ const baseTask = {
   id: "task-1",
   projectId: "proj-1",
   status: "review",
+  statusVersion: 3,
   claimedByUserId: null,
   claimedByAgentId: "agent-claimant",
   reviewClaimedByUserId: null,
@@ -135,10 +136,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   accessMocks.hasProjectAccess.mockResolvedValue(true);
   mergeMock.mockResolvedValue({ ok: true, sha: "deadbeef", alreadyMerged: false });
-  prismaMocks.taskUpdate.mockImplementation(
-    ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
-      Promise.resolve({ ...baseTask, id: where.id, ...data }),
-  );
+  prismaMocks.taskUpdateMany.mockResolvedValue({ count: 1 });
 });
 
 describe("POST /tasks/:id/merge", () => {
@@ -199,16 +197,25 @@ describe("POST /tasks/:id/merge", () => {
     });
     expect(res.status).toBe(200);
     expect(mergeMock).toHaveBeenCalledTimes(1);
-    expect(prismaMocks.taskUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          status: "done",
-          claimedByAgentId: null,
-          reviewClaimedByAgentId: null,
-          autoMergeSha: "deadbeef",
-        }),
+    expect(prismaMocks.taskUpdateMany).toHaveBeenCalledWith({
+      // Compare-and-swap on the state the gates validated against.
+      where: {
+        id: "task-1",
+        status: "review",
+        statusVersion: 3,
+        claimedByUserId: null,
+        claimedByAgentId: "agent-claimant",
+        reviewClaimedByUserId: null,
+        reviewClaimedByAgentId: "agent-reviewer",
+      },
+      data: expect.objectContaining({
+        status: "done",
+        statusVersion: { increment: 1 },
+        claimedByAgentId: null,
+        reviewClaimedByAgentId: null,
+        autoMergeSha: "deadbeef",
       }),
-    );
+    });
     expect(logAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "task.merged",
@@ -276,6 +283,20 @@ describe("POST /tasks/:id/merge", () => {
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(409);
-    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("a lost compare-and-swap after the merge answers 409 merged_but_status_changed and records nothing", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({ ...baseTask });
+    prismaMocks.taskUpdateMany.mockResolvedValue({ count: 0 });
+    const res = await makeApp(AGENT_WITH_SCOPE).request("/tasks/task-1/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe("merged_but_status_changed");
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.merged" }));
+    expect(logAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "task.merged_status_conflict" }));
   });
 });

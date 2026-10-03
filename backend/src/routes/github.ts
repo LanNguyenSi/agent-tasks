@@ -655,7 +655,7 @@ githubRouter.post(
 
         await prisma.task.update({
           where: { id: body.taskId },
-          data: { status: "done" },
+          data: { status: "done", statusVersion: { increment: 1 } },
         });
         await acknowledgeSignalsForTask(body.taskId);
         void emitSelfMergeNoticeIfApplicable({
