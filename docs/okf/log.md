@@ -17,6 +17,15 @@
 
 # Change log
 
+## 2026-10-03 (release.yml: step values via env)
+
+`release.yml` now passes the release version into its `run:` scripts through
+`env:` instead of interpolating `${{ }}` expressions into the script text, and
+the changelog `awk` extraction reads it from `ENVIRON`. Re-verified
+`release-flow.md` (its description of the tag-derived version and the `awk`
+section extraction still holds) and `deploy.md` (lists `release.yml` only as
+a source, no claim about it). Both were re-stamped; no body text changed.
+
 ## 2026-10-02 (merge of master: generic status compare-and-swap)
 
 Merged master (the generic status write compare-and-swap) into the branch for
