@@ -411,6 +411,20 @@ describe.each([
     expect(row.status).toBe("review");
     expect(row.reviewClaimedByUserId).toBe(claimantId);
   });
+
+  it("the work claim handed to the approver between the gate and the write answers 409 and does not write done", async () => {
+    const { taskId } = await seedReviewedTask();
+    shared.afterTaskRead = async () => {
+      await db.task.update({ where: { id: taskId }, data: { claimedByUserId: userId } });
+    };
+
+    const res = await approve(taskId);
+
+    expect(res.status).toBe(409);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("review");
+    expect(row.claimedByUserId).toBe(userId);
+  });
 });
 
 // ---------------------------------------------------------------------------
