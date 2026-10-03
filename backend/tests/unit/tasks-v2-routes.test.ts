@@ -261,6 +261,7 @@ const baseTask = {
   title: "Fix thing",
   description: "do the thing",
   status: "open",
+  statusVersion: 5,
   priority: "MEDIUM",
   workflowId: null,
   workflow: null,
@@ -302,6 +303,27 @@ const baseTask = {
   blockedBy: [],
   blocks: [],
 };
+
+/** The where of the status compare-and-swap for a task row the handler read. */
+function casWhereOf(task: {
+  id: string;
+  status: string;
+  statusVersion: number;
+  claimedByUserId: string | null;
+  claimedByAgentId: string | null;
+  reviewClaimedByUserId: string | null;
+  reviewClaimedByAgentId: string | null;
+}) {
+  return {
+    id: task.id,
+    status: task.status,
+    statusVersion: task.statusVersion,
+    claimedByUserId: task.claimedByUserId,
+    claimedByAgentId: task.claimedByAgentId,
+    reviewClaimedByUserId: task.reviewClaimedByUserId,
+    reviewClaimedByAgentId: task.reviewClaimedByAgentId,
+  };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -1360,8 +1382,8 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
     expect(signalEmitters.emitTaskAvailableSignal).not.toHaveBeenCalled();
   });
 
-  it("guards the status write on the status it read: the write's where carries id and the previous status", async () => {
-    prismaMocks.taskFindUnique.mockResolvedValueOnce({
+  it("guards the status write on the state it read: the write's where carries id, status, status version and claims, and the data bumps the version", async () => {
+    const readTask = {
       ...baseTask,
       status: "in_progress",
       claimedByAgentId: "agent-1",
@@ -1369,7 +1391,8 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
       branchName: "feat/test-branch",
       prUrl: "https://github.com/acme/thing/pull/1",
       prNumber: 1,
-    });
+    };
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(readTask);
     prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
 
     const res = await makeApp(HUMAN).request("/tasks/task-1", {
@@ -1380,7 +1403,11 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
 
     expect(res.status).toBe(200);
     expect(prismaMocks.taskUpdateMany).toHaveBeenCalledTimes(1);
-    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].where).toEqual({ id: "task-1", status: "in_progress" });
+    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].where).toEqual(casWhereOf(readTask));
+    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].data).toMatchObject({
+      status: "done",
+      statusVersion: { increment: 1 },
+    });
   });
 
   it("a status write that lost the race (compare-and-swap matched no row) answers 409 and audits, acknowledges and signals nothing", async () => {
@@ -2355,7 +2382,7 @@ describe("POST /tasks/:id/finish (work claim)", () => {
     const body = (await res.json()) as { targetStatus: string };
     expect(body.targetStatus).toBe("review");
 
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    const data = prismaMocks.taskUpdateMany.mock.calls[0]![0].data;
     expect(data.status).toBe("review");
     expect(data.prUrl).toBe("https://github.com/acme/thing/pull/42");
     expect(data.prNumber).toBe(42);
@@ -2396,7 +2423,7 @@ describe("POST /tasks/:id/finish (work claim)", () => {
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(200);
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    const data = prismaMocks.taskUpdateMany.mock.calls[0]![0].data;
     expect(data.status).toBe("done");
     expect(data.claimedByAgentId).toBeNull();
     expect(data.claimedByUserId).toBeNull();
@@ -2483,7 +2510,7 @@ describe("task_finish grounding gate (Phase 3)", () => {
     });
     expect(res.status).toBe(200);
     expect(groundingClientMock.getLedgerSummary).toHaveBeenCalledWith("sess-debug-1");
-    expect(prismaMocks.taskUpdate).toHaveBeenCalled();
+    expect(prismaMocks.taskUpdateMany).toHaveBeenCalled();
   });
 
   it("blocks with missing=ledgerEntries when the ledger is empty", async () => {
@@ -2718,7 +2745,7 @@ describe("POST /tasks/:id/finish — gate enforcement (regression)", () => {
       }),
     });
     expect(res.status).toBe(200);
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    const data = prismaMocks.taskUpdateMany.mock.calls[0]![0].data;
     expect(data.prUrl).toBe("https://github.com/acme/thing/pull/42");
     expect(data.prNumber).toBe(42);
   });
@@ -2747,7 +2774,7 @@ describe("POST /tasks/:id/finish — gate enforcement (regression)", () => {
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(200);
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    const data = prismaMocks.taskUpdateMany.mock.calls[0]![0].data;
     expect(data.status).toBe("done");
   });
 
@@ -2851,7 +2878,7 @@ describe("release-ops-no-pr template — task_finish runs without branchName/prU
     expect(res.status).toBe(200);
     const body = (await res.json()) as { targetStatus: string };
     expect(body.targetStatus).toBe("review");
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    const data = prismaMocks.taskUpdateMany.mock.calls[0]![0].data;
     expect(data.status).toBe("review");
     expect(data.result).toBe("Tagged and published v1.2.3 to npm");
   });
@@ -2876,7 +2903,7 @@ describe("release-ops-no-pr template — task_finish runs without branchName/prU
       body: JSON.stringify({ outcome: "approve", result: "verified on npm" }),
     });
     expect(res.status).toBe(200);
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    const data = prismaMocks.taskUpdateMany.mock.calls[0]![0].data;
     expect(data.status).toBe("done");
   });
 
@@ -2970,7 +2997,7 @@ describe("release-ops-no-pr template — task_finish runs without branchName/prU
       body: JSON.stringify({ result: "Tagged and published v1.2.3 to npm" }),
     });
     expect(res.status).toBe(200);
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    const data = prismaMocks.taskUpdateMany.mock.calls[0]![0].data;
     expect(data.status).toBe("review");
   });
 });
@@ -2991,7 +3018,7 @@ describe("POST /tasks/:id/finish (review claim)", () => {
       body: JSON.stringify({ outcome: "approve", result: "lgtm" }),
     });
     expect(res.status).toBe(200);
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    const data = prismaMocks.taskUpdateMany.mock.calls[0]![0].data;
     expect(data.status).toBe("done");
     expect(data.reviewClaimedByAgentId).toBeNull();
     expect(data.claimedByAgentId).toBeNull();
@@ -3015,7 +3042,7 @@ describe("POST /tasks/:id/finish (review claim)", () => {
       body: JSON.stringify({ outcome: "request_changes", result: "pls fix" }),
     });
     expect(res.status).toBe(200);
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    const data = prismaMocks.taskUpdateMany.mock.calls[0]![0].data;
     expect(data.status).toBe("in_progress");
     expect(data.reviewClaimedByAgentId).toBeNull();
     // work claim must NOT be cleared — author auto-resumes
@@ -3180,7 +3207,10 @@ describe("POST /tasks/:id/finish — M5 confidence-telemetry snapshot hook", () 
   // into an error response. Uses the REAL confidence-telemetry service (not
   // mocked away) so this exercises the actual try/catch, not a stand-in.
   it("fail-open: a confidenceTelemetry.upsert DB error does not block the transition", async () => {
-    prismaMocks.taskFindUnique.mockResolvedValueOnce(REVIEW_FINISH_TASK);
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(REVIEW_FINISH_TASK)
+      // The re-fetch after the compare-and-swap write serves the response.
+      .mockResolvedValueOnce({ ...REVIEW_FINISH_TASK, status: "done" });
     prismaMocks.agentTokenFindUnique.mockResolvedValueOnce({ name: "Reviewer" });
     prismaMocks.confidenceTelemetryUpsert.mockRejectedValueOnce(new Error("db unreachable"));
 
@@ -3251,7 +3281,7 @@ describe("POST /tasks/:id/finish — M5 confidence-telemetry snapshot hook", () 
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(200);
-    const data = prismaMocks.taskUpdate.mock.calls[0]![0].data;
+    const data = prismaMocks.taskUpdateMany.mock.calls[0]![0].data;
     expect(data.status).toBe("done");
     expect(prismaMocks.confidenceTelemetryUpsert).not.toHaveBeenCalled();
   });
@@ -4393,9 +4423,10 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     // Race won: the write is guarded on the status that was read.
     const won = await send();
     expect(won.status).toBe(200);
-    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].where).toEqual({
-      id: "task-transition-cas-1",
-      status: "review",
+    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].where).toEqual(casWhereOf(task));
+    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].data).toMatchObject({
+      status: "done",
+      statusVersion: { increment: 1 },
     });
     vi.clearAllMocks();
 

@@ -132,7 +132,7 @@ describe("unconfigured differential", () => {
   // the second run starts from the same state.
   const restore = async (taskId: string, row: Awaited<ReturnType<typeof store.db.task.findUniqueOrThrow>>) => {
     await store.db.toolInvocation.deleteMany({ where: { projectId: row.projectId } });
-    await store.db.task.update({ where: { id: taskId }, data: { status: row.status, claimedByAgentId: row.claimedByAgentId, claimedByUserId: row.claimedByUserId, claimedAt: row.claimedAt, reviewClaimedByAgentId: row.reviewClaimedByAgentId, reviewClaimedByUserId: row.reviewClaimedByUserId, reviewClaimedAt: row.reviewClaimedAt, prUrl: row.prUrl, prNumber: row.prNumber, branchName: row.branchName, autoMergeSha: row.autoMergeSha } });
+    await store.db.task.update({ where: { id: taskId }, data: { status: row.status, claimedByAgentId: row.claimedByAgentId, claimedByUserId: row.claimedByUserId, claimedAt: row.claimedAt, reviewClaimedByAgentId: row.reviewClaimedByAgentId, reviewClaimedByUserId: row.reviewClaimedByUserId, reviewClaimedAt: row.reviewClaimedAt, prUrl: row.prUrl, prNumber: row.prNumber, branchName: row.branchName, autoMergeSha: row.autoMergeSha, statusVersion: row.statusVersion } });
   };
   async function both(taskId: string, send: (target: ReturnType<typeof createApp>) => Response | Promise<Response>) {
     const before = await store.db.task.findUniqueOrThrow({ where: { id: taskId } });

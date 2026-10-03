@@ -352,6 +352,12 @@ model Task {
   title       String
   description String?
   status      String       @default("open")
+  // Bumped by one on every write that sets `status` (see
+  // services/task-status-cas.ts). The compare-and-swap on a status write
+  // compares it next to `status`, so a round trip back to the same status
+  // (review -> in_progress -> review) between a handler's read and its write
+  // is detected instead of passing as "status unchanged".
+  statusVersion Int        @default(0)
   priority    TaskPriority @default(MEDIUM)
 
   // Human creator

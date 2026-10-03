@@ -12,6 +12,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
 import { acknowledgeSignalsForTask } from "./signal.js";
+import { STATUS_VERSION_BUMP } from "./task-status-cas.js";
 import {
   GovernanceMode,
   resolveGovernanceMode,
@@ -210,7 +211,7 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
       for (const task of tasks) {
         await prisma.task.update({
           where: { id: task.id },
-          data: { status: "done" },
+          data: { status: "done", ...STATUS_VERSION_BUMP },
         });
         await acknowledgeSignalsForTask(task.id);
         await logAuditEvent({
@@ -338,7 +339,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
           if (toStatus !== null && toStatus !== task.status) {
             await prisma.task.update({
               where: { id: task.id },
-              data: { status: toStatus },
+              data: { status: toStatus, ...STATUS_VERSION_BUMP },
             });
             if (toStatus === "done") {
               await acknowledgeSignalsForTask(task.id);
@@ -417,7 +418,7 @@ export async function handlePullRequestReviewEvent(payload: GitHubPullRequestRev
           if (task.status === "review") {
             await prisma.task.update({
               where: { id: task.id },
-              data: { status: "in_progress" },
+              data: { status: "in_progress", ...STATUS_VERSION_BUMP },
             });
           }
           await addTimelineComment(task.id, `Changes requested by ${reviewer}`);

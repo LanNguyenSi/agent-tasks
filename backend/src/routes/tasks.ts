@@ -97,6 +97,11 @@ import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES, parseOwnerRepo } from "../services/transition-rules.js";
 import { performPrMerge } from "../services/github-merge.js";
 import { groundingRemoteGuardFor } from "../services/grounding-scope.js";
+import {
+  STATUS_VERSION_BUMP,
+  casUpdateTaskStatus,
+  taskStatusCasWhere,
+} from "../services/task-status-cas.js";
 import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
 import {
   checkDistinctReviewerGate,
@@ -2196,7 +2201,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
           data: {
             claimedByUserId: actor.type === "human" ? actor.userId : null,
             claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
-            claimedAt: new Date(), status: startTarget,
+            claimedAt: new Date(), status: startTarget, ...STATUS_VERSION_BUMP,
             ...(willPersistBranchName ? { branchName: providedBranchName } : {}),
             ...(flavor.isFresh || reclassify ? { metadata: flavor.mergedMetadata as Prisma.InputJsonValue } : {}),
           },
@@ -2905,11 +2910,12 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     // author resumes ownership automatically and the hard-limit still
     // reflects their active claim.
 
-    const updated = await prisma.task.update({
-      where: { id: task.id },
-      data: updateData,
-      include: taskInclude,
-    });
+    // Compare-and-swap: the write lands only while the row still has the
+    // status, status version, work claim and review lock this branch validated
+    // against (the distinct-reviewer gate decided from them). A lost race
+    // answers 409 and writes nothing.
+    const updated = await casUpdateTaskStatus(prisma, task, updateData, taskInclude);
+    if (!updated) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
 
     if (outcome === "approve" && isTerminalState(effectiveDefinition, targetStatus)) {
       await acknowledgeSignalsForTask(task.id);
@@ -3172,11 +3178,9 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     }
     // On request_changes keep claimedBy* so the author resumes ownership.
 
-    const selfApprUpdated = await prisma.task.update({
-      where: { id: task.id },
-      data: selfApprUpdateData,
-      include: taskInclude,
-    });
+    // Compare-and-swap, same as the review-finish write above.
+    const selfApprUpdated = await casUpdateTaskStatus(prisma, task, selfApprUpdateData, taskInclude);
+    if (!selfApprUpdated) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
 
     if (selfApprOutcome === "approve" && isTerminalState(effectiveDefinition, selfApprTargetStatus)) {
       await acknowledgeSignalsForTask(task.id);
@@ -3336,17 +3340,20 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       });
       if (postCheck.failed.length === 0) {
         // PR is merged on GitHub — complete the transition without re-calling merge.
-        const recovered = await prisma.task.update({
-          where: { id: task.id },
-          data: {
+        // Compare-and-swap, same as the review-finish write above.
+        const recovered = await casUpdateTaskStatus(
+          prisma,
+          task,
+          {
             status: "done",
             claimedByUserId: null,
             claimedByAgentId: null,
             claimedAt: null,
             ...(result !== undefined ? { result } : {}),
           },
-          include: taskInclude,
-        });
+          taskInclude,
+        );
+        if (!recovered) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
         await acknowledgeSignalsForTask(task.id);
         // Mid-flight recovery: the merge happened in a prior request that
         // never got to emit the notice. Emit it now so the human-visibility
@@ -3631,11 +3638,9 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     updateData.claimedAt = null;
   }
 
-  const updated = await prisma.task.update({
-    where: { id: task.id },
-    data: updateData,
-    include: taskInclude,
-  });
+  // Compare-and-swap, same as the review-finish write above.
+  const updated = await casUpdateTaskStatus(prisma, task, updateData, taskInclude);
+  if (!updated) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
 
   if (isTerminalState(effectiveDefinition, targetStatus)) {
     await acknowledgeSignalsForTask(task.id);
@@ -4046,6 +4051,7 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
     // If the task is already in review, we rejected above.
     if (isWorkState(effectiveDef, task.status)) {
       updateData.status = effectiveDef.initialState;
+      updateData.statusVersion = STATUS_VERSION_BUMP.statusVersion;
     }
     if (actor.type === "human") claimGuard.claimedByUserId = actor.userId;
     else claimGuard.claimedByAgentId = actor.tokenId;
@@ -4222,7 +4228,7 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
         where: { id: lockedTask.id, status: { in: ["open", "backlog"] }, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, createdByAgentId: actor.tokenId },
-        data: { status: "abandoned", updatedAt: new Date() },
+        data: { status: "abandoned", ...STATUS_VERSION_BUMP, updatedAt: new Date() },
       });
       return { value, changed: value.count === 1 };
     },
@@ -4430,9 +4436,14 @@ taskRouter.post(
       );
     }
 
-    const updated = await prisma.task.update({
-      where: { id: task.id },
-      data: {
+    // Compare-and-swap: the write lands only while the row still has the
+    // status, status version, work claim and review lock the gates above
+    // validated against. A lost race answers 409 (the PR is already merged; a
+    // retry takes the idempotent done -> done path).
+    const updated = await casUpdateTaskStatus(
+      prisma,
+      task,
+      {
         status: "done",
         claimedByUserId: null,
         claimedByAgentId: null,
@@ -4442,8 +4453,9 @@ taskRouter.post(
         reviewClaimedAt: null,
         autoMergeSha: mergeResult.sha,
       },
-      include: taskInclude,
-    });
+      taskInclude,
+    );
+    if (!updated) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
 
     await acknowledgeSignalsForTask(task.id);
     void emitSelfMergeNoticeIfApplicable({
@@ -5265,7 +5277,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
       ...(body.title !== undefined ? { title: body.title } : {}),
       ...(body.description !== undefined ? { description: body.description } : {}),
       ...(body.priority !== undefined ? { priority: body.priority } : {}),
-      ...(body.status !== undefined ? { status: body.status } : {}),
+      ...(body.status !== undefined ? { status: body.status, ...STATUS_VERSION_BUMP } : {}),
       ...(body.dueAt !== undefined ? { dueAt: body.dueAt ? new Date(body.dueAt) : null } : {}),
       ...(body.branchName !== undefined ? { branchName: body.branchName } : {}),
       ...(body.prUrl !== undefined ? { prUrl: body.prUrl } : {}),
@@ -5328,13 +5340,15 @@ taskRouter.patch("/tasks/:id", async (c) => {
       updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
       if (!updated) return notFound(c);
     } else if (body.status !== undefined) {
-      // Compare-and-swap on the status the checks above validated (this also
+      // Compare-and-swap on the state the checks above validated (this also
       // covers the promote and discard moves and an echoed, unchanged status):
-      // the write only lands while the row still has that status. A concurrent
-      // change in between matches zero rows, so the stale transition answers
-      // 409 and leaves the row alone instead of writing over the newer state.
+      // the write only lands while the row still has that status, status
+      // version and work claim / review lock (the distinct-reviewer gate
+      // decided from them). A concurrent change in between, including a status
+      // round trip, matches zero rows, so the stale transition answers 409 and
+      // leaves the row alone instead of writing over the newer state.
       const written = await prisma.task.updateMany({
-        where: { id: task.id, status: previousStatus },
+        where: taskStatusCasWhere(task),
         data: patchData,
       });
       if (written.count === 0) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
@@ -6765,7 +6779,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
         where: { id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null },
-        data: { claimedByUserId: actor.type === "human" ? actor.userId : null, claimedByAgentId: actor.type === "agent" ? actor.tokenId : null, claimedAt: new Date(), status: startTarget },
+        data: { claimedByUserId: actor.type === "human" ? actor.userId : null, claimedByAgentId: actor.type === "agent" ? actor.tokenId : null, claimedAt: new Date(), status: startTarget, ...STATUS_VERSION_BUMP },
       });
       return { value, changed: value.count === 1 };
     },
@@ -6825,7 +6839,7 @@ taskRouter.post("/tasks/:id/release", async (c) => {
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
         where: actor.type === "human" ? { id: lockedTask.id, claimedByUserId: actor.userId } : { id: lockedTask.id, claimedByAgentId: actor.tokenId },
-        data: { claimedByUserId: null, claimedByAgentId: null, claimedAt: null, status: effectiveDef.initialState },
+        data: { claimedByUserId: null, claimedByAgentId: null, claimedAt: null, status: effectiveDef.initialState, ...STATUS_VERSION_BUMP },
       });
       return { value, changed: value.count === 1 };
     },
@@ -7164,15 +7178,18 @@ taskRouter.post(
       !isTerminal &&
       status !== previousStatus &&
       isReviewState(effectiveDef, previousStatus);
-    // Compare-and-swap on the status the checks above validated: the write
-    // only lands while the row still has `previousStatus`. A concurrent status
-    // change between the read and this write matches zero rows, so the stale
-    // transition answers 409 before any claim change, ack, audit event or
-    // signal happens, and the row keeps the newer state.
+    // Compare-and-swap on the state the checks above validated: the write
+    // only lands while the row still has `previousStatus`, the status version
+    // and the work claim / review lock it was read with (the distinct-reviewer
+    // gate decided from them). A concurrent change between the read and this
+    // write, including a status round trip back to `previousStatus`, matches
+    // zero rows, so the stale transition answers 409 before any claim change,
+    // ack, audit event or signal happens, and the row keeps the newer state.
     const written = await prisma.task.updateMany({
-      where: { id: task.id, status: previousStatus },
+      where: taskStatusCasWhere(task),
       data: {
         status,
+        ...STATUS_VERSION_BUMP,
         updatedAt: new Date(),
         ...(isTerminal
           ? {
@@ -7348,17 +7365,22 @@ taskRouter.post(
     }
 
     // Complete review: transition status and clear review lock
-    const updated = await prisma.task.update({
-      where: { id: task.id },
-      data: {
+    // Compare-and-swap: the write lands only while the row still has the
+    // status, status version, work claim and review lock the gate above
+    // validated against. A lost race answers 409 and writes nothing.
+    const updated = await casUpdateTaskStatus(
+      prisma,
+      task,
+      {
         status: newStatus,
         reviewClaimedByUserId: null,
         reviewClaimedByAgentId: null,
         reviewClaimedAt: null,
         updatedAt: new Date(),
       },
-      include: taskInclude,
-    });
+      taskInclude,
+    );
+    if (!updated) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
 
     // Ack BEFORE emitting `task_approved` below, which is deliberately
     // emitted against a terminal task and must survive.
