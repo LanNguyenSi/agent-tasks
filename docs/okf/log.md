@@ -2,6 +2,13 @@
 
 # Change log
 
+## 2026-10-03 (release-flow.md quotes the workflow's literal)
+
+`release-flow.md` now quotes the attestation probe as
+`npm view "${pkg}@${version}" dist.attestations`, the literal at the cited
+`publish-npm.yml:93-110`, instead of a `<pkg>@<version>` placeholder the
+literal guard cannot match. Claims unchanged; re-stamped (2026-10-03T12:52:10Z).
+
 ## 2026-10-02 (merge of master: generic status compare-and-swap)
 
 Merged master (the generic status write compare-and-swap) into the branch for
