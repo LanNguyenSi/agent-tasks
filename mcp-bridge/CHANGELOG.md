@@ -4,6 +4,18 @@ All notable changes to `@agent-tasks/mcp-bridge` are documented here.
 
 ## Unreleased
 
+## 0.9.0
+
+### Changed
+
+- **`@agent-tasks/mcp-server` dependency bumped to `0.16.0`.** Ships
+  mcp-server 0.16.0 to npx consumers. BREAKING (inherited): `task_finish`,
+  `task_merge`, `task_abandon`, `pull_requests_create` and
+  `pull_requests_merge` now always send an operation/idempotency key, and the
+  two PR tools' key formats are narrowed; `task_respec` now describes both
+  eligible states, `open` and `backlog`. See `mcp-server/CHANGELOG.md`
+  `## 0.16.0`.
+
 ## 0.8.2
 
 ### Changed

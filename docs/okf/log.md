@@ -17,6 +17,16 @@
 
 # Change log
 
+## 2026-10-03 (mcp-server 0.16.0, mcp-bridge 0.9.0)
+
+`mcp-server.md` names `SERVER_VERSION` and `mcp-server/package.json#version`
+as `"0.16.0"` and points at the `## 0.16.0` CHANGELOG entry; `mcp-bridge.md`
+names `PACKAGE_VERSION` `"0.9.0"` and the exact pin `"0.16.0"`;
+`release-flow.md` was re-verified (the pin-with-server-bump steps still hold,
+`mcp-bridge/package.json` is one of its sources) and re-stamped, and so was `auth.md`: its source `mcp-bridge/src/cli.ts` changed only
+in `PACKAGE_VERSION`, and its `serve`-path sentence was re-checked against the
+current file. All four re-stamped.
+
 ## 2026-10-03 (deploy.md re-stamp after the staleness-template re-sync)
 
 `deploy.md` lists `okf-staleness.yml` as a source; the comment-only re-sync
