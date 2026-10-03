@@ -23,6 +23,20 @@
 of that workflow made it stale again. Claims unchanged (the doc never
 describes the OKF job); re-stamped.
 
+## 2026-10-03 (merge of master: release.yml env change)
+
+Merged master (release.yml passes its step values through `env:`) into the
+publish-floor branch. `release-flow.md` keeps this branch's publish text and
+master's release.yml description, both still accurate; `deploy.md` lists both
+workflows only as sources. Both re-stamped after the merge.
+
+## 2026-10-03 (release-flow.md quotes the workflow's literal)
+
+`release-flow.md` now quotes the attestation probe as
+`npm view "${pkg}@${version}" dist.attestations`, the literal at the cited
+`publish-npm.yml:93-110`, instead of a `<pkg>@<version>` placeholder the
+literal guard cannot match. Claims unchanged; re-stamped (2026-10-03T12:52:10Z).
+
 ## 2026-10-03 (release.yml: step values via env)
 
 `release.yml` now passes the release version into its `run:` scripts through
