@@ -1,5 +1,5 @@
 import { authorizeDirectSubmission, mutateDirectTask } from "../services/grounding-direct-mutations.js";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { prisma } from "../lib/prisma.js";
@@ -100,6 +100,7 @@ import { groundingRemoteGuardFor } from "../services/grounding-scope.js";
 import {
   STATUS_VERSION_BUMP,
   casUpdateTaskStatus,
+  casUpdateTaskStatusAfterMerge,
   taskStatusCasWhere,
 } from "../services/task-status-cas.js";
 import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
@@ -153,6 +154,74 @@ const RESOLVED_BLOCKER_STATUSES: string[] = ["done", "abandoned"];
 // handler's read and its write, so the validated transition no longer applies.
 const STATUS_CHANGED_CONFLICT_MESSAGE =
   "Task status changed before the request completed; reload the task and retry";
+
+/**
+ * Compare-and-swap status write for the handlers that validate against a
+ * snapshot and then write. `merge` is set when the PR was merged on GitHub
+ * before this write (the merge cannot be undone): a lost race then still
+ * completes when the system's own PR-merge webhook already moved the task to
+ * the status this write targets, and otherwise answers a distinct 409 that
+ * carries the merge sha and leaves an audit event for the operator. Without a
+ * merge a lost race is the plain "reload and retry" 409 and nothing is written.
+ */
+async function writeStatusCas<I extends Prisma.TaskInclude>(
+  c: Context,
+  actor: Actor,
+  task: Parameters<typeof casUpdateTaskStatus>[1] & { projectId: string },
+  data: Prisma.TaskUncheckedUpdateManyInput,
+  targetStatus: string,
+  include: I,
+  merge: { sha: string | null; via: string } | null,
+): Promise<{ ok: true; task: Prisma.TaskGetPayload<{ include: I }> } | { ok: false; response: Response }> {
+  if (merge === null) {
+    const written = await casUpdateTaskStatus(prisma, task, data, include);
+    if (!written) return { ok: false, response: conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE) };
+    return { ok: true, task: written };
+  }
+  const outcome = await casUpdateTaskStatusAfterMerge(prisma, task, data, targetStatus, include);
+  const actorId = actor.type === "human" ? actor.userId : undefined;
+  if (outcome.kind === "written") {
+    if (outcome.webhookFirst) {
+      void logAuditEvent({
+        action: "task.merge_webhook_first",
+        actorId,
+        projectId: task.projectId,
+        taskId: task.id,
+        payload: { via: merge.via, mergeSha: merge.sha, status: targetStatus, actorType: actor.type },
+      });
+    }
+    return { ok: true, task: outcome.task };
+  }
+  void logAuditEvent({
+    action: "task.merged_status_conflict",
+    actorId,
+    projectId: task.projectId,
+    taskId: task.id,
+    payload: {
+      via: merge.via,
+      mergeSha: merge.sha,
+      expectedFrom: task.status,
+      targetStatus,
+      currentStatus: outcome.currentStatus,
+      actorType: actor.type,
+    },
+  });
+  return {
+    ok: false,
+    response: c.json(
+      {
+        error: "merged_but_status_changed",
+        message:
+          `The pull request was merged${merge.sha ? ` (${merge.sha})` : ""}, but the task status changed ` +
+          `to '${outcome.currentStatus ?? "unknown"}' before this request could record it. The task was not updated; ` +
+          "reconcile it by hand.",
+        mergeSha: merge.sha,
+        currentStatus: outcome.currentStatus,
+      },
+      409,
+    ),
+  };
+}
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
 taskRouter.onError((error, c) => {
@@ -2914,8 +2983,17 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     // status, status version, work claim and review lock this branch validated
     // against (the distinct-reviewer gate decided from them). A lost race
     // answers 409 and writes nothing.
-    const updated = await casUpdateTaskStatus(prisma, task, updateData, taskInclude);
-    if (!updated) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
+    const reviewWrite = await writeStatusCas(
+      c,
+      actor,
+      task,
+      updateData,
+      targetStatus,
+      taskInclude,
+      reviewAutoMergeSha !== null ? { sha: reviewAutoMergeSha, via: "task_finish_auto_merge" } : null,
+    );
+    if (!reviewWrite.ok) return reviewWrite.response;
+    const updated = reviewWrite.task;
 
     if (outcome === "approve" && isTerminalState(effectiveDefinition, targetStatus)) {
       await acknowledgeSignalsForTask(task.id);
@@ -3179,8 +3257,17 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     // On request_changes keep claimedBy* so the author resumes ownership.
 
     // Compare-and-swap, same as the review-finish write above.
-    const selfApprUpdated = await casUpdateTaskStatus(prisma, task, selfApprUpdateData, taskInclude);
-    if (!selfApprUpdated) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
+    const selfApprWrite = await writeStatusCas(
+      c,
+      actor,
+      task,
+      selfApprUpdateData,
+      selfApprTargetStatus,
+      taskInclude,
+      selfApprAutoMergeSha !== null ? { sha: selfApprAutoMergeSha, via: "task_finish_self_approve_auto_merge" } : null,
+    );
+    if (!selfApprWrite.ok) return selfApprWrite.response;
+    const selfApprUpdated = selfApprWrite.task;
 
     if (selfApprOutcome === "approve" && isTerminalState(effectiveDefinition, selfApprTargetStatus)) {
       await acknowledgeSignalsForTask(task.id);
@@ -3341,8 +3428,11 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       if (postCheck.failed.length === 0) {
         // PR is merged on GitHub — complete the transition without re-calling merge.
         // Compare-and-swap, same as the review-finish write above.
-        const recovered = await casUpdateTaskStatus(
-          prisma,
+        // The PR is already merged, so a lost race completes against the
+        // webhook-moved row or answers the merged-but-changed 409.
+        const recoveredWrite = await writeStatusCas(
+          c,
+          actor,
           task,
           {
             status: "done",
@@ -3351,9 +3441,12 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
             claimedAt: null,
             ...(result !== undefined ? { result } : {}),
           },
+          "done",
           taskInclude,
+          { sha: task.autoMergeSha, via: "task_finish_auto_merge_recovery" },
         );
-        if (!recovered) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
+        if (!recoveredWrite.ok) return recoveredWrite.response;
+        const recovered = recoveredWrite.task;
         await acknowledgeSignalsForTask(task.id);
         // Mid-flight recovery: the merge happened in a prior request that
         // never got to emit the notice. Emit it now so the human-visibility
@@ -3639,8 +3732,17 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   }
 
   // Compare-and-swap, same as the review-finish write above.
-  const updated = await casUpdateTaskStatus(prisma, task, updateData, taskInclude);
-  if (!updated) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
+  const workWrite = await writeStatusCas(
+    c,
+    actor,
+    task,
+    updateData,
+    targetStatus,
+    taskInclude,
+    workAutoMergeSha !== null ? { sha: workAutoMergeSha, via: "task_finish_auto_merge" } : null,
+  );
+  if (!workWrite.ok) return workWrite.response;
+  const updated = workWrite.task;
 
   if (isTerminalState(effectiveDefinition, targetStatus)) {
     await acknowledgeSignalsForTask(task.id);
@@ -4438,10 +4540,12 @@ taskRouter.post(
 
     // Compare-and-swap: the write lands only while the row still has the
     // status, status version, work claim and review lock the gates above
-    // validated against. A lost race answers 409 (the PR is already merged; a
-    // retry takes the idempotent done -> done path).
-    const updated = await casUpdateTaskStatus(
-      prisma,
+    // validated against. The PR is already merged, so a lost race completes
+    // against the webhook-moved row (the system's own PR-merge webhook got to
+    // `done` first) or answers the merged-but-changed 409.
+    const mergeWrite = await writeStatusCas(
+      c,
+      actor,
       task,
       {
         status: "done",
@@ -4453,9 +4557,12 @@ taskRouter.post(
         reviewClaimedAt: null,
         autoMergeSha: mergeResult.sha,
       },
+      "done",
       taskInclude,
+      { sha: mergeResult.sha, via: "task_merge" },
     );
-    if (!updated) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
+    if (!mergeWrite.ok) return mergeWrite.response;
+    const updated = mergeWrite.task;
 
     await acknowledgeSignalsForTask(task.id);
     void emitSelfMergeNoticeIfApplicable({
@@ -7351,35 +7458,41 @@ taskRouter.post(
     const { action, comment: reviewComment } = c.req.valid("json");
     const newStatus = action === "approve" ? "done" : "in_progress";
 
-    // Create review comment first so it's included in the response
-    if (reviewComment?.trim()) {
-      const prefix = action === "approve" ? "Approved" : "Changes requested";
-      await prisma.comment.create({
-        data: {
-          taskId: task.id,
-          content: `[${prefix}] ${reviewComment.trim()}`,
-          authorUserId: actor.type === "human" ? actor.userId : null,
-          authorAgentId: actor.type === "agent" ? actor.tokenId : null,
-        },
-      });
-    }
-
-    // Complete review: transition status and clear review lock
+    // Complete review: transition status and clear review lock, and store the
+    // review comment, in one transaction.
     // Compare-and-swap: the write lands only while the row still has the
     // status, status version, work claim and review lock the gate above
-    // validated against. A lost race answers 409 and writes nothing.
-    const updated = await casUpdateTaskStatus(
-      prisma,
-      task,
-      {
-        status: newStatus,
-        reviewClaimedByUserId: null,
-        reviewClaimedByAgentId: null,
-        reviewClaimedAt: null,
-        updatedAt: new Date(),
-      },
-      taskInclude,
-    );
+    // validated against. A lost race answers 409 and writes nothing, the
+    // comment included (a stale "[Approved]" note must not outlive a review
+    // that did not happen). The comment is created after the write so the
+    // response, re-read at the end, includes it.
+    const updated = await prisma.$transaction(async (tx) => {
+      const written = await casUpdateTaskStatus(
+        tx,
+        task,
+        {
+          status: newStatus,
+          reviewClaimedByUserId: null,
+          reviewClaimedByAgentId: null,
+          reviewClaimedAt: null,
+          updatedAt: new Date(),
+        },
+        {},
+      );
+      if (!written) return null;
+      if (reviewComment?.trim()) {
+        const prefix = action === "approve" ? "Approved" : "Changes requested";
+        await tx.comment.create({
+          data: {
+            taskId: task.id,
+            content: `[${prefix}] ${reviewComment.trim()}`,
+            authorUserId: actor.type === "human" ? actor.userId : null,
+            authorAgentId: actor.type === "agent" ? actor.tokenId : null,
+          },
+        });
+      }
+      return tx.task.findUnique({ where: { id: task.id }, include: taskInclude });
+    });
     if (!updated) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
 
     // Ack BEFORE emitting `task_approved` below, which is deliberately

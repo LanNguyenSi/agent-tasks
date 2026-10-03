@@ -97,6 +97,16 @@ for (const variant of variants) it.each(["missing", "wrong", "valid"])(`N-01/N-0
   expect(harness.wrapper.start).not.toHaveBeenCalled(); expect(harness.wrapper.getLedgerSummary).not.toHaveBeenCalled(); expect(f.ledger.getLedgerSummary).not.toHaveBeenCalled();
 });
 
+it.each(["work", "review", "task_merge"] as const)("a completed grounding %s write adds one to the task's status version", async variant => {
+  const v = await setup(variant); await f.evidence(v.intent);
+  const before = (await store.db.task.findUniqueOrThrow({ where: { id: f.taskId } })).statusVersion;
+  const response = await app().fetch(request(v.body, v.endpoint));
+  expect(response.status).toBe(200);
+  const after = await store.db.task.findUniqueOrThrow({ where: { id: f.taskId } });
+  expect(after.status).toBe(v.target);
+  expect(after.statusVersion).toBe(before + 1);
+});
+
 it("N-09 new attempt with failed producer cannot reuse the previous passing receipt", async () => {
   await f.evidence(); const old = await f.snapshot();
   await f.attempts.issue(f.taskId, actor, "finish");

@@ -286,7 +286,7 @@ describe("POST /tasks/:id/merge", () => {
     expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("a lost compare-and-swap after the merge answers 409 conflict and records nothing", async () => {
+  it("a lost compare-and-swap after the merge answers 409 merged_but_status_changed and records nothing", async () => {
     prismaMocks.taskFindUnique.mockResolvedValue({ ...baseTask });
     prismaMocks.taskUpdateMany.mockResolvedValue({ count: 0 });
     const res = await makeApp(AGENT_WITH_SCOPE).request("/tasks/task-1/merge", {
@@ -295,7 +295,8 @@ describe("POST /tasks/:id/merge", () => {
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toBe("conflict");
+    expect(((await res.json()) as { error: string }).error).toBe("merged_but_status_changed");
     expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.merged" }));
+    expect(logAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "task.merged_status_conflict" }));
   });
 });

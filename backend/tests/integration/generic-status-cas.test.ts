@@ -125,6 +125,9 @@ import { taskRouter } from "../../src/routes/tasks.js";
 import { logAuditEvent } from "../../src/services/audit.js";
 import { emitTaskAvailableSignal } from "../../src/services/task-signal.js";
 import { emitReviewSignal } from "../../src/services/review-signal.js";
+import { githubRouter } from "../../src/routes/github.js";
+import { handlePullRequestEvent } from "../../src/services/github-webhook.js";
+import { applyGithubObservedContext } from "../../src/services/grounding-github-observation-context.js";
 
 let store: Awaited<ReturnType<typeof groundingPostgres>>;
 let db: PrismaClient;
@@ -667,12 +670,24 @@ describe("POST /tasks/:id/merge compare-and-swaps its done write", () => {
 
     const res = await postJson(`/tasks/${taskId}/merge`, {});
 
+    // The PR is merged by then, so the answer says so instead of the plain
+    // "reload and retry" conflict, and the merge sha is on record.
     expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; mergeSha: string };
+    expect(body.error).toBe("merged_but_status_changed");
+    expect(body.mergeSha).toBe("deadbeef");
     expect(github.performPrMerge).toHaveBeenCalledTimes(1);
     const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
     expect(row.status).toBe("in_progress");
     expect(row.autoMergeSha).toBeNull();
     expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.merged" }));
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merged_status_conflict",
+        taskId,
+        payload: expect.objectContaining({ mergeSha: "deadbeef", via: "task_merge", currentStatus: "in_progress" }),
+      }),
+    );
   });
 
   it("without a race it lands (done, the merge sha stored, claims cleared)", async () => {
@@ -705,11 +720,13 @@ describe("POST /tasks/:id/review compare-and-swaps its status write", () => {
     });
     moveDuringRead(taskId, "in_progress");
 
-    const res = await postJson(`/tasks/${taskId}/review`, { action: "approve" });
+    const res = await postJson(`/tasks/${taskId}/review`, { action: "approve", comment: "LGTM" });
 
     expect(res.status).toBe(409);
     expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("in_progress");
     expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.reviewed" }));
+    // The review did not happen, so its comment must not be on the timeline.
+    expect(await db.comment.findMany({ where: { taskId } })).toEqual([]);
   });
 
   it("without a race it lands (done)", async () => {
@@ -721,9 +738,433 @@ describe("POST /tasks/:id/review compare-and-swaps its status write", () => {
       ...PR_FIELDS,
     });
 
-    const res = await postJson(`/tasks/${taskId}/review`, { action: "approve" });
+    const res = await postJson(`/tasks/${taskId}/review`, { action: "approve", comment: "LGTM" });
 
     expect(res.status).toBe(200);
     expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("done");
+    // The comment is stored and the response, read after the write, carries it.
+    const stored = await db.comment.findMany({ where: { taskId } });
+    expect(stored.map((comment) => comment.content)).toEqual(["[Approved] LGTM"]);
+    const body = (await res.json()) as { task: { status: string; comments: Array<{ content: string }> } };
+    expect(body.task.status).toBe("done");
+    expect(body.task.comments.map((comment) => comment.content)).toEqual(["[Approved] LGTM"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The PR-merge webhook of the system itself landing between the GitHub merge
+// and the guarded write.
+// ---------------------------------------------------------------------------
+
+const MERGE_PR = { branchName: "feat/x", prUrl: "https://github.com/acme/thing/pull/1", prNumber: 1 };
+
+async function autonomousProject() {
+  await db.project.update({ where: { id: projectId }, data: { githubRepo: "acme/thing", governanceMode: "AUTONOMOUS", soloMode: true } });
+}
+
+/** The two writers a merged-PR event can reach: the legacy handler and the Grounding observation adapter. */
+const WEBHOOK_WRITERS: Array<[string, (taskId: string) => Promise<void>]> = [
+  [
+    "handlePullRequestEvent",
+    async () => {
+      await handlePullRequestEvent({
+        action: "closed",
+        repository: { full_name: "acme/thing" },
+        pull_request: {
+          number: 1,
+          html_url: MERGE_PR.prUrl,
+          merged: true,
+          merged_by: { login: "bot" },
+          head: { ref: MERGE_PR.branchName },
+        },
+      } as never);
+    },
+  ],
+  [
+    "applyGithubObservedContext",
+    async (taskId) => {
+      await db.$transaction(async (tx) => {
+        const row = await tx.task.findUniqueOrThrow({ where: { id: taskId }, include: { project: true } });
+        await applyGithubObservedContext(tx, [{ task: row as never, patch: { status: "done" } }], {
+          deliveryId: randomUUID(),
+          reason: "pull_request.closed",
+        });
+      });
+    },
+  ],
+];
+
+/** performPrMerge stand-in: GitHub merges, then the merged-PR event is processed before the handler writes. */
+function mergeThenWebhook(webhook: (taskId: string) => Promise<void>, taskId: string) {
+  github.performPrMerge.mockImplementation(async () => {
+    await webhook(taskId);
+    return { ok: true, sha: "deadbeef", alreadyMerged: false };
+  });
+}
+
+describe.each(WEBHOOK_WRITERS)(
+  "the PR-merge webhook (%s) moves the task to done between the GitHub merge and the handler's write",
+  (_writer, webhook) => {
+    beforeEach(autonomousProject);
+
+    it("POST /tasks/:id/merge: completes against the webhook-moved row (200, claims cleared, sha stored, merge audit)", async () => {
+      const claimantId = await seedUser();
+      const taskId = await seedTask({ status: "review", claimedByUserId: claimantId, claimedAt: new Date(), ...MERGE_PR });
+      mergeThenWebhook(webhook, taskId);
+
+      const res = await postJson(`/tasks/${taskId}/merge`, {});
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { merged: boolean; sha: string; task: { status: string } };
+      expect(body.merged).toBe(true);
+      expect(body.sha).toBe("deadbeef");
+      expect(body.task.status).toBe("done");
+      const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+      expect(row.status).toBe("done");
+      expect(row.claimedByUserId).toBeNull();
+      expect(row.claimedAt).toBeNull();
+      expect(row.autoMergeSha).toBe("deadbeef");
+      expect(logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "task.merged", taskId, payload: expect.objectContaining({ sha: "deadbeef" }) }),
+      );
+      expect(logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "task.merge_webhook_first", taskId, payload: expect.objectContaining({ mergeSha: "deadbeef" }) }),
+      );
+      expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.merged_status_conflict" }));
+    });
+
+    it("POST /tasks/:id/finish Mode A autoMerge: completes (200, claim cleared, sha and result stored, auto-merge audit)", async () => {
+      const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+      mergeThenWebhook(webhook, taskId);
+
+      const res = await postJson(`/tasks/${taskId}/finish`, { autoMerge: true, result: "shipped" });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { kind: string; autoMergeSha: string };
+      expect(body.kind).toBe("work");
+      expect(body.autoMergeSha).toBe("deadbeef");
+      const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+      expect(row.status).toBe("done");
+      expect(row.claimedByUserId).toBeNull();
+      expect(row.autoMergeSha).toBe("deadbeef");
+      expect(row.result).toBe("shipped");
+      expect(logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "task.auto_merged", taskId, payload: expect.objectContaining({ mode: "A", autoMergeSha: "deadbeef" }) }),
+      );
+    });
+
+    it("POST /tasks/:id/finish Mode B autoMerge (review lock holder approves): completes (200, both claims cleared, sha stored, audit)", async () => {
+      const claimantId = await seedUser();
+      const taskId = await seedTask({
+        status: "review",
+        claimedByUserId: claimantId,
+        claimedAt: new Date(),
+        reviewClaimedByUserId: userId,
+        reviewClaimedAt: new Date(),
+        ...MERGE_PR,
+      });
+      mergeThenWebhook(webhook, taskId);
+
+      const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", autoMerge: true });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { kind: string; autoMergeSha: string };
+      expect(body.kind).toBe("review");
+      expect(body.autoMergeSha).toBe("deadbeef");
+      const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+      expect(row.status).toBe("done");
+      expect(row.claimedByUserId).toBeNull();
+      expect(row.reviewClaimedByUserId).toBeNull();
+      expect(row.autoMergeSha).toBe("deadbeef");
+      expect(logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "task.auto_merged", taskId, payload: expect.objectContaining({ mode: "B", autoMergeSha: "deadbeef" }) }),
+      );
+      expect(logAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "task.reviewed", taskId }));
+    });
+
+    it("POST /tasks/:id/finish self-approve autoMerge (work claim holder on a review task): completes (200, claim cleared, sha stored)", async () => {
+      const taskId = await seedTask({ status: "review", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+      mergeThenWebhook(webhook, taskId);
+
+      const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", autoMerge: true });
+
+      expect(res.status).toBe(200);
+      const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+      expect(row.status).toBe("done");
+      expect(row.claimedByUserId).toBeNull();
+      expect(row.autoMergeSha).toBe("deadbeef");
+      expect(logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "task.auto_merged", taskId, payload: expect.objectContaining({ mode: "B_self_approve", autoMergeSha: "deadbeef" }) }),
+      );
+    });
+
+    it("POST /tasks/:id/finish autoMerge recovery (merged earlier, PR event lands before the write): completes (200, claim cleared)", async () => {
+      github.prMergedPostCheckPasses = true;
+      const taskId = await seedTask({
+        status: "in_progress",
+        claimedByUserId: userId,
+        claimedAt: new Date(),
+        autoMergeSha: "cafebabe",
+        ...MERGE_PR,
+      });
+      shared.afterTaskRead = () => webhook(taskId);
+
+      const res = await postJson(`/tasks/${taskId}/finish`, { autoMerge: true, result: "shipped" });
+
+      expect(res.status).toBe(200);
+      const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+      expect(row.status).toBe("done");
+      expect(row.claimedByUserId).toBeNull();
+      expect(row.autoMergeSha).toBe("cafebabe");
+      expect(row.result).toBe("shipped");
+    });
+  },
+);
+
+describe("a change other than the webhook's done after the GitHub merge answers merged_but_status_changed", () => {
+  beforeEach(autonomousProject);
+
+  /** performPrMerge stand-in: GitHub merges, then the task is moved elsewhere before the handler writes. */
+  function mergeThenMove(taskId: string, status: string) {
+    github.performPrMerge.mockImplementation(async () => {
+      await db.task.update({ where: { id: taskId }, data: { status } });
+      return { ok: true, sha: "deadbeef", alreadyMerged: false };
+    });
+  }
+
+  it.each([
+    ["/merge", "review", {}, "merge"],
+    ["/finish Mode A", "in_progress", { autoMerge: true, result: "shipped" }, "finish"],
+  ] as const)("%s: 409 merged_but_status_changed with the sha, nothing written, an operator audit event", async (_label, status, body, verb) => {
+    const claimantId = await seedUser();
+    const taskId = await seedTask({
+      status,
+      claimedByUserId: status === "review" ? claimantId : userId,
+      claimedAt: new Date(),
+      ...MERGE_PR,
+    });
+    mergeThenMove(taskId, status === "review" ? "in_progress" : "open");
+
+    const res = await postJson(`/tasks/${taskId}/${verb}`, body);
+
+    expect(res.status).toBe(409);
+    const answer = (await res.json()) as { error: string; mergeSha: string; currentStatus: string };
+    expect(answer.error).toBe("merged_but_status_changed");
+    expect(answer.mergeSha).toBe("deadbeef");
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe(status === "review" ? "in_progress" : "open");
+    expect(row.autoMergeSha).toBeNull();
+    expect(row.result).toBeNull();
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merged_status_conflict",
+        taskId,
+        payload: expect.objectContaining({ mergeSha: "deadbeef", currentStatus: answer.currentStatus }),
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The webhook observation writer and the status version.
+// ---------------------------------------------------------------------------
+
+async function observeStatus(taskId: string, status: string) {
+  await db.$transaction(async (tx) => {
+    const row = await tx.task.findUniqueOrThrow({ where: { id: taskId }, include: { project: true } });
+    await applyGithubObservedContext(tx, [{ task: row as never, patch: { status } }], {
+      deliveryId: randomUUID(),
+      reason: "pull_request.synchronize",
+    });
+  });
+}
+
+describe("the Grounding webhook observation writer bumps the status version", () => {
+  it("an observed status write adds one", async () => {
+    const taskId = await seedTask({ status: "review", claimedByUserId: userId, claimedAt: new Date(), ...PR_FIELDS });
+
+    await observeStatus(taskId, "in_progress");
+
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("in_progress");
+    expect(row.statusVersion).toBe(1);
+  });
+
+  it("an observed write without a status leaves the version alone", async () => {
+    const taskId = await seedTask({ status: "review", claimedByUserId: userId, claimedAt: new Date(), ...PR_FIELDS });
+
+    await db.$transaction(async (tx) => {
+      const row = await tx.task.findUniqueOrThrow({ where: { id: taskId }, include: { project: true } });
+      await applyGithubObservedContext(tx, [{ task: row as never, patch: { prNumber: 2 } }], {
+        deliveryId: randomUUID(),
+        reason: "pull_request.edited",
+      });
+    });
+
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.prNumber).toBe(2);
+    expect(row.statusVersion).toBe(0);
+  });
+
+  it.each([
+    ["PATCH /tasks/:id", (taskId: string) => patchStatus(taskId, "done")],
+    ["POST /tasks/:id/transition", (taskId: string) => transition(taskId, "done")],
+  ])("a review -> in_progress -> review round trip made of observed writes makes the stale %s answer 409", async (_label, approve) => {
+    const taskId = await seedTask({ status: "review", claimedByUserId: userId, claimedAt: new Date(), ...PR_FIELDS });
+    shared.afterTaskRead = async () => {
+      await observeStatus(taskId, "in_progress");
+      await observeStatus(taskId, "review");
+    };
+
+    const res = await approve(taskId);
+
+    expect(res.status).toBe(409);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("review");
+    expect(row.statusVersion).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Every writer of a task status bumps the status version by exactly one.
+// ---------------------------------------------------------------------------
+
+describe("every status writer adds one to the status version", () => {
+  const AGENT_SCOPES = ["tasks:transition", "tasks:claim", "tasks:update", "github:pr_merge"];
+
+  async function seedAgent() {
+    const tokenId = randomUUID();
+    await db.agentToken.create({
+      data: { id: tokenId, teamId, createdById: userId, name: `agent-${tokenId.slice(0, 8)}`, tokenHash: tokenId, scopes: AGENT_SCOPES },
+    });
+    return { type: "agent", tokenId, teamId, userId, scopes: AGENT_SCOPES } as Actor;
+  }
+
+  const OTHER_CLAIMANT = async () => seedUser();
+
+  // [writer, seed overrides, request, expected status after]
+  const WRITERS: Array<{
+    name: string;
+    expectedStatus: string;
+    run: () => Promise<{ taskId: string; res: Response }>;
+  }> = [
+    {
+      name: "POST /tasks/:id/start",
+      expectedStatus: "in_progress",
+      run: async () => {
+        const taskId = await seedTask({ status: "open" });
+        return { taskId, res: await postJson(`/tasks/${taskId}/start`, {}) };
+      },
+    },
+    {
+      name: "POST /tasks/:id/claim",
+      expectedStatus: "in_progress",
+      run: async () => {
+        const taskId = await seedTask({ status: "open" });
+        return { taskId, res: await postJson(`/tasks/${taskId}/claim`, {}) };
+      },
+    },
+    {
+      name: "POST /tasks/:id/release",
+      expectedStatus: "open",
+      run: async () => {
+        const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date() });
+        return { taskId, res: await postJson(`/tasks/${taskId}/release`, {}) };
+      },
+    },
+    {
+      name: "POST /tasks/:id/abandon",
+      expectedStatus: "open",
+      run: async () => {
+        const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date() });
+        return { taskId, res: await postJson(`/tasks/${taskId}/abandon`, {}) };
+      },
+    },
+    {
+      name: "POST /tasks/:id/creator-abandon",
+      expectedStatus: "abandoned",
+      run: async () => {
+        const agent = await seedAgent();
+        const taskId = await seedTask({ status: "open", createdByUserId: null, createdByAgentId: (agent as { tokenId: string }).tokenId });
+        return { taskId, res: await postJson(`/tasks/${taskId}/creator-abandon`, {}, agent) };
+      },
+    },
+    {
+      name: "POST /tasks/:id/finish (work finish, compare-and-swap helper)",
+      expectedStatus: "review",
+      run: async () => {
+        const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date(), ...PR_FIELDS });
+        return { taskId, res: await postJson(`/tasks/${taskId}/finish`, { result: "Done." }) };
+      },
+    },
+    {
+      name: "POST /tasks/:id/review (compare-and-swap helper)",
+      expectedStatus: "done",
+      run: async () => {
+        const claimant = await OTHER_CLAIMANT();
+        const taskId = await seedTask({ status: "review", claimedByUserId: claimant, claimedAt: new Date(), ...PR_FIELDS });
+        return { taskId, res: await postJson(`/tasks/${taskId}/review`, { action: "approve" }) };
+      },
+    },
+    {
+      name: "POST /tasks/:id/merge (compare-and-swap helper)",
+      expectedStatus: "done",
+      run: async () => {
+        const claimant = await OTHER_CLAIMANT();
+        const taskId = await seedTask({ status: "review", claimedByUserId: claimant, claimedAt: new Date(), ...PR_FIELDS });
+        return { taskId, res: await postJson(`/tasks/${taskId}/merge`, {}) };
+      },
+    },
+    {
+      name: "POST /pull-requests/:prNumber/merge (legacy GitHub route)",
+      expectedStatus: "done",
+      run: async () => {
+        await autonomousProject();
+        const agent = await seedAgent();
+        const claimant = await OTHER_CLAIMANT();
+        const taskId = await seedTask({ status: "review", claimedByUserId: claimant, claimedAt: new Date(), ...MERGE_PR });
+        const app = new Hono<{ Variables: AppVariables }>();
+        app.use("*", async (c, next) => {
+          c.set("actor", agent);
+          c.set("groundingRemoteTargetGuard", null);
+          await next();
+        });
+        app.route("/", githubRouter);
+        const res = await app.request("/pull-requests/1/merge", {
+          method: "POST",
+          headers: PATCH_HEADERS,
+          body: JSON.stringify({ taskId, owner: "acme", repo: "thing" }),
+        });
+        return { taskId, res };
+      },
+    },
+    {
+      name: "the legacy PR-merge webhook (handlePullRequestEvent)",
+      expectedStatus: "done",
+      run: async () => {
+        await autonomousProject();
+        const taskId = await seedTask({ status: "review", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+        await WEBHOOK_WRITERS[0][1](taskId);
+        return { taskId, res: new Response(null, { status: 200 }) };
+      },
+    },
+    {
+      name: "the Grounding webhook observation writer (applyGithubObservedContext)",
+      expectedStatus: "done",
+      run: async () => {
+        const taskId = await seedTask({ status: "review", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+        await WEBHOOK_WRITERS[1][1](taskId);
+        return { taskId, res: new Response(null, { status: 200 }) };
+      },
+    },
+  ];
+
+  it.each(WRITERS.map((writer) => [writer.name, writer] as const))("%s", async (_name, writer) => {
+    const { taskId, res } = await writer.run();
+
+    expect(res.status).toBe(200);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe(writer.expectedStatus);
+    expect(row.statusVersion).toBe(1);
   });
 });

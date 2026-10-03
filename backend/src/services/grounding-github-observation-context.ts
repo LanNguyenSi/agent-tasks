@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { mismatch, type GroundingTask } from "./grounding-context.js";
+import { STATUS_VERSION_BUMP } from "./task-status-cas.js";
 import { assertNoGroundingReservation, invalidateGroundingContext } from "./grounding-transaction.js";
 
 export type GithubObservedContextChange = {
@@ -16,7 +17,7 @@ export async function applyGithubObservedContext(tx: Prisma.TransactionClient, c
   for (const change of actual) await assertNoGroundingReservation(tx, change.task.id);
   for (const { task, patch } of actual) {
     if (Object.keys(patch).length) {
-      const updated = await tx.task.updateMany({ where: { id: task.id, status: task.status, prNumber: task.prNumber, prUrl: task.prUrl, branchName: task.branchName }, data: patch });
+      const updated = await tx.task.updateMany({ where: { id: task.id, status: task.status, prNumber: task.prNumber, prUrl: task.prUrl, branchName: task.branchName }, data: { ...patch, ...(patch.status !== undefined ? STATUS_VERSION_BUMP : {}) } });
       if (updated.count !== 1) mismatch();
     }
     await invalidateGroundingContext(tx, task.id);

@@ -39,6 +39,8 @@ export type AuditAction =
   | "github.pr_commented"
   | "task.auto_merged"
   | "task.auto_merge_post_assert_failed"
+  | "task.merge_webhook_first"
+  | "task.merged_status_conflict"
   | "task.imported"
   | "task.artifact.created"
   | "task.artifact.deleted"
