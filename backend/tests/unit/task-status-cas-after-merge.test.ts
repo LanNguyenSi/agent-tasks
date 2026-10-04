@@ -28,7 +28,7 @@ const BASE: Row = {
   result: null,
 };
 
-/** `reads` yields the row for each successive findUnique; `lose` makes the matching updateMany calls write nothing. */
+/** `reads` yields the row for each successive findUnique; `writes[i]` true makes the i-th updateMany land, false makes it write nothing. */
 function fakeDb(reads: Array<Row | null>, writes: Array<boolean>) {
   const updates: Array<Record<string, unknown>> = [];
   const wheres: Array<Record<string, unknown>> = [];
@@ -180,8 +180,9 @@ describe("casUpdateTaskStatusAfterMerge", () => {
   it("a first write that wins reports no webhook-first completion", async () => {
     const { db } = fakeDb([BASE], [true]);
 
-    expect(await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {})).toMatchObject({
+    expect(await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {})).toEqual({
       kind: "written",
+      task: BASE,
       webhookFirst: false,
     });
   });
@@ -306,6 +307,21 @@ describe("casUpdateTaskStatusAfterMerge", () => {
       reason: "claim_moved",
     });
     expect(await lose({ ...snapshot, statusVersion: 5, claimedByUserId: null })).toEqual({
+      kind: "lost",
+      currentStatus: "done",
+      reason: "status_changed",
+    });
+  });
+
+  it("a lost retry compares the fresh read with the request's snapshot, not with the row the retry was built from", async () => {
+    // The request's snapshot is stale in status and version; after the fresh
+    // read only a claim moved. Comparing the two fresh reads with each other
+    // would call this claim_moved and tell the caller a retry is safe.
+    const current = { ...BASE, status: "done", statusVersion: 4, result: "theirs" };
+    const latest = { ...current, claimedByUserId: "u2" };
+    const { db } = fakeDb([current, latest], [false, false]);
+
+    expect(await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {})).toEqual({
       kind: "lost",
       currentStatus: "done",
       reason: "status_changed",
