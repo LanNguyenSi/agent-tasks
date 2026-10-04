@@ -115,6 +115,50 @@ describe("casUpdateTaskStatusAfterMerge", () => {
     expect(outcome).toMatchObject({ kind: "written", webhookFirst: true, prior: { status: "done", resultKept: true } });
   });
 
+  it("a guard miss whose re-read finds the task reopened with a result does not retry: the loss reports the reopened status", async () => {
+    const done = { ...BASE, status: "done", statusVersion: 4, result: null };
+    const reopened = { ...BASE, status: "in_progress", statusVersion: 5, result: "x" };
+    const { db, updates } = fakeDb([done, reopened], [false, false, true]);
+
+    const outcome = await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {});
+
+    expect(outcome).toEqual({ kind: "lost", currentStatus: "in_progress", reason: "status_changed" });
+    // No write lands on the reopened row: only the first write and the guarded retry ran.
+    expect(updates).toHaveLength(2);
+  });
+
+  it("a retry without result that loses again reports the status of a fresh read, not the row the retry was built from", async () => {
+    const done = { ...BASE, status: "done", statusVersion: 4, result: null };
+    const edited = { ...done, result: "late" };
+    const reopened = { ...BASE, status: "open", statusVersion: 5, result: "late", claimedByUserId: null };
+    const { db, updates, reads } = fakeDb([done, edited, reopened], [false, false, false]);
+
+    const outcome = await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {});
+
+    expect(outcome).toEqual({ kind: "lost", currentStatus: "open", reason: "status_changed" });
+    expect(updates).toHaveLength(3);
+    expect(reads()).toBe(3);
+  });
+
+  it("a retry without result completes against the re-read row and reports that row as the prior state", async () => {
+    const done = { ...BASE, status: "done", statusVersion: 4, result: null };
+    const bumped = { ...done, statusVersion: 6, result: "x", claimedByUserId: null };
+    const writtenRow = { ...bumped, statusVersion: 7 };
+    const { db, updates, wheres } = fakeDb([done, bumped, writtenRow], [false, false, true]);
+
+    const outcome = await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {});
+
+    expect(outcome).toMatchObject({
+      kind: "written",
+      webhookFirst: true,
+      prior: { status: "done", statusVersion: 6, resultKept: true },
+    });
+    expect(wheres[2]).toHaveProperty("statusVersion", 6);
+    expect(wheres[2]).toHaveProperty("claimedByUserId", null);
+    expect(wheres[2]).not.toHaveProperty("result");
+    expect(updates[2]).not.toHaveProperty("result");
+  });
+
   it("a retry without a result to write carries no result condition", async () => {
     const done = { ...BASE, status: "done", statusVersion: 4, result: null };
     const { db, wheres } = fakeDb([done], [false, true]);
