@@ -1,3 +1,4 @@
+- 2026-10-04T06:03:23Z, task d3f5266b: `workflow-gates.md` CAS paragraph now states which writers clear which claims after a merge race (webhook and `POST /github/merge` leave both, `/finish` approval clears both, `/review` approval clears only the review lock), checked against `backend/src/routes/tasks.ts` and `backend/src/services/github-webhook.ts`. Re-stamped.
 - 2026-10-03T12:12:29Z, okf-staleness workflow re-synced from the okf-kit
   workflow template (fleet convergence ticket fdc01728): the workflow header
   now names the template as its source instead of calling the file a pattern
