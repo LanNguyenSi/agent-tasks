@@ -172,11 +172,14 @@ async function writeStatusCas<I extends Prisma.TaskInclude>(
   targetStatus: string,
   include: I,
   merge: { sha: string | null; via: string } | null,
-): Promise<{ ok: true; task: Prisma.TaskGetPayload<{ include: I }> } | { ok: false; response: Response }> {
+): Promise<
+  | { ok: true; task: Prisma.TaskGetPayload<{ include: I }>; resultKept: boolean }
+  | { ok: false; response: Response }
+> {
   if (merge === null) {
     const written = await casUpdateTaskStatus(prisma, task, data, include);
     if (!written) return { ok: false, response: conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE) };
-    return { ok: true, task: written };
+    return { ok: true, task: written, resultKept: false };
   }
   const outcome = await casUpdateTaskStatusAfterMerge(prisma, task, data, targetStatus, include);
   const actorId = actor.type === "human" ? actor.userId : undefined;
@@ -187,10 +190,20 @@ async function writeStatusCas<I extends Prisma.TaskInclude>(
         actorId,
         projectId: task.projectId,
         taskId: task.id,
-        payload: { via: merge.via, mergeSha: merge.sha, status: targetStatus, actorType: actor.type },
+        payload: {
+          via: merge.via,
+          mergeSha: merge.sha,
+          status: targetStatus,
+          actorType: actor.type,
+          // The state the retry completed against: the other writer's status
+          // and version, and whether its stored result was kept.
+          priorStatus: outcome.prior?.status ?? null,
+          priorStatusVersion: outcome.prior?.statusVersion ?? null,
+          resultKept: outcome.prior?.resultKept ?? false,
+        },
       });
     }
-    return { ok: true, task: outcome.task };
+    return { ok: true, task: outcome.task, resultKept: outcome.prior?.resultKept ?? false };
   }
   void logAuditEvent({
     action: "task.merged_status_conflict",
@@ -203,18 +216,23 @@ async function writeStatusCas<I extends Prisma.TaskInclude>(
       expectedFrom: task.status,
       targetStatus,
       currentStatus: outcome.currentStatus,
+      reason: outcome.reason,
       actorType: actor.type,
     },
   });
+  const mergedPrefix = `The pull request was merged${merge.sha ? ` (${merge.sha})` : ""}`;
+  const message =
+    outcome.reason === "claim_moved"
+      ? `${mergedPrefix}, but a claim on the task moved before this request could record it; the status ` +
+        `is still '${outcome.currentStatus ?? "unknown"}'. The task was not updated. Retrying the same request is safe.`
+      : `${mergedPrefix}, but the task status changed to '${outcome.currentStatus ?? "unknown"}' before this ` +
+        "request could record it. The task was not updated; reconcile it by hand.";
   return {
     ok: false,
     response: c.json(
       {
         error: "merged_but_status_changed",
-        message:
-          `The pull request was merged${merge.sha ? ` (${merge.sha})` : ""}, but the task status changed ` +
-          `to '${outcome.currentStatus ?? "unknown"}' before this request could record it. The task was not updated; ` +
-          "reconcile it by hand.",
+        message,
         mergeSha: merge.sha,
         currentStatus: outcome.currentStatus,
       },
@@ -3053,7 +3071,8 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         task.claimedByUserId,
         task.claimedByAgentId,
         reviewerName,
-        result,
+        // A result another writer stored was kept: the signal carries that one.
+        reviewWrite.resultKept ? (updated.result ?? undefined) : result,
       );
     }
 
@@ -3337,7 +3356,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         task.claimedByUserId,
         task.claimedByAgentId,
         selfApprActorName,
-        selfApprResult,
+        selfApprWrite.resultKept ? (selfApprUpdated.result ?? undefined) : selfApprResult,
       );
     }
 

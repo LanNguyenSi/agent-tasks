@@ -45,8 +45,12 @@ export interface TaskStatusCasSnapshot {
 }
 
 /** The WHERE of the compare-and-swap: the row must still look as it was read. */
-export function taskStatusCasWhere(task: TaskStatusCasSnapshot): Prisma.TaskWhereInput {
+export function taskStatusCasWhere(
+  task: TaskStatusCasSnapshot,
+  extra?: Prisma.TaskWhereInput,
+): Prisma.TaskWhereInput {
   return {
+    ...extra,
     id: task.id,
     status: task.status,
     statusVersion: task.statusVersion,
@@ -61,16 +65,18 @@ export function taskStatusCasWhere(task: TaskStatusCasSnapshot): Prisma.TaskWher
  * Writes `data` (which sets `status`) only while the row still matches the
  * snapshot the caller validated against, bumping `statusVersion`. Returns the
  * fresh row, or `null` when another writer got there first (nothing was
- * written; the caller answers 409).
+ * written; the caller answers 409). `extraWhere` adds a condition the write
+ * must also satisfy (for example `{ result: null }`).
  */
 export async function casUpdateTaskStatus<I extends Prisma.TaskInclude>(
   db: Pick<Prisma.TransactionClient, "task">,
   snapshot: TaskStatusCasSnapshot,
   data: Prisma.TaskUncheckedUpdateManyInput,
   include: I,
+  extraWhere?: Prisma.TaskWhereInput,
 ): Promise<Prisma.TaskGetPayload<{ include: I }> | null> {
   const written = await db.task.updateMany({
-    where: taskStatusCasWhere(snapshot),
+    where: taskStatusCasWhere(snapshot, extraWhere),
     data: { ...data, ...STATUS_VERSION_BUMP },
   });
   if (written.count === 0) return null;
@@ -81,25 +87,62 @@ export async function casUpdateTaskStatus<I extends Prisma.TaskInclude>(
   })) as Prisma.TaskGetPayload<{ include: I }> | null;
 }
 
+/**
+ * Why a post-merge write lost, so the caller can word the 409 truthfully:
+ *
+ *   - `status_changed`: the row is in another status (or went through a status
+ *     round trip, which the status version shows), so the transition this
+ *     request validated no longer applies.
+ *   - `claim_moved`: the status and its version are as they were read and only
+ *     a work claim or review lock moved; the same request sent again passes
+ *     the compare-and-swap.
+ */
+export type MergedLossReason = "status_changed" | "claim_moved";
+
 /** The outcome of a status write that follows an irreversible merge. */
 export type MergedStatusWrite<T> =
-  | { kind: "written"; task: T; webhookFirst: boolean }
-  | { kind: "lost"; currentStatus: string | null };
+  | {
+      kind: "written";
+      task: T;
+      webhookFirst: boolean;
+      /**
+       * Set with `webhookFirst`: the status and status version of the row the
+       * retry completed against (the state another writer left), and whether
+       * that row already carried a result, which the retry then kept.
+       */
+      prior?: { status: string; statusVersion: number; resultKept: boolean };
+    }
+  | { kind: "lost"; currentStatus: string | null; reason: MergedLossReason };
+
+function lossReason(
+  snapshot: TaskStatusCasSnapshot,
+  row: TaskStatusCasSnapshot | null,
+): MergedLossReason {
+  if (row && row.status === snapshot.status && row.statusVersion === snapshot.statusVersion) {
+    return "claim_moved";
+  }
+  return "status_changed";
+}
 
 /**
  * `casUpdateTaskStatus` for a write that runs AFTER the PR was merged on
  * GitHub. The merge cannot be undone, so a lost compare-and-swap is not
  * simply "reload and retry":
  *
- *   - The system's own PR-merge webhook (`pull_request` closed + merged) can
- *     move the task to the terminal status between the merge and this write.
- *     When the fresh row is already in the status this write targets, the
- *     write is completed against the fresh row (claims cleared, merge sha and
- *     result stored) and reported as `written` with `webhookFirst: true`, so
- *     the caller answers the normal success.
+ *   - Another writer can move the task to the terminal status between the
+ *     merge and this write: typically the system's own PR-merge webhook
+ *     (`pull_request` closed + merged), but a concurrent approval or admin
+ *     write qualifies as well. When the fresh
+ *     row is already in the status this write targets, the write is completed
+ *     against the fresh row (claims cleared, merge sha stored) and reported as
+ *     `written` with `webhookFirst: true`, so the caller answers the normal
+ *     success. A `result` the other writer already stored is kept: the retry
+ *     writes `result` only while the fresh row has none.
  *   - Any other change (the task moved elsewhere, or the retry loses again)
  *     is `lost`: nothing was written and the caller answers a distinct 409
  *     that tells the operator the PR is merged, with the merge sha recorded.
+ *     The loss reports the status the row has after the last failed write, so
+ *     the row is read again once the retry has lost.
  */
 export async function casUpdateTaskStatusAfterMerge<I extends Prisma.TaskInclude>(
   db: Pick<Prisma.TransactionClient, "task">,
@@ -112,10 +155,52 @@ export async function casUpdateTaskStatusAfterMerge<I extends Prisma.TaskInclude
   if (written) return { kind: "written", task: written, webhookFirst: false };
 
   const current = await db.task.findUnique({ where: { id: snapshot.id } });
-  if (!current) return { kind: "lost", currentStatus: null };
-  if (current.status !== targetStatus) return { kind: "lost", currentStatus: current.status };
+  if (!current) return { kind: "lost", currentStatus: null, reason: "status_changed" };
+  if (current.status !== targetStatus) {
+    return { kind: "lost", currentStatus: current.status, reason: lossReason(snapshot, current) };
+  }
 
-  const retried = await casUpdateTaskStatus(db, current, data, include);
-  if (retried) return { kind: "written", task: retried, webhookFirst: true };
-  return { kind: "lost", currentStatus: current.status };
+  const resultKept = current.result !== null && current.result !== undefined;
+  const retryData: Prisma.TaskUncheckedUpdateManyInput = { ...data };
+  if (resultKept) delete retryData.result;
+  // Writing `result` is conditional on it still being null: a result stored
+  // between the fresh-row read and this write must not be overwritten.
+  const writesResult = !resultKept && retryData.result !== undefined;
+  let retried = await casUpdateTaskStatus(
+    db,
+    current,
+    retryData,
+    include,
+    writesResult ? { result: null } : undefined,
+  );
+  let kept = resultKept;
+  let prior = current;
+  // The freshest read of the row once the retry has lost.
+  let latest: typeof current | null | undefined;
+  if (!retried && writesResult) {
+    // The guard may be what missed: re-read once and retry without `result`
+    // if another writer stored one meanwhile.
+    latest = await db.task.findUnique({ where: { id: snapshot.id } });
+    if (latest && latest.status === targetStatus && latest.result !== null && latest.result !== undefined) {
+      const withoutResult = { ...retryData };
+      delete withoutResult.result;
+      retried = await casUpdateTaskStatus(db, latest, withoutResult, include);
+      kept = true;
+      prior = latest;
+      latest = undefined;
+    }
+  }
+  if (retried) {
+    return {
+      kind: "written",
+      task: retried,
+      webhookFirst: true,
+      prior: { status: prior.status, statusVersion: prior.statusVersion, resultKept: kept },
+    };
+  }
+  // The retry lost too: `current` is stale (the row moved again after it was
+  // read), so read it again before reporting a status.
+  if (latest === undefined) latest = await db.task.findUnique({ where: { id: snapshot.id } });
+  if (!latest) return { kind: "lost", currentStatus: null, reason: "status_changed" };
+  return { kind: "lost", currentStatus: latest.status, reason: lossReason(snapshot, latest) };
 }

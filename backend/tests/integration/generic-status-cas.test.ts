@@ -124,7 +124,7 @@ vi.mock("../../src/services/transition-rules.js", async (importOriginal) => {
 import { taskRouter } from "../../src/routes/tasks.js";
 import { logAuditEvent } from "../../src/services/audit.js";
 import { emitTaskAvailableSignal } from "../../src/services/task-signal.js";
-import { emitReviewSignal } from "../../src/services/review-signal.js";
+import { emitReviewSignal, emitTaskApprovedSignal } from "../../src/services/review-signal.js";
 import { githubRouter } from "../../src/routes/github.js";
 import { handlePullRequestEvent } from "../../src/services/github-webhook.js";
 import { applyGithubObservedContext } from "../../src/services/grounding-github-observation-context.js";
@@ -962,6 +962,276 @@ describe("a change other than the webhook's done after the GitHub merge answers 
         action: "task.merged_status_conflict",
         taskId,
         payload: expect.objectContaining({ mergeSha: "deadbeef", currentStatus: answer.currentStatus }),
+      }),
+    );
+  });
+});
+
+describe("the post-merge loss reports what the row looks like when the last write lost", () => {
+  beforeEach(autonomousProject);
+
+  /** A write that sets a status, as every real status writer does: it bumps the status version too. */
+  function moveTo(taskId: string, data: Record<string, unknown>) {
+    return db.task.update({ where: { id: taskId }, data: { ...data, statusVersion: { increment: 1 } } });
+  }
+
+  it("the fresh-row retry loses to a reopen: the 409 body and the audit event carry the reopened status, not the stale done", async () => {
+    const claimantId = await seedUser();
+    const taskId = await seedTask({ status: "review", claimedByUserId: claimantId, claimedAt: new Date(), ...MERGE_PR });
+    github.performPrMerge.mockImplementation(async () => {
+      // The webhook completes the task, and the task is reopened again after the
+      // handler has re-read that done row and before its retry writes.
+      await moveTo(taskId, { status: "done" });
+      shared.afterTaskRead = async () => {
+        await moveTo(taskId, { status: "open" });
+      };
+      return { ok: true, sha: "deadbeef", alreadyMerged: false };
+    });
+
+    const res = await postJson(`/tasks/${taskId}/merge`, {});
+
+    expect(res.status).toBe(409);
+    const answer = (await res.json()) as { error: string; currentStatus: string; message: string };
+    expect(answer.error).toBe("merged_but_status_changed");
+    expect(answer.currentStatus).toBe("open");
+    expect(answer.message).toContain("changed to 'open'");
+    expect(answer.message).not.toContain("'done'");
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("open");
+    expect(row.autoMergeSha).toBeNull();
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merged_status_conflict",
+        taskId,
+        payload: expect.objectContaining({ currentStatus: "open", reason: "status_changed" }),
+      }),
+    );
+  });
+
+  it("a status change says which status the task changed to, and tells the operator to reconcile by hand", async () => {
+    const claimantId = await seedUser();
+    const taskId = await seedTask({ status: "review", claimedByUserId: claimantId, claimedAt: new Date(), ...MERGE_PR });
+    github.performPrMerge.mockImplementation(async () => {
+      await moveTo(taskId, { status: "in_progress" });
+      return { ok: true, sha: "deadbeef", alreadyMerged: false };
+    });
+
+    const res = await postJson(`/tasks/${taskId}/merge`, {});
+
+    expect(res.status).toBe(409);
+    const answer = (await res.json()) as { message: string };
+    expect(answer.message).toContain("status changed to 'in_progress'");
+    expect(answer.message).toContain("reconcile it by hand");
+    expect(answer.message).not.toContain("safe");
+  });
+
+  it("only a claim moved (status and version as read): the message says so and that retrying the request is safe", async () => {
+    const claimantId = await seedUser();
+    const otherId = await seedUser();
+    const taskId = await seedTask({ status: "review", claimedByUserId: claimantId, claimedAt: new Date(), ...MERGE_PR });
+    github.performPrMerge.mockImplementation(async () => {
+      await db.task.update({ where: { id: taskId }, data: { claimedByUserId: otherId } });
+      return { ok: true, sha: "deadbeef", alreadyMerged: false };
+    });
+
+    const res = await postJson(`/tasks/${taskId}/merge`, {});
+
+    expect(res.status).toBe(409);
+    const answer = (await res.json()) as { error: string; message: string; currentStatus: string };
+    expect(answer.error).toBe("merged_but_status_changed");
+    expect(answer.currentStatus).toBe("review");
+    expect(answer.message).toContain("a claim on the task moved");
+    expect(answer.message).toContain("Retrying the same request is safe");
+    expect(answer.message).not.toContain("reconcile");
+    expect(answer.message).not.toContain("status changed");
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merged_status_conflict",
+        taskId,
+        payload: expect.objectContaining({ reason: "claim_moved", currentStatus: "review" }),
+      }),
+    );
+  });
+});
+
+describe("a non-webhook writer set done between the GitHub merge and the handler's write", () => {
+  beforeEach(autonomousProject);
+
+  /** The merged-PR event does not come from the webhook: an approval or admin write set done and its own result. */
+  function mergeThenOtherWriterDone(taskId: string, result: string | null) {
+    const seen = { versionBeforeRetry: -1 };
+    github.performPrMerge.mockImplementation(async () => {
+      const row = await db.task.update({
+        where: { id: taskId },
+        data: { status: "done", result, claimedByUserId: null, claimedAt: null, statusVersion: { increment: 1 } },
+      });
+      seen.versionBeforeRetry = row.statusVersion;
+      return { ok: true, sha: "deadbeef", alreadyMerged: false };
+    });
+    return seen;
+  }
+
+  it("the other writer's result is kept, the merge sha is stored, and the audit event carries the prior status and version", async () => {
+    const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+    const seen = mergeThenOtherWriterDone(taskId, "approved by the reviewer");
+
+    const res = await postJson(`/tasks/${taskId}/finish`, { autoMerge: true, result: "shipped by the claimant" });
+
+    expect(res.status).toBe(200);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("done");
+    expect(row.result).toBe("approved by the reviewer");
+    expect(row.autoMergeSha).toBe("deadbeef");
+    expect(row.claimedByUserId).toBeNull();
+    // The retry's own write bumped the version once more.
+    expect(row.statusVersion).toBe(seen.versionBeforeRetry + 1);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merge_webhook_first",
+        taskId,
+        payload: expect.objectContaining({
+          mergeSha: "deadbeef",
+          priorStatus: "done",
+          priorStatusVersion: seen.versionBeforeRetry,
+          resultKept: true,
+        }),
+      }),
+    );
+  });
+
+  it("a result that is still null is written by the retry (resultKept false in the audit event)", async () => {
+    const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+    const seen = mergeThenOtherWriterDone(taskId, null);
+
+    const res = await postJson(`/tasks/${taskId}/finish`, { autoMerge: true, result: "shipped by the claimant" });
+
+    expect(res.status).toBe(200);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.result).toBe("shipped by the claimant");
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merge_webhook_first",
+        payload: expect.objectContaining({ priorStatus: "done", priorStatusVersion: seen.versionBeforeRetry, resultKept: false }),
+      }),
+    );
+  });
+
+  /** A review task whose lock holder (the test user) approves with autoMerge; a second approval lands inside the merge. */
+  async function reviewTaskApprovedTwice() {
+    const claimantId = await seedUser();
+    const taskId = await seedTask({
+      status: "review",
+      claimedByUserId: claimantId,
+      claimedAt: new Date(),
+      reviewClaimedByUserId: userId,
+      reviewClaimedAt: new Date(),
+      ...MERGE_PR,
+    });
+    const inner = { status: 0, versionAfter: -1 };
+    github.performPrMerge.mockImplementation(async () => {
+      // A real concurrent approval: it clears the lock, stores its own result
+      // and sends its own approval signal before this request writes.
+      const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", result: "approved by the second reviewer" });
+      inner.status = res.status;
+      inner.versionAfter = (await db.task.findUniqueOrThrow({ where: { id: taskId } })).statusVersion;
+      return { ok: true, sha: "deadbeef", alreadyMerged: false };
+    });
+    return { taskId, claimantId, inner };
+  }
+
+  it("a concurrent approval inside the merge: this request completes, keeps its result, and both approvals signal (the audit event marks the overlap)", async () => {
+    const { taskId, inner } = await reviewTaskApprovedTwice();
+
+    const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", autoMerge: true, result: "approved by the first reviewer" });
+
+    expect(res.status).toBe(200);
+    expect(inner.status).toBe(200);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("done");
+    expect(row.result).toBe("approved by the second reviewer");
+    expect(row.autoMergeSha).toBe("deadbeef");
+    expect(row.statusVersion).toBe(inner.versionAfter + 1);
+    // One signal from the concurrent approval, one from this request.
+    expect(emitTaskApprovedSignal).toHaveBeenCalledTimes(2);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merge_webhook_first",
+        taskId,
+        payload: expect.objectContaining({
+          priorStatus: "done",
+          priorStatusVersion: inner.versionAfter,
+          resultKept: true,
+        }),
+      }),
+    );
+  });
+
+  it("when the other writer's result was kept, this request's approval signal carries the stored result, not the discarded one", async () => {
+    const { taskId } = await reviewTaskApprovedTwice();
+
+    const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", autoMerge: true, result: "approved by the first reviewer" });
+
+    expect(res.status).toBe(200);
+    const comments = vi.mocked(emitTaskApprovedSignal).mock.calls.map((call) => call[5]);
+    expect(comments).toEqual(["approved by the second reviewer", "approved by the second reviewer"]);
+  });
+
+  it("a result still null is written by the retry and the signal carries the caller's own result", async () => {
+    const claimantId = await seedUser();
+    const taskId = await seedTask({
+      status: "review",
+      claimedByUserId: claimantId,
+      claimedAt: new Date(),
+      reviewClaimedByUserId: userId,
+      reviewClaimedAt: new Date(),
+      ...MERGE_PR,
+    });
+    mergeThenOtherWriterDone(taskId, null);
+
+    const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", autoMerge: true, result: "approved by the first reviewer" });
+
+    expect(res.status).toBe(200);
+    expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).result).toBe("approved by the first reviewer");
+    expect(vi.mocked(emitTaskApprovedSignal).mock.calls.map((call) => call[5])).toEqual(["approved by the first reviewer"]);
+  });
+
+  it("self-approve autoMerge: the signal carries the stored result when the other writer's was kept", async () => {
+    const taskId = await seedTask({ status: "review", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+    mergeThenOtherWriterDone(taskId, "result of the other writer");
+
+    const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", autoMerge: true, result: "the claimant's own result" });
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(emitTaskApprovedSignal).mock.calls.map((call) => call[5])).toEqual(["result of the other writer"]);
+  });
+
+  it("a result stored between the fresh-row read and the retry is not overwritten: the retry drops its own and says the result was kept", async () => {
+    const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+    github.performPrMerge.mockImplementation(async () => {
+      // The other writer sets done without a result; a result-only write then
+      // lands after the handler re-read that row and before its retry writes.
+      await db.task.update({
+        where: { id: taskId },
+        data: { status: "done", result: null, claimedByUserId: null, claimedAt: null, statusVersion: { increment: 1 } },
+      });
+      shared.afterTaskRead = async () => {
+        await db.task.update({ where: { id: taskId }, data: { result: "late edit" } });
+      };
+      return { ok: true, sha: "deadbeef", alreadyMerged: false };
+    });
+
+    const res = await postJson(`/tasks/${taskId}/finish`, { autoMerge: true, result: "shipped by the claimant" });
+
+    expect(res.status).toBe(200);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("done");
+    expect(row.result).toBe("late edit");
+    expect(row.autoMergeSha).toBe("deadbeef");
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merge_webhook_first",
+        taskId,
+        payload: expect.objectContaining({ priorStatus: "done", resultKept: true }),
       }),
     );
   });
