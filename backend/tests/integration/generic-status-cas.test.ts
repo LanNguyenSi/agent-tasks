@@ -27,6 +27,9 @@ const shared = vi.hoisted(() => ({
   db: undefined as PrismaClient | undefined,
   // Runs once, right after the handler under test first reads the task row.
   afterTaskRead: null as (() => Promise<void>) | null,
+  // Runs once, right after the first task list query the predicate accepts
+  // (the webhook handlers find their tasks with findMany, not findUnique).
+  afterTaskList: null as { matches: (args: { where?: Record<string, unknown> }) => boolean; run: () => Promise<void> } | null,
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -40,6 +43,17 @@ vi.mock("../../src/lib/prisma.js", () => ({
           return new Proxy(value as object, {
             get: (delegate, method) => {
               const member = Reflect.get(delegate, method);
+              if (method === "findMany" && typeof member === "function") {
+                return async (...args: unknown[]) => {
+                  const rows = await (member as (...a: unknown[]) => Promise<unknown>).apply(delegate, args);
+                  const hook = shared.afterTaskList;
+                  if (hook && hook.matches((args[0] ?? {}) as { where?: Record<string, unknown> })) {
+                    shared.afterTaskList = null;
+                    await hook.run();
+                  }
+                  return rows;
+                };
+              }
               if (method !== "findUnique" || typeof member !== "function") return member;
               return async (...args: unknown[]) => {
                 const row = await (member as (...a: unknown[]) => Promise<unknown>).apply(delegate, args);
@@ -126,7 +140,7 @@ import { logAuditEvent } from "../../src/services/audit.js";
 import { emitTaskAvailableSignal } from "../../src/services/task-signal.js";
 import { emitReviewSignal, emitTaskApprovedSignal } from "../../src/services/review-signal.js";
 import { githubRouter } from "../../src/routes/github.js";
-import { handlePullRequestEvent } from "../../src/services/github-webhook.js";
+import { handleIssuesEvent, handlePullRequestEvent, handlePullRequestReviewEvent } from "../../src/services/github-webhook.js";
 import { applyGithubObservedContext } from "../../src/services/grounding-github-observation-context.js";
 
 let store: Awaited<ReturnType<typeof groundingPostgres>>;
@@ -176,6 +190,7 @@ afterAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   shared.afterTaskRead = null;
+  shared.afterTaskList = null;
   github.prMergedPostCheckPasses = false;
   github.performPrMerge.mockResolvedValue({ ok: true, sha: "deadbeef", alreadyMerged: false });
   accessMocks.hasProjectAccess.mockResolvedValue(true);
@@ -1438,5 +1453,385 @@ describe("every status writer adds one to the status version", () => {
     const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
     expect(row.status).toBe(writer.expectedStatus);
     expect(row.statusVersion).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The claim-guarded writers (agent-tasks task 21446d1a): /start, /claim,
+// /release, /abandon, creator-abandon, unabandon and demote validate against
+// the row they read. Each one's own guard (an unclaimed row, the claim holder)
+// still matches after a status round trip, so only the status version tells
+// the stale write from a fresh one.
+// ---------------------------------------------------------------------------
+
+/**
+ * From inside the read-to-write window the task leaves `status` for `through`
+ * and comes back to `back`, each leg a real status write that bumps the status
+ * version. Claim columns end up as they were read (the extras undo themselves).
+ */
+function roundTripDuringRead(
+  taskId: string,
+  legs: { through: string; throughData?: Record<string, unknown>; back: string; backData?: Record<string, unknown> },
+) {
+  shared.afterTaskRead = async () => {
+    await db.task.update({
+      where: { id: taskId },
+      data: { status: legs.through, statusVersion: { increment: 1 }, ...legs.throughData },
+    });
+    await db.task.update({
+      where: { id: taskId },
+      data: { status: legs.back, statusVersion: { increment: 1 }, ...legs.backData },
+    });
+  };
+}
+
+const CLAIMED_BY_OTHER = async () => ({ claimedByUserId: await seedUser(), claimedAt: new Date() });
+const CLAIM_CLEARED = { claimedByUserId: null, claimedByAgentId: null, claimedAt: null };
+
+async function expectUnchangedAfterLostRace(taskId: string, expected: { status: string; claimedByUserId?: string | null }) {
+  const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+  expect(row.status).toBe(expected.status);
+  expect(row.statusVersion).toBe(2);
+  if (expected.claimedByUserId !== undefined) expect(row.claimedByUserId).toBe(expected.claimedByUserId);
+  expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.claimed" }));
+  expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.released" }));
+}
+
+describe("claim-guarded status writers compare the status version", () => {
+  it("POST /tasks/:id/start: open -> in_progress -> open in the window makes the stale claim answer 409 and writes no claim", async () => {
+    const taskId = await seedTask({ status: "open" });
+    roundTripDuringRead(taskId, { through: "in_progress", throughData: await CLAIMED_BY_OTHER(), back: "open", backData: CLAIM_CLEARED });
+
+    const res = await postJson(`/tasks/${taskId}/start`, {});
+
+    expect(res.status).toBe(409);
+    await expectUnchangedAfterLostRace(taskId, { status: "open", claimedByUserId: null });
+  });
+
+  it("POST /tasks/:id/claim: open -> in_progress -> open in the window makes the stale claim answer 409 and writes no claim", async () => {
+    const taskId = await seedTask({ status: "open" });
+    roundTripDuringRead(taskId, { through: "in_progress", throughData: await CLAIMED_BY_OTHER(), back: "open", backData: CLAIM_CLEARED });
+
+    const res = await postJson(`/tasks/${taskId}/claim`, {});
+
+    expect(res.status).toBe(409);
+    await expectUnchangedAfterLostRace(taskId, { status: "open", claimedByUserId: null });
+  });
+
+  it("POST /tasks/:id/release: in_progress -> review -> in_progress in the window makes the stale release answer 409 and keeps the claim", async () => {
+    const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date() });
+    roundTripDuringRead(taskId, { through: "review", back: "in_progress" });
+
+    const res = await postJson(`/tasks/${taskId}/release`, {});
+
+    expect(res.status).toBe(409);
+    await expectUnchangedAfterLostRace(taskId, { status: "in_progress", claimedByUserId: userId });
+  });
+
+  it("POST /tasks/:id/abandon: a status change in the window answers 409 and neither resets the status nor drops the claim", async () => {
+    const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date() });
+    // The holder keeps the work claim while the task moves on to review; an
+    // abandon validated against in_progress must not reset it to open.
+    shared.afterTaskRead = async () => {
+      await db.task.update({ where: { id: taskId }, data: { status: "review", statusVersion: { increment: 1 } } });
+    };
+
+    const res = await postJson(`/tasks/${taskId}/abandon`, {});
+
+    expect(res.status).toBe(409);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("review");
+    expect(row.statusVersion).toBe(1);
+    expect(row.claimedByUserId).toBe(userId);
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.released" }));
+  });
+
+  it("POST /tasks/:id/abandon: a round trip back to the same status in the window is also 409", async () => {
+    const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date() });
+    roundTripDuringRead(taskId, { through: "review", back: "in_progress" });
+
+    const res = await postJson(`/tasks/${taskId}/abandon`, {});
+
+    expect(res.status).toBe(409);
+    await expectUnchangedAfterLostRace(taskId, { status: "in_progress", claimedByUserId: userId });
+  });
+
+  it("POST /tasks/:id/creator-abandon: open -> in_progress -> open in the window makes the stale abandon answer 409", async () => {
+    const tokenId = randomUUID();
+    const scopes = ["tasks:update"];
+    await db.agentToken.create({
+      data: { id: tokenId, teamId, createdById: userId, name: `agent-${tokenId.slice(0, 8)}`, tokenHash: tokenId, scopes },
+    });
+    const agent = { type: "agent", tokenId, teamId, userId, scopes } as Actor;
+    const taskId = await seedTask({ status: "open", createdByUserId: null, createdByAgentId: tokenId });
+    roundTripDuringRead(taskId, { through: "in_progress", throughData: await CLAIMED_BY_OTHER(), back: "open", backData: CLAIM_CLEARED });
+
+    const res = await postJson(`/tasks/${taskId}/creator-abandon`, {}, agent);
+
+    expect(res.status).toBe(409);
+    await expectUnchangedAfterLostRace(taskId, { status: "open", claimedByUserId: null });
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.creator_abandoned" }));
+  });
+
+  it("PATCH /tasks/:id unabandon: abandoned -> open -> abandoned in the window makes the stale restore answer 409", async () => {
+    const taskId = await seedTask({ status: "abandoned" });
+    roundTripDuringRead(taskId, { through: "open", back: "abandoned" });
+
+    const res = await patchStatus(taskId, "open", { title: "Restored" });
+
+    expect(res.status).toBe(409);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("abandoned");
+    expect(row.statusVersion).toBe(2);
+    expect(row.title).not.toBe("Restored");
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.unabandoned" }));
+  });
+
+  it("PATCH /tasks/:id demote: open -> in_progress -> open in the window makes the stale demote answer 409", async () => {
+    const taskId = await seedTask({ status: "open" });
+    roundTripDuringRead(taskId, { through: "in_progress", throughData: await CLAIMED_BY_OTHER(), back: "open", backData: CLAIM_CLEARED });
+
+    const res = await patchStatus(taskId, "backlog");
+
+    expect(res.status).toBe(409);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("open");
+    expect(row.statusVersion).toBe(2);
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.backlog_demoted" }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The legacy GitHub webhook writers decide a target from the status they read.
+// A write that lost its compare-and-swap re-reads the row and decides again.
+// ---------------------------------------------------------------------------
+
+describe("legacy GitHub webhook status writers do not write over a concurrent change", () => {
+  const PR_EVENT_BASE = {
+    repository: { full_name: "acme/thing" },
+    pull_request: {
+      number: 1,
+      title: "Fix",
+      body: null,
+      html_url: MERGE_PR.prUrl,
+      state: "closed" as const,
+      merged: true,
+      merged_by: { login: "bot" },
+      head: { ref: MERGE_PR.branchName },
+    },
+  };
+
+  /** After the handler's by-PR-number lookup the task is moved on by another writer (a version-bumping write). */
+  function moveAfterPrLookup(taskId: string, status: string) {
+    shared.afterTaskList = {
+      // Earlier tests' projects share the repository name, so the handler
+      // looks tasks up in each of them: only this test's project counts.
+      matches: (args) => args.where?.projectId === projectId && args.where?.prNumber !== undefined,
+      run: async () => {
+        await db.task.update({ where: { id: taskId }, data: { status, statusVersion: { increment: 1 } } });
+      },
+    };
+  }
+
+  beforeEach(async () => {
+    await db.project.update({ where: { id: projectId }, data: { githubRepo: "acme/thing" } });
+  });
+
+  it("PR merged (confirmation required): a task approved to done in the window stays done and is not handed back to review", async () => {
+    const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+    moveAfterPrLookup(taskId, "done");
+
+    await handlePullRequestEvent({ ...PR_EVENT_BASE, action: "closed" } as never);
+
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("done");
+    expect(row.statusVersion).toBe(1);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.transitioned",
+        taskId,
+        payload: expect.objectContaining({ event: "pr_merged", from: "done", to: "done" }),
+      }),
+    );
+  });
+
+  it("PR merged (confirmation required): a task that moved to review in the window is left in review", async () => {
+    const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+    moveAfterPrLookup(taskId, "review");
+
+    await handlePullRequestEvent({ ...PR_EVENT_BASE, action: "closed" } as never);
+
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("review");
+    expect(row.statusVersion).toBe(1);
+  });
+
+  it("PR merged (autonomous): a task that moved to review in the window is decided again against that row and ends done", async () => {
+    await autonomousProject();
+    const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+    moveAfterPrLookup(taskId, "review");
+
+    await handlePullRequestEvent({ ...PR_EVENT_BASE, action: "closed" } as never);
+
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("done");
+    // The window's own write and this one: two bumps, nothing lost or doubled.
+    expect(row.statusVersion).toBe(2);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.transitioned",
+        taskId,
+        payload: expect.objectContaining({ event: "pr_merged", from: "review", to: "done" }),
+      }),
+    );
+  });
+
+  it("changes requested: a task approved to done in the window stays done and is not sent back to in_progress", async () => {
+    const taskId = await seedTask({ status: "review", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+    moveAfterPrLookup(taskId, "done");
+
+    await handlePullRequestReviewEvent({
+      action: "submitted",
+      repository: PR_EVENT_BASE.repository,
+      pull_request: { number: 1, title: "Fix", html_url: MERGE_PR.prUrl, head: { ref: MERGE_PR.branchName } },
+      review: { state: "changes_requested", user: { login: "bob" }, html_url: "https://review" },
+    } as never);
+
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("done");
+    expect(row.statusVersion).toBe(1);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.reviewed",
+        taskId,
+        payload: expect.not.objectContaining({ to: "in_progress" }),
+      }),
+    );
+  });
+
+  it("issue closed: a task demoted to backlog in the window is not moved to done", async () => {
+    const taskId = await seedTask({ status: "in_progress", title: "[GH #7] Something", claimedByUserId: userId, claimedAt: new Date() });
+    shared.afterTaskList = {
+      matches: (args) =>
+        args.where?.projectId === projectId &&
+        typeof (args.where?.title as { contains?: string } | undefined)?.contains === "string",
+      run: async () => {
+        await db.task.update({ where: { id: taskId }, data: { status: "backlog", statusVersion: { increment: 1 } } });
+      },
+    };
+
+    await handleIssuesEvent({
+      action: "closed",
+      repository: PR_EVENT_BASE.repository,
+      issue: { number: 7, title: "Something", body: null, html_url: "https://github.com/acme/thing/issues/7", state: "closed" },
+    } as never);
+
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("backlog");
+    expect(row.statusVersion).toBe(1);
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.transitioned", taskId }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /github/pull-requests/:n/merge (the route MCP pull_requests_merge uses)
+// wrote `done` unconditionally after its gate and the GitHub merge.
+// ---------------------------------------------------------------------------
+
+describe("POST /github/pull-requests/:n/merge compare-and-swaps its done write", () => {
+  const AGENT_SCOPES = ["tasks:transition", "github:pr_merge"];
+
+  async function seedMergeAgent() {
+    const tokenId = randomUUID();
+    await db.agentToken.create({
+      data: { id: tokenId, teamId, createdById: userId, name: `agent-${tokenId.slice(0, 8)}`, tokenHash: tokenId, scopes: AGENT_SCOPES },
+    });
+    return { type: "agent", tokenId, teamId, userId, scopes: AGENT_SCOPES } as Actor;
+  }
+
+  function mergeViaGithubRoute(agent: Actor, taskId: string) {
+    const app = new Hono<{ Variables: AppVariables }>();
+    app.use("*", async (c, next) => {
+      c.set("actor", agent);
+      c.set("groundingRemoteTargetGuard", null);
+      await next();
+    });
+    app.route("/", githubRouter);
+    return app.request("/pull-requests/1/merge", {
+      method: "POST",
+      headers: PATCH_HEADERS,
+      body: JSON.stringify({ taskId, owner: "acme", repo: "thing" }),
+    });
+  }
+
+  beforeEach(autonomousProject);
+
+  it("a status change after the GitHub merge answers merged_but_status_changed, writes nothing and leaves the audit event with the merge sha", async () => {
+    const agent = await seedMergeAgent();
+    const claimantId = await seedUser();
+    const taskId = await seedTask({ status: "review", claimedByUserId: claimantId, claimedAt: new Date(), ...MERGE_PR });
+    github.performPrMerge.mockImplementation(async () => {
+      await db.task.update({ where: { id: taskId }, data: { status: "in_progress", statusVersion: { increment: 1 } } });
+      return { ok: true, sha: "deadbeef", alreadyMerged: false };
+    });
+
+    const res = await mergeViaGithubRoute(agent, taskId);
+
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; mergeSha: string; currentStatus: string };
+    expect(body.error).toBe("merged_but_status_changed");
+    expect(body.mergeSha).toBe("deadbeef");
+    expect(body.currentStatus).toBe("in_progress");
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("in_progress");
+    expect(row.statusVersion).toBe(1);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merged_status_conflict",
+        taskId,
+        payload: expect.objectContaining({ mergeSha: "deadbeef", via: "github_pr_merge", currentStatus: "in_progress" }),
+      }),
+    );
+  });
+
+  it("the system's PR-merge webhook moving the task to done first completes the write: 200 and the webhook-first audit event", async () => {
+    const agent = await seedMergeAgent();
+    const claimantId = await seedUser();
+    const taskId = await seedTask({ status: "review", claimedByUserId: claimantId, claimedAt: new Date(), ...MERGE_PR });
+    github.performPrMerge.mockImplementation(async () => {
+      await WEBHOOK_WRITERS[0][1](taskId);
+      return { ok: true, sha: "deadbeef", alreadyMerged: false };
+    });
+
+    const res = await mergeViaGithubRoute(agent, taskId);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { merged: boolean; task: { status: string } };
+    expect(body.merged).toBe(true);
+    expect(body.task.status).toBe("done");
+    expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("done");
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merge_webhook_first",
+        taskId,
+        payload: expect.objectContaining({ mergeSha: "deadbeef", via: "github_pr_merge" }),
+      }),
+    );
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.merged_status_conflict" }));
+  });
+
+  it("without a race it lands: 200, done, no conflict or webhook-first audit event", async () => {
+    const agent = await seedMergeAgent();
+    const claimantId = await seedUser();
+    const taskId = await seedTask({ status: "review", claimedByUserId: claimantId, claimedAt: new Date(), ...MERGE_PR });
+
+    const res = await mergeViaGithubRoute(agent, taskId);
+
+    expect(res.status).toBe(200);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("done");
+    expect(row.statusVersion).toBe(1);
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.merge_webhook_first" }));
+    expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.merged_status_conflict" }));
   });
 });

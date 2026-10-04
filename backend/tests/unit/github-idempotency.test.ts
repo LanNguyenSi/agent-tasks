@@ -34,6 +34,7 @@ const store = vi.hoisted(() => ({
 const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
   taskUpdate: vi.fn().mockResolvedValue(undefined),
+  taskUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
   toolFindUnique: vi.fn(),
   toolCreate: vi.fn(),
 }));
@@ -43,6 +44,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     task: {
       findUnique: prismaMocks.taskFindUnique,
       update: prismaMocks.taskUpdate,
+      updateMany: prismaMocks.taskUpdateMany,
     },
     toolInvocation: {
       findUnique: prismaMocks.toolFindUnique,
@@ -187,6 +189,7 @@ beforeEach(() => {
     id: TASK_ID,
     projectId: "proj-1",
     status: "review",
+    statusVersion: 3,
     prNumber: 42,
     claimedByUserId: null,
     claimedByAgentId: "agent-claimant",
@@ -823,6 +826,14 @@ describe("pull_requests_merge idempotency", () => {
     expect(second.headers.get("X-Idempotent-Replay")).toBe("true");
 
     expect(performPrMergeMock).toHaveBeenCalledOnce();
+    // The done write ran once, as a compare-and-swap on the task as read.
+    expect(prismaMocks.taskUpdateMany).toHaveBeenCalledOnce();
+    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].where).toMatchObject({
+      id: TASK_ID,
+      status: "review",
+      statusVersion: 3,
+    });
+    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 
   it("reusing the merge key against a different URL prNumber does NOT replay", async () => {

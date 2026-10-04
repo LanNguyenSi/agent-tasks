@@ -24,6 +24,7 @@ import {
   isForeignDeliverable,
 } from "../services/gates/index.js";
 import { performPrMerge } from "../services/github-merge.js";
+import { writeStatusAfterMerge } from "../services/task-merge-status-write.js";
 import { groundingRedirectRefusal, groundingRemoteGuardFor, isGithubRedirect } from "../services/grounding-scope.js";
 import { SCOPES } from "../services/scopes.js";
 import { withIdempotency } from "../services/idempotency.js";
@@ -653,10 +654,23 @@ githubRouter.post(
           };
         }
 
-        await prisma.task.update({
-          where: { id: body.taskId },
-          data: { status: "done", statusVersion: { increment: 1 } },
-        });
+        // Compare-and-swap on the task as the gates above read it. The PR is
+        // merged by now, so a lost race is reported like the task-scoped
+        // merge: the system's own PR-merge webhook having moved the task to
+        // `done` first completes this write, any other change answers the
+        // merged-but-changed 409 and writes nothing.
+        const written = await writeStatusAfterMerge(
+          prisma,
+          actor,
+          { ...task, projectId: task.project.id },
+          { status: "done" },
+          "done",
+          {},
+          { sha: mergeResult.sha, via: "github_pr_merge" },
+        );
+        if (!written.ok) {
+          return { status: 409, body: written.body };
+        }
         await acknowledgeSignalsForTask(body.taskId);
         void emitSelfMergeNoticeIfApplicable({
           taskId: body.taskId,

@@ -12,7 +12,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logAuditEvent } from "./audit.js";
 import { acknowledgeSignalsForTask } from "./signal.js";
-import { STATUS_VERSION_BUMP } from "./task-status-cas.js";
+import { STATUS_VERSION_BUMP, taskStatusVersionWhere } from "./task-status-cas.js";
+import { logger } from "../lib/logger.js";
 import {
   GovernanceMode,
   resolveGovernanceMode,
@@ -127,6 +128,70 @@ export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
   });
 }
 
+/** How many times a webhook status write re-reads and re-decides after losing a race. */
+const WEBHOOK_STATUS_WRITE_ATTEMPTS = 3;
+
+interface WebhookStatusRow {
+  id: string;
+  status: string;
+  statusVersion: number;
+}
+
+/**
+ * The outcome of `writeWebhookStatus`: `written` is true when this call moved
+ * the task; `from` is the status the row had when the decision was taken (the
+ * one that was written over when `written`, otherwise the last one seen);
+ * `to` is the status written, or null when nothing was written.
+ */
+interface WebhookStatusWrite {
+  written: boolean;
+  from: string;
+  to: string | null;
+}
+
+/**
+ * Compare-and-swap status write for the legacy webhook handlers. A handler
+ * decides a target from the status of the row it read (`decide`, null for
+ * "no transition") and the write lands only while the row still has that
+ * status and status version, so a concurrent writer (an approval, a finish, an
+ * admin write) between the read and the write is not written over.
+ *
+ * A webhook delivery is at-most-once and reports a fact that already happened
+ * on GitHub, so a lost write is not answered with an error: the row is read
+ * again and the decision is taken again against it (a task another writer
+ * already moved to the target simply needs no transition). After
+ * `WEBHOOK_STATUS_WRITE_ATTEMPTS` lost races the write is given up with a
+ * warning and `written: false`.
+ */
+async function writeWebhookStatus(
+  task: WebhookStatusRow,
+  decide: (status: string) => string | null,
+): Promise<WebhookStatusWrite> {
+  let current: WebhookStatusRow = task;
+  for (let attempt = 0; attempt < WEBHOOK_STATUS_WRITE_ATTEMPTS; attempt++) {
+    const target = decide(current.status);
+    if (target === null || target === current.status) {
+      return { written: false, from: current.status, to: null };
+    }
+    const result = await prisma.task.updateMany({
+      where: { id: current.id, ...taskStatusVersionWhere(current) },
+      data: { status: target, ...STATUS_VERSION_BUMP },
+    });
+    if (result.count === 1) return { written: true, from: current.status, to: target };
+    const fresh = await prisma.task.findUnique({
+      where: { id: task.id },
+      select: { id: true, status: true, statusVersion: true },
+    });
+    if (!fresh) return { written: false, from: current.status, to: null };
+    current = fresh;
+  }
+  logger.warn(
+    { component: "github-webhook", taskId: task.id, status: current.status },
+    "webhook status write lost its compare-and-swap repeatedly; task left as is",
+  );
+  return { written: false, from: current.status, to: null };
+}
+
 /** Add a webhook timeline comment to a task */
 async function addTimelineComment(taskId: string, message: string) {
   await prisma.comment.create({
@@ -209,10 +274,12 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
       });
 
       for (const task of tasks) {
-        await prisma.task.update({
-          where: { id: task.id },
-          data: { status: "done", ...STATUS_VERSION_BUMP },
-        });
+        // Re-decided against the fresh row after a lost race: a task another
+        // writer already finished (or demoted to backlog) is left alone.
+        const moved = await writeWebhookStatus(task, (status) =>
+          status === "done" || status === "backlog" ? null : "done",
+        );
+        if (!moved.written) continue;
         await acknowledgeSignalsForTask(task.id);
         await logAuditEvent({
           action: "task.transitioned",
@@ -331,19 +398,11 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
         // epic.
         const mergedBy = payload.pull_request.merged_by?.login ?? "unknown";
         for (const task of tasks) {
-          const toStatus = pickMergeTargetStatus({
-            project,
-            currentStatus: task.status,
-          });
-
-          if (toStatus !== null && toStatus !== task.status) {
-            await prisma.task.update({
-              where: { id: task.id },
-              data: { status: toStatus, ...STATUS_VERSION_BUMP },
-            });
-            if (toStatus === "done") {
-              await acknowledgeSignalsForTask(task.id);
-            }
+          const moved = await writeWebhookStatus(task, (currentStatus) =>
+            pickMergeTargetStatus({ project, currentStatus }),
+          );
+          if (moved.written && moved.to === "done") {
+            await acknowledgeSignalsForTask(task.id);
           }
           await addTimelineComment(task.id, `PR #${prNumber} merged by ${mergedBy}`);
           await logAuditEvent({
@@ -355,8 +414,8 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
               event: "pr_merged",
               pr_number: prNumber,
               merged_by: mergedBy,
-              from: task.status,
-              to: toStatus ?? task.status,
+              from: moved.from,
+              to: moved.to ?? moved.from,
             },
           });
         }
@@ -415,12 +474,9 @@ export async function handlePullRequestReviewEvent(payload: GitHubPullRequestRev
 
         case "changes_requested": {
           // Policy: review → in_progress
-          if (task.status === "review") {
-            await prisma.task.update({
-              where: { id: task.id },
-              data: { status: "in_progress", ...STATUS_VERSION_BUMP },
-            });
-          }
+          const moved = await writeWebhookStatus(task, (status) =>
+            status === "review" ? "in_progress" : null,
+          );
           await addTimelineComment(task.id, `Changes requested by ${reviewer}`);
           await logAuditEvent({
             action: "task.reviewed",
@@ -431,7 +487,7 @@ export async function handlePullRequestReviewEvent(payload: GitHubPullRequestRev
               event: "changes_requested",
               reviewer,
               pr_number: prNumber,
-              ...(task.status === "review" ? { from: "review", to: "in_progress" } : {}),
+              ...(moved.written ? { from: "review", to: "in_progress" } : {}),
             },
           });
           break;

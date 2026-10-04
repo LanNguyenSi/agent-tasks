@@ -62,6 +62,21 @@ export function taskStatusCasWhere(
 }
 
 /**
+ * The status half of the compare-and-swap, for the writers that already carry
+ * their own claim guard in the WHERE (a claim taken only while the row is
+ * unclaimed, a release only for the claim holder): the write also lands only
+ * while the row still has the status and status version the handler read, so
+ * a status change (or a round trip back to the same status) between the read
+ * and the write matches no row. Spread it into the `where` next to the
+ * writer's own claim conditions.
+ */
+export function taskStatusVersionWhere(
+  task: Pick<TaskStatusCasSnapshot, "status" | "statusVersion">,
+): Prisma.TaskWhereInput {
+  return { status: task.status, statusVersion: task.statusVersion };
+}
+
+/**
  * Writes `data` (which sets `status`) only while the row still matches the
  * snapshot the caller validated against, bumping `statusVersion`. Returns the
  * fresh row, or `null` when another writer got there first (nothing was
