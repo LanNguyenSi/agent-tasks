@@ -59,7 +59,7 @@ make dev-frontend
 - **Frontend:** Next.js 15 (React 19, App Router)
 - **Backend:** Hono + Node.js
 - **Database:** PostgreSQL + Prisma
-- **Auth:** Email/Password + optional GitHub connect + team-scoped OIDC SSO (humans) + API tokens with scopes (agents)
+- **Auth:** Email/Password + GitHub OAuth login (`/api/auth/github`) + GitHub connect for existing accounts (`/api/auth/github/connect`) + team-scoped OIDC SSO (humans) + API tokens with scopes (agents)
 
 See [docs/architecture.md](architecture.md) for the repository layout and module boundaries.
 

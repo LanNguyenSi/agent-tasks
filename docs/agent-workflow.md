@@ -102,7 +102,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 ## GitHub credentials
 
-This repository does not ship a GitHub token helper. Agents that call GitHub directly (for `gh pr create`, pushing branches) can mint a short-lived `GH_TOKEN` with their own GitHub App helper; the PR verbs (`task_submit_pr`, `task_merge`, `pull_requests_*`) route through the team's GitHub delegation and need no agent-side credential.
+This repository does not ship a GitHub token helper. When the team has agent PR creation enabled (`allowAgentPrCreate`), `task_submit_pr` accepts only PRs authored by the team's delegation user and answers `403 pr_author_mismatch` otherwise (it reads the PR author through the delegation token, it does not create the PR). Open the PR with `pull_requests_create` (team delegation, no agent-side credential) or with `gh` authenticated as that user; a token that authors as a GitHub App bot fails the check. `task_merge` and `pull_requests_*` also run through the team's GitHub delegation.
 
 ## Task ↔ PR binding
 

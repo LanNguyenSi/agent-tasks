@@ -44,7 +44,7 @@ Siehe auch:
 
 ## Security Model
 
-- Humans: E-Mail/Passwort-Login, optionale GitHub-Verknüpfung, team-spezifisches OIDC-SSO (`backend/src/routes/sso.ts`)
+- Humans: E-Mail/Passwort-Login, GitHub-OAuth-Login (`/api/auth/github`), Verknüpfung von GitHub mit einem bestehenden Konto (`/api/auth/github/connect`), team-spezifisches OIDC-SSO (`backend/src/routes/sso.ts`)
 - Agents: dedizierte Bearer-Tokens mit Scopes
 - Team-/Projektzugriff wird auf Service-Ebene geprüft
 - Kritische Aktionen sollen auditierbar sein
