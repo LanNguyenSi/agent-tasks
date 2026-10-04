@@ -6,7 +6,16 @@
 import { describe, it, expect } from "vitest";
 import { casUpdateTaskStatusAfterMerge, type TaskStatusCasSnapshot } from "../../src/services/task-status-cas.js";
 
-type Row = TaskStatusCasSnapshot & { result: string | null };
+// `result` is optional so a test can hand the function a row whose read
+// carried no result value at all (undefined rather than null).
+type Row = TaskStatusCasSnapshot & { result?: string | null };
+
+/** The row as a read that carried no `result` value returns it. */
+function withoutResultValue(row: Row): Row {
+  const copy = { ...row };
+  delete copy.result;
+  return copy;
+}
 
 const BASE: Row = {
   id: "t1",
@@ -174,6 +183,132 @@ describe("casUpdateTaskStatusAfterMerge", () => {
     expect(await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {})).toMatchObject({
       kind: "written",
       webhookFirst: false,
+    });
+  });
+
+  it("a row that is gone at the first fresh read is reported as unknown, without a retry", async () => {
+    const { db, updates } = fakeDb([null], [false, true]);
+
+    const outcome = await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {});
+
+    expect(outcome).toEqual({ kind: "lost", currentStatus: null, reason: "status_changed" });
+    expect(updates).toHaveLength(1);
+  });
+
+  it("a fresh row in another status is reported without a retry, even when a retry would land", async () => {
+    const elsewhere = { ...BASE, status: "in_progress", statusVersion: 4 };
+    const { db, updates, reads } = fakeDb([elsewhere], [false, true]);
+
+    const outcome = await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {});
+
+    expect(outcome).toEqual({ kind: "lost", currentStatus: "in_progress", reason: "status_changed" });
+    expect(updates).toHaveLength(1);
+    expect(reads()).toBe(1);
+  });
+
+  it("another status with an unchanged status version is still a status change, not a moved claim", async () => {
+    // A writer that skipped the version bump: the status alone must decide.
+    const { db } = fakeDb([{ ...BASE, status: "in_progress" }], [false]);
+
+    expect(await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {})).toEqual({
+      kind: "lost",
+      currentStatus: "in_progress",
+      reason: "status_changed",
+    });
+  });
+
+  it("a fresh row read without a result value counts as having none: the retry writes the result under the null guard", async () => {
+    const done = withoutResultValue({ ...BASE, status: "done", statusVersion: 4 });
+    const { db, updates, wheres } = fakeDb([done], [false, true]);
+
+    const outcome = await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {});
+
+    expect(outcome).toMatchObject({ kind: "written", webhookFirst: true, prior: { resultKept: false } });
+    expect(updates[1]).toHaveProperty("result", "mine");
+    expect(wheres[1]).toHaveProperty("result", null);
+  });
+
+  it("a guarded retry that lands completes against the fresh row: no re-read, no second write", async () => {
+    const done = { ...BASE, status: "done", statusVersion: 4, result: null };
+    const writtenRow = { ...done, statusVersion: 5, result: "mine", claimedByUserId: null };
+    const { db, updates, wheres, reads } = fakeDb([done, writtenRow], [false, true, true]);
+
+    const outcome = await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {});
+
+    expect(outcome).toEqual({
+      kind: "written",
+      task: writtenRow,
+      webhookFirst: true,
+      prior: { status: "done", statusVersion: 4, resultKept: false },
+    });
+    // The retry is conditioned on the fresh row, not on the request's own snapshot.
+    expect(wheres[1]).toMatchObject({ status: "done", statusVersion: 4, claimedByUserId: "u1", result: null });
+    expect(updates).toHaveLength(2);
+    expect(reads()).toBe(2);
+  });
+
+  it("a guard miss whose re-read is still done without a result does not retry again: the loss reports done", async () => {
+    const done = { ...BASE, status: "done", statusVersion: 4, result: null };
+    const bumped = { ...done, statusVersion: 5, result: null, claimedByUserId: null };
+    const { db, updates } = fakeDb([done, bumped], [false, false, true]);
+
+    const outcome = await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {});
+
+    expect(outcome).toEqual({ kind: "lost", currentStatus: "done", reason: "status_changed" });
+    expect(updates).toHaveLength(2);
+  });
+
+  it("a guard miss whose re-read carries no result value does not retry without it", async () => {
+    const done = { ...BASE, status: "done", statusVersion: 4, result: null };
+    const bumped = withoutResultValue({ ...done, statusVersion: 5 });
+    const { db, updates } = fakeDb([done, bumped], [false, false, true]);
+
+    const outcome = await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {});
+
+    expect(outcome).toEqual({ kind: "lost", currentStatus: "done", reason: "status_changed" });
+    expect(updates).toHaveLength(2);
+  });
+
+  it("a retry without a result to write that loses is not retried: the loss reports a fresh read", async () => {
+    const done = { ...BASE, status: "done", statusVersion: 4, result: "theirs" };
+    const bumped = { ...done, statusVersion: 5 };
+    const { db, updates, reads } = fakeDb([done, bumped], [false, false, true]);
+
+    const outcome = await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {});
+
+    expect(outcome).toEqual({ kind: "lost", currentStatus: "done", reason: "status_changed" });
+    expect(updates).toHaveLength(2);
+    expect(reads()).toBe(2);
+  });
+
+  it("a row that vanished during the guard-miss re-read is not read a third time", async () => {
+    const done = { ...BASE, status: "done", statusVersion: 4, result: null };
+    const { db, updates, reads } = fakeDb([done, null], [false, false]);
+
+    const outcome = await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {});
+
+    expect(outcome).toEqual({ kind: "lost", currentStatus: null, reason: "status_changed" });
+    expect(updates).toHaveLength(2);
+    expect(reads()).toBe(2);
+  });
+
+  it("a lost retry takes its loss reason from the fresh read: claims that moved again are claim_moved, a version bump is a status change", async () => {
+    // The request already targets the status the row has, so only the claims
+    // and the status version separate the rows.
+    const snapshot = { ...BASE, status: "done", statusVersion: 4 };
+    const current = { ...snapshot, claimedByUserId: "u2" };
+    const lose = (latest: Row) =>
+      casUpdateTaskStatusAfterMerge(fakeDb([current, latest], [false, false]).db, snapshot, DATA, "done", {});
+
+    expect(await lose({ ...snapshot, claimedByUserId: "u3" })).toEqual({
+      kind: "lost",
+      currentStatus: "done",
+      reason: "claim_moved",
+    });
+    expect(await lose({ ...snapshot, statusVersion: 5, claimedByUserId: null })).toEqual({
+      kind: "lost",
+      currentStatus: "done",
+      reason: "status_changed",
     });
   });
 });
