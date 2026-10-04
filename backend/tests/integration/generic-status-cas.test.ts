@@ -1826,8 +1826,11 @@ describe("POST /github/pull-requests/:n/merge compare-and-swaps its done write",
   });
 
   it.each([
-    ["the review lock is released", (_claimantId: string) => ({ reviewClaimedByUserId: null, reviewClaimedAt: null })],
-    ["the review lock is handed to the work claimant", (claimantId: string) => ({ reviewClaimedByUserId: claimantId })],
+    ["the review lock is released", (_c: string, _r: string, _a: string) => ({ reviewClaimedByUserId: null, reviewClaimedAt: null })],
+    ["the review lock is handed to the work claimant", (c: string, _r: string, _a: string) => ({ reviewClaimedByUserId: c })],
+    ["the review lock moves to the merging agent", (_c: string, _r: string, a: string) => ({ reviewClaimedByUserId: null, reviewClaimedByAgentId: a })],
+    ["the work claim is handed to the reviewer", (_c: string, r: string, _a: string) => ({ claimedByUserId: r })],
+    ["the work claim is handed to the merging agent", (_c: string, _r: string, a: string) => ({ claimedByUserId: null, claimedByAgentId: a })],
   ])(
     "only a claim column moves while status and version stay as read (%s): merged_but_status_changed, the row is unchanged and the audit event says claim_moved",
     async (_label, move) => {
@@ -1844,7 +1847,7 @@ describe("POST /github/pull-requests/:n/merge compare-and-swaps its done write",
       });
       const before = await db.task.findUniqueOrThrow({ where: { id: taskId } });
       github.performPrMerge.mockImplementation(async () => {
-        await db.task.update({ where: { id: taskId }, data: move(claimantId) });
+        await db.task.update({ where: { id: taskId }, data: move(claimantId, reviewerId, (agent as { tokenId: string }).tokenId) });
         return { ok: true, sha: "deadbeef", alreadyMerged: false };
       });
 
