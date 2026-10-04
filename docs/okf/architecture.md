@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-10-03T12:26:13Z
+timestamp: 2026-10-04T16:57:21Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -56,7 +56,7 @@ enabled, `performPrMerge` checks the exact repository and PR number right
 before the GitHub merge call (`services/github-merge.ts:114`, shared by the
 GitHub merge route, task merge and the review, self-approve and work
 finishes), and the legacy PR creator and commenter check the repository (and
-PR) they post to (`routes/github.ts:267`, `routes/github.ts:768`). The check
+PR) they post to (`routes/github.ts:268`, `routes/github.ts:782`). The check
 (`grounding-scope.ts:103`) refuses with `409 grounding_enrollment_required` a
 repository string that is not exactly canonical (`grounding-scope.ts:60`), an
 enforced repository, or a protected/`EXTERNAL_V1`/bound/held task's PR,
@@ -73,11 +73,11 @@ requesting task stores included, since an agent can set a task's PR number and
 repository. Everything is read in one statement
 driven by the enrollment and hold tables (`grounding-scope.ts:71`). With
 configuration enabled the three legacy writes are sent with
-`redirect: "manual"` (`backend/src/services/github-merge.ts:126`, `backend/src/routes/github.ts:282`,
-`backend/src/routes/github.ts:778`), and a GitHub redirect (a renamed or transferred
+`redirect: "manual"` (`backend/src/services/github-merge.ts:126`, `backend/src/routes/github.ts:283`,
+`backend/src/routes/github.ts:792`), and a GitHub redirect (a renamed or transferred
 repository) is answered with `409 github_redirect_refused` instead of being
 followed (`grounding-scope.ts:151`, `services/github-merge.ts:156`,
-`routes/github.ts:297`, `routes/github.ts:791`); the unconfigured app keeps
+`routes/github.ts:298`, `routes/github.ts:805`); the unconfigured app keeps
 fetch's default redirect handling.
 `createApp` hands the check to every request (`backend/src/app.ts:47`,
 `backend/src/app.ts:59`); the unconfigured app hands none, so its handlers run

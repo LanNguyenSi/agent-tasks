@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-10-04T05:48:54Z
+timestamp: 2026-10-04T16:57:21Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -119,7 +119,7 @@ number, or the path number parsed with `parseInt` when the task has none),
 task merge, and the review, self-approve and work finishes (the work finish
 merges the number of the body PR URL when one is given). The legacy PR creator
 and commenter check the repository (and PR) they post to
-(`routes/github.ts:267`, `routes/github.ts:768`). The check
+(`routes/github.ts:268`, `routes/github.ts:782`). The check
 (`grounding-scope.ts:103`) refuses with `409 grounding_enrollment_required` a
 repository string that is not exactly canonical (surrounding whitespace, dot
 segment, percent-encoded name, owner containing `/`), an enforced repository,
@@ -140,11 +140,11 @@ GitHub UI, other apps) is not governed by the check. Grouped merge discovery and
 ids from the enrollment and hold tables (`grounding-scope.ts:71`,
 `grounding-github-merge.ts:40`), and the boundary reads everything in one
 statement. With configuration enabled the three legacy writes go out with
-`redirect: "manual"` (`backend/src/services/github-merge.ts:126`, `backend/src/routes/github.ts:282`,
-`backend/src/routes/github.ts:778`), and a GitHub redirect (a renamed or transferred
+`redirect: "manual"` (`backend/src/services/github-merge.ts:126`, `backend/src/routes/github.ts:283`,
+`backend/src/routes/github.ts:792`), and a GitHub redirect (a renamed or transferred
 repository) is answered with `409 github_redirect_refused` instead of being
-followed (`services/github-merge.ts:156`, `routes/github.ts:297`,
-`routes/github.ts:791`). The configured GitHub create and merge
+followed (`services/github-merge.ts:156`, `routes/github.ts:298`,
+`routes/github.ts:805`). The configured GitHub create and merge
 routes check the caller's project access with the legacy rule right after the
 task lookup, before any Grounding read or lock (`routes/grounding-github.ts:82`,
 `routes/grounding-github.ts:130`), so a caller without access gets the legacy
@@ -212,11 +212,16 @@ The original webhook and task routes remain the compatibility behavior of an
 unconfigured application. `pickMergeTargetStatus` leaves `done` and `backlog`
 alone; otherwise a merged PR moves an AUTONOMOUS task to `done`, or a task in
 either confirmation mode to `review` unless already there. Legacy webhook
-lookups exclude done and backlog tasks.
+lookups exclude done and backlog tasks. Each legacy webhook status write is a
+compare-and-swap on the status and status version it read; a write that lost
+reads the row again and decides again, so a task another writer already moved
+on is not written over (`workflow-gates.md`).
 
 The historical task-merge route instead writes `done` after the merge helper
 succeeds. It admits review and done, retains the self-merge gate on retries, and
-runs distinct-reviewer approval while the task is in review. The helper can
+runs distinct-reviewer approval while the task is in review. The GitHub merge
+route writes its `done` through the same post-merge compare-and-swap
+(`workflow-gates.md`). The helper can
 recognize an already-merged PR. Historical finish with `autoMerge` requires
 AUTONOMOUS mode for a work-claim finish; review finish or permitted self-approval
 still runs the ordinary self-merge gate. These compatibility paths are not the
