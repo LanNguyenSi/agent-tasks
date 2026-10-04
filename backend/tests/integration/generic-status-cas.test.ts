@@ -1569,6 +1569,9 @@ describe("claim-guarded status writers compare the status version", () => {
     const res = await postJson(`/tasks/${taskId}/creator-abandon`, {}, agent);
 
     expect(res.status).toBe(409);
+    expect(((await res.json()) as { message: string }).message).toBe(
+      "Task must be open and unclaimed to creator-abandon, or it changed before the request completed",
+    );
     await expectUnchangedAfterLostRace(taskId, { status: "open", claimedByUserId: null });
     expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.creator_abandoned" }));
   });
@@ -1580,6 +1583,7 @@ describe("claim-guarded status writers compare the status version", () => {
     const res = await patchStatus(taskId, "open", { title: "Restored" });
 
     expect(res.status).toBe(409);
+    expect(((await res.json()) as { message: string }).message).toContain("or it changed before the request completed");
     const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
     expect(row.status).toBe("abandoned");
     expect(row.statusVersion).toBe(2);
@@ -1594,6 +1598,7 @@ describe("claim-guarded status writers compare the status version", () => {
     const res = await patchStatus(taskId, "backlog");
 
     expect(res.status).toBe(409);
+    expect(((await res.json()) as { message: string }).message).toContain("or it changed before the request completed");
     const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
     expect(row.status).toBe("open");
     expect(row.statusVersion).toBe(2);
@@ -1819,6 +1824,49 @@ describe("POST /github/pull-requests/:n/merge compare-and-swaps its done write",
     );
     expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.merged_status_conflict" }));
   });
+
+  it.each([
+    ["the review lock is released", (_claimantId: string) => ({ reviewClaimedByUserId: null, reviewClaimedAt: null })],
+    ["the review lock is handed to the work claimant", (claimantId: string) => ({ reviewClaimedByUserId: claimantId })],
+  ])(
+    "only a claim column moves while status and version stay as read (%s): merged_but_status_changed, the row is unchanged and the audit event says claim_moved",
+    async (_label, move) => {
+      const agent = await seedMergeAgent();
+      const claimantId = await seedUser();
+      const reviewerId = await seedUser();
+      const taskId = await seedTask({
+        status: "review",
+        claimedByUserId: claimantId,
+        claimedAt: new Date(),
+        reviewClaimedByUserId: reviewerId,
+        reviewClaimedAt: new Date(),
+        ...MERGE_PR,
+      });
+      const before = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+      github.performPrMerge.mockImplementation(async () => {
+        await db.task.update({ where: { id: taskId }, data: move(claimantId) });
+        return { ok: true, sha: "deadbeef", alreadyMerged: false };
+      });
+
+      const res = await mergeViaGithubRoute(agent, taskId);
+
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: string; mergeSha: string; currentStatus: string };
+      expect(body.error).toBe("merged_but_status_changed");
+      expect(body.mergeSha).toBe("deadbeef");
+      expect(body.currentStatus).toBe("review");
+      const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+      expect(row.status).toBe("review");
+      expect(row.statusVersion).toBe(before.statusVersion);
+      expect(logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "task.merged_status_conflict",
+          taskId,
+          payload: expect.objectContaining({ reason: "claim_moved", currentStatus: "review", via: "github_pr_merge" }),
+        }),
+      );
+    },
+  );
 
   it("without a race it lands: 200, done, no conflict or webhook-first audit event", async () => {
     const agent = await seedMergeAgent();

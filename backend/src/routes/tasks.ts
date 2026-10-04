@@ -4244,6 +4244,12 @@ const creatorAbandonSchema = z.object({
 });
 
 const CREATOR_ABANDON_STATE_CONFLICT_MESSAGE = "Task must be open and unclaimed to creator-abandon";
+// The write's own compare-and-swap lost: the precondition may still hold and
+// only the status version moved (a round trip back to open), so the text does
+// not claim the precondition failed. The prefix stays byte-identical because
+// the MCP server maps the 409 by matching "open and unclaimed to creator-abandon".
+const CREATOR_ABANDON_WRITE_LOST_CONFLICT_MESSAGE =
+  `${CREATOR_ABANDON_STATE_CONFLICT_MESSAGE}, or it changed before the request completed`;
 
 taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
   const actor = c.get("actor") as Actor;
@@ -4315,7 +4321,7 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
   });
   const abandonResult = abandonMutation.value;
   if (abandonResult.count === 0) {
-    return conflict(c, CREATOR_ABANDON_STATE_CONFLICT_MESSAGE);
+    return conflict(c, CREATOR_ABANDON_WRITE_LOST_CONFLICT_MESSAGE);
   }
 
   // M5 signal 4: the task is now terminal-abandoned. Post-commit and
@@ -5391,7 +5397,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
           return { value, changed: value.count === 1 };
         },
       });
-      if (!reopenMutation.changed) return conflict(c, "Task is no longer abandoned");
+      if (!reopenMutation.changed) return conflict(c, "Task is no longer abandoned, or it changed before the request completed");
       // M5 signal 4: the task is no longer terminal. Post-commit and fail-open
       // (clearDisposition logs and swallows its own errors); it only resets an
       // existing telemetry row and never creates one.
@@ -5420,7 +5426,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
           return { value, changed: value.count === 1 };
         },
       });
-      if (!demoteMutation.changed) return conflict(c, DEMOTE_STATE_CONFLICT_MESSAGE);
+      if (!demoteMutation.changed) return conflict(c, `${DEMOTE_STATE_CONFLICT_MESSAGE}, or it changed before the request completed`);
       // updateMany cannot use `include`, so re-fetch the freshly written row.
       updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
       if (!updated) return notFound(c);
