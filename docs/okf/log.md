@@ -758,3 +758,7 @@ Re-verified `workflow-gates.md`, `task-lifecycle.md`, `governance-merge.md`, `ba
 ## 2026-10-03 (merge-race wording)
 
 Re-verified `task-lifecycle.md` items 4 and 5 against `casUpdateTaskStatusAfterMerge` in `backend/src/services/task-status-cas.ts`. The post-merge retry completes against any row already in the target status, whichever writer moved it, so the text now says "another writer (typically the system's own PR-merge webhook)" instead of attributing the move to the webhook alone. Wording only, no behaviour change; the doc was re-stamped.
+
+## 2026-10-04 (post-merge loss reporting and result policy)
+
+Re-verified `workflow-gates.md` and `task-lifecycle.md` against `casUpdateTaskStatusAfterMerge` in `backend/src/services/task-status-cas.ts` and `writeStatusCas` in `backend/src/routes/tasks.ts`. The completion against a row another writer already set to the target status now keeps that row's `result` (written only while null) and its audit event carries `priorStatus`, `priorStatusVersion` and `resultKept`; a lost retry re-reads the row before reporting `currentStatus`; the `merged_but_status_changed` message tells a moved status (reconcile by hand) from a moved claim only (retrying is safe). The corrected paragraphs are in both docs, which were re-stamped. The four other docs that list `routes/tasks.ts` as a source make no claim about these writes and were not changed.
