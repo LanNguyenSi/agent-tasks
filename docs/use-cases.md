@@ -54,7 +54,7 @@ The opt-in path that lets agents act as a team-bound GitHub identity instead of 
 1. Team admin opens `Settings → API Tokens → Connect an agent`. The modal mints an `AgentToken` with a 90-day TTL and the minimum-viable scope set (`tasks:read`, `tasks:create`, `tasks:claim`, `tasks:comment`, `tasks:transition`, `tasks:update`, `projects:read`, `boards:read`, plus `github:pr_create` / `github:pr_merge` if the human has opted into delegation). PR comments use the `tasks:comment` scope; there is no separate `github:pr_comment` scope.
 2. The human (one-time, in `Settings → GitHub`) sets `allowAgentPrCreate=true`, `allowAgentPrMerge=true`, `allowAgentPrComment=true` on their own user. These are User-level consent flags, separate from the AgentToken scopes. Without consent, `pull_requests_*` calls return `403`.
 3. The agent receives the unhashed token plus a copy-paste install snippet (Claude Code MCP, CLI, or curl). The token is stored hashed in `AgentToken`.
-4. From that point, `task_submit_pr` / `task_merge` / `pull_requests_*` route through the team's GitHub identity. The agent never sees a GitHub credential.
+4. From that point, `pull_requests_*` and `task_merge` act through the delegation user's GitHub identity, and `task_submit_pr` records the PR and verifies its author through that identity. The agent never sees a GitHub credential.
 
 ## Further reading
 

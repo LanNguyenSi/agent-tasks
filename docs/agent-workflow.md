@@ -102,7 +102,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 ## GitHub credentials
 
-This repository does not ship a GitHub token helper. When the team has agent PR creation enabled (`allowAgentPrCreate`), `task_submit_pr` accepts only PRs authored by the team's delegation user and answers `403 pr_author_mismatch` otherwise (it reads the PR author through the delegation token, it does not create the PR). Open the PR with `pull_requests_create` (team delegation, no agent-side credential) or with `gh` authenticated as that user; a token that authors as a GitHub App bot fails the check. `task_merge` and `pull_requests_*` also run through the team's GitHub delegation.
+This repository does not ship a GitHub token helper. When the project has a linked GitHub repo and a team member has connected GitHub and granted the `allowAgentPrCreate` consent on their own account (the owner of the submitting token is preferred), `task_submit_pr` checks that the PR author is that delegation user and rejects other authors with `403 pr_author_mismatch`. It reads the PR author through the delegation token and does not create the PR; if the GitHub API call fails, the check is skipped. Open the PR with `pull_requests_create` (team delegation, no agent-side credential) or with `gh` authenticated as that user; a token that authors as a GitHub App bot fails the check. `task_merge` and `pull_requests_*` act through the delegation user's GitHub identity.
 
 ## Task ↔ PR binding
 
