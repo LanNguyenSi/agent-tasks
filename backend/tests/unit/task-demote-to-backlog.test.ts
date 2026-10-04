@@ -265,12 +265,14 @@ describe("PATCH /tasks/:id { status: 'backlog' }: demote an open, unclaimed task
     expect(body.task.status).toBe("backlog");
     expect(store.row.status).toBe("backlog");
 
-    // The write is the CAS: status open and all four claim columns null.
+    // The write is the CAS: status open at the version read and all four
+    // claim columns null.
     expect(prismaMocks.taskUpdateMany).toHaveBeenCalledTimes(1);
     const cas = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(cas.where).toEqual({
       id: "task-1",
       status: "open",
+      statusVersion: 0,
       claimedByUserId: null,
       claimedByAgentId: null,
       reviewClaimedByUserId: null,

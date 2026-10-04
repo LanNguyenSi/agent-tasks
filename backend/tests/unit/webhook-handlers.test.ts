@@ -3,6 +3,8 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const {
   mockTaskFindMany,
   mockTaskUpdate,
+  mockTaskUpdateMany,
+  mockTaskFindUnique,
   mockTaskCreate,
   mockProjectFindMany,
   mockCommentCreate,
@@ -11,6 +13,8 @@ const {
 } = vi.hoisted(() => ({
   mockTaskFindMany: vi.fn(),
   mockTaskUpdate: vi.fn().mockResolvedValue({}),
+  mockTaskUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
+  mockTaskFindUnique: vi.fn(),
   mockTaskCreate: vi.fn().mockImplementation((args: { data: Record<string, unknown> }) =>
     Promise.resolve({ id: "new-task-1", ...args.data }),
   ),
@@ -22,7 +26,13 @@ const {
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
-    task: { findMany: mockTaskFindMany, update: mockTaskUpdate, create: mockTaskCreate },
+    task: {
+      findMany: mockTaskFindMany,
+      findUnique: mockTaskFindUnique,
+      update: mockTaskUpdate,
+      updateMany: mockTaskUpdateMany,
+      create: mockTaskCreate,
+    },
     project: { findMany: mockProjectFindMany },
     comment: { create: mockCommentCreate },
     signal: { updateMany: mockSignalUpdateMany },
@@ -38,10 +48,11 @@ import { handlePullRequestReviewEvent, handlePullRequestEvent, handleIssuesEvent
 beforeEach(() => {
   vi.clearAllMocks();
   mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: false }]);
+  mockTaskUpdateMany.mockResolvedValue({ count: 1 });
 });
 
 function makeTask(overrides = {}) {
-  return { id: "task-1", projectId: "proj-1", status: "review", prNumber: 42, prUrl: "https://github.com/test/repo/pull/42", workflowId: null, ...overrides };
+  return { id: "task-1", projectId: "proj-1", status: "review", statusVersion: 0, prNumber: 42, prUrl: "https://github.com/test/repo/pull/42", workflowId: null, ...overrides };
 }
 
 describe("handlePullRequestReviewEvent", () => {
@@ -61,6 +72,7 @@ describe("handlePullRequestReviewEvent", () => {
 
     // No status update
     expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
     // Timeline comment added
     expect(mockCommentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -83,10 +95,11 @@ describe("handlePullRequestReviewEvent", () => {
       review: { state: "changes_requested", user: { login: "bob" }, html_url: "https://review" },
     });
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({
-      where: { id: "task-1" },
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "review", statusVersion: 0 },
       data: { status: "in_progress", statusVersion: { increment: 1 } },
     });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
     expect(mockCommentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         content: expect.stringContaining("Changes requested by bob"),
@@ -104,6 +117,7 @@ describe("handlePullRequestReviewEvent", () => {
     });
 
     expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
     // But still adds timeline comment
     expect(mockCommentCreate).toHaveBeenCalled();
   });
@@ -118,6 +132,7 @@ describe("handlePullRequestReviewEvent", () => {
     });
 
     expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
     expect(mockCommentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         content: expect.stringContaining("Review comment by carol"),
@@ -135,6 +150,7 @@ describe("handlePullRequestReviewEvent", () => {
     });
 
     expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
     expect(mockCommentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         content: expect.stringContaining("dismissed"),
@@ -175,10 +191,11 @@ describe("handlePullRequestEvent", () => {
 
     await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({
-      where: { id: "task-1" },
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "in_progress", statusVersion: 0 },
       data: { status: "review", statusVersion: { increment: 1 } },
     });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
     expect(mockCommentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         content: expect.stringContaining("merged by merger"),
@@ -192,6 +209,7 @@ describe("handlePullRequestEvent", () => {
     await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
 
     expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
     expect(mockCommentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         content: expect.stringContaining("merged by merger"),
@@ -205,10 +223,11 @@ describe("handlePullRequestEvent", () => {
 
     await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({
-      where: { id: "task-1" },
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "in_progress", statusVersion: 0 },
       data: { status: "done", statusVersion: { increment: 1 } },
     });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
     // Pending signals for the task are auto-acked so the pickup queue drops them
     expect(mockSignalUpdateMany).toHaveBeenCalledWith({
       where: { taskId: "task-1", acknowledgedAt: null },
@@ -221,10 +240,11 @@ describe("handlePullRequestEvent", () => {
 
     await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({
-      where: { id: "task-1" },
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "in_progress", statusVersion: 0 },
       data: { status: "review", statusVersion: { increment: 1 } },
     });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
 
@@ -239,10 +259,11 @@ describe("handlePullRequestEvent", () => {
 
     await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({
-      where: { id: "task-1" },
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "in_progress", statusVersion: 0 },
       data: { status: "review", statusVersion: { increment: 1 } },
     });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
 
@@ -252,10 +273,11 @@ describe("handlePullRequestEvent", () => {
 
     await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({
-      where: { id: "task-1" },
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "in_progress", statusVersion: 0 },
       data: { status: "review", statusVersion: { increment: 1 } },
     });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
 
   it("resolves the target from the governanceMode enum column (AUTONOMOUS → done)", async () => {
@@ -264,10 +286,11 @@ describe("handlePullRequestEvent", () => {
 
     await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({
-      where: { id: "task-1" },
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "in_progress", statusVersion: 0 },
       data: { status: "done", statusVersion: { increment: 1 } },
     });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
 
   it("does not transition already-done task on PR merged (idempotent)", async () => {
@@ -276,6 +299,7 @@ describe("handlePullRequestEvent", () => {
     await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
 
     expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
     // Still adds timeline comment
     expect(mockCommentCreate).toHaveBeenCalled();
   });
@@ -295,6 +319,7 @@ describe("handlePullRequestEvent", () => {
     await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
 
     expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
 
@@ -305,6 +330,7 @@ describe("handlePullRequestEvent", () => {
     await handlePullRequestEvent({ ...basePrPayload, action: "closed" });
 
     expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
 
@@ -318,6 +344,7 @@ describe("handlePullRequestEvent", () => {
     });
 
     expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
     expect(mockCommentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         content: expect.stringContaining("closed without merge"),
@@ -381,15 +408,16 @@ describe("handleIssuesEvent", () => {
   it("acks pending signals when issue.closed transitions a task to done", async () => {
     mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
     mockTaskFindMany.mockResolvedValue([
-      { id: "task-1", projectId: "proj-1", title: "[GH #7] Something", status: "in_progress" },
+      { id: "task-1", projectId: "proj-1", title: "[GH #7] Something", status: "in_progress", statusVersion: 0 },
     ]);
 
     await handleIssuesEvent({ ...baseIssuePayload, action: "closed" });
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({
-      where: { id: "task-1" },
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "in_progress", statusVersion: 0 },
       data: { status: "done", statusVersion: { increment: 1 } },
     });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
     expect(mockSignalUpdateMany).toHaveBeenCalledWith({
       where: { taskId: "task-1", acknowledgedAt: null },
       data: { acknowledgedAt: expect.any(Date) },
@@ -413,5 +441,131 @@ describe("handleIssuesEvent", () => {
         where: expect.objectContaining({ status: { notIn: ["done", "backlog"] } }),
       }),
     );
+  });
+});
+
+// A webhook status write is a compare-and-swap on the status and status
+// version the handler read. A lost write re-reads the row and re-decides.
+describe("webhook status writes lose to a concurrent writer without writing over it", () => {
+  const mergedPayload = {
+    action: "closed" as const,
+    repository: { full_name: "test/repo" },
+    pull_request: {
+      number: 42,
+      title: "Fix bug",
+      body: null,
+      html_url: "https://github.com/test/repo/pull/42",
+      state: "closed" as const,
+      merged: true,
+      merged_by: { login: "merger" },
+    },
+  };
+
+  it("PR merged: a lost write re-reads the row and re-decides against it (in_progress -> review, then the row is already review: no second write)", async () => {
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress", statusVersion: 4 })]);
+    mockTaskUpdateMany.mockResolvedValueOnce({ count: 0 });
+    mockTaskFindUnique.mockResolvedValueOnce({ id: "task-1", status: "review", statusVersion: 5 });
+
+    await handlePullRequestEvent(mergedPayload);
+
+    // One attempt against the row as read, nothing against the fresh row.
+    expect(mockTaskUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "in_progress", statusVersion: 4 },
+      data: { status: "review", statusVersion: { increment: 1 } },
+    });
+    // The audit event reports the status the decision ended on, not the stale read.
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.transitioned",
+        payload: expect.objectContaining({ event: "pr_merged", from: "review", to: "review" }),
+      }),
+    );
+  });
+
+  it("PR merged (solo): a lost write retries against the fresh row's status and version", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: true }]);
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress", statusVersion: 4 })]);
+    mockTaskUpdateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+    mockTaskFindUnique.mockResolvedValueOnce({ id: "task-1", status: "review", statusVersion: 6 });
+
+    await handlePullRequestEvent(mergedPayload);
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mockTaskUpdateMany).toHaveBeenLastCalledWith({
+      where: { id: "task-1", status: "review", statusVersion: 6 },
+      data: { status: "done", statusVersion: { increment: 1 } },
+    });
+    expect(mockSignalUpdateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("PR merged (solo): the fresh row is already done: no further write, no signal ack", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: true }]);
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "review", statusVersion: 4 })]);
+    mockTaskUpdateMany.mockResolvedValueOnce({ count: 0 });
+    mockTaskFindUnique.mockResolvedValueOnce({ id: "task-1", status: "done", statusVersion: 5 });
+
+    await handlePullRequestEvent(mergedPayload);
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mockSignalUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("gives up after repeated lost writes: the task is left as the other writer set it, the delivery still comments", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: true }]);
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "in_progress", statusVersion: 0 })]);
+    mockTaskUpdateMany.mockResolvedValue({ count: 0 });
+    let version = 0;
+    mockTaskFindUnique.mockImplementation(async () => ({
+      id: "task-1",
+      status: version % 2 === 0 ? "review" : "in_progress",
+      statusVersion: ++version,
+    }));
+
+    await handlePullRequestEvent(mergedPayload);
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledTimes(3);
+    expect(mockSignalUpdateMany).not.toHaveBeenCalled();
+    expect(mockCommentCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ content: expect.stringContaining("merged by merger") }),
+    });
+  });
+
+  it("changes requested: a lost write on a task that left review meanwhile does not write in_progress over it", async () => {
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "review", statusVersion: 2 })]);
+    mockTaskUpdateMany.mockResolvedValueOnce({ count: 0 });
+    mockTaskFindUnique.mockResolvedValueOnce({ id: "task-1", status: "done", statusVersion: 3 });
+
+    await handlePullRequestReviewEvent({
+      repository: { full_name: "test/repo" },
+      pull_request: { number: 42, title: "Fix bug", html_url: "https://github.com/test/repo/pull/42" },
+      action: "submitted",
+      review: { state: "changes_requested", user: { login: "bob" }, html_url: "https://review" },
+    });
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledTimes(1);
+    // No review -> in_progress claim in the audit event: nothing was written.
+    const audit = mockLogAuditEvent.mock.calls.find(([event]) => event.payload?.event === "changes_requested")![0];
+    expect(audit.payload).not.toHaveProperty("from");
+    expect(audit.payload).not.toHaveProperty("to");
+  });
+
+  it("issue closed: a lost write on a task another writer already finished writes nothing and acks nothing", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+    mockTaskFindMany.mockResolvedValue([
+      { id: "task-1", projectId: "proj-1", title: "[GH #7] Something", status: "in_progress", statusVersion: 0 },
+    ]);
+    mockTaskUpdateMany.mockResolvedValueOnce({ count: 0 });
+    mockTaskFindUnique.mockResolvedValueOnce({ id: "task-1", status: "done", statusVersion: 1 });
+
+    await handleIssuesEvent({
+      action: "closed",
+      repository: { full_name: "test/repo" },
+      issue: { number: 7, title: "Something", body: null, html_url: "https://github.com/test/repo/issues/7", state: "closed" },
+    });
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mockSignalUpdateMany).not.toHaveBeenCalled();
+    expect(mockLogAuditEvent).not.toHaveBeenCalled();
   });
 });

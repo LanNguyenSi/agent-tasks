@@ -100,9 +100,10 @@ import { groundingRemoteGuardFor } from "../services/grounding-scope.js";
 import {
   STATUS_VERSION_BUMP,
   casUpdateTaskStatus,
-  casUpdateTaskStatusAfterMerge,
   taskStatusCasWhere,
+  taskStatusVersionWhere,
 } from "../services/task-status-cas.js";
+import { writeStatusAfterMerge } from "../services/task-merge-status-write.js";
 import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
 import {
   checkDistinctReviewerGate,
@@ -155,6 +156,15 @@ const RESOLVED_BLOCKER_STATUSES: string[] = ["done", "abandoned"];
 const STATUS_CHANGED_CONFLICT_MESSAGE =
   "Task status changed before the request completed; reload the task and retry";
 
+// Answers for the claim writers (/start, /claim, /release, /abandon) whose
+// write matched no row. The claim guard alone used to be the only reason, so
+// the old texts named the claim; the status compare adds a second, so the
+// texts name both.
+const CLAIM_LOST_CONFLICT_MESSAGE =
+  "Task is already claimed, or its status changed before the request completed; reload the task and retry";
+const CLAIM_RELEASE_LOST_CONFLICT_MESSAGE =
+  "Your claim on this task is no longer held, or its status changed before the request completed";
+
 /**
  * Compare-and-swap status write for the handlers that validate against a
  * snapshot and then write. `merge` is set when the PR was merged on GitHub
@@ -181,64 +191,9 @@ async function writeStatusCas<I extends Prisma.TaskInclude>(
     if (!written) return { ok: false, response: conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE) };
     return { ok: true, task: written, resultKept: false };
   }
-  const outcome = await casUpdateTaskStatusAfterMerge(prisma, task, data, targetStatus, include);
-  const actorId = actor.type === "human" ? actor.userId : undefined;
-  if (outcome.kind === "written") {
-    if (outcome.webhookFirst) {
-      void logAuditEvent({
-        action: "task.merge_webhook_first",
-        actorId,
-        projectId: task.projectId,
-        taskId: task.id,
-        payload: {
-          via: merge.via,
-          mergeSha: merge.sha,
-          status: targetStatus,
-          actorType: actor.type,
-          // The state the retry completed against: the other writer's status
-          // and version, and whether its stored result was kept.
-          priorStatus: outcome.prior?.status ?? null,
-          priorStatusVersion: outcome.prior?.statusVersion ?? null,
-          resultKept: outcome.prior?.resultKept ?? false,
-        },
-      });
-    }
-    return { ok: true, task: outcome.task, resultKept: outcome.prior?.resultKept ?? false };
-  }
-  void logAuditEvent({
-    action: "task.merged_status_conflict",
-    actorId,
-    projectId: task.projectId,
-    taskId: task.id,
-    payload: {
-      via: merge.via,
-      mergeSha: merge.sha,
-      expectedFrom: task.status,
-      targetStatus,
-      currentStatus: outcome.currentStatus,
-      reason: outcome.reason,
-      actorType: actor.type,
-    },
-  });
-  const mergedPrefix = `The pull request was merged${merge.sha ? ` (${merge.sha})` : ""}`;
-  const message =
-    outcome.reason === "claim_moved"
-      ? `${mergedPrefix}, but a claim on the task moved before this request could record it; the status ` +
-        `is still '${outcome.currentStatus ?? "unknown"}'. The task was not updated. Retrying the same request is safe.`
-      : `${mergedPrefix}, but the task status changed to '${outcome.currentStatus ?? "unknown"}' before this ` +
-        "request could record it. The task was not updated; reconcile it by hand.";
-  return {
-    ok: false,
-    response: c.json(
-      {
-        error: "merged_but_status_changed",
-        message,
-        mergeSha: merge.sha,
-        currentStatus: outcome.currentStatus,
-      },
-      409,
-    ),
-  };
+  const written = await writeStatusAfterMerge(prisma, actor, task, data, targetStatus, include, merge);
+  if (written.ok) return { ok: true, task: written.task, resultKept: written.resultKept };
+  return { ok: false, response: c.json(written.body, 409) };
 }
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -2284,7 +2239,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       },
       mutate: async (db, lockedTask) => {
         const value = await db.task.updateMany({
-          where: { id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null },
+          where: { id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null, ...taskStatusVersionWhere(task) },
           data: {
             claimedByUserId: actor.type === "human" ? actor.userId : null,
             claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
@@ -2298,7 +2253,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     });
     const claimResult = claimMutation.value;
     if (claimResult.count === 0) {
-      return conflict(c, "Task is already claimed");
+      return conflict(c, CLAIM_LOST_CONFLICT_MESSAGE);
     }
 
     // updateMany cannot use `include`, so re-fetch the freshly claimed row.
@@ -4176,6 +4131,10 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
     }
     if (actor.type === "human") claimGuard.claimedByUserId = actor.userId;
     else claimGuard.claimedByAgentId = actor.tokenId;
+    // The work-claim branch decides from the status it read (it refuses while
+    // the task is in review and resets a work state to the initial state), so
+    // the write also lands only while that status and its version still hold.
+    Object.assign(claimGuard, taskStatusVersionWhere(task));
   }
   if (holdsReviewClaim) {
     updateData.reviewClaimedByUserId = null;
@@ -4190,7 +4149,7 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
     data: updateData,
   });
   if (abandonResult.count === 0) {
-    return conflict(c, "Your claim on this task is no longer held");
+    return conflict(c, CLAIM_RELEASE_LOST_CONFLICT_MESSAGE);
   }
 
   // updateMany cannot use `include`, so re-fetch the freshly released row.
@@ -4285,6 +4244,12 @@ const creatorAbandonSchema = z.object({
 });
 
 const CREATOR_ABANDON_STATE_CONFLICT_MESSAGE = "Task must be open and unclaimed to creator-abandon";
+// The write's own compare-and-swap lost: the precondition may still hold and
+// only the status version moved (a round trip back to open), so the text does
+// not claim the precondition failed. The prefix stays byte-identical because
+// the MCP server maps the 409 by matching "open and unclaimed to creator-abandon".
+const CREATOR_ABANDON_WRITE_LOST_CONFLICT_MESSAGE =
+  `${CREATOR_ABANDON_STATE_CONFLICT_MESSAGE}, or it changed before the request completed`;
 
 taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
   const actor = c.get("actor") as Actor;
@@ -4348,7 +4313,7 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: { id: lockedTask.id, status: { in: ["open", "backlog"] }, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, createdByAgentId: actor.tokenId },
+        where: { id: lockedTask.id, status: { in: ["open", "backlog"] }, statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, createdByAgentId: actor.tokenId },
         data: { status: "abandoned", ...STATUS_VERSION_BUMP, updatedAt: new Date() },
       });
       return { value, changed: value.count === 1 };
@@ -4356,7 +4321,7 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
   });
   const abandonResult = abandonMutation.value;
   if (abandonResult.count === 0) {
-    return conflict(c, CREATOR_ABANDON_STATE_CONFLICT_MESSAGE);
+    return conflict(c, CREATOR_ABANDON_WRITE_LOST_CONFLICT_MESSAGE);
   }
 
   // M5 signal 4: the task is now terminal-abandoned. Post-commit and
@@ -5426,13 +5391,13 @@ taskRouter.patch("/tasks/:id", async (c) => {
         },
         mutate: async (db, lockedTask) => {
           const value = await db.task.updateMany({
-            where: { id: lockedTask.id, status: "abandoned", claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
+            where: { id: lockedTask.id, status: "abandoned", statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
             data: patchData,
           });
           return { value, changed: value.count === 1 };
         },
       });
-      if (!reopenMutation.changed) return conflict(c, "Task is no longer abandoned");
+      if (!reopenMutation.changed) return conflict(c, "Task is no longer abandoned, or it changed before the request completed");
       // M5 signal 4: the task is no longer terminal. Post-commit and fail-open
       // (clearDisposition logs and swallows its own errors); it only resets an
       // existing telemetry row and never creates one.
@@ -5455,13 +5420,13 @@ taskRouter.patch("/tasks/:id", async (c) => {
         },
         mutate: async (db, lockedTask) => {
           const value = await db.task.updateMany({
-            where: { id: lockedTask.id, status: "open", claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
+            where: { id: lockedTask.id, status: "open", statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
             data: patchData,
           });
           return { value, changed: value.count === 1 };
         },
       });
-      if (!demoteMutation.changed) return conflict(c, DEMOTE_STATE_CONFLICT_MESSAGE);
+      if (!demoteMutation.changed) return conflict(c, `${DEMOTE_STATE_CONFLICT_MESSAGE}, or it changed before the request completed`);
       // updateMany cannot use `include`, so re-fetch the freshly written row.
       updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
       if (!updated) return notFound(c);
@@ -6904,7 +6869,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: { id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null },
+        where: { id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null, ...taskStatusVersionWhere(task) },
         data: { claimedByUserId: actor.type === "human" ? actor.userId : null, claimedByAgentId: actor.type === "agent" ? actor.tokenId : null, claimedAt: new Date(), status: startTarget, ...STATUS_VERSION_BUMP },
       });
       return { value, changed: value.count === 1 };
@@ -6912,7 +6877,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
   });
   const claimResult = claimMutation.value;
   if (claimResult.count === 0) {
-    return conflict(c, "Task is already claimed");
+    return conflict(c, CLAIM_LOST_CONFLICT_MESSAGE);
   }
 
   // updateMany cannot use `include`, so re-fetch the freshly claimed row.
@@ -6964,13 +6929,16 @@ taskRouter.post("/tasks/:id/release", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: actor.type === "human" ? { id: lockedTask.id, claimedByUserId: actor.userId } : { id: lockedTask.id, claimedByAgentId: actor.tokenId },
+        where: {
+          ...(actor.type === "human" ? { id: lockedTask.id, claimedByUserId: actor.userId } : { id: lockedTask.id, claimedByAgentId: actor.tokenId }),
+          ...taskStatusVersionWhere(task),
+        },
         data: { claimedByUserId: null, claimedByAgentId: null, claimedAt: null, status: effectiveDef.initialState, ...STATUS_VERSION_BUMP },
       });
       return { value, changed: value.count === 1 };
     },
   });
-  if (!releaseMutation.changed) return conflict(c, "Your claim on this task is no longer held");
+  if (!releaseMutation.changed) return conflict(c, CLAIM_RELEASE_LOST_CONFLICT_MESSAGE);
   const updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
   if (!updated) return notFound(c);
 

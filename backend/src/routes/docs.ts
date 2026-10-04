@@ -1471,7 +1471,7 @@ export const openApiSpec = {
         description: "Provisioned external-grounding merge requires Idempotency-Key. Reuse it only for an identical retry.",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }, { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string", pattern: "^[A-Za-z0-9._:-]{1,128}$" }, description: "Required for a provisioned task." }],
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: { mergeMethod: { type: "string", enum: ["squash", "merge", "rebase"] } } } } } },
-        responses: { "200": { description: "Merged task route result" }, "202": { description: "Pending remote merge; retry with the same key." }, "400": { description: "Missing or invalid operation key for a provisioned task" } },
+        responses: { "200": { description: "Merged task route result" }, "202": { description: "Pending remote merge; retry with the same key." }, "400": { description: "Missing or invalid operation key for a provisioned task" }, "409": { description: "merged_but_status_changed: the pull request was merged on GitHub, but the task was changed by another writer before this request could record it, so the task was not updated. mergeSha is the merge commit and currentStatus the status the task has now; the system's own PR-merge webhook having moved the task to done first is not an error (200). Other 409 causes use the ErrorResponse shape: bad_state (the task is not in a mergeable state) and foreign_deliverable_merge_refused.", content: { "application/json": { schema: { oneOf: [{ type: "object", properties: { error: { type: "string", enum: ["merged_but_status_changed"] }, message: { type: "string" }, mergeSha: { type: "string", nullable: true }, currentStatus: { type: "string", nullable: true } }, required: ["error", "message", "mergeSha", "currentStatus"] }, { $ref: "#/components/schemas/ErrorResponse" }] } } } } },
       },
     },
     "/api/tasks/{id}/abandon": {
@@ -1953,6 +1953,10 @@ export const openApiSpec = {
           "404": {
             description: "Task not found",
             content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          },
+          "409": {
+            description: "merged_but_status_changed: the pull request was merged on GitHub, but the task was changed by another writer before this request could record it, so the task was not updated. mergeSha is the merge commit and currentStatus the status the task has now; the system's own PR-merge webhook having moved the task to done first is not an error (200). Other 409 causes use the ErrorResponse shape: foreign_deliverable_merge_refused, and conflict when an Idempotency-Key is reused with a different payload.",
+            content: { "application/json": { schema: { oneOf: [{ type: "object", properties: { error: { type: "string", enum: ["merged_but_status_changed"] }, message: { type: "string" }, mergeSha: { type: "string", nullable: true }, currentStatus: { type: "string", nullable: true } }, required: ["error", "message", "mergeSha", "currentStatus"] }, { $ref: "#/components/schemas/ErrorResponse" }] } } },
           },
         },
       },
