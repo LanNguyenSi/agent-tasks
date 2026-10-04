@@ -45,8 +45,12 @@ export interface TaskStatusCasSnapshot {
 }
 
 /** The WHERE of the compare-and-swap: the row must still look as it was read. */
-export function taskStatusCasWhere(task: TaskStatusCasSnapshot): Prisma.TaskWhereInput {
+export function taskStatusCasWhere(
+  task: TaskStatusCasSnapshot,
+  extra?: Prisma.TaskWhereInput,
+): Prisma.TaskWhereInput {
   return {
+    ...extra,
     id: task.id,
     status: task.status,
     statusVersion: task.statusVersion,
@@ -61,16 +65,18 @@ export function taskStatusCasWhere(task: TaskStatusCasSnapshot): Prisma.TaskWher
  * Writes `data` (which sets `status`) only while the row still matches the
  * snapshot the caller validated against, bumping `statusVersion`. Returns the
  * fresh row, or `null` when another writer got there first (nothing was
- * written; the caller answers 409).
+ * written; the caller answers 409). `extraWhere` adds a condition the write
+ * must also satisfy (for example `{ result: null }`).
  */
 export async function casUpdateTaskStatus<I extends Prisma.TaskInclude>(
   db: Pick<Prisma.TransactionClient, "task">,
   snapshot: TaskStatusCasSnapshot,
   data: Prisma.TaskUncheckedUpdateManyInput,
   include: I,
+  extraWhere?: Prisma.TaskWhereInput,
 ): Promise<Prisma.TaskGetPayload<{ include: I }> | null> {
   const written = await db.task.updateMany({
-    where: taskStatusCasWhere(snapshot),
+    where: taskStatusCasWhere(snapshot, extraWhere),
     data: { ...data, ...STATUS_VERSION_BUMP },
   });
   if (written.count === 0) return null;
@@ -126,7 +132,7 @@ function lossReason(
  *   - Another writer can move the task to the terminal status between the
  *     merge and this write: typically the system's own PR-merge webhook
  *     (`pull_request` closed + merged), but a concurrent approval or admin
- *     write qualifies as well, the row cannot tell them apart. When the fresh
+ *     write qualifies as well. When the fresh
  *     row is already in the status this write targets, the write is completed
  *     against the fresh row (claims cleared, merge sha stored) and reported as
  *     `written` with `webhookFirst: true`, so the caller answers the normal
@@ -157,18 +163,44 @@ export async function casUpdateTaskStatusAfterMerge<I extends Prisma.TaskInclude
   const resultKept = current.result !== null && current.result !== undefined;
   const retryData: Prisma.TaskUncheckedUpdateManyInput = { ...data };
   if (resultKept) delete retryData.result;
-  const retried = await casUpdateTaskStatus(db, current, retryData, include);
+  // Writing `result` is conditional on it still being null: a result stored
+  // between the fresh-row read and this write must not be overwritten.
+  const writesResult = !resultKept && retryData.result !== undefined;
+  let retried = await casUpdateTaskStatus(
+    db,
+    current,
+    retryData,
+    include,
+    writesResult ? { result: null } : undefined,
+  );
+  let kept = resultKept;
+  let prior = current;
+  // The freshest read of the row once the retry has lost.
+  let latest: typeof current | null | undefined;
+  if (!retried && writesResult) {
+    // The guard may be what missed: re-read once and retry without `result`
+    // if another writer stored one meanwhile.
+    latest = await db.task.findUnique({ where: { id: snapshot.id } });
+    if (latest && latest.status === targetStatus && latest.result !== null && latest.result !== undefined) {
+      const withoutResult = { ...retryData };
+      delete withoutResult.result;
+      retried = await casUpdateTaskStatus(db, latest, withoutResult, include);
+      kept = true;
+      prior = latest;
+      latest = undefined;
+    }
+  }
   if (retried) {
     return {
       kind: "written",
       task: retried,
       webhookFirst: true,
-      prior: { status: current.status, statusVersion: current.statusVersion, resultKept },
+      prior: { status: prior.status, statusVersion: prior.statusVersion, resultKept: kept },
     };
   }
   // The retry lost too: `current` is stale (the row moved again after it was
   // read), so read it again before reporting a status.
-  const latest = await db.task.findUnique({ where: { id: snapshot.id } });
+  if (latest === undefined) latest = await db.task.findUnique({ where: { id: snapshot.id } });
   if (!latest) return { kind: "lost", currentStatus: null, reason: "status_changed" };
   return { kind: "lost", currentStatus: latest.status, reason: lossReason(snapshot, latest) };
 }

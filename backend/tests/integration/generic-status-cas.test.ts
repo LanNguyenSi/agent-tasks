@@ -1116,7 +1116,8 @@ describe("a non-webhook writer set done between the GitHub merge and the handler
     );
   });
 
-  it("the approval signal is sent once, by this request: the retry does not add a second one", async () => {
+  /** A review task whose lock holder (the test user) approves with autoMerge; a second approval lands inside the merge. */
+  async function reviewTaskApprovedTwice() {
     const claimantId = await seedUser();
     const taskId = await seedTask({
       status: "review",
@@ -1126,12 +1127,113 @@ describe("a non-webhook writer set done between the GitHub merge and the handler
       reviewClaimedAt: new Date(),
       ...MERGE_PR,
     });
-    mergeThenOtherWriterDone(taskId, "approved by the reviewer");
+    const inner = { status: 0, versionAfter: -1 };
+    github.performPrMerge.mockImplementation(async () => {
+      // A real concurrent approval: it clears the lock, stores its own result
+      // and sends its own approval signal before this request writes.
+      const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", result: "approved by the second reviewer" });
+      inner.status = res.status;
+      inner.versionAfter = (await db.task.findUniqueOrThrow({ where: { id: taskId } })).statusVersion;
+      return { ok: true, sha: "deadbeef", alreadyMerged: false };
+    });
+    return { taskId, claimantId, inner };
+  }
 
-    const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", autoMerge: true });
+  it("a concurrent approval inside the merge: this request completes, keeps its result, and both approvals signal (the audit event marks the overlap)", async () => {
+    const { taskId, inner } = await reviewTaskApprovedTwice();
+
+    const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", autoMerge: true, result: "approved by the first reviewer" });
 
     expect(res.status).toBe(200);
-    expect(emitTaskApprovedSignal).toHaveBeenCalledTimes(1);
+    expect(inner.status).toBe(200);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("done");
+    expect(row.result).toBe("approved by the second reviewer");
+    expect(row.autoMergeSha).toBe("deadbeef");
+    expect(row.statusVersion).toBe(inner.versionAfter + 1);
+    // One signal from the concurrent approval, one from this request.
+    expect(emitTaskApprovedSignal).toHaveBeenCalledTimes(2);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merge_webhook_first",
+        taskId,
+        payload: expect.objectContaining({
+          priorStatus: "done",
+          priorStatusVersion: inner.versionAfter,
+          resultKept: true,
+        }),
+      }),
+    );
+  });
+
+  it("when the other writer's result was kept, this request's approval signal carries the stored result, not the discarded one", async () => {
+    const { taskId } = await reviewTaskApprovedTwice();
+
+    const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", autoMerge: true, result: "approved by the first reviewer" });
+
+    expect(res.status).toBe(200);
+    const comments = vi.mocked(emitTaskApprovedSignal).mock.calls.map((call) => call[5]);
+    expect(comments).toEqual(["approved by the second reviewer", "approved by the second reviewer"]);
+  });
+
+  it("a result still null is written by the retry and the signal carries the caller's own result", async () => {
+    const claimantId = await seedUser();
+    const taskId = await seedTask({
+      status: "review",
+      claimedByUserId: claimantId,
+      claimedAt: new Date(),
+      reviewClaimedByUserId: userId,
+      reviewClaimedAt: new Date(),
+      ...MERGE_PR,
+    });
+    mergeThenOtherWriterDone(taskId, null);
+
+    const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", autoMerge: true, result: "approved by the first reviewer" });
+
+    expect(res.status).toBe(200);
+    expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).result).toBe("approved by the first reviewer");
+    expect(vi.mocked(emitTaskApprovedSignal).mock.calls.map((call) => call[5])).toEqual(["approved by the first reviewer"]);
+  });
+
+  it("self-approve autoMerge: the signal carries the stored result when the other writer's was kept", async () => {
+    const taskId = await seedTask({ status: "review", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+    mergeThenOtherWriterDone(taskId, "result of the other writer");
+
+    const res = await postJson(`/tasks/${taskId}/finish`, { outcome: "approve", autoMerge: true, result: "the claimant's own result" });
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(emitTaskApprovedSignal).mock.calls.map((call) => call[5])).toEqual(["result of the other writer"]);
+  });
+
+  it("a result stored between the fresh-row read and the retry is not overwritten: the retry drops its own and says the result was kept", async () => {
+    const taskId = await seedTask({ status: "in_progress", claimedByUserId: userId, claimedAt: new Date(), ...MERGE_PR });
+    github.performPrMerge.mockImplementation(async () => {
+      // The other writer sets done without a result; a result-only write then
+      // lands after the handler re-read that row and before its retry writes.
+      await db.task.update({
+        where: { id: taskId },
+        data: { status: "done", result: null, claimedByUserId: null, claimedAt: null, statusVersion: { increment: 1 } },
+      });
+      shared.afterTaskRead = async () => {
+        await db.task.update({ where: { id: taskId }, data: { result: "late edit" } });
+      };
+      return { ok: true, sha: "deadbeef", alreadyMerged: false };
+    });
+
+    const res = await postJson(`/tasks/${taskId}/finish`, { autoMerge: true, result: "shipped by the claimant" });
+
+    expect(res.status).toBe(200);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("done");
+    expect(row.result).toBe("late edit");
+    expect(row.autoMergeSha).toBe("deadbeef");
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merge_webhook_first",
+        taskId,
+        payload: expect.objectContaining({ priorStatus: "done", resultKept: true }),
+      }),
+    );
   });
 });
 

@@ -172,11 +172,14 @@ async function writeStatusCas<I extends Prisma.TaskInclude>(
   targetStatus: string,
   include: I,
   merge: { sha: string | null; via: string } | null,
-): Promise<{ ok: true; task: Prisma.TaskGetPayload<{ include: I }> } | { ok: false; response: Response }> {
+): Promise<
+  | { ok: true; task: Prisma.TaskGetPayload<{ include: I }>; resultKept: boolean }
+  | { ok: false; response: Response }
+> {
   if (merge === null) {
     const written = await casUpdateTaskStatus(prisma, task, data, include);
     if (!written) return { ok: false, response: conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE) };
-    return { ok: true, task: written };
+    return { ok: true, task: written, resultKept: false };
   }
   const outcome = await casUpdateTaskStatusAfterMerge(prisma, task, data, targetStatus, include);
   const actorId = actor.type === "human" ? actor.userId : undefined;
@@ -200,7 +203,7 @@ async function writeStatusCas<I extends Prisma.TaskInclude>(
         },
       });
     }
-    return { ok: true, task: outcome.task };
+    return { ok: true, task: outcome.task, resultKept: outcome.prior?.resultKept ?? false };
   }
   void logAuditEvent({
     action: "task.merged_status_conflict",
@@ -3068,7 +3071,8 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         task.claimedByUserId,
         task.claimedByAgentId,
         reviewerName,
-        result,
+        // A result another writer stored was kept: the signal carries that one.
+        reviewWrite.resultKept ? (updated.result ?? undefined) : result,
       );
     }
 
@@ -3352,7 +3356,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         task.claimedByUserId,
         task.claimedByAgentId,
         selfApprActorName,
-        selfApprResult,
+        selfApprWrite.resultKept ? (selfApprUpdated.result ?? undefined) : selfApprResult,
       );
     }
 

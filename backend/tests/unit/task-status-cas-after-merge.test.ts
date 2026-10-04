@@ -22,6 +22,7 @@ const BASE: Row = {
 /** `reads` yields the row for each successive findUnique; `lose` makes the matching updateMany calls write nothing. */
 function fakeDb(reads: Array<Row | null>, writes: Array<boolean>) {
   const updates: Array<Record<string, unknown>> = [];
+  const wheres: Array<Record<string, unknown>> = [];
   let readIndex = 0;
   let writeIndex = 0;
   const db = {
@@ -29,11 +30,12 @@ function fakeDb(reads: Array<Row | null>, writes: Array<boolean>) {
       findUnique: async () => reads[Math.min(readIndex++, reads.length - 1)] ?? null,
       updateMany: async (args: { where: Row; data: Record<string, unknown> }) => {
         updates.push(args.data);
+        wheres.push(args.where);
         return { count: writes[writeIndex++] ? 1 : 0 };
       },
     },
   };
-  return { db: db as never, updates, reads: () => readIndex };
+  return { db: db as never, updates, wheres, reads: () => readIndex };
 }
 
 const DATA = { status: "done", result: "mine" };
@@ -97,6 +99,29 @@ describe("casUpdateTaskStatusAfterMerge", () => {
 
     expect(outcome).toMatchObject({ kind: "written", webhookFirst: true, prior: { resultKept: false } });
     expect(updates[1]).toHaveProperty("result", "mine");
+  });
+
+  it("the retry writes result only while it is still null: the WHERE carries result null, and a miss re-reads and retries without it", async () => {
+    const done = { ...BASE, status: "done", statusVersion: 4, result: null };
+    const edited = { ...done, result: "late edit" };
+    const { db, updates, wheres } = fakeDb([done, edited], [false, false, true]);
+
+    const outcome = await casUpdateTaskStatusAfterMerge(db, BASE, DATA, "done", {});
+
+    expect(wheres[1]).toHaveProperty("result", null);
+    expect(updates[1]).toHaveProperty("result", "mine");
+    expect(updates[2]).not.toHaveProperty("result");
+    expect(wheres[2]).not.toHaveProperty("result");
+    expect(outcome).toMatchObject({ kind: "written", webhookFirst: true, prior: { status: "done", resultKept: true } });
+  });
+
+  it("a retry without a result to write carries no result condition", async () => {
+    const done = { ...BASE, status: "done", statusVersion: 4, result: null };
+    const { db, wheres } = fakeDb([done], [false, true]);
+
+    await casUpdateTaskStatusAfterMerge(db, BASE, { status: "done" }, "done", {});
+
+    expect(wheres[1]).not.toHaveProperty("result");
   });
 
   it("a first write that wins reports no webhook-first completion", async () => {
