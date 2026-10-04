@@ -10,12 +10,13 @@ Shipped:
 - [x] GitHub PR delegation (create, merge, comment via API)
 - [x] CSV/Excel import (Jira auto-mapping)
 - [x] Per-project sharing (invite-link, three role tiers, soloMode auto-flip)
+- [x] Structured logging (JSON, correlation IDs)
+- [x] Workflow templates (pre-built custom workflows, applied per project)
+- [x] Notification webhook (per-project outbound webhook for agent signals)
 
 Planned:
 
-- [ ] Notification system (email, Slack, browser push)
-- [ ] Structured logging (JSON, correlation IDs)
+- [ ] Further notification channels (email, browser push)
 - [ ] E2E and integration tests
 - [ ] Deploy webhook integration (GitHub Deployments API)
-- [ ] Workflow templates (pre-built custom workflows for common patterns)
 - [ ] Task export (CSV/Excel)

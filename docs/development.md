@@ -40,7 +40,6 @@ make dev-frontend
 |--------|---------|
 | `make install` | Install workspace dependencies |
 | `make setup` | Prepare `.env` and generate Prisma client |
-| `make hooks` | Set up pre-commit hooks (Husky + lint-staged) |
 | `make db-generate` | Generate the Prisma client |
 | `make db-push` | Push the schema to the configured database |
 | `make dev` | Run backend + frontend locally (one terminal) |
@@ -60,7 +59,7 @@ make dev-frontend
 - **Frontend:** Next.js 15 (React 19, App Router)
 - **Backend:** Hono + Node.js
 - **Database:** PostgreSQL + Prisma
-- **Auth:** Email/Password + optional GitHub connect + team-scoped OIDC SSO (humans) + API tokens with scopes (agents)
+- **Auth:** Email/Password + GitHub OAuth login (`/api/auth/github`) + GitHub connect for existing accounts (`/api/auth/github/connect`) + team-scoped OIDC SSO (humans) + API tokens with scopes (agents)
 
 See [docs/architecture.md](architecture.md) for the repository layout and module boundaries.
 

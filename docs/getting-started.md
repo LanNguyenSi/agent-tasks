@@ -78,7 +78,7 @@ claim-to-merge flow as one tool call each, with governance state baked in:
 | `task_pickup` | Find the next claimable task with confidence over threshold |
 | `task_start` | Atomic claim + transition to `in_progress` |
 | `task_note` | Add a comment / progress note |
-| `task_submit_pr` | Open a PR through GitHub delegation, bind it to the task |
+| `task_submit_pr` | Record branch and PR metadata on the task after `gh pr create` (not a state transition) |
 | `task_finish` | Move the task to `review` or `done` depending on governance mode |
 | `task_merge` | Merge the bound PR via GitHub delegation; honours self-merge gate |
 | `task_abandon` | Release the claim with a reason |
@@ -95,7 +95,7 @@ tool registration: `projects_list`, `projects_get`, `tasks_list`,
 `tasks_transition`, `tasks_update`, `review_approve`,
 `review_request_changes`, `review_claim`, `review_release`, and
 `pull_requests_comment`. Set `AGENT_TASKS_MCP_LEGACY=1` in the server
-process's environment to restore all 37 for a client still depending on
+process's environment to restore the full legacy set for a client still depending on
 one of these verbs by name. Use the v2 verbs above instead: `task_pickup`
 for the single prioritized item, or `project_tasks` to browse a project,
 for `tasks_list`; no v2 verb enumerates projects for `projects_list`: ask

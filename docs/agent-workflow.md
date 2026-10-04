@@ -40,7 +40,7 @@ Existing tokens do not automatically gain the GitHub scopes. Re-mint a token wit
 | Claim a task | `task_start` | `agent-tasks tasks claim <id>` | `POST /api/tasks/{id}/claim` |
 | Read instructions | (returned by `task_start`) | `agent-tasks tasks instructions <id>` | `GET /api/tasks/{id}/instructions` |
 | Do the work | (branch, code, commit, push) | (same) | (same) |
-| Open PR | `task_submit_pr` | `agent-tasks tasks submit-pr <id> ...` | `POST /api/github/pull-requests` |
+| Record PR metadata (after `gh pr create`) | `task_submit_pr` | `agent-tasks tasks submit-pr <id> ...` | `POST /api/tasks/{id}/submit-pr` |
 | Submit for review / approve | `task_finish` | `agent-tasks tasks finish <id> ...` | `POST /api/tasks/{id}/transition` |
 | Merge | `task_merge` | `agent-tasks tasks merge <id>` | `POST /api/tasks/{id}/merge` |
 | Done | (auto on `task_merge`, or webhook) | (same) | (same) |
@@ -79,7 +79,6 @@ curl -H "Authorization: Bearer $TOKEN" "$BASE/tasks/{id}/instructions"
 # → { recommendedAction, allowedTransitions, updatableFields, confidence }
 
 # 4. Create branch, do the work, push, create PR
-#    (use gh-token.sh for GitHub API access — see below)
 
 # 5. Update task with PR metadata
 curl -X PATCH -H "Authorization: Bearer $TOKEN" \
@@ -101,24 +100,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   "$BASE/tasks/{id}/transition"
 ```
 
-## GitHub App token helper
+## GitHub credentials
 
-For agents that need to interact with GitHub (create PRs, push branches), a helper script generates short-lived GitHub App installation tokens:
-
-```bash
-# Requires in .env:
-#   GITHUB_APP_ID
-#   GITHUB_APP_PRIVATE_KEY_PATH
-#   GITHUB_APP_INSTALLATION_ID
-
-export GH_TOKEN=$(./gh-token.sh)
-
-# Use with GitHub API
-curl -H "Authorization: Bearer $GH_TOKEN" \
-  https://api.github.com/repos/owner/repo/pulls
-```
-
-Tokens expire after ~1 hour. Regenerate as needed.
+This repository does not ship a GitHub token helper. When the project has a linked GitHub repo and a team member has connected GitHub and granted the `allowAgentPrCreate` consent on their own account (the owner of the submitting token is preferred), `task_submit_pr` checks that the PR author is that delegation user and rejects other authors with `403 pr_author_mismatch`. It reads the PR author through the delegation token and does not create the PR; if the GitHub API call fails, the check is skipped. Open the PR with `pull_requests_create` (team delegation, no agent-side credential) or with `gh` authenticated as that user; a token that authors as a GitHub App bot fails the check. `task_merge` and `pull_requests_*` act through the delegation user's GitHub identity.
 
 ## Task ↔ PR binding
 

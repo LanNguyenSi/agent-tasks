@@ -48,7 +48,7 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 | `task.review_rejected_self_reviewer` | Self-review rejected by `REQUIRES_DISTINCT_REVIEWER` gate |
 | `task.merge_rejected_bad_status` | Merge attempt against a task in `open` or `in_progress` |
 | `task.workflow_id_rejected_cross_project` | Create-time `workflowId` that does not resolve under the target project (foreign or non-existent); no `taskId`, since no task row is created |
-| `task.pr_submitted` | PR opened via `task_submit_pr` (or REST equivalent) |
+| `task.pr_submitted` | PR metadata recorded via `task_submit_pr` (or REST equivalent) |
 | `task.merged` / `task.auto_merged` | PR merged through the API; `auto_merged` fires when the merge was triggered as a side effect of `task_finish { autoMerge: true }` |
 | `task.auto_merge_post_assert_failed` | Post-merge invariant check failed; flagged for human attention |
 | `task.merge_webhook_first` | Another writer (typically the system's own PR-merge webhook) already moved the task to its terminal status between the GitHub merge and the API's own status write; the write completed against that row (payload carries `via`, `mergeSha`, `status`, `actorType`, plus `priorStatus` and `priorStatusVersion` of the row the write completed against and `resultKept`, true when that row already had a result, which the write then did not overwrite) |

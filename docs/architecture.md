@@ -19,7 +19,8 @@ Siehe auch:
 - Frontend: Next.js App (`frontend/`)
 - Backend API: Hono + Node.js (`backend/`)
 - Primary DB: PostgreSQL + Prisma
-- Optional Docker-Dev-Stack: `docker-compose.yml` (db + backend + frontend)
+- Optional cache: Redis (`REDIS_URL`; the backend falls back to an in-memory cache when unset)
+- Optional Docker-Dev-Stack: `docker-compose.yml` (db + redis + backend + frontend)
 
 ## Logical Modules
 
@@ -39,11 +40,11 @@ Siehe auch:
 - Keine Business-Regeln in Routen.
 - Services sprechen nicht direkt HTTP, sondern Domain.
 - Repositories enthalten nur Persistenzlogik.
-- Integrationen (GitHub OAuth/Sync) bleiben hinter internen Modulen mit expliziten Fehlerpfaden.
+- Integrationen (GitHub-Anbindung, OIDC-SSO) bleiben hinter internen Modulen mit expliziten Fehlerpfaden.
 
 ## Security Model
 
-- Humans: GitHub OAuth (Wave 2 End-to-End im Ausbau)
+- Humans: E-Mail/Passwort-Login, GitHub-OAuth-Login (`/api/auth/github`), Verknüpfung von GitHub mit einem bestehenden Konto (`/api/auth/github/connect`), team-spezifisches OIDC-SSO (`backend/src/routes/sso.ts`)
 - Agents: dedizierte Bearer-Tokens mit Scopes
 - Team-/Projektzugriff wird auf Service-Ebene geprüft
 - Kritische Aktionen sollen auditierbar sein
@@ -57,7 +58,6 @@ Siehe auch:
 ## Evolution Path
 
 Kurzfristig:
-- Wave 2: OAuth-Flow und Session-Management abschließen
 - Agent-Token-Lifecycle und Tests vervollständigen
 
 Mittelfristig:
@@ -98,6 +98,9 @@ agent-tasks/
 │       ├── cli.ts         # CLI entry (serve | login | logout | status)
 │       ├── login.ts       # Token prompt + backend validation
 │       └── token-store.ts # env / keychain / file fallback
+├── cli/              # @agent-tasks/cli, command-line client
+├── scripts/          # Grounding deployment / receipt-contract checks
+├── tools/            # Docker smoke override + script, Jira import
 ├── docs/             # Specs (this directory)
 └── .github/          # CI workflows
 ```

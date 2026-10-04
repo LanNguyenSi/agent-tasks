@@ -9,11 +9,11 @@ sequenceDiagram
     participant Inbox as Signal inbox
 
     Note over Agent,Inbox: 1. Agent submits work for review
-    Agent->>API: task_submit_pr { taskId, ... }
-    API->>GH: open PR (delegated)
-    GH-->>API: prNumber, prUrl
-    API->>API: bind PR to task<br/>(branchName, prUrl, prNumber)
-    Agent->>API: task_finish { outcome: "approve" }
+    Agent->>GH: gh pr create
+    GH-->>Agent: prNumber, prUrl
+    Agent->>API: task_submit_pr { taskId, branchName, prUrl, prNumber }
+    API->>API: record PR metadata on task<br/>(branchName, prUrl, prNumber)
+    Agent->>API: task_finish { taskId, result, prUrl }
     API->>Gate: governanceMode + claimant check
     alt REQUIRES_DISTINCT_REVIEWER and self-review
         Gate-->>API: 403 forbidden (reason: self_review)

@@ -8,9 +8,9 @@ The canonical v2 agent flow.
 
 1. Agent calls `task_pickup`. Backend filters by `confidenceThreshold`, dependency graph, and the agent's claim eligibility. Returns one of `{ kind: "signal" }`, `{ kind: "review" }`, `{ kind: "work" }`, or `{ kind: "idle" }`.
 2. Agent calls `task_start { taskId }`. `task.transitioned (open → in_progress)`. The response includes the task body, instructions, and allowed transitions.
-3. Agent does the work (branch, code, commit, push).
-4. Agent calls `task_submit_pr { taskId, ... }`. Backend opens the PR through team delegation and binds `branchName` / `prUrl` / `prNumber` to the task. `task.pr_submitted`. `github.pr_created`.
-5. Agent calls `task_finish { taskId, outcome: "approve" }`. The self-review and self-merge gates run. In `AUTONOMOUS` projects the task lands directly in `done` and the PR is merged. In `REQUIRES_DISTINCT_REVIEWER` projects the task lands in `review` and a `review_needed` signal fans out to the eligible reviewers. In `AWAITS_CONFIRMATION` projects the merge succeeds and a `self_merge_notice` signal lands in every human team member's inbox.
+3. Agent does the work (branch, code, commit, push) and opens the PR (`gh pr create`, or `pull_requests_create` through team delegation, which emits `github.pr_created`).
+4. Agent calls `task_submit_pr { taskId, branchName, prUrl, prNumber }`. Backend records the PR metadata on the task; no state transition. `task.pr_submitted`.
+5. Agent calls `task_finish { taskId, result, prUrl }`. The self-review and self-merge gates run. In `AUTONOMOUS` projects the task lands directly in `done` and the PR is merged. In `REQUIRES_DISTINCT_REVIEWER` projects the task lands in `review` and a `review_needed` signal fans out to the eligible reviewers. In `AWAITS_CONFIRMATION` projects the merge succeeds and a `self_merge_notice` signal lands in every human team member's inbox.
 
 ## 2. Human invites a collaborator into a single project
 
@@ -25,7 +25,7 @@ The per-project sharing path. Useful when you want a domain expert reviewing one
 
 `REQUIRES_DISTINCT_REVIEWER` projects.
 
-1. Agent A holds the work claim. Calling `task_finish { outcome: "approve" }` from the work claim moves the task to `review` and fans a `review_needed` signal out to every eligible reviewer (humans + agents minus the author).
+1. Agent A holds the work claim. Calling `task_finish { taskId, result, prUrl }` from the work claim moves the task to `review` and fans a `review_needed` signal out to every eligible reviewer (humans + agents minus the author).
 2. Agent B (or a human reviewer) calls `task_pickup`, receives `{ kind: "review", taskId }`, and claims the review lock with `POST /api/tasks/:id/review/claim`.
 3. Agent B approves with `POST /api/tasks/:id/review { action: "approve" }`. `task.reviewed`. `task.transitioned (review → done)`. If Agent A had attempted to approve from a review claim it held itself, the self-review gate would have rejected with a `403 forbidden` plus `task.review_rejected_self_reviewer` audit row.
 4. Agent B (or any non-claimant agent with `github:pr_merge`) calls `task_merge { taskId }`. The self-merge gate passes because Agent B is not the work claimant. `github.pr_merged`. `task.merged`.
@@ -54,7 +54,7 @@ The opt-in path that lets agents act as a team-bound GitHub identity instead of 
 1. Team admin opens `Settings → API Tokens → Connect an agent`. The modal mints an `AgentToken` with a 90-day TTL and the minimum-viable scope set (`tasks:read`, `tasks:create`, `tasks:claim`, `tasks:comment`, `tasks:transition`, `tasks:update`, `projects:read`, `boards:read`, plus `github:pr_create` / `github:pr_merge` if the human has opted into delegation). PR comments use the `tasks:comment` scope; there is no separate `github:pr_comment` scope.
 2. The human (one-time, in `Settings → GitHub`) sets `allowAgentPrCreate=true`, `allowAgentPrMerge=true`, `allowAgentPrComment=true` on their own user. These are User-level consent flags, separate from the AgentToken scopes. Without consent, `pull_requests_*` calls return `403`.
 3. The agent receives the unhashed token plus a copy-paste install snippet (Claude Code MCP, CLI, or curl). The token is stored hashed in `AgentToken`.
-4. From that point, `task_submit_pr` / `task_merge` / `pull_requests_*` route through the team's GitHub identity. The agent never sees a GitHub credential.
+4. From that point, `pull_requests_*` and `task_merge` act through the delegation user's GitHub identity, and `task_submit_pr` records the PR and verifies its author through that identity. The agent never sees a GitHub credential.
 
 ## Further reading
 
