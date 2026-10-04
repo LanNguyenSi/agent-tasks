@@ -1871,6 +1871,40 @@ describe("POST /github/pull-requests/:n/merge compare-and-swaps its done write",
     },
   );
 
+  it("only the agent review-lock column moves (an agent-held review lock is released): merged_but_status_changed with claim_moved, row unchanged", async () => {
+    const agent = await seedMergeAgent();
+    const reviewingAgent = (await seedMergeAgent()) as { tokenId: string };
+    const claimantId = await seedUser();
+    const taskId = await seedTask({
+      status: "review",
+      claimedByUserId: claimantId,
+      claimedAt: new Date(),
+      reviewClaimedByAgentId: reviewingAgent.tokenId,
+      reviewClaimedAt: new Date(),
+      ...MERGE_PR,
+    });
+    const before = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    github.performPrMerge.mockImplementation(async () => {
+      await db.task.update({ where: { id: taskId }, data: { reviewClaimedByAgentId: null, reviewClaimedAt: null } });
+      return { ok: true, sha: "deadbeef", alreadyMerged: false };
+    });
+
+    const res = await mergeViaGithubRoute(agent, taskId);
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe("merged_but_status_changed");
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("review");
+    expect(row.statusVersion).toBe(before.statusVersion);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.merged_status_conflict",
+        taskId,
+        payload: expect.objectContaining({ reason: "claim_moved", via: "github_pr_merge" }),
+      }),
+    );
+  });
+
   it("without a race it lands: 200, done, no conflict or webhook-first audit event", async () => {
     const agent = await seedMergeAgent();
     const claimantId = await seedUser();
