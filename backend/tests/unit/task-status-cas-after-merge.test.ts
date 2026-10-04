@@ -30,7 +30,7 @@ function fakeDb(reads: Array<Row | null>, writes: Array<boolean>) {
       findUnique: async () => reads[Math.min(readIndex++, reads.length - 1)] ?? null,
       updateMany: async (args: { where: Row; data: Record<string, unknown> }) => {
         updates.push(args.data);
-        wheres.push(args.where);
+        wheres.push({ ...args.where });
         return { count: writes[writeIndex++] ? 1 : 0 };
       },
     },
