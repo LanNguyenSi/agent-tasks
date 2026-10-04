@@ -1,6 +1,6 @@
 "use client";
 
-// Board view: 5-column kanban layout per the Quiet Precision mockup.
+// Board view: 5-column kanban layout in the Quiet Precision style.
 // Card anatomy: PriorityLabel + confidence badge + (optional) PR chip | title
 // | footer (labels, due, avatar). Column header: status dot + title + tinted
 // count Badge + add-task (+) button.

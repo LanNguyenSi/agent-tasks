@@ -40,7 +40,6 @@ make dev-frontend
 |--------|---------|
 | `make install` | Install workspace dependencies |
 | `make setup` | Prepare `.env` and generate Prisma client |
-| `make hooks` | Set up pre-commit hooks (Husky + lint-staged) |
 | `make db-generate` | Generate the Prisma client |
 | `make db-push` | Push the schema to the configured database |
 | `make dev` | Run backend + frontend locally (one terminal) |

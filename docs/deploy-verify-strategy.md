@@ -78,7 +78,7 @@ Adding `merged`, `deployed`, `verified` as default states would:
 - Create a false expectation that all tasks go through deployment
 - Duplicate what the Activity timeline already shows
 
-If demand emerges, the right path is **workflow templates** (pre-built custom workflows teams can adopt), not expanding the default.
+If demand emerges, the right path is a **workflow template** (the pre-built custom workflows teams can already apply to a project), not expanding the default.
 
 ## Summary
 

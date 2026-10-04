@@ -115,7 +115,7 @@ task_artifact_create({
   name: "vitest.log",
   content: capturedOutput
 })
-task_finish({ taskId, outcome: "approve" })
+task_finish({ taskId, result: "tests attached" })
 ```
 
 A reviewer agent picking up the same task can then call `task_artifact_list`

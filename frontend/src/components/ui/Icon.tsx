@@ -1,6 +1,6 @@
 // Inline SVG icon set on a 16px grid, 1.5px stroke, currentColor.
-// Path data taken from quiet-precision mockup symbol defs where present;
-// missing icons drawn in the same style.
+// Icons follow the Quiet Precision visual direction: one stroke weight,
+// one grid, currentColor.
 //
 // Usage: <Icon name="search" size={16} />
 // Accessibility: aria-hidden by default; pass label prop to set aria-label.

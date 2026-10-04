@@ -42,7 +42,7 @@ AGENT_TASKS_BASE_URL=https://staging.example.com npx -y @agent-tasks/mcp-bridge
 still-deprecated v1 verbs from its default tool registration (rc-v1-C007;
 see [`mcp-server/README.md`](https://github.com/LanNguyenSi/agent-tasks/tree/master/mcp-server#tools)
 for the full list and their v2 replacements). Set `AGENT_TASKS_MCP_LEGACY=1`
-in the bridge process's environment to register all 37 tools instead:
+in the bridge process's environment to register the full legacy set (40 tools) instead:
 
 ```sh
 AGENT_TASKS_MCP_LEGACY=1 npx -y @agent-tasks/mcp-bridge

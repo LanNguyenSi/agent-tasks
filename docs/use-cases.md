@@ -8,9 +8,9 @@ The canonical v2 agent flow.
 
 1. Agent calls `task_pickup`. Backend filters by `confidenceThreshold`, dependency graph, and the agent's claim eligibility. Returns one of `{ kind: "signal" }`, `{ kind: "review" }`, `{ kind: "work" }`, or `{ kind: "idle" }`.
 2. Agent calls `task_start { taskId }`. `task.transitioned (open → in_progress)`. The response includes the task body, instructions, and allowed transitions.
-3. Agent does the work (branch, code, commit, push).
-4. Agent calls `task_submit_pr { taskId, ... }`. Backend opens the PR through team delegation and binds `branchName` / `prUrl` / `prNumber` to the task. `task.pr_submitted`. `github.pr_created`.
-5. Agent calls `task_finish { taskId, outcome: "approve" }`. The self-review and self-merge gates run. In `AUTONOMOUS` projects the task lands directly in `done` and the PR is merged. In `REQUIRES_DISTINCT_REVIEWER` projects the task lands in `review` and a `review_needed` signal fans out to the eligible reviewers. In `AWAITS_CONFIRMATION` projects the merge succeeds and a `self_merge_notice` signal lands in every human team member's inbox.
+3. Agent does the work (branch, code, commit, push) and opens the PR (`gh pr create`, or `pull_requests_create` through team delegation, which emits `github.pr_created`).
+4. Agent calls `task_submit_pr { taskId, branchName, prUrl, prNumber }`. Backend records the PR metadata on the task; no state transition. `task.pr_submitted`.
+5. Agent calls `task_finish { taskId, result, prUrl }`. The self-review and self-merge gates run. In `AUTONOMOUS` projects the task lands directly in `done` and the PR is merged. In `REQUIRES_DISTINCT_REVIEWER` projects the task lands in `review` and a `review_needed` signal fans out to the eligible reviewers. In `AWAITS_CONFIRMATION` projects the merge succeeds and a `self_merge_notice` signal lands in every human team member's inbox.
 
 ## 2. Human invites a collaborator into a single project
 
@@ -25,7 +25,7 @@ The per-project sharing path. Useful when you want a domain expert reviewing one
 
 `REQUIRES_DISTINCT_REVIEWER` projects.
 
-1. Agent A holds the work claim. Calling `task_finish { outcome: "approve" }` from the work claim moves the task to `review` and fans a `review_needed` signal out to every eligible reviewer (humans + agents minus the author).
+1. Agent A holds the work claim. Calling `task_finish { taskId, result, prUrl }` from the work claim moves the task to `review` and fans a `review_needed` signal out to every eligible reviewer (humans + agents minus the author).
 2. Agent B (or a human reviewer) calls `task_pickup`, receives `{ kind: "review", taskId }`, and claims the review lock with `POST /api/tasks/:id/review/claim`.
 3. Agent B approves with `POST /api/tasks/:id/review { action: "approve" }`. `task.reviewed`. `task.transitioned (review → done)`. If Agent A had attempted to approve from a review claim it held itself, the self-review gate would have rejected with a `403 forbidden` plus `task.review_rejected_self_reviewer` audit row.
 4. Agent B (or any non-claimant agent with `github:pr_merge`) calls `task_merge { taskId }`. The self-merge gate passes because Agent B is not the work claimant. `github.pr_merged`. `task.merged`.

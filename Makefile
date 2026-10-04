@@ -1,4 +1,4 @@
-.PHONY: help install setup hooks db-generate db-push dev dev-backend dev-frontend dev-docker docker-up docker-down docker-logs build test typecheck lint ci clean
+.PHONY: help install setup db-generate db-push dev dev-backend dev-frontend dev-docker docker-up docker-down docker-logs build test typecheck lint ci clean
 
 .DEFAULT_GOAL := help
 
@@ -13,11 +13,6 @@ install: ## Install backend and frontend dependencies
 setup: ## Prepare local development (.env + Prisma client)
 	@if [ ! -f .env ]; then cp .env.example .env; fi
 	npm run db:generate --workspace=backend
-
-hooks: ## Set up Git pre-commit hooks (Husky + lint-staged)
-	npx husky init
-	cp tools/husky-pre-commit .husky/pre-commit
-	chmod +x .husky/pre-commit
 
 db-generate: ## Generate Prisma client
 	npm run db:generate --workspace=backend

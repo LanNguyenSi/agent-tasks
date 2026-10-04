@@ -40,7 +40,7 @@ Existing tokens do not automatically gain the GitHub scopes. Re-mint a token wit
 | Claim a task | `task_start` | `agent-tasks tasks claim <id>` | `POST /api/tasks/{id}/claim` |
 | Read instructions | (returned by `task_start`) | `agent-tasks tasks instructions <id>` | `GET /api/tasks/{id}/instructions` |
 | Do the work | (branch, code, commit, push) | (same) | (same) |
-| Open PR | `task_submit_pr` | `agent-tasks tasks submit-pr <id> ...` | `POST /api/github/pull-requests` |
+| Record PR metadata (after `gh pr create`) | `task_submit_pr` | `agent-tasks tasks submit-pr <id> ...` | `POST /api/tasks/{id}/submit-pr` |
 | Submit for review / approve | `task_finish` | `agent-tasks tasks finish <id> ...` | `POST /api/tasks/{id}/transition` |
 | Merge | `task_merge` | `agent-tasks tasks merge <id>` | `POST /api/tasks/{id}/merge` |
 | Done | (auto on `task_merge`, or webhook) | (same) | (same) |
@@ -79,7 +79,6 @@ curl -H "Authorization: Bearer $TOKEN" "$BASE/tasks/{id}/instructions"
 # → { recommendedAction, allowedTransitions, updatableFields, confidence }
 
 # 4. Create branch, do the work, push, create PR
-#    (use gh-token.sh for GitHub API access — see below)
 
 # 5. Update task with PR metadata
 curl -X PATCH -H "Authorization: Bearer $TOKEN" \
@@ -101,24 +100,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   "$BASE/tasks/{id}/transition"
 ```
 
-## GitHub App token helper
+## GitHub credentials
 
-For agents that need to interact with GitHub (create PRs, push branches), a helper script generates short-lived GitHub App installation tokens:
-
-```bash
-# Requires in .env:
-#   GITHUB_APP_ID
-#   GITHUB_APP_PRIVATE_KEY_PATH
-#   GITHUB_APP_INSTALLATION_ID
-
-export GH_TOKEN=$(./gh-token.sh)
-
-# Use with GitHub API
-curl -H "Authorization: Bearer $GH_TOKEN" \
-  https://api.github.com/repos/owner/repo/pulls
-```
-
-Tokens expire after ~1 hour. Regenerate as needed.
+This repository does not ship a GitHub token helper. Agents that call GitHub directly (for `gh pr create`, pushing branches) can mint a short-lived `GH_TOKEN` with their own GitHub App helper; the PR verbs (`task_submit_pr`, `task_merge`, `pull_requests_*`) route through the team's GitHub delegation and need no agent-side credential.
 
 ## Task ↔ PR binding
 
