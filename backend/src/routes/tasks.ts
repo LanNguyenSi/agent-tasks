@@ -187,7 +187,17 @@ async function writeStatusCas<I extends Prisma.TaskInclude>(
         actorId,
         projectId: task.projectId,
         taskId: task.id,
-        payload: { via: merge.via, mergeSha: merge.sha, status: targetStatus, actorType: actor.type },
+        payload: {
+          via: merge.via,
+          mergeSha: merge.sha,
+          status: targetStatus,
+          actorType: actor.type,
+          // The state the retry completed against: the other writer's status
+          // and version, and whether its stored result was kept.
+          priorStatus: outcome.prior?.status ?? null,
+          priorStatusVersion: outcome.prior?.statusVersion ?? null,
+          resultKept: outcome.prior?.resultKept ?? false,
+        },
       });
     }
     return { ok: true, task: outcome.task };
@@ -203,18 +213,23 @@ async function writeStatusCas<I extends Prisma.TaskInclude>(
       expectedFrom: task.status,
       targetStatus,
       currentStatus: outcome.currentStatus,
+      reason: outcome.reason,
       actorType: actor.type,
     },
   });
+  const mergedPrefix = `The pull request was merged${merge.sha ? ` (${merge.sha})` : ""}`;
+  const message =
+    outcome.reason === "claim_moved"
+      ? `${mergedPrefix}, but a claim on the task moved before this request could record it; the status ` +
+        `is still '${outcome.currentStatus ?? "unknown"}'. The task was not updated. Retrying the same request is safe.`
+      : `${mergedPrefix}, but the task status changed to '${outcome.currentStatus ?? "unknown"}' before this ` +
+        "request could record it. The task was not updated; reconcile it by hand.";
   return {
     ok: false,
     response: c.json(
       {
         error: "merged_but_status_changed",
-        message:
-          `The pull request was merged${merge.sha ? ` (${merge.sha})` : ""}, but the task status changed ` +
-          `to '${outcome.currentStatus ?? "unknown"}' before this request could record it. The task was not updated; ` +
-          "reconcile it by hand.",
+        message,
         mergeSha: merge.sha,
         currentStatus: outcome.currentStatus,
       },

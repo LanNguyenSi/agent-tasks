@@ -323,3 +323,13 @@ All four open questions from the first-draft review cycle are resolved in the bo
 - **OQ4 — Threat model**: resolved in §7 (branch protection mandatory in docs + UI warning, delegation user consent is per-user revocable).
 
 No genuine open questions remain at the scope of this ADR. `task_submit_pr` verification (mentioned in §7 secondary defenses) is a separate concern and is tracked as a follow-up ticket, not an OQ here.
+
+## Addendum: a done write that lands between the merge and the handler's own write (task d3f5266b)
+
+Section 8 covers retries of one caller. A second case exists inside a single call: `/merge` and the autoMerge forms of `/finish` merge the PR on GitHub first and write `done` afterwards, and another writer can set `done` in between. The system's own PR-merge webhook is the expected one; a concurrent approval or an admin write qualifies too, and the row cannot tell them apart. `casUpdateTaskStatusAfterMerge` completes the write against the fresh row whenever that row already has the target status. The policy for that completion:
+
+- **Result**: the retry writes `result` only while the fresh row has none. A result the other writer stored is kept, and the audit event `task.merge_webhook_first` carries `resultKept: true`. The caller's own result is then not applied, and that audit flag is the record of it.
+- **Everything else the write sets** (claims cleared, `autoMergeSha`, the status version bump) is applied as for any completed write.
+- **Attribution**: the `task.merge_webhook_first` payload adds `priorStatus` and `priorStatusVersion`, the status and status version of the fresh row the retry completed against, so an operator can see the state the other writer left and that a write followed it.
+- **Approval signal**: the retry cannot know whether the other writer was the webhook (which sends no approval signal) or an approval (which did), so the request that merged the PR sends its normal approval signal once. A recipient can see a second approval notification when an approval and a merge race; the audit event marks that case. Suppressing it would also suppress the only signal in the webhook case.
+- **Reporting a loss**: when the retry loses as well, the row is read again before the 409 and the `task.merged_status_conflict` event are built, so `currentStatus` is the status the row has after the last failed write. The message distinguishes a changed status ("status changed to 'X'", reconcile by hand) from a moved claim only (status and version as read; the same request can be retried safely, the PR merge being idempotent per section 8).
