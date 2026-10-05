@@ -288,6 +288,16 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     expect(recorded[0].query).toEqual({});
   });
 
+  it("tasks_list accepts a 200-char cursor and rejects a 201-char one before any forwarding", async () => {
+    await callTool("tasks_list", { cursor: "c".repeat(200) });
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].query).toEqual({ cursor: "c".repeat(200) });
+
+    recorded.length = 0;
+    await callTool("tasks_list", { cursor: "c".repeat(201) });
+    expect(recorded).toHaveLength(0);
+  });
+
   it("tasks_list forwards sort and cursor as query parameters", async () => {
     await callTool("tasks_list", { sort: "createdAt:desc", cursor: "task-7" });
     expect(recorded).toHaveLength(1);

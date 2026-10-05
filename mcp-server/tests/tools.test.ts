@@ -1292,6 +1292,11 @@ describe("buildTools", () => {
     expect(url).toContain("cursor=task-9");
   });
 
+  it("tasks_list caps the cursor at 200 chars: 200 accepted, 201 rejected", () => {
+    expect(() => parseArgs("tasks_list", { cursor: "c".repeat(200) })).not.toThrow();
+    expect(() => parseArgs("tasks_list", { cursor: "c".repeat(201) })).toThrow();
+  });
+
   // ── review_* ───────────────────────────────────────────────────────
 
   it("review_approve POSTs action=approve with optional comment", async () => {
