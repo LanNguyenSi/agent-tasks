@@ -3,7 +3,10 @@
 This repo versions the orchestrator-workflow kit's `.ai` layer only: the
 run-file templates under `templates/` (exactly 7) and `manifest.json`.
 That is what a fresh clone needs so `.ai/runs/` history stays readable
-and a kit re-install can diff against a known state.
+and a kit re-install can diff against a known state. Besides the kit
+files, this directory also tracks seven repo-specific verification-set
+manifests (see "Verification-set manifests" below); they are not part of
+the kit.
 
 The kit's ADAPTER layer (an `AGENTS.md` marker section, `CLAUDE.md`,
 `.claude/` skills and agent definitions, plus `.agents/`/`.opencode/`
@@ -39,3 +42,28 @@ pattern. A blanket `.ai/` line would not untrack existing files, but it
 would make `git add -A` silently skip newly shipped kit files, so the
 tracked kit drifts out of sync with the installed one - that drift is
 what the job catches.
+
+## Verification-set manifests
+
+The seven `verify-grounding-*.json` files in this directory are tracked
+verification-set manifests for the external-grounding work. Each has
+`version: 1`, a `repository` entry, a `preflight` entry (running
+`preflight run . --json`) and an ordered list of `extras`. Most extras are
+`agent-primitives verify -c <checks>` invocations (build, test typecheck,
+focused backend tests). Some also run `okf-kit check docs/okf`, two run
+`node scripts/grounding-receipt-contract.mjs check` (context-writers,
+github), and one (runtime) runs a `docker compose ... config` check.
+
+They are run ad hoc by an orchestrator run as an approved verification set
+(the orchestrator-workflow "verification sets" concept). Neither CI nor any
+script in this repo reads them, and `kit-tracking.yml` does not count them.
+
+| File | Adding commit |
+| --- | --- |
+| `verify-grounding-context-writers.json` | 960a675 (#519) |
+| `verify-grounding-github.json` | 50d3f9b (#520) |
+| `verify-grounding-task-mcp.json` | 32809db (#530) |
+| `verify-grounding-migration.json` | d543c8f |
+| `verify-grounding-legacy-phases.json` | 4a3fe4e |
+| `verify-grounding-cohort-migration.json` | f4a28ee |
+| `verify-grounding-runtime.json` | 926e7d0 |
