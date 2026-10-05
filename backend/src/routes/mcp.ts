@@ -252,7 +252,7 @@ function buildServer(token: string): McpServer {
         "Response projection:\n" +
         "  • verbose=false (the default): summary fields only — id, projectId, title, status, priority, labels, claim refs, branch/PR refs, timestamps, and a small project blob. The long-form description, comments, attachments, and artifacts are omitted because they dominate the byte budget and easily push the tool result past the harness's token cap. Use tasks_get for the full detail of a single task.\n" +
         "  • verbose=true: the full task payload, equivalent to the legacy response shape.\n\n" +
-        "Default limit is 25 (max 200). Tasks are returned oldest-first by createdAt. The response also carries truncated (true when more tasks exist beyond this page) and nextCursor (the last returned id when truncated, otherwise null), so a capped page is never mistaken for the full list; this tool takes no cursor input, so raise limit to see more.",
+        "Default limit is 25 (max 200). Tasks are returned oldest-first by createdAt unless sort is 'createdAt:desc' (only createdAt is sortable). The response also carries truncated (true when more tasks exist beyond this page) and nextCursor (the last returned id when truncated, otherwise null), so a capped page is never mistaken for the full list: pass nextCursor back as cursor, with the same filters and sort, to page forward until nextCursor is null.",
       inputSchema: {
         limit: z.number().int().positive().max(200).optional(),
         projectId: uuid().optional(),
@@ -270,9 +270,11 @@ function buildServer(token: string): McpServer {
           .union([uuid(), z.literal("me")])
           .optional(),
         verbose: z.boolean().optional(),
+        sort: z.enum(["createdAt:asc", "createdAt:desc"]).optional(),
+        cursor: z.string().min(1).optional(),
       },
     },
-    async ({ limit, projectId, status, priority, labels, claimedByAgentId, verbose }) => {
+    async ({ limit, projectId, status, priority, labels, claimedByAgentId, verbose, sort, cursor }) => {
       try {
         const params = new URLSearchParams();
         if (limit !== undefined) params.set("limit", String(limit));
@@ -286,6 +288,8 @@ function buildServer(token: string): McpServer {
         if (labels && labels.length > 0) params.set("labels", labels.join(","));
         if (claimedByAgentId) params.set("claimedByAgentId", claimedByAgentId);
         if (verbose) params.set("verbose", "true");
+        if (sort !== undefined) params.set("sort", sort);
+        if (cursor) params.set("cursor", cursor);
         const qs = params.toString();
         const path = qs.length > 0 ? `/api/tasks/claimable?${qs}` : `/api/tasks/claimable`;
         const r = await callSelf(path, { method: "GET" }, token);

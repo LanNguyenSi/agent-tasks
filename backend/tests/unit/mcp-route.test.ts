@@ -288,6 +288,16 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     expect(recorded[0].query).toEqual({});
   });
 
+  it("tasks_list forwards sort and cursor as query parameters", async () => {
+    await callTool("tasks_list", { sort: "createdAt:desc", cursor: "task-7" });
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({
+      method: "GET",
+      path: "/api/tasks/claimable",
+      query: { sort: "createdAt:desc", cursor: "task-7" },
+    });
+  });
+
   it("tasks_create → POST /api/projects/:id/tasks with body", async () => {
     const projectId = "11111111-1111-1111-1111-111111111111";
     await callTool("tasks_create", {
@@ -835,5 +845,85 @@ describe("POST /api/mcp — method gate", () => {
       }),
     );
     expect(res.status).toBe(405);
+  });
+});
+
+describe("POST /api/mcp tasks_list paging over the claimable cap", () => {
+  const TOTAL = 60;
+  const ids = Array.from({ length: TOTAL }, (_, i) => `task-${String(i).padStart(3, "0")}`);
+
+  function makePagingApp(): Hono<{ Variables: AppVariables }> {
+    const app = new Hono<{ Variables: AppVariables }>();
+    app.route("/api/mcp", mcpRouter);
+    // Stand-in for the claimable route: same cursor/sort/truncated contract
+    // (default page 25, look-ahead row, nextCursor = last returned id).
+    app.get("/api/tasks/claimable", (c) => {
+      const limit = Number(c.req.query("limit") ?? "25");
+      const cursor = c.req.query("cursor");
+      const ordered = c.req.query("sort") === "createdAt:desc" ? [...ids].reverse() : ids;
+      const start = cursor ? ordered.indexOf(cursor) + 1 : 0;
+      const slice = ordered.slice(start, start + limit + 1);
+      const truncated = slice.length > limit;
+      const page = truncated ? slice.slice(0, limit) : slice;
+      return c.json({
+        tasks: page.map((id) => ({ id })),
+        truncated,
+        nextCursor: truncated ? page[page.length - 1] : null,
+      });
+    });
+    setApp(app);
+    return app;
+  }
+
+  async function pageAll(sort?: string): Promise<{ seen: string[]; pages: number }> {
+    const app = makePagingApp();
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    for (;;) {
+      const args: Record<string, unknown> = {};
+      if (cursor) args.cursor = cursor;
+      if (sort) args.sort = sort;
+      const res = await mcpRequest(
+        app,
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "tasks_list", arguments: args },
+        },
+        { Authorization: "Bearer good_token" },
+      );
+      const text = (res.body as { result: { content: Array<{ text: string }> } }).result
+        .content[0].text;
+      const body = JSON.parse(text) as {
+        tasks: Array<{ id: string }>;
+        nextCursor: string | null;
+        truncated: boolean;
+      };
+      pages += 1;
+      seen.push(...body.tasks.map((t) => t.id));
+      if (!body.truncated) {
+        expect(body.nextCursor).toBeNull();
+        break;
+      }
+      expect(body.nextCursor).not.toBeNull();
+      cursor = body.nextCursor as string;
+      expect(pages).toBeLessThan(10);
+    }
+    return { seen, pages };
+  }
+
+  it("pages oldest-first to the end with every id exactly once", async () => {
+    const { seen, pages } = await pageAll();
+    expect(pages).toBe(3);
+    expect(seen).toEqual(ids);
+    expect(new Set(seen).size).toBe(TOTAL);
+  });
+
+  it("pages newest-first with sort=createdAt:desc, every id exactly once", async () => {
+    const { seen } = await pageAll("createdAt:desc");
+    expect(seen).toEqual([...ids].reverse());
+    expect(new Set(seen).size).toBe(TOTAL);
   });
 });
