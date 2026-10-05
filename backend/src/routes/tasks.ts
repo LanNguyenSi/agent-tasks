@@ -1568,11 +1568,15 @@ taskRouter.get("/tasks/claimable", async (c) => {
     where.project = { teamId: resolved.teamId };
   }
 
-  const tasks = verbose
+  // Fetch one row past `limit` (the page size defaults to 25) so the response
+  // can say exactly whether more rows exist, mirroring the project-browse
+  // route above. Without the look-ahead row a capped page was
+  // indistinguishable from a complete one.
+  const fetched = verbose
     ? await prisma.task.findMany({
         where,
         orderBy,
-        take: limit,
+        take: limit + 1,
         ...(cursorRaw ? { cursor: { id: cursorRaw }, skip: 1 } : {}),
         include: {
           ...taskInclude,
@@ -1582,19 +1586,20 @@ taskRouter.get("/tasks/claimable", async (c) => {
     : await prisma.task.findMany({
         where,
         orderBy,
-        take: limit,
+        take: limit + 1,
         ...(cursorRaw ? { cursor: { id: cursorRaw }, skip: 1 } : {}),
         select: claimableSummarySelect,
       });
 
-  // nextCursor heuristic: a full page (tasks.length === limit) yields the
-  // last row's id as the next cursor. Same size-based trade-off as the
-  // project-browse route above — not an exact has-more check, but avoids an
-  // extra look-ahead row fetch on every call.
-  const nextCursor =
-    tasks.length === limit ? (tasks[tasks.length - 1] as { id: string }).id : null;
+  // `truncated` is exact: true only when the look-ahead row came back, i.e.
+  // more rows exist after this page. `nextCursor` is the last returned row's
+  // id in that case and null on the last page, so a page whose length merely
+  // equals `limit` is never misread as capped.
+  const truncated = fetched.length > limit;
+  const tasks = truncated ? fetched.slice(0, limit) : fetched;
+  const nextCursor = truncated ? (tasks[tasks.length - 1] as { id: string }).id : null;
 
-  return c.json({ tasks, nextCursor });
+  return c.json({ tasks, nextCursor, truncated });
 });
 
 // Best-effort attempt to recover Phase 2 session fields from previously

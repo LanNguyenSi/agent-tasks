@@ -875,7 +875,8 @@ export function buildTools(
         "(default returns a summary projection without descriptions/comments to stay inside the harness's tool-result token cap). " +
         "claimedByAgentId='me' resolves to the calling agent's tokenId. Default limit 25. " +
         "DEFAULT sort is `createdAt:desc` (newest tasks first) — the backend API itself still defaults to `createdAt:asc` for backward compatibility, but this tool overrides that at the tool layer so calling with no `sort` returns the N most-recently-created tasks, not the oldest. Pass `sort: \"createdAt:asc\"` to get the old behavior back. " +
-        "The response carries `nextCursor` (a task id, or null once the last page is reached) — pass it back as `cursor` to page forward through more results than fit in one call, instead of raising `limit` past the token cap.",
+        "The response carries `nextCursor` (a task id, or null once the last page is reached) — pass it back as `cursor` to page forward through more results than fit in one call, instead of raising `limit` past the token cap. " +
+        "The response also carries `truncated` (true exactly when more rows exist after this page): a call without `limit` returns at most 25 rows, so `truncated: true` means the list is incomplete and you must page with `nextCursor` to see the rest.",
       inputShape: {
         limit: z.number().int().positive().max(200).optional(),
         projectId: uuid().optional(),

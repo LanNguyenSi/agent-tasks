@@ -1207,7 +1207,7 @@ export const openApiSpec = {
           "For agents, team scope is inferred from token; optionally narrow by projectId. For humans, provide projectId or teamId. " +
           "Pass status/priority/labels/claimedByAgentId to broaden the search beyond claimable. " +
           "verbose=false (the default) returns a summary projection without the long-form description, comments, attachments, or artifacts. " +
-          "Defaults to `sort=createdAt:asc` — unchanged, pre-existing API-level behavior kept for backward compatibility; the deprecated MCP `tasks_list` tool defaults/documents `createdAt:desc` at the tool layer so agents see the N newest tasks by default. Pass `cursor` (a task id from a previous page's `nextCursor`) to page forward; `nextCursor` in the response is the id to pass next, or `null`/absent once the last page is reached.",
+          "Defaults to `sort=createdAt:asc` — unchanged, pre-existing API-level behavior kept for backward compatibility; the deprecated MCP `tasks_list` tool defaults/documents `createdAt:desc` at the tool layer so agents see the N newest tasks by default. Pass `cursor` (a task id from a previous page's `nextCursor`) to page forward; `nextCursor` in the response is the id to pass next, or `null` once the last page is reached. A page holds at most `limit` rows (default 25, so a caller that omits `limit` sees at most 25 tasks per call); the response always carries `truncated`, which is true exactly when more rows exist after this page, proven by a take-limit-plus-one probe. A caller that needs every match pages with `nextCursor` until `truncated` is false.",
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1297,10 +1297,14 @@ export const openApiSpec = {
                       type: "string",
                       format: "uuid",
                       nullable: true,
-                      description: "Pass as `cursor` to fetch the next page. `null` when this page came back short of `limit` (no more results).",
+                      description: "Pass as `cursor` to fetch the next page. `null` on the last page (no more results). Exact: a page that is exactly full with nothing after it also reports `null`.",
+                    },
+                    truncated: {
+                      type: "boolean",
+                      description: "True exactly when more rows exist after this page (equivalent to `nextCursor !== null`). A page capped at `limit` (default 25) with rows remaining reports `true`, so a capped page is never mistaken for the complete result.",
                     },
                   },
-                  required: ["tasks"],
+                  required: ["tasks", "nextCursor", "truncated"],
                 },
               },
             },

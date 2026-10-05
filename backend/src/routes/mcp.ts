@@ -252,7 +252,7 @@ function buildServer(token: string): McpServer {
         "Response projection:\n" +
         "  • verbose=false (the default): summary fields only — id, projectId, title, status, priority, labels, claim refs, branch/PR refs, timestamps, and a small project blob. The long-form description, comments, attachments, and artifacts are omitted because they dominate the byte budget and easily push the tool result past the harness's token cap. Use tasks_get for the full detail of a single task.\n" +
         "  • verbose=true: the full task payload, equivalent to the legacy response shape.\n\n" +
-        "Default limit is 25 (max 200). Tasks are returned oldest-first by createdAt.",
+        "Default limit is 25 (max 200). Tasks are returned oldest-first by createdAt. The response also carries truncated (true when more tasks exist beyond this page) and nextCursor (the last returned id when truncated, otherwise null), so a capped page is never mistaken for the full list; this tool takes no cursor input, so raise limit to see more.",
       inputSchema: {
         limit: z.number().int().positive().max(200).optional(),
         projectId: uuid().optional(),

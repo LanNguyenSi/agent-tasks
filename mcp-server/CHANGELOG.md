@@ -4,6 +4,8 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+- `tasks_list` documents that the backend response carries `truncated` (more rows exist after the page) and that a call without `limit` returns at most 25 rows. The tool description is the only change here; the field itself comes from the backend.
+
 ## 0.16.0
 
 - `task_respec` and its teaching error now describe both eligible states, `open` and `backlog`. The conflict mapper accepts both old and new backend 409 messages during staggered deployment.
