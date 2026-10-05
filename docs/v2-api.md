@@ -42,7 +42,7 @@ DELETE /api/projects/:id           # Humans only
 # Tasks
 GET  /api/projects/:id/tasks
 POST /api/projects/:id/tasks       # task_create; agent creates are routed to "backlog" status
-GET  /api/tasks/claimable          # Open + unclaimed; "backlog" only via explicit status search
+GET  /api/tasks/claimable          # Open + unclaimed; "backlog" only via explicit status search; 25 rows per page by default, `truncated` + `nextCursor` say whether more exist
 GET  /api/tasks/:id
 PATCH /api/tasks/:id               # Agents: branchName/prUrl/prNumber/result only; humans also promote backlog → open here
 DELETE /api/tasks/:id              # Humans only

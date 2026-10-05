@@ -122,7 +122,8 @@ describe("GET /tasks/claimable — defaults & projection", () => {
     expect(res.status).toBe(200);
 
     const args = lastFindManyArgs();
-    expect(args.take).toBe(25);
+    // 25 rows per page plus the one look-ahead row that proves truncation.
+    expect(args.take).toBe(26);
     expect(args.where).toMatchObject({
       status: "open",
       claimedByUserId: null,
@@ -157,16 +158,16 @@ describe("GET /tasks/claimable — defaults & projection", () => {
 
   it("respects an explicit limit query param within bounds", async () => {
     await makeApp().request("/tasks/claimable?limit=7");
-    expect(lastFindManyArgs().take).toBe(7);
+    expect(lastFindManyArgs().take).toBe(8);
   });
 
   it("falls back to the default 25 when limit is out of range or non-numeric", async () => {
     await makeApp().request("/tasks/claimable?limit=0");
-    expect(lastFindManyArgs().take).toBe(25);
+    expect(lastFindManyArgs().take).toBe(26);
     await makeApp().request("/tasks/claimable?limit=999");
-    expect(lastFindManyArgs().take).toBe(25);
+    expect(lastFindManyArgs().take).toBe(26);
     await makeApp().request("/tasks/claimable?limit=banana");
-    expect(lastFindManyArgs().take).toBe(25);
+    expect(lastFindManyArgs().take).toBe(26);
   });
 });
 
@@ -377,11 +378,25 @@ describe("GET /tasks/claimable — cursor pagination", () => {
 });
 
 describe("GET /tasks/claimable — nextCursor", () => {
-  it("returns the last row's id as nextCursor when the page comes back full", async () => {
+  it("returns the last returned row's id as nextCursor when more rows exist, dropping the look-ahead row", async () => {
+    prismaMocks.taskFindMany.mockResolvedValueOnce([{ id: "task-1" }, { id: "task-2" }, { id: "task-3" }]);
+    const res = await makeApp().request("/tasks/claimable?limit=2");
+    const body = (await res.json()) as {
+      tasks: { id: string }[];
+      nextCursor: string | null;
+      truncated: boolean;
+    };
+    expect(body.tasks.map((t) => t.id)).toEqual(["task-1", "task-2"]);
+    expect(body.nextCursor).toBe("task-2");
+    expect(body.truncated).toBe(true);
+  });
+
+  it("returns null and truncated=false when the page is exactly full but nothing follows", async () => {
     prismaMocks.taskFindMany.mockResolvedValueOnce([{ id: "task-1" }, { id: "task-2" }]);
     const res = await makeApp().request("/tasks/claimable?limit=2");
-    const body = (await res.json()) as { nextCursor: string | null };
-    expect(body.nextCursor).toBe("task-2");
+    const body = (await res.json()) as { nextCursor: string | null; truncated: boolean };
+    expect(body.nextCursor).toBeNull();
+    expect(body.truncated).toBe(false);
   });
 
   it("returns null when the page comes back short of the limit (end of results)", async () => {
@@ -396,5 +411,63 @@ describe("GET /tasks/claimable — nextCursor", () => {
     const res = await makeApp().request("/tasks/claimable?limit=5");
     const body = (await res.json()) as { nextCursor: string | null };
     expect(body.nextCursor).toBeNull();
+  });
+});
+
+// ── Cap visibility: more claimable tasks than one page ──────────────────────
+//
+// An in-memory stand-in for Prisma's findMany that honours take, cursor and
+// skip over a fixed ordered id list, so the test drives the real route code
+// through every page instead of asserting on mocked return values.
+
+describe("GET /tasks/claimable — more rows than the default page", () => {
+  const TOTAL = 60;
+  const ids = Array.from({ length: TOTAL }, (_, i) => `task-${String(i + 1).padStart(3, "0")}`);
+
+  beforeEach(() => {
+    prismaMocks.taskFindMany.mockImplementation(
+      async (args: { take: number; cursor?: { id: string }; skip?: number }) => {
+        const start = args.cursor ? ids.indexOf(args.cursor.id) + (args.skip ?? 0) : 0;
+        return ids.slice(start, start + args.take).map((id) => ({ id }));
+      },
+    );
+  });
+
+  type Page = { tasks: { id: string }[]; nextCursor: string | null; truncated: boolean };
+
+  async function fetchPage(query: string): Promise<Page> {
+    const res = await makeApp().request(`/tasks/claimable${query}`);
+    expect(res.status).toBe(200);
+    return (await res.json()) as Page;
+  }
+
+  it("reports truncated=true with a cursor on the default 25-row page", async () => {
+    const page = await fetchPage("");
+    expect(page.tasks).toHaveLength(25);
+    expect(page.truncated).toBe(true);
+    expect(page.nextCursor).toBe("task-025");
+  });
+
+  it("paging by nextCursor returns every task exactly once, ending with truncated=false", async () => {
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const page: Page = await fetchPage(cursor ? `?cursor=${cursor}` : "");
+      seen.push(...page.tasks.map((t) => t.id));
+      expect(page.truncated).toBe(page.nextCursor !== null);
+      cursor = page.nextCursor;
+      pages += 1;
+    } while (cursor && pages < 20);
+    expect(pages).toBe(3);
+    expect(seen).toEqual(ids);
+    expect(new Set(seen).size).toBe(TOTAL);
+  });
+
+  it("an exact multiple of the page size ends on a page that is not truncated", async () => {
+    const page = await fetchPage("?limit=30&cursor=task-030");
+    expect(page.tasks).toHaveLength(30);
+    expect(page.truncated).toBe(false);
+    expect(page.nextCursor).toBeNull();
   });
 });
