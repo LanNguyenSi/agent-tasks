@@ -28,7 +28,7 @@ Even in multi-agent projects with a distinct reviewer, the reviewer's `approve` 
 
 ### 3. Existing infrastructure
 
-`backend/src/routes/github.ts:135–342` already implements `POST /api/github/pull-requests/:prNumber/merge`:
+`backend/src/routes/github.ts:462–709` (the `githubRouter.post("/pull-requests/:prNumber/merge", ...)` handler) already implements `POST /api/github/pull-requests/:prNumber/merge`:
 
 - Requires agent-only caller with `tasks:transition` scope
 - Uses `findDelegationUser(teamId, "allowAgentPrMerge")` to resolve the delegation token
@@ -89,7 +89,7 @@ task_finish {
 **Step order (Mode B)** — must match the existing merge route's ordering to preserve governance invariants:
 1. Parse + validate payload (Zod catches `outcome`/`autoMerge` mutex and `autoMerge` without `soloMode`/review-approve).
 2. State = `review` check.
-3. Distinct-reviewer gate (re-run even though upstream already enforced it; defense in depth matches `routes/github.ts:242`).
+3. Distinct-reviewer gate (re-run even though upstream already enforced it; defense in depth matches `routes/github.ts:563`, the `checkReviewApprovalGate` call in the merge handler).
 4. `evaluateV2TransitionGates` for `review → done` with `prMerged` stripped (§3).
 5. `performPrMerge` call.
 6. `prMerged` post-check if the workflow required it (§3).
@@ -124,7 +124,7 @@ async function performPrMerge(task, mergeMethod, actor): Promise<
 >
 ```
 
-- **`owner/repo` is derived from `task.project.githubRepo`** (parsed via `parseOwnerRepo` in `transition-rules.ts:76`), **NOT** from `task.prUrl` and **NOT** from any request body. This is a hardening change vs. the existing `routes/github.ts:128–133` behavior, which currently trusts `owner`/`repo` from the request body — see §7 for the cross-repo exploit path this closes.
+- **`owner/repo` is derived from `task.project.githubRepo`** (parsed via `parseOwnerRepo` in `transition-rules.ts:76`), **NOT** from `task.prUrl` and **NOT** from any request body. This is a hardening change vs. the existing `routes/github.ts:454–460` (`mergePrSchema`) behavior, which currently trusts `owner`/`repo` from the request body — see §7 for the cross-repo exploit path this closes.
 - **`prNumber` is read from `task.prNumber`** (set by `task_submit_pr` or `task_finish { prUrl }`), NOT from request body.
 - Resolves delegation user via `findDelegationUser(task.project.teamId, "allowAgentPrMerge")` — same as existing route.
 - Calls `PUT /repos/:owner/:repo/pulls/:n/merge` — same as existing route.
@@ -134,7 +134,7 @@ async function performPrMerge(task, mergeMethod, actor): Promise<
 
 Both call sites use this helper:
 
-1. The existing `POST /api/github/pull-requests/:prNumber/merge` route (`routes/github.ts:135+`) is refactored to call `performPrMerge` instead of inlining the GitHub call. Behavior is preserved EXCEPT for one deliberate tightening: the route's `owner`/`repo`/`prNumber` body fields become **ignored in favor of values derived from the task**. Callers that previously passed mismatched body values will see a behavior change (the merge hits the task's actual repo); this is a bug fix, not a regression, and the test suite should pin the correction.
+1. The existing `POST /api/github/pull-requests/:prNumber/merge` route (`routes/github.ts:462+`, the merge handler) is refactored to call `performPrMerge` instead of inlining the GitHub call. Behavior is preserved EXCEPT for one deliberate tightening: the route's `owner`/`repo`/`prNumber` body fields become **ignored in favor of values derived from the task**. Callers that previously passed mismatched body values will see a behavior change (the merge hits the task's actual repo); this is a bug fix, not a regression, and the test suite should pin the correction.
 2. `task_finish` in the new autoMerge path calls `performPrMerge` inline and plumbs the result into the transition logic.
 
 The helper is the single point where `allowAgentPrMerge` delegation is resolved and the GitHub API is called. No duplication, no divergence.
@@ -282,7 +282,7 @@ The 1-claim limit is not relaxed for soloMode. A soloMode agent still holds one 
 
 **Follow-ups outside this ADR**:
 
-- **Implementation ticket**: schema migration (`Project.soloMode`, `Task.autoMergeSha`), `performPrMerge` helper extraction from `routes/github.ts:135–342`, `task_finish` handler extension in `backend/src/routes/tasks.ts`, MCP tool description update in `mcp-server/src/tools.ts` (the `task_finish` tool definition) + schema extension in `mcp-server/src/client.ts`, `routes/projects.ts` updateProjectSchema + audit diff extension for `soloMode`, `task_submit_pr` cross-repo hardening, frontend settings toggle + warning banner, unit and integration tests (see test plan below). Will be created after this ADR is accepted.
+- **Implementation ticket**: schema migration (`Project.soloMode`, `Task.autoMergeSha`), `performPrMerge` helper extraction from `routes/github.ts:462–709` (the merge handler), `task_finish` handler extension in `backend/src/routes/tasks.ts`, MCP tool description update in `mcp-server/src/tools.ts` (the `task_finish` tool definition) + schema extension in `mcp-server/src/client.ts`, `routes/projects.ts` updateProjectSchema + audit diff extension for `soloMode`, `task_submit_pr` cross-repo hardening, frontend settings toggle + warning banner, unit and integration tests (see test plan below). Will be created after this ADR is accepted.
 - **Documentation updates**: `docs/workflow-preconditions.md` (add soloMode + autoMerge flow section), `feedback_workflow.md` memory (add the soloMode canonical path), README mentions if any.
 - **`task_submit_pr` authorship verification**: GitHub API check that the PR author matches the claiming agent, or that the branch head commit is authored by the agent's delegation user. Separate ticket, not blocking — the cross-repo hardening in this ADR (§5b) closes the most urgent exploit surface.
 - **Branch protection status indicator**: frontend widget that queries `GET /repos/:owner/:repo/branches/:branch/protection` and surfaces the status on the project settings page. Separate ticket.
