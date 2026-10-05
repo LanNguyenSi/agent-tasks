@@ -1228,6 +1228,8 @@ export const openApiSpec = {
             in: "query",
             required: false,
             schema: { type: "integer", minimum: 1, maximum: 200, default: 25 },
+            description:
+              "Page size. Out-of-range values are clamped: above 200 becomes 200, below 1 becomes 1; an absent or non-numeric value uses the default 25. The project task route (`GET /api/projects/:id/tasks`) differs on purpose: it caps at 500 and rejects a value of 0 or below with 400.",
           },
           {
             name: "sort",
