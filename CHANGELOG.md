@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-05
+
 ### Added
 
 - The backend-hosted MCP `tasks_list` tool (`backend/src/routes/mcp.ts`) takes `cursor` and `sort` (`createdAt:asc|desc`) and forwards them to `GET /api/tasks/claimable` (task faba28af), so its callers can page with `nextCursor` like callers of the standalone MCP server's `tasks_list` instead of only raising `limit`. An omitted `sort` keeps the route default (oldest first); the tool description no longer says it takes no cursor.
