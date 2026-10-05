@@ -464,6 +464,21 @@ describe("GET /tasks/claimable — more rows than the default page", () => {
     expect(new Set(seen).size).toBe(TOTAL);
   });
 
+  it("verbose=true over the cap: asks for limit + 1 rows and reports truncation with a cursor", async () => {
+    const page = await fetchPage("?verbose=true");
+    expect(lastFindManyArgs().take).toBe(26);
+    expect(page.tasks).toHaveLength(25);
+    expect(page.truncated).toBe(true);
+    expect(page.nextCursor).toBe("task-025");
+  });
+
+  it("verbose=true with an explicit limit also looks one row ahead", async () => {
+    const page = await fetchPage("?verbose=true&limit=10");
+    expect(lastFindManyArgs().take).toBe(11);
+    expect(page.tasks).toHaveLength(10);
+    expect(page.truncated).toBe(true);
+  });
+
   it("an exact multiple of the page size ends on a page that is not truncated", async () => {
     const page = await fetchPage("?limit=30&cursor=task-030");
     expect(page.tasks).toHaveLength(30);
