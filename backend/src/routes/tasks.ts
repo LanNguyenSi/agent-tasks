@@ -1438,8 +1438,15 @@ taskRouter.get("/tasks/claimable", async (c) => {
   const claimedByAgentIdRaw = c.req.query("claimedByAgentId");
 
   const parsedLimit = limitRaw ? Number.parseInt(limitRaw, 10) : 25;
-  const limit =
-    Number.isFinite(parsedLimit) && parsedLimit >= 1 && parsedLimit <= 200 ? parsedLimit : 25;
+  // Out-of-range values clamp (above 200 -> 200, below 1 -> 1); only an absent,
+  // empty or non-numeric value falls back to the default page size.
+  const limit = Number.isNaN(parsedLimit)
+    ? 25
+    : parsedLimit > 200
+      ? 200
+      : parsedLimit < 1
+        ? 1
+        : parsedLimit;
 
   const verbose = verboseRaw === "true" || verboseRaw === "1";
 

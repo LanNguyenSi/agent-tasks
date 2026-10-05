@@ -161,11 +161,21 @@ describe("GET /tasks/claimable — defaults & projection", () => {
     expect(lastFindManyArgs().take).toBe(8);
   });
 
-  it("falls back to the default 25 when limit is out of range or non-numeric", async () => {
-    await makeApp().request("/tasks/claimable?limit=0");
-    expect(lastFindManyArgs().take).toBe(26);
-    await makeApp().request("/tasks/claimable?limit=999");
-    expect(lastFindManyArgs().take).toBe(26);
+  it("clamps a limit above 200 down to 200", async () => {
+    for (const value of ["201", "999", "200"]) {
+      await makeApp().request(`/tasks/claimable?limit=${value}`);
+      expect(lastFindManyArgs().take).toBe(201);
+    }
+  });
+
+  it("clamps a limit below 1 up to 1", async () => {
+    for (const value of ["0", "-5"]) {
+      await makeApp().request(`/tasks/claimable?limit=${value}`);
+      expect(lastFindManyArgs().take).toBe(2);
+    }
+  });
+
+  it("falls back to the default 25 when limit is non-numeric", async () => {
     await makeApp().request("/tasks/claimable?limit=banana");
     expect(lastFindManyArgs().take).toBe(26);
   });
