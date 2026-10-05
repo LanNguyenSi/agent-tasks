@@ -901,6 +901,7 @@ export function buildTools(
         cursor: z
           .string()
           .min(1)
+          .max(200)
           .optional()
           .describe(
             "Task id to page forward from — pass the previous call's `nextCursor`. Omit for the first page.",

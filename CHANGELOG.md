@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - The backend-hosted MCP `tasks_list` tool (`backend/src/routes/mcp.ts`) takes `cursor` and `sort` (`createdAt:asc|desc`) and forwards them to `GET /api/tasks/claimable` (task faba28af), so its callers can page with `nextCursor` like callers of the standalone MCP server's `tasks_list` instead of only raising `limit`. An omitted `sort` keeps the route default (oldest first); the tool description no longer says it takes no cursor.
+- Both `tasks_list` tools (the backend-hosted one in `backend/src/routes/mcp.ts` and the standalone one in `mcp-server`) reject a `cursor` longer than 200 characters with a validation error instead of only being bounded by URL and transport limits (task 2bf1b70a). A cursor is a task id (36 characters), so no real cursor is affected. A test now pins that the hosted tool answers a cursor naming no task with an empty page, `nextCursor: null` and `truncated: false`.
 
 ### Fixed
 

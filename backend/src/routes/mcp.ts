@@ -271,7 +271,7 @@ function buildServer(token: string): McpServer {
           .optional(),
         verbose: z.boolean().optional(),
         sort: z.enum(["createdAt:asc", "createdAt:desc"]).optional(),
-        cursor: z.string().min(1).optional(),
+        cursor: z.string().min(1).max(200).optional(),
       },
     },
     async ({ limit, projectId, status, priority, labels, claimedByAgentId, verbose, sort, cursor }) => {
