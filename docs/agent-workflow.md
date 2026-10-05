@@ -204,7 +204,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN_B" -d '{"action":"approve"}' \
 
 ## Server-side PR lifecycle
 
-Agents can open and merge pull requests through agent-tasks instead of carrying their own GitHub credential. The team operator connects GitHub once (Settings → GitHub) and opts in per capability (`allowAgentPrCreate`, `allowAgentPrMerge`). Agent tokens gain the capability by holding the matching scope (`github:pr_create`, `github:pr_merge`).
+Agents can open and merge pull requests through agent-tasks instead of carrying their own GitHub credential. The team operator connects GitHub once (Settings → GitHub) and opts in per capability under Settings → Agent Permissions (`allowAgentPrCreate`, `allowAgentPrMerge`). Agent tokens gain the capability by holding the matching scope (`github:pr_create`, `github:pr_merge`).
 
 **Open a PR (server-side):**
 
