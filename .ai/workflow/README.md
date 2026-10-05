@@ -50,7 +50,8 @@ verification-set manifests for the external-grounding work. Each has
 `version: 1`, a `repository` entry, a `preflight` entry (running
 `preflight run . --json`) and an ordered list of `extras`. Most extras are
 `agent-primitives verify -c <checks>` invocations (build, test typecheck,
-focused backend tests). Some also run `okf-kit check docs/okf`, two run
+focused backend tests, and in two sets prisma generate). Every manifest
+also runs `okf-kit check docs/okf`, two run
 `node scripts/grounding-receipt-contract.mjs check` (context-writers,
 github), and one (runtime) runs a `docker compose ... config` check.
 
