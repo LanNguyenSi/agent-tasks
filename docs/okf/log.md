@@ -597,7 +597,7 @@ follow-up verification instant.
 Review-round-2 corrections (reviewer found the re-stamp had preserved
 claims the cited sources contradict): `mcp-server.md`'s
 `backlog_not_promoted` bullet said `allowedNext: ["tasks_get",
-"task_creator_abandon"]`; the code at `mcp-server/src/errors.ts:764`
+"task_creator_abandon"]`; the code at `mcp-server/src/errors.ts:806`
 reads `["task_respec", "task_creator_abandon"]`, corrected, and the
 parenthetical now gives the code's own rationale from
 `mcp-server/src/errors.ts:752-757` (the two verbs an agent can still call
