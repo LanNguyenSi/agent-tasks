@@ -1,6 +1,6 @@
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
-import { assertGithubFenceInstalled, githubPrUrlMatches, sameGithubPrUrl } from "../../src/services/grounding-github-fence.js";
+import { assertGithubFenceInstalled, githubPrUrlMatches, isGithubFenceConflict, sameGithubPrUrl } from "../../src/services/grounding-github-fence.js";
 
 it("requires the hold, migration enrollment and immutable command triggers alongside repository fences", async () => {
   const query = vi.fn().mockResolvedValue([{ count: 9n }]);
@@ -50,4 +50,31 @@ it("same PR URL compares canonical identities and keeps exact equality", () => {
   expect(sameGithubPrUrl("https://github.com/acme/repo/pull/42", "https://github.com/acme/other/pull/42")).toBe(false);
   expect(sameGithubPrUrl("https://github.com/acme/repo/pull/42", null)).toBe(false);
   expect(sameGithubPrUrl("https://github.com/acme/repo/pull/42/", "https://github.com/acme/repo/pull/42")).toBe(false);
+});
+
+describe("isGithubFenceConflict", () => {
+  it("is true for a Prisma-shaped error that names the fence trigger", () => {
+    const err = Object.assign(new Error("Invalid `prisma.$executeRaw()` invocation"), {
+      code: "P2010",
+      meta: { code: "55000", message: "grounding_github_fence_conflict: acme/thing" },
+    });
+    expect(isGithubFenceConflict(err)).toBe(true);
+  });
+
+  it("is true when only the message names the fence trigger", () => {
+    expect(isGithubFenceConflict({ message: "ERROR: grounding_github_fence_conflict: acme/thing" })).toBe(true);
+  });
+
+  it("is false for the other 55000 trigger refusal grounding_task_held", () => {
+    const err = Object.assign(new Error("Invalid invocation"), { code: "P2010", meta: { code: "55000", message: "grounding_task_held" } });
+    expect(isGithubFenceConflict(err)).toBe(false);
+  });
+
+  it("is false for a generic error, null, undefined and non-objects", () => {
+    expect(isGithubFenceConflict(new Error("boom"))).toBe(false);
+    expect(isGithubFenceConflict(null)).toBe(false);
+    expect(isGithubFenceConflict(undefined)).toBe(false);
+    expect(isGithubFenceConflict("grounding_github_fence_conflict")).toBe(false);
+    expect(isGithubFenceConflict(42)).toBe(false);
+  });
 });

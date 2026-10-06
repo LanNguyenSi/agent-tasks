@@ -646,6 +646,10 @@ async function sameAsUnconfigured(send: (target: ReturnType<typeof createApp>) =
   const configured = await send(app(f.service, new GroundingGithubCreateService({ db: store.db }), emptyScope));
   const configuredCalls = fetchCalls();
   (globalThis.fetch as ReturnType<typeof vi.fn>).mockClear();
+  // The stubbed fetch rejects, an unknown merge outcome: the first request
+  // keeps its merge reservation until the lease lapses. Drop it so the second
+  // request meets the same task state instead of merge_in_progress.
+  await store.db.task.updateMany({ where: { mergeReservedAt: { not: null } }, data: { mergeReservedAt: null, mergeReservedByUserId: null, mergeReservedByAgentId: null } });
   const unconfigured = await send(createApp(""));
   return { configured: { status: configured.status, body: await configured.json() }, unconfigured: { status: unconfigured.status, body: await unconfigured.json() }, configuredCalls, unconfiguredCalls: fetchCalls() };
 }

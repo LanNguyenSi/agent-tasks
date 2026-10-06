@@ -9,6 +9,6 @@ export type AppVariables = {
    * guard, or null in the unconfigured application. See groundingRemoteGuardFor. */
   groundingRemoteTargetGuard?: GroundingRemoteTargetGuard | null;
   /** The merge reservation the current request holds, released when the
-   * request ends (see taskRouter's reservation release middleware). */
-  mergeReservation?: { taskId: string; reservation: MergeReservation } | null;
+   * request ends unless `keep` is set (the merge outcome is unknown) (see taskRouter's reservation release middleware). */
+  mergeReservation?: { taskId: string; reservation: MergeReservation; keep?: boolean } | null;
 };

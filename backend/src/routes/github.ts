@@ -25,7 +25,7 @@ import {
 } from "../services/gates/index.js";
 import { performPrMerge, type BeforeGithubMerge } from "../services/github-merge.js";
 import { writeStatusAfterMerge } from "../services/task-merge-status-write.js";
-import { reserveTaskForMerge } from "../services/task-status-cas.js";
+import { GITHUB_FENCE_CONFLICT_MESSAGE, reserveTaskForMerge } from "../services/task-status-cas.js";
 import { releaseMergeReservation, type MergeReservation } from "../services/task-merge-reservation.js";
 import { mergeInProgressBody } from "../middleware/error.js";
 import { logger } from "../lib/logger.js";
@@ -637,9 +637,14 @@ githubRouter.post(
         // The merge takes the task's merge reservation right before the
         // GitHub call (bound to the status and claims the gates above decided
         // from, so a review lock released since then refuses the merge) and
-        // this block gives it back whichever way the merge ends; see
-        // services/task-merge-reservation.ts.
+        // this block gives it back after a refused merge or a lost post-merge
+        // write, but keeps it until the lease lapses after an unknown GitHub
+        // outcome or a thrown handler; see services/task-merge-reservation.ts.
         const held: { reservation: MergeReservation | null } = { reservation: null };
+        // Set when the GitHub call ended with an unknown outcome or the block
+        // threw: GitHub may still merge, so the reservation lapses with its
+        // lease instead of being released.
+        let keepReservation = false;
         const takeReservation: BeforeGithubMerge = async () => {
           const reserved = await reserveTaskForMerge(prisma, task, actor);
           if (reserved.ok) {
@@ -647,7 +652,10 @@ githubRouter.post(
             return null;
           }
           if (reserved.reason === "merge_in_progress") {
-            return { ok: false, error: "merge_in_progress", message: mergeInProgressBody(reserved.retryAfterSeconds).message, status: 409 };
+            return { ok: false, error: "merge_in_progress", message: mergeInProgressBody(reserved.retryAfterSeconds).message, status: 409, retryAfterSeconds: reserved.retryAfterSeconds };
+          }
+          if (reserved.reason === "fenced") {
+            return { ok: false, error: "grounding_github_fence_conflict", message: GITHUB_FENCE_CONFLICT_MESSAGE, status: 409 };
           }
           return {
             ok: false,
@@ -669,6 +677,7 @@ githubRouter.post(
           );
 
           if (!mergeResult.ok) {
+            if (mergeResult.outcomeUnknown) keepReservation = true;
             const status =
               mergeResult.error === "no_delegation"
                 ? 403
@@ -678,7 +687,10 @@ githubRouter.post(
               body: {
                 error: mergeResult.error,
                 message: mergeResult.message,
-              } as const,
+                ...(mergeResult.error === "merge_in_progress" && mergeResult.retryAfterSeconds !== undefined
+                  ? { retryAfterSeconds: mergeResult.retryAfterSeconds }
+                  : {}),
+              },
             };
           }
 
@@ -724,8 +736,11 @@ githubRouter.post(
               },
             },
           };
+        } catch (err) {
+          keepReservation = true;
+          throw err;
         } finally {
-          if (held.reservation) {
+          if (held.reservation && !keepReservation) {
             await releaseMergeReservation(prisma, task.id, held.reservation).catch((err: unknown) => {
               // The lease lapses on its own; a failed release must not replace the response.
               logger.error(
@@ -740,6 +755,10 @@ githubRouter.post(
 
     if (outcome.replayed) {
       c.header("X-Idempotent-Replay", "true");
+    }
+    const refusedRetryAfter = (outcome.body as { error?: unknown; retryAfterSeconds?: unknown } | null)?.retryAfterSeconds;
+    if (outcome.status === 409 && (outcome.body as { error?: unknown } | null)?.error === "merge_in_progress" && typeof refusedRetryAfter === "number") {
+      c.header("Retry-After", String(refusedRetryAfter));
     }
     return c.json(
       outcome.body,

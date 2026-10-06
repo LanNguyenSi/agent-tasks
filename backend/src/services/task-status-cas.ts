@@ -32,6 +32,7 @@
  * one loss that is expected there, the PR-merge webhook of the system itself
  * moving the task to the same terminal status first.
  */
+import { isGithubFenceConflict } from "./grounding-github-fence.js";
 import { Prisma } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
 import {
@@ -268,9 +269,14 @@ export async function casUpdateTaskStatusAfterMerge<I extends Prisma.TaskInclude
   return { kind: "lost", currentStatus: latest.status, reason: lossReason(snapshot, latest, reservation) };
 }
 
+/** Answer text of `409 grounding_github_fence_conflict` for a reservation write the repository fence refused. */
+export const GITHUB_FENCE_CONFLICT_MESSAGE =
+  "The task is under an active GitHub repository fence, so the merge was not started and nothing was merged; retry once the fenced operation has finished";
+
 export type ReserveOutcome =
   | { ok: true; reservation: MergeReservation }
   | { ok: false; reason: "merge_in_progress"; retryAfterSeconds: number }
+  | { ok: false; reason: "fenced" }
   | { ok: false; reason: "changed" };
 
 /**
@@ -300,7 +306,9 @@ export async function reserveTaskForMerge(
     byUserId: actor.type === "human" ? actor.userId : null,
     byAgentId: actor.type === "agent" ? actor.tokenId : null,
   };
-  const written = await db.$executeRaw`
+  let written: number;
+  try {
+    written = await db.$executeRaw`
     UPDATE "tasks"
     SET "mergeReservedByUserId" = ${reservation.byUserId},
         "mergeReservedByAgentId" = ${reservation.byAgentId},
@@ -313,6 +321,13 @@ export async function reserveTaskForMerge(
       AND "reviewClaimedByUserId" IS NOT DISTINCT FROM ${snapshot.reviewClaimedByUserId}
       AND "reviewClaimedByAgentId" IS NOT DISTINCT FROM ${snapshot.reviewClaimedByAgentId}
       AND ("mergeReservedAt" IS NULL OR "mergeReservedAt" <= ${utcTimestampSql(mergeReservationLeaseCutoff(now))})`;
+  } catch (err) {
+    // A task under an active GitHub repository fence refuses every write to it
+    // (the grounding_github_task_guard trigger raises SQLSTATE 55000); that is a
+    // refusal of this merge, not a server fault.
+    if (isGithubFenceConflict(err)) return { ok: false, reason: "fenced" };
+    throw err;
+  }
   if (written === 1) return { ok: true, reservation };
 
   const current = await db.task.findUnique({

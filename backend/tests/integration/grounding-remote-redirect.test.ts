@@ -108,7 +108,8 @@ describe("a GitHub redirect on a legacy write", () => {
     // The request init carries no redirect option at all, so it is the same
     // request the unconfigured application sent before.
     expect(writeInits).toHaveLength(1);
-    expect(Object.keys(writeInits[0]!)).toEqual(["method", "headers", "body"]);
+    // The merge PUT additionally carries its timeout signal; create and comment do not.
+    expect(Object.keys(writeInits[0]!)).toEqual(site === "create" || site === "comment" ? ["method", "headers", "body"] : ["method", "headers", "body", "signal"]);
   });
 });
 

@@ -48,10 +48,27 @@ export type MergeResult =
   | { ok: true; sha: string | null; alreadyMerged: boolean }
   | {
       ok: false;
-      error: "no_delegation" | "github_error" | "foreign_deliverable_merge_refused" | "merge_in_progress" | "conflict" | GroundingRemoteRefusalCode | typeof groundingRedirectRefusal.error;
+      error: "no_delegation" | "github_error" | "foreign_deliverable_merge_refused" | "merge_in_progress" | "conflict" | "grounding_github_fence_conflict" | GroundingRemoteRefusalCode | typeof groundingRedirectRefusal.error;
       message: string;
       status?: number;
+      /** Seconds until the merge reservation that refused this merge lapses (`merge_in_progress` only). */
+      retryAfterSeconds?: number;
+      /**
+       * The merge request was sent but its outcome is unknown (the fetch threw,
+       * was reset or timed out): GitHub may still complete the merge. The caller
+       * keeps its merge reservation until the lease lapses instead of releasing it.
+       */
+      outcomeUnknown?: true;
     };
+
+/**
+ * Upper bound on the GitHub merge PUT, in milliseconds. It has to stay well
+ * below the merge reservation lease (`MERGE_RESERVATION_TTL_MS`, 120 s): a
+ * request that is still pending when the lease lapses would let GitHub merge
+ * while claim writers are no longer refused. 45 s is far above the seconds a
+ * merge call takes and leaves 75 s of the lease for the post-merge write.
+ */
+export const GITHUB_MERGE_TIMEOUT_MS = 45_000;
 
 /**
  * Runs once every refusal that needs no GitHub call has passed (foreign
@@ -150,6 +167,7 @@ export async function performPrMerge(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ merge_method: mergeMethod }),
+        signal: AbortSignal.timeout(GITHUB_MERGE_TIMEOUT_MS),
       },
     );
   } catch (err) {
@@ -167,7 +185,9 @@ export async function performPrMerge(
         error: message,
       },
     });
-    return { ok: false, error: "github_error", message: `GitHub API unreachable: ${message}`, status: 502 };
+    // The request may have reached GitHub before it threw or timed out, so the
+    // merge may still land: the outcome is unknown, not a refusal.
+    return { ok: false, error: "github_error", message: `GitHub API unreachable: ${message}`, status: 502, outcomeUnknown: true };
   }
 
   // A redirect answer is not a merge result: re-sending the PUT would reach a

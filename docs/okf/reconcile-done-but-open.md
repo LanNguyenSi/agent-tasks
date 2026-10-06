@@ -3,7 +3,7 @@ type: runbook
 title: "Reconciling a task whose PR merged but the record is stuck open"
 description: "Recover a configured merge with its original operation and exact GitHub proof; retain the separate historical task lifecycle repair flow."
 tags: [reconcile, task-lifecycle, idempotency, runbook]
-timestamp: 2026-10-06T05:10:53Z
+timestamp: 2026-10-06T09:48:48Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/default-workflow.ts
@@ -91,7 +91,7 @@ from the router only when the task's own project is selected by
 key, the untouched request reaches the legacy handler. That handler is
 unchanged except for a target check at its effect boundary: with configuration
 enabled, `performPrMerge` checks the exact repository and PR number right
-before the GitHub merge call (`services/github-merge.ts:126`) and refuses
+before the GitHub merge call (`services/github-merge.ts:143`) and refuses
 with `409 grounding_enrollment_required` when that repository string is not
 exactly canonical, belongs to a selected project, when the PR is a
 protected/`EXTERNAL_V1`/bound/held task's (including such a task whose own
@@ -105,7 +105,7 @@ there makes no GitHub call and writes nothing, so it cannot produce a
 done-but-open mismatch; with configuration enabled a GitHub redirect (a
 renamed or transferred repository) is answered with
 `409 github_redirect_refused` rather than followed
-(`services/github-merge.ts:175`), which makes no merge either; a legacy gate that refuses first answers as in the unconfigured app.
+(`services/github-merge.ts:195`), which makes no merge either; a legacy gate that refuses first answers as in the unconfigured app.
 The configured GitHub create and merge routes check the caller's project
 access with the legacy rule right after the task lookup, before any Grounding
 read or lock (`routes/grounding-github.ts:82`,
@@ -125,7 +125,7 @@ the legacy merge land on GitHub while the legacy task write fails on the
 fence, which leaves the task in review with a merged PR; retrying the same
 legacy merge after the fence is released records it, because
 `performPrMerge` treats GitHub's already-merged answer as success
-(`services/github-merge.ts:200`). Enabling configuration writes grounding history
+(`services/github-merge.ts:220`). Enabling configuration writes grounding history
 (webhook deliveries, for example), so it is one-way; rollback keeps an enabled
 configuration with empty trust and an empty `creationPolicy`. Compatibility
 requires explicit OFF or LEGACY_LOCAL server enrollment, not a fallback
