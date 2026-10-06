@@ -48,16 +48,28 @@ export type MergeResult =
   | { ok: true; sha: string | null; alreadyMerged: boolean }
   | {
       ok: false;
-      error: "no_delegation" | "github_error" | "foreign_deliverable_merge_refused" | GroundingRemoteRefusalCode | typeof groundingRedirectRefusal.error;
+      error: "no_delegation" | "github_error" | "foreign_deliverable_merge_refused" | "merge_in_progress" | "conflict" | GroundingRemoteRefusalCode | typeof groundingRedirectRefusal.error;
       message: string;
       status?: number;
     };
+
+/**
+ * Runs once every refusal that needs no GitHub call has passed (foreign
+ * deliverable, missing repository or PR number, no delegation, the grounding
+ * effect-boundary guard), immediately before the irreversible merge call. The
+ * merge paths use it to take the task's merge reservation (see
+ * task-merge-reservation.ts) there, so a refused merge never touches the task
+ * row and a task that moved since the caller's gates refuses the merge instead
+ * of merging. Returns null to proceed, or the refusal to answer.
+ */
+export type BeforeGithubMerge = () => Promise<Extract<MergeResult, { ok: false }> | null>;
 
 export async function performPrMerge(
   task: MergeTask,
   mergeMethod: "squash" | "merge" | "rebase",
   actor: Actor,
   groundingGuard: GroundingRemoteTargetGuard | null,
+  beforeGithubMerge?: BeforeGithubMerge,
 ): Promise<MergeResult> {
   // Foreign-deliverable hard refusal. A task whose effective deliverable
   // repo diverges from project.githubRepo has its PR lifecycle owned by
@@ -114,6 +126,13 @@ export async function performPrMerge(
   if (groundingGuard) {
     const refused = await groundingGuard({ repo: `${owner}/${repo}`, prNumber, kind: "merge", taskId: task.id });
     if (refused) return { ok: false, error: refused.error, message: refused.message, status: refused.status };
+  }
+
+  // The last point before the irreversible call: let the caller take its
+  // merge reservation (bound to the state its gates decided from).
+  if (beforeGithubMerge) {
+    const refusal = await beforeGithubMerge();
+    if (refusal) return refusal;
   }
 
   // Call GitHub Merge API.

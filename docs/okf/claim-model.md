@@ -3,7 +3,7 @@ type: invariant
 title: "Claim model: task_pickup resolution order, backlog filtering, and single-active-claim"
 description: "Signals, then review, then open work, then idle; backlog is invisible to pickup; priority desc/createdAt asc; blockedBy filtering; one active claim per agent enforced in both pickup and start; status is an unconstrained free String; backlog tasks require human promotion before agent claim."
 tags: [claim, pickup, status, dependencies, backlog]
-timestamp: 2026-10-05T07:34:34Z
+timestamp: 2026-10-06T05:10:53Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/routes/mcp.ts
@@ -59,7 +59,9 @@ that member's active work and review claims after the project lock. It clears
 the live claim fields, invalidates the selected attempts, writes the mandatory
 context audit, and deletes the membership in one transaction. An active
 finalization reservation rejects the whole removal before either a claim or
-membership changes. Workflow and project-member writers now use this boundary; configured GitHub
+membership changes, and so does a merge reservation: a task whose pull request
+is being merged keeps its claims, the removal answers `409 merge_in_progress`
+and the member stays (`backend/src/routes/invites.ts`, `backend/src/services/task-merge-reservation.ts`). Workflow and project-member writers now use this boundary; configured GitHub
 creation and webhook writers participate in it too (see `governance-merge.md`
 and the [receipt contract](../grounding-receipt-contract.md)). Public MCP
 transport remains separate follow-up work.

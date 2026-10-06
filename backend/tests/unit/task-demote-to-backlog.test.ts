@@ -139,9 +139,15 @@ const AGENT_WITH_UPDATE: Actor = {
   scopes: ["tasks:read", "tasks:claim", "tasks:transition", "tasks:update"],
 };
 
+/** The merge-reservation half of every claim/status write's where: no live reservation. */
+const NO_LIVE_MERGE_RESERVATION = {
+  AND: [{ OR: [{ mergeReservedAt: null }, { mergeReservedAt: { lte: expect.any(Date) } }] }],
+};
+
 /** The where of the generic status compare-and-swap for a row the handler read. */
 function casWhere(row: Row) {
   return {
+    ...NO_LIVE_MERGE_RESERVATION,
     id: row.id,
     status: row.status,
     statusVersion: row.statusVersion,
@@ -208,9 +214,21 @@ function patchStatus(app: Hono<{ Variables: AppVariables }>, status: string, ext
   });
 }
 
-/** What Postgres does with the CAS `where`: every listed column must match. */
+/**
+ * What Postgres does with the CAS `where`: every listed column must match,
+ * `AND` / `OR` combine nested conditions and `{ lte }` compares a date (the
+ * merge-reservation lease check; a row without the column has no reservation).
+ */
 function matches(row: Row, where: Record<string, unknown>): boolean {
-  return Object.entries(where).every(([key, expected]) => row[key] === expected);
+  return Object.entries(where).every(([key, expected]) => {
+    if (key === "AND") return (expected as Record<string, unknown>[]).every((part) => matches(row, part));
+    if (key === "OR") return (expected as Record<string, unknown>[]).some((part) => matches(row, part));
+    const actual = key.startsWith("mergeReserved") ? ((row[key] as unknown) ?? null) : row[key];
+    if (expected !== null && typeof expected === "object" && "lte" in expected) {
+      return actual instanceof Date && actual <= (expected as { lte: Date }).lte;
+    }
+    return actual === expected;
+  });
 }
 
 const CLAIM_COLUMNS = [
@@ -270,6 +288,7 @@ describe("PATCH /tasks/:id { status: 'backlog' }: demote an open, unclaimed task
     expect(prismaMocks.taskUpdateMany).toHaveBeenCalledTimes(1);
     const cas = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(cas.where).toEqual({
+      ...NO_LIVE_MERGE_RESERVATION,
       id: "task-1",
       status: "open",
       statusVersion: 0,

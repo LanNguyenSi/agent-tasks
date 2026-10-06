@@ -378,6 +378,24 @@ model Task {
   reviewClaimedByAgentId String?
   reviewClaimedAt        DateTime?
 
+  // Merge reservation (see services/task-merge-reservation.ts). Set by the
+  // paths that merge the PR on GitHub (POST /tasks/:id/merge, the autoMerge
+  // forms of /finish, POST /github/pull-requests/:n/merge) with one
+  // conditional write before the irreversible merge call and cleared by the
+  // post-merge status write (and again when the handler exits, so a failed
+  // merge releases it). While it is live, every claim and status writer
+  // refuses with 409 merge_in_progress, so the claims the distinct-reviewer
+  // and self-merge gates decided from cannot move before the merge is
+  // recorded. `mergeReservedAt` is the lease start: a reservation older than
+  // MERGE_RESERVATION_TTL_MS counts as absent (lazy expiry), so a handler that
+  // dies between the reserve and the release cannot lock the task for good.
+  // The holder columns are plain ids without a relation: they only say who
+  // reserved, and a user or token deletion must not be blocked by (or null
+  // out) a reservation.
+  mergeReservedByUserId  String?
+  mergeReservedByAgentId String?
+  mergeReservedAt        DateTime?
+
   // Template data (structured task info for agents)
   templateData Json? // { goal?, acceptanceCriteria?, context?, constraints?, scope?, outOfScope?, dependencies?, risk?, agentPrompt?, prefers?, taskType? }
 

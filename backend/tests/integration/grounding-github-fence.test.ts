@@ -59,7 +59,7 @@ it("raw INSERT, DELETE and old/new task identities cannot evade a cross-project 
 
 it("raw task status, claims, context and PR fields are fenced; identical writes are no-ops", async () => {
   await reserve();
-  for (const data of [{ title: "Changed" }, { description: "Changed" }, { templateData: { goal: "Changed" } }, { status: "done" }, { claimedAt: new Date() }, { branchName: "other" }, { prNumber: 43 }, { prUrl: null }, { deliverableRepo: f.other.githubRepo }, { labels: ["x"] }]) await blocked(store.db.task.update({ where: { id: f.task.id }, data }));
+  for (const data of [{ title: "Changed" }, { description: "Changed" }, { templateData: { goal: "Changed" } }, { status: "done" }, { claimedAt: new Date() }, { branchName: "other" }, { prNumber: 43 }, { prUrl: null }, { deliverableRepo: f.other.githubRepo }, { labels: ["x"] }, { mergeReservedAt: new Date() }, { mergeReservedByUserId: "holder" }, { mergeReservedByAgentId: "holder" }]) await blocked(store.db.task.update({ where: { id: f.task.id }, data }));
   const before = await store.db.groundingGithubRepositoryFence.findUniqueOrThrow({ where: { repo: f.repo } });
   await store.db.task.update({ where: { id: f.task.id }, data: { title: f.task.title, prNumber: 42 } });
   await store.db.project.update({ where: { id: f.project.id }, data: { githubRepo: f.repo, name: "Display only" } });

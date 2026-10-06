@@ -52,6 +52,16 @@ export const openApiSpec = {
         },
         required: ["error", "message"],
       },
+      MergeInProgressResponse: {
+        type: "object",
+        description: "409 merge_in_progress: a pull request merge holds the task, so this claim or status write was refused and nothing was changed. The merge takes a leased reservation on the task right before the GitHub call; every claim and status writer refuses while it is live, and the reservation lapses on its own after its lease (two minutes) if the merge never completes. Retry once the merge has settled (the Retry-After header and retryAfterSeconds, when present, say how many seconds the lease has left at most).",
+        properties: {
+          error: { type: "string", enum: ["merge_in_progress"] },
+          message: { type: "string" },
+          retryAfterSeconds: { type: "integer", minimum: 1, description: "Upper bound on the seconds until the reservation lapses on its own." },
+        },
+        required: ["error", "message"],
+      },
       GroundingErrorResponse: {
         type: "object",
         description: "External-grounding transport errors always include a stable error code. Message and verification detail are returned only for the applicable failure.",
@@ -1375,10 +1385,10 @@ export const openApiSpec = {
             },
           },
           "409": {
-            description: "Demote (open to backlog) refused: the task holds a work or review claim, or lost the claim race.",
+            description: "Demote (open to backlog) refused: the task holds a work or review claim, or lost the claim race. A status write is also refused with merge_in_progress while a pull request merge holds the task.",
             content: {
               "application/json": {
-                schema: { $ref: "#/components/schemas/ErrorResponse" },
+                schema: { oneOf: [{ $ref: "#/components/schemas/ErrorResponse" }, { $ref: "#/components/schemas/MergeInProgressResponse" }] },
               },
             },
           },
@@ -1468,7 +1478,7 @@ export const openApiSpec = {
         description: "Provisioned external-grounding completion requires Idempotency-Key. Reuse it only for an identical retry; a pending result is not completion.",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }, { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string", pattern: "^[A-Za-z0-9._:-]{1,128}$" }, description: "Required for a provisioned task." }],
         requestBody: { required: true, content: { "application/json": { schema: { type: "object" } } } },
-        responses: { "200": { description: "Completed task route result" }, "202": { description: "Pending remote completion; retry with the same key." }, "400": { description: "Missing or invalid operation key for a provisioned task" } },
+        responses: { "200": { description: "Completed task route result" }, "202": { description: "Pending remote completion; retry with the same key." }, "400": { description: "Missing or invalid operation key for a provisioned task" }, "409": { description: "merge_in_progress: a pull request merge holds the task, so this claim or status write was refused and nothing was changed; retry once the merge has settled. Another finish that merges the pull request (autoMerge) while the first holds the reservation gets the same answer. Other 409 causes use the ErrorResponse shape.", content: { "application/json": { schema: { oneOf: [{ $ref: "#/components/schemas/MergeInProgressResponse" }, { $ref: "#/components/schemas/ErrorResponse" }] } } } } },
       },
     },
     "/api/tasks/{id}/merge": {
@@ -1477,7 +1487,7 @@ export const openApiSpec = {
         description: "Provisioned external-grounding merge requires Idempotency-Key. Reuse it only for an identical retry.",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }, { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string", pattern: "^[A-Za-z0-9._:-]{1,128}$" }, description: "Required for a provisioned task." }],
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: { mergeMethod: { type: "string", enum: ["squash", "merge", "rebase"] } } } } } },
-        responses: { "200": { description: "Merged task route result" }, "202": { description: "Pending remote merge; retry with the same key." }, "400": { description: "Missing or invalid operation key for a provisioned task" }, "409": { description: "merged_but_status_changed: the pull request was merged on GitHub, but the task was changed by another writer before this request could record it, so the task was not updated. mergeSha is the merge commit and currentStatus the status the task has now; the system's own PR-merge webhook having moved the task to done first is not an error (200). Other 409 causes use the ErrorResponse shape: bad_state (the task is not in a mergeable state) and foreign_deliverable_merge_refused.", content: { "application/json": { schema: { oneOf: [{ type: "object", properties: { error: { type: "string", enum: ["merged_but_status_changed"] }, message: { type: "string" }, mergeSha: { type: "string", nullable: true }, currentStatus: { type: "string", nullable: true } }, required: ["error", "message", "mergeSha", "currentStatus"] }, { $ref: "#/components/schemas/ErrorResponse" }] } } } } },
+        responses: { "200": { description: "Merged task route result" }, "202": { description: "Pending remote merge; retry with the same key." }, "400": { description: "Missing or invalid operation key for a provisioned task" }, "409": { description: "merged_but_status_changed: the pull request was merged on GitHub, but the task was changed by another writer before this request could record it, so the task was not updated. mergeSha is the merge commit and currentStatus the status the task has now; the system's own PR-merge webhook having moved the task to done first is not an error (200). Other 409 causes use the ErrorResponse shape: bad_state (the task is not in a mergeable state) and foreign_deliverable_merge_refused. merge_in_progress: another merge of the task holds its reservation, so this merge was refused before the GitHub call.", content: { "application/json": { schema: { oneOf: [{ type: "object", properties: { error: { type: "string", enum: ["merged_but_status_changed"] }, message: { type: "string" }, mergeSha: { type: "string", nullable: true }, currentStatus: { type: "string", nullable: true } }, required: ["error", "message", "mergeSha", "currentStatus"] }, { $ref: "#/components/schemas/MergeInProgressResponse" }, { $ref: "#/components/schemas/ErrorResponse" }] } } } } },
       },
     },
     "/api/tasks/{id}/abandon": {
@@ -1486,7 +1496,7 @@ export const openApiSpec = {
         description: "Provisioned external-grounding abandonment requires Idempotency-Key and an empty JSON object. Reuse the key only for an identical retry.",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }, { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string", pattern: "^[A-Za-z0-9._:-]{1,128}$" }, description: "Required for a provisioned task." }],
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", additionalProperties: false } } } },
-        responses: { "200": { description: "Abandoned task route result" }, "400": { description: "Missing or invalid operation key for a provisioned task" } },
+        responses: { "200": { description: "Abandoned task route result" }, "400": { description: "Missing or invalid operation key for a provisioned task" }, "409": { description: "merge_in_progress: a pull request merge holds the task, so the claim was not released; retry once the merge has settled. Other 409 causes use the ErrorResponse shape.", content: { "application/json": { schema: { oneOf: [{ $ref: "#/components/schemas/MergeInProgressResponse" }, { $ref: "#/components/schemas/ErrorResponse" }] } } } } },
       },
     },
     "/api/tasks/{id}/respec": {
@@ -1718,10 +1728,10 @@ export const openApiSpec = {
             },
           },
           "409": {
-            description: "Task already claimed",
+            description: "Task already claimed, or (merge_in_progress) a pull request merge holds the task",
             content: {
               "application/json": {
-                schema: { $ref: "#/components/schemas/ErrorResponse" },
+                schema: { oneOf: [{ $ref: "#/components/schemas/ErrorResponse" }, { $ref: "#/components/schemas/MergeInProgressResponse" }] },
               },
             },
           },
@@ -1777,6 +1787,14 @@ export const openApiSpec = {
               },
             },
           },
+          "409": {
+            description: "The claim is no longer held or the status changed before the request completed, or (merge_in_progress) a pull request merge holds the task",
+            content: {
+              "application/json": {
+                schema: { oneOf: [{ $ref: "#/components/schemas/ErrorResponse" }, { $ref: "#/components/schemas/MergeInProgressResponse" }] },
+              },
+            },
+          },
         },
       },
     },
@@ -1825,6 +1843,14 @@ export const openApiSpec = {
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "409": {
+            description: "The status changed before the request completed, or (merge_in_progress) a pull request merge holds the task",
+            content: {
+              "application/json": {
+                schema: { oneOf: [{ $ref: "#/components/schemas/ErrorResponse" }, { $ref: "#/components/schemas/MergeInProgressResponse" }] },
               },
             },
           },
@@ -1961,8 +1987,8 @@ export const openApiSpec = {
             content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
           },
           "409": {
-            description: "merged_but_status_changed: the pull request was merged on GitHub, but the task was changed by another writer before this request could record it, so the task was not updated. mergeSha is the merge commit and currentStatus the status the task has now; the system's own PR-merge webhook having moved the task to done first is not an error (200). Other 409 causes use the ErrorResponse shape: foreign_deliverable_merge_refused, and conflict when an Idempotency-Key is reused with a different payload.",
-            content: { "application/json": { schema: { oneOf: [{ type: "object", properties: { error: { type: "string", enum: ["merged_but_status_changed"] }, message: { type: "string" }, mergeSha: { type: "string", nullable: true }, currentStatus: { type: "string", nullable: true } }, required: ["error", "message", "mergeSha", "currentStatus"] }, { $ref: "#/components/schemas/ErrorResponse" }] } } },
+            description: "merged_but_status_changed: the pull request was merged on GitHub, but the task was changed by another writer before this request could record it, so the task was not updated. mergeSha is the merge commit and currentStatus the status the task has now; the system's own PR-merge webhook having moved the task to done first is not an error (200). Other 409 causes use the ErrorResponse shape: foreign_deliverable_merge_refused, and conflict when an Idempotency-Key is reused with a different payload. merge_in_progress: another merge of the task holds its reservation, so this merge was refused before the GitHub call.",
+            content: { "application/json": { schema: { oneOf: [{ type: "object", properties: { error: { type: "string", enum: ["merged_but_status_changed"] }, message: { type: "string" }, mergeSha: { type: "string", nullable: true }, currentStatus: { type: "string", nullable: true } }, required: ["error", "message", "mergeSha", "currentStatus"] }, { $ref: "#/components/schemas/MergeInProgressResponse" }, { $ref: "#/components/schemas/ErrorResponse" }] } } },
           },
         },
       },

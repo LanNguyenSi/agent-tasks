@@ -38,7 +38,11 @@ const REPO_README_PATH = resolve(__filename, "..", "..", "..", "README.md");
 // new "## Backlog routing (v1)" section add ~860 chars (6166 -> 7263, same
 // deliberate-raise rationale as the round above, not a budget the mechanical
 // trap-list-sync guard leaves any real choice about skipping).
-const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 7500;
+// Ceiling raised from 7500 to 7700 for the merge_in_progress trap-list entry
+// (+~140 chars, 7390 -> 7531): the trap-list-sync guard makes naming every
+// catalog code mandatory, so the entry cannot be skipped, and the bound stays
+// a sanity ceiling against runaway growth with the same headroom as before.
+const WORKFLOW_PRIMER_SANITY_CEILING_CHARS = 7700;
 
 // docs/response-contract-v1.md's "Onboarding channels by rate of change" table:
 // HANDSHAKE_PRIMER targets ~300-500 tokens with a HARD budget of 2000 chars
@@ -88,6 +92,7 @@ const NON_VERB_TOKENS = new Set([
   "unknown_project_slug", // client-side error code (rc-v1-C006: an unresolvable projectSlug/project value)
   "backlog_routing_enforced", // 400 error code (v1 backlog routing: task_create rejects an explicit non-backlog status from an agent)
   "backlog_not_promoted", // 403 error code (v1 backlog routing: task_start/task_pickup on an unpromoted backlog task)
+  "merge_in_progress", // 409 error code (a claim or status write refused while a PR merge holds the task)
 ]);
 
 function snakeCaseTokens(text: string): string[] {

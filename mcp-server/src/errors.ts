@@ -54,7 +54,9 @@
 // lowConfidenceError below. Plus backlog_routing_enforced (400, task_create)
 // and backlog_not_promoted (403, task_start / the deprecated tasks_claim
 // alias), the v1 backlog-routing pair -- see backlogRoutingEnforcedError and
-// backlogNotPromotedError below. Every other backend error degrades to the
+// backlogNotPromotedError below. Plus merge_in_progress (409, a claim or
+// status write refused while a pull request merge holds the task) -- see
+// mergeInProgressError below. Every other backend error degrades to the
 // generic shape (status-derived code, message passthrough, recipe ->
 // workflow_primer, and now also a clamped passthrough of any structured
 // body.details — see genericDegrade) rather than being forwarded as raw
@@ -802,6 +804,26 @@ function backlogNotPromotedError(message: string): TeachingError {
     recipe:
       "this task awaits operator promotion from backlog to open; call task_respec to refine it while it waits, or task_creator_abandon to withdraw it if you created it",
     allowedNext: ["task_respec", "task_creator_abandon"],
+  });
+}
+
+// 7d. Merge in progress. A path that merges a task's pull request on GitHub
+// (task_merge, task_finish with autoMerge, pull_requests_merge) reserves the
+// task right before the GitHub call; every claim or status write
+// (task_abandon, task_finish, task_start, ...) is refused with 409 `merge_in_progress` while that
+// reservation is live (backend/src/services/task-merge-reservation.ts). Its
+// own backend code, no message pattern needed. The write was NOT applied and
+// nothing the caller can change speeds the merge up, so the recipe is to read
+// the task until it settles and then retry. The reservation lapses on its own
+// if the merge never completes, so waiting is always finite. `recipe` names
+// `tasks_get`, which `allowedNext` carries.
+function mergeInProgressError(message: string): TeachingError {
+  return buildTeachingError({
+    code: "merge_in_progress",
+    message,
+    recipe:
+      "a merge of this task's pull request is in progress and holds its claims and status; call tasks_get until the merge has settled, then retry the call (the reservation lapses on its own if the merge never completes)",
+    allowedNext: ["tasks_get"],
   });
 }
 
@@ -1575,6 +1597,9 @@ export function mapBackendError(status: number, rawBody: unknown, verbContext?: 
   }
   if (status === 403 && code === "backlog_not_promoted") {
     return backlogNotPromotedError(message);
+  }
+  if (status === 409 && code === "merge_in_progress") {
+    return mergeInProgressError(message);
   }
   if (verbContext === "pull_requests_create" && code === "github_error") {
     return githubCreateError(status, body, message);

@@ -24,6 +24,30 @@ export function conflict(c: Context, message: string): Response {
   return errorResponse(c, 409, "conflict", message);
 }
 
+/** The 409 body a claim or status writer answers while a merge holds the task. */
+export function mergeInProgressBody(retryAfterSeconds?: number): {
+  error: "merge_in_progress";
+  message: string;
+  retryAfterSeconds?: number;
+} {
+  return {
+    error: "merge_in_progress",
+    message:
+      "A pull request merge is in progress for this task, so its claims and status cannot change right now. " +
+      "Retry once the merge has finished; the reservation lapses on its own if the merge never completes.",
+    ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+  };
+}
+
+/**
+ * 409 `merge_in_progress`: the writer's conditional write matched no row
+ * because a merge reservation is live (see services/task-merge-reservation.ts).
+ */
+export function mergeInProgress(c: Context, retryAfterSeconds?: number): Response {
+  if (retryAfterSeconds !== undefined) c.header("Retry-After", String(retryAfterSeconds));
+  return c.json(mergeInProgressBody(retryAfterSeconds), 409);
+}
+
 // Confidence may carry the extended ADR-0011 fields (subscores, findings,
 // nextActions). The shape stays additive — existing clients that read
 // `score` / `missing` / `threshold` keep working unchanged.

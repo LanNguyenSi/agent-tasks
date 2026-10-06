@@ -23,8 +23,12 @@ import {
   effectiveDeliverableRepo,
   isForeignDeliverable,
 } from "../services/gates/index.js";
-import { performPrMerge } from "../services/github-merge.js";
+import { performPrMerge, type BeforeGithubMerge } from "../services/github-merge.js";
 import { writeStatusAfterMerge } from "../services/task-merge-status-write.js";
+import { reserveTaskForMerge } from "../services/task-status-cas.js";
+import { releaseMergeReservation, type MergeReservation } from "../services/task-merge-reservation.js";
+import { mergeInProgressBody } from "../middleware/error.js";
+import { logger } from "../lib/logger.js";
 import { groundingRedirectRefusal, groundingRemoteGuardFor, isGithubRedirect } from "../services/grounding-scope.js";
 import { SCOPES } from "../services/scopes.js";
 import { withIdempotency } from "../services/idempotency.js";
@@ -630,71 +634,107 @@ githubRouter.post(
         payload: { ...body, prNumber },
       },
       async () => {
-        // Shared merge helper — derives owner/repo from
-        // task.project.githubRepo (cross-repo hardening, ADR-0010 §5b).
-        // Body-supplied owner/repo fields are intentionally ignored.
-        const mergeResult = await performPrMerge(
-          { ...task, prNumber: task.prNumber ?? prNumber },
-          body.merge_method,
-          actor,
-          groundingRemoteGuardFor(c),
-        );
-
-        if (!mergeResult.ok) {
-          const status =
-            mergeResult.error === "no_delegation"
-              ? 403
-              : (mergeResult.status ?? 502);
+        // The merge takes the task's merge reservation right before the
+        // GitHub call (bound to the status and claims the gates above decided
+        // from, so a review lock released since then refuses the merge) and
+        // this block gives it back whichever way the merge ends; see
+        // services/task-merge-reservation.ts.
+        const held: { reservation: MergeReservation | null } = { reservation: null };
+        const takeReservation: BeforeGithubMerge = async () => {
+          const reserved = await reserveTaskForMerge(prisma, task, actor);
+          if (reserved.ok) {
+            held.reservation = reserved.reservation;
+            return null;
+          }
+          if (reserved.reason === "merge_in_progress") {
+            return { ok: false, error: "merge_in_progress", message: mergeInProgressBody(reserved.retryAfterSeconds).message, status: 409 };
+          }
           return {
-            status,
-            body: {
-              error: mergeResult.error,
-              message: mergeResult.message,
-            } as const,
+            ok: false,
+            error: "conflict",
+            message: "Task status changed before the request completed; reload the task and retry",
+            status: 409,
           };
-        }
-
-        // Compare-and-swap on the task as the gates above read it. The PR is
-        // merged by now, so a lost race is reported like the task-scoped
-        // merge: the system's own PR-merge webhook having moved the task to
-        // `done` first completes this write, any other change answers the
-        // merged-but-changed 409 and writes nothing.
-        const written = await writeStatusAfterMerge(
-          prisma,
-          actor,
-          { ...task, projectId: task.project.id },
-          { status: "done" },
-          "done",
-          {},
-          { sha: mergeResult.sha, via: "github_pr_merge" },
-        );
-        if (!written.ok) {
-          return { status: 409, body: written.body };
-        }
-        await acknowledgeSignalsForTask(body.taskId);
-        void emitSelfMergeNoticeIfApplicable({
-          taskId: body.taskId,
-          projectId: task.project.id,
-          actor,
-          project: task.project,
-          mergeSha: mergeResult.sha,
-          via: "github_pr_merge",
-        });
-
-        return {
-          status: 200,
-          body: {
-            merged: true,
-            sha: mergeResult.sha,
-            message: mergeResult.alreadyMerged
-              ? "Already merged"
-              : "Pull request successfully merged",
-            task: {
-              id: task.id,
-              status: "done",
-            },
-          },
         };
+        try {
+          // Shared merge helper — derives owner/repo from
+          // task.project.githubRepo (cross-repo hardening, ADR-0010 §5b).
+          // Body-supplied owner/repo fields are intentionally ignored.
+          const mergeResult = await performPrMerge(
+            { ...task, prNumber: task.prNumber ?? prNumber },
+            body.merge_method,
+            actor,
+            groundingRemoteGuardFor(c),
+            takeReservation,
+          );
+
+          if (!mergeResult.ok) {
+            const status =
+              mergeResult.error === "no_delegation"
+                ? 403
+                : (mergeResult.status ?? 502);
+            return {
+              status,
+              body: {
+                error: mergeResult.error,
+                message: mergeResult.message,
+              } as const,
+            };
+          }
+
+          // Compare-and-swap on the task as the gates above read it. The PR is
+          // merged by now, so a lost race is reported like the task-scoped
+          // merge: the system's own PR-merge webhook having moved the task to
+          // `done` first completes this write, any other change answers the
+          // merged-but-changed 409 and writes nothing.
+          const written = await writeStatusAfterMerge(
+            prisma,
+            actor,
+            { ...task, projectId: task.project.id },
+            { status: "done" },
+            "done",
+            {},
+            { sha: mergeResult.sha, via: "github_pr_merge" },
+            held.reservation,
+          );
+          if (!written.ok) {
+            return { status: 409, body: written.body };
+          }
+          await acknowledgeSignalsForTask(body.taskId);
+          void emitSelfMergeNoticeIfApplicable({
+            taskId: body.taskId,
+            projectId: task.project.id,
+            actor,
+            project: task.project,
+            mergeSha: mergeResult.sha,
+            via: "github_pr_merge",
+          });
+
+          return {
+            status: 200,
+            body: {
+              merged: true,
+              sha: mergeResult.sha,
+              message: mergeResult.alreadyMerged
+                ? "Already merged"
+                : "Pull request successfully merged",
+              task: {
+                id: task.id,
+                status: "done",
+              },
+            },
+          };
+        } finally {
+          if (held.reservation) {
+            await releaseMergeReservation(prisma, task.id, held.reservation).catch((err: unknown) => {
+              // The lease lapses on its own; a failed release must not replace the response.
+              logger.error(
+                { component: "merge-reservation", taskId: task.id, errMessage: err instanceof Error ? err.message : String(err) },
+                "failed to release merge reservation; it lapses when its lease ends",
+              );
+            });
+          }
+        }
       },
     );
 

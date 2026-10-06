@@ -6,7 +6,7 @@ import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
 import { Prisma } from "@prisma/client";
-import { forbidden, notFound, conflict } from "../middleware/error.js";
+import { forbidden, notFound, conflict, mergeInProgress, mergeInProgressBody } from "../middleware/error.js";
 import {
   hasProjectAccess,
   hasProjectRole,
@@ -95,14 +95,22 @@ import {
 } from "../services/default-workflow.js";
 import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES, parseOwnerRepo } from "../services/transition-rules.js";
-import { performPrMerge } from "../services/github-merge.js";
+import { performPrMerge, type BeforeGithubMerge } from "../services/github-merge.js";
 import { groundingRemoteGuardFor } from "../services/grounding-scope.js";
 import {
   STATUS_VERSION_BUMP,
   casUpdateTaskStatus,
+  reserveTaskForMerge,
   taskStatusCasWhere,
   taskStatusVersionWhere,
 } from "../services/task-status-cas.js";
+import {
+  isMergeReservationLive,
+  mergeReservationRetryAfterSeconds,
+  withNoLiveMergeReservation,
+  releaseMergeReservation,
+  type MergeReservation,
+} from "../services/task-merge-reservation.js";
 import { writeStatusAfterMerge } from "../services/task-merge-status-write.js";
 import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
 import {
@@ -188,12 +196,91 @@ async function writeStatusCas<I extends Prisma.TaskInclude>(
 > {
   if (merge === null) {
     const written = await casUpdateTaskStatus(prisma, task, data, include);
-    if (!written) return { ok: false, response: conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE) };
+    if (!written) {
+      return { ok: false, response: await conflictOrMergeInProgress(c, task.id, STATUS_CHANGED_CONFLICT_MESSAGE) };
+    }
     return { ok: true, task: written, resultKept: false };
   }
-  const written = await writeStatusAfterMerge(prisma, actor, task, data, targetStatus, include, merge);
+  const held = (c.get("mergeReservation") as AppVariables["mergeReservation"]) ?? null;
+  const written = await writeStatusAfterMerge(
+    prisma,
+    actor,
+    task,
+    data,
+    targetStatus,
+    include,
+    merge,
+    held && held.taskId === task.id ? held.reservation : null,
+  );
   if (written.ok) return { ok: true, task: written.task, resultKept: written.resultKept };
   return { ok: false, response: c.json(written.body, 409) };
+}
+
+/**
+ * Answer for a claim or status write whose conditional write matched no row.
+ * While a merge reservation is live (see services/task-merge-reservation.ts)
+ * that is why the write was refused, so the caller gets `409 merge_in_progress`;
+ * otherwise it is the plain `409 conflict` with the writer's own message. The
+ * refusal itself is the WHERE of the write, atomic with it; this read only
+ * names the reason.
+ */
+async function conflictOrMergeInProgress(c: Context, taskId: string, message: string): Promise<Response> {
+  return (await mergeInProgressIfLive(c, taskId)) ?? conflict(c, message);
+}
+
+/** `409 merge_in_progress` while the task carries a live merge reservation, else null. */
+async function mergeInProgressIfLive(c: Context, taskId: string): Promise<Response | null> {
+  const current = await prisma.task.findUnique({ where: { id: taskId }, select: { mergeReservedAt: true } });
+  if (current?.mergeReservedAt && isMergeReservationLive(current)) {
+    return mergeInProgress(c, mergeReservationRetryAfterSeconds({ mergeReservedAt: current.mergeReservedAt }));
+  }
+  return null;
+}
+
+/**
+ * The `beforeGithubMerge` hook of the merge paths: takes the merge reservation
+ * (see services/task-merge-reservation.ts) at the last point before the
+ * irreversible GitHub merge call, after every refusal that needs no GitHub
+ * call. The conditional write is bound to the status, status version and
+ * claims the caller's gates decided from, so a lock released between the gate
+ * and here refuses the merge instead of letting it land. The reservation is
+ * remembered on the request and released when the request ends (the release
+ * middleware below), so a failed or refused merge gives it back; the
+ * post-merge write clears it in the same write that records the result.
+ */
+function takeMergeReservation(
+  c: Context,
+  actor: Actor,
+  task: Parameters<typeof reserveTaskForMerge>[1],
+): BeforeGithubMerge {
+  return async () => {
+    const reserved = await reserveTaskForMerge(prisma, task, actor);
+    if (reserved.ok) {
+      c.set("mergeReservation", { taskId: task.id, reservation: reserved.reservation });
+      return null;
+    }
+    if (reserved.reason === "merge_in_progress") {
+      return { ok: false, error: "merge_in_progress", message: mergeInProgressBody(reserved.retryAfterSeconds).message, status: 409 };
+    }
+    return { ok: false, error: "conflict", message: STATUS_CHANGED_CONFLICT_MESSAGE, status: 409 };
+  };
+}
+
+/** Gives back the merge reservation the request still holds, if any. */
+async function releaseHeldMergeReservation(c: Context): Promise<void> {
+  const held = c.get("mergeReservation") as { taskId: string; reservation: MergeReservation } | null | undefined;
+  if (!held) return;
+  c.set("mergeReservation", null);
+  try {
+    await releaseMergeReservation(prisma, held.taskId, held.reservation);
+  } catch (err) {
+    // The lease lapses on its own, so a failed release only delays claim
+    // writers; it must never replace the response of the request.
+    logger.error(
+      { component: "merge-reservation", taskId: held.taskId, errMessage: err instanceof Error ? err.message : String(err) },
+      "failed to release merge reservation; it lapses when its lease ends",
+    );
+  }
 }
 
 export const taskRouter = new Hono<{ Variables: AppVariables }>();
@@ -240,7 +327,13 @@ export function normalizeIdQuery(q: string): string {
 taskRouter.use("/tasks/:id/*", async (c, next) => {
   const id = c.req.param("id");
   if (id) setLogContext({ taskId: id });
-  await next();
+  try {
+    await next();
+  } finally {
+    // The handlers that merge a PR take a merge reservation and leave the
+    // release to the request end, whichever way the handler returned.
+    await releaseHeldMergeReservation(c);
+  }
 });
 taskRouter.use("/projects/:projectId/*", async (c, next) => {
   const projectId = c.req.param("projectId");
@@ -2251,7 +2344,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       },
       mutate: async (db, lockedTask) => {
         const value = await db.task.updateMany({
-          where: { id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null, ...taskStatusVersionWhere(task) },
+          where: withNoLiveMergeReservation({ id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null, ...taskStatusVersionWhere(task) }),
           data: {
             claimedByUserId: actor.type === "human" ? actor.userId : null,
             claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
@@ -2265,7 +2358,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     });
     const claimResult = claimMutation.value;
     if (claimResult.count === 0) {
-      return conflict(c, CLAIM_LOST_CONFLICT_MESSAGE);
+      return conflictOrMergeInProgress(c, task.id, CLAIM_LOST_CONFLICT_MESSAGE);
     }
 
     // updateMany cannot use `include`, so re-fetch the freshly claimed row.
@@ -2370,7 +2463,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         },
         mutate: async (db, lockedTask) => {
           const value = await db.task.updateMany({
-            where: { id: lockedTask.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
+            where: withNoLiveMergeReservation({ id: lockedTask.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null }),
             data: { reviewClaimedByUserId: actor.type === "human" ? actor.userId : null, reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null, reviewClaimedAt: new Date() },
           });
           return { value, changed: value.count === 1 };
@@ -2378,7 +2471,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       });
       const claimResult = reviewMutation.value;
       if (claimResult.count === 0) {
-        return conflict(c, "Task is already being reviewed by another reviewer");
+        return conflictOrMergeInProgress(c, task.id, "Task is already being reviewed by another reviewer");
       }
 
       // updateMany cannot use `include`, so re-fetch the freshly claimed row.
@@ -2900,7 +2993,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           403,
         );
       }
-      const mergeResult = await performPrMerge(task, mergeMethod, actor, groundingRemoteGuardFor(c));
+      const mergeResult = await performPrMerge(task, mergeMethod, actor, groundingRemoteGuardFor(c), takeMergeReservation(c, actor, task));
       if (!mergeResult.ok) {
         const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
         return c.json(
@@ -3177,7 +3270,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           403,
         );
       }
-      const mergeResult = await performPrMerge(task, selfApprMergeMethod, actor, groundingRemoteGuardFor(c));
+      const mergeResult = await performPrMerge(task, selfApprMergeMethod, actor, groundingRemoteGuardFor(c), takeMergeReservation(c, actor, task));
       if (!mergeResult.ok) {
         const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
         return c.json(
@@ -3656,6 +3749,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       workMergeMethod,
       actor,
       groundingRemoteGuardFor(c),
+      takeMergeReservation(c, actor, task),
     );
     if (!mergeResult.ok) {
       const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
@@ -4157,11 +4251,11 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
   }
 
   const abandonResult = await prisma.task.updateMany({
-    where: claimGuard,
+    where: withNoLiveMergeReservation(claimGuard),
     data: updateData,
   });
   if (abandonResult.count === 0) {
-    return conflict(c, CLAIM_RELEASE_LOST_CONFLICT_MESSAGE);
+    return conflictOrMergeInProgress(c, task.id, CLAIM_RELEASE_LOST_CONFLICT_MESSAGE);
   }
 
   // updateMany cannot use `include`, so re-fetch the freshly released row.
@@ -4325,7 +4419,7 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: { id: lockedTask.id, status: { in: ["open", "backlog"] }, statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, createdByAgentId: actor.tokenId },
+        where: withNoLiveMergeReservation({ id: lockedTask.id, status: { in: ["open", "backlog"] }, statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, createdByAgentId: actor.tokenId }),
         data: { status: "abandoned", ...STATUS_VERSION_BUMP, updatedAt: new Date() },
       });
       return { value, changed: value.count === 1 };
@@ -4333,7 +4427,7 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
   });
   const abandonResult = abandonMutation.value;
   if (abandonResult.count === 0) {
-    return conflict(c, CREATOR_ABANDON_WRITE_LOST_CONFLICT_MESSAGE);
+    return conflictOrMergeInProgress(c, task.id, CREATOR_ABANDON_WRITE_LOST_CONFLICT_MESSAGE);
   }
 
   // M5 signal 4: the task is now terminal-abandoned. Post-commit and
@@ -4525,7 +4619,7 @@ taskRouter.post(
     }
 
     const { mergeMethod } = c.req.valid("json");
-    const mergeResult = await performPrMerge(task, mergeMethod, actor, groundingRemoteGuardFor(c));
+    const mergeResult = await performPrMerge(task, mergeMethod, actor, groundingRemoteGuardFor(c), takeMergeReservation(c, actor, task));
     if (!mergeResult.ok) {
       const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
       return c.json(
@@ -5403,13 +5497,13 @@ taskRouter.patch("/tasks/:id", async (c) => {
         },
         mutate: async (db, lockedTask) => {
           const value = await db.task.updateMany({
-            where: { id: lockedTask.id, status: "abandoned", statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
+            where: withNoLiveMergeReservation({ id: lockedTask.id, status: "abandoned", statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null }),
             data: patchData,
           });
           return { value, changed: value.count === 1 };
         },
       });
-      if (!reopenMutation.changed) return conflict(c, "Task is no longer abandoned, or it changed before the request completed");
+      if (!reopenMutation.changed) return conflictOrMergeInProgress(c, task.id, "Task is no longer abandoned, or it changed before the request completed");
       // M5 signal 4: the task is no longer terminal. Post-commit and fail-open
       // (clearDisposition logs and swallows its own errors); it only resets an
       // existing telemetry row and never creates one.
@@ -5432,13 +5526,13 @@ taskRouter.patch("/tasks/:id", async (c) => {
         },
         mutate: async (db, lockedTask) => {
           const value = await db.task.updateMany({
-            where: { id: lockedTask.id, status: "open", statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
+            where: withNoLiveMergeReservation({ id: lockedTask.id, status: "open", statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null }),
             data: patchData,
           });
           return { value, changed: value.count === 1 };
         },
       });
-      if (!demoteMutation.changed) return conflict(c, `${DEMOTE_STATE_CONFLICT_MESSAGE}, or it changed before the request completed`);
+      if (!demoteMutation.changed) return conflictOrMergeInProgress(c, task.id, `${DEMOTE_STATE_CONFLICT_MESSAGE}, or it changed before the request completed`);
       // updateMany cannot use `include`, so re-fetch the freshly written row.
       updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
       if (!updated) return notFound(c);
@@ -5454,7 +5548,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
         where: taskStatusCasWhere(task),
         data: patchData,
       });
-      if (written.count === 0) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
+      if (written.count === 0) return conflictOrMergeInProgress(c, task.id, STATUS_CHANGED_CONFLICT_MESSAGE);
       // updateMany cannot use `include`, so re-fetch the freshly written row.
       updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
       if (!updated) return notFound(c);
@@ -5932,7 +6026,14 @@ taskRouter.delete("/tasks/:id", async (c) => {
     where: { taskId: task.id },
     select: { url: true },
   });
-  await prisma.task.delete({ where: { id: task.id } });
+  // A merge in flight holds the task: deleting the row under it would turn the
+  // merge's post-merge write into a lost write with no task to report on. The
+  // reservation predicate is in the delete's own WHERE, so the check is atomic
+  // with the delete.
+  const deleted = await prisma.task.deleteMany({ where: withNoLiveMergeReservation({ id: task.id }) });
+  if (deleted.count === 0) {
+    return conflictOrMergeInProgress(c, task.id, "Task was deleted or changed by another request; reload and retry");
+  }
   for (const a of attachments) {
     const abs = storedFilePath(a.url);
     if (abs) await unlink(abs).catch(() => {});
@@ -6881,7 +6982,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: { id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null, ...taskStatusVersionWhere(task) },
+        where: withNoLiveMergeReservation({ id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null, ...taskStatusVersionWhere(task) }),
         data: { claimedByUserId: actor.type === "human" ? actor.userId : null, claimedByAgentId: actor.type === "agent" ? actor.tokenId : null, claimedAt: new Date(), status: startTarget, ...STATUS_VERSION_BUMP },
       });
       return { value, changed: value.count === 1 };
@@ -6889,7 +6990,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
   });
   const claimResult = claimMutation.value;
   if (claimResult.count === 0) {
-    return conflict(c, CLAIM_LOST_CONFLICT_MESSAGE);
+    return conflictOrMergeInProgress(c, task.id, CLAIM_LOST_CONFLICT_MESSAGE);
   }
 
   // updateMany cannot use `include`, so re-fetch the freshly claimed row.
@@ -6941,16 +7042,16 @@ taskRouter.post("/tasks/:id/release", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: {
+        where: withNoLiveMergeReservation({
           ...(actor.type === "human" ? { id: lockedTask.id, claimedByUserId: actor.userId } : { id: lockedTask.id, claimedByAgentId: actor.tokenId }),
           ...taskStatusVersionWhere(task),
-        },
+        }),
         data: { claimedByUserId: null, claimedByAgentId: null, claimedAt: null, status: effectiveDef.initialState, ...STATUS_VERSION_BUMP },
       });
       return { value, changed: value.count === 1 };
     },
   });
-  if (!releaseMutation.changed) return conflict(c, CLAIM_RELEASE_LOST_CONFLICT_MESSAGE);
+  if (!releaseMutation.changed) return conflictOrMergeInProgress(c, task.id, CLAIM_RELEASE_LOST_CONFLICT_MESSAGE);
   const updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
   if (!updated) return notFound(c);
 
@@ -7015,6 +7116,9 @@ taskRouter.post(
     const initialReviewHolder = task.reviewClaimedByUserId
       ? { type: "human" as const, id: task.reviewClaimedByUserId }
       : task.reviewClaimedByAgentId ? { type: "agent" as const, id: task.reviewClaimedByAgentId } : null;
+    // A release that matched no row is an idempotent no-op below, except when
+    // a live merge reservation is why: that one answers 409 merge_in_progress.
+    let releaseWriteMissed = false;
     const adminMutation = await mutateGroundingRouteContext(prisma, {
       taskId: task.id, projectId: task.projectId, actor, reason: "admin_release",
       revalidate: async (db, lockedTask) => {
@@ -7034,12 +7138,14 @@ taskRouter.post(
         const result = await db.task.updateMany({
           where:
             priorHolder.type === "human"
-              ? { id: task.id, claimedByUserId: priorHolder.id }
-              : { id: task.id, claimedByAgentId: priorHolder.id },
+              ? withNoLiveMergeReservation({ id: task.id, claimedByUserId: priorHolder.id })
+              : withNoLiveMergeReservation({ id: task.id, claimedByAgentId: priorHolder.id }),
           data: { claimedByUserId: null, claimedByAgentId: null, claimedAt: null },
         });
         if (result.count > 0) {
           released.workClaim = true;
+        } else {
+          releaseWriteMissed = true;
         }
       }
     }
@@ -7050,12 +7156,14 @@ taskRouter.post(
         const result = await db.task.updateMany({
           where:
             priorHolder.type === "human"
-              ? { id: task.id, reviewClaimedByUserId: priorHolder.id }
-              : { id: task.id, reviewClaimedByAgentId: priorHolder.id },
+              ? withNoLiveMergeReservation({ id: task.id, reviewClaimedByUserId: priorHolder.id })
+              : withNoLiveMergeReservation({ id: task.id, reviewClaimedByAgentId: priorHolder.id }),
           data: { reviewClaimedByUserId: null, reviewClaimedByAgentId: null, reviewClaimedAt: null },
         });
         if (result.count > 0) {
           released.reviewClaim = true;
+        } else {
+          releaseWriteMissed = true;
         }
       }
     }
@@ -7063,6 +7171,10 @@ taskRouter.post(
       },
     });
     const released = adminMutation.value;
+    if (releaseWriteMissed) {
+      const mergeHeld = await mergeInProgressIfLive(c, task.id);
+      if (mergeHeld) return mergeHeld;
+    }
     if (released.workClaim && initialWorkHolder) {
       void logAuditEvent({ action: "task.claim_released_by_admin", actorId: actor.userId, projectId: task.projectId, taskId: task.id, payload: { priorHolder: initialWorkHolder, reason: body.reason ?? null } });
     }
@@ -7315,7 +7427,7 @@ taskRouter.post(
             : {}),
       },
     });
-    if (written.count === 0) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
+    if (written.count === 0) return conflictOrMergeInProgress(c, task.id, STATUS_CHANGED_CONFLICT_MESSAGE);
     // updateMany cannot use `include`, so re-fetch the freshly written row.
     const updated = await prisma.task.findUnique({
       where: { id: task.id },
@@ -7492,7 +7604,7 @@ taskRouter.post(
       }
       return tx.task.findUnique({ where: { id: task.id }, include: taskInclude });
     });
-    if (!updated) return conflict(c, STATUS_CHANGED_CONFLICT_MESSAGE);
+    if (!updated) return conflictOrMergeInProgress(c, task.id, STATUS_CHANGED_CONFLICT_MESSAGE);
 
     // Ack BEFORE emitting `task_approved` below, which is deliberately
     // emitted against a terminal task and must survive.
@@ -7596,7 +7708,7 @@ taskRouter.post("/tasks/:id/review/claim", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: { id: lockedTask.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null },
+        where: withNoLiveMergeReservation({ id: lockedTask.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null }),
         data: { reviewClaimedByUserId: actor.type === "human" ? actor.userId : null, reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null, reviewClaimedAt: new Date() },
       });
       return { value, changed: value.count === 1 };
@@ -7604,7 +7716,7 @@ taskRouter.post("/tasks/:id/review/claim", async (c) => {
   });
   const claimResult = reviewMutation.value;
   if (claimResult.count === 0) {
-    return conflict(c, "Task is already being reviewed by another reviewer");
+    return conflictOrMergeInProgress(c, task.id, "Task is already being reviewed by another reviewer");
   }
 
   // updateMany cannot use `include`, so re-fetch the freshly claimed row.
@@ -7661,7 +7773,7 @@ taskRouter.post("/tasks/:id/review/release", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: actor.type === "human" ? { id: lockedTask.id, reviewClaimedByUserId: actor.userId } : { id: lockedTask.id, reviewClaimedByAgentId: actor.tokenId },
+        where: withNoLiveMergeReservation({ ...(actor.type === "human" ? { id: lockedTask.id, reviewClaimedByUserId: actor.userId } : { id: lockedTask.id, reviewClaimedByAgentId: actor.tokenId }) }),
         data: { reviewClaimedByUserId: null, reviewClaimedByAgentId: null, reviewClaimedAt: null },
       });
       return { value, changed: value.count === 1 };
@@ -7669,7 +7781,7 @@ taskRouter.post("/tasks/:id/review/release", async (c) => {
   });
   const releaseResult = releaseMutation.value;
   if (releaseResult.count === 0) {
-    return conflict(c, "Review lock is no longer held by you");
+    return conflictOrMergeInProgress(c, task.id, "Review lock is no longer held by you");
   }
 
   // updateMany cannot use `include`, so re-fetch the freshly released row.

@@ -25,6 +25,7 @@ import { maybeDeliverSignalWebhook } from "./signal.js";
 import { logger } from "../lib/logger.js";
 import { GovernanceMode, resolveGovernanceMode } from "../lib/governance-mode.js";
 import { STATUS_VERSION_BUMP } from "./task-status-cas.js";
+import { isMergeReservationLive, withNoLiveMergeReservation } from "./task-merge-reservation.js";
 
 export type GroundingAfterCommit = (result: unknown) => Promise<void>;
 
@@ -211,8 +212,14 @@ export class GroundingCompletionService {
   protected async applyDecision(db: Prisma.TransactionClient, task: GroundingTask, operation: GroundingOperation, mergeCommitSha?: string) {
     const decision = operation.decision as unknown as GroundingDecision;
     const { templateData, ...taskData } = decision.data;
-    const changed = await db.task.updateMany({ where: { id: task.id, status: decision.from, claimedByUserId: task.claimedByUserId, claimedByAgentId: task.claimedByAgentId, reviewClaimedByUserId: task.reviewClaimedByUserId, reviewClaimedByAgentId: task.reviewClaimedByAgentId }, data: { ...taskData, ...STATUS_VERSION_BUMP, ...(templateData !== undefined ? { templateData: templateData === null ? Prisma.JsonNull : templateData } : {}), ...(mergeCommitSha ? { autoMergeSha: mergeCommitSha } : {}) } });
-    if (changed.count !== 1) mismatch();
+    const changed = await db.task.updateMany({ where: withNoLiveMergeReservation({ id: task.id, status: decision.from, claimedByUserId: task.claimedByUserId, claimedByAgentId: task.claimedByAgentId, reviewClaimedByUserId: task.reviewClaimedByUserId, reviewClaimedByAgentId: task.reviewClaimedByAgentId }), data: { ...taskData, ...STATUS_VERSION_BUMP, ...(templateData !== undefined ? { templateData: templateData === null ? Prisma.JsonNull : templateData } : {}), ...(mergeCommitSha ? { autoMergeSha: mergeCommitSha } : {}) } });
+    if (changed.count !== 1) {
+      // A legacy merge path holding a merge reservation on the task refuses the
+      // write (the claims the merge gates decided from must not move); name it.
+      const holder = await db.task.findUnique({ where: { id: task.id }, select: { mergeReservedAt: true } });
+      if (holder && isMergeReservationLive(holder)) throw new GroundingAccessError("merge_in_progress", 409);
+      mismatch();
+    }
     if (decision.attemptId) {
       const consumed = await db.groundingAttempt.updateMany({ where: { id: decision.attemptId, taskId: task.id, state: "ACTIVE" }, data: { state: "CONSUMED" } });
       if (consumed.count !== 1) mismatch();
