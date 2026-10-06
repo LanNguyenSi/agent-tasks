@@ -15,8 +15,8 @@
  * task-status-cas.ts). While it is
  * live every claim and status writer refuses with `409 merge_in_progress`,
  * enforced in the WHERE of the writer's own conditional write
- * (`noLiveMergeReservation`), so the check is atomic with the write and not a
- * read followed by a write.
+ * (`withNoLiveMergeReservation(where)`), so the check is atomic with the write
+ * and not a read followed by a write.
  *
  * Release: the post-merge status write clears the columns in the same write
  * that records the result (`MERGE_RESERVATION_CLEAR`), and the handler exit
@@ -98,8 +98,9 @@ export function utcTimestampSql(value: Date): Prisma.Sql {
 
 /**
  * WHERE fragment: the task has no LIVE merge reservation (none, or one whose
- * lease has lapsed). Spread into the WHERE of every claim or status write so
- * the write matches no row while a merge holds the task. Uses `AND` so it
+ * lease has lapsed). The raw fragment: writers compose it with
+ * `withNoLiveMergeReservation(where)` (or `andWhere`), never by object spread,
+ * so the write matches no row while a merge holds the task. Uses `AND` so it
  * cannot collide with an `OR` another condition of the same WHERE carries.
  */
 export function noLiveMergeReservation(now: Date = new Date()): Prisma.TaskWhereInput {

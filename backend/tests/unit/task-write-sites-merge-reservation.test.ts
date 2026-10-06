@@ -127,11 +127,14 @@ describe("every write to the tasks table carries the merge-reservation predicate
   });
 
   it("the predicate is composed with the writer's own WHERE, never spread under the AND key of an object literal", () => {
-    // `{ ...a, ...noLiveMergeReservation() }` replaces an `AND` that `a` carries.
+    // `{ ...a, ...noLiveMergeReservation() }` replaces an `AND` that `a` carries, and
+    // `{ ...withNoLiveMergeReservation(a), AND: [...] }` drops the composed predicate:
+    // every predicate-carrying helper is called, never spread.
+    const SPREAD = /\.\.\.\s*(noLiveMergeReservation|withNoLiveMergeReservation|mergeReservationAllows|taskStatusCasWhere|andWhere)\(/;
     const spreads: string[] = [];
     for (const path of sourceFiles(SRC)) {
       const text = readFileSync(path, "utf8");
-      if (/\.\.\.\s*noLiveMergeReservation\(/.test(text) || /\.\.\.\s*mergeReservationAllows\(/.test(text)) spreads.push(relative(SRC, path));
+      if (SPREAD.test(text)) spreads.push(relative(SRC, path));
     }
     expect(spreads, "use withNoLiveMergeReservation(where) / andWhere(where, clause), which append to an existing AND").toEqual([]);
   });
