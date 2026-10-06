@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A persisted, leased merge reservation holds the distinct-reviewer gate across the GitHub merge (task eb08742f, closing the limitation listed under 0.31.0). `POST /tasks/:id/merge`, `POST /api/github/pull-requests/:prNumber/merge` and the autoMerge forms of `POST /tasks/:id/finish` take a reservation on the task (`tasks.mergeReservedByUserId`, `mergeReservedByAgentId`, `mergeReservedAt`, new nullable columns applied by `prisma db push` / `Dockerfile.migrate`) with one conditional write bound to the status, status version, work claim and review lock the gates decided from, at the last point before the GitHub call. A review lock released between the gate and the merge now refuses the merge (`409 conflict`, GitHub is never called) instead of letting it land. The write that records the merge clears the reservation, the end of the request releases whatever is left (a merge GitHub refused, a thrown error, a lost post-merge write), and a lease of 120 s with lazy expiry keeps a crashed handler from locking the task: a lapsed reservation counts as absent.
+- `409 merge_in_progress` (body `{ error, message, retryAfterSeconds }`, header `Retry-After`) on every claim and status writer while a reservation is live: `/start`, `/claim`, `/release`, `/abandon`, `/creator-abandon`, `/admin-release`, `/review/claim`, `/review/release`, `/review`, `/transition`, `PATCH` (status, demote, unabandon), every `/finish` write, project member removal (the whole removal is refused) and the Grounding completion write (`{ error }` body). The refusal is the writer's own conditional write (the predicate is in its WHERE), not a read before it. A second merge of a reserved task answers it too. The GitHub webhook writers are not refused: they record a fact that already happened on GitHub. `backend/tests/unit/task-write-sites-merge-reservation.test.ts` keeps the list of task write sites closed.
+- The OpenAPI document describes `merge_in_progress` (`MergeInProgressResponse`) on the documented claim and status writers, and `@agent-tasks/mcp-server` maps it to a teaching error that points at `tasks_get` (see its own changelog).
+
+### Changed
+
+- The `reason` of a `task.merged_status_conflict` audit event can now be `merge_in_progress` (the status is as it was read and another merge holds the task); the response message says so and that retrying is safe.
+- `performPrMerge` takes an optional `beforeGithubMerge` hook that runs after every refusal that needs no GitHub call and right before the fetch; the merge paths take their reservation in it, so a merge that is refused earlier never touches the task row. Taking and releasing a reservation do not change `updatedAt`.
+
 ## [0.31.0] - 2026-10-05
 
 ### Added

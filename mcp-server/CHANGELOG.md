@@ -4,6 +4,7 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+- The backend's `409 merge_in_progress` (a claim or status write refused while a pull request merge holds the task) maps to a `merge_in_progress` teaching error whose recipe is to call `tasks_get` until the merge has settled and then retry. `workflow_primer` names it in the error trap list (its sanity ceiling moved from 7500 to 7700 characters).
 - `tasks_list` rejects a `cursor` longer than 200 characters (a cursor is a task id, 36 characters).
 - `tasks_list` documents that the backend response carries `truncated` (more rows exist after the page) and that a call without `limit` returns at most 25 rows. The tool description is the only change here; the field itself comes from the backend.
 

@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-10-05T04:35:07Z
+timestamp: 2026-10-06T04:42:30Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -113,13 +113,14 @@ handler, including without an operation key
 legacy governance gates above are unchanged and run first. The legacy merge
 path is unchanged except for a target check at its effect boundary: with
 configuration enabled, `performPrMerge` checks the exact repository and PR
-number it merges right before the GitHub call (`services/github-merge.ts:114`),
+number it merges right before the GitHub call (`services/github-merge.ts:126`;
+the merge reservation of `workflow-gates.md` is taken right after that check),
 which covers the GitHub merge route (project repository and the task's PR
 number, or the path number parsed with `parseInt` when the task has none),
 task merge, and the review, self-approve and work finishes (the work finish
 merges the number of the body PR URL when one is given). The legacy PR creator
 and commenter check the repository (and PR) they post to
-(`routes/github.ts:268`, `routes/github.ts:782`). The check
+(`routes/github.ts:272`, `routes/github.ts:822`). The check
 (`grounding-scope.ts:103`) refuses with `409 grounding_enrollment_required` a
 repository string that is not exactly canonical (surrounding whitespace, dot
 segment, percent-encoded name, owner containing `/`), an enforced repository,
@@ -140,11 +141,11 @@ GitHub UI, other apps) is not governed by the check. Grouped merge discovery and
 ids from the enrollment and hold tables (`grounding-scope.ts:71`,
 `grounding-github-merge.ts:40`), and the boundary reads everything in one
 statement. With configuration enabled the three legacy writes go out with
-`redirect: "manual"` (`backend/src/services/github-merge.ts:126`, `backend/src/routes/github.ts:283`,
-`backend/src/routes/github.ts:792`), and a GitHub redirect (a renamed or transferred
+`redirect: "manual"` (`backend/src/services/github-merge.ts:145`, `backend/src/routes/github.ts:287`,
+`backend/src/routes/github.ts:832`), and a GitHub redirect (a renamed or transferred
 repository) is answered with `409 github_redirect_refused` instead of being
-followed (`services/github-merge.ts:156`, `routes/github.ts:298`,
-`routes/github.ts:805`). The configured GitHub create and merge
+followed (`services/github-merge.ts:175`, `routes/github.ts:302`,
+`routes/github.ts:845`). The configured GitHub create and merge
 routes check the caller's project access with the legacy rule right after the
 task lookup, before any Grounding read or lock (`routes/grounding-github.ts:82`,
 `routes/grounding-github.ts:130`), so a caller without access gets the legacy
