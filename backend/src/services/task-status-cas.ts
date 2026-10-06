@@ -36,6 +36,8 @@ import { Prisma } from "@prisma/client";
 import type { Actor } from "../types/auth.js";
 import {
   MERGE_RESERVATION_CLEAR,
+  andWhere,
+  utcTimestampSql,
   isMergeReservationLive,
   mergeReservationAllows,
   mergeReservationLeaseCutoff,
@@ -62,24 +64,26 @@ export interface TaskStatusCasSnapshot {
 /**
  * The WHERE of the compare-and-swap: the row must still look as it was read
  * and carry no live merge reservation other than `reservation` (the caller's
- * own, for the post-merge write). `extra` must not use `AND`.
+ * own, for the post-merge write). An `AND` in `extra` is kept.
  */
 export function taskStatusCasWhere(
   task: TaskStatusCasSnapshot,
   extra?: Prisma.TaskWhereInput,
   reservation?: MergeReservation | null,
 ): Prisma.TaskWhereInput {
-  return {
-    ...extra,
-    ...mergeReservationAllows(reservation),
-    id: task.id,
-    status: task.status,
-    statusVersion: task.statusVersion,
-    claimedByUserId: task.claimedByUserId,
-    claimedByAgentId: task.claimedByAgentId,
-    reviewClaimedByUserId: task.reviewClaimedByUserId,
-    reviewClaimedByAgentId: task.reviewClaimedByAgentId,
-  };
+  return andWhere(
+    {
+      ...extra,
+      id: task.id,
+      status: task.status,
+      statusVersion: task.statusVersion,
+      claimedByUserId: task.claimedByUserId,
+      claimedByAgentId: task.claimedByAgentId,
+      reviewClaimedByUserId: task.reviewClaimedByUserId,
+      reviewClaimedByAgentId: task.reviewClaimedByAgentId,
+    },
+    mergeReservationAllows(reservation),
+  );
 }
 
 /**
@@ -300,7 +304,7 @@ export async function reserveTaskForMerge(
     UPDATE "tasks"
     SET "mergeReservedByUserId" = ${reservation.byUserId},
         "mergeReservedByAgentId" = ${reservation.byAgentId},
-        "mergeReservedAt" = ${reservation.at}
+        "mergeReservedAt" = ${utcTimestampSql(reservation.at)}
     WHERE "id" = ${snapshot.id}
       AND "status" = ${snapshot.status}
       AND "statusVersion" = ${snapshot.statusVersion}
@@ -308,7 +312,7 @@ export async function reserveTaskForMerge(
       AND "claimedByAgentId" IS NOT DISTINCT FROM ${snapshot.claimedByAgentId}
       AND "reviewClaimedByUserId" IS NOT DISTINCT FROM ${snapshot.reviewClaimedByUserId}
       AND "reviewClaimedByAgentId" IS NOT DISTINCT FROM ${snapshot.reviewClaimedByAgentId}
-      AND ("mergeReservedAt" IS NULL OR "mergeReservedAt" <= ${mergeReservationLeaseCutoff(now)})`;
+      AND ("mergeReservedAt" IS NULL OR "mergeReservedAt" <= ${utcTimestampSql(mergeReservationLeaseCutoff(now))})`;
   if (written === 1) return { ok: true, reservation };
 
   const current = await db.task.findUnique({

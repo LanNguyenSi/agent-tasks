@@ -107,7 +107,7 @@ import {
 import {
   isMergeReservationLive,
   mergeReservationRetryAfterSeconds,
-  noLiveMergeReservation,
+  withNoLiveMergeReservation,
   releaseMergeReservation,
   type MergeReservation,
 } from "../services/task-merge-reservation.js";
@@ -2344,7 +2344,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       },
       mutate: async (db, lockedTask) => {
         const value = await db.task.updateMany({
-          where: { id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null, ...taskStatusVersionWhere(task), ...noLiveMergeReservation() },
+          where: withNoLiveMergeReservation({ id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null, ...taskStatusVersionWhere(task) }),
           data: {
             claimedByUserId: actor.type === "human" ? actor.userId : null,
             claimedByAgentId: actor.type === "agent" ? actor.tokenId : null,
@@ -2463,7 +2463,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         },
         mutate: async (db, lockedTask) => {
           const value = await db.task.updateMany({
-            where: { id: lockedTask.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, ...noLiveMergeReservation() },
+            where: withNoLiveMergeReservation({ id: lockedTask.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null }),
             data: { reviewClaimedByUserId: actor.type === "human" ? actor.userId : null, reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null, reviewClaimedAt: new Date() },
           });
           return { value, changed: value.count === 1 };
@@ -4251,7 +4251,7 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
   }
 
   const abandonResult = await prisma.task.updateMany({
-    where: { ...claimGuard, ...noLiveMergeReservation() },
+    where: withNoLiveMergeReservation(claimGuard),
     data: updateData,
   });
   if (abandonResult.count === 0) {
@@ -4419,7 +4419,7 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: { id: lockedTask.id, status: { in: ["open", "backlog"] }, statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, createdByAgentId: actor.tokenId, ...noLiveMergeReservation() },
+        where: withNoLiveMergeReservation({ id: lockedTask.id, status: { in: ["open", "backlog"] }, statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, createdByAgentId: actor.tokenId }),
         data: { status: "abandoned", ...STATUS_VERSION_BUMP, updatedAt: new Date() },
       });
       return { value, changed: value.count === 1 };
@@ -5497,7 +5497,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
         },
         mutate: async (db, lockedTask) => {
           const value = await db.task.updateMany({
-            where: { id: lockedTask.id, status: "abandoned", statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, ...noLiveMergeReservation() },
+            where: withNoLiveMergeReservation({ id: lockedTask.id, status: "abandoned", statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null }),
             data: patchData,
           });
           return { value, changed: value.count === 1 };
@@ -5526,7 +5526,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
         },
         mutate: async (db, lockedTask) => {
           const value = await db.task.updateMany({
-            where: { id: lockedTask.id, status: "open", statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, ...noLiveMergeReservation() },
+            where: withNoLiveMergeReservation({ id: lockedTask.id, status: "open", statusVersion: task.statusVersion, claimedByUserId: null, claimedByAgentId: null, reviewClaimedByUserId: null, reviewClaimedByAgentId: null }),
             data: patchData,
           });
           return { value, changed: value.count === 1 };
@@ -6026,7 +6026,14 @@ taskRouter.delete("/tasks/:id", async (c) => {
     where: { taskId: task.id },
     select: { url: true },
   });
-  await prisma.task.delete({ where: { id: task.id } });
+  // A merge in flight holds the task: deleting the row under it would turn the
+  // merge's post-merge write into a lost write with no task to report on. The
+  // reservation predicate is in the delete's own WHERE, so the check is atomic
+  // with the delete.
+  const deleted = await prisma.task.deleteMany({ where: withNoLiveMergeReservation({ id: task.id }) });
+  if (deleted.count === 0) {
+    return conflictOrMergeInProgress(c, task.id, "Task was deleted or changed by another request; reload and retry");
+  }
   for (const a of attachments) {
     const abs = storedFilePath(a.url);
     if (abs) await unlink(abs).catch(() => {});
@@ -6975,7 +6982,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: { id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null, ...taskStatusVersionWhere(task), ...noLiveMergeReservation() },
+        where: withNoLiveMergeReservation({ id: lockedTask.id, claimedByUserId: null, claimedByAgentId: null, ...taskStatusVersionWhere(task) }),
         data: { claimedByUserId: actor.type === "human" ? actor.userId : null, claimedByAgentId: actor.type === "agent" ? actor.tokenId : null, claimedAt: new Date(), status: startTarget, ...STATUS_VERSION_BUMP },
       });
       return { value, changed: value.count === 1 };
@@ -7035,11 +7042,10 @@ taskRouter.post("/tasks/:id/release", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: {
+        where: withNoLiveMergeReservation({
           ...(actor.type === "human" ? { id: lockedTask.id, claimedByUserId: actor.userId } : { id: lockedTask.id, claimedByAgentId: actor.tokenId }),
           ...taskStatusVersionWhere(task),
-          ...noLiveMergeReservation(),
-        },
+        }),
         data: { claimedByUserId: null, claimedByAgentId: null, claimedAt: null, status: effectiveDef.initialState, ...STATUS_VERSION_BUMP },
       });
       return { value, changed: value.count === 1 };
@@ -7132,8 +7138,8 @@ taskRouter.post(
         const result = await db.task.updateMany({
           where:
             priorHolder.type === "human"
-              ? { id: task.id, claimedByUserId: priorHolder.id, ...noLiveMergeReservation() }
-              : { id: task.id, claimedByAgentId: priorHolder.id, ...noLiveMergeReservation() },
+              ? withNoLiveMergeReservation({ id: task.id, claimedByUserId: priorHolder.id })
+              : withNoLiveMergeReservation({ id: task.id, claimedByAgentId: priorHolder.id }),
           data: { claimedByUserId: null, claimedByAgentId: null, claimedAt: null },
         });
         if (result.count > 0) {
@@ -7150,8 +7156,8 @@ taskRouter.post(
         const result = await db.task.updateMany({
           where:
             priorHolder.type === "human"
-              ? { id: task.id, reviewClaimedByUserId: priorHolder.id, ...noLiveMergeReservation() }
-              : { id: task.id, reviewClaimedByAgentId: priorHolder.id, ...noLiveMergeReservation() },
+              ? withNoLiveMergeReservation({ id: task.id, reviewClaimedByUserId: priorHolder.id })
+              : withNoLiveMergeReservation({ id: task.id, reviewClaimedByAgentId: priorHolder.id }),
           data: { reviewClaimedByUserId: null, reviewClaimedByAgentId: null, reviewClaimedAt: null },
         });
         if (result.count > 0) {
@@ -7702,7 +7708,7 @@ taskRouter.post("/tasks/:id/review/claim", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: { id: lockedTask.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null, ...noLiveMergeReservation() },
+        where: withNoLiveMergeReservation({ id: lockedTask.id, reviewClaimedByUserId: null, reviewClaimedByAgentId: null }),
         data: { reviewClaimedByUserId: actor.type === "human" ? actor.userId : null, reviewClaimedByAgentId: actor.type === "agent" ? actor.tokenId : null, reviewClaimedAt: new Date() },
       });
       return { value, changed: value.count === 1 };
@@ -7767,7 +7773,7 @@ taskRouter.post("/tasks/:id/review/release", async (c) => {
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
-        where: { ...(actor.type === "human" ? { id: lockedTask.id, reviewClaimedByUserId: actor.userId } : { id: lockedTask.id, reviewClaimedByAgentId: actor.tokenId }), ...noLiveMergeReservation() },
+        where: withNoLiveMergeReservation({ ...(actor.type === "human" ? { id: lockedTask.id, reviewClaimedByUserId: actor.userId } : { id: lockedTask.id, reviewClaimedByAgentId: actor.tokenId }) }),
         data: { reviewClaimedByUserId: null, reviewClaimedByAgentId: null, reviewClaimedAt: null },
       });
       return { value, changed: value.count === 1 };

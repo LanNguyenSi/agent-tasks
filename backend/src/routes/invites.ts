@@ -34,7 +34,7 @@ import { getUserRoleInTeam } from "../repositories/team-repository.js";
 import { logAuditEvent } from "../services/audit.js";
 import { mutateGroundingContext } from "../services/grounding-context-mutation.js";
 import { GroundingAccessError } from "../services/grounding-context.js";
-import { noLiveMergeReservation } from "../services/task-merge-reservation.js";
+import { withNoLiveMergeReservation } from "../services/task-merge-reservation.js";
 import { lockGroundingAuthority } from "../services/grounding-direct-authority.js";
 
 export const projectInviteAdminRouter = new Hono<{ Variables: AppVariables }>();
@@ -270,7 +270,7 @@ projectInviteAdminRouter.delete("/projects/:id/members/:userId", async (c) => {
               // A task a merge currently holds keeps its claims: the claims the
               // merge gates decided from must not move before the merge is
               // recorded, so such a task matches no row here.
-              where: { id: { in: tasks.map(task => task.id) }, ...noLiveMergeReservation() },
+              where: withNoLiveMergeReservation({ id: { in: tasks.map(task => task.id) } }),
               data: {
                 claimedByUserId: null,
                 claimedAt: null,

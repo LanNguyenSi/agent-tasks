@@ -1,7 +1,7 @@
 /**
  * Class guard for the merge reservation (agent-tasks eb08742f): every write to
  * the `tasks` table in the backend source either carries the reservation
- * predicate (`noLiveMergeReservation`, or `taskStatusCasWhere`, which includes
+ * predicate (`withNoLiveMergeReservation`, or `taskStatusCasWhere`, which includes
  * it) or is listed below with the reason it is allowed to ignore a live merge
  * reservation. A new writer of claims or status that does neither fails here,
  * so the decision is made when the writer is added and not found in review.
@@ -74,7 +74,7 @@ function rawTaskUpdates(): Site[] {
   return sites;
 }
 
-const GUARD = /noLiveMergeReservation|taskStatusCasWhere/;
+const GUARD = /withNoLiveMergeReservation|taskStatusCasWhere/;
 
 /**
  * Writers that ignore a live merge reservation on purpose. `snippet` must occur
@@ -88,7 +88,6 @@ const ALLOWED_WITHOUT_PREDICATE: Array<{ file: string; snippet: string; count: n
   { file: "routes/tasks.ts", snippet: "...(body.branchName !== undefined ? { branchName: body.branchName }", count: 1, reason: "agent PATCH: branch, PR and result fields only (status and claims are not writable there)" },
   { file: "routes/tasks.ts", snippet: "data: patchData, include: taskInclude })", count: 1, reason: "human PATCH without a status: the status lane above carries the predicate, this branch never writes status or claims" },
   { file: "routes/tasks.ts", snippet: "status: { in: [\"open\", \"backlog\"] }, claimedByUserId: null", count: 1, reason: "task_respec: edits the description of an open or backlog, unclaimed task; no claim or status change" },
-  { file: "routes/tasks.ts", snippet: ".task.delete({ where: { id: task.id } })", count: 1, reason: "human DELETE of a task: removes the row; a merge in flight then answers merged_but_status_changed with no current status" },
   { file: "routes/tasks.ts", snippet: "blockedBy: { connect:", count: 1, reason: "dependency edge: no claim or status" },
   { file: "routes/tasks.ts", snippet: "blockedBy: { disconnect:", count: 1, reason: "dependency edge: no claim or status" },
   { file: "services/grounding-github-create.ts", snippet: "data: { branchName: request.head, prUrl: frozen.url", count: 1, reason: "grounded PR creation: branch and PR fields only" },
@@ -125,6 +124,16 @@ describe("every write to the tasks table carries the merge-reservation predicate
   it.each(ALLOWED_WITHOUT_PREDICATE)("the allowlist entry for $file ($snippet) matches exactly $count write(s): no stale or widened entry", (entry) => {
     const matched = writes.filter((site) => !GUARD.test(site.call) && site.file === entry.file && site.call.includes(entry.snippet));
     expect(matched).toHaveLength(entry.count);
+  });
+
+  it("the predicate is composed with the writer's own WHERE, never spread under the AND key of an object literal", () => {
+    // `{ ...a, ...noLiveMergeReservation() }` replaces an `AND` that `a` carries.
+    const spreads: string[] = [];
+    for (const path of sourceFiles(SRC)) {
+      const text = readFileSync(path, "utf8");
+      if (/\.\.\.\s*noLiveMergeReservation\(/.test(text) || /\.\.\.\s*mergeReservationAllows\(/.test(text)) spreads.push(relative(SRC, path));
+    }
+    expect(spreads, "use withNoLiveMergeReservation(where) / andWhere(where, clause), which append to an existing AND").toEqual([]);
   });
 
   it("raw UPDATE statements on tasks are the reservation's own or the fence's no-op touches", () => {

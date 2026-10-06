@@ -38,7 +38,7 @@
  * a merge is the `merge_webhook_first` path of the post-merge write) and
  * writers that touch neither a claim nor the status.
  */
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 /** Lease length of a merge reservation, in milliseconds. */
 export const MERGE_RESERVATION_TTL_MS = 120_000;
@@ -68,6 +68,30 @@ export function mergeReservationLeaseCutoff(now: Date): Date {
 }
 
 /**
+ * `base` with `clauses` ANDed on. A WHERE has one `AND` key, so a predicate
+ * spread into an object next to another `AND` would silently replace it: this
+ * appends to whatever `base` already carries instead, so a condition is never
+ * dropped by the order in which fragments are merged.
+ */
+export function andWhere(base: Prisma.TaskWhereInput, ...clauses: Prisma.TaskWhereInput[]): Prisma.TaskWhereInput {
+  const { AND, ...rest } = base;
+  const existing = AND === undefined ? [] : Array.isArray(AND) ? AND : [AND];
+  return { ...rest, AND: [...existing, ...clauses] };
+}
+
+/**
+ * A JS `Date` as a raw SQL value for a `timestamp(3)` column (Prisma stores
+ * these as UTC). A Date bound directly in `$executeRaw` is converted by the
+ * session time zone of the connection, while Prisma's own reads and writes
+ * treat the column as UTC, so the raw statements below would be shifted by the
+ * zone offset on any connection that is not set to UTC. Going through
+ * `timestamptz` and back to UTC makes the binding independent of the session.
+ */
+export function utcTimestampSql(value: Date): Prisma.Sql {
+  return Prisma.sql`(${value}::timestamptz AT TIME ZONE 'UTC')`;
+}
+
+/**
  * WHERE fragment: the task has no LIVE merge reservation (none, or one whose
  * lease has lapsed). Spread into the WHERE of every claim or status write so
  * the write matches no row while a merge holds the task. Uses `AND` so it
@@ -77,6 +101,17 @@ export function noLiveMergeReservation(now: Date = new Date()): Prisma.TaskWhere
   return {
     AND: [{ OR: [{ mergeReservedAt: null }, { mergeReservedAt: { lte: mergeReservationLeaseCutoff(now) } }] }],
   };
+}
+
+/**
+ * `where` plus the no-live-reservation predicate, composed with any `AND` that
+ * `where` already carries. The form every claim or status writer uses.
+ */
+export function withNoLiveMergeReservation(
+  where: Prisma.TaskWhereInput,
+  now: Date = new Date(),
+): Prisma.TaskWhereInput {
+  return andWhere(where, noLiveMergeReservation(now));
 }
 
 /**
@@ -141,7 +176,7 @@ export async function releaseMergeReservation(
     UPDATE "tasks"
     SET "mergeReservedByUserId" = NULL, "mergeReservedByAgentId" = NULL, "mergeReservedAt" = NULL
     WHERE "id" = ${taskId}
-      AND "mergeReservedAt" = ${reservation.at}
+      AND "mergeReservedAt" = ${utcTimestampSql(reservation.at)}
       AND "mergeReservedByUserId" IS NOT DISTINCT FROM ${reservation.byUserId}
       AND "mergeReservedByAgentId" IS NOT DISTINCT FROM ${reservation.byAgentId}`;
 }

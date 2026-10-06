@@ -13,7 +13,10 @@ import {
   mergeReservationLeaseCutoff,
   mergeReservationRetryAfterSeconds,
   noLiveMergeReservation,
+  andWhere,
+  withNoLiveMergeReservation,
 } from "../../src/services/task-merge-reservation.js";
+import { taskStatusCasWhere } from "../../src/services/task-status-cas.js";
 
 const NOW = new Date("2026-10-06T12:00:00.000Z");
 const ago = (ms: number) => new Date(NOW.getTime() - ms);
@@ -75,5 +78,36 @@ describe("WHERE fragments", () => {
 
   it("the clear spread nulls the holder columns and the lease start", () => {
     expect(MERGE_RESERVATION_CLEAR).toEqual({ mergeReservedByUserId: null, mergeReservedByAgentId: null, mergeReservedAt: null });
+  });
+});
+
+describe("composition with an AND the writer already carries", () => {
+  const OWN = { OR: [{ result: null }, { result: "x" }] };
+
+  it("andWhere appends to a single AND clause, an AND array and no AND", () => {
+    const clause = { mergeReservedAt: null };
+    expect(andWhere({ id: "t" }, clause)).toEqual({ id: "t", AND: [clause] });
+    expect(andWhere({ id: "t", AND: OWN }, clause)).toEqual({ id: "t", AND: [OWN, clause] });
+    expect(andWhere({ id: "t", AND: [OWN, { title: "a" }] }, clause)).toEqual({ id: "t", AND: [OWN, { title: "a" }, clause] });
+  });
+
+  it("withNoLiveMergeReservation keeps the writer's own AND next to the predicate", () => {
+    const where = withNoLiveMergeReservation({ id: "t", AND: [OWN] }, NOW);
+    expect(where.AND).toEqual([OWN, noLiveMergeReservation(NOW)]);
+    expect(where.id).toBe("t");
+  });
+
+  it("taskStatusCasWhere keeps an AND in `extra` and still carries the predicate", () => {
+    const snapshot = {
+      id: "t", status: "review", statusVersion: 3,
+      claimedByUserId: "u1", claimedByAgentId: null, reviewClaimedByUserId: "u2", reviewClaimedByAgentId: null,
+    };
+    const where = taskStatusCasWhere(snapshot, { AND: [OWN], result: null });
+    const and = where.AND as unknown[];
+    expect(and).toContainEqual(OWN);
+    // The predicate is there too (the AND key was not overwritten by either side).
+    expect(and).toHaveLength(2);
+    expect(JSON.stringify(and[1])).toContain("mergeReservedAt");
+    expect(where).toMatchObject({ id: "t", status: "review", statusVersion: 3, result: null });
   });
 });

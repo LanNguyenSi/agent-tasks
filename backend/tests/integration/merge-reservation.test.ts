@@ -17,7 +17,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
-import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from "vitest";
+import { beforeAll, afterAll, beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
 import type { Actor } from "../../src/types/auth.js";
@@ -412,6 +412,120 @@ describe("reserveTaskForMerge / releaseMergeReservation", () => {
     expect(row.mergeReservedAt).toBeNull();
     expect(row.mergeReservedByUserId).toBeNull();
     expect(row.mergeReservedByAgentId).toBeNull();
+  });
+
+  // Agent holders: both USER columns stay NULL throughout, so only the agent
+  // column comparison of the take can see the change.
+  describe("agent-held claims bind the take on their own columns", () => {
+    async function seedAgentHeldReviewTask() {
+      const workAgent = await seedAgent(MERGE_SCOPES);
+      const reviewAgent = await seedAgent(MERGE_SCOPES);
+      const taskId = await seedReviewTask({
+        claimedByUserId: null,
+        claimedByAgentId: (workAgent as { tokenId: string }).tokenId,
+        reviewClaimedByUserId: null,
+        reviewClaimedByAgentId: (reviewAgent as { tokenId: string }).tokenId,
+      });
+      return { taskId, workAgent, reviewAgent };
+    }
+
+    it.each([
+      ["only the work claim agent", "claimedByAgentId"],
+      ["only the review lock agent", "reviewClaimedByAgentId"],
+    ] as const)("is refused as changed when %s moved to another agent since the gates read the row", async (_label, column) => {
+      const { taskId } = await seedAgentHeldReviewTask();
+      const read = await snapshotOf(taskId);
+      const other = await seedAgent(MERGE_SCOPES);
+      await db.task.update({ where: { id: taskId }, data: { [column]: (other as { tokenId: string }).tokenId } });
+      const moved = await snapshotOf(taskId);
+      // Nothing but the one agent column differs from what the gates read.
+      expect(moved.claimedByUserId).toBeNull();
+      expect(moved.reviewClaimedByUserId).toBeNull();
+      expect(moved.status).toBe(read.status);
+      expect(moved.statusVersion).toBe(read.statusVersion);
+
+      const outcome = await reserveTaskForMerge(db, read, reviewer);
+
+      expect(outcome).toEqual({ ok: false, reason: "changed" });
+      expect(await reservationOf(taskId)).toMatchObject(NO_RESERVATION);
+    });
+
+    it("takes the reservation while both agent claims are as the gates read them", async () => {
+      const { taskId } = await seedAgentHeldReviewTask();
+
+      const outcome = await reserveTaskForMerge(db, await snapshotOf(taskId), reviewer);
+
+      expect(outcome.ok).toBe(true);
+    });
+  });
+
+  it("the lease boundary is in SQL too: a reservation exactly TTL old is taken over, one a millisecond younger holds", async () => {
+    const taskId = await seedReviewTask();
+    const read = await snapshotOf(taskId);
+    const start = new Date("2026-10-06T12:00:00.000Z");
+    expect((await reserveTaskForMerge(db, read, reviewer, start)).ok).toBe(true);
+
+    const justBefore = await reserveTaskForMerge(db, read, reviewer2, new Date(start.getTime() + MERGE_RESERVATION_TTL_MS - 1));
+    expect(justBefore).toMatchObject({ ok: false, reason: "merge_in_progress" });
+    expect((await reservationOf(taskId)).mergeReservedByUserId).toBe(reviewerId);
+
+    const atTtl = new Date(start.getTime() + MERGE_RESERVATION_TTL_MS);
+    const taken = await reserveTaskForMerge(db, read, reviewer2, atTtl);
+    expect(taken.ok).toBe(true);
+    const row = await reservationOf(taskId);
+    expect(row.mergeReservedByUserId).toBe(reviewer2Id);
+    expect(row.mergeReservedAt?.getTime()).toBe(atTtl.getTime());
+  });
+
+  it("the same actor's old release cannot clear the new reservation it took over a lapsed one with: the lease start is part of the token", async () => {
+    const taskId = await seedReviewTask();
+    const read = await snapshotOf(taskId);
+    const lapsed = new Date(Date.now() - MERGE_RESERVATION_TTL_MS - 1000);
+    const old = await reserveTaskForMerge(db, read, reviewer, lapsed);
+    const fresh = await reserveTaskForMerge(db, read, reviewer);
+    if (!old.ok || !fresh.ok) throw new Error("setup: both reservations should have been taken");
+    // Same holder, different lease start.
+    expect(old.reservation.byUserId).toBe(fresh.reservation.byUserId);
+    expect(old.reservation.at.getTime()).not.toBe(fresh.reservation.at.getTime());
+
+    expect(await releaseMergeReservation(db, taskId, old.reservation)).toBe(0);
+
+    const row = await reservationOf(taskId);
+    expect(row.mergeReservedAt?.getTime()).toBe(fresh.reservation.at.getTime());
+    expect(row.mergeReservedByUserId).toBe(reviewerId);
+  });
+
+  it.each([
+    ["another user", (taskId: string) => db.task.update({ where: { id: taskId }, data: { mergeReservedByUserId: reviewer2Id } })],
+    ["another agent", async (taskId: string) => {
+      const agent = await seedAgent(MERGE_SCOPES);
+      await db.task.update({ where: { id: taskId }, data: { mergeReservedByUserId: null, mergeReservedByAgentId: (agent as { tokenId: string }).tokenId } });
+    }],
+  ])("a release does not clear a reservation with the same lease start but held by %s: the holder is part of the token", async (_label, rehold) => {
+    const taskId = await seedReviewTask();
+    const read = await snapshotOf(taskId);
+    const outcome = await reserveTaskForMerge(db, read, reviewer);
+    if (!outcome.ok) throw new Error("setup: the reservation should have been taken");
+    await rehold(taskId);
+    const before = await reservationOf(taskId);
+
+    expect(await releaseMergeReservation(db, taskId, outcome.reservation)).toBe(0);
+
+    expect(await reservationOf(taskId)).toEqual(before);
+  });
+
+  it("a release does not clear a reservation held by another AGENT with the same lease start and no user holder", async () => {
+    const agentA = await seedAgent(MERGE_SCOPES);
+    const agentB = await seedAgent(MERGE_SCOPES);
+    const taskId = await seedReviewTask();
+    const outcome = await reserveTaskForMerge(db, await snapshotOf(taskId), agentA);
+    if (!outcome.ok) throw new Error("setup: the reservation should have been taken");
+    expect(outcome.reservation.byUserId).toBeNull();
+    await db.task.update({ where: { id: taskId }, data: { mergeReservedByAgentId: (agentB as { tokenId: string }).tokenId } });
+
+    expect(await releaseMergeReservation(db, taskId, outcome.reservation)).toBe(0);
+
+    expect((await reservationOf(taskId)).mergeReservedByAgentId).toBe((agentB as { tokenId: string }).tokenId);
   });
 
   it("releasing leaves updatedAt alone", async () => {
@@ -944,5 +1058,174 @@ describe("the autoMerge recovery write of /finish", () => {
       expect.objectContaining({ action: "task.merged_status_conflict", payload: expect.objectContaining({ reason: "merge_in_progress" }) }),
     );
     expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("in_progress");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// An agent-held review lock that moves to another agent between the gate and
+// the merge: only the agent columns change, both user columns stay NULL.
+// ---------------------------------------------------------------------------
+
+describe("an agent-held review lock that moves to another agent between the gate and the merge", () => {
+  it("refuses POST /tasks/:id/merge: 409, GitHub is never called, no reservation is left", async () => {
+    await distinctReviewerProject();
+    const mergingAgent = await seedAgent(MERGE_SCOPES);
+    const otherAgent = await seedAgent(MERGE_SCOPES);
+    const taskId = await seedReviewTask({
+      reviewClaimedByUserId: null,
+      reviewClaimedByAgentId: (mergingAgent as { tokenId: string }).tokenId,
+    });
+    shared.afterTaskRead = async () => {
+      await db.task.update({ where: { id: taskId }, data: { reviewClaimedByAgentId: (otherAgent as { tokenId: string }).tokenId } });
+    };
+
+    const res = await post(mergingAgent, `/tasks/${taskId}/merge`);
+
+    expect(res.status).toBe(409);
+    expect(github.githubCalls).toBe(0);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("review");
+    expect(row.reviewClaimedByUserId).toBeNull();
+    expect(row.reviewClaimedByAgentId).toBe((otherAgent as { tokenId: string }).tokenId);
+    expect(row).toMatchObject(NO_RESERVATION);
+  });
+
+  it("refuses POST /tasks/:id/merge when only the work claim agent moved", async () => {
+    await distinctReviewerProject();
+    const workAgent = await seedAgent(MERGE_SCOPES);
+    const mergingAgent = await seedAgent(MERGE_SCOPES);
+    const otherAgent = await seedAgent(MERGE_SCOPES);
+    const taskId = await seedReviewTask({
+      claimedByUserId: null,
+      claimedByAgentId: (workAgent as { tokenId: string }).tokenId,
+      reviewClaimedByUserId: null,
+      reviewClaimedByAgentId: (mergingAgent as { tokenId: string }).tokenId,
+    });
+    shared.afterTaskRead = async () => {
+      await db.task.update({ where: { id: taskId }, data: { claimedByAgentId: (otherAgent as { tokenId: string }).tokenId } });
+    };
+
+    const res = await post(mergingAgent, `/tasks/${taskId}/merge`);
+
+    expect(res.status).toBe(409);
+    expect(github.githubCalls).toBe(0);
+    expect(await db.task.findUniqueOrThrow({ where: { id: taskId } })).toMatchObject({ status: "review", ...NO_RESERVATION });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /tasks/:id is a writer too: removing the row under a merge would
+// leave the post-merge write with no task to record on.
+// ---------------------------------------------------------------------------
+
+describe("DELETE /tasks/:id while a merge holds the task", () => {
+  it("is refused with 409 merge_in_progress during the GitHub call and the merge still records itself", async () => {
+    const taskId = await seedReviewTask();
+    const before = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+
+    const result = await mergeWhile(taskId, () => send(admin, "DELETE", `/tasks/${taskId}`));
+
+    expectRefused(result, { status: before.status, statusVersion: before.statusVersion, claimedByUserId: before.claimedByUserId, reviewClaimedByUserId: before.reviewClaimedByUserId });
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("done");
+    expect(row).toMatchObject(NO_RESERVATION);
+  });
+
+  it("is refused while a reservation is live and lands once its lease lapsed (lazy expiry)", async () => {
+    const taskId = await seedReviewTask();
+    const read = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect((await reserveTaskForMerge(db, read, reviewer2)).ok).toBe(true);
+
+    const refused = await send(admin, "DELETE", `/tasks/${taskId}`);
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toBe("merge_in_progress");
+    expect(refused.headers.get("retry-after")).toMatch(/^\d+$/);
+    expect(await db.task.count({ where: { id: taskId } })).toBe(1);
+
+    await db.task.update({ where: { id: taskId }, data: { mergeReservedAt: new Date(Date.now() - MERGE_RESERVATION_TTL_MS - 1000) } });
+    const landed = await send(admin, "DELETE", `/tasks/${taskId}`);
+    expect(landed.status).toBe(200);
+    expect(await db.task.count({ where: { id: taskId } })).toBe(0);
+  });
+
+  it("deletes a task without a reservation", async () => {
+    const taskId = await seedReviewTask();
+
+    const res = await send(admin, "DELETE", `/tasks/${taskId}`);
+
+    expect(res.status).toBe(200);
+    expect(await db.task.count({ where: { id: taskId } })).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The raw statements bind their timestamps independent of the session time
+// zone of the connection. Prisma's own reads and writes treat the
+// timestamp(3) columns as UTC; a Date bound raw is converted by the session
+// zone, so a connection set to another zone shifts the lease by the offset.
+// ---------------------------------------------------------------------------
+
+describe.each(["America/Los_Angeles", "Pacific/Kiritimati", "Europe/Berlin"])("on a connection whose session time zone is %s", (zone) => {
+  let tzClient: PrismaClient;
+  let appDb: PrismaClient | undefined;
+
+  beforeEach(async () => {
+    // One connection, so the SET holds for every statement of the test.
+    tzClient = store.connect(1);
+    await tzClient.$executeRawUnsafe(`SET TIME ZONE '${zone}'`);
+    appDb = shared.db;
+    shared.db = tzClient;
+  });
+  afterEach(async () => {
+    shared.db = appDb;
+    await tzClient.$disconnect();
+  });
+
+  it("reserve, a writer gets 409 merge_in_progress, and the post-merge write lands and clears the reservation", async () => {
+    const taskId = await seedReviewTask();
+    let during: ReservationColumns | null = null;
+    let writerStatus = 0;
+    let writerError: string | undefined;
+    github.insideMerge = async () => {
+      during = await reservationOf(taskId);
+      const writer = await post(reviewer, `/tasks/${taskId}/review/release`);
+      writerStatus = writer.status;
+      writerError = ((await writer.json()) as { error?: string }).error;
+    };
+
+    const res = await post(reviewer, `/tasks/${taskId}/merge`);
+
+    expect(res.status).toBe(200);
+    // The stored lease start is the real instant, not shifted by the zone offset.
+    expect(Math.abs(Date.now() - during!.mergeReservedAt!.getTime())).toBeLessThan(60_000);
+    expect(writerStatus).toBe(409);
+    expect(writerError).toBe("merge_in_progress");
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("done");
+    expect(row).toMatchObject(NO_RESERVATION);
+    expect(releases.found).toEqual([0]);
+  });
+
+  it("the release of a reservation that was not cleared by the post-merge write finds it by its lease start", async () => {
+    const taskId = await seedReviewTask();
+    const read = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    const outcome = await reserveTaskForMerge(tzClient, read, reviewer);
+    if (!outcome.ok) throw new Error("setup: the reservation should have been taken");
+    const stored = await reservationOf(taskId);
+    expect(stored.mergeReservedAt?.getTime()).toBe(outcome.reservation.at.getTime());
+
+    expect(await releaseMergeReservation(tzClient, taskId, outcome.reservation)).toBe(1);
+
+    expect(await reservationOf(taskId)).toMatchObject(NO_RESERVATION);
+  });
+
+  it("the lease check of the take reads the stored lease start as the same instant: a live reservation is not taken over", async () => {
+    const taskId = await seedReviewTask();
+    const read = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect((await reserveTaskForMerge(tzClient, read, reviewer)).ok).toBe(true);
+
+    const second = await reserveTaskForMerge(tzClient, read, reviewer2);
+
+    expect(second).toMatchObject({ ok: false, reason: "merge_in_progress" });
   });
 });

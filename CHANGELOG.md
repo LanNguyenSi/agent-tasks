@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The `reason` of a `task.merged_status_conflict` audit event can now be `merge_in_progress` (the status is as it was read and another merge holds the task); the response message says so and that retrying is safe.
 - `performPrMerge` takes an optional `beforeGithubMerge` hook that runs after every refusal that needs no GitHub call and right before the fetch; the merge paths take their reservation in it, so a merge that is refused earlier never touches the task row. Taking and releasing a reservation do not change `updatedAt`.
 
+### Fixed
+
+- The merge reservation no longer depends on the time zone of the database session (task eb08742f). The raw statements that take and release it bound a JS `Date` into the `timestamp(3)` column, which Postgres converts by the session zone while Prisma's own reads and writes treat the column as UTC; on a connection not set to UTC the lease was shifted by the zone offset (a lease that looked lapsed, or a post-merge write that did not recognize its own reservation). The timestamps are now bound as `(${date}::timestamptz AT TIME ZONE 'UTC')`.
+- `DELETE /tasks/:id` answers `409 merge_in_progress` while a merge holds the task instead of removing the row under it.
+- The no-live-reservation predicate is composed with a writer's own `AND` (`withNoLiveMergeReservation`, `andWhere`) instead of being object-spread under the same `AND` key, which would have replaced the writer's condition; a test keeps new write sites from spreading it.
+
 ## [0.31.0] - 2026-10-05
 
 ### Added
