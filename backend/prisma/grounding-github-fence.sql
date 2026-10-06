@@ -59,6 +59,10 @@ BEGIN
 END
 $$;
 
+-- The comparison is over the whole row, so every column of tasks is fenced,
+-- the merge reservation columns (mergeReservedByUserId, mergeReservedByAgentId,
+-- mergeReservedAt) included: taking or releasing a merge reservation is a
+-- fenced write like any other claim or status write.
 CREATE OR REPLACE FUNCTION grounding_github_task_guard() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE repos text[] := '{}';

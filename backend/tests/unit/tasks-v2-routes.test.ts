@@ -315,6 +315,8 @@ function casWhereOf(task: {
   reviewClaimedByAgentId: string | null;
 }) {
   return {
+    // The write also lands only while no merge reservation is live.
+    AND: [{ OR: [{ mergeReservedAt: null }, { mergeReservedAt: { lte: expect.any(Date) } }] }],
     id: task.id,
     status: task.status,
     statusVersion: task.statusVersion,
@@ -4117,6 +4119,8 @@ describe("task_finish autoMerge", () => {
       "rebase",
       expect.objectContaining({ type: "agent" }),
       null,
+      // The hook that takes the merge reservation right before the GitHub call.
+      expect.any(Function),
     );
   });
 

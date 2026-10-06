@@ -17,6 +17,7 @@ import {
   casUpdateTaskStatusAfterMerge,
   type TaskStatusCasSnapshot,
 } from "./task-status-cas.js";
+import type { MergeReservation } from "./task-merge-reservation.js";
 import type { Actor } from "../types/auth.js";
 
 export interface MergedButStatusChangedBody {
@@ -34,11 +35,12 @@ export async function writeStatusAfterMerge<I extends Prisma.TaskInclude>(
   targetStatus: string,
   include: I,
   merge: { sha: string | null; via: string },
+  reservation?: MergeReservation | null,
 ): Promise<
   | { ok: true; task: Prisma.TaskGetPayload<{ include: I }>; resultKept: boolean }
   | { ok: false; body: MergedButStatusChangedBody }
 > {
-  const outcome = await casUpdateTaskStatusAfterMerge(db, task, data, targetStatus, include);
+  const outcome = await casUpdateTaskStatusAfterMerge(db, task, data, targetStatus, include, reservation);
   const actorId = actor.type === "human" ? actor.userId : undefined;
   if (outcome.kind === "written") {
     if (outcome.webhookFirst) {
@@ -79,7 +81,10 @@ export async function writeStatusAfterMerge<I extends Prisma.TaskInclude>(
   });
   const mergedPrefix = `The pull request was merged${merge.sha ? ` (${merge.sha})` : ""}`;
   const message =
-    outcome.reason === "claim_moved"
+    outcome.reason === "merge_in_progress"
+      ? `${mergedPrefix}, but another merge holds the task right now, so this request could not record it; the ` +
+        `status is still '${outcome.currentStatus ?? "unknown"}'. The task was not updated. Retrying the same request is safe.`
+      : outcome.reason === "claim_moved"
       ? `${mergedPrefix}, but a claim on the task moved before this request could record it; the status ` +
         `is still '${outcome.currentStatus ?? "unknown"}'. The task was not updated. Retrying the same request is safe.`
       : `${mergedPrefix}, but the task status changed to '${outcome.currentStatus ?? "unknown"}' before this ` +

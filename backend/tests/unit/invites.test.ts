@@ -81,9 +81,13 @@ vi.mock("../../src/services/audit.js", () => ({
 // Route unit tests deliberately isolate the writer callback. PostgreSQL lock,
 // reservation, and invalidation behavior is exercised by the mounted C08
 // integration suite; this shim keeps the older HTTP-contract fixtures narrow.
+// The tasks the claim-release write is scoped to: the write must release every
+// one of them (a task a merge holds matches no row and refuses the removal), so
+// each test sizes this list like the count its updateMany answers.
+const lockedTasks = vi.hoisted(() => ({ list: [{ id: "task-1" }] as Array<{ id: string }> }));
 vi.mock("../../src/services/grounding-context-mutation.js", () => ({
   mutateGroundingContext: async (_client: unknown, input: { mutate: (db: unknown, tasks: Array<{ id: string }>) => Promise<unknown> }) =>
-    input.mutate({ projectMember: { findUnique: prismaMocks.projectMemberFindUnique, delete: prismaMocks.projectMemberDelete }, task: { updateMany: prismaMocks.taskUpdateMany } }, [{ id: "task-1" }]),
+    input.mutate({ projectMember: { findUnique: prismaMocks.projectMemberFindUnique, delete: prismaMocks.projectMemberDelete }, task: { updateMany: prismaMocks.taskUpdateMany } }, lockedTasks.list),
 }));
 
 import {
@@ -128,6 +132,7 @@ function makeSharesAdminApp(actor: Actor) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  lockedTasks.list = [{ id: "task-1" }];
   prismaMocks.projectFindUnique.mockResolvedValue({
     id: PROJECT_ID,
     teamId: "team-A",
@@ -470,7 +475,7 @@ describe("DELETE /projects/:id/members/:userId", () => {
       role: "PROJECT_VIEWER",
       userId: ADMIN.userId,
     });
-    prismaMocks.taskUpdateMany.mockResolvedValue({ count: 0 });
+    lockedTasks.list = [];
 
     const res = await makeAdminApp(ADMIN).request(
       `/projects/${PROJECT_ID}/members/${ADMIN.userId}`,
@@ -486,6 +491,7 @@ describe("DELETE /projects/:id/members/:userId", () => {
       role: "PROJECT_CONTRIBUTOR",
       userId: "u-removed",
     });
+    lockedTasks.list = [{ id: "task-1" }, { id: "task-2" }, { id: "task-3" }];
     prismaMocks.taskUpdateMany.mockResolvedValue({ count: 3 });
 
     const res = await makeAdminApp(ADMIN).request(

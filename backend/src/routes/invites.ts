@@ -28,12 +28,13 @@ import type { ProjectMemberRole } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import type { Actor } from "../types/auth.js";
 import type { AppVariables } from "../types/hono.js";
-import { forbidden, notFound } from "../middleware/error.js";
+import { forbidden, mergeInProgressBody, notFound } from "../middleware/error.js";
 import { hasProjectAccess, hasProjectRole, isProjectAdmin } from "../services/team-access.js";
 import { getUserRoleInTeam } from "../repositories/team-repository.js";
 import { logAuditEvent } from "../services/audit.js";
 import { mutateGroundingContext } from "../services/grounding-context-mutation.js";
 import { GroundingAccessError } from "../services/grounding-context.js";
+import { noLiveMergeReservation } from "../services/task-merge-reservation.js";
 import { lockGroundingAuthority } from "../services/grounding-direct-authority.js";
 
 export const projectInviteAdminRouter = new Hono<{ Variables: AppVariables }>();
@@ -266,7 +267,10 @@ projectInviteAdminRouter.delete("/projects/:id/members/:userId", async (c) => {
         if (!member) throw new GroundingAccessError("not_found", 404);
         const releasedClaims = tasks.length
           ? await db.task.updateMany({
-              where: { id: { in: tasks.map(task => task.id) } },
+              // A task a merge currently holds keeps its claims: the claims the
+              // merge gates decided from must not move before the merge is
+              // recorded, so such a task matches no row here.
+              where: { id: { in: tasks.map(task => task.id) }, ...noLiveMergeReservation() },
               data: {
                 claimedByUserId: null,
                 claimedAt: null,
@@ -275,6 +279,9 @@ projectInviteAdminRouter.delete("/projects/:id/members/:userId", async (c) => {
               },
             })
           : { count: 0 };
+        // Some claim could not be released because a merge holds its task:
+        // refuse the whole removal (the member stays, nothing is released).
+        if (releasedClaims.count !== tasks.length) throw new GroundingAccessError("merge_in_progress", 409);
         await db.projectMember.delete({ where: { id: member.id } });
         return { member, releasedClaims: releasedClaims.count };
       },
@@ -297,6 +304,7 @@ projectInviteAdminRouter.delete("/projects/:id/members/:userId", async (c) => {
     if (err instanceof GroundingAccessError) {
       if (err.code === "not_found") return notFound(c);
       if (err.code === "forbidden") return forbidden(c, "Only project admins can remove members");
+      if (err.code === "merge_in_progress") return c.json(mergeInProgressBody(), 409);
       return c.json({ error: err.code }, 409);
     }
     throw err;

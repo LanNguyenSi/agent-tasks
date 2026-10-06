@@ -207,6 +207,8 @@ describe("POST /tasks/:id/merge", () => {
         claimedByAgentId: "agent-claimant",
         reviewClaimedByUserId: null,
         reviewClaimedByAgentId: "agent-reviewer",
+        // ... and while no other merge holds the task.
+        AND: [{ OR: [{ mergeReservedAt: null }, { mergeReservedAt: { lte: expect.any(Date) } }] }],
       },
       data: expect.objectContaining({
         status: "done",
@@ -214,6 +216,10 @@ describe("POST /tasks/:id/merge", () => {
         claimedByAgentId: null,
         reviewClaimedByAgentId: null,
         autoMergeSha: "deadbeef",
+        // The write that records the merge releases the reservation.
+        mergeReservedAt: null,
+        mergeReservedByUserId: null,
+        mergeReservedByAgentId: null,
       }),
     });
     expect(logAuditEvent).toHaveBeenCalledWith(
@@ -237,6 +243,8 @@ describe("POST /tasks/:id/merge", () => {
       "merge",
       AGENT_WITH_SCOPE,
       null,
+      // The hook that takes the merge reservation right before the GitHub call.
+      expect.any(Function),
     );
     const body = (await res.json()) as { merged: boolean; sha: string };
     expect(body.merged).toBe(true);

@@ -609,6 +609,31 @@ describe("mapBackendError catalog", () => {
     assertAllowedNextRegistered(err, registered);
   });
 
+  // ── 7d. merge_in_progress ───────────────────────────────────────────────────
+  it("merge_in_progress: a claim or status write refused during a PR merge maps to tasks_get, not a blind retry", () => {
+    const err = mapBackendError(
+      409,
+      {
+        error: "merge_in_progress",
+        message: "A pull request merge is in progress for this task, so its claims and status cannot change right now.",
+        retryAfterSeconds: 90,
+      },
+      "task_abandon",
+    );
+    expect(err.ok).toBe(false);
+    expect(err.error.code).toBe("merge_in_progress");
+    expect(err.error.message).toMatch(/merge is in progress/);
+    expect(err.error.recipe).toMatch(/tasks_get/);
+    expect(err.error.recipe).toMatch(/retry/);
+    expect(err.error.allowedNext).toEqual(["tasks_get"]);
+  });
+
+  it("merge_in_progress is matched on its own backend code and 409 only: another 409 code or the same code on another status degrades", () => {
+    expect(mapBackendError(409, { error: "conflict", message: "A pull request merge is in progress" }).error.code).toBe("conflict");
+    // On another status the generic degrade passes the code through but keeps its own recipe.
+    expect(mapBackendError(403, { error: "merge_in_progress", message: "x" }).error.recipe).not.toMatch(/merge of this task's pull request/);
+  });
+
   // ── 7c. backlog_not_promoted ───────────────────────────────────────────────
   it("backlog_not_promoted: task_start/task_pickup's own 403 code maps to task_respec/task_creator_abandon, not a bare 'cannot start'", () => {
     const err = mapBackendError(403, {
@@ -1846,6 +1871,13 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
         message: "This task is in backlog status and awaits operator promotion before an agent can start it.",
       }),
     },
+    {
+      label: "merge_in_progress",
+      err: mapBackendError(409, {
+        error: "merge_in_progress",
+        message: "A pull request merge is in progress for this task, so its claims and status cannot change right now.",
+      }),
+    },
     { label: "result_not_plain_string (task_finish)", err: resultMustBePlainStringError("task_finish") },
     { label: "result_not_plain_string (tasks_update)", err: resultMustBePlainStringError("tasks_update") },
     {
@@ -1928,6 +1960,7 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
       "cross_repo_pr_rejected",
       "force_admin_only",
       "low_confidence",
+      "merge_in_progress",
       "not_claimed",
       "pr_author_mismatch",
       "precondition_failed",

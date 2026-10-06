@@ -17,6 +17,8 @@ import * as audit from "../../src/services/audit.js";
 import * as checks from "../../src/services/github-checks.js";
 import { defaultWorkflowDefinition } from "../../src/services/default-workflow.js";
 import { createSessionToken } from "../../src/services/session.js";
+import { reserveTaskForMerge } from "../../src/services/task-status-cas.js";
+import { MERGE_RESERVATION_TTL_MS } from "../../src/services/task-merge-reservation.js";
 
 let store: Awaited<ReturnType<typeof completionStore>>;
 let f: Awaited<ReturnType<typeof completionFixture>>;
@@ -195,6 +197,19 @@ it("N-16 pending remote reservation blocks dispositions and competing completion
     const response = await app().fetch(request(body, endpoint, randomUUID())); expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "grounding_finalization_pending" });
   }
   expect(await snapshot()).toEqual(before);
+});
+
+it.each(["work", "review"] as const)("a live merge reservation of a legacy merge path refuses the grounded %s completion write: 409 merge_in_progress and nothing is consumed", async variant => {
+  const v = await setup(variant); await f.evidence(v.intent);
+  const row = await store.db.task.findUniqueOrThrow({ where: { id: f.taskId } });
+  expect((await reserveTaskForMerge(store.db, row, actor)).ok).toBe(true);
+  const before = await snapshot();
+  const response = await app().fetch(request(v.body, v.endpoint));
+  expect(response.status).toBe(409); expect(await response.json()).toEqual({ error: "merge_in_progress" });
+  expect(await snapshot()).toEqual(before); expect(f.merge).not.toHaveBeenCalled();
+  // The lease lapsing releases the task: the same request now completes.
+  await store.db.task.update({ where: { id: f.taskId }, data: { mergeReservedAt: new Date(Date.now() - MERGE_RESERVATION_TTL_MS - 1000) } });
+  expect((await app().fetch(request(v.body, v.endpoint))).status).toBe(200);
 });
 
 it.each(["missing-service", "orphan-binding", "missing-binding", "invalid-cohort", "database"])("provisioned admission %s fails closed without entering legacy routes", async denial => {
