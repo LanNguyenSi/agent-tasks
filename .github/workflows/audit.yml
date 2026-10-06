@@ -60,8 +60,7 @@ name: Audit
 # the file and the id), so no exception can be parked for long. A package
 # counts as excepted only when every HIGH/CRITICAL advisory in its
 # dependency chain is allowlisted.
-# An entry that matches nothing in a tree only warns (the same file is
-# used for every tree below).
+# An entry that matches nothing in the tree only warns.
 # The gate script is vendored from depsight commit be8c7ea
 # (scripts/audit-gate.mjs); keep the copies in sync. The gate step runs
 # without a `shell:` key, so GitHub Actions executes it as `bash -e {0}`;
