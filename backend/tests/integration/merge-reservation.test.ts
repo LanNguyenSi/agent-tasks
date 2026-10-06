@@ -109,7 +109,7 @@ const github = vi.hoisted(() => ({
   /** What the GitHub call answers. */
   answer: { ok: true, sha: "deadbeef", alreadyMerged: false } as
     | { ok: true; sha: string; alreadyMerged: boolean }
-    | { ok: false; error: string; message: string; status: number },
+    | { ok: false; error: string; message: string; status: number; outcomeUnknown?: true },
   throws: null as Error | null,
 }));
 vi.mock("../../src/services/github-merge.js", () => ({ performPrMerge: github.performPrMerge }));
@@ -674,15 +674,65 @@ describe.each(MERGE_PATHS)("$name reserves the task for the merge", (path) => {
     expect(releases.found).toEqual([1]);
   });
 
-  it("gives the reservation back when the merge handler throws", async () => {
-    const { taskId } = await path.seed();
+  it("keeps the reservation when the merge handler throws after taking it: GitHub may still be merging, so it lapses with its lease", async () => {
+    const { taskId, holderUserId, holderAgentId } = await path.seed();
     github.throws = new Error("socket hang up");
 
     const res = await path.run(taskId);
 
     expect(res.status).toBe(500);
+    // The old expectation (released at request end) is wrong now: a handler
+    // that died after the reservation may have left a merge in flight, and
+    // releasing would let claim writers in under it.
+    const held = await reservationOf(taskId);
+    expect(held.mergeReservedAt).not.toBeNull();
+    expect(held.mergeReservedByUserId).toBe(holderUserId);
+    expect(held.mergeReservedByAgentId).toBe(holderAgentId);
+    expect(releases.found).toEqual([]);
+  });
+
+  it("keeps the reservation when the GitHub call ends with an unknown outcome (fetch threw, reset or timed out), and a second merge is refused with Retry-After", async () => {
+    const { taskId, holderUserId, holderAgentId } = await path.seed();
+    github.answer = { ok: false, error: "github_error", message: "GitHub API unreachable: The operation was aborted due to timeout", status: 502, outcomeUnknown: true };
+
+    const res = await path.run(taskId);
+
+    expect(res.status).toBe(502);
+    const held = await reservationOf(taskId);
+    expect(held.mergeReservedAt).not.toBeNull();
+    expect(held.mergeReservedByUserId).toBe(holderUserId);
+    expect(held.mergeReservedByAgentId).toBe(holderAgentId);
+    expect(releases.found).toEqual([]);
+    expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).not.toBe("done");
+
+    const second = await path.run(taskId);
+
+    expect(second.status).toBe(409);
+    const body = (await second.json()) as { error: string; retryAfterSeconds?: number };
+    expect(body.error).toBe("merge_in_progress");
+    expect(body.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+    expect(Number(second.headers.get("Retry-After"))).toBe(body.retryAfterSeconds);
+    expect(github.githubCalls).toBe(1);
+  });
+
+  it("answers a documented 409 grounding_github_fence_conflict, not 500, when the reservation write hits an active repository fence", async () => {
+    const { taskId } = await path.seed();
+    const intentId = randomUUID();
+    await db.groundingGithubFenceIntent.create({ data: { id: intentId, repo: "acme/thing", kind: "MERGE", taskId: null, state: "ACTIVE" } });
+    await db.groundingGithubRepositoryFence.upsert({ where: { repo: "acme/thing" }, create: { repo: "acme/thing", ownerId: intentId }, update: { ownerId: intentId } });
+    let res: Response;
+    try {
+      res = await path.run(taskId);
+    } finally {
+      await db.groundingGithubRepositoryFence.update({ where: { repo: "acme/thing" }, data: { ownerId: null } });
+      await db.groundingGithubFenceIntent.update({ where: { id: intentId }, data: { state: "RELEASED" } });
+    }
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe("grounding_github_fence_conflict");
+    expect(github.githubCalls).toBe(0);
     expect(await reservationOf(taskId)).toMatchObject(NO_RESERVATION);
-    expect(releases.found).toEqual([1]);
+    expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).not.toBe("done");
   });
 
   it("gives the reservation back when the post-merge write loses (the task moved after the lease): merged_but_status_changed", async () => {

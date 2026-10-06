@@ -95,10 +95,11 @@ import {
 } from "../services/default-workflow.js";
 import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES, parseOwnerRepo } from "../services/transition-rules.js";
-import { performPrMerge, type BeforeGithubMerge } from "../services/github-merge.js";
+import { performPrMerge, type BeforeGithubMerge, type MergeResult } from "../services/github-merge.js";
 import { groundingRemoteGuardFor } from "../services/grounding-scope.js";
 import {
   STATUS_VERSION_BUMP,
+  GITHUB_FENCE_CONFLICT_MESSAGE,
   casUpdateTaskStatus,
   reserveTaskForMerge,
   taskStatusCasWhere,
@@ -260,16 +261,59 @@ function takeMergeReservation(
       return null;
     }
     if (reserved.reason === "merge_in_progress") {
-      return { ok: false, error: "merge_in_progress", message: mergeInProgressBody(reserved.retryAfterSeconds).message, status: 409 };
+      return { ok: false, error: "merge_in_progress", message: mergeInProgressBody(reserved.retryAfterSeconds).message, status: 409, retryAfterSeconds: reserved.retryAfterSeconds };
+    }
+    if (reserved.reason === "fenced") {
+      return { ok: false, error: "grounding_github_fence_conflict", message: GITHUB_FENCE_CONFLICT_MESSAGE, status: 409 };
     }
     return { ok: false, error: "conflict", message: STATUS_CHANGED_CONFLICT_MESSAGE, status: 409 };
   };
 }
 
-/** Gives back the merge reservation the request still holds, if any. */
-async function releaseHeldMergeReservation(c: Context): Promise<void> {
-  const held = c.get("mergeReservation") as { taskId: string; reservation: MergeReservation } | null | undefined;
+/**
+ * `performPrMerge` with the request's merge reservation: when the GitHub call
+ * ends with an unknown outcome (the fetch threw, was reset or timed out, so
+ * GitHub may still complete the merge) the reservation is marked to be kept
+ * until its lease lapses instead of being released at the end of the request.
+ */
+async function performReservedMerge(
+  c: Context,
+  actor: Actor,
+  reservationTask: Parameters<typeof reserveTaskForMerge>[1],
+  mergeTask: Parameters<typeof performPrMerge>[0],
+  mergeMethod: Parameters<typeof performPrMerge>[1],
+): Promise<MergeResult> {
+  const result = await performPrMerge(mergeTask, mergeMethod, actor, groundingRemoteGuardFor(c), takeMergeReservation(c, actor, reservationTask));
+  if (!result.ok && result.outcomeUnknown) {
+    const held = c.get("mergeReservation") as AppVariables["mergeReservation"] | undefined;
+    if (held) c.set("mergeReservation", { ...held, keep: true });
+  }
+  return result;
+}
+
+/**
+ * The refusal body of a failed merge. A `merge_in_progress` refusal carries the
+ * seconds left of the live reservation, in the body and the `Retry-After`
+ * header, like the claim and status writers' refusal.
+ */
+function mergeRefusalBody(c: Context, result: Extract<MergeResult, { ok: false }>): { error: string; message: string; retryAfterSeconds?: number } {
+  if (result.error === "merge_in_progress" && result.retryAfterSeconds !== undefined) {
+    c.header("Retry-After", String(result.retryAfterSeconds));
+    return { error: result.error, message: result.message, retryAfterSeconds: result.retryAfterSeconds };
+  }
+  return { error: result.error, message: result.message };
+}
+
+/**
+ * Gives back the merge reservation the request still holds, if any. A
+ * reservation marked `keep` (the merge outcome is unknown) and one held by a
+ * request whose handler failed (`handlerFailed`) are left to lapse with their
+ * lease: GitHub may still be merging, and releasing would let claim writers in.
+ */
+async function releaseHeldMergeReservation(c: Context, handlerFailed = false): Promise<void> {
+  const held = c.get("mergeReservation") as { taskId: string; reservation: MergeReservation; keep?: boolean } | null | undefined;
   if (!held) return;
+  if (held.keep || handlerFailed) return;
   c.set("mergeReservation", null);
   try {
     await releaseMergeReservation(prisma, held.taskId, held.reservation);
@@ -327,12 +371,19 @@ export function normalizeIdQuery(q: string): string {
 taskRouter.use("/tasks/:id/*", async (c, next) => {
   const id = c.req.param("id");
   if (id) setLogContext({ taskId: id });
+  let handlerFailed = false;
   try {
     await next();
+    handlerFailed = c.error !== undefined;
+  } catch (err) {
+    handlerFailed = true;
+    throw err;
   } finally {
     // The handlers that merge a PR take a merge reservation and leave the
-    // release to the request end, whichever way the handler returned.
-    await releaseHeldMergeReservation(c);
+    // release to the request end. A handler that returned gives it back; one
+    // that threw after taking it, or whose GitHub call ended with an unknown
+    // outcome, leaves it to lapse with its lease.
+    await releaseHeldMergeReservation(c, handlerFailed);
   }
 });
 taskRouter.use("/projects/:projectId/*", async (c, next) => {
@@ -2993,11 +3044,11 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           403,
         );
       }
-      const mergeResult = await performPrMerge(task, mergeMethod, actor, groundingRemoteGuardFor(c), takeMergeReservation(c, actor, task));
+      const mergeResult = await performReservedMerge(c, actor, task, task, mergeMethod);
       if (!mergeResult.ok) {
         const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
         return c.json(
-          { error: mergeResult.error, message: mergeResult.message },
+          mergeRefusalBody(c, mergeResult),
           status as 403 | 409 | 502,
         );
       }
@@ -3270,11 +3321,11 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           403,
         );
       }
-      const mergeResult = await performPrMerge(task, selfApprMergeMethod, actor, groundingRemoteGuardFor(c), takeMergeReservation(c, actor, task));
+      const mergeResult = await performReservedMerge(c, actor, task, task, selfApprMergeMethod);
       if (!mergeResult.ok) {
         const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
         return c.json(
-          { error: mergeResult.error, message: mergeResult.message },
+          mergeRefusalBody(c, mergeResult),
           status as 403 | 409 | 502,
         );
       }
@@ -3744,17 +3795,11 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     }
     // Merge payload-derived prNumber onto task so performPrMerge sees it
     // even when prNumber is not yet in the DB (task_finish { prUrl } shorthand).
-    const mergeResult = await performPrMerge(
-      { ...task, prNumber: prNumber ?? task.prNumber },
-      workMergeMethod,
-      actor,
-      groundingRemoteGuardFor(c),
-      takeMergeReservation(c, actor, task),
-    );
+    const mergeResult = await performReservedMerge(c, actor, task, { ...task, prNumber: prNumber ?? task.prNumber }, workMergeMethod);
     if (!mergeResult.ok) {
       const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
       return c.json(
-        { error: mergeResult.error, message: mergeResult.message },
+        mergeRefusalBody(c, mergeResult),
         status as 403 | 409 | 502,
       );
     }
@@ -4619,11 +4664,11 @@ taskRouter.post(
     }
 
     const { mergeMethod } = c.req.valid("json");
-    const mergeResult = await performPrMerge(task, mergeMethod, actor, groundingRemoteGuardFor(c), takeMergeReservation(c, actor, task));
+    const mergeResult = await performReservedMerge(c, actor, task, task, mergeMethod);
     if (!mergeResult.ok) {
       const status = mergeResult.error === "no_delegation" ? 403 : (mergeResult.status ?? 502);
       return c.json(
-        { error: mergeResult.error, message: mergeResult.message },
+        mergeRefusalBody(c, mergeResult),
         status as 400 | 403 | 404 | 405 | 409 | 422 | 500 | 502,
       );
     }

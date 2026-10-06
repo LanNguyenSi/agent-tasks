@@ -14,8 +14,9 @@ vi.mock("../../src/services/audit.js", () => ({
   logAuditEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { performPrMerge, type MergeTask } from "../../src/services/github-merge.js";
+import { performPrMerge, GITHUB_MERGE_TIMEOUT_MS, type MergeTask } from "../../src/services/github-merge.js";
 import type { Actor } from "../../src/types/auth.js";
+import { MERGE_RESERVATION_TTL_MS } from "../../src/services/task-merge-reservation.js";
 
 const ACTOR: Actor = { type: "agent", tokenId: "agent-1", teamId: "team-1", userId: "owner", scopes: ["github:pr_merge"] };
 const TASK: MergeTask = {
@@ -101,5 +102,41 @@ describe("beforeGithubMerge", () => {
 
     expect(result.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("merge PUT timeout and unknown outcome", () => {
+  it("sends the merge with an abort signal bounded by the timeout, which stays below the reservation lease", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+
+    await performPrMerge(TASK, "squash", ACTOR, null);
+
+    expect(timeout).toHaveBeenCalledWith(GITHUB_MERGE_TIMEOUT_MS);
+    const init = fetchMock.mock.calls[0]![1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(GITHUB_MERGE_TIMEOUT_MS).toBeGreaterThanOrEqual(30_000);
+    expect(GITHUB_MERGE_TIMEOUT_MS).toBeLessThanOrEqual(60_000);
+    expect(GITHUB_MERGE_TIMEOUT_MS).toBeLessThan(MERGE_RESERVATION_TTL_MS);
+    timeout.mockRestore();
+  });
+
+  it.each([
+    ["a timeout", () => new DOMException("The operation was aborted due to timeout", "TimeoutError")],
+    ["a reset connection", () => new TypeError("fetch failed")],
+  ])("marks the outcome unknown when the fetch ends with %s", async (_label, error) => {
+    fetchMock.mockRejectedValue(error());
+
+    const result = await performPrMerge(TASK, "squash", ACTOR, null);
+
+    expect(result).toMatchObject({ ok: false, error: "github_error", status: 502, outcomeUnknown: true });
+  });
+
+  it("does not mark a refusal GitHub answered as unknown", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ message: "Pull Request is not mergeable" }), { status: 405 }));
+
+    const result = await performPrMerge(TASK, "squash", ACTOR, null);
+
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty("outcomeUnknown");
   });
 });

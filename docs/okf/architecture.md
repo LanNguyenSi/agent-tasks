@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-10-06T04:42:30Z
+timestamp: 2026-10-06T09:28:57Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -53,11 +53,11 @@ outside the scope reaches the legacy creator even with a key
 header or the body `idempotencyKey`. The historical handlers are unchanged
 except for a target check at their effect boundary: with configuration
 enabled, `performPrMerge` checks the exact repository and PR number right
-before the GitHub merge call (`services/github-merge.ts:126`, shared by the
+before the GitHub merge call (`services/github-merge.ts:143`, shared by the
 GitHub merge route, task merge and the review, self-approve and work
 finishes; the merge reservation of `workflow-gates.md` is taken right after
 that check), and the legacy PR creator and commenter check the repository (and
-PR) they post to (`routes/github.ts:272`, `routes/github.ts:822`). The check
+PR) they post to (`routes/github.ts:272`, `routes/github.ts:840`). The check
 (`grounding-scope.ts:103`) refuses with `409 grounding_enrollment_required` a
 repository string that is not exactly canonical (`grounding-scope.ts:60`), an
 enforced repository, or a protected/`EXTERNAL_V1`/bound/held task's PR,
@@ -74,11 +74,11 @@ requesting task stores included, since an agent can set a task's PR number and
 repository. Everything is read in one statement
 driven by the enrollment and hold tables (`grounding-scope.ts:71`). With
 configuration enabled the three legacy writes are sent with
-`redirect: "manual"` (`backend/src/services/github-merge.ts:145`, `backend/src/routes/github.ts:287`,
-`backend/src/routes/github.ts:832`), and a GitHub redirect (a renamed or transferred
+`redirect: "manual"` (`backend/src/services/github-merge.ts:162`, `backend/src/routes/github.ts:287`,
+`backend/src/routes/github.ts:850`), and a GitHub redirect (a renamed or transferred
 repository) is answered with `409 github_redirect_refused` instead of being
-followed (`grounding-scope.ts:151`, `services/github-merge.ts:175`,
-`routes/github.ts:302`, `routes/github.ts:845`); the unconfigured app keeps
+followed (`grounding-scope.ts:151`, `services/github-merge.ts:195`,
+`routes/github.ts:302`, `routes/github.ts:863`); the unconfigured app keeps
 fetch's default redirect handling.
 `createApp` hands the check to every request (`backend/src/app.ts:47`,
 `backend/src/app.ts:59`); the unconfigured app hands none, so its handlers run

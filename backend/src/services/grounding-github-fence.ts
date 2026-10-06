@@ -6,6 +6,18 @@ export class GithubFenceError extends Error {
   constructor(message = "Repository operation conflicts with a durable fence") { super(message); }
 }
 
+/**
+ * True when a database error is the repository fence trigger refusing a write
+ * (`grounding_github_fence_conflict`, SQLSTATE 55000). Prisma wraps the raw
+ * error, so the name is matched in the message and in the error metadata.
+ */
+export function isGithubFenceConflict(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const { message, meta } = err as { message?: unknown; meta?: unknown };
+  const text = `${typeof message === "string" ? message : ""} ${meta === undefined ? "" : JSON.stringify(meta)}`;
+  return text.includes("grounding_github_fence_conflict");
+}
+
 /** GitHub identities are case insensitive. Invalid identities are never reservable. */
 export function canonicalGithubRepo(value: string): string {
   const repo = value.trim();

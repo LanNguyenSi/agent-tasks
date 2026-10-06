@@ -20,8 +20,8 @@
  *
  * Release: the post-merge status write clears the columns in the same write
  * that records the result (`MERGE_RESERVATION_CLEAR`), and the handler exit
- * releases whatever it still holds (`releaseMergeReservation`), which covers a
- * failed or refused merge and a lost post-merge write.
+ * releases it (`releaseMergeReservation`) after a refused merge or a lost
+ * post-merge write; an unknown GitHub outcome or a throw keeps it to the lease.
  *
  * Lease: `mergeReservedAt` is the lease start. A reservation older than
  * `MERGE_RESERVATION_TTL_MS` is treated as absent by every reader and writer
