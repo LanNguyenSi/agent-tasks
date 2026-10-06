@@ -24,27 +24,47 @@ name: Audit
 # Gate step outcomes (incident 2026-09-04: the registry's advisories/bulk
 # endpoint stopped answering for hours; npm's own client applies no
 # timeout to that call and just hangs). The gate step below has four
-# distinct outcomes, never conflated:
-#   - exit 0, CLEAN: the endpoint answered, no HIGH or CRITICAL advisory.
+# distinct outcomes, never conflated. It captures `npm audit
+# --audit-level=high --json` and hands the output to scripts/audit-gate.mjs
+# (dependency-free, self-test in scripts/audit-gate.test.mjs), which decides:
+#   - exit 0, CLEAN: the endpoint answered, no HIGH or CRITICAL advisory
+#     remains after the allowlist below. An advisory covered by an
+#     allowlist entry counts as clean; the entries used are printed.
 #   - exit 1, FINDINGS: the endpoint answered and returned a HIGH or
-#     CRITICAL advisory. Requires a vulnerability summary line, for
-#     example "1 high severity vulnerability" or npm's mixed-severity
-#     form "3 vulnerabilities (2 high, 1 critical)". A summary line
-#     wins over any outage-like text also present in the same log, so a
-#     real finding can never be misread as an outage.
-#   - exit 2, OUTAGE: no vulnerability summary, but an outage marker is
-#     present (registry error text, a DNS/connection failure, or the
-#     local timeout below firing). This is NOT an advisory finding; do
+#     CRITICAL advisory that no allowlist entry covers (listed per
+#     package), or an allowlist entry's reviewBy date is before today
+#     (UTC), even when the advisory is gone. A real report always wins
+#     over outage-like text elsewhere in the log, so a real finding can
+#     never be misread as an outage.
+#   - exit 2, OUTAGE: no audit report, but an outage marker is present
+#     (registry error text, a DNS/connection failure, or the local
+#     timeout below firing). This is NOT an advisory finding; do
 #     not silence it with `|| true`, the fix is to retry the job later
 #     once the endpoint is back.
-#   - exit 3, UNCLASSIFIED: npm audit failed but the log has neither a
-#     summary line nor an outage marker (for example a missing
-#     lockfile, or a wrong working-directory). Treated as a real
-#     failure, not silenced; read the log.
+#   - exit 3, UNCLASSIFIED: npm audit failed but the output is neither a
+#     report nor an outage marker (for example a missing lockfile, or a
+#     wrong working-directory), or the allowlist file is unreadable or
+#     malformed. Treated as a real failure, not silenced; read the log.
 # The report step below is bounded the same way (a step timeout plus an
 # internal `timeout`) so a hanging endpoint cannot eat the job's
 # timeout-minutes budget before this gate step, which does the actual
 # classification, ever gets to run.
+#
+# Allowlist (.github/audit-allowlist.json): the only way to except an
+# advisory that has no upstream fix. Each entry is { id, reason, reviewBy }
+# with an exact GHSA id (matched against the advisory url in npm's JSON,
+# never by severity or package name) and a YYYY-MM-DD review date; the
+# entry stops passing the gate the day after reviewBy, so a renewal needs
+# a commit with a recorded reason. reviewBy may lie at most 90 days after
+# today (UTC); a later date makes the allowlist malformed (exit 3, naming
+# the file and the id), so no exception can be parked for long. A package
+# counts as excepted only when every HIGH/CRITICAL advisory in its
+# dependency chain is allowlisted.
+# An entry that matches nothing in the tree only warns.
+# The gate script is vendored from depsight commit be8c7ea
+# (scripts/audit-gate.mjs); keep the copies in sync. The gate step runs
+# without a `shell:` key, so GitHub Actions executes it as `bash -e {0}`;
+# the step sets pipefail itself and guards the npm call with set +e/-e.
 
 on:
   pull_request:
@@ -73,10 +93,18 @@ jobs:
         # `|| true` either way.
         timeout-minutes: 2
         run: timeout 60s npm audit --no-fund || true
+      - name: audit gate self-test
+        # Dependency-free (node:test, no npm ci); runs the classifier
+        # against fixtures captured from this repo's own lockfile(s)
+        # before the gate step relies on it.
+        run: node --test scripts/audit-gate.test.mjs
       - name: npm audit gate (high/critical fail)
         # Per-step bound so a hanging endpoint cannot eat the whole job's
         # timeout-minutes budget; kept well under it.
         timeout-minutes: 5
+        env:
+          AUDIT_GATE_SCRIPT: ${{ github.workspace }}/scripts/audit-gate.mjs
+          AUDIT_ALLOWLIST: ${{ github.workspace }}/.github/audit-allowlist.json
         run: |
           set -o pipefail
 
@@ -87,69 +115,24 @@ jobs:
           # notice that case at all instead of running out the step budget.
           AUDIT_TIMEOUT_SECS=60
 
-          has_summary() {
-            # $1: path to captured npm audit output (stdout+stderr).
-            # A vulnerability summary line means the endpoint answered
-            # and returned a real report, for example "1 high severity
-            # vulnerability" or npm's mixed-severity form "3
-            # vulnerabilities (2 high, 1 critical)". Checked before any
-            # outage marker, so a real finding can never be misread as
-            # an outage, even if the log also happens to contain an
-            # outage-like word (e.g. a package literally named
-            # "network"). The count must be non-zero: a log that carries
-            # "found 0 vulnerabilities" next to some other error is not
-            # a finding. This parses npm's human-readable summary (same
-            # wording in npm 9, 10 and 11); if npm ever rewords it, the
-            # wording-independent alternative is `npm audit --json` and
-            # its .metadata.vulnerabilities counts.
-            grep -qE '[1-9][0-9]* vulnerabilit|[1-9][0-9]* (low|moderate|high|critical) severity' "$1"
-          }
+          OUT="$(mktemp)"
+          ERR="$(mktemp)"
+          trap 'rm -f "$OUT" "$ERR"' EXIT
 
-          has_outage_marker() {
-            # $1: path to captured npm audit output (stdout+stderr).
-            # Transient registry-side and network failures only. HTTP 4xx
-            # codes other than 429 (E401/E403/E404: credentials, scope,
-            # wrong registry URL) are deliberately NOT here; they fall
-            # through to the UNCLASSIFIED branch below, because "retry
-            # later" is the wrong advice for a configuration error.
-            grep -qE 'audit endpoint returned an error|Invalid package tree|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|ECONNRESET|EAI_AGAIN|socket hang up|ERR_SOCKET_TIMEOUT|network|E5[0-9]{2}|E429' "$1"
-          }
-
-          LOG="$(mktemp)"
-          trap 'rm -f "$LOG"' EXIT
-
-          # GitHub Actions runs `run:` steps as `bash -eo pipefail`;
+          # With no `shell:` key GitHub Actions runs `run:` steps as
+          # `bash -e {0}` (this step sets pipefail itself, above);
           # without this guard, `set -e` would kill the script right at
-          # this pipeline on any non-zero exit (findings, outage, or a
+          # this command on any non-zero exit (findings, outage, or a
           # timeout alike), before the classification below ever runs.
           set +e
-          timeout "${AUDIT_TIMEOUT_SECS}s" npm audit --audit-level=high --no-fund 2>&1 | tee "$LOG"
+          timeout "${AUDIT_TIMEOUT_SECS}s" npm audit --audit-level=high --no-fund --json >"$OUT" 2>"$ERR"
           STATUS=$?
           set -e
 
-          if [ "$STATUS" -eq 0 ]; then
-            echo "npm audit gate: endpoint answered, no HIGH or CRITICAL advisories."
-            exit 0
-          fi
+          # Keep npm's own diagnostics in the log; the classifier reads them too.
+          cat "$ERR" >&2
 
-          if [ "$STATUS" -eq 124 ]; then
-            # A hang produces zero output (npm never gets a chance to
-            # print anything before the local timeout kills it), so
-            # has_outage_marker would see an empty log; feed it an
-            # equivalent marker of our own so the classification below
-            # decides every non-zero path the same way.
-            echo "ERR_SOCKET_TIMEOUT: npm audit did not return within ${AUDIT_TIMEOUT_SECS}s" >> "$LOG"
-          fi
-
-          if has_summary "$LOG"; then
-            echo "::error::npm audit gate: HIGH or CRITICAL advisories reported (endpoint answered); read the report step above"
-            exit 1
-          fi
-
-          if has_outage_marker "$LOG"; then
-            echo "::error::npm audit gate: the audit endpoint did not answer (registry outage), this is NOT an advisory finding; retry the job later"
-            exit 2
-          fi
-
-          echo "::error::npm audit gate: npm audit failed with status ${STATUS} and produced neither a vulnerability summary nor an outage marker; check the log and the working-directory"
-          exit 3
+          # The classifier's exit code (0 CLEAN, 1 FINDINGS, 2 OUTAGE,
+          # 3 UNCLASSIFIED) is the step's exit code: under `set -e` a
+          # non-zero exit of the last command ends the step with that status.
+          node "$AUDIT_GATE_SCRIPT" --allowlist "$AUDIT_ALLOWLIST" --status "$STATUS" --stdout "$OUT" --stderr "$ERR"

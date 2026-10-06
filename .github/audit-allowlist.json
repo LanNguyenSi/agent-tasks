@@ -1,0 +1,9 @@
+{
+  "entries": [
+    {
+      "id": "GHSA-vfj7-8cjw-p6xm",
+      "reason": "braces 3.0.3 reaches the tree only as a dev dependency (frontend workspace: micromatch via fast-glob via @next/eslint-plugin-next under eslint-config-next), as shown by npm ls braces --all after npm ci in the root tree; npm audit offers no fix except an eslint-config-next major downgrade. Drop the entry once braces or micromatch ships a fix.",
+      "reviewBy": "2026-11-06"
+    }
+  ]
+}
