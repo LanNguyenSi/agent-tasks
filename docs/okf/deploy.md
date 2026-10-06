@@ -3,7 +3,7 @@ type: runbook
 title: "Deploy: no in-repo automation, prod is docker-compose"
 description: "ci.yml only tests and builds; deploy/verify is an external ops concern; prod runtime is db + one-shot Prisma db push + backend/frontend behind Traefik."
 tags: [deploy, docker-compose, ops, ci]
-timestamp: 2026-10-06T04:42:30Z
+timestamp: 2026-10-06T08:17:15Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
