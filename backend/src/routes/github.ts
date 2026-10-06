@@ -637,8 +637,9 @@ githubRouter.post(
         // The merge takes the task's merge reservation right before the
         // GitHub call (bound to the status and claims the gates above decided
         // from, so a review lock released since then refuses the merge) and
-        // this block gives it back whichever way the merge ends; see
-        // services/task-merge-reservation.ts.
+        // this block gives it back after a refused merge or a lost post-merge
+        // write, but keeps it until the lease lapses after an unknown GitHub
+        // outcome or a thrown handler; see services/task-merge-reservation.ts.
         const held: { reservation: MergeReservation | null } = { reservation: null };
         // Set when the GitHub call ended with an unknown outcome or the block
         // threw: GitHub may still merge, so the reservation lapses with its

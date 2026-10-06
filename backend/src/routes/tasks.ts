@@ -246,8 +246,10 @@ async function mergeInProgressIfLive(c: Context, taskId: string): Promise<Respon
  * claims the caller's gates decided from, so a lock released between the gate
  * and here refuses the merge instead of letting it land. The reservation is
  * remembered on the request and released when the request ends (the release
- * middleware below), so a failed or refused merge gives it back; the
- * post-merge write clears it in the same write that records the result.
+ * middleware below) after a refused merge or a lost post-merge write; it is
+ * kept until the lease lapses after an unknown GitHub outcome or a thrown
+ * handler; the post-merge write clears it in the same write that records the
+ * result.
  */
 function takeMergeReservation(
   c: Context,

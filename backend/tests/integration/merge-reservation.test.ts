@@ -541,7 +541,7 @@ describe("reserveTaskForMerge / releaseMergeReservation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The merge paths: reserve before the GitHub call, release on every exit.
+// The merge paths: reserve before the GitHub call; released after a refused merge or a lost post-merge write, kept until the lease lapses after an unknown GitHub outcome or a thrown handler.
 // ---------------------------------------------------------------------------
 
 type ReservationColumns = { mergeReservedAt: Date | null; mergeReservedByUserId: string | null; mergeReservedByAgentId: string | null };
@@ -733,6 +733,22 @@ describe.each(MERGE_PATHS)("$name reserves the task for the merge", (path) => {
     expect(github.githubCalls).toBe(0);
     expect(await reservationOf(taskId)).toMatchObject(NO_RESERVATION);
     expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).not.toBe("done");
+  });
+
+  it("a reservation kept after an unknown outcome stops blocking once its lease lapses: the next merge proceeds", async () => {
+    const { taskId } = await path.seed();
+    github.answer = { ok: false, error: "github_error", message: "GitHub API unreachable: timeout", status: 502, outcomeUnknown: true };
+    expect((await path.run(taskId)).status).toBe(502);
+    const kept = await reservationOf(taskId);
+    expect(kept.mergeReservedAt).not.toBeNull();
+    // Lease lapses.
+    await db.task.update({ where: { id: taskId }, data: { mergeReservedAt: new Date(kept.mergeReservedAt!.getTime() - MERGE_RESERVATION_TTL_MS - 1000) } });
+    github.answer = { ok: true, sha: "deadbeef", alreadyMerged: false };
+    const second = await path.run(taskId);
+    expect(second.status).toBe(path.okStatus);
+    expect(github.githubCalls).toBe(2);
+    expect(await reservationOf(taskId)).toMatchObject(NO_RESERVATION);
+    expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("done");
   });
 
   it("gives the reservation back when the post-merge write loses (the task moved after the lease): merged_but_status_changed", async () => {
