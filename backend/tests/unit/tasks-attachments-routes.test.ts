@@ -19,7 +19,7 @@ import {
 
 const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
-  taskDelete: vi.fn(),
+  taskDeleteMany: vi.fn(),
   attachmentFindUnique: vi.fn(),
   attachmentFindMany: vi.fn(),
   attachmentCreate: vi.fn(),
@@ -31,7 +31,7 @@ const prismaMocks = vi.hoisted(() => ({
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
-    task: { findUnique: prismaMocks.taskFindUnique, delete: prismaMocks.taskDelete },
+    task: { findUnique: prismaMocks.taskFindUnique, deleteMany: prismaMocks.taskDeleteMany },
     project: { findUnique: prismaMocks.projectFindUnique },
     taskAttachment: {
       findUnique: prismaMocks.attachmentFindUnique,
@@ -127,7 +127,7 @@ beforeEach(() => {
   fsMocks.unlink.mockResolvedValue(undefined);
   fsMocks.readFile.mockResolvedValue(Buffer.from(PNG));
   prismaMocks.taskFindUnique.mockResolvedValue(task);
-  prismaMocks.taskDelete.mockResolvedValue(task);
+  prismaMocks.taskDeleteMany.mockResolvedValue({ count: 1 });
   prismaMocks.attachmentFindMany.mockResolvedValue([]);
   // Default: no per-project overrides, no existing attachments (cap checks pass).
   prismaMocks.projectFindUnique.mockResolvedValue({ attachmentCountCap: null, attachmentBytesCap: null });
@@ -640,7 +640,7 @@ describe("DELETE /tasks/:id — attachment file cleanup", () => {
     ]);
     const res = await makeApp(HUMAN).request("/tasks/task-1", { method: "DELETE" });
     expect(res.status).toBe(200);
-    expect(prismaMocks.taskDelete).toHaveBeenCalledWith({ where: { id: "task-1" } });
+    expect(prismaMocks.taskDeleteMany).toHaveBeenCalledWith({ where: expect.objectContaining({ id: "task-1", AND: expect.any(Array) }) });
     expect(fsMocks.unlink).toHaveBeenCalledTimes(1);
   });
 });

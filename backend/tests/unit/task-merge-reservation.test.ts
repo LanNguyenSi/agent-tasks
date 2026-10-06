@@ -93,7 +93,7 @@ describe("composition with an AND the writer already carries", () => {
 
   it("withNoLiveMergeReservation keeps the writer's own AND next to the predicate", () => {
     const where = withNoLiveMergeReservation({ id: "t", AND: [OWN] }, NOW);
-    expect(where.AND).toEqual([OWN, noLiveMergeReservation(NOW)]);
+    expect(where.AND).toEqual([OWN, ...(noLiveMergeReservation(NOW).AND as unknown[])]);
     expect(where.id).toBe("t");
   });
 
@@ -108,6 +108,7 @@ describe("composition with an AND the writer already carries", () => {
     // The predicate is there too (the AND key was not overwritten by either side).
     expect(and).toHaveLength(2);
     expect(JSON.stringify(and[1])).toContain("mergeReservedAt");
+    expect(JSON.stringify(and)).not.toContain('"AND"');
     expect(where).toMatchObject({ id: "t", status: "review", statusVersion: 3, result: null });
   });
 });

@@ -75,8 +75,13 @@ export function mergeReservationLeaseCutoff(now: Date): Date {
  */
 export function andWhere(base: Prisma.TaskWhereInput, ...clauses: Prisma.TaskWhereInput[]): Prisma.TaskWhereInput {
   const { AND, ...rest } = base;
-  const existing = AND === undefined ? [] : Array.isArray(AND) ? AND : [AND];
-  return { ...rest, AND: [...existing, ...clauses] };
+  const asList = (value: Prisma.TaskWhereInput["AND"]) => (value === undefined ? [] : Array.isArray(value) ? value : [value]);
+  // A clause that is only an AND is spliced in, so the result is one flat AND list.
+  const added = clauses.flatMap((clause) => {
+    const keys = Object.keys(clause);
+    return keys.length === 1 && keys[0] === "AND" ? asList(clause.AND) : [clause];
+  });
+  return { ...rest, AND: [...asList(AND), ...added] };
 }
 
 /**
