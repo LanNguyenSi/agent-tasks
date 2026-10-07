@@ -44,7 +44,11 @@ name: Audit
 #   - exit 3, UNCLASSIFIED: npm audit failed but the output is neither a
 #     report nor an outage marker (for example a missing lockfile, or a
 #     wrong working-directory), or the allowlist file is unreadable or
-#     malformed. Treated as a real failure, not silenced; read the log.
+#     malformed; or the report is inconsistent (its metadata HIGH plus
+#     CRITICAL tally disagrees with, or is missing against, its
+#     vulnerabilities map); or the classifier exited 0 without printing the
+#     `npm audit gate: CLEAN` line (checked by the step itself). Treated as
+#     a real failure, not silenced; read the log.
 # The report step below is bounded the same way (a step timeout plus an
 # internal `timeout`) so a hanging endpoint cannot eat the job's
 # timeout-minutes budget before this gate step, which does the actual
@@ -92,7 +96,24 @@ jobs:
         # classification, gets a chance to run; still non-blocking via
         # `|| true` either way.
         timeout-minutes: 2
-        run: timeout 60s npm audit --no-fund || true
+        run: |
+          # npm's output (stdout and stderr) is registry-influenced text.
+          # It is printed between ::stop-commands:: and its resume line,
+          # keyed by a per-run random token, so text in it cannot act as a
+          # workflow command. The token is generated here, never taken from
+          # event data. `|| true` keeps the step non-blocking.
+          TOKEN="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          # A failed od would leave an empty token, which the runner rejects
+          # without stopping commands: refuse to print npm output then.
+          if [ "${#TOKEN}" -ne 32 ]; then
+            echo "npm audit report: could not generate a stop-commands token" >&2
+            exit 1
+          fi
+          echo "::stop-commands::$TOKEN"
+          timeout 60s npm audit --no-fund 2>&1 || true
+          # Leading newline: npm output without a trailing newline must not
+          # swallow the resume line.
+          printf '\n::%s::\n' "$TOKEN"
       - name: audit gate self-test
         # Dependency-free (node:test, no npm ci); runs the classifier
         # against fixtures captured from this repo's own lockfile(s)
@@ -129,10 +150,28 @@ jobs:
           STATUS=$?
           set -e
 
-          # Keep npm's own diagnostics in the log; the classifier reads them too.
-          cat "$ERR" >&2
+          # npm's own diagnostics are printed by the classifier, sanitised
+          # like its own output (npm stderr is registry-influenced text and
+          # must not reach the log as a raw workflow command).
 
           # The classifier's exit code (0 CLEAN, 1 FINDINGS, 2 OUTAGE,
-          # 3 UNCLASSIFIED) is the step's exit code: under `set -e` a
-          # non-zero exit of the last command ends the step with that status.
-          node "$AUDIT_GATE_SCRIPT" --allowlist "$AUDIT_ALLOWLIST" --status "$STATUS" --stdout "$OUT" --stderr "$ERR"
+          # 3 UNCLASSIFIED) is the step's exit code. Its output is also kept
+          # so that exit 0 can be required to come with the CLEAN line: a
+          # missing script path exits 1 (MODULE_NOT_FOUND) on its own, but a
+          # path to a different existing file, or a `node --import` style
+          # invocation, exits 0 without classifying and must not pass. The
+          # status is captured inside a `set +e` guard so the pipe to tee
+          # cannot end the step early under -e.
+          GATE_LOG="$(mktemp)"
+          trap 'rm -f "$OUT" "$ERR" "$GATE_LOG"' EXIT
+          set +e
+          node "$AUDIT_GATE_SCRIPT" --allowlist "$AUDIT_ALLOWLIST" --status "$STATUS" --stdout "$OUT" --stderr "$ERR" | tee "$GATE_LOG"
+          GATE_STATUS="${PIPESTATUS[0]}"
+          set -e
+          if [ "$GATE_STATUS" -ne 0 ]; then
+            exit "$GATE_STATUS"
+          fi
+          if ! grep -q '^npm audit gate: CLEAN: ' "$GATE_LOG"; then
+            echo "::error::npm audit gate: the classifier exited 0 without printing the 'npm audit gate: CLEAN' line; treating as UNCLASSIFIED"
+            exit 3
+          fi
