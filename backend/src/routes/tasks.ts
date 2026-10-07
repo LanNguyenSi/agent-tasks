@@ -274,9 +274,9 @@ function takeMergeReservation(
 
 /**
  * `performPrMerge` with the request's merge reservation: when the GitHub call
- * ends with an unknown outcome (the fetch threw, was reset or timed out, so
- * GitHub may still complete the merge) the reservation is marked to be kept
- * until its lease lapses instead of being released at the end of the request.
+ * ends with an unknown outcome (fetch threw, reset, timed out, or GitHub
+ * answered 5xx: the merge may still land) the reservation is kept until its
+ * lease lapses instead of being released at the end of the request.
  */
 async function performReservedMerge(
   c: Context,

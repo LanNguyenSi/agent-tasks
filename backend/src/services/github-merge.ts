@@ -55,7 +55,7 @@ export type MergeResult =
       retryAfterSeconds?: number;
       /**
        * The merge request was sent but its outcome is unknown (the fetch threw,
-       * was reset or timed out): GitHub may still complete the merge. The caller
+       * was reset or timed out, or GitHub answered 5xx): GitHub may still complete the merge. The caller
        * keeps its merge reservation until the lease lapses instead of releasing it.
        */
       outcomeUnknown?: true;
@@ -258,6 +258,10 @@ export async function performPrMerge(
       error: "github_error",
       message: `GitHub API error: ${ghError.message ?? ghResponse.statusText}`,
       status: ghResponse.status,
+      // A 5xx answer (a 502 or 504 from a gateway in front of GitHub) does not
+      // say the merge did not happen: it may still land. A 4xx answer is a
+      // definite refusal and keeps releasing the reservation.
+      ...(ghResponse.status >= 500 ? { outcomeUnknown: true as const } : {}),
     };
   }
 

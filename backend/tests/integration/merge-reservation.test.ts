@@ -111,6 +111,12 @@ const github = vi.hoisted(() => ({
     | { ok: true; sha: string; alreadyMerged: boolean }
     | { ok: false; error: string; message: string; status: number; outcomeUnknown?: true },
   throws: null as Error | null,
+  /**
+   * When set, the stand-in runs the REAL `performPrMerge` against a stubbed
+   * `fetch` that answers this HTTP status, so the 5xx/4xx classification the
+   * handlers act on is the production one, not a canned answer.
+   */
+  realStatus: null as number | null,
 }));
 vi.mock("../../src/services/github-merge.js", () => ({ performPrMerge: github.performPrMerge }));
 vi.mock("../../src/services/github-delegation.js", () => ({
@@ -150,8 +156,9 @@ import { taskRouter } from "../../src/routes/tasks.js";
 import { githubRouter } from "../../src/routes/github.js";
 import { projectInviteAdminRouter } from "../../src/routes/invites.js";
 import { logAuditEvent } from "../../src/services/audit.js";
+import { findDelegationUser } from "../../src/services/github-delegation.js";
 import { reserveTaskForMerge } from "../../src/services/task-status-cas.js";
-import { MERGE_RESERVATION_TTL_MS, releaseMergeReservation } from "../../src/services/task-merge-reservation.js";
+import { MERGE_RESERVATION_TTL_MS, noLiveMergeReservation, releaseMergeReservation } from "../../src/services/task-merge-reservation.js";
 
 let store: Awaited<ReturnType<typeof groundingPostgres>>;
 let db: PrismaClient;
@@ -266,7 +273,22 @@ beforeEach(async () => {
   github.insideMerge = null;
   github.answer = { ok: true, sha: "deadbeef", alreadyMerged: false };
   github.throws = null;
-  github.performPrMerge.mockImplementation(async (_task, _method, _actor, _guard, beforeGithubMerge?: () => Promise<unknown>) => {
+  github.realStatus = null;
+  github.performPrMerge.mockImplementation(async (task, method, actor, guard, beforeGithubMerge?: () => Promise<unknown>) => {
+    if (github.realStatus !== null) {
+      const status = github.realStatus;
+      const real = await vi.importActual<typeof import("../../src/services/github-merge.js")>("../../src/services/github-merge.js");
+      vi.mocked(findDelegationUser).mockResolvedValue({ userId: reviewerId, login: "delegate", githubAccessToken: "ghp_x" } as never);
+      vi.stubGlobal("fetch", async () => {
+        github.githubCalls += 1;
+        return new Response(JSON.stringify({ message: `GitHub answered ${status}` }), { status });
+      });
+      try {
+        return await real.performPrMerge(task, method, actor, guard, beforeGithubMerge as never);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
     const refusal = beforeGithubMerge ? await beforeGithubMerge() : null;
     if (refusal) return refusal;
     github.githubCalls += 1;
@@ -304,6 +326,29 @@ beforeEach(async () => {
 // ---------------------------------------------------------------------------
 // The reservation itself: take, refuse, expire, release.
 // ---------------------------------------------------------------------------
+
+describe("noLiveMergeReservation against real rows", () => {
+  const now = new Date("2026-10-06T12:00:00.000Z");
+  const matches = async (taskId: string) =>
+    (await db.task.count({ where: { id: taskId, ...noLiveMergeReservation(now) } })) === 1;
+  const reservedAt = (at: Date | null) =>
+    seedTask({ mergeReservedAt: at, mergeReservedByUserId: at ? reviewerId : null });
+
+  it("matches a row without a reservation", async () => {
+    expect(await matches(await reservedAt(null))).toBe(true);
+  });
+
+  it("matches a row whose lease has lapsed, including the instant the lease is exactly one TTL old", async () => {
+    expect(await matches(await reservedAt(new Date(now.getTime() - MERGE_RESERVATION_TTL_MS - 1000)))).toBe(true);
+    expect(await matches(await reservedAt(new Date(now.getTime() - MERGE_RESERVATION_TTL_MS)))).toBe(true);
+  });
+
+  it("does not match a row whose lease is still live, however little of it is left", async () => {
+    expect(await matches(await reservedAt(new Date(now.getTime() - MERGE_RESERVATION_TTL_MS + 1)))).toBe(false);
+    expect(await matches(await reservedAt(new Date(now.getTime() - 1000)))).toBe(false);
+    expect(await matches(await reservedAt(now))).toBe(false);
+  });
+});
 
 describe("reserveTaskForMerge / releaseMergeReservation", () => {
   async function snapshotOf(taskId: string) {
@@ -714,6 +759,45 @@ describe.each(MERGE_PATHS)("$name reserves the task for the merge", (path) => {
     expect(Number(second.headers.get("Retry-After"))).toBe(body.retryAfterSeconds);
     expect(github.githubCalls).toBe(1);
   });
+
+  it.each([500, 502, 503, 504])(
+    "keeps the reservation when GitHub itself answers %i to the merge PUT (the merge may still land), and a second merge is refused",
+    async (status) => {
+      const { taskId, holderUserId, holderAgentId } = await path.seed();
+      github.realStatus = status;
+
+      const res = await path.run(taskId);
+
+      expect(res.status).toBe(status);
+      const held = await reservationOf(taskId);
+      expect(held.mergeReservedAt).not.toBeNull();
+      expect(held.mergeReservedByUserId).toBe(holderUserId);
+      expect(held.mergeReservedByAgentId).toBe(holderAgentId);
+      expect(releases.found).toEqual([]);
+      expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).not.toBe("done");
+
+      const second = await path.run(taskId);
+
+      expect(second.status).toBe(409);
+      expect(((await second.json()) as { error: string }).error).toBe("merge_in_progress");
+      expect(github.githubCalls).toBe(1);
+    },
+  );
+
+  it.each([400, 403, 404, 405, 409, 422])(
+    "still gives the reservation back when GitHub answers the definite refusal %i",
+    async (status) => {
+      const { taskId } = await path.seed();
+      github.realStatus = status;
+
+      const res = await path.run(taskId);
+
+      expect(res.status).toBe(status);
+      expect(await reservationOf(taskId)).toMatchObject(NO_RESERVATION);
+      expect(releases.found).toEqual([1]);
+      expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).not.toBe("done");
+    },
+  );
 
   it("answers a documented 409 grounding_github_fence_conflict, not 500, when the reservation write hits an active repository fence", async () => {
     const { taskId } = await path.seed();

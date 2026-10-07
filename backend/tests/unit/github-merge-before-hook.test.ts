@@ -131,6 +131,31 @@ describe("merge PUT timeout and unknown outcome", () => {
     expect(result).toMatchObject({ ok: false, error: "github_error", status: 502, outcomeUnknown: true });
   });
 
+  it.each([500, 502, 503, 504, 599])("marks the outcome unknown when GitHub answers %i, and keeps that status", async (status) => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ message: "Bad Gateway" }), { status }));
+
+    const result = await performPrMerge(TASK, "squash", ACTOR, null);
+
+    expect(result).toMatchObject({ ok: false, error: "github_error", status, outcomeUnknown: true });
+  });
+
+  it.each([400, 401, 403, 404, 405, 409, 422])("does not mark the definite refusal %i as unknown", async (status) => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ message: "refused" }), { status }));
+
+    const result = await performPrMerge(TASK, "squash", ACTOR, null);
+
+    expect(result).toMatchObject({ ok: false, error: "github_error", status });
+    expect(result).not.toHaveProperty("outcomeUnknown");
+  });
+
+  it("a 5xx answer with an unreadable body is still an unknown outcome", async () => {
+    fetchMock.mockResolvedValue(new Response("<html>bad gateway</html>", { status: 502 }));
+
+    const result = await performPrMerge(TASK, "squash", ACTOR, null);
+
+    expect(result).toMatchObject({ ok: false, status: 502, outcomeUnknown: true });
+  });
+
   it("does not mark a refusal GitHub answered as unknown", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ message: "Pull Request is not mergeable" }), { status: 405 }));
 
