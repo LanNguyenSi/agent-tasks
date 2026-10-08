@@ -865,9 +865,9 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
         where: {
           ...countWhere,
           priority: { in: ["HIGH", "CRITICAL"] },
-          // Unpromoted backlog drafts are not actionable work; keep this in
-          // sync with the frontend's isPriorityTask (home/widgetFilters.ts).
-          status: { notIn: ["done", "backlog"] },
+          // Actionable statuses only (no done, abandoned or backlog draft); keep in
+          // sync with isPriorityTask (home/widgetFilters.ts) and /tasks scope=priority.
+          status: { in: ["open", "in_progress", "review"] },
         },
       }),
       prisma.task.count({
