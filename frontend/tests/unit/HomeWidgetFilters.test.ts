@@ -6,9 +6,10 @@
  *   - isBacklogTask matches only status "backlog". This is the assertion
  *     the task's mutation probe (swapping the status the Backlog widget
  *     filters on) is expected to turn red.
- *   - isPriorityTask matches HIGH/CRITICAL priority tasks that are neither
- *     done nor backlog (backlog drafts aren't actionable until promoted;
- *     they surface in their own widget instead).
+ *   - isPriorityTask matches HIGH/CRITICAL priority tasks whose status is
+ *     actionable (open, in_progress, review): done and abandoned tasks are
+ *     finished, and backlog drafts aren't actionable until promoted (they
+ *     surface in their own widget instead).
  */
 import { describe, it, expect } from "vitest";
 import { isBacklogTask, isPriorityTask } from "../../src/app/home/widgetFilters";
@@ -42,6 +43,19 @@ describe("isPriorityTask", () => {
   it("excludes a backlog task even at HIGH/CRITICAL priority (unpromoted drafts have their own widget)", () => {
     expect(isPriorityTask({ priority: "HIGH", status: "backlog" })).toBe(false);
     expect(isPriorityTask({ priority: "CRITICAL", status: "backlog" })).toBe(false);
+  });
+
+  it("excludes an abandoned task even at HIGH/CRITICAL priority", () => {
+    expect(isPriorityTask({ priority: "HIGH", status: "abandoned" })).toBe(false);
+    expect(isPriorityTask({ priority: "CRITICAL", status: "abandoned" })).toBe(false);
+  });
+
+  it("matches a HIGH-priority task in review", () => {
+    expect(isPriorityTask({ priority: "HIGH", status: "review" })).toBe(true);
+  });
+
+  it("excludes a status outside the actionable set", () => {
+    expect(isPriorityTask({ priority: "CRITICAL", status: "some_future_status" })).toBe(false);
   });
 
   it("excludes a MEDIUM/LOW priority task regardless of status", () => {

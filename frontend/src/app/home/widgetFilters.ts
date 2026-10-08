@@ -10,13 +10,17 @@ export function isBacklogTask(t: Pick<Task, "status">): boolean {
   return t.status === "backlog";
 }
 
+/** Statuses that count as actionable work on the /home dashboard. */
+const ACTIONABLE_STATUSES: ReadonlySet<string> = new Set(["open", "in_progress", "review"]);
+
 /**
- * High/critical priority AND actionable: excludes done (already finished)
- * and backlog (not yet promoted, so not actionable work). Backlog tasks
- * surface in their own widget instead.
+ * High/critical priority AND actionable: only open, in-progress or in-review
+ * tasks. Done and abandoned tasks are finished, and backlog drafts are not
+ * promoted yet (they surface in their own widget instead).
  */
 // Kept in sync with the backend priorityCount query (routes/tasks.ts,
-// counts.priority): both exclude done and unpromoted backlog drafts.
+// counts.priority) and the /tasks scope=priority preset: all three use
+// this status allowlist.
 export function isPriorityTask(t: Pick<Task, "priority" | "status">): boolean {
-  return (t.priority === "CRITICAL" || t.priority === "HIGH") && t.status !== "done" && !isBacklogTask(t);
+  return (t.priority === "CRITICAL" || t.priority === "HIGH") && ACTIONABLE_STATUSES.has(t.status);
 }
