@@ -56,6 +56,13 @@ const transitionStatusEnum = z.enum([
   "review",
   "done",
 ]);
+// The values templateData.taskType accepts. The backend owns the enum
+// (taskTypeSchema in backend/src/lib/confidence.ts); this package cannot
+// import it at runtime, so tests/task-type-parity.test.ts pins this list to
+// the backend schema and fails on drift.
+export const TASK_TYPE_VALUES = ["bugfix", "feature", "refactoring", "security", "migration", "docs"] as const;
+const TASK_TYPE_LIST = TASK_TYPE_VALUES.join(", ");
+
 const priorityEnum = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 
 const uuid = () => z.string().uuid();
@@ -491,7 +498,7 @@ export function buildTools(
           .record(z.string(), z.unknown())
           .optional()
           .describe(
-            "Structured spec fields, forwarded to the backend which validates + scores them: goal, acceptanceCriteria (the task's evals), context, constraints, scope, outOfScope, dependencies, risk, agentPrompt, taskType, and prefers { testBeforeImplementation, verticalSlices, smallDiffs, explicitStopConditions, noSpeculativeRefactoring }. Populate goal + acceptanceCriteria at minimum so the task is executable.",
+            "Structured spec fields, forwarded to the backend which validates + scores them: goal, acceptanceCriteria (the task's evals), context, constraints, scope, outOfScope, dependencies, risk, agentPrompt, taskType (one of: " + TASK_TYPE_LIST + "), and prefers { testBeforeImplementation, verticalSlices, smallDiffs, explicitStopConditions, noSpeculativeRefactoring }. Populate goal + acceptanceCriteria at minimum so the task is executable.",
           ),
         deliverableRepo: z
           .string()
@@ -576,7 +583,7 @@ export function buildTools(
           .record(z.string(), z.unknown())
           .optional()
           .describe(
-            "Replacement structured spec fields (same shape as task_create's templateData: goal, acceptanceCriteria, context, constraints, scope, outOfScope, dependencies, risk, agentPrompt, taskType, prefers). This WHOLESALE REPLACES the task's stored templateData — it is not merged with the existing value. Backend rejects an empty object with 400. At least one of description or templateData is required.",
+            "Replacement structured spec fields (same shape as task_create's templateData: goal, acceptanceCriteria, context, constraints, scope, outOfScope, dependencies, risk, agentPrompt, taskType (one of: " + TASK_TYPE_LIST + "), prefers). This WHOLESALE REPLACES the task's stored templateData — it is not merged with the existing value. Backend rejects an empty object with 400. At least one of description or templateData is required.",
           ),
         include: includeSchema,
       },

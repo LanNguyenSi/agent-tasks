@@ -1500,6 +1500,13 @@ function summarizeZodIssue(issue: unknown): Record<string, unknown> {
   }
   if (typeof i.code === "string") entry.code = clamp(i.code, GENERIC_ISSUE_ENTRY_CHAR_BUDGET);
   if (typeof i.message === "string") entry.message = clamp(i.message, GENERIC_ISSUE_ENTRY_CHAR_BUDGET);
+  // A zod enum mismatch carries the allowed values in `options`; the clamped
+  // message above cuts them off ("Expected 'bugfix'..."), so surface them as
+  // one joined string (one clamped level, within the detail depth guard).
+  if (i.code === "invalid_enum_value" && Array.isArray(i.options)) {
+    const allowed = i.options.filter((o): o is string => typeof o === "string").join("|");
+    if (allowed.length > 0) entry.allowed = clamp(allowed, DETAIL_ENTRY_CHAR_BUDGET);
+  }
   return entry;
 }
 
