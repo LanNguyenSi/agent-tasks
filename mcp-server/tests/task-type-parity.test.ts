@@ -54,8 +54,14 @@ describe("invalid taskType 400 on the wire", () => {
     expect(taskTypeSchema.options).toHaveLength(6);
   });
 
-  it("marks a non-string enum option with a visible placeholder", () => {
+  it("renders a numeric enum option as its number", () => {
     const wire = { success: false, error: { issues: [{ code: "invalid_enum_value", path: ["n"], options: ["a", 2, "b"], message: "bad" }] } };
+    const mapped = mapBackendError(400, wire) as unknown as { error: { detail?: { issues?: Array<Record<string, unknown>> } } };
+    expect(mapped.error.detail?.issues?.[0]?.allowed).toBe("a|2|b");
+  });
+
+  it("marks any other non-string enum option with a visible placeholder", () => {
+    const wire = { success: false, error: { issues: [{ code: "invalid_enum_value", path: ["n"], options: ["a", { x: 1 }, "b"], message: "bad" }] } };
     const mapped = mapBackendError(400, wire) as unknown as { error: { detail?: { issues?: Array<Record<string, unknown>> } } };
     expect(mapped.error.detail?.issues?.[0]?.allowed).toBe("a|?|b");
   });
