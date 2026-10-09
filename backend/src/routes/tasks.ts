@@ -115,6 +115,7 @@ import {
 } from "../services/task-merge-reservation.js";
 import { writeStatusAfterMerge } from "../services/task-merge-status-write.js";
 import { emitForceTransitionedSignal } from "../services/force-transition-signal.js";
+import type { GateProject, GateTask } from "../services/review-gate.js";
 import {
   checkDistinctReviewerGate,
   checkReviewApprovalGate,
@@ -7253,9 +7254,10 @@ taskRouter.post(
 // 409 so the admin sees that nothing happened. The target must be in the
 // project's eligible-actors set (services/eligible-actors.ts). The agent
 // single-active-claim rule is mirrored for an agent target (humans are
-// exempt, as on /tasks/pickup and /tasks/:id/start), and a review claim may
-// not be handed to the work claimant when the project requires a distinct
-// reviewer (the same checkDistinctReviewerGate the review-claim routes use).
+// exempt, as on /tasks/pickup and /tasks/:id/start), and when the project
+// requires a distinct reviewer the review claim may not be handed to the work
+// claimant nor the work claim to the review holder (the same
+// checkDistinctReviewerGate the review-claim routes use).
 //
 // Response: { task: <standard taskInclude row>, reassigned: { claim,
 // priorHolder, newHolder } }.
@@ -7320,10 +7322,15 @@ taskRouter.post(
       );
     }
 
-    // Distinct reviewer: the review claim may not go to the work claimant.
-    // Reuses the claim-time gate with the target standing in as the actor.
-    if (!isWork && !checkDistinctReviewerGate(task, targetAsGateActor(target), task.project).allowed) {
-      return conflict(c, "This project requires a distinct reviewer: the review claim cannot be reassigned to the task's work claimant");
+    // Distinct reviewer: the review claim may not go to the work claimant,
+    // and the work claim may not go to the current review holder.
+    if (reassignBreaksDistinctReviewer(isWork, task, target)) {
+      return conflict(
+        c,
+        isWork
+          ? "This project requires a distinct reviewer: the work claim cannot be reassigned to the task's current reviewer"
+          : "This project requires a distinct reviewer: the review claim cannot be reassigned to the task's work claimant",
+      );
     }
 
     const mutation = await mutateGroundingRouteContext(prisma, {
@@ -7333,7 +7340,7 @@ taskRouter.post(
         // The target may have been removed or its token revoked since the check above.
         const eligibleNow = await listEligibleActors(lockedTask.projectId, db);
         if (!eligibleNow || !isEligibleTarget(eligibleNow, target)) throw new GroundingAccessError("bad_state", 409);
-        if (!isWork && !checkDistinctReviewerGate(lockedTask, targetAsGateActor(target), lockedTask.project).allowed) {
+        if (reassignBreaksDistinctReviewer(isWork, lockedTask, target)) {
           throw new GroundingAccessError("bad_state", 409);
         }
       },
@@ -7395,10 +7402,8 @@ taskRouter.post(
       return conflictOrMergeInProgress(c, task.id, "The claim changed hands before the reassignment completed; reload and retry");
     }
 
-    // updateMany cannot use `include`, so re-fetch the reassigned row.
-    const updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
-    if (!updated) return notFound(c);
-
+    // Audit before the re-fetch so a row that vanished in between still
+    // leaves the event for a write that did commit.
     void logAuditEvent({
       action: "task.claim_reassigned",
       actorId: actor.userId,
@@ -7406,6 +7411,10 @@ taskRouter.post(
       taskId: task.id,
       payload: { claim: body.claim, priorHolder, newHolder: target, reason: body.reason ?? null },
     });
+
+    // updateMany cannot use `include`, so re-fetch the reassigned row.
+    const updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
+    if (!updated) return notFound(c);
 
     return c.json({ task: updated, reassigned: { claim: body.claim, priorHolder, newHolder: target } });
   },
@@ -7415,6 +7424,28 @@ function isEligibleTarget(eligible: EligibleActors, target: ReassignHolder): boo
   return target.type === "human"
     ? eligible.humans.some((h) => h.userId === target.id)
     : eligible.agents.some((a) => a.tokenId === target.id);
+}
+
+/**
+ * True when handing `claim` to `target` would break the project's distinct
+ * reviewer rule: the review claim to the work claimant, or the work claim to
+ * the current review holder. Both directions run the claim-time gate; for the
+ * work claim the review holder stands in as the gate's claimant, so the gate
+ * stays the single place that knows when the rule applies.
+ */
+function reassignBreaksDistinctReviewer(
+  isWork: boolean,
+  task: GateTask & { project: GateProject },
+  target: ReassignHolder,
+): boolean {
+  const gateTask: GateTask = isWork
+    ? {
+        ...task,
+        claimedByUserId: task.reviewClaimedByUserId,
+        claimedByAgentId: task.reviewClaimedByAgentId,
+      }
+    : task;
+  return !checkDistinctReviewerGate(gateTask, targetAsGateActor(target), task.project).allowed;
 }
 
 /** The target as the Actor shape the distinct-reviewer gate reads (type and id only). */

@@ -266,12 +266,16 @@ describe("POST /tasks/:id/admin-reassign against Postgres", () => {
 
   it("does not count the task being reassigned as the agent's other claim", async () => {
     const agentId = await seedToken();
-    const taskId = await seedTask({ status: "review", claimedByUserId: memberId, reviewClaimedByUserId: memberTwoId, reviewClaimedAt: new Date(), claimedByAgentId: null });
+    // The agent holds the review claim on this very task and nothing else; the
+    // work claim moves to it. Without the exclusion of the task being moved,
+    // the agent's own review claim here would read as "another active claim".
+    const taskId = await seedTask({ status: "review", claimedByUserId: memberId, claimedAt: new Date(), reviewClaimedByAgentId: agentId, reviewClaimedAt: new Date() });
     await db.project.update({ where: { id: projectId }, data: { governanceMode: "AUTONOMOUS", requireDistinctReviewer: false, soloMode: true } });
-    // The agent's only claim would be this very task.
-    const res = await reassign(actorOf(adminId), taskId, { claim: "review", target: { type: "agent", id: agentId } });
+    const res = await reassign(actorOf(adminId), taskId, { claim: "work", target: { type: "agent", id: agentId } });
     expect(res.status).toBe(200);
-    expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).reviewClaimedByAgentId).toBe(agentId);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.claimedByAgentId).toBe(agentId);
+    expect(row.reviewClaimedByAgentId).toBe(agentId);
   });
 
   it("refuses to hand the review claim to the work claimant when a distinct reviewer is required, and allows it otherwise", async () => {
@@ -284,6 +288,27 @@ describe("POST /tasks/:id/admin-reassign against Postgres", () => {
     const allowed = await reassign(actorOf(adminId), taskId, { claim: "review", target: { type: "human", id: memberId } });
     expect(allowed.status).toBe(200);
     expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).reviewClaimedByUserId).toBe(memberId);
+  });
+
+  it("refuses to hand the work claim to the current review holder when a distinct reviewer is required, and allows it otherwise", async () => {
+    const reviewerAgent = await seedToken();
+    const taskId = await seedTask({ status: "review", claimedByUserId: memberId, claimedAt: new Date(), reviewClaimedByUserId: memberTwoId, reviewClaimedAt: new Date() });
+    const refused = await reassign(actorOf(adminId), taskId, { claim: "work", target: { type: "human", id: memberTwoId } });
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { message: string }).message).toMatch(/distinct reviewer/);
+    expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).claimedByUserId).toBe(memberId);
+
+    // An agent review holder is refused the work claim too.
+    const agentReviewed = await seedTask({ status: "review", claimedByUserId: memberId, claimedAt: new Date(), reviewClaimedByAgentId: reviewerAgent, reviewClaimedAt: new Date() });
+    const refusedAgent = await reassign(actorOf(adminId), agentReviewed, { claim: "work", target: { type: "agent", id: reviewerAgent } });
+    expect(refusedAgent.status).toBe(409);
+    expect((await db.task.findUniqueOrThrow({ where: { id: agentReviewed } })).claimedByUserId).toBe(memberId);
+    expect(logAuditEvent).not.toHaveBeenCalled();
+
+    await db.project.update({ where: { id: projectId }, data: { governanceMode: "AUTONOMOUS", requireDistinctReviewer: false, soloMode: true } });
+    const allowed = await reassign(actorOf(adminId), taskId, { claim: "work", target: { type: "human", id: memberTwoId } });
+    expect(allowed.status).toBe(200);
+    expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).claimedByUserId).toBe(memberTwoId);
   });
 
   it("409s for a claim with no holder and for a target that already holds it, writing nothing", async () => {

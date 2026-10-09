@@ -347,6 +347,17 @@ describe("POST /tasks/:id/admin-reassign: reassigning claims", () => {
     });
   });
 
+  it("still audits a committed reassignment when the re-fetch finds the row gone, and answers 404", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(fresh({ status: "in_progress", claimedByAgentId: "agent-77" }))
+      .mockResolvedValueOnce(null);
+    const res = await postReassign(ADMIN, { claim: "work", target: { type: "human", id: "user-2" } });
+    expect(res.status).toBe(404);
+    expect(prismaMocks.taskUpdateMany).toHaveBeenCalledTimes(1);
+    expect(logAuditEventMock).toHaveBeenCalledTimes(1);
+    expect(logAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({ action: "task.claim_reassigned", taskId: TASK_ID }));
+  });
+
   it("hands a review claim from a HUMAN to an AGENT: review columns only, work claim untouched, audited with a null reason", async () => {
     prismaMocks.taskFindUnique
       .mockResolvedValueOnce(fresh({ status: "review", claimedByUserId: "user-3", reviewClaimedByUserId: "user-2" }))
@@ -499,7 +510,47 @@ describe("POST /tasks/:id/admin-reassign: refused reassignments", () => {
       expect(res.status).toBe(200);
     });
 
-    it("does not apply to a work claim reassignment", async () => {
+    it("409s when the work claim would go to the task's current review holder (human), with no write", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValue(
+        fresh({ status: "review", project: DISTINCT_PROJECT, claimedByAgentId: "agent-77", reviewClaimedByUserId: "user-3" }),
+      );
+      const res = await postReassign(ADMIN, { claim: "work", target: { type: "human", id: "user-3" } });
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { message: string }).message).toMatch(/distinct reviewer.*work claim/);
+      expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+      expect(logAuditEventMock).not.toHaveBeenCalled();
+    });
+
+    it("409s when the work claim would go to the task's current review holder (agent), with no write", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValue(
+        fresh({ status: "review", project: DISTINCT_PROJECT, claimedByUserId: "user-2", reviewClaimedByAgentId: "agent-new" }),
+      );
+      const res = await postReassign(ADMIN, { claim: "work", target: { type: "agent", id: "agent-new" } });
+      expect(res.status).toBe(409);
+      expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("allows the work claim to go to the review holder when the project does not require a distinct reviewer", async () => {
+      prismaMocks.taskFindUnique.mockResolvedValue(
+        fresh({ status: "review", project: OPEN_PROJECT, claimedByAgentId: "agent-77", reviewClaimedByUserId: "user-3" }),
+      );
+      const res = await postReassign(ADMIN, { claim: "work", target: { type: "human", id: "user-3" } });
+      expect(res.status).toBe(200);
+    });
+
+    it("re-checks the work-claim direction inside the transaction against the locked row", async () => {
+      // The route loaded a task with no review holder; by the time the wrapper
+      // holds the lock, user-3 has taken the review claim.
+      const loaded = fresh({ status: "review", project: DISTINCT_PROJECT, claimedByAgentId: "agent-77", reviewClaimedByUserId: null });
+      prismaMocks.taskFindUnique.mockResolvedValue(loaded);
+      groundingMocks.locked.value = { ...loaded, reviewClaimedByUserId: "user-3" };
+      const res = await postReassign(ADMIN, { claim: "work", target: { type: "human", id: "user-3" } });
+      expect(res.status).toBe(409);
+      expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+      expect(logAuditEventMock).not.toHaveBeenCalled();
+    });
+
+    it("does not apply to a work claim reassignment to someone other than the review holder", async () => {
       prismaMocks.taskFindUnique.mockResolvedValue(
         fresh({ status: "review", project: DISTINCT_PROJECT, claimedByAgentId: "agent-77", reviewClaimedByUserId: "user-3" }),
       );

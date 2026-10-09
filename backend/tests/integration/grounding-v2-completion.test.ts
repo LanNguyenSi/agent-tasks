@@ -409,6 +409,48 @@ it("N-16 actual admin-reassign refusal (no holder) retains its active generation
   expect(await store.db.auditLog.count({ where: { taskId: f.taskId, action: "task.claim_reassigned" } })).toBe(0);
 });
 
+/** A second agent token on the fixture team, standing in as a reassignment target. */
+async function secondAgent() {
+  const id = randomUUID();
+  await store.db.agentToken.create({ data: { id, teamId: ids.team, createdById: ids.user, name: "Second", tokenHash: id, scopes: actor.scopes } });
+  return id;
+}
+
+it("N-16 actual admin-reassign refusal (target agent already holds another claim) retains its active generation and audits nothing", async () => {
+  await contextWriter("admin-reassign");
+  const busy = await secondAgent();
+  await store.db.task.create({ data: { id: randomUUID(), projectId: f.projectId, title: "Busy elsewhere", description: "d", status: "in_progress", claimedByAgentId: busy, createdByUserId: ids.user } });
+  const before = await snapshot();
+  const response = await app().fetch(request({ claim: "work", target: { type: "agent", id: busy } }, "admin-reassign", null, await createSessionToken(ids.user, "test-secret-which-is-long-enough-1234")));
+  expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "already_claimed", activeClaim: { role: "author" } });
+  expect(await snapshot()).toEqual(before);
+  expect(await store.db.auditLog.count({ where: { projectId: f.projectId, action: "project.grounding.context_mutated" } })).toBe(0);
+  expect(await store.db.auditLog.count({ where: { taskId: f.taskId, action: "task.claim_reassigned" } })).toBe(0);
+});
+
+it("N-16 actual admin-reassign refusal (lost holder-pinned write) retains its active generation and audits nothing", async () => {
+  await contextWriter("admin-reassign");
+  const before = await snapshot();
+  // The work claim changes hands right after the route first loads the task, so
+  // the write pinned to the observed holder matches nothing.
+  const original = store.db.task.findUnique.bind(store.db.task);
+  let moved = false;
+  const spy = vi.spyOn(store.db.task, "findUnique").mockImplementation(((...args: Parameters<typeof original>) => {
+    const result = original(...args);
+    if (moved) return result;
+    moved = true;
+    return (async () => { const row = await result; await store.db.task.update({ where: { id: f.taskId }, data: { claimedByAgentId: null, claimedByUserId: ids.user } }); return row; })();
+  }) as never);
+  let response: Response;
+  try { response = await app().fetch(request({ claim: "work", target: { type: "human", id: ids.user } }, "admin-reassign", null, await createSessionToken(ids.user, "test-secret-which-is-long-enough-1234"))); } finally { spy.mockRestore(); }
+  expect(moved).toBe(true);
+  expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "conflict" });
+  const after = await snapshot();
+  expect(after).toEqual({ ...before, task: expect.objectContaining({ claimedByAgentId: null, claimedByUserId: ids.user, claimedAt: before.task!.claimedAt }) });
+  expect(await store.db.auditLog.count({ where: { projectId: f.projectId, action: "project.grounding.context_mutated" } })).toBe(0);
+  expect(await store.db.auditLog.count({ where: { taskId: f.taskId, action: "task.claim_reassigned" } })).toBe(0);
+});
+
 // finalDisposition on the grounded paths that reach abandoned or leave it. The
 // real telemetry writers replace the mocks here so the row is observable; each
 // writer records the task status it saw, which proves it ran after the status
