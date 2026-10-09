@@ -4,6 +4,7 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+- The `allowed` list in a generic 400 enum detail now renders a numeric enum option as its number (for example `a|2|b`); only other non-string options still render as `?`. A backend unit test pins the `templateData` request-body key on the task create and respec schemas, so renaming it fails a test instead of silently breaking the mcp-server's `templateData.*` error paths. Tracker task 8caceafb.
 - The `allowed` list in a generic 400 enum detail renders a non-string enum option as `?` instead of dropping it, so the list is never silently partial. `tests/task-type-parity.test.ts` now also pins the JSON-serialized zValidator body for an invalid `templateData.taskType`. Tracker task 30c0fe08.
 - `task_create` and `task_respec` name the allowed `templateData.taskType` values (`bugfix`, `feature`, `refactoring`, `security`, `migration`, `docs`) in the `templateData` description. `tests/task-type-parity.test.ts` pins the list to the backend `taskTypeSchema`, so a backend change fails the test until the description follows. Tracker task feea2dbb.
 - The generic 400 degrade for a zod `invalid_enum_value` issue now carries the allowed values in an `allowed` field (joined with `|`), instead of leaving them in a message clamped to 40 characters.
