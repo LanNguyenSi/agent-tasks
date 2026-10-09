@@ -3,7 +3,7 @@ type: runbook
 title: "Reconciling a task whose PR merged but the record is stuck open"
 description: "Recover a configured merge with its original operation and exact GitHub proof; retain the separate historical task lifecycle repair flow."
 tags: [reconcile, task-lifecycle, idempotency, runbook]
-timestamp: 2026-10-09T20:23:19Z
+timestamp: 2026-10-09T20:47:30Z
 sources:
   - backend/src/routes/tasks.ts
   - backend/src/services/default-workflow.ts

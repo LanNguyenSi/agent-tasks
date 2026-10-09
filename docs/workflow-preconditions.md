@@ -305,8 +305,9 @@ compare-and-swap-guarded on the holder it observed, and it answers
 `admin-release` it has no idempotent no-op: a claim with no holder, or a
 target that already holds it, answers `409`. An agent target that already
 holds another active claim is refused with `409 already_claimed` (humans are
-exempt, as everywhere else), and a review claim cannot be handed to the work
-claimant when the project requires a distinct reviewer. Audited as
+exempt, as everywhere else), and when the project requires a distinct reviewer
+the review claim cannot be handed to the work claimant, nor the work claim to
+the review holder. Audited as
 `task.claim_reassigned` with `{ claim, priorHolder, newHolder, reason }`; the
 response is `{ task, reassigned: { claim, priorHolder, newHolder } }`.
 
