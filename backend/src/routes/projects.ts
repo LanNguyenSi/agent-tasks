@@ -17,6 +17,7 @@ import {
   getProjectMembership,
 } from "../services/team-access.js";
 import { logAuditEvent } from "../services/audit.js";
+import { listEligibleActors } from "../services/eligible-actors.js";
 import { unlink } from "node:fs/promises";
 import { storedFilePath } from "../services/attachment-files.js";
 import {
@@ -404,6 +405,29 @@ projectRouter.get("/projects/:id/effective-gates", async (c) => {
     effectiveGates: computeEffectiveGates(project),
     taskCreation: describeTaskCreation(project),
   });
+});
+
+// Who may hold a claim on this project: the candidate list for the admin claim
+// reassignment (POST /tasks/:id/admin-reassign, which validates its target
+// against this same set). Humans are the project's non-viewer members plus the
+// owning team's members; agents are the owning team's live tokens. Human
+// project admins only: it enumerates every member and token name of the
+// project, which an agent token or a plain member has no business reading.
+projectRouter.get("/projects/:id/eligible-actors", async (c) => {
+  const actor = c.get("actor");
+  const projectId = c.req.param("id");
+
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
+  if (!project) return notFound(c);
+
+  if (actor.type !== "human" || !(await isProjectAdmin(actor, projectId))) {
+    return forbidden(c, "Only project admins can list eligible claim holders");
+  }
+
+  const eligible = await listEligibleActors(projectId);
+  if (!eligible) return notFound(c);
+
+  return c.json(eligible);
 });
 
 // ── Calibration telemetry (M5, task 698eeb01) ───────────────────────────────

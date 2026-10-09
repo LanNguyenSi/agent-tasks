@@ -16,6 +16,7 @@ import {
   resolveTeamIdErrorBody,
   type ProjectRole,
 } from "../services/team-access.js";
+import { listEligibleActors, type EligibleActors } from "../services/eligible-actors.js";
 import { logAuditEvent } from "../services/audit.js";
 import { emitReviewSignal, emitChangesRequestedSignal, emitTaskApprovedSignal } from "../services/review-signal.js";
 import { emitTaskAvailableSignal } from "../services/task-signal.js";
@@ -7237,6 +7238,191 @@ taskRouter.post(
     return c.json({ task: updated, released });
   },
 );
+
+// ── Admin reassign: hand a work/review claim to a specific eligible actor ───
+//
+// Sibling of admin-release (which stays byte-identical: its { task, released }
+// response and idempotent no-op semantics are a contract the frontend depends
+// on). Human-project-admin-only. Moves the claim straight from its current
+// holder to a chosen human or agent, leaving task.status UNCHANGED, with the
+// same grounding wrapper, merge-reservation refusal and holder-pinned CAS as
+// admin-release.
+//
+// Unlike admin-release there is no idempotent no-op: reassigning a claim that
+// has no holder, or "reassigning" it to the actor that already holds it, is a
+// 409 so the admin sees that nothing happened. The target must be in the
+// project's eligible-actors set (services/eligible-actors.ts). The agent
+// single-active-claim rule is mirrored for an agent target (humans are
+// exempt, as on /tasks/pickup and /tasks/:id/start), and a review claim may
+// not be handed to the work claimant when the project requires a distinct
+// reviewer (the same checkDistinctReviewerGate the review-claim routes use).
+//
+// Response: { task: <standard taskInclude row>, reassigned: { claim,
+// priorHolder, newHolder } }.
+const adminReassignSchema = z.object({
+  claim: z.enum(["work", "review"]),
+  target: z.object({
+    type: z.enum(["human", "agent"]),
+    id: z.string().min(1).max(100),
+  }),
+  reason: z.string().max(500).optional(),
+});
+
+type ReassignHolder = { type: "human" | "agent"; id: string };
+
+type ReassignOutcome =
+  | { outcome: "reassigned" }
+  | { outcome: "already_claimed"; existing: { id: string; title: string; reviewClaimedByAgentId: string | null } }
+  | { outcome: "lost" };
+
+taskRouter.post(
+  "/tasks/:id/admin-reassign",
+  zValidator("json", adminReassignSchema),
+  async (c) => {
+    const actor = c.get("actor") as Actor;
+    if (actor.type !== "human") {
+      return forbidden(c, "Agents cannot admin-reassign claims");
+    }
+
+    const task = await prisma.task.findUnique({
+      where: { id: c.req.param("id") },
+      include: { project: true },
+    });
+    if (!task) return notFound(c);
+
+    if (!(await isProjectAdmin(actor, task.projectId))) {
+      return forbidden(c, "Only project admins can reassign another actor's claim");
+    }
+
+    const body = c.req.valid("json");
+    const target: ReassignHolder = body.target;
+    const isWork = body.claim === "work";
+
+    const priorHolder: ReassignHolder | null = isWork
+      ? task.claimedByUserId
+        ? { type: "human", id: task.claimedByUserId }
+        : task.claimedByAgentId ? { type: "agent", id: task.claimedByAgentId } : null
+      : task.reviewClaimedByUserId
+        ? { type: "human", id: task.reviewClaimedByUserId }
+        : task.reviewClaimedByAgentId ? { type: "agent", id: task.reviewClaimedByAgentId } : null;
+    if (!priorHolder) {
+      return conflict(c, `This task has no ${body.claim} claim to reassign`);
+    }
+    if (priorHolder.type === target.type && priorHolder.id === target.id) {
+      return conflict(c, `The target already holds this task's ${body.claim} claim`);
+    }
+
+    const eligible = await listEligibleActors(task.projectId);
+    if (!eligible || !isEligibleTarget(eligible, target)) {
+      return c.json(
+        { error: "bad_request", message: "Target is not an eligible claim holder for this project (see GET /projects/:id/eligible-actors)" },
+        400,
+      );
+    }
+
+    // Distinct reviewer: the review claim may not go to the work claimant.
+    // Reuses the claim-time gate with the target standing in as the actor.
+    if (!isWork && !checkDistinctReviewerGate(task, targetAsGateActor(target), task.project).allowed) {
+      return conflict(c, "This project requires a distinct reviewer: the review claim cannot be reassigned to the task's work claimant");
+    }
+
+    const mutation = await mutateGroundingRouteContext(prisma, {
+      taskId: task.id, projectId: task.projectId, actor, reason: "admin_reassign",
+      revalidate: async (db, lockedTask) => {
+        if (!(await hasProjectRole(actor, lockedTask.projectId, "ADMIN", db))) throw new GroundingAccessError("forbidden", 403);
+        // The target may have been removed or its token revoked since the check above.
+        const eligibleNow = await listEligibleActors(lockedTask.projectId, db);
+        if (!eligibleNow || !isEligibleTarget(eligibleNow, target)) throw new GroundingAccessError("bad_state", 409);
+        if (!isWork && !checkDistinctReviewerGate(lockedTask, targetAsGateActor(target), lockedTask.project).allowed) {
+          throw new GroundingAccessError("bad_state", 409);
+        }
+      },
+      mutate: async (db, _lockedTask): Promise<{ value: ReassignOutcome; changed: boolean }> => {
+        // Single-active-claim rule, agent branches of /tasks/pickup and
+        // /tasks/:id/start: an agent holds at most one active claim. Humans
+        // are exempt. This task is excluded: it is the claim being moved.
+        if (target.type === "agent") {
+          const existing = await db.task.findFirst({
+            where: {
+              id: { not: task.id },
+              OR: [
+                { claimedByAgentId: target.id, status: { not: "done" } },
+                { reviewClaimedByAgentId: target.id, status: "review" },
+              ],
+            },
+            select: { id: true, title: true, reviewClaimedByAgentId: true },
+          });
+          if (existing) return { value: { outcome: "already_claimed", existing }, changed: false };
+        }
+
+        // Holder-pinned CAS: if the claim changed hands between the load and
+        // this write, the pinned where matches nothing and the new claimant
+        // is never clobbered.
+        const now = new Date();
+        const pinnedHolder: Prisma.TaskWhereInput = isWork
+          ? priorHolder.type === "human" ? { claimedByUserId: priorHolder.id } : { claimedByAgentId: priorHolder.id }
+          : priorHolder.type === "human" ? { reviewClaimedByUserId: priorHolder.id } : { reviewClaimedByAgentId: priorHolder.id };
+        const holderColumns = {
+          human: target.type === "human" ? target.id : null,
+          agent: target.type === "agent" ? target.id : null,
+        };
+        const result = await db.task.updateMany({
+          where: withNoLiveMergeReservation({ id: task.id, ...pinnedHolder }),
+          data: isWork
+            ? { claimedByUserId: holderColumns.human, claimedByAgentId: holderColumns.agent, claimedAt: now }
+            : { reviewClaimedByUserId: holderColumns.human, reviewClaimedByAgentId: holderColumns.agent, reviewClaimedAt: now },
+        });
+        return result.count === 1
+          ? { value: { outcome: "reassigned" }, changed: true }
+          : { value: { outcome: "lost" }, changed: false };
+      },
+    });
+
+    const result = mutation.value;
+    if (result.outcome === "already_claimed") {
+      const role = result.existing.reviewClaimedByAgentId === target.id ? "reviewer" : "author";
+      return c.json(
+        {
+          error: "already_claimed",
+          message:
+            "The target agent already holds an active claim on another task. It must finish or abandon that claim before it can be handed this one.",
+          activeClaim: { taskId: result.existing.id, title: result.existing.title, role },
+        },
+        409,
+      );
+    }
+    if (result.outcome === "lost") {
+      return conflictOrMergeInProgress(c, task.id, "The claim changed hands before the reassignment completed; reload and retry");
+    }
+
+    // updateMany cannot use `include`, so re-fetch the reassigned row.
+    const updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
+    if (!updated) return notFound(c);
+
+    void logAuditEvent({
+      action: "task.claim_reassigned",
+      actorId: actor.userId,
+      projectId: task.projectId,
+      taskId: task.id,
+      payload: { claim: body.claim, priorHolder, newHolder: target, reason: body.reason ?? null },
+    });
+
+    return c.json({ task: updated, reassigned: { claim: body.claim, priorHolder, newHolder: target } });
+  },
+);
+
+function isEligibleTarget(eligible: EligibleActors, target: ReassignHolder): boolean {
+  return target.type === "human"
+    ? eligible.humans.some((h) => h.userId === target.id)
+    : eligible.agents.some((a) => a.tokenId === target.id);
+}
+
+/** The target as the Actor shape the distinct-reviewer gate reads (type and id only). */
+function targetAsGateActor(target: ReassignHolder): Actor {
+  return target.type === "human"
+    ? { type: "human", userId: target.id }
+    : { type: "agent", tokenId: target.id, teamId: "", userId: "", scopes: [] };
+}
 
 // ── Transition task status ────────────────────────────────────────────────────
 
