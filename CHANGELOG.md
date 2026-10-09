@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- **next 15.5.27** (GHSA-mcj8-r9mp-w47p, GHSA-4jqv-mc3x-m676): the lockfile resolves 15.5.27 with its matching `@next/env` and `@next/swc-*` packages and the `next` dependency floor is now `^15.5.27`.
+
 ### Added
 
 - The `Audit` workflow gates high/critical advisories through `scripts/audit-gate.mjs` (vendored from depsight commit be8c7ea) with an ID-scoped, dated allowlist, `.github/audit-allowlist.json`: the one entry, GHSA-vfj7-8cjw-p6xm (braces 3.0.3, dev-only under the frontend workspace's eslint-config-next, no upstream fix), is excepted by exact advisory id until its `reviewBy` date (2026-11-06; an expired entry fails the gate, and a date more than 90 days out makes the allowlist malformed). Every other HIGH/CRITICAL advisory still fails the gate. `scripts/audit-gate.test.mjs` (`node --test`, no dependencies, fixture captured from this repo's own `npm audit --json`) runs as a step before the gate.
