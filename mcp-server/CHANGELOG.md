@@ -4,6 +4,8 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+- `task_create` and `task_respec` name the allowed `templateData.taskType` values (`bugfix`, `feature`, `refactoring`, `security`, `migration`, `docs`) in the `templateData` description. `tests/task-type-parity.test.ts` pins the list to the backend `taskTypeSchema`, so a backend change fails the test until the description follows. Tracker task feea2dbb.
+- The generic 400 degrade for a zod `invalid_enum_value` issue now carries the allowed values in an `allowed` field (joined with `|`), instead of leaving them in a message clamped to 40 characters.
 - The backend's `409 merge_in_progress` (a claim or status write refused while a pull request merge holds the task) maps to a `merge_in_progress` teaching error whose recipe is to call `tasks_get` until the merge has settled and then retry. `workflow_primer` names it in the error trap list (its sanity ceiling moved from 7500 to 7700 characters).
 - `tasks_list` rejects a `cursor` longer than 200 characters (a cursor is a task id, 36 characters).
 - `tasks_list` documents that the backend response carries `truncated` (more rows exist after the page) and that a call without `limit` returns at most 25 rows. The tool description is the only change here; the field itself comes from the backend.
