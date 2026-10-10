@@ -2193,6 +2193,8 @@ taskRouter.post("/tasks/:id/start", async (c) => {
           confidenceThreshold: true,
           taskTemplate: true,
           enforcementMode: true,
+          // Read with the legacy flags by the review-holder check (distinct-reviewer gate).
+          governanceMode: true,
           soloMode: true,
           requireDistinctReviewer: true,
           taskTypeThresholds: true,
@@ -2268,6 +2270,16 @@ taskRouter.post("/tasks/:id/start", async (c) => {
   if (isInitialState(effectiveDefinition, task.status)) {
     if (task.claimedByUserId || task.claimedByAgentId) {
       return conflict(c, "Task is already claimed");
+    }
+
+    // Identity rule: the review holder may not also take the work claim (the
+    // release of a task in review leaves the review lock behind). Same
+    // mode-aware gate as /claim: a solo or opted-out project allows
+    // self-review. Answered ahead of the confidence and transition gates so a
+    // refusal emits none of their audit events; the locked revalidate below
+    // repeats it for a review claim that lands between this read and the lock.
+    if (!checkDistinctReviewerGate(reviewHolderAsClaimant(task), actor, task.project).allowed) {
+      return c.json({ error: "bad_state", message: REVIEW_HOLDER_WORK_CLAIM_MESSAGE }, 409);
     }
 
     // Dependency gate
@@ -2395,6 +2407,9 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         if (!(await requireProjectWrite(actor, lockedTask.projectId, db)))
           throw new GroundingAccessError("forbidden", 403);
         if (lockedTask.status !== task.status || lockedTask.claimedByUserId || lockedTask.claimedByAgentId)
+          throw new GroundingAccessError("bad_state", 409);
+        // Identity rule, repeated for a review claim that landed since the read.
+        if (!checkDistinctReviewerGate(reviewHolderAsClaimant(lockedTask), actor, lockedTask.project).allowed)
           throw new GroundingAccessError("bad_state", 409);
       },
       mutate: async (db, lockedTask) => {
@@ -2548,6 +2563,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
               confidenceThreshold: true,
               taskTemplate: true,
               enforcementMode: true,
+              governanceMode: true,
               soloMode: true,
               requireDistinctReviewer: true,
               taskTypeThresholds: true,
@@ -6975,13 +6991,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
   // locked revalidate below repeats it for a review claim that lands between
   // this read and the project lock.
   if (!checkDistinctReviewerGate(reviewHolderAsClaimant(task), actor, task.project).allowed) {
-    return c.json(
-      {
-        error: "bad_state",
-        message: "You hold this task's review claim; under this project's distinct-reviewer rule the reviewer cannot also take the work claim",
-      },
-      409,
-    );
+    return c.json({ error: "bad_state", message: REVIEW_HOLDER_WORK_CLAIM_MESSAGE }, 409);
   }
 
   // Dependency gate — all blocking tasks must be done or abandoned
@@ -7493,12 +7503,17 @@ function isEligibleTarget(eligible: EligibleActors, target: ReassignHolder): boo
     : eligible.agents.some((a) => a.tokenId === target.id);
 }
 
+/** 409 text when the review holder asks for the work claim (/claim and /start). */
+const REVIEW_HOLDER_WORK_CLAIM_MESSAGE =
+  "You hold this task's review claim; under this project's distinct-reviewer rule the reviewer cannot also take the work claim";
+
 /**
  * The task with its review holder standing in as the work claimant. The
  * claim-time distinct-reviewer gate reads the claimant columns, so running it
  * on this view asks "may this actor take the work claim next to the current
  * review holder?" and keeps the gate the single place that knows when the rule
- * applies. Shared by POST /tasks/:id/claim and the admin reassign path.
+ * applies. Shared by POST /tasks/:id/claim, the /start work branch and the
+ * admin reassign path.
  */
 function reviewHolderAsClaimant<T extends GateTask>(task: T): T {
   return {

@@ -4,6 +4,7 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+- `task_start` documents that an `open` task is refused with a 409 (bad state) when the caller holds its review claim in a project that requires a distinct reviewer. The tool description is the only change here; the refusal comes from the backend. Tracker task 0b045884.
 - The `allowed` list in a generic 400 enum detail now renders a numeric enum option as its number (for example `a|2|b`); only other non-string options still render as `?`. A backend unit test pins the `templateData` request-body key on the task create and respec schemas, so renaming it fails a test instead of silently breaking the mcp-server's `templateData.*` error paths. Tracker task 8caceafb.
 - The `allowed` list in a generic 400 enum detail renders a non-string enum option as `?` instead of dropping it, so the list is never silently partial. `tests/task-type-parity.test.ts` now also pins the JSON-serialized zValidator body for an invalid `templateData.taskType`. Tracker task 30c0fe08.
 - `task_create` and `task_respec` name the allowed `templateData.taskType` values (`bugfix`, `feature`, `refactoring`, `security`, `migration`, `docs`) in the `templateData` description. `tests/task-type-parity.test.ts` pins the list to the backend `taskTypeSchema`, so a backend change fails the test until the description follows. Tracker task feea2dbb.
