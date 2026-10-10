@@ -12,6 +12,7 @@ import type { Actor } from "../../src/types/auth.js";
 const prismaMocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
   taskUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
+  taskUpdate: vi.fn(),
   workflowFindFirst: vi.fn(),
   workflowFindUnique: vi.fn(),
 }));
@@ -21,6 +22,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     task: {
       findUnique: prismaMocks.taskFindUnique,
       updateMany: prismaMocks.taskUpdateMany,
+      update: prismaMocks.taskUpdate,
     },
     workflow: {
       findFirst: prismaMocks.workflowFindFirst,
@@ -192,4 +194,134 @@ describe("GET /tasks/:id inReviewState", () => {
     prismaMocks.workflowFindUnique.mockResolvedValue(null);
     expect(await getFlag({ status: "review", workflowId: WORKFLOW_ID })).toBe(true);
   });
+});
+
+// ── Agreement with the release / abandon gates ───────────────────────────────
+//
+// The routes below load the task WITHOUT its workflow relation. The flag and
+// the gates both resolve the pinned workflow by id, so the answers agree.
+
+const CLAIMANT: Actor = { type: "human", userId: "claimant-1" };
+
+async function releaseStatus(task: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }> {
+  prismaMocks.taskFindUnique.mockResolvedValue({ ...baseTask, claimedByUserId: CLAIMANT.userId, ...task });
+  const res = await makeApp(CLAIMANT).request(`/tasks/${TASK_ID}/release`, { method: "POST" });
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
+describe("POST /tasks/:id/release agrees with the inReviewState flag", () => {
+  it("pinned task in review under the pinned workflow only: flag true and release 409", async () => {
+    const pinned = { status: "qa", workflowId: WORKFLOW_ID };
+    expect(await getFlag(pinned)).toBe(true);
+    const { status, body } = await releaseStatus(pinned);
+    expect(status).toBe(409);
+    expect(body.error).toBe("bad_state");
+    expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("pinned task in review under the default only: flag false and release 200", async () => {
+    const pinned = { status: "review", workflowId: WORKFLOW_ID };
+    expect(await getFlag(pinned)).toBe(false);
+    const { status, body } = await releaseStatus(pinned);
+    expect(status).toBe(200);
+    expect((body.task as { inReviewState: boolean }).inReviewState).toBe(false);
+    // The release resets to the PINNED workflow's initial state.
+    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].data.status).toBe("todo");
+  });
+
+  it("unpinned task keeps judging on the default: flag true and release 409", async () => {
+    const unpinned = { status: "review", workflowId: null };
+    expect(await getFlag(unpinned)).toBe(true);
+    expect((await releaseStatus(unpinned)).status).toBe(409);
+  });
+});
+
+describe("POST /tasks/:id/abandon judges review state on the pinned workflow", () => {
+  async function abandonStatus(task: Record<string, unknown>) {
+    prismaMocks.taskFindUnique.mockResolvedValue({ ...baseTask, claimedByUserId: CLAIMANT.userId, ...task });
+    const res = await makeApp(CLAIMANT).request(`/tasks/${TASK_ID}/abandon`, { method: "POST" });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  }
+
+  it("pinned task in a pinned review state: 409 bad_state", async () => {
+    const { status, body } = await abandonStatus({ status: "qa", workflowId: WORKFLOW_ID });
+    expect(status).toBe(409);
+    expect(body.error).toBe("bad_state");
+    expect(prismaMocks.workflowFindUnique).toHaveBeenCalledWith({ where: { id: WORKFLOW_ID } });
+  });
+
+  it("pinned task in a state that is review-like only under the default: not rejected as in review", async () => {
+    const { body } = await abandonStatus({ status: "review", workflowId: WORKFLOW_ID });
+    expect(body.error).not.toBe("bad_state");
+  });
+});
+
+// ── Mutation routes carry the pinned-correct flag ────────────────────────────
+//
+// Every route that returns the updated task to the sidebar answers with the
+// flag computed on the task's own workflow, for the status it was left in.
+
+const AGENT: Actor = {
+  type: "agent",
+  tokenId: "agent-1",
+  scopes: ["tasks:update", "tasks:transition"],
+} as Actor;
+
+// `from` is the status the row has before the write, `to` the status it is
+// left in; the flag is judged on `to`.
+const MUTATION_ROUTES: Array<{
+  name: string;
+  actor: Actor;
+  method: string;
+  body: (to: string) => Record<string, unknown>;
+  cases: Array<{ from: string; to: string; inReviewState: boolean }>;
+}> = [
+  {
+    name: "POST /tasks/:id/transition",
+    actor: ADMIN,
+    method: "POST",
+    body: (to) => ({ status: to }),
+    cases: [
+      { from: "doing", to: "qa", inReviewState: true },
+      { from: "todo", to: "review", inReviewState: false },
+    ],
+  },
+  {
+    name: "PATCH /tasks/:id (agent lane)",
+    actor: AGENT,
+    method: "PATCH",
+    body: () => ({ branchName: "feat/x" }),
+    cases: [
+      { from: "qa", to: "qa", inReviewState: true },
+      { from: "review", to: "review", inReviewState: false },
+    ],
+  },
+];
+
+describe("mutation routes answer with the pinned-correct inReviewState", () => {
+  for (const route of MUTATION_ROUTES) {
+    for (const { from, to, inReviewState } of route.cases) {
+      it(`${route.name} ${from} -> ${to} on a pinned task: inReviewState ${inReviewState}`, async () => {
+        const before = {
+          ...baseTask,
+          status: from,
+          workflowId: WORKFLOW_ID,
+          workflow: { definition: PINNED_DEFINITION },
+          project: {},
+        };
+        const after = { ...baseTask, status: to, workflowId: WORKFLOW_ID };
+        prismaMocks.taskFindUnique.mockResolvedValueOnce(before).mockResolvedValue(after);
+        prismaMocks.taskUpdate.mockResolvedValue(after);
+        const path = route.method === "POST" ? `/tasks/${TASK_ID}/transition` : `/tasks/${TASK_ID}`;
+        const res = await makeApp(route.actor).request(path, {
+          method: route.method,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(route.body(to)),
+        });
+        expect(res.status).toBe(200);
+        const json = (await res.json()) as { task: { inReviewState: boolean } };
+        expect(json.task.inReviewState).toBe(inReviewState);
+      });
+    }
+  }
 });

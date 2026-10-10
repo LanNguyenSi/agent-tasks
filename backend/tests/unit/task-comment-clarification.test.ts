@@ -71,7 +71,6 @@ const TASK = {
   projectId: "proj-1",
   status: "in_progress",
   workflowId: null,
-  workflow: null,
   claimedByAgentId: "agent-1",
   claimedByUserId: null,
 };
