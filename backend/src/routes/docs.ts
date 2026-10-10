@@ -1728,7 +1728,7 @@ export const openApiSpec = {
             },
           },
           "409": {
-            description: "Task already claimed, or (merge_in_progress) a pull request merge holds the task",
+            description: "Task already claimed; (merge_in_progress) a pull request merge holds the task; (bad_state) the task is in backlog or not in the workflow's initial state, or the caller holds the review claim in a project that requires a distinct reviewer",
             content: {
               "application/json": {
                 schema: { oneOf: [{ $ref: "#/components/schemas/ErrorResponse" }, { $ref: "#/components/schemas/MergeInProgressResponse" }] },
