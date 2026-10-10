@@ -1637,7 +1637,9 @@ describe("PATCH /tasks/:id — status write goes through workflow-engine gates (
     });
 
     expect(res.status).toBe(200);
-    expect(prismaMocks.workflowFindFirst).not.toHaveBeenCalled();
+    // The only resolution is the one behind the response's inReviewState
+    // flag; a transition gate would add a second.
+    expect(prismaMocks.workflowFindFirst).toHaveBeenCalledTimes(1);
     const updateCall = prismaMocks.taskUpdateMany.mock.calls[0]![0];
     expect(updateCall.data.title).toBe("Renamed");
     // Negative control (agent-tasks 05ad9bf3): a no-op status write is not a

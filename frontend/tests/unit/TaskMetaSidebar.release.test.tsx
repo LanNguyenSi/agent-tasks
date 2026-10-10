@@ -3,18 +3,20 @@
  * TaskMetaSidebar -- self-service Release visibility per workflow state.
  *
  * POST /tasks/:id/release answers 409 bad_state in any review state of the
- * task's effective workflow, so the button on the caller's own claim is
- * disabled with a reason there, enabled elsewhere, and absent when done.
+ * task's effective workflow. The server computes that per task
+ * (`inReviewState`, pinned workflow included), so the button on the caller's
+ * own claim is disabled with a reason when the flag is set, enabled when it
+ * is not, and absent when done.
  */
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 import TaskMetaSidebar from "../../src/components/task-detail/TaskMetaSidebar";
-import type { Task, User, WorkflowDefinition } from "../../src/lib/api";
+import type { Task, User } from "../../src/lib/api";
 
 const me = { id: "u-1", login: "lan" } as User;
 
-function makeTask(status: string): Task {
+function makeTask(status: string, inReviewState?: boolean): Task {
   return {
     id: "t-1",
     projectId: "p-1",
@@ -34,47 +36,14 @@ function makeTask(status: string): Task {
     claimedByAgent: null,
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-12T00:00:00.000Z",
+    ...(inReviewState === undefined ? {} : { inReviewState }),
   } as unknown as Task;
 }
 
-// Custom workflow whose review-like state is "qa" (not the literal "review").
-const customWorkflow: WorkflowDefinition = {
-  initialState: "todo",
-  states: [
-    { name: "todo", label: "Todo", terminal: false },
-    { name: "doing", label: "Doing", terminal: false },
-    { name: "qa", label: "QA", terminal: false },
-    { name: "review", label: "Review", terminal: false },
-    { name: "shipped", label: "Shipped", terminal: true },
-  ],
-  transitions: [
-    { from: "todo", to: "doing" },
-    { from: "todo", to: "review" },
-    { from: "doing", to: "qa" },
-    { from: "qa", to: "shipped" },
-    { from: "review", to: "shipped" },
-  ],
-} as WorkflowDefinition;
-
-// Workflow whose initial state itself has a transition to a terminal state.
-const initialToTerminalWorkflow: WorkflowDefinition = {
-  initialState: "todo",
-  states: [
-    { name: "todo", label: "Todo", terminal: false },
-    { name: "doing", label: "Doing", terminal: false },
-    { name: "shipped", label: "Shipped", terminal: true },
-  ],
-  transitions: [
-    { from: "todo", to: "doing" },
-    { from: "todo", to: "shipped" },
-    { from: "doing", to: "shipped" },
-  ],
-} as WorkflowDefinition;
-
-function renderSidebar(status: string, workflowDefinition?: WorkflowDefinition | null) {
+function renderSidebar(status: string, inReviewState?: boolean) {
   render(
     <TaskMetaSidebar
-      task={makeTask(status)}
+      task={makeTask(status, inReviewState)}
       user={me}
       confidenceScore={null}
       onRelease={vi.fn()}
@@ -83,18 +52,17 @@ function renderSidebar(status: string, workflowDefinition?: WorkflowDefinition |
       onAdminRelease={vi.fn().mockResolvedValue(true)}
       adminReleaseBusy={false}
       onClaimReassigned={vi.fn()}
-      workflowDefinition={workflowDefinition}
     />,
   );
 }
 
 describe("TaskMetaSidebar self-service Release per state", () => {
-  it("is enabled for in_progress (default workflow, no definition loaded)", () => {
+  it("is enabled for in_progress without the flag", () => {
     renderSidebar("in_progress");
     expect(screen.getByRole("button", { name: "Release" })).toBeEnabled();
   });
 
-  it("is disabled with a reason in review when no definition is loaded", () => {
+  it("is disabled with a reason in review when the payload carries no flag", () => {
     renderSidebar("review");
     const btn = screen.getByRole("button", { name: "Release" });
     expect(btn).toBeDisabled();
@@ -102,27 +70,24 @@ describe("TaskMetaSidebar self-service Release per state", () => {
   });
 
   it("is absent for a done task", () => {
-    renderSidebar("done");
+    renderSidebar("done", false);
     expect(screen.queryByRole("button", { name: "Release" })).not.toBeInTheDocument();
   });
 
-  it("follows the custom workflow: its review-like state disables Release", () => {
-    renderSidebar("qa", customWorkflow);
-    expect(screen.getByRole("button", { name: "Release" })).toBeDisabled();
+  it("pinned workflow: a custom review-like state with the flag set disables Release", () => {
+    renderSidebar("qa", true);
+    const btn = screen.getByRole("button", { name: "Release" });
+    expect(btn).toBeDisabled();
+    expect(btn.getAttribute("title")).toMatch(/in review/);
   });
 
-  it("follows the custom workflow: a work state stays enabled", () => {
-    renderSidebar("doing", customWorkflow);
+  it("pinned workflow: a task literally named review but with the flag unset keeps Release enabled", () => {
+    renderSidebar("review", false);
     expect(screen.getByRole("button", { name: "Release" })).toBeEnabled();
   });
 
-  it("follows the custom workflow: a state named review that is a direct target of the initial state is not review-like", () => {
-    renderSidebar("review", customWorkflow);
-    expect(screen.getByRole("button", { name: "Release" })).toBeEnabled();
-  });
-
-  it("keeps Release enabled in an initial state that has a transition to a terminal state", () => {
-    renderSidebar("todo", initialToTerminalWorkflow);
+  it("pinned workflow: a work state with the flag unset stays enabled", () => {
+    renderSidebar("doing", false);
     expect(screen.getByRole("button", { name: "Release" })).toBeEnabled();
   });
 });

@@ -29,6 +29,12 @@ vi.mock("../../src/lib/prisma.js", () => ({
       findUnique: prismaMocks.taskFindUnique,
       updateMany: prismaMocks.taskUpdateMany,
     },
+    // The response carries the server-computed inReviewState flag, which
+    // resolves the task's effective workflow (project default here).
+    workflow: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 
