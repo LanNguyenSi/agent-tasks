@@ -75,7 +75,6 @@ function renderSidebar(
       task={task}
       user={overrides.user === undefined ? me : overrides.user}
       confidenceScore={null}
-      onClaim={vi.fn()}
       onRelease={vi.fn()}
       claimBusy={false}
       isProjectAdmin={overrides.isProjectAdmin ?? true}
