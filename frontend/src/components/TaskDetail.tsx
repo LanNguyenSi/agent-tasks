@@ -34,6 +34,7 @@ import {
   type Task,
   type Comment,
   type WorkflowTransition,
+  type WorkflowDefinition,
   type EnforcementMode,
   type TaskConfidenceDetail,
 } from "../lib/api";
@@ -179,6 +180,9 @@ export interface TaskDetailProps {
    * dropdown to targets the backend will accept (force bypasses `requires`
    * gates, not edge existence). null = not loaded → fall back to base states. */
   workflowTransitions?: WorkflowTransition[] | null;
+  /** Full effective workflow, loaded for every role; the sidebar uses it to
+   * disable Release in a review state. null = not loaded. */
+  workflowDefinition?: WorkflowDefinition | null;
   /** Open directly in edit mode (e.g. from the create-confidence panel's
    *  "Edit task"), so the user lands on the editors for the missing fields. */
   initialEditing?: boolean;
@@ -225,6 +229,7 @@ export default function TaskDetail({
   isProjectAdmin = false,
   isProjectWrite = false,
   workflowTransitions = null,
+  workflowDefinition = null,
   improvementPanel = null,
   aiHelpersEnabled = false,
   onUpdate,
@@ -1347,6 +1352,7 @@ export default function TaskDetail({
         projectLabels={projectLabels}
         onUpdateLabels={handleUpdateLabels}
         labelsBusy={labelsBusy}
+        workflowDefinition={workflowDefinition}
       />
     </aside>
   );

@@ -7,7 +7,8 @@
 // reflects the live editing state without this component importing calculateConfidence.
 
 import { useState } from "react";
-import type { ClaimHolder, Task, User } from "@/lib/api";
+import type { ClaimHolder, Task, User, WorkflowDefinition } from "@/lib/api";
+import { isReviewState } from "@/lib/workflowState";
 import { normalizeStatus } from "@/lib/status";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { PriorityLabel } from "@/components/ui/PriorityLabel";
@@ -58,6 +59,10 @@ interface TaskMetaSidebarProps {
    * success so the input can clear itself only after the save lands. */
   onUpdateLabels?: (labels: string[]) => Promise<boolean>;
   labelsBusy?: boolean;
+  /** The project's effective workflow, used to tell whether the task is in a
+   * review state (where releasing a work claim is rejected). null = not
+   * loaded: falls back to the default workflow's literal `review` state. */
+  workflowDefinition?: WorkflowDefinition | null;
 }
 
 function isOverdue(task: Task): boolean {
@@ -115,10 +120,19 @@ export default function TaskMetaSidebar({
   projectLabels = [],
   onUpdateLabels,
   labelsBusy = false,
+  workflowDefinition = null,
 }: TaskMetaSidebarProps) {
   const overdue = isOverdue(task);
   const assigned = Boolean(task.claimedByUserId || task.claimedByAgentId);
   const isOwnTask = task.claimedByUserId === user?.id;
+  // Same predicate the release route uses. Without the project's workflow
+  // (not loaded, or it failed to load) fall back to the built-in default
+  // workflow's review state. Task rows carry no per-task workflow id, so a
+  // task pinned to a workflow other than the project default is judged on
+  // the project default here.
+  const inReview = workflowDefinition
+    ? isReviewState(workflowDefinition, task.status)
+    : task.status === "review";
   const nextStep = NEXT_STEP[task.status] ?? "in an unknown state";
   const hasReviewClaim = Boolean(task.reviewClaimedByUserId || task.reviewClaimedByAgentId);
   // Admin reassign picker: hidden (not disabled) unless a human project admin
@@ -203,13 +217,22 @@ export default function TaskMetaSidebar({
                 {/* Never offer Release on a terminal task: the release route
                     resets to the workflow's initial state, which would
                     silently reopen completed work. */}
+                {/* In a review state the route answers 409 bad_state (the
+                    reviewer's lock only means something while the task stays
+                    in review), so the button is shown disabled with the
+                    reason instead of failing on click. */}
                 {isOwnTask && task.status !== "done" && (
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={onRelease}
-                    disabled={claimBusy}
+                    disabled={claimBusy || inReview}
                     loading={claimBusy}
+                    title={
+                      inReview
+                        ? "A claim cannot be released while the task is in review. Wait for the reviewer to approve or request changes."
+                        : undefined
+                    }
                   >
                     Release
                   </Button>

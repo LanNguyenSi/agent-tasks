@@ -19,6 +19,7 @@ import {
   type Project,
   type Task,
   type WorkflowTransition,
+  type WorkflowDefinition,
 } from "../../lib/api";
 import {
   DEFAULT_DONE_VISIBILITY,
@@ -167,9 +168,13 @@ export default function DashboardPage() {
     WorkflowTransition[] | null
   >(null);
 
+  const [workflowDefinition, setWorkflowDefinition] =
+    useState<WorkflowDefinition | null>(null);
+
   useEffect(() => {
     setSelectedProjectAccessRole(undefined);
     setWorkflowTransitions(null);
+    setWorkflowDefinition(null);
     if (!selectedProjectId) return;
     let cancelled = false;
     void (async () => {
@@ -177,13 +182,16 @@ export default function DashboardPage() {
         const detail = await getProject(selectedProjectId);
         if (cancelled) return;
         setSelectedProjectAccessRole(detail.accessRole);
-        if (isProjectAdminRole(detail.accessRole)) {
-          try {
-            const wf = await getEffectiveWorkflow(selectedProjectId);
-            if (!cancelled) setWorkflowTransitions(wf.definition.transitions);
-          } catch {
-            /* fall back to base states */
+        try {
+          const wf = await getEffectiveWorkflow(selectedProjectId);
+          if (!cancelled) {
+            setWorkflowDefinition(wf.definition);
+            if (isProjectAdminRole(detail.accessRole)) {
+              setWorkflowTransitions(wf.definition.transitions);
+            }
           }
+        } catch {
+          /* fall back to base states / default review state */
         }
       } catch {
         /* controls stay ungated; board is unaffected */
@@ -714,6 +722,7 @@ export default function DashboardPage() {
           isProjectAdmin={isProjectAdmin}
           isProjectWrite={isProjectWrite}
           workflowTransitions={workflowTransitions}
+          workflowDefinition={workflowDefinition}
           onUpdate={handleTaskUpdate}
           onDelete={handleTaskDelete}
           onClose={() => selectTask(null)}
