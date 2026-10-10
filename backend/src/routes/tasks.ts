@@ -7032,6 +7032,22 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     revalidate: async (db, lockedTask) => {
       if (!(await requireProjectWrite(actor, lockedTask.projectId, db))) throw new GroundingAccessError("forbidden", 403);
       if (lockedTask.status !== task.status || lockedTask.claimedByUserId || lockedTask.claimedByAgentId) throw new GroundingAccessError("bad_state", 409);
+      // Status rule: this route writes `status = startTarget`, which is the
+      // edge out of the initial state. On any other status (a task in review
+      // whose work claim an admin released) that write would pull the task
+      // back out of review and skip it. /start refuses the same way.
+      if (lockedTask.status !== effectiveDef.initialState) throw new GroundingAccessError("bad_state", 409);
+      // Identity rule: the review holder may not also take the work claim.
+      // The gate is the claim-time distinct-reviewer check with the review
+      // holder standing in as the claimant, so it stays mode-aware (a solo or
+      // opted-out project allows self-review); same stand-in the admin
+      // reassign path uses for a work claim handed to the review holder.
+      const reviewHolderAsClaimant = {
+        ...lockedTask,
+        claimedByUserId: lockedTask.reviewClaimedByUserId,
+        claimedByAgentId: lockedTask.reviewClaimedByAgentId,
+      };
+      if (!checkDistinctReviewerGate(reviewHolderAsClaimant, actor, lockedTask.project).allowed) throw new GroundingAccessError("bad_state", 409);
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
