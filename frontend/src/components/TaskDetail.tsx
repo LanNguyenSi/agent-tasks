@@ -20,7 +20,6 @@ import ReactMarkdown from "react-markdown";
 import {
   updateTask,
   deleteTask,
-  claimTask,
   releaseTask,
   startTask,
   createComment,
@@ -559,18 +558,6 @@ export default function TaskDetail({
       onError((err as Error).message);
     } finally {
       setBacklogActionBusy(false);
-    }
-  }
-
-  async function handleClaim() {
-    setClaimBusy(true);
-    try {
-      const updated = await claimTask(task.id);
-      onUpdate(updated);
-    } catch (err) {
-      onError((err as Error).message);
-    } finally {
-      setClaimBusy(false);
     }
   }
 
@@ -1350,7 +1337,6 @@ export default function TaskDetail({
         task={task}
         user={user}
         confidenceScore={confidenceScore}
-        onClaim={() => void handleClaim()}
         onRelease={() => void handleRelease()}
         claimBusy={claimBusy}
         isProjectAdmin={isProjectAdmin}

@@ -1,5 +1,5 @@
 // Properties sidebar for the task detail two-column layout.
-// Shows: status chip, priority, assignee (with claim/release), labels,
+// Shows: status chip, priority, assignee (with release), labels,
 // branch chip, due date, created date, confidence bar (if templateFields exist).
 // Below a divider: next-workflow-step note.
 //
@@ -25,7 +25,6 @@ interface TaskMetaSidebarProps {
   task: Task;
   user: User | null;
   confidenceScore: number | null;
-  onClaim: () => void;
   onRelease: () => void;
   claimBusy: boolean;
   /** True for a human who is a team ADMIN or a per-project PROJECT_ADMIN.
@@ -106,7 +105,6 @@ export default function TaskMetaSidebar({
   task,
   user,
   confidenceScore,
-  onClaim,
   onRelease,
   claimBusy,
   isProjectAdmin,
@@ -121,7 +119,6 @@ export default function TaskMetaSidebar({
   const overdue = isOverdue(task);
   const assigned = Boolean(task.claimedByUserId || task.claimedByAgentId);
   const isOwnTask = task.claimedByUserId === user?.id;
-  const canClaim = !assigned && task.status !== "open";
   const nextStep = NEXT_STEP[task.status] ?? "in an unknown state";
   const hasReviewClaim = Boolean(task.reviewClaimedByUserId || task.reviewClaimedByAgentId);
   // Admin reassign picker: hidden (not disabled) unless a human project admin
@@ -193,7 +190,7 @@ export default function TaskMetaSidebar({
           <PriorityLabel priority={task.priority} />
         </span>
 
-        {/* Assignee + claim/release */}
+        {/* Assignee + release */}
         <span className="td-prop-label">Assignee</span>
         <span className="td-prop-value">
           <span className="td-assignee-row">
@@ -250,17 +247,11 @@ export default function TaskMetaSidebar({
             ) : (
               <>
                 <span className="td-prop-label">Unassigned</span>
-                {canClaim && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={onClaim}
-                    disabled={claimBusy}
-                    loading={claimBusy}
-                  >
-                    Claim
-                  </Button>
-                )}
+                {/* No Claim button: POST /tasks/:id/claim only succeeds from the
+                    workflow's initial state, where the header's Start button
+                    already claims and starts. Every other unassigned state
+                    would answer 409 bad_state, and no reassign exists for a
+                    task without a holder, so nothing is offered here. */}
               </>
             )}
           </span>

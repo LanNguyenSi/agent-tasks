@@ -66,7 +66,6 @@ function renderSidebar(
       task={task}
       user={me}
       confidenceScore={null}
-      onClaim={vi.fn()}
       onRelease={vi.fn()}
       claimBusy={false}
       isProjectAdmin={overrides.isProjectAdmin ?? false}
@@ -311,4 +310,18 @@ describe("TaskMetaSidebar labels editor", () => {
     const values = [...options].map((o) => o.getAttribute("value"));
     expect(values).toEqual(["ui", "dx"]);
   });
+});
+
+describe("TaskMetaSidebar claim affordance", () => {
+  // POST /tasks/:id/claim only succeeds from the workflow's initial state,
+  // where the header's Start button already claims and starts the task.
+  // The sidebar therefore never offers a Claim button, whatever the state.
+  it.each(["open", "in_progress", "review", "done"])(
+    "offers no Claim button on an unassigned %s task",
+    (status) => {
+      renderSidebar(makeTask({ status }), { isProjectAdmin: true });
+      expect(screen.getByText("Unassigned")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /claim/i })).toBeNull();
+    },
+  );
 });
