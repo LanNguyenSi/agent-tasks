@@ -1926,7 +1926,9 @@ async function deriveDebugFlavor<T extends {
 // Single "what should I do next?" endpoint for the v2 MCP surface. Resolution:
 //   1. Pending signals for this agent → return the oldest, ack it atomically
 //   2. Tasks in status `review` with a free review-claim, author != this agent
-//   3. Claimable tasks in status `open`, not blocked, in authorized projects
+//   3. Claimable tasks in status `open`, not blocked, in authorized projects,
+//      skipping one whose review lock the caller holds when the project's
+//      distinct-reviewer rule bars the holder from the work claim
 //   4. Nothing → idle
 //
 // Hard-limit: agents with an active author-claim OR review-claim are rejected

@@ -99,9 +99,9 @@ async function seedAgent(): Promise<Actor> {
   return { type: "agent", tokenId, teamId, userId: adminId, scopes };
 }
 
-async function seedProject(governanceMode: "REQUIRES_DISTINCT_REVIEWER" | "AUTONOMOUS", requireDistinctReviewer: boolean, soloMode: boolean) {
+async function seedProject(governanceMode: "REQUIRES_DISTINCT_REVIEWER" | "AUTONOMOUS" | null, requireDistinctReviewer: boolean, soloMode: boolean) {
   const id = randomUUID();
-  await db.project.create({ data: { id, teamId, name: governanceMode, slug: randomUUID(), governanceMode, requireDistinctReviewer, soloMode } });
+  await db.project.create({ data: { id, teamId, name: governanceMode ?? "LEGACY", slug: randomUUID(), governanceMode, requireDistinctReviewer, soloMode } });
   return id;
 }
 
@@ -152,8 +152,8 @@ describe("POST /tasks/pickup work pool against Postgres", () => {
   });
 
   it("offers the holder the next task instead, and the locked task to another caller", async () => {
-    const lockedId = await seedTask(reviewLockedBy(holder), projectId);
-    const freeId = await seedTask({}, projectId);
+    const lockedId = await seedTask({ ...reviewLockedBy(holder), createdAt: new Date("2026-01-01T00:00:00Z") }, projectId);
+    const freeId = await seedTask({ createdAt: new Date("2026-01-02T00:00:00Z") }, projectId);
 
     const mine = await (await pickup(holder)).json();
     expect(mine.kind).toBe("work");
@@ -180,5 +180,15 @@ describe("POST /tasks/pickup work pool against Postgres", () => {
     expect(body.kind).toBe("work");
     expect(body.task.id).toBe(taskId);
     expect((await start(holder, taskId)).status).toBe(200);
+  });
+
+  it("falls back to the legacy flags when the project has no governance mode", async () => {
+    const legacy = await seedProject(null, true, false);
+    const taskId = await seedTask(reviewLockedBy(holder), legacy);
+    expect((await start(holder, taskId)).status).toBe(409);
+
+    const res = await pickup(holder);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ kind: "idle" });
   });
 });
