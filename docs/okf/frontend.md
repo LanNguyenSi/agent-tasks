@@ -3,7 +3,7 @@ type: module
 title: "frontend: Next.js UI"
 description: "App-router structure, the two independently-authored task list views, the backlog board column, and the hand-maintained confidence-scorer mirror."
 tags: [frontend, nextjs, ui, confidence, backlog]
-timestamp: 2026-10-04T13:51:13Z
+timestamp: 2026-10-10T05:22:00Z
 sources:
   - frontend/src/app
   - frontend/src/app/tasks/page.tsx
@@ -12,6 +12,9 @@ sources:
   - frontend/src/lib/confidence.ts
   - frontend/src/components/dashboard/NewTaskModal.tsx
   - frontend/package.json
+  - frontend/src/components/task-detail/ClaimReassignPicker.tsx
+  - frontend/src/components/task-detail/TaskMetaSidebar.tsx
+  - frontend/src/lib/api.ts
 ---
 
 Next.js 15 app router (`frontend/package.json`: `next@^15`). Route segments under `frontend/src/app/`: `tasks`, `dashboard`, `projects`, `teams`, `settings`, `onboarding`, `invite`, `auth`, `home`, `dev`. `frontend/src/app/api/` holds exactly two route handlers (`auth/github/route.ts`, `auth/github/connect/route.ts`) for the GitHub OAuth redirect dance, everything else talks to the backend over HTTP, there is no BFF layer.
@@ -23,5 +26,7 @@ Next.js 15 app router (`frontend/package.json`: `next@^15`). Route segments unde
 **Two list views, shared CSS not shared JSX**: `frontend/src/app/tasks/page.tsx` and `frontend/src/app/dashboard/page.tsx` are two independently-written React components (845 and 739 lines respectively; `tasks/page.tsx`'s column render helpers now live in a sibling `_components/columns.tsx`, split out because Next's typed-routes codegen rejects extra named exports from a `page.tsx`) that both render a task list. Each imports its own tree of `components/ui/*` primitives (`Button`, `Skeleton`, `StatusChip`, `Pagination`, etc.) and neither imports the other's list markup, there is no shared `<TaskList>` component. What *is* shared is the class-name vocabulary defined once in `frontend/src/app/globals.css` (e.g. both use `db-search`/`db-search-input`/`num`; `tasks/page.tsx` additionally uses a `tasks-*` prefix, `dashboard/page.tsx` a `db-*` prefix). The tasks list includes a backlog filter, promote/discard row actions on backlog rows and a "Move to backlog" row action on open rows (disabled with a reason while the task holds a claim). Practical consequence: a visual/behavioral fix to one list (sorting, empty state, filter chips) must be manually re-applied to the other; there is no single code path to patch.
 
 **Confidence scorer client mirror** (`frontend/src/lib/confidence.ts`, 1290 lines): a hand-maintained port of the backend scorer, used for create-time UX so `NewTaskModal.tsx` (`frontend/src/components/dashboard/NewTaskModal.tsx`) can show a live confidence score/badge before the task is even submitted (`calculateConfidence`, `ConfidenceBadge`). It is explicitly commented `FAITHFUL MIRROR ... keep in sync` with `backend/src/lib/confidence.ts`, and is now also parity-checked live in CI, see `confidence-scorer.md` for the mechanism and the exact duplicated section. `BoardView.tsx` and `TaskDetail.tsx` also import from this module directly; `TaskMetaSidebar.tsx` (`components/task-detail/`) does not import it itself, it only renders a `confidenceScore` number `TaskDetail.tsx` computes and passes down as a prop.
+
+**Admin claim reassign picker** (`frontend/src/components/task-detail/ClaimReassignPicker.tsx`, rendered by `frontend/src/components/task-detail/TaskMetaSidebar.tsx`, API client `getEligibleActors` and `adminReassignClaim` in `frontend/src/lib/api.ts`): a human project admin gets a `Reassign` control on the work claim (next to `Release (admin)`) and on the review claim (next to its `Release`); the button's accessible name is `Reassign work claim` or `Reassign review claim`, so the two are told apart, and `TaskMetaSidebar` takes `onClaimReassigned` as a required prop. Opening it loads `GET /projects/:id/eligible-actors`, offers every eligible human and agent except the current holder, and `Assign` calls `POST /tasks/:id/admin-reassign` for that claim; the updated task goes back through `TaskDetail`'s `onUpdate`. A 403, 409 or 400 from either call is shown inline with the server's message and leaves the picker open. Unlike the disabled-with-reason release controls it is hidden, not disabled, when `isProjectAdmin` is false, when there is no signed-in `user`, and on a `done` task. Styles are the `.td-reassign*` rules in `frontend/src/app/globals.css`.
 
 Related: `confidence-scorer.md`, `architecture.md`.

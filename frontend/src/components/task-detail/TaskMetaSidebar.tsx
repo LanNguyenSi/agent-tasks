@@ -7,13 +7,14 @@
 // reflects the live editing state without this component importing calculateConfidence.
 
 import { useState } from "react";
-import type { Task, User } from "@/lib/api";
+import type { ClaimHolder, Task, User } from "@/lib/api";
 import { normalizeStatus } from "@/lib/status";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { PriorityLabel } from "@/components/ui/PriorityLabel";
 import { Icon } from "@/components/ui/Icon";
 import { Button } from "@/components/ui/Button";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import ClaimReassignPicker from "./ClaimReassignPicker";
 import { formatAbsoluteDate, formatDueDate } from "@/lib/time";
 import { isHttpUrl } from "@/lib/pr";
 import { validateNewLabel } from "@/lib/labels";
@@ -36,6 +37,11 @@ interface TaskMetaSidebarProps {
    * component knows whether to close the confirm dialog. */
   onAdminRelease: (opts: { releaseWorkClaim?: boolean; releaseReviewClaim?: boolean }) => Promise<boolean>;
   adminReleaseBusy: boolean;
+  /** Called with the updated task after an admin hands a claim to another
+   * actor through the reassign picker. The picker is offered only to a human
+   * project admin (`isProjectAdmin` with a signed-in `user`); it is hidden,
+   * not disabled, for everyone else. */
+  onClaimReassigned: (task: Task) => void;
   /** True for a human with project write access (any team role, or a
    * per-project PROJECT_ADMIN/PROJECT_CONTRIBUTOR share; mirrors the
    * backend's `requireProjectWrite` gate that PATCH /tasks/:id enforces
@@ -106,6 +112,7 @@ export default function TaskMetaSidebar({
   isProjectAdmin,
   onAdminRelease,
   adminReleaseBusy,
+  onClaimReassigned,
   canEditLabels = false,
   projectLabels = [],
   onUpdateLabels,
@@ -117,6 +124,19 @@ export default function TaskMetaSidebar({
   const canClaim = !assigned && task.status !== "open";
   const nextStep = NEXT_STEP[task.status] ?? "in an unknown state";
   const hasReviewClaim = Boolean(task.reviewClaimedByUserId || task.reviewClaimedByAgentId);
+  // Admin reassign picker: hidden (not disabled) unless a human project admin
+  // is looking, and never on a finished task.
+  const canReassign = isProjectAdmin && user !== null && task.status !== "done";
+  const workHolder: ClaimHolder | null = task.claimedByUserId
+    ? { type: "human", id: task.claimedByUserId }
+    : task.claimedByAgentId
+      ? { type: "agent", id: task.claimedByAgentId }
+      : null;
+  const reviewHolder: ClaimHolder | null = task.reviewClaimedByUserId
+    ? { type: "human", id: task.reviewClaimedByUserId }
+    : task.reviewClaimedByAgentId
+      ? { type: "agent", id: task.reviewClaimedByAgentId }
+      : null;
 
   // Admin release: which confirm dialog (if any) is open. Self-service
   // release (above) already covers "the claimant releases their own work
@@ -217,6 +237,15 @@ export default function TaskMetaSidebar({
                     Release (admin)
                   </Button>
                 )}
+                {canReassign && (
+                  <ClaimReassignPicker
+                    taskId={task.id}
+                    projectId={task.projectId}
+                    claim="work"
+                    currentHolder={workHolder}
+                    onReassigned={onClaimReassigned}
+                  />
+                )}
               </>
             ) : (
               <>
@@ -259,6 +288,15 @@ export default function TaskMetaSidebar({
                 >
                   Release
                 </Button>
+                {canReassign && (
+                  <ClaimReassignPicker
+                    taskId={task.id}
+                    projectId={task.projectId}
+                    claim="review"
+                    currentHolder={reviewHolder}
+                    onReassigned={onClaimReassigned}
+                  />
+                )}
               </span>
             </span>
           </>

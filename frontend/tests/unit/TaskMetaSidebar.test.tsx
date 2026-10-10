@@ -72,6 +72,7 @@ function renderSidebar(
       isProjectAdmin={overrides.isProjectAdmin ?? false}
       onAdminRelease={onAdminRelease}
       adminReleaseBusy={overrides.adminReleaseBusy ?? false}
+      onClaimReassigned={vi.fn()}
       canEditLabels={overrides.canEditLabels ?? false}
       projectLabels={overrides.projectLabels ?? []}
       onUpdateLabels={onUpdateLabels}

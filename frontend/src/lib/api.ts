@@ -974,6 +974,60 @@ export async function adminReleaseClaim(
   );
 }
 
+/** One human who may hold a claim on a project (GET /projects/:id/eligible-actors). */
+export interface EligibleHuman {
+  userId: string;
+  name: string;
+  source: "team" | "project";
+  role: string;
+}
+
+/** One live agent token that may hold a claim on a project. */
+export interface EligibleAgent {
+  tokenId: string;
+  name: string;
+}
+
+export interface EligibleActors {
+  humans: EligibleHuman[];
+  agents: EligibleAgent[];
+}
+
+/** Candidates for an admin claim reassignment. Human project admins only:
+ * 403 for agents and non-admins, 404 for an unknown project. */
+export async function getEligibleActors(projectId: string): Promise<EligibleActors> {
+  return request<EligibleActors>(`/api/projects/${projectId}/eligible-actors`);
+}
+
+export interface ClaimHolder {
+  type: "human" | "agent";
+  id: string;
+}
+
+export interface AdminReassignBody {
+  claim: "work" | "review";
+  target: ClaimHolder;
+  reason?: string;
+}
+
+export interface AdminReassignResult {
+  task: Task;
+  reassigned: { claim: "work" | "review"; priorHolder: ClaimHolder; newHolder: ClaimHolder };
+}
+
+/** Project-admin claim handoff: moves the work or review claim straight from
+ * its current holder to an eligible human or agent without touching
+ * `task.status`. 403 for agents and non-admins; 400 for a target outside the
+ * eligible set; 409 when the claim has no holder, the target already holds it,
+ * the distinct-reviewer rule or the agent single-claim rule forbids it, or the
+ * claim changed hands meanwhile. */
+export async function adminReassignClaim(taskId: string, body: AdminReassignBody): Promise<AdminReassignResult> {
+  return request<AdminReassignResult>(`/api/tasks/${taskId}/admin-reassign`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 // Claim + advance an open task to in_progress in one call (the v2 `/start`
 // endpoint). Workflow gates and the dependency gate are enforced server-side.
 export async function startTask(taskId: string): Promise<Task> {
