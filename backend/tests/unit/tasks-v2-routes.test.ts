@@ -329,6 +329,8 @@ function casWhereOf(task: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The pickup work pool reads the caller's own review-locked open tasks first.
+  prismaMocks.taskFindMany.mockResolvedValue([]);
   // Telemetry writers default to resolving cleanly; a test that makes one
   // reject must not leak that into the next test.
   prismaMocks.confidenceTelemetryUpsert.mockReset().mockResolvedValue({});
