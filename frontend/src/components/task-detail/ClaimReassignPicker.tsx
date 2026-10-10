@@ -117,6 +117,7 @@ export default function ClaimReassignPicker({
         size="sm"
         onClick={() => void openPicker()}
         title={`Hand this ${claimLabel} claim to another eligible actor`}
+        aria-label={`Reassign ${claimLabel} claim`}
       >
         Reassign
       </Button>

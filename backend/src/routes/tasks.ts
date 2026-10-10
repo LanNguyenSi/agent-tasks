@@ -2515,6 +2515,10 @@ taskRouter.post("/tasks/:id/start", async (c) => {
           if (!(await requireProjectWrite(actor, lockedTask.projectId, db))) throw new GroundingAccessError("forbidden", 403);
           if (lockedTask.status !== task.status || lockedTask.reviewClaimedByUserId || lockedTask.reviewClaimedByAgentId)
             throw new GroundingAccessError("bad_state", 409);
+          // The gate above ran on the pre-lock read. An admin reassign can hand
+          // the work claim to this actor before the lock is taken, so re-run it
+          // against the locked row; otherwise one actor ends up holding both claims.
+          if (!checkDistinctReviewerGate(lockedTask, actor, lockedTask.project).allowed) throw new GroundingAccessError("bad_state", 409);
         },
         mutate: async (db, lockedTask) => {
           const value = await db.task.updateMany({

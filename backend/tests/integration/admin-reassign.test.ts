@@ -94,6 +94,12 @@ const reassign = (actor: Actor, taskId: string, body: Record<string, unknown>) =
   });
 const reviewClaim = (actor: Actor, taskId: string) =>
   makeApp(actor).request(`/tasks/${taskId}/review/claim`, { method: "POST" });
+const startTask = (actor: Actor, taskId: string) =>
+  makeApp(actor).request(`/tasks/${taskId}/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
 const eligibleActors = (actor: Actor, id = projectId) => makeApp(actor).request(`/projects/${id}/eligible-actors`);
 
 async function seedUser(label: string) {
@@ -358,14 +364,16 @@ describe("POST /tasks/:id/admin-reassign against Postgres", () => {
   });
 });
 
-describe("admin-reassign against /review/claim on the same task", () => {
+describe("admin-reassign against the review-claim routes on the same task", () => {
   // Both requests read the task before either takes the project lock, so both
   // pass their pre-lock checks against the same stale row. A transaction held
   // open on the project row queues them behind it in a known order; whichever
   // commits first decides the other's locked re-check, and exactly one side
   // must lose with a 409. Without the distinct-reviewer re-check inside the
   // review-claim revalidate, the review claim would win after the reassign
-  // handed the same actor the work claim.
+  // handed the same actor the work claim. Both routes that grant a review claim
+  // are covered: POST /tasks/:id/review/claim and POST /tasks/:id/start on a
+  // task in review.
   async function raceBehindProjectLock(first: () => Response | Promise<Response>, second: () => Response | Promise<Response>) {
     const requestDb = store.connect(4);
     const blocker = store.connect();
@@ -448,6 +456,40 @@ describe("admin-reassign against /review/claim on the same task", () => {
     const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
     expect(row.claimedByUserId).toBe(memberId);
     expect(row.reviewClaimedByUserId).toBe(memberTwoId);
+  });
+
+  it("409s the review claim started via /start when the reassign hands the work claim to the same actor first", async () => {
+    const taskId = await seedReviewTask();
+    const [reassigned, started] = await raceBehindProjectLock(
+      () => reassign(actorOf(adminId), taskId, { claim: "work", target: { type: "human", id: memberTwoId } }),
+      () => startTask(actorOf(memberTwoId), taskId),
+    );
+    expect(reassigned.status).toBe(200);
+    expect(started.status).toBe(409);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.claimedByUserId).toBe(memberTwoId);
+    expect(row.reviewClaimedByUserId).toBeNull();
+    expect(row.reviewClaimedByAgentId).toBeNull();
+  });
+
+  it("409s the reassign when the review claim started via /start lands on the target first", async () => {
+    const taskId = await seedReviewTask();
+    const [started, reassigned] = await raceBehindProjectLock(
+      () => startTask(actorOf(memberTwoId), taskId),
+      () => reassign(actorOf(adminId), taskId, { claim: "work", target: { type: "human", id: memberTwoId } }),
+    );
+    expect(started.status).toBe(200);
+    expect(reassigned.status).toBe(409);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.claimedByUserId).toBe(memberId);
+    expect(row.reviewClaimedByUserId).toBe(memberTwoId);
+  });
+
+  it("still lets a distinct actor start a review on a reassigned work claim", async () => {
+    const taskId = await seedReviewTask();
+    expect((await reassign(actorOf(adminId), taskId, { claim: "work", target: { type: "human", id: memberTwoId } })).status).toBe(200);
+    expect((await startTask(actorOf(memberId), taskId)).status).toBe(200);
+    expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).reviewClaimedByUserId).toBe(memberId);
   });
 
   it("still lets a distinct actor review-claim a reassigned work claim", async () => {

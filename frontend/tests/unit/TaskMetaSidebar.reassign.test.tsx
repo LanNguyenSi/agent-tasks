@@ -88,7 +88,7 @@ function renderSidebar(
 }
 
 async function openAndPick(label: RegExp | string, claimName: string) {
-  await userEvent.click(screen.getByRole("button", { name: "Reassign" }));
+  await userEvent.click(screen.getByRole("button", { name: "Reassign work claim" }));
   const combobox = await screen.findByRole("combobox", { name: claimName });
   await userEvent.click(combobox);
   await userEvent.click(await screen.findByRole("option", { name: label }));
@@ -134,7 +134,7 @@ describe("TaskMetaSidebar claim reassign picker", () => {
 
     // Two claims are held (work by Other Person, review by Reviewer Person);
     // the second Reassign control belongs to the Reviewer row.
-    await userEvent.click(screen.getAllByRole("button", { name: "Reassign" })[1]!);
+    await userEvent.click(screen.getByRole("button", { name: "Reassign review claim" }));
     await userEvent.click(await screen.findByRole("combobox", { name: "Reassign review claim to" }));
     await userEvent.click(await screen.findByRole("option", { name: /builder-bot/ }));
     await userEvent.click(screen.getByRole("button", { name: "Assign" }));
@@ -144,7 +144,7 @@ describe("TaskMetaSidebar claim reassign picker", () => {
 
   it("does not offer the current holder as a target", async () => {
     renderSidebar(makeTask({}));
-    await userEvent.click(screen.getByRole("button", { name: "Reassign" }));
+    await userEvent.click(screen.getByRole("button", { name: "Reassign work claim" }));
     await userEvent.click(await screen.findByRole("combobox", { name: "Reassign work claim to" }));
     const listbox = await screen.findByRole("listbox");
     const names = within(listbox).getAllByRole("option").map((o) => o.textContent);
@@ -186,7 +186,7 @@ describe("TaskMetaSidebar claim reassign picker", () => {
     );
     renderSidebar(makeTask({}));
 
-    await userEvent.click(screen.getByRole("button", { name: "Reassign" }));
+    await userEvent.click(screen.getByRole("button", { name: "Reassign work claim" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Only project admins can list eligible claim holders");
     expect(screen.queryByRole("combobox", { name: "Reassign work claim to" })).not.toBeInTheDocument();
@@ -195,17 +195,17 @@ describe("TaskMetaSidebar claim reassign picker", () => {
 
   it("is hidden for a non-admin, not disabled", () => {
     renderSidebar(makeTask({}), { isProjectAdmin: false });
-    expect(screen.queryByRole("button", { name: "Reassign" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reassign (work|review) claim$/ })).not.toBeInTheDocument();
   });
 
   it("is hidden when there is no signed-in human user", () => {
     renderSidebar(makeTask({}), { user: null });
-    expect(screen.queryByRole("button", { name: "Reassign" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reassign (work|review) claim$/ })).not.toBeInTheDocument();
   });
 
   it("is hidden on a finished task", () => {
     renderSidebar(makeTask({ status: "done" }));
-    expect(screen.queryByRole("button", { name: "Reassign" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reassign (work|review) claim$/ })).not.toBeInTheDocument();
   });
 
   it("is hidden for a non-admin on a review claim too", () => {
@@ -213,6 +213,6 @@ describe("TaskMetaSidebar claim reassign picker", () => {
       makeTask({ status: "review", reviewClaimedByUserId: "u-3", reviewClaimedByUser: { id: "u-3", login: "rev", name: "Reviewer Person", avatarUrl: null } }),
       { isProjectAdmin: false },
     );
-    expect(screen.queryByRole("button", { name: "Reassign" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reassign (work|review) claim$/ })).not.toBeInTheDocument();
   });
 });

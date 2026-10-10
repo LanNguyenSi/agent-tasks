@@ -41,7 +41,7 @@ interface TaskMetaSidebarProps {
    * actor through the reassign picker. The picker is offered only to a human
    * project admin (`isProjectAdmin` with a signed-in `user`); it is hidden,
    * not disabled, for everyone else. */
-  onClaimReassigned?: (task: Task) => void;
+  onClaimReassigned: (task: Task) => void;
   /** True for a human with project write access (any team role, or a
    * per-project PROJECT_ADMIN/PROJECT_CONTRIBUTOR share; mirrors the
    * backend's `requireProjectWrite` gate that PATCH /tasks/:id enforces
@@ -243,7 +243,7 @@ export default function TaskMetaSidebar({
                     projectId={task.projectId}
                     claim="work"
                     currentHolder={workHolder}
-                    onReassigned={(updated) => onClaimReassigned?.(updated)}
+                    onReassigned={onClaimReassigned}
                   />
                 )}
               </>
@@ -294,7 +294,7 @@ export default function TaskMetaSidebar({
                     projectId={task.projectId}
                     claim="review"
                     currentHolder={reviewHolder}
-                    onReassigned={(updated) => onClaimReassigned?.(updated)}
+                    onReassigned={onClaimReassigned}
                   />
                 )}
               </span>
