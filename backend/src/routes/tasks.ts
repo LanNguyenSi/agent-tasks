@@ -4375,7 +4375,7 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
     },
   });
 
-  return c.json({ task: updated });
+  return c.json({ task: await withInReviewState(updated, prisma) });
 });
 
 // ── Creator abandon (v2 MCP) ──────────────────────────────────────────────────

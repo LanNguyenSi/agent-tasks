@@ -256,6 +256,28 @@ describe("POST /tasks/:id/abandon judges review state on the pinned workflow", (
     expect(body.error).toBeUndefined();
     expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].data.status).toBe("todo");
   });
+
+  it("the 200 response carries inReviewState, judged on the pinned workflow", async () => {
+    // `review` is review-like under the default but not under the pinned
+    // workflow, so a flag computed on the wrong workflow would read true.
+    const { status, body } = await abandonStatus({ status: "review", workflowId: WORKFLOW_ID });
+    expect(status).toBe(200);
+    expect(body.task).toHaveProperty("inReviewState", false);
+  });
+
+  it("the 200 response flags a review-lock-only abandon that leaves the task in a pinned review state", async () => {
+    // A reviewer drops only its review lock: the task stays in `qa`.
+    prismaMocks.taskFindUnique.mockResolvedValue({
+      ...baseTask,
+      status: "qa",
+      workflowId: WORKFLOW_ID,
+      reviewClaimedByUserId: CLAIMANT.userId,
+    });
+    const res = await makeApp(CLAIMANT).request(`/tasks/${TASK_ID}/abandon`, { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { task: { inReviewState: boolean } };
+    expect(body.task.inReviewState).toBe(true);
+  });
 });
 
 // ── Mutation routes carry the pinned-correct flag ────────────────────────────
