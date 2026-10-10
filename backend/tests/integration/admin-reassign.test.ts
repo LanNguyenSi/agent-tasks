@@ -412,10 +412,15 @@ describe("admin-reassign against the review-claim routes on the same task", () =
     };
     const previous = shared.db;
     shared.db = requestDb;
+    // Requests still in flight when a waiter check throws must settle before
+    // their client disconnects.
+    const pending: Promise<Response>[] = [];
     try {
-      const firstPending = first();
+      const firstPending = Promise.resolve(first());
+      pending.push(firstPending);
       await waitForWaiters(1);
-      const secondPending = second();
+      const secondPending = Promise.resolve(second());
+      pending.push(secondPending);
       await waitForWaiters(2);
       hold.release();
       await held;
@@ -423,7 +428,11 @@ describe("admin-reassign against the review-claim routes on the same task", () =
     } finally {
       hold.release();
       await held.catch(() => undefined);
+      await Promise.allSettled(pending);
       shared.db = previous;
+      // Each race opens up to six connections; release them now instead of at
+      // the file's afterAll, so adding races cannot exhaust max_connections.
+      await Promise.all([requestDb, blocker, observer].map((client) => client.$disconnect()));
     }
   }
 
