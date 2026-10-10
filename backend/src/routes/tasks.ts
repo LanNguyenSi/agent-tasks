@@ -1926,7 +1926,9 @@ async function deriveDebugFlavor<T extends {
 // Single "what should I do next?" endpoint for the v2 MCP surface. Resolution:
 //   1. Pending signals for this agent → return the oldest, ack it atomically
 //   2. Tasks in status `review` with a free review-claim, author != this agent
-//   3. Claimable tasks in status `open`, not blocked, in authorized projects
+//   3. Claimable tasks in status `open`, not blocked, in authorized projects,
+//      skipping one whose review lock the caller holds when the project's
+//      distinct-reviewer rule bars the holder from the work claim
 //   4. Nothing → idle
 //
 // Hard-limit: agents with an active author-claim OR review-claim are rejected
@@ -2046,8 +2048,35 @@ taskRouter.post("/tasks/pickup", async (c) => {
   }
 
   // ── 3. Work pickup ────────────────────────────────────────────────────────
+  // Skip open tasks whose review lock the caller holds when the project's
+  // distinct-reviewer rule bars the reviewer from the work claim: task_start
+  // answers 409 on them, so offering one would loop pickup -> 409. The shape
+  // (review lock left behind on an open task) is rare, so the candidates are
+  // few; the shared predicate decides per project, then the pool query below
+  // excludes the ids.
+  const ownReviewLocked = await prisma.task.findMany({
+    where: {
+      status: "open",
+      claimedByAgentId: null,
+      claimedByUserId: null,
+      reviewClaimedByAgentId: actor.tokenId,
+      ...teamFilter,
+    },
+    select: {
+      id: true,
+      claimedByUserId: true,
+      claimedByAgentId: true,
+      reviewClaimedByUserId: true,
+      reviewClaimedByAgentId: true,
+      project: { select: { governanceMode: true, soloMode: true, requireDistinctReviewer: true } },
+    },
+  });
+  const ownReviewBlockedIds = ownReviewLocked
+    .filter((t) => reviewHolderBlockedFromWorkClaim(t, actor, t.project))
+    .map((t) => t.id);
   const workTask = await prisma.task.findFirst({
     where: {
+      ...(ownReviewBlockedIds.length > 0 ? { id: { notIn: ownReviewBlockedIds } } : {}),
       // This literal IS the v1 backlog gate: task_pickup's work-pool query
       // must never surface a "backlog" task (it awaits operator promotion —
       // see backlog_not_promoted at /tasks/:id/start). A future
@@ -2278,7 +2307,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     // self-review. Answered ahead of the confidence and transition gates so a
     // refusal emits none of their audit events; the locked revalidate below
     // repeats it for a review claim that lands between this read and the lock.
-    if (!checkDistinctReviewerGate(reviewHolderAsClaimant(task), actor, task.project).allowed) {
+    if (reviewHolderBlockedFromWorkClaim(task, actor, task.project)) {
       return c.json({ error: "bad_state", message: REVIEW_HOLDER_WORK_CLAIM_MESSAGE }, 409);
     }
 
@@ -2409,7 +2438,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
         if (lockedTask.status !== task.status || lockedTask.claimedByUserId || lockedTask.claimedByAgentId)
           throw new GroundingAccessError("bad_state", 409);
         // Identity rule, repeated for a review claim that landed since the read.
-        if (!checkDistinctReviewerGate(reviewHolderAsClaimant(lockedTask), actor, lockedTask.project).allowed)
+        if (reviewHolderBlockedFromWorkClaim(lockedTask, actor, lockedTask.project))
           throw new GroundingAccessError("bad_state", 409);
       },
       mutate: async (db, lockedTask) => {
@@ -6990,7 +7019,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
   // mode-aware gate (a solo or opted-out project allows self-review). The
   // locked revalidate below repeats it for a review claim that lands between
   // this read and the project lock.
-  if (!checkDistinctReviewerGate(reviewHolderAsClaimant(task), actor, task.project).allowed) {
+  if (reviewHolderBlockedFromWorkClaim(task, actor, task.project)) {
     return c.json({ error: "bad_state", message: REVIEW_HOLDER_WORK_CLAIM_MESSAGE }, 409);
   }
 
@@ -7081,7 +7110,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
       // and the status check above pins the locked row to that read, so the
       // initial-state rule needs no second check here.
       // Identity rule, repeated for a review claim that landed since the read.
-      if (!checkDistinctReviewerGate(reviewHolderAsClaimant(lockedTask), actor, lockedTask.project).allowed) throw new GroundingAccessError("bad_state", 409);
+      if (reviewHolderBlockedFromWorkClaim(lockedTask, actor, lockedTask.project)) throw new GroundingAccessError("bad_state", 409);
     },
     mutate: async (db, lockedTask) => {
       const value = await db.task.updateMany({
@@ -7521,6 +7550,17 @@ function reviewHolderAsClaimant<T extends GateTask>(task: T): T {
     claimedByUserId: task.reviewClaimedByUserId,
     claimedByAgentId: task.reviewClaimedByAgentId,
   };
+}
+
+/**
+ * True when `actor` holds the task's review lock and the project's
+ * distinct-reviewer rule therefore bars them from the work claim. The one
+ * predicate behind the work-claim 409s on /claim and /start and the
+ * task_pickup work pool, which skips such a task so an agent is not offered
+ * what task_start would refuse.
+ */
+function reviewHolderBlockedFromWorkClaim(task: GateTask, actor: Actor, project: GateProject): boolean {
+  return !checkDistinctReviewerGate(reviewHolderAsClaimant(task), actor, project).allowed;
 }
 
 /**
