@@ -56,6 +56,21 @@ const customWorkflow: WorkflowDefinition = {
   ],
 } as WorkflowDefinition;
 
+// Workflow whose initial state itself has a transition to a terminal state.
+const initialToTerminalWorkflow: WorkflowDefinition = {
+  initialState: "todo",
+  states: [
+    { name: "todo", label: "Todo", terminal: false },
+    { name: "doing", label: "Doing", terminal: false },
+    { name: "shipped", label: "Shipped", terminal: true },
+  ],
+  transitions: [
+    { from: "todo", to: "doing" },
+    { from: "todo", to: "shipped" },
+    { from: "doing", to: "shipped" },
+  ],
+} as WorkflowDefinition;
+
 function renderSidebar(status: string, workflowDefinition?: WorkflowDefinition | null) {
   render(
     <TaskMetaSidebar
@@ -103,6 +118,11 @@ describe("TaskMetaSidebar self-service Release per state", () => {
 
   it("follows the custom workflow: a state named review that is a direct target of the initial state is not review-like", () => {
     renderSidebar("review", customWorkflow);
+    expect(screen.getByRole("button", { name: "Release" })).toBeEnabled();
+  });
+
+  it("keeps Release enabled in an initial state that has a transition to a terminal state", () => {
+    renderSidebar("todo", initialToTerminalWorkflow);
     expect(screen.getByRole("button", { name: "Release" })).toBeEnabled();
   });
 });
