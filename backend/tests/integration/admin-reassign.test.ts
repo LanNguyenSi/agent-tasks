@@ -12,7 +12,7 @@ import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from "vites
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
 import type { Actor } from "../../src/types/auth.js";
-import { groundingPostgres } from "../helpers/grounding-postgres.js";
+import { barrier, groundingPostgres } from "../helpers/grounding-postgres.js";
 
 const shared = vi.hoisted(() => ({ db: undefined as PrismaClient | undefined }));
 
@@ -92,6 +92,8 @@ const reassign = (actor: Actor, taskId: string, body: Record<string, unknown>) =
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+const reviewClaim = (actor: Actor, taskId: string) =>
+  makeApp(actor).request(`/tasks/${taskId}/review/claim`, { method: "POST" });
 const eligibleActors = (actor: Actor, id = projectId) => makeApp(actor).request(`/projects/${id}/eligible-actors`);
 
 async function seedUser(label: string) {
@@ -353,5 +355,105 @@ describe("POST /tasks/:id/admin-reassign against Postgres", () => {
     }
     expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).claimedByUserId).toBe(projectOnlyId);
     expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("admin-reassign against /review/claim on the same task", () => {
+  // Both requests read the task before either takes the project lock, so both
+  // pass their pre-lock checks against the same stale row. A transaction held
+  // open on the project row queues them behind it in a known order; whichever
+  // commits first decides the other's locked re-check, and exactly one side
+  // must lose with a 409. Without the distinct-reviewer re-check inside the
+  // review-claim revalidate, the review claim would win after the reassign
+  // handed the same actor the work claim.
+  async function raceBehindProjectLock(first: () => Response | Promise<Response>, second: () => Response | Promise<Response>) {
+    const requestDb = store.connect(4);
+    const blocker = store.connect();
+    const observer = store.connect();
+    const hold = barrier();
+    let blockingPid = 0;
+    const held = blocker.$transaction(
+      async (tx) => {
+        const [row] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid FROM projects WHERE id = ${projectId} FOR UPDATE`;
+        blockingPid = row!.pid;
+        await hold.wait();
+      },
+      { timeout: 20000 },
+    );
+    await hold.reached;
+    // Postgres queues lock waiters in arrival order, so counting the backends
+    // blocked on the holder, directly or behind another waiter, tells that both
+    // requests are parked, first one first.
+    const waiters = async () => {
+      const [row] = await observer.$queryRaw<{ n: number }[]>`
+        WITH RECURSIVE chain(pid) AS (
+          SELECT pid FROM pg_stat_activity WHERE ${blockingPid}::int = ANY(pg_blocking_pids(pid))
+          UNION
+          SELECT a.pid FROM pg_stat_activity a JOIN chain c ON c.pid = ANY(pg_blocking_pids(a.pid))
+        )
+        SELECT count(*)::int AS n FROM chain`;
+      return row!.n;
+    };
+    const waitForWaiters = async (n: number) => {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        if ((await waiters()) >= n) return;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      throw new Error(`expected ${n} request(s) queued on the held project lock`);
+    };
+    const previous = shared.db;
+    shared.db = requestDb;
+    try {
+      const firstPending = first();
+      await waitForWaiters(1);
+      const secondPending = second();
+      await waitForWaiters(2);
+      hold.release();
+      await held;
+      return await Promise.all([firstPending, secondPending]);
+    } finally {
+      hold.release();
+      await held.catch(() => undefined);
+      shared.db = previous;
+    }
+  }
+
+  async function seedReviewTask() {
+    return seedTask({ status: "review", claimedByUserId: memberId, claimedAt: new Date() });
+  }
+
+  it("409s the review claim when the reassign hands the work claim to the same actor first", async () => {
+    const taskId = await seedReviewTask();
+    const [reassigned, reviewed] = await raceBehindProjectLock(
+      () => reassign(actorOf(adminId), taskId, { claim: "work", target: { type: "human", id: memberTwoId } }),
+      () => reviewClaim(actorOf(memberTwoId), taskId),
+    );
+    expect(reassigned.status).toBe(200);
+    expect(reviewed.status).toBe(409);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.claimedByUserId).toBe(memberTwoId);
+    expect(row.reviewClaimedByUserId).toBeNull();
+    expect(row.reviewClaimedByAgentId).toBeNull();
+  });
+
+  it("409s the reassign when the review claim lands on the target first", async () => {
+    const taskId = await seedReviewTask();
+    const [reviewed, reassigned] = await raceBehindProjectLock(
+      () => reviewClaim(actorOf(memberTwoId), taskId),
+      () => reassign(actorOf(adminId), taskId, { claim: "work", target: { type: "human", id: memberTwoId } }),
+    );
+    expect(reviewed.status).toBe(200);
+    expect(reassigned.status).toBe(409);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.claimedByUserId).toBe(memberId);
+    expect(row.reviewClaimedByUserId).toBe(memberTwoId);
+  });
+
+  it("still lets a distinct actor review-claim a reassigned work claim", async () => {
+    const taskId = await seedReviewTask();
+    expect((await reassign(actorOf(adminId), taskId, { claim: "work", target: { type: "human", id: memberTwoId } })).status).toBe(200);
+    expect((await reviewClaim(actorOf(memberId), taskId)).status).toBe(200);
+    expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).reviewClaimedByUserId).toBe(memberId);
   });
 });
