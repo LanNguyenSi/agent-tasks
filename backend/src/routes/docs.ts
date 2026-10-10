@@ -1756,7 +1756,7 @@ export const openApiSpec = {
       post: {
         tags: ["Tasks"],
         summary: "Release claimed task",
-        description: "Only current claimant can release. Status is reset to open. Refused with 409 bad_state while the task is in a review state: the work claim stays with its holder until the reviewer approves or requests changes (admin-release is the override).",
+        description: "Only current claimant can release. Status is reset to open. Refused with 409 bad_state while the task is in a review state: the work claim stays with its holder until the reviewer approves or requests changes (admin-release is the override). A caller that also holds the review claim is pointed at /abandon, which drops both claims.",
         security: [{ bearerAuth: [] }],
         parameters: [
           {

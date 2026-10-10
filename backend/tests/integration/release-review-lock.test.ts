@@ -87,6 +87,9 @@ const abandon = (actor: Actor, taskId: string) => makeApp(actor).request(`/tasks
 const REVIEW_MESSAGE =
   "Cannot release a work claim while the task is in review. Wait for the reviewer to approve or request changes.";
 
+const BOTH_CLAIMS_MESSAGE =
+  "Cannot release a work claim while the task is in review. You also hold its review claim; use /abandon (task_abandon) to drop both claims.";
+
 async function seedUser(label: string) {
   const id = randomUUID();
   await db.user.create({ data: { id, login: `${label}-${id}`, name: label } });
@@ -202,5 +205,74 @@ describe("POST /tasks/:id/release against Postgres", () => {
     const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
     expect(row.status).toBe("review");
     expect(row.claimedByUserId).toBe(authorId);
+  });
+
+  it("classifies review states through the workflow definition, not the literal name 'review'", async () => {
+    await db.workflow.create({
+      data: {
+        id: randomUUID(),
+        projectId,
+        name: "custom",
+        isDefault: true,
+        definition: {
+          initialState: "open",
+          states: [
+            { name: "open", label: "Open", terminal: false },
+            { name: "in_progress", label: "In progress", terminal: false },
+            { name: "qa", label: "QA", terminal: false },
+            { name: "done", label: "Done", terminal: true },
+          ],
+          transitions: [
+            { from: "open", to: "in_progress", requiredRole: "any" },
+            { from: "in_progress", to: "qa", requiredRole: "any" },
+            { from: "qa", to: "done", requiredRole: "any" },
+          ],
+        } as never,
+      },
+    });
+    const claimedAt = new Date();
+    const taskId = await seedTask({ status: "qa", claimedByUserId: authorId, claimedAt });
+    const before = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+
+    const res = await release(actorOf(authorId), taskId);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "bad_state", message: REVIEW_MESSAGE });
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("qa");
+    expect(row.statusVersion).toBe(before.statusVersion);
+    expect(row.claimedByUserId).toBe(authorId);
+    expect(row.claimedAt?.getTime()).toBe(claimedAt.getTime());
+  });
+
+  it("points a caller that holds both claims at /abandon, which drops both, while the release changes nothing", async () => {
+    await db.project.update({
+      where: { id: projectId },
+      data: { governanceMode: "AUTONOMOUS", requireDistinctReviewer: false, soloMode: true },
+    });
+    const claimedAt = new Date();
+    const reviewedAt = new Date();
+    const taskId = await seedTask({
+      status: "review",
+      claimedByUserId: authorId,
+      claimedAt,
+      reviewClaimedByUserId: authorId,
+      reviewClaimedAt: reviewedAt,
+    });
+
+    const res = await release(actorOf(authorId), taskId);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "bad_state", message: BOTH_CLAIMS_MESSAGE });
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("review");
+    expect(row.claimedByUserId).toBe(authorId);
+    expect(row.reviewClaimedByUserId).toBe(authorId);
+
+    const abandoned = await abandon(actorOf(authorId), taskId);
+    expect(abandoned.status).toBe(200);
+    const after = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(after.claimedByUserId).toBeNull();
+    expect(after.reviewClaimedByUserId).toBeNull();
   });
 });

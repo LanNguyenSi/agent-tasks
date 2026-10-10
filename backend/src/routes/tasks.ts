@@ -7133,11 +7133,17 @@ taskRouter.post("/tasks/:id/release", async (c) => {
   // author waits for the reviewer's verdict (approve, or request changes,
   // which resumes the author's work claim).
   if (isReviewState(effectiveDef, task.status)) {
+    // An actor that also holds the review lock (self-review allowed) cannot
+    // wait for a reviewer: /abandon is the route that lets it drop both claims.
+    const holdsReviewClaim =
+      (actor.type === "human" && task.reviewClaimedByUserId === actor.userId) ||
+      (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
     return c.json(
       {
         error: "bad_state",
-        message:
-          "Cannot release a work claim while the task is in review. Wait for the reviewer to approve or request changes.",
+        message: holdsReviewClaim
+          ? "Cannot release a work claim while the task is in review. You also hold its review claim; use /abandon (task_abandon) to drop both claims."
+          : "Cannot release a work claim while the task is in review. Wait for the reviewer to approve or request changes.",
       },
       409,
     );
