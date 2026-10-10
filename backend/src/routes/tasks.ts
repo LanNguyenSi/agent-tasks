@@ -2193,6 +2193,8 @@ taskRouter.post("/tasks/:id/start", async (c) => {
           confidenceThreshold: true,
           taskTemplate: true,
           enforcementMode: true,
+          // Read with the legacy flags by the review-holder check (distinct-reviewer gate).
+          governanceMode: true,
           soloMode: true,
           requireDistinctReviewer: true,
           taskTypeThresholds: true,

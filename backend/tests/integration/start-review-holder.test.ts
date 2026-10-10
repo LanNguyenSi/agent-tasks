@@ -2,8 +2,9 @@
  * DB-backed test for the work branch of POST /tasks/:id/start (the MCP
  * task_start verb) when the caller holds the review claim.
  *
- * The work holder's self-service release of a task in review sets the status
- * back to open and keeps the review lock. /start used to claim any unclaimed
+ * A task can sit in the initial state with no work claim and a review lock
+ * still set: the old self-service /release reset a task in review that way, and
+ * admin-reassign can leave the same shape. /start used to claim any unclaimed
  * row in the initial state, so the review holder took the work claim and ended
  * with both claims. Under a distinct-reviewer project the route now answers a
  * specific 409 ahead of the confidence and transition gates, and repeats the
@@ -84,7 +85,6 @@ function makeApp(actor: Actor) {
 }
 
 const start = (actor: Actor, taskId: string) => makeApp(actor).request(`/tasks/${taskId}/start`, { method: "POST" });
-const release = (actor: Actor, taskId: string) => makeApp(actor).request(`/tasks/${taskId}/release`, { method: "POST" });
 const reassign = (actor: Actor, taskId: string, body: Record<string, unknown>) =>
   makeApp(actor).request(`/tasks/${taskId}/admin-reassign`, {
     method: "POST",
@@ -199,18 +199,6 @@ beforeEach(async () => {
 });
 
 describe("POST /tasks/:id/start work branch against Postgres", () => {
-  const seedReviewedTask = (workerId: string) =>
-    seedTask({
-      status: "review",
-      claimedByUserId: workerId,
-      claimedAt: new Date(),
-      reviewClaimedByUserId: holderId,
-      reviewClaimedAt: new Date(),
-      branchName: "feature/x",
-      prUrl: "https://github.com/x/y/pull/1",
-      prNumber: 1,
-    });
-
   it("starts an unclaimed task in the initial state", async () => {
     const taskId = await seedTask();
     const res = await start(actorOf(holderId), taskId);
@@ -220,29 +208,33 @@ describe("POST /tasks/:id/start work branch against Postgres", () => {
     expect(row.claimedByUserId).toBe(holderId);
   });
 
-  it("refuses the review holder after the work holder released the task from review, and keeps work=null, review=holder", async () => {
-    const workerId = await seedUser("worker");
-    await db.teamMember.create({ data: { teamId, userId: workerId, role: "HUMAN_MEMBER" } });
-    const taskId = await seedReviewedTask(workerId);
-    const released = await release(actorOf(workerId), taskId);
-    expect(released.status).toBe(200);
-    let row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
-    expect(row.status).toBe("open");
-    expect(row.claimedByUserId).toBeNull();
-    expect(row.reviewClaimedByUserId).toBe(holderId);
-    const reviewedAt = row.reviewClaimedAt?.getTime();
-    vi.mocked(logAuditEvent).mockClear();
+  it("refuses the review holder on a task left in the initial state with the review lock set, and keeps work=null, review=holder", async () => {
+    // Seeded directly: rows of this shape come from the pre-fix /release, which
+    // reset a task in review to the initial state and kept the review lock, and
+    // from admin-reassign. /release no longer produces them, so the stale state
+    // cannot be built through the route.
+    const reviewedAt = new Date(1_700_000_000_000);
+    const taskId = await seedTask({
+      status: "open",
+      claimedByUserId: null,
+      claimedByAgentId: null,
+      reviewClaimedByUserId: holderId,
+      reviewClaimedAt: reviewedAt,
+      branchName: "feature/x",
+      prUrl: "https://github.com/x/y/pull/1",
+      prNumber: 1,
+    });
 
     const res = await start(actorOf(holderId), taskId);
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "bad_state", message: REVIEW_HOLDER_MESSAGE });
     expect(logAuditEvent).not.toHaveBeenCalled();
-    row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    let row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
     expect(row.status).toBe("open");
     expect(row.claimedByUserId).toBeNull();
     expect(row.claimedByAgentId).toBeNull();
     expect(row.reviewClaimedByUserId).toBe(holderId);
-    expect(row.reviewClaimedAt?.getTime()).toBe(reviewedAt);
+    expect(row.reviewClaimedAt?.getTime()).toBe(reviewedAt.getTime());
 
     // A distinct teammate may still take the work claim; the review lock stays.
     const allowed = await start(actorOf(otherId), taskId);
@@ -256,6 +248,19 @@ describe("POST /tasks/:id/start work branch against Postgres", () => {
     const soloProject = randomUUID();
     await db.project.create({ data: { id: soloProject, teamId, name: "Solo", slug: randomUUID(), governanceMode: "AUTONOMOUS", requireDistinctReviewer: false, soloMode: true } });
     const taskId = await seedTask({ reviewClaimedByUserId: holderId, reviewClaimedAt: new Date() }, soloProject);
+    const res = await start(actorOf(holderId), taskId);
+    expect(res.status).toBe(200);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("in_progress");
+    expect(row.claimedByUserId).toBe(holderId);
+  });
+
+  it("reads the project's governanceMode, not the legacy flags, before and under the lock", async () => {
+    // governanceMode AUTONOMOUS permits self-review even though the legacy
+    // flags still say requireDistinctReviewer=true, soloMode=false.
+    const autonomousProject = randomUUID();
+    await db.project.create({ data: { id: autonomousProject, teamId, name: "Autonomous", slug: randomUUID(), governanceMode: "AUTONOMOUS", requireDistinctReviewer: true, soloMode: false } });
+    const taskId = await seedTask({ reviewClaimedByUserId: holderId, reviewClaimedAt: new Date() }, autonomousProject);
     const res = await start(actorOf(holderId), taskId);
     expect(res.status).toBe(200);
     const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
