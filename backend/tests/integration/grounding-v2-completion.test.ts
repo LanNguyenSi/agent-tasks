@@ -334,8 +334,10 @@ it("project write authorization precedes malformed/keyless request details and e
   expect(await snapshot()).toEqual(before);
 });
 
-const contextWriters = ["claim", "release", "review/claim", "review/release", "admin-release", "creator-abandon", "reopen"] as const;
+const contextWriters = ["claim", "release", "review/claim", "review/release", "admin-release", "admin-reassign", "creator-abandon", "reopen"] as const;
 type ContextWriter = typeof contextWriters[number];
+/** The session admin's own request body for the admin claim writers; the agent holds the work claim. */
+const adminBody = (writer: string) => writer === "admin-release" ? { releaseWorkClaim: true } : writer === "admin-reassign" ? { claim: "work", target: { type: "human", id: ids.user } } : {};
 async function contextWriter(writer: ContextWriter) {
   // Preserve an active generation from the previous working context. These
   // fixture writes arrange each direct route's admission state, without using
@@ -347,11 +349,11 @@ async function contextWriter(writer: ContextWriter) {
   if (writer.startsWith("review/")) {
     await store.db.task.update({ where: { id: f.taskId }, data: { status: "review", claimedByAgentId: null, claimedByUserId: ids.user, reviewClaimedByAgentId: writer === "review/release" ? ids.agent : null } });
   }
-  const authorization = ["admin-release", "reopen"].includes(writer)
+  const authorization = ["admin-release", "admin-reassign", "reopen"].includes(writer)
     ? await createSessionToken(ids.user, "test-secret-which-is-long-enough-1234") : token;
   return () => writer === "reopen"
     ? new Request(`http://localhost/api/tasks/${f.taskId}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${authorization}` }, body: JSON.stringify({ status: "open" }) })
-    : request(writer === "admin-release" ? { releaseWorkClaim: true } : {}, writer, null, authorization);
+    : request(adminBody(writer), writer, null, authorization);
 }
 
 it.each(contextWriters)("N-16 actual %s writer supersedes generation without requiring a positive receipt", async writer => {
@@ -367,22 +369,23 @@ it.each(contextWriters)("N-16 actual %s writer supersedes generation without req
     "review/claim": { status: "review", reviewClaimedByAgentId: ids.agent },
     "review/release": { status: "review", reviewClaimedByAgentId: null },
     "admin-release": { status: "in_progress", claimedByAgentId: null },
+    "admin-reassign": { status: "in_progress", claimedByAgentId: null, claimedByUserId: ids.user },
     "creator-abandon": { status: "abandoned", claimedByAgentId: null },
     reopen: { status: "open", claimedByAgentId: null },
   }[writer];
   expect(after.task).toMatchObject(expected);
   const contextAudit = await store.db.auditLog.findMany({ where: { projectId: f.projectId, action: "project.grounding.context_mutated" } });
   expect(contextAudit).toHaveLength(1);
-  const routeAudit = { claim: "task.claimed", release: "task.released", "review/claim": "task.reviewed", "review/release": "task.reviewed", "admin-release": "task.claim_released_by_admin", "creator-abandon": "task.creator_abandoned", reopen: "task.unabandoned" }[writer];
+  const routeAudit = { claim: "task.claimed", release: "task.released", "review/claim": "task.reviewed", "review/release": "task.reviewed", "admin-release": "task.claim_released_by_admin", "admin-reassign": "task.claim_reassigned", "creator-abandon": "task.creator_abandoned", reopen: "task.unabandoned" }[writer];
   await vi.waitFor(async () => { expect(await store.db.auditLog.count({ where: { taskId: f.taskId, action: routeAudit } })).toBe(1); });
   expect(f.merge).not.toHaveBeenCalled(); expect(harness.wrapper.start).not.toHaveBeenCalled();
 });
 
-it.each(["release", "review/release", "admin-release"] as const)("N-16 actual %s writer cannot alter a reserved generation", async writer => {
+it.each(["release", "review/release", "admin-release", "admin-reassign"] as const)("N-16 actual %s writer cannot alter a reserved generation", async writer => {
   const v = await setup("mode_b_review"); await f.evidence(v.intent);
   await f.service.reserveMerge(f.taskId, actor, "reserved", { action: "approve", method: "squash" });
   const authorization = writer === "review/release" ? token : await createSessionToken(ids.user, "test-secret-which-is-long-enough-1234");
-  const before = await snapshot(); const response = await app().fetch(request(writer === "admin-release" ? { releaseWorkClaim: true, releaseReviewClaim: true } : {}, writer, null, authorization));
+  const before = await snapshot(); const response = await app().fetch(request(writer === "admin-release" ? { releaseWorkClaim: true, releaseReviewClaim: true } : { claim: "work", target: { type: "agent", id: ids.agent } }, writer, null, authorization));
   expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "conflict", message: "Task state changed before the request completed" });
   expect(await snapshot()).toEqual(before); expect(f.merge).not.toHaveBeenCalled();
 });
@@ -394,6 +397,58 @@ it.each(["review/claim", "admin-release"] as const)("N-16 actual %s no-op retain
   if (writer === "admin-release") expect(await response.json()).toMatchObject({ released: { workClaim: false, reviewClaim: false } });
   expect(await snapshot()).toEqual(before);
   expect(await store.db.auditLog.count({ where: { projectId: f.projectId, action: "project.grounding.context_mutated" } })).toBe(0);
+});
+
+it("N-16 actual admin-reassign refusal (no holder) retains its active generation and audits nothing", async () => {
+  const makeRequest = await contextWriter("admin-reassign");
+  await store.db.task.update({ where: { id: f.taskId }, data: { claimedByAgentId: null } });
+  const before = await snapshot(); const response = await app().fetch(makeRequest());
+  expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ message: expect.stringContaining("no work claim to reassign") });
+  expect(await snapshot()).toEqual(before);
+  expect(await store.db.auditLog.count({ where: { projectId: f.projectId, action: "project.grounding.context_mutated" } })).toBe(0);
+  expect(await store.db.auditLog.count({ where: { taskId: f.taskId, action: "task.claim_reassigned" } })).toBe(0);
+});
+
+/** A second agent token on the fixture team, standing in as a reassignment target. */
+async function secondAgent() {
+  const id = randomUUID();
+  await store.db.agentToken.create({ data: { id, teamId: ids.team, createdById: ids.user, name: "Second", tokenHash: id, scopes: actor.scopes } });
+  return id;
+}
+
+it("N-16 actual admin-reassign refusal (target agent already holds another claim) retains its active generation and audits nothing", async () => {
+  await contextWriter("admin-reassign");
+  const busy = await secondAgent();
+  await store.db.task.create({ data: { id: randomUUID(), projectId: f.projectId, title: "Busy elsewhere", description: "d", status: "in_progress", claimedByAgentId: busy, createdByUserId: ids.user } });
+  const before = await snapshot();
+  const response = await app().fetch(request({ claim: "work", target: { type: "agent", id: busy } }, "admin-reassign", null, await createSessionToken(ids.user, "test-secret-which-is-long-enough-1234")));
+  expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "already_claimed", activeClaim: { role: "author" } });
+  expect(await snapshot()).toEqual(before);
+  expect(await store.db.auditLog.count({ where: { projectId: f.projectId, action: "project.grounding.context_mutated" } })).toBe(0);
+  expect(await store.db.auditLog.count({ where: { taskId: f.taskId, action: "task.claim_reassigned" } })).toBe(0);
+});
+
+it("N-16 actual admin-reassign refusal (lost holder-pinned write) retains its active generation and audits nothing", async () => {
+  await contextWriter("admin-reassign");
+  const before = await snapshot();
+  // The work claim changes hands right after the route first loads the task, so
+  // the write pinned to the observed holder matches nothing.
+  const original = store.db.task.findUnique.bind(store.db.task);
+  let moved = false;
+  const spy = vi.spyOn(store.db.task, "findUnique").mockImplementation(((...args: Parameters<typeof original>) => {
+    const result = original(...args);
+    if (moved) return result;
+    moved = true;
+    return (async () => { const row = await result; await store.db.task.update({ where: { id: f.taskId }, data: { claimedByAgentId: null, claimedByUserId: ids.user } }); return row; })();
+  }) as never);
+  let response: Response;
+  try { response = await app().fetch(request({ claim: "work", target: { type: "human", id: ids.user } }, "admin-reassign", null, await createSessionToken(ids.user, "test-secret-which-is-long-enough-1234"))); } finally { spy.mockRestore(); }
+  expect(moved).toBe(true);
+  expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "conflict" });
+  const after = await snapshot();
+  expect(after).toEqual({ ...before, task: expect.objectContaining({ claimedByAgentId: null, claimedByUserId: ids.user, claimedAt: before.task!.claimedAt }) });
+  expect(await store.db.auditLog.count({ where: { projectId: f.projectId, action: "project.grounding.context_mutated" } })).toBe(0);
+  expect(await store.db.auditLog.count({ where: { taskId: f.taskId, action: "task.claim_reassigned" } })).toBe(0);
 });
 
 // finalDisposition on the grounded paths that reach abandoned or leave it. The

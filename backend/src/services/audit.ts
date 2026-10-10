@@ -135,6 +135,13 @@ export type AuditAction =
   // for an idempotent no-op where the claim was already gone).
   | "task.claim_released_by_admin"
   | "task.review_claim_released_by_admin"
+  // Human-project-admin claim handoff (POST /tasks/:id/admin-reassign): an
+  // admin moves a work or review claim from its current holder straight to a
+  // chosen eligible human or agent, without touching task.status. Payload:
+  // { claim: "work" | "review", priorHolder: { type, id }, newHolder:
+  // { type, id }, reason }. One event per successful reassign, none on a
+  // refused or lost one.
+  | "task.claim_reassigned"
   // Respec verb (POST /tasks/:id/respec): an agent (creator, or any agent
   // when the project's allowNonCreatorRespec flag is set, or ANY agent while
   // the task is still "backlog" — T-002/D6 draft-space carve-out) or a human

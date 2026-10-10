@@ -3,7 +3,7 @@ type: module
 title: "backend: Hono API + Prisma"
 description: "Route layout, service/gate split, and the token-hash auth middleware behind every request."
 tags: [backend, hono, prisma, auth, routes]
-timestamp: 2026-10-07T04:24:51Z
+timestamp: 2026-10-09T20:47:30Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -69,6 +69,8 @@ Exact byte projection, limits and error behavior are documented in [the receipt
 contract](../grounding-receipt-contract.md).
 
 **Project settings PATCH** (`backend/src/routes/projects.ts`): `PATCH /api/projects/:id` is human-only and requires the ADMIN role (on the project or its team). Its `riskModifiers` field (the write path for the M3 modifiers) is validated by `riskModifiersSchema` from `backend/src/lib/confidence.ts` (see `confidence-scorer.md`), stored as `Prisma.JsonNull` when cleared with `null`, and audited as `project.updated` only when the canonical (key-order-insensitive) value changes, the same handling as `taskTypeThresholds`.
+
+**Eligible claim holders** (`backend/src/routes/projects.ts`, `backend/src/services/eligible-actors.ts`): `GET /api/projects/:id/eligible-actors` is human-project-admin-only (an agent token or a non-admin answers `403`, an unknown project `404`) and returns `{ humans: [{ userId, name, source, role }], agents: [{ tokenId, name }] }`: the project's non-`PROJECT_VIEWER` members and the owning team's members (deduped by user id, team entry wins), and the team's non-revoked, non-expired agent tokens. `POST /tasks/:id/admin-reassign` validates its target against the same `listEligibleActors` function (see `claim-model.md`).
 
 **Gate registry** (`backend/src/services/gates/`): a small discovery-only registry (`types.ts` `GateCode` enum: `distinct_reviewer`, `self_merge`, `task_status_for_merge`, `pr_repo_matches_project`) so a project can introspect *which* gates would fire before calling a verb (`GET /api/projects/:id/effective-gates`, MCP `projects_get_effective_gates`). Enforcement itself still lives inline in the route handlers, not in this registry. The separate legacy finish gate accepts only the pinned wrapper's `claim-evaluation` and terminal `complete` phases with a session and ledger evidence; its phase compatibility is not an evaluated-outcome result.
 

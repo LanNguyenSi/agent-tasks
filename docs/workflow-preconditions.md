@@ -293,6 +293,24 @@ by anyone (`POST /tasks/:id/admin-release`), independent of the transition
 force lever above and audited separately (`task.claim_released_by_admin` /
 `task.review_claim_released_by_admin`).
 
+A project admin can also hand a claim to a specific actor instead of
+releasing it: `POST /tasks/:id/admin-reassign` with
+`{ claim: "work" | "review", target: { type: "human" | "agent", id }, reason? }`
+moves the claim from its current holder to the target and leaves the task
+status unchanged. The target must appear in `GET /projects/:id/eligible-actors`
+(admin-only; returns `{ humans: [{ userId, name, source, role }], agents:
+[{ tokenId, name }] }`). Like `admin-release` it is human-admin-only and
+compare-and-swap-guarded on the holder it observed, and it answers
+`409 merge_in_progress` while a PR merge holds the task. Unlike
+`admin-release` it has no idempotent no-op: a claim with no holder, or a
+target that already holds it, answers `409`. An agent target that already
+holds another active claim is refused with `409 already_claimed` (humans are
+exempt, as everywhere else), and when the project requires a distinct reviewer
+the review claim cannot be handed to the work claimant, nor the work claim to
+the review holder. Audited as
+`task.claim_reassigned` with `{ claim, priorHolder, newHolder, reason }`; the
+response is `{ task, reassigned: { claim, priorHolder, newHolder } }`.
+
 ## How agents see the rules
 
 `GET /api/tasks/:id/instructions` returns `allowedTransitions` where each

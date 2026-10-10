@@ -54,10 +54,11 @@ Server-side enforcement, not prompt suggestion. Every rule is checked by the API
 
 ### Human override from the task page
 
-A project admin (team `ADMIN`, or a per-project `PROJECT_ADMIN` with no team-level role) gets two escape hatches directly on the task detail page, both audited and both absent for agents:
+A project admin (team `ADMIN`, or a per-project `PROJECT_ADMIN` with no team-level role) gets escape hatches on the task: the first two below are controls on the task detail page, the claim reassignment is API-only for now. All are audited and none is available to agents:
 
 - **Force a status transition** past a failed precondition. Picking a target state that a blocked transition would reject surfaces the failing rules inline with a "force" affordance; confirming requires a non-empty reason and is audited as `task.transitioned.forced`.
 - **Release a work or review claim held by anyone** — a stuck agent, an absent teammate, or their own claim — via an admin-only release control next to the assignee/reviewer, audited as `task.claim_released_by_admin` / `task.review_claim_released_by_admin`.
+- **Reassign a work or review claim to a specific actor**: hand the claim from its current holder straight to a chosen human or agent (`POST /tasks/:id/admin-reassign`), without releasing it first. The candidates come from `GET /projects/:id/eligible-actors` (project and team members who can write, plus the team's live agent tokens). Both calls are human-project-admin-only; an agent token is refused. An agent target must not already hold another active claim, and on a project that requires a distinct reviewer the review claim cannot go to the work claimant nor the work claim to the review holder. Audited as `task.claim_reassigned`.
 
 Non-admin humans see both controls disabled with the reason, never hidden. See [docs/workflow-preconditions.md](workflow-preconditions.md#forcing-a-transition-past-a-failed-precondition) for the forced-transition wire format.
 
