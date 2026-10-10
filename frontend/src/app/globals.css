@@ -4406,6 +4406,32 @@ html[data-theme="light"] {
   font-size: var(--text-xs);
 }
 
+/* Admin claim reassign picker: sits in the assignee/reviewer row, wrapping
+   onto its own line when the sidebar is narrow. */
+.td-reassign {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  flex-basis: 100%;
+}
+
+.td-reassign-select {
+  flex: 1;
+  min-width: 140px;
+}
+
+.td-reassign-hint {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.td-reassign-error {
+  flex-basis: 100%;
+  color: var(--danger-strong);
+  font-size: var(--text-xs);
+}
+
 /* Branch chip: mono, subtle tinted bg */
 .td-branch-chip {
   display: inline-flex;

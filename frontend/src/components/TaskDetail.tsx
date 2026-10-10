@@ -1356,6 +1356,7 @@ export default function TaskDetail({
         isProjectAdmin={isProjectAdmin}
         onAdminRelease={handleAdminRelease}
         adminReleaseBusy={adminReleaseBusy}
+        onClaimReassigned={onUpdate}
         canEditLabels={isProjectWrite}
         projectLabels={projectLabels}
         onUpdateLabels={handleUpdateLabels}
