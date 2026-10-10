@@ -295,11 +295,23 @@ export function sanitizeStoredDefinition(
  */
 export async function resolveEffectiveDefinition(
   task: { workflowId: string | null; workflow?: { definition: unknown } | null; projectId: string },
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  prismaClient: { workflow: { findFirst: (...args: any[]) => Promise<{ definition: unknown } | null> } },
+  prismaClient: {
+    workflow: {
+      findFirst: (...args: any[]) => Promise<{ definition: unknown } | null>; // eslint-disable-line @typescript-eslint/no-explicit-any
+      findUnique: (...args: any[]) => Promise<{ definition: unknown } | null>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    };
+  },
 ): Promise<WorkflowDefinitionShape> {
-  if (task.workflowId && task.workflow) {
-    return sanitizeStoredDefinition(task.workflow.definition, {
+  // `workflow === undefined` means the caller loaded the task without the
+  // relation: load the pinned row here so a pinned task is never judged on the
+  // project default. `workflow === null` means the relation was loaded and the
+  // row is gone, which falls through to the project default.
+  const pinned =
+    task.workflowId && task.workflow === undefined
+      ? await prismaClient.workflow.findUnique({ where: { id: task.workflowId } })
+      : task.workflow;
+  if (task.workflowId && pinned) {
+    return sanitizeStoredDefinition(pinned.definition, {
       workflowId: task.workflowId,
       projectId: task.projectId,
     });
@@ -310,6 +322,30 @@ export async function resolveEffectiveDefinition(
   return projectDefault
     ? sanitizeStoredDefinition(projectDefault.definition, { projectId: task.projectId })
     : defaultWorkflowDefinition();
+}
+
+/**
+ * Whether `task` currently sits in a review-like state of ITS effective
+ * workflow (task-pinned, else project default, else built-in), judged by the
+ * same `isReviewState` predicate the release/transition gates use. Both go
+ * through `resolveEffectiveDefinition`, so a pinned task is never judged on
+ * the project default.
+ */
+export async function isTaskInReviewState(
+  task: { status: string; workflowId: string | null; workflow?: { definition: unknown } | null; projectId: string },
+  prismaClient: Parameters<typeof resolveEffectiveDefinition>[1],
+): Promise<boolean> {
+  return isReviewState(await resolveEffectiveDefinition(task, prismaClient), task.status);
+}
+
+/** Adds the server-computed `inReviewState` flag to a task payload. */
+export async function withInReviewState<
+  T extends { status: string; workflowId: string | null; workflow?: { definition: unknown } | null; projectId: string },
+>(
+  task: T,
+  prismaClient: Parameters<typeof isTaskInReviewState>[1],
+): Promise<T & { inReviewState: boolean }> {
+  return { ...task, inReviewState: await isTaskInReviewState(task, prismaClient) };
 }
 
 // ── Workflow state semantic helpers ──────────────────────────────────────────

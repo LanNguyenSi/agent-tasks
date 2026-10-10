@@ -79,7 +79,7 @@ import {
   DEFAULT_TRANSITIONS,
   findDefaultTransition,
   defaultWorkflowDefinition,
-  resolveEffectiveDefinition,
+  resolveEffectiveDefinition, withInReviewState,
   resolveProjectEffectiveDefinition,
   expectedFinishStateFromDefinition,
   isInitialState,
@@ -2496,7 +2496,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
 
     return c.json({
       kind: "work",
-      task: { ...updated, metadata: flavor.mergedMetadata },
+      task: await withInReviewState({ ...updated, metadata: flavor.mergedMetadata }, prisma),
       expectedFinishState,
       // Gate list for the STANDARD (non-autoMerge) finish edge the caller
       // will hit next (startTarget → expectedFinishState), resolved from the
@@ -2637,7 +2637,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
 
     return c.json({
       kind: "review",
-      task: updated,
+      task: await withInReviewState(updated, prisma),
       expectedFinishState: expectedFinishStateFromDefinition(effectiveDefinition),
       // Same rationale as the work-claim branch above (see the comment
       // there for the null-vs-[] contract): `finish` previews outcome
@@ -4803,7 +4803,7 @@ taskRouter.get("/tasks/:id", async (c) => {
     return forbidden(c, "Access denied to this project");
   }
 
-  return c.json({ task });
+  return c.json({ task: await withInReviewState(task, prisma) });
 });
 
 // ── Task instructions (agent context) ────────────────────────────────────────
@@ -5188,7 +5188,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
       }
     }
 
-    return c.json({ task: updated });
+    return c.json({ task: await withInReviewState(updated, prisma) });
   }
 
   // Human path — full update. Write-tier gate: PROJECT_VIEWER is read-only
@@ -5795,7 +5795,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
   }
 
   return c.json({
-    task: updated,
+    task: await withInReviewState(updated, prisma),
     ...(transitionSkippedGates.length > 0 ? { skippedGates: transitionSkippedGates } : {}),
   });
 });
@@ -6763,13 +6763,7 @@ taskRouter.post("/tasks/:id/comments", zValidator("json", createCommentSchema), 
   // paid by actual claim-holder comments.
   try {
     if (actor.type === "agent" && task.claimedByAgentId === actor.tokenId) {
-      // The comment route loads the task without its workflow relation, so
-      // fetch the per-task workflow here (one extra lookup, only on this
-      // branch) to let resolveEffectiveDefinition honour task.workflowId.
-      const taskWorkflow = task.workflowId
-        ? await prisma.workflow.findUnique({ where: { id: task.workflowId } })
-        : null;
-      const effectiveDef = await resolveEffectiveDefinition({ ...task, workflow: taskWorkflow }, prisma);
+      const effectiveDef = await resolveEffectiveDefinition(task, prisma);
       // isWorkState alone also admits the review state; clarifications are work-phase only.
       if (isWorkState(effectiveDef, task.status) && !isReviewState(effectiveDef, task.status)) {
         await recordClarification(task.id, task.projectId);
@@ -7140,7 +7134,7 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     payload: { actorType: actor.type, actorId: actor.type === "agent" ? actor.tokenId : actor.userId },
   });
 
-  return c.json({ task: updated });
+  return c.json({ task: await withInReviewState(updated, prisma) });
 });
 
 // ── Release task ──────────────────────────────────────────────────────────────
@@ -7218,7 +7212,7 @@ taskRouter.post("/tasks/:id/release", async (c) => {
     payload: { actorType: actor.type },
   });
 
-  return c.json({ task: updated });
+  return c.json({ task: await withInReviewState(updated, prisma) });
 });
 
 // ── Admin release: force-release a work/review claim held by ANYONE ─────────
@@ -7342,7 +7336,7 @@ taskRouter.post(
     const updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
     if (!updated) return notFound(c);
 
-    return c.json({ task: updated, released });
+    return c.json({ task: await withInReviewState(updated, prisma), released });
   },
 );
 
@@ -7522,7 +7516,7 @@ taskRouter.post(
     const updated = await prisma.task.findUnique({ where: { id: task.id }, include: taskInclude });
     if (!updated) return notFound(c);
 
-    return c.json({ task: updated, reassigned: { claim: body.claim, priorHolder, newHolder: target } });
+    return c.json({ task: await withInReviewState(updated, prisma), reassigned: { claim: body.claim, priorHolder, newHolder: target } });
   },
 );
 
@@ -7892,7 +7886,7 @@ taskRouter.post(
     }
 
     return c.json({
-      task: updated,
+      task: await withInReviewState(updated, prisma),
       ...(transitionSkippedGates.length > 0
         ? { skippedGates: transitionSkippedGates }
         : {}),
@@ -8034,7 +8028,7 @@ taskRouter.post(
       );
     }
 
-    return c.json({ task: updated });
+    return c.json({ task: await withInReviewState(updated, prisma) });
   },
 );
 

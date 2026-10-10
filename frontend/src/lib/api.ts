@@ -215,6 +215,11 @@ export interface Task {
   } | null;
   blockedBy?: { id: string; title: string; status: string }[];
   blocks?: { id: string; title: string; status: string }[];
+  /** Server-computed: whether the task sits in a review-like state of ITS
+   * effective workflow (task-pinned, else project default). Carried by the
+   * single-task routes the task detail view reads (GET /tasks/:id and the
+   * mutation responses); absent on list payloads. */
+  inReviewState?: boolean;
 }
 
 export interface Comment {

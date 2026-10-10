@@ -7,8 +7,7 @@
 // reflects the live editing state without this component importing calculateConfidence.
 
 import { useState } from "react";
-import type { ClaimHolder, Task, User, WorkflowDefinition } from "@/lib/api";
-import { isReviewState } from "@/lib/workflowState";
+import type { ClaimHolder, Task, User } from "@/lib/api";
 import { normalizeStatus } from "@/lib/status";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { PriorityLabel } from "@/components/ui/PriorityLabel";
@@ -59,10 +58,6 @@ interface TaskMetaSidebarProps {
    * success so the input can clear itself only after the save lands. */
   onUpdateLabels?: (labels: string[]) => Promise<boolean>;
   labelsBusy?: boolean;
-  /** The project's effective workflow, used to tell whether the task is in a
-   * review state (where releasing a work claim is rejected). null = not
-   * loaded: falls back to the default workflow's literal `review` state. */
-  workflowDefinition?: WorkflowDefinition | null;
 }
 
 function isOverdue(task: Task): boolean {
@@ -120,19 +115,15 @@ export default function TaskMetaSidebar({
   projectLabels = [],
   onUpdateLabels,
   labelsBusy = false,
-  workflowDefinition = null,
 }: TaskMetaSidebarProps) {
   const overdue = isOverdue(task);
   const assigned = Boolean(task.claimedByUserId || task.claimedByAgentId);
   const isOwnTask = task.claimedByUserId === user?.id;
-  // Same predicate the release route uses. Without the project's workflow
-  // (not loaded, or it failed to load) fall back to the built-in default
-  // workflow's review state. Task rows carry no per-task workflow id, so a
-  // task pinned to a workflow other than the project default is judged on
-  // the project default here.
-  const inReview = workflowDefinition
-    ? isReviewState(workflowDefinition, task.status)
-    : task.status === "review";
+  // The release route answers 409 in a review state of the task's effective
+  // workflow; the server computes that per task (pinned workflow included).
+  // A payload without the flag (e.g. a list row) falls back to the built-in
+  // default workflow's literal `review` state.
+  const inReview = task.inReviewState ?? task.status === "review";
   const nextStep = NEXT_STEP[task.status] ?? "in an unknown state";
   const hasReviewClaim = Boolean(task.reviewClaimedByUserId || task.reviewClaimedByAgentId);
   // Admin reassign picker: hidden (not disabled) unless a human project admin

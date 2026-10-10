@@ -261,7 +261,9 @@ describe("sanitizeStoredDefinition", () => {
 });
 
 describe("the effective-definition resolvers sanitize every stored source", () => {
-  const prismaWith = (definition: unknown) => ({ workflow: { findFirst: async () => ({ definition }) } });
+  const prismaWith = (definition: unknown) => ({
+    workflow: { findFirst: async () => ({ definition }), findUnique: async () => ({ definition }) },
+  });
 
   it("resolveEffectiveDefinition: task-attached workflow", async () => {
     const def = await resolveEffectiveDefinition(

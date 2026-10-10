@@ -17,7 +17,6 @@ import {
   type Project,
   type Team,
   type WorkflowTransition,
-  type WorkflowDefinition,
   type TaskConfidenceDetail,
 } from "../../../lib/api";
 import AlertBanner from "../../../components/ui/AlertBanner";
@@ -51,9 +50,6 @@ export default function TaskDetailPage() {
   // override dropdown to the transitions the backend will actually accept
   // (null = not loaded / not admin → the control falls back to the base states).
   const [workflowTransitions, setWorkflowTransitions] = useState<WorkflowTransition[] | null>(null);
-  // Full effective workflow, fetched for every role: the sidebar needs it to
-  // disable Release in a review state (null = not loaded → default "review").
-  const [workflowDefinition, setWorkflowDefinition] = useState<WorkflowDefinition | null>(null);
   // M4 (task 67526c1c): the Improvement panel's data. Fetched alongside the
   // other page data but non-critical — a failure resolves to null via the
   // .catch below rather than surfacing as a page error, so the panel simply
@@ -92,16 +88,13 @@ export default function TaskDetailPage() {
         // workflow edges. A failure here must not break the page — the control
         // falls back to the base states when transitions stay null. Same
         // helper the render path uses, so both admin derivations stay in sync.
-        try {
-          const wf = await getEffectiveWorkflow(fetchedProject.id);
-          if (!cancelled) {
-            setWorkflowDefinition(wf.definition);
-            if (isProjectAdminRole(fetchedProject.accessRole)) {
-              setWorkflowTransitions(wf.definition.transitions);
-            }
+        if (isProjectAdminRole(fetchedProject.accessRole)) {
+          try {
+            const wf = await getEffectiveWorkflow(fetchedProject.id);
+            if (!cancelled) setWorkflowTransitions(wf.definition.transitions);
+          } catch {
+            /* fall back to base states */
           }
-        } catch {
-          /* fall back to base states / default review state */
         }
       } catch (err) {
         if (cancelled) return;
@@ -176,7 +169,6 @@ export default function TaskDetailPage() {
           isProjectAdmin={isProjectAdmin}
           isProjectWrite={isProjectWrite}
           workflowTransitions={workflowTransitions}
-          workflowDefinition={workflowDefinition}
           improvementPanel={improvementPanel}
           aiHelpersEnabled={project.aiHelpersEnabled ?? false}
           onUpdate={handleUpdate}
