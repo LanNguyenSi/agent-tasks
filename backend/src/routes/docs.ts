@@ -1756,7 +1756,7 @@ export const openApiSpec = {
       post: {
         tags: ["Tasks"],
         summary: "Release claimed task",
-        description: "Only current claimant can release. Status is reset to open.",
+        description: "Only current claimant can release. Status is reset to open. Refused with 409 bad_state while the task is in a review state: the work claim stays with its holder until the reviewer approves or requests changes (admin-release is the override).",
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1788,7 +1788,7 @@ export const openApiSpec = {
             },
           },
           "409": {
-            description: "The claim is no longer held or the status changed before the request completed, or (merge_in_progress) a pull request merge holds the task",
+            description: "The task is in a review state (bad_state), the claim is no longer held or the status changed before the request completed, or (merge_in_progress) a pull request merge holds the task",
             content: {
               "application/json": {
                 schema: { oneOf: [{ $ref: "#/components/schemas/ErrorResponse" }, { $ref: "#/components/schemas/MergeInProgressResponse" }] },

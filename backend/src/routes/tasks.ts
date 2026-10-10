@@ -7126,6 +7126,23 @@ taskRouter.post("/tasks/:id/release", async (c) => {
 
   const effectiveDef = await resolveEffectiveDefinition(task, prisma);
 
+  // Reject releasing a work claim while the task is in review, like /abandon.
+  // The release resets the status to the initial state but leaves the review
+  // lock alone, so a task would land there with a stale review lock; the
+  // reviewer's lock only means something while the task stays in review. The
+  // author waits for the reviewer's verdict (approve, or request changes,
+  // which resumes the author's work claim).
+  if (isReviewState(effectiveDef, task.status)) {
+    return c.json(
+      {
+        error: "bad_state",
+        message:
+          "Cannot release a work claim while the task is in review. Wait for the reviewer to approve or request changes.",
+      },
+      409,
+    );
+  }
+
   const releaseMutation = await mutateGroundingRouteContext(prisma, {
     taskId: task.id, projectId: task.projectId, actor, reason: "legacy_release",
     revalidate: async (db, lockedTask) => {

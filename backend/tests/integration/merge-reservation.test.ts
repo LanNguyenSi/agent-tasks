@@ -977,7 +977,6 @@ describe("claim and status writers refuse with 409 merge_in_progress while a mer
       name: "POST /tasks/:id/admin-reassign (an admin hands the review lock to another member)",
       writer: (id) => post(admin, `/tasks/${id}/admin-reassign`, { claim: "review", target: { type: "human", id: reviewer2Id } }),
     },
-    { name: "POST /tasks/:id/release (the author releases the work claim)", writer: (id) => post(author, `/tasks/${id}/release`) },
     { name: "POST /tasks/:id/review (the reviewer requests changes)", writer: (id) => post(reviewer, `/tasks/${id}/review`, { action: "request_changes" }) },
     { name: "POST /tasks/:id/transition (an admin moves the task back)", writer: (id) => post(admin, `/tasks/${id}/transition`, { status: "in_progress" }) },
     { name: "PATCH /tasks/:id (an admin writes the status)", writer: (id) => send(admin, "PATCH", `/tasks/${id}`, { status: "in_progress" }) },
