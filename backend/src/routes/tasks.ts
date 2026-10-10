@@ -2563,6 +2563,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
               confidenceThreshold: true,
               taskTemplate: true,
               enforcementMode: true,
+              governanceMode: true,
               soloMode: true,
               requireDistinctReviewer: true,
               taskTypeThresholds: true,
