@@ -268,6 +268,31 @@ describe("POST /tasks/:id/start work branch against Postgres", () => {
     expect(row.claimedByUserId).toBe(holderId);
   });
 
+  it("lets the work holder review-claim through /start when governanceMode permits self-review despite the legacy flags", async () => {
+    // The review branch's pre-lock gate reads the same project select as the
+    // work branch, so it also resolves governanceMode rather than the legacy
+    // requireDistinctReviewer=true, soloMode=false flags.
+    const autonomousProject = randomUUID();
+    await db.project.create({ data: { id: autonomousProject, teamId, name: "Autonomous", slug: randomUUID(), governanceMode: "AUTONOMOUS", requireDistinctReviewer: true, soloMode: false } });
+    const taskId = await seedTask(
+      {
+        status: "review",
+        claimedByUserId: holderId,
+        claimedAt: new Date(),
+        branchName: "feature/x",
+        prUrl: "https://github.com/x/y/pull/1",
+        prNumber: 1,
+      },
+      autonomousProject,
+    );
+    const res = await start(actorOf(holderId), taskId);
+    expect(res.status).toBe(200);
+    const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(row.status).toBe("review");
+    expect(row.claimedByUserId).toBe(holderId);
+    expect(row.reviewClaimedByUserId).toBe(holderId);
+  });
+
   it("refuses an agent review holder before the confidence gate audits and leaves the work claim unset", async () => {
     const scopes = ["tasks:claim", "tasks:transition"];
     const tokenId = randomUUID();
