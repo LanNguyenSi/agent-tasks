@@ -16,7 +16,8 @@ import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from "vites
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
 import type { Actor } from "../../src/types/auth.js";
-import { barrier, groundingPostgres } from "../helpers/grounding-postgres.js";
+import { groundingPostgres } from "../helpers/grounding-postgres.js";
+import { raceBehindProjectLock as raceBehind } from "../helpers/project-lock-race.js";
 
 const shared = vi.hoisted(() => ({ db: undefined as PrismaClient | undefined }));
 
@@ -100,65 +101,8 @@ const REVIEW_HOLDER_MESSAGE =
  * arrival order, then releases it: both pass their pre-lock read before either
  * commits, so the second one is decided by the locked revalidate alone.
  */
-async function raceBehindProjectLock(first: () => Response | Promise<Response>, second: () => Response | Promise<Response>) {
-  const requestDb = store.connect(4);
-  const blocker = store.connect();
-  const observer = store.connect();
-  const hold = barrier();
-  let blockingPid = 0;
-  const held = blocker.$transaction(
-    async (tx) => {
-      const [row] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid FROM projects WHERE id = ${projectId} FOR UPDATE`;
-      blockingPid = row!.pid;
-      await hold.wait();
-    },
-    { timeout: 20000 },
-  );
-  await hold.reached;
-  // Postgres queues lock waiters in arrival order, so counting the backends
-  // blocked on the holder, directly or behind another waiter, tells that both
-  // requests are parked, first one first.
-  const waiters = async () => {
-    const [row] = await observer.$queryRaw<{ n: number }[]>`
-      WITH RECURSIVE chain(pid) AS (
-        SELECT pid FROM pg_stat_activity WHERE ${blockingPid}::int = ANY(pg_blocking_pids(pid))
-        UNION
-        SELECT a.pid FROM pg_stat_activity a JOIN chain c ON c.pid = ANY(pg_blocking_pids(a.pid))
-      )
-      SELECT count(*)::int AS n FROM chain`;
-    return row!.n;
-  };
-  const waitForWaiters = async (n: number) => {
-    const deadline = Date.now() + 10000;
-    while (Date.now() < deadline) {
-      if ((await waiters()) >= n) return;
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    throw new Error(`expected ${n} request(s) queued on the held project lock`);
-  };
-  const previous = shared.db;
-  shared.db = requestDb;
-  // Requests still in flight when a waiter check throws must settle before
-  // their client disconnects.
-  const pending: Promise<Response>[] = [];
-  try {
-    const firstPending = Promise.resolve(first());
-    pending.push(firstPending);
-    await waitForWaiters(1);
-    const secondPending = Promise.resolve(second());
-    pending.push(secondPending);
-    await waitForWaiters(2);
-    hold.release();
-    await held;
-    return await Promise.all([firstPending, secondPending]);
-  } finally {
-    hold.release();
-    await held.catch(() => undefined);
-    await Promise.allSettled(pending);
-    shared.db = previous;
-    await Promise.all([requestDb, blocker, observer].map((client) => client.$disconnect()));
-  }
-}
+const raceBehindProjectLock = (first: () => Response | Promise<Response>, second: () => Response | Promise<Response>) =>
+  raceBehind({ store, projectId, holder: shared }, first, second);
 
 async function seedUser(label: string) {
   const id = randomUUID();
