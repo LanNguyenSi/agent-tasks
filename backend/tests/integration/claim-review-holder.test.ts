@@ -138,10 +138,15 @@ async function raceBehindProjectLock(first: () => Response | Promise<Response>, 
   };
   const previous = shared.db;
   shared.db = requestDb;
+  // Requests still in flight when a waiter check throws must settle before
+  // their client disconnects.
+  const pending: Promise<Response>[] = [];
   try {
-    const firstPending = first();
+    const firstPending = Promise.resolve(first());
+    pending.push(firstPending);
     await waitForWaiters(1);
-    const secondPending = second();
+    const secondPending = Promise.resolve(second());
+    pending.push(secondPending);
     await waitForWaiters(2);
     hold.release();
     await held;
@@ -149,7 +154,9 @@ async function raceBehindProjectLock(first: () => Response | Promise<Response>, 
   } finally {
     hold.release();
     await held.catch(() => undefined);
+    await Promise.allSettled(pending);
     shared.db = previous;
+    await Promise.all([requestDb, blocker, observer].map((client) => client.$disconnect()));
   }
 }
 
@@ -268,6 +275,8 @@ describe("POST /tasks/:id/claim against Postgres", () => {
     const row = await db.task.findUniqueOrThrow({ where: { id: taskId } });
     expect(row.claimedByAgentId).toBeNull();
     expect(row.reviewClaimedByAgentId).toBe(tokenId);
+    // The confidence gate audits agent callers; a refusal must come before it.
+    expect(logAuditEvent).not.toHaveBeenCalled();
   });
 
   it("refuses an unclaimed task in a non-initial, non-review state of a custom workflow", async () => {
