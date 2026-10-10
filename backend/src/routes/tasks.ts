@@ -7133,6 +7133,29 @@ taskRouter.post("/tasks/:id/release", async (c) => {
 
   const effectiveDef = await resolveEffectiveDefinition(task, prisma);
 
+  // Reject releasing a work claim while the task is in review, like /abandon.
+  // The release resets the status to the initial state but leaves the review
+  // lock alone, so a task would land there with a stale review lock; the
+  // reviewer's lock only means something while the task stays in review. The
+  // author waits for the reviewer's verdict (approve, or request changes,
+  // which resumes the author's work claim).
+  if (isReviewState(effectiveDef, task.status)) {
+    // An actor that also holds the review lock (self-review allowed) cannot
+    // wait for a reviewer: /abandon is the route that lets it drop both claims.
+    const holdsReviewClaim =
+      (actor.type === "human" && task.reviewClaimedByUserId === actor.userId) ||
+      (actor.type === "agent" && task.reviewClaimedByAgentId === actor.tokenId);
+    return c.json(
+      {
+        error: "bad_state",
+        message: holdsReviewClaim
+          ? "Cannot release a work claim while the task is in review. You also hold its review claim; use /abandon (task_abandon) to drop both claims."
+          : "Cannot release a work claim while the task is in review. Wait for the reviewer to approve or request changes.",
+      },
+      409,
+    );
+  }
+
   const releaseMutation = await mutateGroundingRouteContext(prisma, {
     taskId: task.id, projectId: task.projectId, actor, reason: "legacy_release",
     revalidate: async (db, lockedTask) => {

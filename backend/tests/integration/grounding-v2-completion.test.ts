@@ -386,7 +386,11 @@ it.each(["release", "review/release", "admin-release", "admin-reassign"] as cons
   await f.service.reserveMerge(f.taskId, actor, "reserved", { action: "approve", method: "squash" });
   const authorization = writer === "review/release" ? token : await createSessionToken(ids.user, "test-secret-which-is-long-enough-1234");
   const before = await snapshot(); const response = await app().fetch(request(writer === "admin-release" ? { releaseWorkClaim: true, releaseReviewClaim: true } : { claim: "work", target: { type: "agent", id: ids.agent } }, writer, null, authorization));
-  expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: "conflict", message: "Task state changed before the request completed" });
+  // The task sits in review, where the self-service release is refused before any write.
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject(writer === "release"
+    ? { error: "bad_state", message: expect.stringContaining("while the task is in review") }
+    : { error: "conflict", message: "Task state changed before the request completed" });
   expect(await snapshot()).toEqual(before); expect(f.merge).not.toHaveBeenCalled();
 });
 
