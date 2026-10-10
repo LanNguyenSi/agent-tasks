@@ -251,8 +251,10 @@ describe("POST /tasks/:id/abandon judges review state on the pinned workflow", (
   });
 
   it("pinned task in a state that is review-like only under the default: not rejected as in review", async () => {
-    const { body } = await abandonStatus({ status: "review", workflowId: WORKFLOW_ID });
-    expect(body.error).not.toBe("bad_state");
+    const { status, body } = await abandonStatus({ status: "review", workflowId: WORKFLOW_ID });
+    expect(status).toBe(200);
+    expect(body.error).toBeUndefined();
+    expect(prismaMocks.taskUpdateMany.mock.calls[0]![0].data.status).toBe("todo");
   });
 });
 
