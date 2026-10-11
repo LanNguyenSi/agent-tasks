@@ -27,7 +27,7 @@ sources:
 
 **Types and recipients**: each type has a fixed recipient rule (`backend/src/services/signal.ts:17-24#"self_merge_notice"`). The emitters are called with `void` from the routes, after the task write.
 
-- `task_available`: `emitTaskAvailableSignal` (`backend/src/services/task-signal.ts`) when a task is created or imported as `open`, or a `PATCH` or `/transition` moves it back to `open`; promoting a `backlog` task to `open` sends none. Recipients: every agent token of the project's team that is not revoked, not expired and carries `tasks:claim`. Humans never receive it.
+- `task_available`: `emitTaskAvailableSignal` (`backend/src/services/task-signal.ts`) on the routes that `docs/events.md` lists under Signal types. Recipients: every agent token of the project's team that is not revoked, not expired and carries `tasks:claim`. Humans never receive it.
 - `review_needed`: `emitReviewSignal` (`backend/src/services/review-signal.ts`) when a task enters review. `findEligibleReviewers` selects the team's active agent tokens with `tasks:transition` and the team members whose team role is `REVIEWER` or `ADMIN`, minus the task's assignee. Per-project members (`ProjectMember`) are not looked up. The emitter also writes a `[system]` timeline comment that lists the recipients, or says that none were found.
 - `changes_requested` and `task_approved`: to the task's work claimant, agent or human, with the review comment; nothing is sent when the task has no claimant.
 - `task_force_transitioned`: `emitForceTransitionedSignal` (`backend/src/services/force-transition-signal.ts`) after an admin `force` transition, to the work claimant and the review claimant, agent or human, deduplicated, and never to the forcing admin.

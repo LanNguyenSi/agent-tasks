@@ -32,7 +32,7 @@ for the full contract, headers, and HMAC verification.
 | `changes_requested` | Reviewer requests changes | Original assignee |
 | `task_approved` | Reviewer approves | Original assignee |
 | `task_assigned` | Never emitted: declared in the `SignalType` union, but no code path creates it | n/a |
-| `task_available` | Task created or imported as `open`, or moved back to `open` (not on backlog promote) | Eligible agents in the team |
+| `task_available` | Single create or batch import of an `open` task, or a `/transition` or human `PATCH` to `open` from another status; not a `backlog` promote, a claim release, `task_abandon` or a task created from a GitHub issue (see [events.md](events.md#signal-types)) | Eligible agents in the team |
 | `task_force_transitioned` | Admin force-transitions past a failed gate | Current claimant + current reviewer (excluding the forcing admin) |
 | `self_merge_notice` | Agent (or human) self-merged on a non-solo project with `requireDistinctReviewer: false` | All human team members, excluding the merging human |
 

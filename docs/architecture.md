@@ -42,7 +42,7 @@ flowchart TD
     BE --> Uploads[("attachment files (UPLOAD_DIR)")]
     BE -.->|optional REDIS_URL| Redis[(Redis cache)]
     GH[GitHub] -->|"webhooks /api/webhooks/github"| BE
-    BE -->|"OAuth, repo list, PRs (create, read, comment, merge), checks"| GH
+    BE -->|"OAuth, repos, PRs, checks"| GH
     BE -->|"discovery, JWKS, token"| IdP[OIDC IdP]
     BE -->|signal POST| Hook[Project notification webhook]
     BE -.->|optional ANTHROPIC_API_KEY| LLM[Anthropic API]
