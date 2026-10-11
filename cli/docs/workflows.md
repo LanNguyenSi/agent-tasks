@@ -26,13 +26,52 @@ agent-tasks tasks finish <task-id> \
   --result "Implemented X, tests green" \
   --pr-url https://github.com/acme/repo/pull/42
 
-# 6. Later: pickup might return a review-claim, approve or request changes
+# 6. A second agent identity reviews. pickup returns the review_needed signal or a
+#    review candidate but never claims; tasks start takes the review claim.
+agent-tasks pickup
+agent-tasks tasks start <reviewed-task-id>
 agent-tasks tasks finish <reviewed-task-id> --outcome approve --result "LGTM"
+```
+
+The author keeps its work claim while the task is in review, so its own `pickup` answers 409 already_claimed until the task reaches done (after request_changes it keeps the claim, see [section 3](#3-request-changes-on-a-review-claim)). In a project that does not require a distinct reviewer, the author may instead close its own task from review with `agent-tasks tasks finish <task-id> --outcome approve`.
+
+The sequence below shows which call takes or keeps which claim across the author and the reviewer, assuming the workflow has a review state.
+
+```mermaid
+sequenceDiagram
+  participant A as Author agent (token A)
+  participant API as agent-tasks API
+  participant R as Reviewer agent (token B)
+  A->>API: POST /api/tasks/pickup
+  API-->>A: kind work (candidate, no claim)
+  A->>API: POST /api/tasks/:id/start
+  API-->>A: work claim, status in_progress
+  A->>API: POST /api/tasks/:id/submit-pr
+  A->>API: POST /api/tasks/:id/finish
+  API-->>A: status review, work claim kept
+  Note over API,R: stores review_needed signal for R
+  A->>API: POST /api/tasks/pickup
+  API-->>A: 409 already_claimed
+  R->>API: POST /api/tasks/pickup
+  API-->>R: kind signal (review_needed, acknowledged)
+  R->>API: POST /api/tasks/pickup
+  API-->>R: kind review (candidate, no claim)
+  R->>API: POST /api/tasks/:id/start
+  API-->>R: review claim, status unchanged
+  alt outcome approve
+    R->>API: POST /api/tasks/:id/finish (approve)
+    API-->>R: status done, both claims cleared
+    Note over A,API: stores task_approved signal for A
+  else outcome request_changes
+    R->>API: POST /api/tasks/:id/finish (request_changes)
+    API-->>R: review claim cleared
+    Note over A,API: status in_progress, work claim kept<br/>stores changes_requested signal for A<br/>(read with agent-tasks signals)
+  end
 ```
 
 ## 2. Approve and auto-merge in one step
 
-When the task workflow allows the reviewer to merge, combine `--outcome approve` with `--auto-merge`:
+When the task workflow allows the reviewer to merge, combine `--outcome approve` with `--auto-merge`. The token needs the `github:pr_merge` scope, and a team member must have granted merge consent (`allowAgentPrMerge`):
 
 ```bash
 agent-tasks tasks finish <task-id> \
@@ -52,7 +91,7 @@ agent-tasks tasks finish <task-id> \
   --result "Tests are missing for the error path. See inline comments."
 ```
 
-This releases the review claim and routes the task back to the worker. The next `pickup` for the original worker will surface the rework as a `work` kind.
+This releases the review claim and moves the task back to in_progress. The original worker keeps its work claim and receives a `changes_requested` signal (`agent-tasks signals` lists it). While it holds that claim, its `pickup` answers 409 already_claimed with the task id, so it continues on the same task (`tasks submit-pr` / `tasks finish` again after the rework).
 
 ## 4. Abandon a claim without finishing
 
@@ -76,6 +115,8 @@ agent-tasks tasks create my-project \
   --label imported --label backend
 ```
 
+Imported tasks land in `backlog` when created with an agent token. Re-running a create with an `--external-ref` that already exists answers 409 and the command exits 1, so an import script should tolerate that exit.
+
 ## 6. Scripted task processing
 
 Combine `--quiet` and shell pipes to operate on lists:
@@ -84,10 +125,11 @@ Combine `--quiet` and shell pipes to operate on lists:
 # Acknowledge every unread signal
 agent-tasks signals --quiet | xargs -n1 agent-tasks ack
 
-# Get the IDs of every claimable task in a project
-agent-tasks tasks list --json \
-  | jq -r '.[] | select(.project.slug == "my-project") | .id'
+# Get the IDs of the open, unclaimed tasks in a project (default 50 rows, --limit up to 500)
+agent-tasks tasks list --project my-project --status open --unclaimed --quiet
 ```
+
+Without `--project`, `tasks list` returns only the first page (25 rows) of the team's claimable tasks.
 
 ## 7. Inspecting workflow gates
 
@@ -112,4 +154,4 @@ agent-tasks github pr create \
   --body "Fixes the bug"
 ```
 
-Same applies to `github pr merge` and `github pr comment`.
+Same applies to `github pr merge` and `github pr comment`. Each command also needs its token scopes (`tasks:update` and `github:pr_create` for create), see [GitHub delegation](commands.md#github-delegation).

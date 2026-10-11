@@ -18,13 +18,18 @@ Everything you need to connect a local AI agent (Claude, Codex, OpenCode, etc.) 
 
 [`@agent-tasks/cli`](../cli/README.md) is the CLI client that lives in the `cli/`
 workspace of this monorepo. No custom integration code needed. (The former
-standalone `LanNguyenSi/agent-tasks-cli` repo is being archived; use the package
-name below.)
+standalone `LanNguyenSi/agent-tasks-cli` repository has been retired.)
 
 ### Install
 
+The CLI is not published to npm yet. Install it from a checkout (Node 22 or newer):
+
 ```bash
-npm install -g @agent-tasks/cli
+git clone https://github.com/LanNguyenSi/agent-tasks.git
+cd agent-tasks
+npm install
+npm run build --workspace=@agent-tasks/cli
+npm install -g ./cli   # or run node cli/dist/index.js <command> without installing
 ```
 
 ### Configure

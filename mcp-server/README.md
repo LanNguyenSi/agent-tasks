@@ -11,7 +11,6 @@ server just translates tool calls into authenticated HTTP requests.
 ## Installation
 
 ```bash
-# once published
 npx @agent-tasks/mcp-server
 
 # or build from this workspace
@@ -79,8 +78,12 @@ returns summary rows (description | templateData | task) with its own,
 narrower `include` vocabulary (no `comments`/`artifacts`: a row has no
 per-row use case for either); `signals_poll` caps and cursors the backend
 response locally even though it takes no `include` parameter of its own
-(see `docs/response-contract-v1.md`'s read-verb section). Every other
-default-registered tool still returns the raw JSON response from the
+(see `docs/response-contract-v1.md`'s read-verb section).
+`task_pickup` returns the full task spec without comments
+(`include: ["comments"]` or `["task"]` adds them back), and `task_start`
+returns a receipt plus a small per-task slice (`include` accepts
+`description`, `instructions`, `comments`, `task`). Every other
+default-registered backend tool still returns the raw JSON response from the
 backend as a text block. The 14 pruned, legacy-flag
 verbs are exempt from these shape rules entirely (see
 `docs/response-contract-v1.md`'s "Legacy-flag exemption"): they exist for
@@ -99,7 +102,7 @@ migrate the caller to its replacement.
 | `tasks_list` | `task_pickup` for the single prioritized item, or `project_tasks` to browse a project |
 | `tasks_instructions` | `task_start` with `include: ["instructions"]`, or the on-demand `workflow_primer` verb for the general lifecycle prose |
 | `tasks_create` | `task_create` (same behavior, v2 naming, receipt by default) |
-| `tasks_claim` | `task_start` (atomic claim + `in_progress` + instructions) |
+| `tasks_claim` | `task_start` (atomic claim + `in_progress`; pass `include: ["instructions"]` for the instructions) |
 | `tasks_release` | `task_abandon` (explicit bail-out with an audit trail) |
 | `tasks_transition` | `task_start` / `task_finish` (the system owns transitions under v2) |
 | `tasks_update` | `task_submit_pr` for branch/PR metadata, or `task_finish { prUrl }` |
@@ -142,6 +145,7 @@ in-session).
 | `task_create`         | `POST /api/projects/:projectId/tasks`        |
 | `task_respec`         | `POST /api/tasks/:id/respec`                 |
 | `task_abandon`        | `POST /api/tasks/:id/abandon`                |
+| `task_creator_abandon` | `POST /api/tasks/:id/creator-abandon`       |
 | `task_submit_pr`      | `POST /api/tasks/:id/submit-pr`              |
 | `task_merge`          | `POST /api/tasks/:id/merge`                  |
 
@@ -204,7 +208,9 @@ table above for their v2 equivalents.
 
 ### GitHub PR tools — delegation required
 
-The three `pull_requests_*` tools dispatch through a team member's GitHub
+The `pull_requests_*` tools (`pull_requests_create` and
+`pull_requests_merge` by default, `pull_requests_comment` only with
+`AGENT_TASKS_MCP_LEGACY=1`) dispatch through a team member's GitHub
 token (the "delegation user"), not through the agent token itself. Before
 these tools can succeed:
 
@@ -212,9 +218,14 @@ these tools can succeed:
 2. The same member must enable the relevant consent flag(s) in
    **Settings → Agent Permissions** (`allowAgentPrCreate`,
    `allowAgentPrMerge`, `allowAgentPrComment`)
+3. The agent token must carry the matching scopes: `pull_requests_create`
+   needs `tasks:update` and `github:pr_create`, `pull_requests_merge` needs
+   `tasks:transition` and `github:pr_merge`, and `pull_requests_comment`
+   needs `tasks:comment`. Existing tokens do not gain the github scopes;
+   mint a new token with them.
 
 Without consent, the backend returns `403` with a message naming which
-consent flag is missing. All three tools are **agent-only** — human
+consent flag is missing. All of them are **agent-only**: human
 sessions cannot call them; use the regular `gh` CLI or the GitHub web UI
 for human-authored PRs.
 
@@ -228,11 +239,12 @@ side effect.
 `review` state (or already `done` for an idempotent re-try), otherwise
 the endpoint returns 403. If the project has `requireDistinctReviewer`
 enabled, the merge caller must not be the task's claimant — same rule
-the `/transition` and `/review` endpoints apply. To bypass the gate,
-admins force-transition to `done` via `tasks_transition` with `force=true`
-first (set `AGENT_TASKS_MCP_LEGACY=1`, `tasks_transition` is pruned from
-the default registration), then call this tool (which accepts `done` as a
-valid entry state).
+the `/transition` and `/review` endpoints apply. To bypass the gate, a
+human project admin force-transitions the task to `done` in the web UI (or
+with `POST /api/tasks/:id/transition` and `force: true` from a human
+session). The agent then calls this tool, which accepts `done` as an entry
+state. An agent token cannot force a transition: `tasks_transition` with
+`force=true` answers 403.
 
 ## Transport
 

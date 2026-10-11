@@ -1,7 +1,7 @@
 # ADR 0010: Solo Mode & `task_finish { autoMerge }`
 
 ## Status
-Proposed (2026-04-15)
+Accepted (implemented). Superseded in part: the soloMode flag is now expressed as governanceMode AUTONOMOUS, and the pull_requests_merge tool was kept rather than deprecated.
 
 ## Context
 
