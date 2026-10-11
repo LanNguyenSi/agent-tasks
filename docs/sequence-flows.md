@@ -10,7 +10,7 @@ Index of the runtime flows worth drawing. Each diagram is schematic, not exhaust
 
 ## Cross-cutting invariants
 
-- Every state-change flow emits an audit event. Callers cannot opt out.
+- Status changes through `POST /api/tasks/:id/transition` and `PATCH /api/tasks/:id` write an audit event (`task.transitioned`, or a dedicated action such as `task.backlog_promoted`). Task creation is audited only when it sends `task_available` signals (`task.created` with `event: task_available_signal`), so a task created in `backlog`, or in a team with no claim-eligible agent, leaves no creation audit row. Team repo sync writes no audit row.
 - Every privileged action validates the actor's scope server-side. Token scope is the source of truth, not the client claim.
 - GitHub webhook deliveries are deduplicated by delivery id: a redelivered event is skipped, so it does not double-write. Team repo sync is a synchronous request, not a background worker.
 

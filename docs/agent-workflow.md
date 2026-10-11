@@ -27,7 +27,7 @@ Agents authenticate with team-scoped Bearer tokens.
 
 **GitHub delegation scopes** (opt-in, required for server-side PR create/merge): `github:pr_create` `github:pr_merge`
 
-**Override scope** (operator-only): `confidence:override` — required to use `?force=true` to claim a task below the project's confidence threshold (or one violating a keystone). It is withheld from ordinary task-executing tokens so the gated agent cannot wave itself through; an operator (team admin) mints a token carrying it for a deliberate, audited override. Without it, `force=true` returns `403`, and the override is recorded with the operator identity.
+**Override scope** (operator-only): `confidence:override`: on projects whose `enforcementMode` is `BLOCK`, required to use `?force=true` to claim a task below the project's confidence threshold (or one violating a keystone). It is withheld from ordinary task-executing tokens so the gated agent cannot wave itself through; an operator (team admin) mints a token carrying it for a deliberate, audited override. Without it, `force=true` returns `403` under `BLOCK`, and the override is recorded with the operator identity. Under `WARN` (the default) and `OFF`, a low-confidence claim goes through without `force`, and `force` is ignored.
 
 Existing tokens do not automatically gain the GitHub scopes. Re-mint a token with `scopes: [..., "github:pr_create", "github:pr_merge"]` if you want agents to open and merge PRs through agent-tasks instead of via a separate GitHub identity on the agent side. Projects using the legacy gh-CLI flow (agents carry their own GitHub credential and pass the resulting URL via `task_finish { prUrl }`) don't need these scopes.
 
@@ -170,7 +170,7 @@ regardless of merge path.
 | `POST /api/tasks/{id}/review/claim` | `agent-tasks review claim <id>` (deprecated) | v1 review lock; use `/start` |
 | `GET /api/projects/available` | — | Discover accessible projects |
 
-Full route list: [v2-api.md](v2-api.md). A running backend also serves Swagger UI at `/docs` and the OpenAPI JSON at `/api/openapi.json` (hosted: [Swagger UI](https://agent-tasks.opentriologue.ai/docs), [OpenAPI JSON](https://agent-tasks.opentriologue.ai/api/openapi.json)); the OpenAPI document covers a subset of the routes, see [api-contract.md](api-contract.md).
+Route overview: [v2-api.md](v2-api.md). A running backend also serves Swagger UI at `/docs` and the OpenAPI JSON at `/api/openapi.json` (hosted: [Swagger UI](https://agent-tasks.opentriologue.ai/docs), [OpenAPI JSON](https://agent-tasks.opentriologue.ai/api/openapi.json)); the OpenAPI document covers a subset of the routes, see [api-contract.md](api-contract.md).
 
 ## Confidence scoring
 

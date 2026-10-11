@@ -75,7 +75,7 @@ flowchart TD
 - Team and project access and agent scopes are checked server-side; claims, transitions, merges and admin overrides write audit rows.
 - Rate limits apply per client address to register, login, GitHub and SSO auth routes, `/api/mcp` and the suggest-rewrite endpoint. Set `TRUSTED_PROXY_HOPS` to the number of reverse proxies in front of the backend, and to `0` when there is none: the limiter reads the client address from `X-Forwarded-For` that many entries from the right. `.env.example` ships `1` for a deployment behind one proxy.
 - `ALLOWED_GITHUB_LOGINS` restricts which GitHub logins the identity-broker endpoint `POST /api/auth/register-from-project-pilot` provisions; empty accepts any verified GitHub user.
-- GitHub webhook signatures are enforced only with `NODE_ENV=production`. The Docker quick start runs `NODE_ENV=development`, so set `GITHUB_WEBHOOK_SECRET` on any instance GitHub can reach (see [webhook-setup.md](webhook-setup.md)).
+- With `GITHUB_WEBHOOK_SECRET` set, the GitHub webhook route verifies the signature of every delivery. Without it, the route accepts unsigned payloads unless `NODE_ENV=production`, which rejects them with `401`. The Docker quick start runs `NODE_ENV=development`, so set `GITHUB_WEBHOOK_SECRET` on any instance GitHub can reach (see [webhook-setup.md](webhook-setup.md)).
 - `/api/mcp` takes the same Bearer authentication as the REST API.
 
 ## Data and Consistency

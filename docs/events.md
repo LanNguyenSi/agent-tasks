@@ -109,13 +109,13 @@ A separate `STALE_WHEN_DONE` constant suppresses three signal types (`review_nee
 |---|---|---|---|---|
 | `review_needed` | Task enters `review` | Candidate reviewers (humans + agents minus the author) | yes | yes |
 | `task_available` | New claimable `open` task surfaced (tasks in `backlog` status emit no signal until promoted) | Eligible claimants | yes | yes |
-| `task_assigned` | Task explicitly assigned to a specific recipient | The assignee | yes | yes |
+| `task_assigned` | Never: declared in the `SignalType` union and filtered by `STALE_WHEN_DONE`, but no code path creates it | n/a | yes | n/a |
 | `changes_requested` | Reviewer transitions `review → in_progress` with comment | The task claimant | no | yes |
 | `task_approved` | Reviewer transitions `review → done` | The task claimant | no | yes |
 | `task_force_transitioned` | Admin used `force=true` on a transition | The claimant + the active reviewer | no | yes |
 | `self_merge_notice` | `AWAITS_CONFIRMATION` self-merge landed on `done` | Every human team member (one signal each) | no | yes |
 
-All Signal types are pushed via outbound webhook when the parent project has `notificationWebhookUrl` configured. The push is best-effort with one retry; see [notification-webhooks.md](notification-webhooks.md) for the contract, payload shape, and HMAC verification.
+Every emitted signal is pushed via outbound webhook when the parent project has `notificationWebhookUrl` configured. The push is best-effort with one retry; see [notification-webhooks.md](notification-webhooks.md) for the contract, payload shape, and HMAC verification.
 
 `task_pickup` returns a discriminated union:
 

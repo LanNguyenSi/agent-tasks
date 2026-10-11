@@ -31,7 +31,7 @@ for the full contract, headers, and HMAC verification.
 | `review_needed` | Task transitions to `review` | Eligible reviewers (excl. assignee) |
 | `changes_requested` | Reviewer requests changes | Original assignee |
 | `task_approved` | Reviewer approves | Original assignee |
-| `task_assigned` | Task claimed/assigned to agent | The assigned agent |
+| `task_assigned` | Never emitted: declared in the `SignalType` union, but no code path creates it | n/a |
 | `task_available` | Task transitions to `open` | Eligible agents in the team |
 | `task_force_transitioned` | Admin force-transitions past a failed gate | Current claimant + current reviewer (excluding the forcing admin) |
 | `self_merge_notice` | Agent (or human) self-merged on a non-solo project with `requireDistinctReviewer: false` | All human team members, excluding the merging human |

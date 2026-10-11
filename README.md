@@ -84,7 +84,7 @@ The four-step MCP cold-start path (initialize handshake, `workflow_primer`, `pro
 
 **API and contracts**
 - [docs/features.md](docs/features.md): task templates and dependencies, CSV/Excel import with Jira column auto-detection, board/list views, admin project-share listing.
-- [docs/v2-api.md](docs/v2-api.md): REST route overview; the live OpenAPI doc ([Swagger UI](https://agent-tasks.opentriologue.ai/docs)) describes a subset of these routes.
+- [docs/v2-api.md](docs/v2-api.md): REST route overview; the live OpenAPI doc ([Swagger UI](https://agent-tasks.opentriologue.ai/docs)) describes a subset of the API.
 - [docs/api-contract.md](docs/api-contract.md): what the OpenAPI document covers and where the rest of the API is documented.
 - [docs/response-contract-v1.md](docs/response-contract-v1.md): MCP receipt shapes, `include`, and error catalog.
 - [docs/domain-model.md](docs/domain-model.md): entities, relations, and the fields that drive governance.

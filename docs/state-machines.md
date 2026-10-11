@@ -4,7 +4,7 @@ Authoritative source: [`backend/src/services/default-workflow.ts`](../backend/sr
 
 ## Default workflow
 
-The product status vocabulary includes six values. The workflow engine itself, implemented in `DEFAULT_TRANSITIONS` below, defines only four states: `open`, `in_progress`, `review`, and `done`. `Task.status` is a free `String` column; custom workflows can define their own state names, but the default workflow engine uses these four:
+The product status vocabulary includes six values. The workflow engine itself, implemented in `DEFAULT_TRANSITIONS` below, defines only four states: `open`, `in_progress`, `review`, and `done`. `Task.status` is a free `String` column, but the workflow API accepts only these four states for any workflow, default or custom (`FIXED_STATE_NAMES` in `backend/src/routes/workflows.ts`); custom workflows change transitions and gates, not states. The default workflow:
 
 ```mermaid
 stateDiagram-v2

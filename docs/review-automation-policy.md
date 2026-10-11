@@ -65,7 +65,7 @@ Before any status transition, the webhook handler must verify:
 
 For projects using custom workflow definitions, the policy matrix above serves as the **default behavior**. Custom workflows may:
 
-- Override transition targets (e.g., `review → approved` instead of no transition on approval).
+- Override transition targets within the fixed state set `open`, `in_progress`, `review`, `done` (the workflow API accepts no other states).
 - Add additional preconditions (e.g., require N approvals before auto-transition).
 - Disable specific automations entirely.
 

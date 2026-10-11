@@ -1,6 +1,6 @@
 # API reference
 
-This page lists the REST routes and the verb shape. The OpenAPI document describes a subset of them; see [api-contract.md](api-contract.md) for what it covers.
+This page lists the main REST routes and the verb shape; it is not a complete route list. The OpenAPI document describes a subset of the API; see [api-contract.md](api-contract.md) for what it covers.
 
 - **Swagger UI** (interactive): [`/docs`](https://agent-tasks.opentriologue.ai/docs) (alias `/api/docs`)
 - **OpenAPI JSON** (machine-readable): [`/api/openapi.json`](https://agent-tasks.opentriologue.ai/api/openapi.json)
