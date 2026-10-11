@@ -39,7 +39,7 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 
 | Action | Emitted on |
 |---|---|
-| `task.created` | New task |
+| `task.created` | Task created by a GitHub `issues.opened` webhook, or by single create (`POST /api/projects/:projectId/tasks`) on a project selected by the grounding creation policy. Otherwise single create writes it only when it sends `task_available` signals (payload `event: task_available_signal`), so a `backlog` task, or one in a team with no claim-eligible agent, gets no row. The same `task_available_signal` row, under the same condition, is written when `/transition` or a human `PATCH` moves a task back to `open` (not on backlog promote) |
 | `task.claimed` / `task.released` | Claim lifecycle |
 | `task.transitioned` | Standard status change |
 | `task.transitioned.forced` | Admin-forced transition with `force=true` + `forceReason` |
@@ -64,7 +64,7 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 | `task.merged_status_conflict` | The post-merge write lost (the status changed, or only a claim moved): the PR was merged but the API could not record it; nothing was written and the request answered 409 `merged_but_status_changed` (payload carries `via`, `mergeSha`, `expectedFrom`, `targetStatus`, `currentStatus` as read after the last failed write, and `reason`: `status_changed`, `claim_moved` or `merge_in_progress`; the latter two mean the status is as it was read, only a claim moved or another merge holds the task, and retrying the request is safe) |
 | `task.pr_merged.blocked_self_merge` | Self-merge blocked by `REQUIRES_DISTINCT_REVIEWER` gate |
 | `task.self_merge_notice_emitted` | `AWAITS_CONFIRMATION` self-merge succeeded; `self_merge_notice` signal fanned out |
-| `task.imported` | Bulk CSV/Excel import |
+| `task.imported` | Batch import (`POST /api/projects/:projectId/tasks/import`, used by the CSV/Excel import dialog), one row per created task, backlog included |
 | `task.grounding_gate.bypassed` | A debug-flavored task was finished on a project with `requireGroundingForDebug` off; records that the debug-grounding finish gate would have applied (no block, no override) |
 | `task.artifact.created` / `task.artifact.deleted` | Typed artifact lifecycle |
 | `task.attachment.uploaded` / `task.attachment.deleted` | A human uploaded a file attachment, or deleted an attachment (creating a URL-pointer attachment writes no event) |

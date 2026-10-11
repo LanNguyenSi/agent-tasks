@@ -357,37 +357,35 @@ and the dashboard gear icon. Non-admins see a read-only view.
 2. Either click **Customize this workflow** to fork the built-in default,
    or click a **template button** (e.g. "Branch, PR & Merge Gated") to
    apply a predefined workflow with transitions and gates pre-configured.
-3. Edit states: inline-edit name/label, toggle terminal, click
+3. Edit states: the state set (`open`, `in_progress`, `review`,
+   `done`), the terminal flag (only `done`) and the initial state
+   (`open`) are fixed, and the table says so; states cannot be added,
+   renamed or removed. Edit each state's label inline, and click
    "Add instructions…" to open a textarea for the state's agent
-   instructions, use `+ Add state` / the `✕` button per row.
-   Renaming a state propagates the rename into every transition
-   endpoint and the initial state so the graph stays coherent —
-   mid-keystroke values that would duplicate or be invalid do **not**
-   propagate, they just write the name and let the validation banner
-   flag it.
+   instructions.
 4. Edit transitions: `from` / `to` are state dropdowns, label is
    inline, `required role` is a dropdown (`any`, `ADMIN`,
    `HUMAN_MEMBER`, `REVIEWER`), and the gates column shows one
    checkbox per built-in rule from `/api/workflow-rules`. `+ Add
-   transition` creates a new row defaulted to the initial state →
-   first other state.
-5. Validation errors (duplicate names, bad name format, dangling
-   `initialState`, missing transition endpoints, duplicate
-   transitions) block Save with an inline banner.
+   transition` adds a row for the first `from` / `to` pair, in state
+   order, that has no transition yet.
+5. Validation errors block Save with an inline banner. In the editor
+   they come from an empty state label or a duplicate transition (same
+   `from` and `to`); the client checks on state names, transition
+   endpoints and `initialState` only fire for a stored definition
+   outside the fixed state set. The backend rejects a definition whose
+   states are not exactly `open`, `in_progress`, `review` and `done`,
+   whose `initialState` is not `open`, or in which a state other than
+   `done` is terminal.
 6. Reachability warnings (unreachable states, dead-end non-terminal
    states, orphan states with no incoming transition) show as a
-   warning banner but do **not** block Save.
+   warning banner and do **not** block Save; Save asks for a
+   confirmation ("Save anyway") first.
 7. `Cmd/Ctrl+S` saves. Save PUTs the whole definition to the backend
    schema, which re-validates with `.superRefine()` before persisting.
 8. **Reset to default** drops the custom row entirely and reverts the
    project to the hardcoded default. Tasks that referenced the custom
    workflow get `workflowId` unset and fall back to the default.
-
-**Renaming a state** does **not** migrate existing task rows whose
-`status` column matches the old name. A warning banner appears when a
-rename is pending, advising that affected tasks will need an admin
-force-transition or manual re-label. The backend will return `422` on
-transition attempts for those stuck tasks until they're moved.
 
 ## Configuring rules on a workflow
 

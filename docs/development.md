@@ -82,7 +82,7 @@ The backend validates its environment at startup (`backend/src/config/index.ts`)
 |----------|--------------------|---------|
 | `DATABASE_URL` | required | PostgreSQL connection URL |
 | `SESSION_SECRET` | required, at least 32 characters | Signs session tokens |
-| `NODE_ENV` | `development` | `development`, `test` or `production`; `production` enforces GitHub webhook signatures |
+| `NODE_ENV` | `development` | `development`, `test` or `production`; with `production`, a backend without `GITHUB_WEBHOOK_SECRET` rejects GitHub webhook deliveries with `401` (with the secret set, signatures are verified in every mode, see [architecture.md](architecture.md#security-model)) |
 | `PORT` | `3001` | Backend port |
 | `BACKEND_URL` | `http://localhost:3001` | Public backend origin, used for the OIDC callback URL |
 | `FRONTEND_URL` | `http://localhost:3000` | Redirect target after login |

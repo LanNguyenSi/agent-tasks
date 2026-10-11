@@ -64,7 +64,7 @@ GITHUB_WEBHOOK_SECRET=<the-generated-secret>
 docker compose -f docker-compose.prod.yml up -d backend
 ```
 
-In development, `GITHUB_WEBHOOK_SECRET` can be left empty — the server accepts unsigned payloads in dev mode. In production, all unsigned payloads are rejected with 401.
+With `GITHUB_WEBHOOK_SECRET` left empty, a backend whose `NODE_ENV` is not `production` accepts unsigned payloads, and a `production` backend rejects every delivery with `401`. With the secret set, every mode verifies the signature and answers `401` when it is missing or wrong.
 
 ## With external grounding enabled
 

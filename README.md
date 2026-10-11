@@ -30,7 +30,7 @@ Highlights, each detailed in [Next steps](#next-steps) below:
 
 - Deterministic, heuristic confidence scoring of agent claims on vague tasks; no LLM in the loop. It blocks such a claim only when the project's `enforcementMode` is `BLOCK`; the default `WARN` records it and lets it through.
 - Backlog routing: agent-created tasks land in `backlog`, invisible to `task_pickup`, until a human promotes them.
-- Configurable workflows: in-browser editor for states, transitions, required roles, reachability analysis.
+- Configurable workflows: in-browser editor for transitions, required roles, gates, state labels and agent instructions over the fixed `open`, `in_progress`, `review`, `done` states, with reachability analysis.
 - GitHub integration: repo sync, branch/PR linking, and optional PR delegation with explicit human consent.
 - Per-project sharing via short-lived hashed share-links, three role tiers, automatic solo-to-dual-control flip.
 - OIDC SSO alongside email/GitHub, team-scoped, PKCE + JWKS.

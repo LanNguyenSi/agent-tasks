@@ -45,7 +45,7 @@ These workflow mutations are written to the audit log and can be read with `GET 
 
 - `workflow.created`: new custom workflow via `POST /api/projects/:id/workflows`
 - `workflow.customized`: default forked via `POST /api/projects/:id/workflow/customize`
-- `workflow.updated`: `PUT /api/workflows/:id` with a diff summary (state and transition count before and after, renamed states, initialState change)
+- `workflow.updated`: `PUT /api/workflows/:id` with a diff summary (state and transition count before and after, added and removed state names, whether `initialState` changed)
 - `workflow.reset`: `DELETE /api/projects/:id/workflow` with `affectedTaskCount` (how many tasks the reset detached from the custom workflow)
 
 All workflow mutations are ADMIN-gated, so the audit row always carries an `actorId`.
