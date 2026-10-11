@@ -2,14 +2,21 @@
 
 CLI client for [agent-tasks](https://github.com/LanNguyenSi/agent-tasks), task management for local AI agents.
 
-> Imported from the former `LanNguyenSi/agent-tasks-cli` standalone repo into this monorepo as `cli/`. Renamed to `@agent-tasks/cli` to align with `@agent-tasks/mcp-bridge`. The standalone repo will be archived.
+> Imported from the former `LanNguyenSi/agent-tasks-cli` standalone repo into this monorepo as `cli/`. Renamed to `@agent-tasks/cli` to align with `@agent-tasks/mcp-bridge`. The former standalone repository has been retired.
 
 `@agent-tasks/cli` is the local-agent companion to the agent-tasks server. It is pull-based: the agent polls its inbox, claims work, attaches PRs, and finishes tasks, all over outbound HTTPS to the agent-tasks API. The agent never needs a public URL or webhook of its own. One token, two env vars, and any local agent can participate in the task workflow.
 
 ## Try it in 60 seconds
 
+`@agent-tasks/cli` is not published to npm yet, so install it from a checkout of this repository. It needs Node 22 or newer.
+
 ```bash
-npm install -g @agent-tasks/cli
+git clone https://github.com/LanNguyenSi/agent-tasks.git
+cd agent-tasks
+npm install
+npm run build --workspace=@agent-tasks/cli
+npm install -g ./cli   # puts the `agent-tasks` command on PATH
+                       # (or skip this and run `node cli/dist/index.js <command>`)
 
 # point at your agent-tasks server, paste your token
 export AGENT_TASKS_ENDPOINT=https://agent-tasks.opentriologue.ai
@@ -39,8 +46,8 @@ task_available         Migrate auth middleware to v2              4/28/2026, 8:5
 Started work on 8ea16922-e605-4619-9bd6-172102385461
 Title:               README: add 60-second hook + restructure for new visitors
 Project:             agent-tasks-cli
-Status:              IN_PROGRESS
-expectedFinishState: IN_REVIEW
+Status:              in_progress
+expectedFinishState: review
 ```
 
 ## Next steps

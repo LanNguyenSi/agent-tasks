@@ -75,6 +75,9 @@ agent-tasks tasks finish <task-id> --outcome request_changes --result "Please ad
 # Auto-merge after approve
 agent-tasks tasks finish <task-id> --outcome approve --auto-merge --merge-method squash
 
+# Auto-merge on a work claim (project in AUTONOMOUS governance mode)
+agent-tasks tasks finish <task-id> --pr-url https://github.com/acme/repo/pull/42 --auto-merge
+
 # Bail out of an active claim without finishing
 agent-tasks tasks abandon <task-id>
 ```
@@ -86,7 +89,7 @@ agent-tasks tasks abandon <task-id>
 | `--result <text>` | both | Result summary |
 | `--pr-url <url>` | work-claim only | Must be a github.com PR |
 | `--outcome <approve\|request_changes>` | review-claim only | Mutually exclusive with `--pr-url` |
-| `--auto-merge` | approve only | Rejected with `request_changes` |
+| `--auto-merge` | work claim, or `--outcome approve` | Rejected with `request_changes`. On a work claim the project must be in AUTONOMOUS governance mode. Needs the `github:pr_merge` token scope and a team member with merge consent |
 | `--merge-method <merge\|squash\|rebase>` | with `--auto-merge` | Default: squash |
 | `--operation-key <key>` | both | Idempotency key for this finish; see [Idempotency keys](#idempotency-keys) below |
 
@@ -122,8 +125,11 @@ agent-tasks github pr merge 42 --task <task-id> --owner o --repo r --operation-k
 ## Tasks (read + create)
 
 ```bash
-# List claimable tasks
+# List the team's claimable tasks (open and unclaimed)
 agent-tasks tasks list
+
+# Browse one project's tasks with filters
+agent-tasks tasks list --project my-project --status open,in_progress --unclaimed
 
 # Fetch a single task by id
 agent-tasks tasks get <task-id>
@@ -137,8 +143,14 @@ agent-tasks tasks create my-project \
   --external-ref "jira-PROJ-42" \
   --label imported --label backend
 
-# Update task fields directly (rarely needed, prefer `tasks submit-pr` / `tasks finish`)
+# Update task fields directly (rarely needed, prefer `tasks submit-pr` / `tasks finish`).
+# Also accepts --result <text>.
 agent-tasks tasks update <task-id> --branch feat/my-branch --pr-url https://... --pr-number 42
+
+# Refine an unclaimed open or backlog task's spec and show its recalculated confidence
+agent-tasks tasks respec <task-id> --description "..."
+agent-tasks tasks respec <task-id> --template-data '{"goal":"..."}'
+agent-tasks tasks respec <task-id> --file spec.json   # { "description"?: string, "templateData"?: object }
 
 # Add a comment
 agent-tasks tasks comment <task-id> "Fixed the bug, ready for review"
@@ -146,6 +158,21 @@ agent-tasks tasks comment <task-id> "Fixed the bug, ready for review"
 # Get task instructions (agent context)
 agent-tasks tasks instructions <task-id>
 ```
+
+`tasks list` flags:
+
+| Flag | Description |
+|------|-------------|
+| `-p, --project <slug-or-id>` | Switches to browse mode: every task in that project matching the filters, newest first |
+| `-s, --status <csv>` | `backlog`, `open`, `in_progress`, `review`, `done`, `abandoned` |
+| `--priority <csv>` | `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
+| `-l, --labels <csv>` | Tasks with any of the listed labels |
+| `--unclaimed` | Only tasks with no work claim |
+| `--limit <n>` | Default 50, max 500 |
+
+Without `--project`, `tasks list` returns the first page (25 rows) of the team's open, unclaimed tasks. The filter flags require `--project`; passing one without it is an error.
+
+`tasks respec` rules: `--file` cannot be combined with `--description` or `--template-data`. The task must be open or backlog and unclaimed. The token needs `tasks:update`. On an open task, only its creator may respec unless the project enables `allowNonCreatorRespec`; any agent may respec a backlog task.
 
 `tasks create` flags:
 
@@ -161,6 +188,8 @@ agent-tasks tasks instructions <task-id>
 | `--depends-on <task-id>` | Blocking task id in the same project (repeatable) |
 | `--debug-flavor` | Force debug-flavor classification (grounding hint at pickup) |
 | `--no-debug-flavor` | Suppress debug-flavor classification (overrides the heuristic) |
+
+Tasks created with an agent token start in `backlog`. They do not appear in `pickup` or the default `tasks list`, and `tasks start` answers 403 `backlog_not_promoted` until a human promotes them to `open` in the web UI. Use `tasks respec` to refine a backlog task while it waits.
 
 ## Projects
 
@@ -178,7 +207,7 @@ agent-tasks projects effective-gates my-project
 
 ## GitHub delegation
 
-These commands drive the agent-tasks server's GitHub delegation endpoints, a team member with `allowAgentPr*` consent acts on the agent's behalf, so the agent itself does not need a GitHub token.
+These commands drive the agent-tasks server's GitHub delegation endpoints, a team member with `allowAgentPr*` consent acts on the agent's behalf, so the agent itself does not need a GitHub token. The agent token also needs the matching scopes: `github pr create` needs `tasks:update` and `github:pr_create`, `github pr merge` needs `tasks:transition` and `github:pr_merge`, and `github pr comment` needs `tasks:comment` (plus the `allowAgentPrComment` consent). Without them the server answers 403. Existing tokens do not gain the github scopes; mint a new token with them.
 
 ```bash
 # Create a PR linked to a task
@@ -214,6 +243,8 @@ agent-tasks github pr comment <pr-number> "LGTM" \
 | `review release <id>` | `tasks abandon <id>` |
 
 The first invocation of a deprecated command in a process emits a single stderr line; subsequent calls in the same process are silent.
+
+`tasks claim --force` sends `?force=true` without a `forceReason`. In a project whose confidence gate is in BLOCK mode, the server rejects it either way: 403 without the `confidence:override` scope, and 400 with it, because a forced claim needs a reason of at least 10 characters. In WARN or OFF mode the flag has no effect.
 
 ## Output formats
 
