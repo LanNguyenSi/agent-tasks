@@ -2222,6 +2222,7 @@ describe("templateDataSchema — list-valued spec fields", () => {
     const base = { title: "Validate signup body", description: "Add validation for the signup body in src/signup.ts." } as const;
     const asList = templateDataSchema.parse({ goal: "g", acceptanceCriteria: ["returns 400 on bad email", "npm test passes"] });
     const asString = templateDataSchema.parse({ goal: "g", acceptanceCriteria: "- returns 400 on bad email\n- npm test passes" });
+    expect(asList.acceptanceCriteria).toBe(asString.acceptanceCriteria);
     const a = calculateConfidence({ ...base, templateData: asList });
     const b = calculateConfidence({ ...base, templateData: asString });
     expect(a.score).toBe(b.score);
