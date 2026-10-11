@@ -1,7 +1,8 @@
 // T-007 (agent-tasks tracker 3feb590f, batch45 D-011): guard for quoted VALUE
 // literals that sit next to a docs/okf line citation. See
 // backend/tests/helpers/okf-literal-guard.ts for the extraction/window
-// design and docs/okf/index.md's Maintenance section for the decision.
+// design, docs/okf/index.md's Maintenance section for the rule and
+// docs/okf/log.md for the decision history.
 //
 // Run: npm run test --workspace=backend (also `npx vitest run
 // tests/unit/docs-okf-literal-guard.test.ts` from backend/).

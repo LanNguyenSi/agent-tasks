@@ -31,8 +31,8 @@ for the full contract, headers, and HMAC verification.
 | `review_needed` | Task transitions to `review` | Eligible reviewers (excl. assignee) |
 | `changes_requested` | Reviewer requests changes | Original assignee |
 | `task_approved` | Reviewer approves | Original assignee |
-| `task_assigned` | Task claimed/assigned to agent | The assigned agent |
-| `task_available` | Task transitions to `open` | Eligible agents in the team |
+| `task_assigned` | Never emitted: declared in the `SignalType` union, but no code path creates it | n/a |
+| `task_available` | Single create or batch import of an `open` task, or a `/transition` or human `PATCH` to `open` from another status; not a `backlog` promote, a claim release, `task_abandon` or a task created from a GitHub issue (see [events.md](events.md#signal-types)) | Eligible agents in the team |
 | `task_force_transitioned` | Admin force-transitions past a failed gate | Current claimant + current reviewer (excluding the forcing admin) |
 | `self_merge_notice` | Agent (or human) self-merged on a non-solo project with `requireDistinctReviewer: false` | All human team members, excluding the merging human |
 
@@ -40,7 +40,7 @@ Future candidates (not in MVP): `deploy_ready`, `mention`, `dependency_resolved`
 
 ### `task_force_transitioned`
 
-Fired when a team admin calls `POST /tasks/:id/transition {force: true}`
+Fired when a project admin calls `POST /tasks/:id/transition {force: true}`
 and bypasses one or more `requires` rules (see
 [workflow-preconditions.md](workflow-preconditions.md)). The purpose
 is to make the override visible without reading the audit log — both
@@ -114,6 +114,7 @@ log remains the authoritative record.
 interface Signal {
   id: string;                  // UUID, unique per signal
   type: SignalType;            // "review_needed" | "changes_requested" | "task_approved" | "task_assigned"
+                               // | "task_available" | "task_force_transitioned" | "self_merge_notice"
   taskId: string;              // Task UUID
   projectId: string;           // Project UUID
   recipientAgentId?: string;   // Target agent token ID (null for human recipients)
@@ -143,6 +144,12 @@ interface SignalContext {
   // Type-specific fields
   reviewComment?: string;      // For changes_requested / task_approved
   assigneeName?: string;       // For review_needed (who is the worker)
+  forceTransition?: {          // task_force_transitioned only
+    from: string;
+    to: string;
+    forcedRules: string[];
+    forceReason?: string | null;
+  };
 }
 ```
 

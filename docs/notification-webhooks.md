@@ -22,9 +22,11 @@ all seven Signal types — see [events.md](events.md) and
 > enforces an egress guard. The host must be `http(s)` and must not be, or
 > resolve to, a private / loopback / link-local / metadata address, and
 > redirects are not followed. See [Egress / SSRF guard](#egress--ssrf-guard)
-> below. Only team admins can write this field. A self-hosted deployment that
-> legitimately targets an internal host can opt specific hosts in with
-> `WEBHOOK_ALLOWED_PRIVATE_HOSTS`.
+> below. Only project admins (team `ADMIN` or per-project `PROJECT_ADMIN`)
+> can write this field. A self-hosted deployment that legitimately targets an
+> internal host can opt specific hosts in with `WEBHOOK_ALLOWED_PRIVATE_HOSTS`;
+> `docker-compose.prod.yml` forwards only the variables listed in the backend
+> service's `environment:` block, and this one is not among them.
 
 PATCH the project to set the URL and (optionally) a signing secret:
 
@@ -117,6 +119,39 @@ before JSON parsing (Express `express.raw()`, Hono `c.req.raw.text()`,
 
 ## Delivery semantics
 
+`createSignal` and `maybeDeliverSignalWebhook` live in
+`backend/src/services/signal.ts`, `deliverSignalWebhook` in
+`backend/src/services/notification-webhook.ts`, and the signal routes in
+`backend/src/routes/signals.ts`. The sequence below shows that the request
+which creates a signal never waits on push delivery, and where the egress
+check, the timeout, the retry and the audit row come in:
+
+```mermaid
+sequenceDiagram
+  participant E as Emitting service
+  participant S as createSignal
+  participant P as deliverSignalWebhook
+  participant R as Receiver
+  participant Q as Signal routes
+  participant A as Agent
+  E->>S: createSignal(input)
+  S->>S: insert Signal row
+  S-)S: maybeDeliverSignalWebhook (not awaited)
+  S-->>E: Signal row
+  Note over S: maybeDeliverSignalWebhook stops here<br/>when the project has no notificationWebhookUrl
+  S->>P: deliverSignalWebhook
+  loop at most 2 attempts, 2 s apart, stop on 2xx
+    P->>P: assertPublicWebhookUrl<br/>(private hosts blocked unless allowlisted)
+    opt host allowed
+      P->>R: POST payload, 5 s timeout,<br/>redirects refused
+      R-->>P: status code
+    end
+  end
+  P->>P: audit signal.webhook_delivered<br/>or signal.webhook_failed
+  A->>Q: GET /api/agent/signals
+  A->>Q: POST /api/agent/signals/:id/ack
+```
+
 - **At most once per Signal in the happy path.** Failure → one retry
   after 2 seconds → give up. There is no DLQ in v1; if the retry also
   fails, the delivery is dropped (audited, never replayed).
@@ -152,7 +187,9 @@ allowlist before sending:
 
 Self-hosted deployments that legitimately target an internal host can opt
 specific hosts in with `WEBHOOK_ALLOWED_PRIVATE_HOSTS` (comma-separated exact
-hostnames/IPs; empty by default). Note: the check resolves-then-connects, so a
+hostnames/IPs; empty by default; with `docker-compose.prod.yml` it must be in the
+backend service's `environment:` block, which forwards only the variables it
+lists). Note: the check resolves-then-connects, so a
 DNS-rebinding attacker who flips the record between the check and the connect is
 not fully blocked.
 
@@ -163,11 +200,13 @@ Every attempt outcome is audit-logged:
 - `signal.webhook_delivered` — success (2xx), with `attempts` (1 or 2)
   and `durationMs`.
 - `signal.webhook_failed` — final give-up after the retry, with
-  `statusCode?` (last HTTP status if we got one) and `errorMessage?`
+  `statusCode?` (last HTTP status if we got one) and `errMessage?`
   (network/timeout text otherwise).
 
 Both rows carry `signalId` so you can correlate against the originating
-Signal. Query via `GET /api/projects/:id/audit?actionPrefix=signal.webhook_`.
+Signal. Read them from `GET /api/projects/:id/audit` (paged with `limit`,
+at most 200, and `offset`) and filter rows whose `action` starts with
+`signal.webhook_`; the route has no server-side action filter.
 
 Repeated failures of one URL are a strong signal that the receiver is
 down or misconfigured; nothing in agent-tasks auto-disables the URL,

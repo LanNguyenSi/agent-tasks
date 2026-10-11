@@ -7,7 +7,10 @@ verifying that the claim CAS exclusion works correctly).
 ## Unit and integration tests (mocked Prisma)
 
 In Vitest tests that mock `src/lib/prisma.js`, no real token lookup occurs.
-Inject the actor directly into the Hono context with a pre-middleware:
+Inject the actor directly into the Hono context with a pre-middleware.
+Integration tests under `backend/tests/integration` that call
+`groundingPostgres()` open a real PostgreSQL schema instead; see
+[Running tests](../development.md#running-tests).
 
 ```typescript
 import type { AgentActor } from "../../src/types/auth.js";

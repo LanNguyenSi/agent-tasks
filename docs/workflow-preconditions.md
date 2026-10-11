@@ -95,8 +95,7 @@ Example failure response:
 
 Projects that haven't defined their own workflow inherit a built-in default
 that **now carries gates**. It lives in
-[`backend/src/services/default-workflow.ts`](../backend/src/services/default-workflow.ts)
-and matches the recommended config below:
+[`backend/src/services/default-workflow.ts`](../backend/src/services/default-workflow.ts):
 
 | From | To | Label | Requires |
 | ---- | -- | ----- | -------- |
@@ -185,7 +184,7 @@ they just pay the underlying GitHub API cost.
    or when GitHub itself is down.
 
 If you legitimately need to complete a task whose CI is broken or
-GitHub is unreachable, a team admin can force the transition with
+GitHub is unreachable, a project admin can force the transition with
 `{force: true, forceReason: "…"}` — audited as
 `task.transitioned.forced`.
 
@@ -217,9 +216,9 @@ same GitHub delegation path and shares the PR cache: when both
 **Interaction with the webhook path**: GitHub webhooks auto-transition
 tasks on PR merge via a raw `prisma.update` that bypasses the rule
 evaluator entirely (see "What bypasses these gates" above). In the
-default workflow the webhook lands the task in `review` (AUTONOMOUS
-projects — formerly `soloMode=true` — and custom-workflow tasks still
-go to `done`; see
+default workflow the webhook lands the task in `review` (only AUTONOMOUS
+projects, formerly `soloMode=true`, go to `done`; custom-workflow tasks
+get the same targets as the default workflow; see
 [review-automation-policy.md](review-automation-policy.md)). The
 `prMerged` rule only matters for manual/agent-driven transitions
 where the webhook hasn't arrived yet, or when the task's `prNumber`
@@ -230,10 +229,9 @@ same transition. `prPresent` gives a clean early error when the task
 has no PR linked at all; `prMerged` handles the "PR exists but not
 merged" case.
 
-More rules (PR merged, docs touched, CI green) are planned as follow-ups.
-Adding one is a ~10-line change in
+Further rules (for example docs touched) can be added in
 [`backend/src/services/transition-rules.ts`](../backend/src/services/transition-rules.ts)
-plus a unit test.
+with a unit test.
 
 ### Unknown rules are not blocking
 
@@ -249,7 +247,7 @@ Sometimes you need to bypass: a hot-fix has no PR because you're applying
 it via a different tool; a docs-only task legitimately has no branch; a
 task was imported from Jira and its metadata was never populated.
 
-Team **admins** can force:
+Project **admins** can force:
 
 ```http
 POST /api/tasks/<id>/transition
@@ -265,8 +263,10 @@ Content-Type: application/json
 Rules:
 
 - Only **human** actors may force. Agents always get 403 on `force=true`.
-- The human must have the `ADMIN` role in the team that owns the task's
-  project. HumanMembers and reviewers cannot force.
+- The human must be a project admin: team `ADMIN`, or a per-project
+  `PROJECT_ADMIN` granted through a project share invite. Team HumanMembers
+  and Reviewers, and `PROJECT_CONTRIBUTOR` or `PROJECT_VIEWER` members,
+  cannot force.
 - The transition existence and `requiredRole` checks still apply — `force`
   only bypasses the `requires` preconditions, not the whole workflow.
 - Every forced transition writes an audit event with action
@@ -357,37 +357,35 @@ and the dashboard gear icon. Non-admins see a read-only view.
 2. Either click **Customize this workflow** to fork the built-in default,
    or click a **template button** (e.g. "Branch, PR & Merge Gated") to
    apply a predefined workflow with transitions and gates pre-configured.
-3. Edit states: inline-edit name/label, toggle terminal, click
-   "Add instructions…" to open a textarea for the state's agent
-   instructions, use `+ Add state` / the `✕` button per row.
-   Renaming a state propagates the rename into every transition
-   endpoint and the initial state so the graph stays coherent —
-   mid-keystroke values that would duplicate or be invalid do **not**
-   propagate, they just write the name and let the validation banner
-   flag it.
+3. Edit states: the state set (`open`, `in_progress`, `review`,
+   `done`), the terminal flag (only `done`) and the initial state
+   (`open`) are fixed: the table shows them read-only and notes that
+   states cannot be added, renamed or removed. Edit each state's label
+   inline, and click "Add instructions…" to open a textarea for the
+   state's agent instructions.
 4. Edit transitions: `from` / `to` are state dropdowns, label is
    inline, `required role` is a dropdown (`any`, `ADMIN`,
    `HUMAN_MEMBER`, `REVIEWER`), and the gates column shows one
    checkbox per built-in rule from `/api/workflow-rules`. `+ Add
-   transition` creates a new row defaulted to the initial state →
-   first other state.
-5. Validation errors (duplicate names, bad name format, dangling
-   `initialState`, missing transition endpoints, duplicate
-   transitions) block Save with an inline banner.
+   transition` adds a row for the first `from` / `to` pair, in state
+   order, that has no transition yet.
+5. Validation errors block Save with an inline banner. In the editor
+   they come from an empty state label or a duplicate transition (same
+   `from` and `to`); the client checks on state names, transition
+   endpoints and `initialState` only fire for a stored definition
+   outside the fixed state set. The backend rejects a definition whose
+   states are not exactly `open`, `in_progress`, `review` and `done`,
+   whose `initialState` is not `open`, or in which `done` is not
+   terminal or another state is.
 6. Reachability warnings (unreachable states, dead-end non-terminal
    states, orphan states with no incoming transition) show as a
-   warning banner but do **not** block Save.
+   warning banner and do **not** block Save; Save asks for a
+   confirmation ("Save anyway") first.
 7. `Cmd/Ctrl+S` saves. Save PUTs the whole definition to the backend
    schema, which re-validates with `.superRefine()` before persisting.
 8. **Reset to default** drops the custom row entirely and reverts the
    project to the hardcoded default. Tasks that referenced the custom
    workflow get `workflowId` unset and fall back to the default.
-
-**Renaming a state** does **not** migrate existing task rows whose
-`status` column matches the old name. A warning banner appears when a
-rename is pending, advising that affected tasks will need an admin
-force-transition or manual re-label. The backend will return `422` on
-transition attempts for those stuck tasks until they're moved.
 
 ## Configuring rules on a workflow
 
@@ -414,6 +412,10 @@ Content-Type: application/json
 The workflow validator accepts up to 10 rules per transition.
 
 ## Recommended default for new code-review workflows
+
+A stricter alternative to the built-in default: it gates
+`open → in_progress` on `branchPresent` and has no skip-review
+`in_progress → done` edge.
 
 ```
 open            ──▶ in_progress    requires: branchPresent
@@ -549,6 +551,12 @@ applied to a project in one click. Templates are defined in code at
 [`backend/src/services/workflow-templates.ts`](../backend/src/services/workflow-templates.ts)
 and are versioned with the backend.
 
+Applying a template replaces the project's custom workflow (or creates
+one if none exists). Existing tasks are not migrated, but because the
+state vocabulary is fixed (`open`, `in_progress`, `review`, `done`)
+their `status` values stay valid; only the transitions, gates, and
+labels change.
+
 ### Branch, PR & Merge Gated (`branch-pr-merge-gated`)
 
 The locked four-state workflow with stricter precondition gates than the
@@ -573,13 +581,30 @@ How it differs from the built-in default:
   set — the `open` state's `agentInstructions` say so explicitly.
 - **Every edge into `done` requires `prMerged`.** Both the `review →
   done` approval and the `in_progress → done` skip-review path require
-  the PR to be merged, so reaching `done` always means the PR landed.
+  the PR to be merged, so `/transition` and `/finish` only reach `done`
+  once the PR landed; the legacy `POST /tasks/:id/review` approve path
+  and admin force do not evaluate `requires` (see
+  [What bypasses these gates](#what-bypasses-these-gates)).
 
 Each state includes `agentInstructions` so agents using `task_start`
 know what is expected at each stage.
 
-Applying a template replaces the project's custom workflow (or creates
-one if none exists). Existing tasks are not migrated, but because the
-state vocabulary is fixed (`open`, `in_progress`, `review`, `done`)
-their `status` values stay valid — only the transitions, gates, and
-labels change.
+### Release / ops, no PR required (`release-ops-no-pr`)
+
+The built-in default without the branch and PR gates. It is for tasks that
+never produce a branch or PR (tag-only releases, config or ops actions).
+
+| From | To | Label | Requires |
+| ---- | -- | ----- | -------- |
+| `open` | `in_progress` | Start | *(none)* |
+| `in_progress` | `review` | Submit for review | *(none)* |
+| `in_progress` | `done` | Mark done | *(none)* |
+| `in_progress` | `open` | Release | *(none)* |
+| `review` | `done` | Approve | *(none)* |
+| `review` | `in_progress` | Request changes | *(none)* |
+
+Applying it with `apply-template` makes it the project default and removes
+the `branchPresent` and `prPresent` gates for every task. For a mixed
+project, create a non-default workflow from this definition
+(`POST /api/projects/:projectId/workflows`) and assign it per task with
+`task_create({ workflowId })`.

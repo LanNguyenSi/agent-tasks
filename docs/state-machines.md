@@ -4,7 +4,7 @@ Authoritative source: [`backend/src/services/default-workflow.ts`](../backend/sr
 
 ## Default workflow
 
-The product status vocabulary includes six values. The workflow engine itself, implemented in `DEFAULT_TRANSITIONS` below, defines only four states: `open`, `in_progress`, `review`, and `done`. `Task.status` is a free `String` column; custom workflows can define their own state names, but the default workflow engine uses these four:
+The product status vocabulary includes six values. The workflow engine itself, implemented in `DEFAULT_TRANSITIONS` below, defines only four states: `open`, `in_progress`, `review`, and `done`. `Task.status` is a free `String` column, but the workflow API accepts only these four states for any workflow, default or custom (`FIXED_STATE_NAMES` in `backend/src/routes/workflows.ts`); custom workflows change transitions and gates, not states. The default workflow:
 
 ```mermaid
 stateDiagram-v2
@@ -27,7 +27,7 @@ stateDiagram-v2
 
 Agent-created tasks land in `backlog` status (handled outside the workflow engine via dedicated routing in `task_start` and claim routes) for human operator review before they can enter the standard workflow. Human-created tasks and promoted backlog tasks default to `open`. The standard workflow then proceeds `open → in_progress → review → done` with branching for release and request-changes.
 
-`open → in_progress` deliberately has no precondition, so exploratory work without a branch is allowed. Gates only attach on `→ review` and `→ done`. Backlog tasks are invisible to `task_pickup` and cannot be claimed until promoted to `open` by a human via `PATCH`; see `docs/okf/claim-model.md` and `docs/okf/task-lifecycle.md` for the full backlog contract. `abandoned` status (terminal) is reachable only via human discard of a backlog task or admin reset; it is not a workflow transition target.
+`open → in_progress` deliberately has no precondition, so exploratory work without a branch is allowed. Gates only attach on `→ review` and `→ done`. Backlog tasks are invisible to `task_pickup` and cannot be claimed until promoted to `open` by a human via `PATCH`; see `docs/okf/claim-model.md` and `docs/okf/task-lifecycle.md` for the full backlog contract. `abandoned` is not a workflow transition target. It is set when a human discards a backlog task, or when an agent withdraws an `open` or `backlog` task it created, with no claim on it, via `task_creator_abandon`; a project admin can restore an abandoned task to the initial state with `PATCH /tasks/:id`.
 
 ## Transition-rule layer
 
@@ -42,7 +42,7 @@ Four reusable rules live in `transition-rules.ts` and decorate transition edges 
 
 Custom workflows can attach any subset of the four rules to any transition. The default workflow only attaches `branchPresent + prPresent` to the two `in_progress → ...` edges.
 
-`force=true` from a team admin bypasses every rule. The bypass is audit-logged as `task.transitioned.forced` and emits a `task_force_transitioned` signal to the claimant + active reviewer.
+`force=true` from a project admin (team `ADMIN` or per-project `PROJECT_ADMIN`) bypasses every rule. The bypass is audit-logged as `task.transitioned.forced` and emits a `task_force_transitioned` signal to the claimant + active reviewer.
 
 ## Governance-tier gates
 
@@ -68,14 +68,38 @@ Two paths reach the task and they can land it in different states:
 
 | Path | How it fires | Resulting `status` |
 |---|---|---|
-| REST merge | `POST /api/github/pull-requests/:n/merge` (used by MCP `task_merge` and `pull_requests_merge`) | hardcoded `done` after a successful merge |
-| Webhook merge | PR merged through the GitHub UI or `gh pr merge` | picked by `pickMergeTargetStatus` from `governanceMode`: `done` for `AUTONOMOUS` / custom workflow, otherwise `review` |
+| REST merge | `task_merge` (`POST /api/tasks/:id/merge`) or `pull_requests_merge` (`POST /api/github/pull-requests/:prNumber/merge`) | `done` after a successful merge |
+| Webhook merge | PR merged through the GitHub UI or `gh pr merge` | `pickMergeTargetStatus`: `done` for `AUTONOMOUS`; in any other mode, with or without a custom workflow, an `open` or `in_progress` task moves to `review` and a task in `review` stays there; `done` and `backlog` tasks are not matched in any mode |
 
-Both paths run the self-merge gate first; only the resulting status differs. Tooling that wraps both must treat them as separate code paths.
+Only the REST paths run the self-merge gate. The webhook path records a merge that already happened on GitHub and writes the status without checking it against a custom workflow's states. Tooling that wraps both must treat them as separate code paths.
 
 ## Confidence gate
 
-A task whose description does not score above `Project.confidenceThreshold` (default `60`) cannot be claimed. `task_pickup` filters such tasks out; `task_start` rejects with `422 confidence_below_threshold`. `task_pickup` also skips tasks until every `blockedBy` parent reaches a resolved status (`done` or `abandoned`), so the dependency graph is enforced at claim time, not at transition time.
+The confidence gate runs when an agent claims an open task (`task_start`, `POST /api/tasks/:id/claim`). `task_pickup` does not filter by confidence. Its effect depends on `Project.enforcementMode`: `OFF` skips scoring; `WARN` (the value when the column is unset) scores the task, lets a would-block claim through and records `task.claim_would_block_shadow`; `BLOCK` rejects a claim that scores below the effective threshold, or that violates a keystone, with `422 low_confidence`. The effective threshold is `taskTypeThresholds[taskType]`, else `confidenceThreshold` (default `60`), else the global default `60`, plus any triggered `riskModifiers`. Under `BLOCK`, `?force=true&forceReason=...` (at least 10 characters) overrides the gate only for a token with the `confidence:override` scope. Human claims are never gated. See [`scorer-v2-enforcement.md`](scorer-v2-enforcement.md).
+
+The flowchart shows when an agent claim is allowed, shadow-logged, blocked or overridden.
+
+```mermaid
+flowchart TD
+    A["task_start or<br/>POST /tasks/:id/claim"] --> B{agent actor?}
+    B -- no --> OK[allow]
+    B -- yes --> C{"enforcementMode<br/>(null = WARN)"}
+    C -- OFF --> OK
+    C -- WARN --> D{"below threshold<br/>or keystone<br/>violated?"}
+    D -- yes --> W["allow, audit<br/>task.claim_would_block_shadow"]
+    D -- no --> R["allow, audit<br/>task.claim_confidence_recorded"]
+    C -- BLOCK --> E{force=true?}
+    E -- no --> G{"below threshold<br/>or keystone<br/>violated?"}
+    G -- yes --> X["422 low_confidence, audit<br/>task.claim_blocked_low_readiness"]
+    G -- no --> R
+    E -- yes --> F{"confidence:override<br/>scope?"}
+    F -- no --> F403[403 forbidden]
+    F -- yes --> H{"forceReason<br/>at least<br/>10 chars?"}
+    H -- no --> F400[400 bad_request]
+    H -- yes --> O["allow; audit<br/>task.claim_override_used<br/>when it would have blocked"]
+```
+
+`task_pickup` skips tasks until every `blockedBy` parent reaches a resolved status (`done` or `abandoned`), and `task_start` rejects such a claim with `409 blocked`, so the dependency graph is enforced at claim time, not at transition time.
 
 ## Further reading
 

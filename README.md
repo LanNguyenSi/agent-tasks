@@ -28,9 +28,9 @@ The monorepo holds five workspace packages. `backend`, `frontend`, and `cli` ver
 
 Highlights, each detailed in [Next steps](#next-steps) below:
 
-- Deterministic, heuristic confidence scoring gates agent claims on vague tasks; no LLM in the loop.
+- Deterministic, heuristic confidence scoring of agent claims on vague tasks; no LLM in the loop. It blocks such a claim only when the project's `enforcementMode` is `BLOCK`; the default `WARN` records it and lets it through.
 - Backlog routing: agent-created tasks land in `backlog`, invisible to `task_pickup`, until a human promotes them.
-- Configurable workflows: in-browser editor for states, transitions, required roles, reachability analysis.
+- Configurable workflows: in-browser editor for transitions, required roles, gates, state labels and agent instructions over the fixed `open`, `in_progress`, `review`, `done` states, with reachability analysis.
 - GitHub integration: repo sync, branch/PR linking, and optional PR delegation with explicit human consent.
 - Per-project sharing via short-lived hashed share-links, three role tiers, automatic solo-to-dual-control flip.
 - OIDC SSO alongside email/GitHub, team-scoped, PKCE + JWKS.
@@ -46,8 +46,10 @@ git clone https://github.com/LanNguyenSi/agent-tasks.git
 cd agent-tasks
 cp .env.example .env
 echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env   # required, >= 32 chars
-make dev-docker          # docker compose up: db + backend + frontend
+make dev-docker          # docker compose up: db + redis + backend + frontend
 ```
+
+This is a development stack (`NODE_ENV=development`); set `TRUSTED_PROXY_HOPS=0` in `.env` when no reverse proxy is in front of the backend.
 
 Open http://localhost:3000, register the first user, create a team, and generate a token in **Settings → API Tokens**. Full local-dev guide, a host-only setup (Node >= 22 and a reachable PostgreSQL; Docker optional), and Make targets: [docs/development.md](docs/development.md).
 
@@ -61,7 +63,7 @@ Once an MCP client is connected, the canonical verb order is `task_pickup` (find
 task_pickup                                          # find work: signal, review-ready task, or claimable task
 task_start     { taskId, branchName? }               # claim it, transition to in_progress
 task_submit_pr { taskId, branchName, prUrl, prNumber } # after `gh pr create`
-task_finish    { taskId, result?, prUrl? }           # advance to review or done, per governance mode
+task_finish    { taskId, result?, prUrl? }           # advance to review, or to done with autoMerge in AUTONOMOUS projects
 ```
 
 The four-step MCP cold-start path (initialize handshake, `workflow_primer`, `projects_get_effective_gates`, `task_pickup`), the full MCP tool table, CLI and curl equivalents, and the response/receipt shapes: [docs/getting-started.md](docs/getting-started.md), [docs/agent-workflow.md](docs/agent-workflow.md), and [docs/response-contract-v1.md](docs/response-contract-v1.md).
@@ -82,8 +84,8 @@ The four-step MCP cold-start path (initialize handshake, `workflow_primer`, `pro
 
 **API and contracts**
 - [docs/features.md](docs/features.md): task templates and dependencies, CSV/Excel import with Jira column auto-detection, board/list views, admin project-share listing.
-- [docs/v2-api.md](docs/v2-api.md): curated REST verb overview (authoritative schema is the live OpenAPI doc, [Swagger UI](https://agent-tasks.opentriologue.ai/docs)).
-- [docs/api-contract.md](docs/api-contract.md): where the API documentation actually lives, and why there is no static copy.
+- [docs/v2-api.md](docs/v2-api.md): REST route overview; the live OpenAPI doc ([Swagger UI](https://agent-tasks.opentriologue.ai/docs)) describes a subset of the API.
+- [docs/api-contract.md](docs/api-contract.md): what the OpenAPI document covers and where the rest of the API is documented.
 - [docs/response-contract-v1.md](docs/response-contract-v1.md): MCP receipt shapes, `include`, and error catalog.
 - [docs/domain-model.md](docs/domain-model.md): entities, relations, and the fields that drive governance.
 - [docs/events.md](docs/events.md): domain events.
@@ -102,9 +104,9 @@ Further reference material (use cases, sequence flows, ADRs, design notes, the O
 ## Development and contributing
 
 ```bash
-make install   # backend + frontend workspace deps
+make install   # all workspace deps (npm ci)
 make setup     # .env + Prisma client
-make test      # frontend, cli, backend test suites
+make test      # frontend, cli, backend test suites (backend needs PostgreSQL)
 make lint      # backend + frontend lint
 ```
 

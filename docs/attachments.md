@@ -53,6 +53,11 @@ A `TaskAttachment` row can be one of two things:
   per-project via `Project.attachmentBytesCap`. A `null` or non-positive
   per-project value means "use the env-var default." Enforcement is best-effort
   (non-atomic), so concurrent uploads can overshoot the cap slightly.
+- **Env overrides in production:** `docker-compose.prod.yml` forwards only the
+  variables listed in the backend service's `environment:` block. Add
+  `ATTACHMENT_MAX_COUNT_PER_TASK` or `ATTACHMENT_MAX_TOTAL_BYTES_PER_TASK`
+  there (for example `ATTACHMENT_MAX_COUNT_PER_TASK: ${ATTACHMENT_MAX_COUNT_PER_TASK:-}`)
+  for the override to take effect.
 
 ## Security model
 

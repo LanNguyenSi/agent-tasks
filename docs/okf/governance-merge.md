@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-10-10T17:44:12Z
+timestamp: 2026-10-11T16:10:03Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -27,6 +27,10 @@ sources:
   - backend/src/services/grounding-operations.ts
   - backend/src/services/grounding-route-effects.ts
   - backend/prisma/grounding-github-fence.sql
+  - backend/src/routes/webhooks.ts
+  - backend/src/services/idempotency-sweep.ts
+  - backend/src/server.ts
+  - backend/src/config/index.ts
 ---
 
 `resolveGovernanceMode(project)` prefers the explicit `governanceMode` column.
@@ -217,6 +221,38 @@ lookups exclude done and backlog tasks. Each legacy webhook status write is a
 compare-and-swap on the status and status version it read; a write that lost
 reads the row again and decides again, so a task another writer already moved
 on is not written over (`workflow-gates.md`).
+
+**Legacy webhook ingest** (`backend/src/routes/webhooks.ts`,
+`backend/src/services/github-webhook.ts`): `app.ts` mounts `/api/webhooks`
+with the grounding webhook router when grounding is configured and with the
+legacy `webhookRouter` otherwise, in both cases without `authMiddleware`.
+`POST /api/webhooks/github` checks `X-Hub-Signature-256` against an
+HMAC-SHA256 of the raw body keyed with `GITHUB_WEBHOOK_SECRET` (constant-time
+compare) and answers `401` on a mismatch. With no secret set it answers `401`
+when `NODE_ENV` is `production` and otherwise accepts the unsigned payload
+with a logged warning; a body that is not JSON answers `400`. After the
+signature check the route claims the `X-GitHub-Delivery` id as a
+`webhook_deliveries` row (`claimWebhookDelivery`): a known id answers `200`
+with `duplicate: true` and is not dispatched again, and a request without the
+header is dispatched without deduplication. The claim is never released, so
+delivery is at-most-once: a handler that throws is logged and a redelivery
+does not run it again. The route answers `200` with `{ received: true, event }`
+before the handler runs; the handlers run detached after the response. Per
+event: `ping` does nothing; `push` sets `githubSyncAt` on every project
+linked to the repository; `issues` `opened` creates an `open` task titled
+`[GH #<n>] <issue title>` in each linked project, and `closed` moves the
+matching `[GH #<n>]` tasks outside `done` and `backlog` to `done`;
+`pull_request` `opened` fills a missing `prNumber`, `prUrl` or `branchName`
+on the matching tasks and never creates a task, a merged `closed` applies the
+merge target above, and an unmerged `closed` adds a timeline entry only;
+`pull_request_review` records `approved`, `commented` and `dismissed` as
+timeline entries and moves a task in `review` back to `in_progress` on
+`changes_requested`. Other events are ignored. `findTasksByPr` matches a PR
+to tasks by `prNumber`, then `prUrl`, then a `branchName` equal to the PR
+head branch, then a title containing `[PR #<n>]`, deduplicated in that
+order. `sweepIdempotencyTables` (`backend/src/services/idempotency-sweep.ts`,
+scheduled every six hours from `backend/src/server.ts`) deletes delivery
+rows older than `IDEMPOTENCY_TTL_DAYS` (default 30).
 
 The historical task-merge route instead writes `done` after the merge helper
 succeeds. It admits review and done, retains the self-merge gate on retries, and

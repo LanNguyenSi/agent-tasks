@@ -21,8 +21,8 @@ warn-mode without a backfill.
 violated (`ConfidenceResult.blocking`). The keystone clause is threshold
 independent: lowering a project's threshold cannot silently disable it.
 
-The effective threshold itself is layered, not a single flat value (M2, task
-b8629b99): `Project.taskTypeThresholds[EXPLICIT templateData.taskType]` ->
+The effective threshold itself is layered, not a single flat value:
+`Project.taskTypeThresholds[EXPLICIT templateData.taskType]` ->
 `Project.confidenceThreshold` -> the global default (`60`). A task with no
 explicit `taskType`, or a project with no `taskTypeThresholds` override, falls
 straight through to the project layer; this is the pre-M2 behaviour and
@@ -34,7 +34,7 @@ in progress is never re-evaluated when a project flips to `BLOCK` (grandfathered
 
 ## The shadow report
 
-Warn-mode was the only calibration signal at rollout (there is no seed corpus); M5 (task 698eeb01) added a second: `GET /projects/:id/telemetry/confidence` aggregates review bounce-backs, override frequency, and score-vs-outcome by score band from the `ConfidenceTelemetry` table — see `docs/domain-model.md` and `backend/src/services/confidence-telemetry.ts`. Two sources feed the shadow report specifically:
+Warn-mode was the only calibration signal at rollout (there is no seed corpus); a second one is `GET /projects/:id/telemetry/confidence`, which aggregates review bounce-backs, override frequency, and score-vs-outcome by score band from the `ConfidenceTelemetry` table; see `docs/domain-model.md` and `backend/src/services/confidence-telemetry.ts`. Two sources feed the shadow report specifically:
 
 1. Runtime: every real warn-mode would-block writes a `task.claim_would_block_shadow`
    audit event carrying `score`, `threshold`, `keystoneBlocked`, and `caps`.

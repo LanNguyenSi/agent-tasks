@@ -10,9 +10,11 @@ export JIRA_URL=https://your-org.atlassian.net
 export JIRA_EMAIL=you@example.com
 export JIRA_TOKEN=ATATT...
 export AGENT_TASKS_URL=https://agent-tasks.opentriologue.ai
-export AGENT_TASKS_TOKEN=at_...
+export AGENT_TASKS_TOKEN=<human session token>
 export PROJECT_ID=<uuid>
 ```
+
+The importer sets a status on every issue (see Field Mapping). The import endpoint rejects a whole batch from an agent token (`at_...`) with `400 backlog_routing_enforced` when any item has a status other than `backlog`, so run the tool with a human session token: the value of your `session` cookie, sent as `Authorization: Bearer`. A session token expires after 7 days.
 
 ## Usage
 
@@ -53,5 +55,5 @@ Uses Jira issue key as `externalRef`. Re-running the same import skips already-i
 | `JIRA_TOKEN` | Jira API token ([create one](https://id.atlassian.com/manage-profile/security/api-tokens)) |
 | `JIRA_JQL` | Default JQL query (overridden by `--jql` flag) |
 | `AGENT_TASKS_URL` | agent-tasks API base URL |
-| `AGENT_TASKS_TOKEN` | agent-tasks Bearer token |
+| `AGENT_TASKS_TOKEN` | Human session token (agent tokens are rejected, see Setup) |
 | `PROJECT_ID` | Target project UUID in agent-tasks |

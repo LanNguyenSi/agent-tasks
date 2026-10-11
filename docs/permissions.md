@@ -1,10 +1,14 @@
 # Permissions
 
-## Rollen
+## Roles
+
+Team roles (`MemberRole`):
+
 - Admin
 - HumanMember
 - Reviewer
-- Agent
+
+Agents act through team-scoped agent tokens; what a token may do is set by its [scopes](#token-scopes).
 
 ## Matrix
 
@@ -16,32 +20,49 @@
 | Create task | yes | yes | yes | yes* |
 | Claim task | yes | yes | yes | yes* |
 | Change workflow | no | no | yes | no |
-| Approve review | no | yes | yes | limited |
+| Approve review | yes§ | yes§ | yes§ | yes*§ |
 | Create agent token | no | no | yes | no |
 | Configure team SSO | no | no | no† | token‡ |
-| Deploy production | limited | limited | yes | no/default |
 
-`*` nur mit passenden Token-Scopes.
-`†` SSO-Konfiguration ist bewusst **nicht** an die ADMIN-Rolle gekoppelt — ein gestohlenes Session-Cookie eines Admins darf den IdP nicht umbiegen können.
-`‡` SSO-Konfiguration läuft ausschließlich per AgentToken mit Scope `sso:admin`. Das Token ist team-scoped und wird out-of-band an die IdP-verantwortliche Person weitergegeben. Siehe [enterprise-sso.md](enterprise-sso.md).
+`*` Only with the matching token scopes.
+`§` Any member with project write access may claim the review lock and approve, subject to the distinct-reviewer rule of the project's `governanceMode`. The Reviewer role controls who receives `review_needed` signals. A custom workflow can restrict the `review → done` edge to a role with `requiredRole`, which `/transition`, `/finish` and `PATCH` check; the v1 `POST /tasks/:id/review` route does not.
+`†` SSO configuration is deliberately **not** tied to the ADMIN role: a stolen admin session cookie must not be able to redirect the IdP.
+`‡` SSO configuration runs only through an agent token with the `sso:admin` scope. The token is team-scoped and handed out of band to the person responsible for the IdP. See [enterprise-sso.md](enterprise-sso.md).
 
-## Audit-Trail
+## Project roles
 
-Folgende Workflow-Mutationen werden in den AuditLog geschrieben und sind über `GET /api/projects/:id/audit` abrufbar:
+A project admin can invite a user to a single project with a share invite. The invite grants one of three per-project roles (`ProjectMemberRole`), layered on top of team membership:
 
-- `workflow.created` — neuer Custom-Workflow via `POST /api/projects/:id/workflows`
-- `workflow.customized` — Default geforkt via `POST /api/projects/:id/workflow/customize`
-- `workflow.updated` — `PUT /api/workflows/:id` mit Diff-Summary (state/transition count before/after, renamed states, initialState change)
-- `workflow.reset` — `DELETE /api/projects/:id/workflow` mit `affectedTaskCount` (wie viele Tasks durch den Reset vom Custom-Workflow getrennt wurden)
+- `PROJECT_VIEWER`: read-only. Every write-tier route refuses it.
+- `PROJECT_CONTRIBUTOR`: claim, transition, comment and review; passes both the HumanMember and the Reviewer role gates.
+- `PROJECT_ADMIN`: also force transitions, workflow edits, project settings, admin release and reassign of claims, and invites. Only a team Admin can mint a `PROJECT_ADMIN` invite.
 
-Alle Workflow-Mutationen sind ADMIN-gated, die Audit-Zeile trägt also immer eine `actorId`.
+When a route or a workflow edge checks a team role, `PROJECT_ADMIN` satisfies Admin, HumanMember and Reviewer, `PROJECT_CONTRIBUTOR` satisfies HumanMember and Reviewer, and `PROJECT_VIEWER` satisfies none of them. Team roles must match exactly: a team Admin does not satisfy an edge that requires HumanMember or Reviewer. The mapping lives in `hasProjectRole` and `requireProjectWrite` in [`backend/src/services/team-access.ts`](../backend/src/services/team-access.ts).
 
-## Token Scopes
-- tasks:read
-- tasks:create
-- tasks:claim
-- tasks:comment
-- tasks:transition
-- projects:read
-- boards:read
-- sso:admin *(sensitive — grants create/update/delete on the team's SSO connection; hand out-of-band, revoke when done)*
+## Audit trail
+
+These workflow mutations are written to the audit log and can be read with `GET /api/projects/:id/audit`:
+
+- `workflow.created`: new custom workflow via `POST /api/projects/:id/workflows`
+- `workflow.customized`: default forked via `POST /api/projects/:id/workflow/customize`
+- `workflow.updated`: `PUT /api/workflows/:id` with a diff summary (state and transition count before and after, added and removed state names, whether `initialState` changed)
+- `workflow.reset`: `DELETE /api/projects/:id/workflow` with `affectedTaskCount` (how many tasks the reset detached from the custom workflow)
+
+All workflow mutations are ADMIN-gated, so the audit row always carries an `actorId`.
+
+## Token scopes
+
+The list served by `GET /api/agent-tokens/scopes` is authoritative.
+
+- `tasks:read`
+- `tasks:create`
+- `tasks:claim`
+- `tasks:comment`
+- `tasks:transition`
+- `tasks:update`
+- `projects:read`
+- `boards:read`
+- `github:pr_create` *(opt-in: server-side PR create through the team's GitHub delegation)*
+- `github:pr_merge` *(opt-in: server-side PR merge through the team's GitHub delegation)*
+- `sso:admin` *(sensitive: grants create, update and delete on the team's SSO connection; hand out of band, revoke when done)*
+- `confidence:override` *(operator-only: allows `?force=true` past the confidence gate)*
