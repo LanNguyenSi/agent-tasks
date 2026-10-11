@@ -2205,3 +2205,28 @@ describe("calculateConfidence — markdown spec sections (friction #99)", () => 
     expect(result.findings.find((f) => f.code === "missing_acceptance_criteria")).toBeUndefined();
   });
 });
+
+describe("templateDataSchema — list-valued spec fields", () => {
+  it("normalises a list to '- item' lines, dropping blanks", () => {
+    const r = templateDataSchema.parse({ acceptanceCriteria: [" a ", "", "b"], goal: "plain" });
+    expect(r.acceptanceCriteria).toBe("- a\n- b");
+    expect(r.goal).toBe("plain");
+  });
+
+  it("rejects entries that are not strings and caps the normalised text", () => {
+    expect(templateDataSchema.safeParse({ acceptanceCriteria: [1] }).success).toBe(false);
+    expect(templateDataSchema.safeParse({ acceptanceCriteria: ["x".repeat(50_000)] }).success).toBe(false);
+  });
+
+  it("scores a list exactly like its equivalent bullet string", () => {
+    const base = { title: "Validate signup body", description: "Add validation for the signup body in src/signup.ts." } as const;
+    const asList = templateDataSchema.parse({ goal: "g", acceptanceCriteria: ["returns 400 on bad email", "npm test passes"] });
+    const asString = templateDataSchema.parse({ goal: "g", acceptanceCriteria: "- returns 400 on bad email\n- npm test passes" });
+    const a = calculateConfidence({ ...base, templateData: asList });
+    const b = calculateConfidence({ ...base, templateData: asString });
+    expect(a.score).toBe(b.score);
+    expect(a.score).toBeGreaterThan(
+      calculateConfidence({ ...base, templateData: templateDataSchema.parse({ goal: "g" }) }).score,
+    );
+  });
+});
