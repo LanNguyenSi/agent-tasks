@@ -4,7 +4,7 @@ How agent-tasks enforces *when* work may move forward: claim gates, transition p
 
 ## Confidence scoring (claim gate)
 
-Every task gets a deterministic confidence score (0–100%) measuring whether it has enough information for an agent to work on. Agents are blocked from claiming low-confidence tasks via the API (`422 unprocessable_entity`); humans see the same signal as a UI warning.
+Every task gets a deterministic confidence score (0–100%) measuring whether it has enough information for an agent to work on. On projects whose `enforcementMode` is `BLOCK`, agent claims below the threshold, or claims violating a keystone, are rejected with `422 low_confidence`. The default (`WARN`, also used when the field is unset) records a `task.claim_would_block_shadow` audit event and allows the claim, and `OFF` skips the check (see [scorer-v2-enforcement.md](scorer-v2-enforcement.md)). Humans see the score as a UI warning.
 
 The score is **deterministic, no LLM, pure heuristics**:
 
@@ -20,7 +20,9 @@ The score normalises against what's configured: a project without templates can 
 
 ```
 GET /api/tasks/{id}/instructions → { ..., confidence: { score, missing, threshold } }
-POST /api/tasks/{id}/claim       → 422 if score < threshold (agents only, bypass with ?force=true)
+POST /api/tasks/{id}/start       → 422 if BLOCK and below threshold (agents only; the deprecated /claim runs the same gate)
+                                   override: ?force=true&forceReason=<at least 10 characters>,
+                                   only with the confidence:override scope (403 without it)
 ```
 
 ## Backlog routing (agent-created tasks)
@@ -54,13 +56,21 @@ Server-side enforcement, not prompt suggestion. Every rule is checked by the API
 
 ### Human override from the task page
 
-A project admin (team `ADMIN`, or a per-project `PROJECT_ADMIN` with no team-level role) gets escape hatches on the task: the first two below are controls on the task detail page, the claim reassignment is API-only for now. All are audited and none is available to agents:
+A project admin (team `ADMIN`, or a per-project `PROJECT_ADMIN` with no team-level role, see [permissions.md](permissions.md#project-roles)) gets escape hatches on the task: all three below are controls on the task detail page. All are audited and none is available to agents:
 
 - **Force a status transition** past a failed precondition. Picking a target state that a blocked transition would reject surfaces the failing rules inline with a "force" affordance; confirming requires a non-empty reason and is audited as `task.transitioned.forced`.
 - **Release a work or review claim held by anyone** — a stuck agent, an absent teammate, or their own claim — via an admin-only release control next to the assignee/reviewer, audited as `task.claim_released_by_admin` / `task.review_claim_released_by_admin`.
-- **Reassign a work or review claim to a specific actor**: hand the claim from its current holder straight to a chosen human or agent (`POST /tasks/:id/admin-reassign`), without releasing it first. The candidates come from `GET /projects/:id/eligible-actors` (project and team members who can write, plus the team's live agent tokens). Both calls are human-project-admin-only; an agent token is refused. An agent target must not already hold another active claim, and on a project that requires a distinct reviewer the review claim cannot go to the work claimant nor the work claim to the review holder. Audited as `task.claim_reassigned`.
+- **Reassign a work or review claim to a specific actor**: hand the claim from its current holder straight to a chosen human or agent with the reassign picker next to the release control (`POST /tasks/:id/admin-reassign`), without releasing it first. The candidates come from `GET /projects/:id/eligible-actors` (project and team members who can write, plus the team's live agent tokens). Both calls are human-project-admin-only; an agent token is refused. An agent target must not already hold another active claim, and on a project that requires a distinct reviewer the review claim cannot go to the work claimant nor the work claim to the review holder. Audited as `task.claim_reassigned`.
 
-Non-admin humans see both controls disabled with the reason, never hidden. See [docs/workflow-preconditions.md](workflow-preconditions.md#forcing-a-transition-past-a-failed-precondition) for the forced-transition wire format.
+Non-admin humans see the force and release controls disabled with the reason; the reassign picker is shown only to project admins and not on `done` tasks. See [docs/workflow-preconditions.md](workflow-preconditions.md#forcing-a-transition-past-a-failed-precondition) for the forced-transition wire format.
+
+### Inspecting a project's gates
+
+`GET /api/projects/:id/effective-gates` (MCP `projects_get_effective_gates`, CLI `agent-tasks projects effective-gates <slug-or-id>`) returns the gates and the task-creation requirements in force for a project. Call it before `task_create` or `task_submit_pr`.
+
+### Debug-grounding finish gate (opt-in)
+
+Off by default. With `requireGroundingForDebug: true` on the project, finishing a work claim on a debug-flavored task requires an active grounding session on the task, at least one evidence-ledger entry for that session, and a session phase of `claim-evaluation` or later (`complete`); otherwise `task_finish` answers `409 grounding_required` with the `missing` items. On projects without the flag, finishing a debug-flavored task writes `task.grounding_gate.bypassed` as a record that the gate would have applied. `AGENT_TASKS_DISABLE_GROUNDING=1` replaces the grounding client with one that reports no ledger entries, so an opted-in project then fails the ledger check (with `docker-compose.prod.yml`, the variable must be added to the backend service's `environment:` block, which forwards only the variables it lists). Background: [ADR 0013](adr/0013-grounding-finish-gate.md).
 
 ## Governance modes (per project)
 
@@ -72,7 +82,7 @@ Non-admin humans see both controls disabled with the reason, never hidden. See [
 | `AWAITS_CONFIRMATION` (formerly `soloMode: false`, `requireDistinctReviewer: false`) | Task moves to `review`; emits `self_merge_notice` to humans on subsequent self-merge to `done` | Yes, but everyone gets a signal | Default for most teams |
 | `REQUIRES_DISTINCT_REVIEWER` (formerly `requireDistinctReviewer: true`) | Task moves to `review`; `checkSelfMergeGate` blocks the author from merging their own work | No | Regulated / two-person-rule contexts |
 
-See [docs/review-automation-policy.md](review-automation-policy.md) for the full rule set, including how custom workflows interact with the modes, and [docs/signal-payload-design.md](signal-payload-design.md) for the `self_merge_notice` signal schema.
+See [docs/review-automation-policy.md](review-automation-policy.md) for the full rule set (a webhook merge picks the same target for default and custom workflows), and [docs/signal-payload-design.md](signal-payload-design.md) for the `self_merge_notice` signal schema.
 
 ## Audit
 

@@ -5,7 +5,7 @@
  * - push: update last sync timestamp
  * - issues.opened → create task
  * - issues.closed → transition task to done
- * - pull_request.opened → create task
+ * - pull_request.opened → backfill PR fields on matching tasks
  */
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { Prisma } from "@prisma/client";

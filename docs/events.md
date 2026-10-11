@@ -13,8 +13,8 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 | `user.registered` | First-party registration |
 | `user.login` | Successful login (email+password, GitHub OAuth, OIDC) |
 | `user.logout` | Explicit logout |
-| `token.created` | Agent token minted via `POST /api/agent-tokens` |
-| `token.revoked` | Agent token revoked |
+| `token.created` / `token.revoked` | Declared in the union for agent token mint and revoke; no code path writes them |
+| `token.renamed` | Agent token display name changed via `PATCH /api/agent-tokens/:id` (payload `{ tokenId, from, to }`) |
 
 ### Project lifecycle
 
@@ -49,6 +49,15 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 | `task.merge_rejected_bad_status` | Merge attempt against a task in `open` or `in_progress` |
 | `task.workflow_id_rejected_cross_project` | Create-time `workflowId` that does not resolve under the target project (foreign or non-existent); no `taskId`, since no task row is created |
 | `task.pr_submitted` | PR metadata recorded via `task_submit_pr` (or REST equivalent) |
+| `task.respec` | `task_respec` changed the description or `templateData` of an unclaimed `open` or `backlog` task; payload carries `{from, to}` per changed field and the confidence score before and after. Not written when nothing changed |
+| `task.creator_abandoned` | The creating agent retired its own unclaimed `open` or `backlog` task via `POST /tasks/:id/creator-abandon` |
+| `task.unabandoned` | A project admin moved an `abandoned` task back to the workflow's initial state (`PATCH /tasks/:id`) |
+| `task.backlog_promoted` / `task.backlog_discarded` | Human `PATCH /tasks/:id` moved a `backlog` task to `open` (promote) or to `abandoned` (discard) |
+| `task.backlog_demoted` | Human `PATCH /tasks/:id` moved an unclaimed `open` task back to `backlog`; its pending signals are acknowledged |
+| `task.deliverable_repo_set` | Task created with a non-null `deliverableRepo` |
+| `task.deliverable_repo_changed` | `deliverableRepo` set, changed or cleared via `PATCH /tasks/:id` |
+| `task.foreign_pr_linked` | A write path linked a `prUrl` while the task's effective deliverable repo differs from `project.githubRepo` |
+| `task.debugFlavor.reclassified` | `reclassify=true` on `task_pickup` or `task_start` produced a different `debugFlavor` than the stored value |
 | `task.merged` / `task.auto_merged` | PR merged through the API; `auto_merged` fires when the merge was triggered as a side effect of `task_finish { autoMerge: true }` |
 | `task.auto_merge_post_assert_failed` | Post-merge invariant check failed; flagged for human attention |
 | `task.merge_webhook_first` | Another writer (typically the system's own PR-merge webhook) already moved the task to its terminal status between the GitHub merge and the API's own status write; the write completed against that row (payload carries `via`, `mergeSha`, `status`, `actorType`, plus `priorStatus` and `priorStatusVersion` of the row the write completed against and `resultKept`, true when that row already had a result, which the write then did not overwrite) |
@@ -56,10 +65,21 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 | `task.pr_merged.blocked_self_merge` | Self-merge blocked by `REQUIRES_DISTINCT_REVIEWER` gate |
 | `task.self_merge_notice_emitted` | `AWAITS_CONFIRMATION` self-merge succeeded; `self_merge_notice` signal fanned out |
 | `task.imported` | Bulk CSV/Excel import |
-| `task.grounding_gate.bypassed` | Admin override of the debug-grounding gate |
+| `task.grounding_gate.bypassed` | A debug-flavored task was finished on a project with `requireGroundingForDebug` off; records that the debug-grounding finish gate would have applied (no block, no override) |
 | `task.artifact.created` / `task.artifact.deleted` | Typed artifact lifecycle |
-| `task.claim_confidence_recorded` | Confidence gate (ADR-0011, M5 task 698eeb01): an agent claim the gate evaluated and did NOT block or shadow-log (the common "claim went cleanly" case) — carries `score`/`threshold`/`thresholdSource`/`actorTokenId` so `GET /projects/:id/telemetry/confidence` has a claim-time score to snapshot later. Siblings `task.claim_blocked_low_readiness` / `task.claim_would_block_shadow` / `task.claim_override_used` cover the other three confidence-gate outcomes (LOW-9, batch 18 review — this table is not yet complete for the older three; a pre-existing gap, not introduced here). |
+| `task.attachment.uploaded` / `task.attachment.deleted` | A human uploaded a file attachment, or deleted an attachment (creating a URL-pointer attachment writes no event) |
+| `task.claim_confidence_recorded` | Confidence gate: an agent claim the gate evaluated and did not block or shadow-log (the common "claim went cleanly" case); carries `score`/`threshold`/`thresholdSource`/`actorTokenId` so `GET /projects/:id/telemetry/confidence` has a claim-time score to snapshot later |
+| `task.claim_blocked_low_readiness` | Confidence gate, `BLOCK` mode: an agent claim below the threshold or violating a keystone was refused with `422` |
+| `task.claim_would_block_shadow` | Confidence gate, `WARN` mode: a claim that would have been blocked was allowed through |
+| `task.claim_override_used` | Confidence gate, `BLOCK` mode: `?force=true` with the `confidence:override` scope and a `forceReason` let a would-block claim through; records the operator identity |
 | `task.labels_changed` | Human PATCH `/tasks/:id` changes a task's `labels` array, compared order-insensitively (a reorder of the same labels does not fire). Labels feed `resolveTriggeredRiskModifiers` (claim-threshold risk modifiers) and easy-pick/heavy-pick dispatch routing, so this is a claim-gating input; mirrors `task.deliverable_repo_changed`'s `{from, to, actorType}` payload shape. Agent PATCH cannot write `labels` (not in `agentUpdateTaskSchema`), so this only ever fires for a human actor. |
+
+### Admin claim operations
+
+| Action | Emitted on |
+|---|---|
+| `task.claim_released_by_admin` / `task.review_claim_released_by_admin` | `POST /tasks/:id/admin-release`: a project admin released a work or review claim held by anyone; one event per released claim |
+| `task.claim_reassigned` | `POST /tasks/:id/admin-reassign`: a project admin moved a work or review claim to a chosen actor (payload `{ claim, priorHolder, newHolder, reason }`) |
 
 ### GitHub delegation
 
@@ -69,6 +89,15 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 | `github.pr_merged` | Server-side PR merge |
 | `github.pr_merge_failed` | Merge call returned an error from GitHub |
 | `github.pr_commented` | Server-side PR comment |
+
+### Signal delivery
+
+| Action | Emitted on |
+|---|---|
+| `signal.webhook_delivered` | Outbound signal webhook answered 2xx (after at most one retry) |
+| `signal.webhook_failed` | Outbound signal webhook gave up after the retry, including a URL the egress guard refused |
+
+See [notification-webhooks.md](notification-webhooks.md#observability) for the payloads.
 
 ## Signal types
 
@@ -100,7 +129,7 @@ so a single call surfaces "you have a pending signal", "you have a review to do"
 
 The audit layer covers backend state changes. The following are intentionally not in `AuditLog`:
 
-- **Webhook delivery.** Inbound GitHub webhook events are processed in `backend/src/services/github-webhook.ts` and emit their effects (`task.transitioned`, `task.pr_merged`, etc.) under the existing actions. There is no `webhook.received` audit row by design.
+- **Webhook delivery.** Inbound GitHub webhook events are processed in `backend/src/services/github-webhook.ts` and emit their effects (`task.created` for an opened issue, `task.transitioned` for a closed issue or a merged PR (`payload.event: "pr_merged"`), and `task.reviewed` with a `payload.event` such as `review_approved` or `pr_closed`) under the existing actions. There is no `webhook.received` audit row by design.
 - **Signal acks.** Acking a signal is a recipient-side bookkeeping operation, not a system state change.
 - **Tool-invocation idempotency rows.** `ToolInvocation` is its own log, not an `AuditLog` entry. Use the `(projectId, verb, idempotencyKey)` unique index to detect retries.
 
@@ -112,7 +141,7 @@ The audit layer covers backend state changes. The following are intentionally no
 
 ## Shared grounding decisions
 
-The dormant shared completion services write these events inside the same
+The dormant grounding services write these events inside the same
 transaction as their task, evidence or reservation effect. A failed audit write
 aborts that transaction; existing `logAuditEvent` callers retain their current
 best-effort behavior.
@@ -123,6 +152,11 @@ best-effort behavior.
 | `task.grounding.overridden` | Human project-admin grounding override, with required reason and the successful decision |
 | `task.grounding.disposed` | Concrete non-success disposition, reason and invalidation, without a passing receipt claim |
 | `task.grounding.cancelled` | Reasoned cancellation of a provably undispatched reservation; invalidates its attempt |
+| `task.grounding.merge_guard_consumed` | A grouped GitHub merge consumed the guard task's receipt (or invalidated its context); later completion of that task needs fresh evidence |
+| `task.grounding.migration` | Human administrative migration command (`hold`, `pin_legacy`, `migrate_external`, `resume`) with reason, key and before/after state |
+| `task.grounding.context_observed` | A configured GitHub webhook changed PR binding fields or observed a changed head; the task's grounding context was invalidated |
+| `task.github.observed` | A configured GitHub webhook recorded an observation on a task, attributed to a system observation |
+| `task.grounding.external_pending` | Same as `task.github.observed`, for an observation recorded as pending (for example a merged PR or issue close on a provisioned task) |
 | `project.grounding.context_mutated` | Context writer's actor type/ID, bounded reason and selected task IDs, committed with actual mutation and invalidation |
 
 Task events attribute human actors through the user foreign key; agent token

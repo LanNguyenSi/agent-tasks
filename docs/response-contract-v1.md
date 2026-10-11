@@ -460,9 +460,9 @@ each already documented as a 4xx behavior in `mcp-server/src/tools.ts` /
   since rc-v1-C007, reachable only with `AGENT_TASKS_MCP_LEGACY=1`) /
   `POST /tasks/:id/transition { force: true }` admin bypass returns 403
   for non-admins.
-- **Description immutability.** `task_respec` only edits an `OPEN`,
-  unclaimed task; any other state (claimed, or not `open`) is rejected
-  with 409.
+- **Description immutability.** `task_respec` only edits an unclaimed
+  task in `open` or `backlog`; any other state, or any work or review
+  claim, is rejected with 409.
 - **`task_finish` `result` as plain string.** `result` is free text
   recorded on the task timeline; it MUST NOT be wrapped in XML or JSON
   tags, and the error/description text MUST say so rather than silently

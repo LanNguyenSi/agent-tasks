@@ -40,7 +40,7 @@ Future candidates (not in MVP): `deploy_ready`, `mention`, `dependency_resolved`
 
 ### `task_force_transitioned`
 
-Fired when a team admin calls `POST /tasks/:id/transition {force: true}`
+Fired when a project admin calls `POST /tasks/:id/transition {force: true}`
 and bypasses one or more `requires` rules (see
 [workflow-preconditions.md](workflow-preconditions.md)). The purpose
 is to make the override visible without reading the audit log — both
@@ -114,6 +114,7 @@ log remains the authoritative record.
 interface Signal {
   id: string;                  // UUID, unique per signal
   type: SignalType;            // "review_needed" | "changes_requested" | "task_approved" | "task_assigned"
+                               // | "task_available" | "task_force_transitioned" | "self_merge_notice"
   taskId: string;              // Task UUID
   projectId: string;           // Project UUID
   recipientAgentId?: string;   // Target agent token ID (null for human recipients)
@@ -143,6 +144,12 @@ interface SignalContext {
   // Type-specific fields
   reviewComment?: string;      // For changes_requested / task_approved
   assigneeName?: string;       // For review_needed (who is the worker)
+  forceTransition?: {          // task_force_transitioned only
+    from: string;
+    to: string;
+    forcedRules: string[];
+    forceReason?: string | null;
+  };
 }
 ```
 

@@ -1,6 +1,6 @@
 # API reference
 
-Authoritative source for the REST API is the OpenAPI document; this page is a curated overview of the verb shape.
+This page lists the REST routes and the verb shape. The OpenAPI document describes a subset of them; see [api-contract.md](api-contract.md) for what it covers.
 
 - **Swagger UI** (interactive): [`/docs`](https://agent-tasks.opentriologue.ai/docs) (alias `/api/docs`)
 - **OpenAPI JSON** (machine-readable): [`/api/openapi.json`](https://agent-tasks.opentriologue.ai/api/openapi.json)
@@ -28,6 +28,7 @@ POST /api/teams/:id/members
 POST /api/teams/:id/sync          # GitHub repo sync
 
 # Agent Tokens (team admins)
+GET   /api/agent-tokens/scopes     # Scope catalog (no team required)
 GET   /api/agent-tokens?teamId=
 POST  /api/agent-tokens
 PATCH /api/agent-tokens/:id        # Rename (display name only; names trimmed, 1-100 chars -- same shared rule as create)
@@ -36,8 +37,10 @@ POST  /api/agent-tokens/:id/revoke
 # Projects
 GET  /api/projects/available       # Agent discovery (recommended)
 GET  /api/projects?teamId=         # Full project list
+GET  /api/projects/by-slug/:slug
 GET  /api/projects/:id
 DELETE /api/projects/:id           # Humans only
+GET  /api/projects/:id/effective-gates   # Gates and task-creation requirements in force
 
 # Tasks
 GET  /api/projects/:id/tasks
@@ -52,11 +55,30 @@ POST /api/tasks/:id/finish         # v2: work claim → review/done, review clai
 POST /api/tasks/:id/merge          # v2: standalone merge verb, lands the task on done
 POST /api/tasks/:id/abandon        # v2: release held claim(s)
 POST /api/tasks/:id/creator-abandon # v2: creator retires their own unclaimed open/backlog task
-POST /api/tasks/:id/respec         # v2: spec update; any caller while in backlog, creator-only from open
+POST /api/tasks/:id/respec         # v2: spec update on an unclaimed open or backlog task; agents: any agent while in backlog, creator-only from open unless allowNonCreatorRespec; humans: project write access
+POST /api/tasks/:id/submit-pr      # v2: record branchName, prUrl, prNumber on a work-claimed task
 POST /api/tasks/:id/claim          # Deprecated v1; use /start
-POST /api/tasks/:id/release
-POST /api/tasks/:id/transition     # Validated against workflow if assigned
+POST /api/tasks/:id/release        # v1; agents use /abandon
+POST /api/tasks/:id/transition     # v1; validated against the workflow; agents use /start and /finish
 GET  /api/tasks/:id/instructions   # Agent context: state, instructions, allowed transitions
+
+# Review (v1; prefer /start and /finish)
+POST /api/tasks/:id/review                                # Approve or request changes
+POST /api/tasks/:id/review/claim                          # Take the review lock
+POST /api/tasks/:id/review/release                        # Release the review lock
+
+# Comments
+POST   /api/tasks/:id/comments
+DELETE /api/tasks/:id/comments/:commentId
+
+# Admin claim operations (human project admins)
+POST /api/tasks/:id/admin-release
+POST /api/tasks/:id/admin-reassign
+GET  /api/projects/:id/eligible-actors
+
+# Attachments and artifacts: see attachments.md and artifacts.md
+# Workflow editor and templates: see workflow-preconditions.md#editor-api-for-ui-and-scripts
+# Grounding attempts and receipts: see grounding-receipt-contract.md
 
 # Workflows
 GET  /api/projects/:id/workflows
@@ -86,7 +108,12 @@ POST /api/projects/:id/boards
 # Audit
 GET  /api/projects/:id/audit
 GET  /api/tasks/:id/audit
+
+# Webhooks (GitHub, signature-verified, no Bearer auth): see webhook-setup.md
+POST /api/webhooks/github
 ```
+
+`POST /api/mcp` is a stateless Streamable HTTP MCP endpoint for remote clients. Each request carries its Bearer token. It exposes a subset of the stdio MCP tools: no `task_pickup` or `task_start`, and no artifact or attachment tools.
 
 ## Agent authentication
 
@@ -99,7 +126,7 @@ curl -H "Authorization: Bearer at_..." \
      http://localhost:3001/api/projects/{id}/tasks
 ```
 
-Available scopes: `tasks:read`, `tasks:create`, `tasks:claim`, `tasks:comment`, `tasks:transition`, `tasks:update`, `projects:read`, `boards:read`.
+Available scopes: `tasks:read`, `tasks:create`, `tasks:claim`, `tasks:comment`, `tasks:transition`, `tasks:update`, `projects:read`, `boards:read`, `github:pr_create`, `github:pr_merge`, `sso:admin`, `confidence:override`. `GET /api/agent-tokens/scopes` serves the authoritative list; see [agent-workflow.md](agent-workflow.md#authentication) for what each group is for.
 
 ## Token issuance
 
@@ -107,10 +134,25 @@ The fast path: open **Settings → API Tokens** and click **Connect an agent**. 
 
 ## Merge-event paths
 
-A PR-merge event reaches the task through one of two paths and they land the task in different states.
+A PR-merge event reaches the task through one of three entry points, and they can leave the task in different states. The diagram shows which route each entry point uses and the resulting status:
 
-- **REST endpoint** `POST /api/github/pull-requests/:n/merge`. Used by the MCP `task_merge` and `pull_requests_merge` verbs. Hardcodes `status: "done"` regardless of `governanceMode`. The task write after the GitHub merge is a compare-and-swap: if another writer changed the task between the gate and the write, the PR is already merged and the call answers `409 merged_but_status_changed` (with `mergeSha` and `currentStatus`) without updating the task; the system's own PR-merge webhook having set `done` first completes normally. The merge takes a leased reservation on the task right before the GitHub call: a review lock released between the gate and the merge refuses the merge (`409 conflict`, GitHub is never called), a second merge answers `409 merge_in_progress`, and every claim and status writer answers `409 merge_in_progress` while the reservation is live (it lapses on its own after two minutes). Self-merge gate fires before the merge is attempted (`REQUIRES_DISTINCT_REVIEWER` projects reject the call when the merger also holds the work claim).
-- **GitHub webhook** (PR merged via the GitHub UI or `gh pr merge`). The webhook handler picks the next status from `governanceMode`: solo / `AUTONOMOUS` projects always go to `done`; default-workflow non-solo projects land in `review` and need an explicit `task_finish { outcome: "approve" }` to reach `done`. The two paths are not equivalent and tooling that wraps both should treat them as such.
+```mermaid
+flowchart TD
+  TM["task_merge (MCP)"] --> RT["POST /api/tasks/:id/merge"]
+  PM["pull_requests_merge (MCP)"] --> RG["POST /api/github/pull-requests/:n/merge"]
+  RT --> G1["status must be review or done, else 409<br/>checkSelfMergeGate<br/>merge reservation, GitHub merge"]
+  RG --> G2["status must be review or done, else 403<br/>checkSelfMergeGate<br/>merge reservation, GitHub merge"]
+  G1 --> D1["task written to done<br/>self_merge_notice if applicable"]
+  G2 --> D1
+  GH["PR merged on GitHub<br/>(UI or gh pr merge)"] --> WH["pull_request webhook<br/>POST /api/webhooks/github"]
+  WH --> PK{"pickMergeTargetStatus"}
+  PK -- "AUTONOMOUS" --> D2["done"]
+  PK -- "already in review" --> S1["stays in review<br/>task_finish approve needed"]
+  PK -- "open or in_progress" --> S2["review"]
+```
+
+- **REST endpoints** `POST /api/tasks/:id/merge` (MCP `task_merge`, derives owner, repo and PR number from the task) and `POST /api/github/pull-requests/:n/merge` (MCP `pull_requests_merge`). Both reject a task that is not in `review` or `done` (`409` on the task route, `403` on the GitHub route), run the self-merge gate, take the merge reservation and write `done` regardless of `governanceMode`. The task write after the GitHub merge is a compare-and-swap: if another writer changed the task between the gate and the write, the PR is already merged and the call answers `409 merged_but_status_changed` (with `mergeSha` and `currentStatus`) without updating the task; the system's own PR-merge webhook having set `done` first completes normally. The merge takes a leased reservation on the task right before the GitHub call: a review lock released between the gate and the merge refuses the merge (`409 conflict`, GitHub is never called), a second merge answers `409 merge_in_progress`, and every claim and status writer answers `409 merge_in_progress` while the reservation is live (it lapses on its own after two minutes). Self-merge gate fires before the merge is attempted (`REQUIRES_DISTINCT_REVIEWER` projects reject the call when the merger also holds the work claim).
+- **GitHub webhook** (PR merged via the GitHub UI or `gh pr merge`). The webhook handler picks the next status from `governanceMode`: `AUTONOMOUS` projects (legacy `soloMode=true`) always go to `done`; every other project, with the default or a custom workflow, lands `open` and `in_progress` tasks in `review`, leaves a task already in `review` there, and needs an explicit `task_finish { outcome: "approve" }` to reach `done`. The two paths are not equivalent and tooling that wraps both should treat them as such.
 
 ## Governance-mode gates
 
@@ -120,7 +162,7 @@ A PR-merge event reaches the task through one of two paths and they land the tas
 - `AWAITS_CONFIRMATION` (both legacy flags false): self-approval allowed; humans on the team receive a `self_merge_notice` signal whenever a task lands in `done` without distinct review.
 - `AUTONOMOUS` (legacy `soloMode=true`): no gates, no notification.
 
-Admin escape hatch: `POST /tasks/:id/transition { force: true, forceReason }` from a team admin bypasses every gate. Non-admins get `403`. The bypass is audit-logged.
+Admin escape hatch: `POST /tasks/:id/transition { force: true, forceReason }` from a project admin (team `ADMIN` or per-project `PROJECT_ADMIN`) bypasses every gate. Non-admins get `403`. The bypass is audit-logged.
 
 ## Further reading
 

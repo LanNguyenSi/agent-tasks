@@ -42,7 +42,7 @@ Four reusable rules live in `transition-rules.ts` and decorate transition edges 
 
 Custom workflows can attach any subset of the four rules to any transition. The default workflow only attaches `branchPresent + prPresent` to the two `in_progress → ...` edges.
 
-`force=true` from a team admin bypasses every rule. The bypass is audit-logged as `task.transitioned.forced` and emits a `task_force_transitioned` signal to the claimant + active reviewer.
+`force=true` from a project admin (team `ADMIN` or per-project `PROJECT_ADMIN`) bypasses every rule. The bypass is audit-logged as `task.transitioned.forced` and emits a `task_force_transitioned` signal to the claimant + active reviewer.
 
 ## Governance-tier gates
 

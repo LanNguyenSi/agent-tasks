@@ -19,6 +19,13 @@ ANTHROPIC_API_KEY=sk-ant-...
 AGENT_TASKS_REWRITE_MODEL=claude-haiku-4-5
 ```
 
+With `docker-compose.prod.yml`, also add both variables to the backend
+service's `environment:` block (for example
+`ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}`); the production compose file
+forwards only the variables it lists, and the backend does not read a
+`.env` file itself. Without that, the endpoint answers
+`503 llm_not_configured`.
+
 Setting `ANTHROPIC_API_KEY` makes the endpoint *available*; it does not
 turn it on for any project. Each project must also opt in:
 
@@ -32,7 +39,8 @@ curl -X PATCH https://agent-tasks.example/api/projects/$PROJECT_ID \
 `aiHelpersEnabled` defaults to `false`. An off project's endpoint 404s
 identically to a missing task, so the feature is invisible unless
 explicitly opted in -- no `ANTHROPIC_API_KEY` touch, no external egress,
-ever happens for it. Only team admins can flip this flag; the change is
+ever happens for it. Only project admins (team `ADMIN` or per-project
+`PROJECT_ADMIN`) can flip this flag; the change is
 audited (`project.updated`, `changes.aiHelpersEnabled`).
 
 ## Request / response

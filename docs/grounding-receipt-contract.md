@@ -69,6 +69,7 @@ for the strict schema, bounds, SQL prerequisites and independent activation gate
 | Route | Strict JSON request | Successful response |
 | --- | --- | --- |
 | `POST /api/tasks/:id/grounding-attempts` | `{"intent":"finish"}`; intent is `finish`, `approve`, or `merge` | Challenge with `audience`, `projectId`, `taskId`, `attemptId`, `nonce`, `contextRevision`, `target`, `subject`, `policy`, `createdAt`, `expiresAt` |
+| `POST /api/tasks/:id/grounding-attempts/direct` | `{"version":1,"endpoint":"transition\|patch\|review","target":"<workflow-state>"}`, limited to 1,024 bytes | Challenge with the same fields as the v2 attempt; see [Direct task-route authority](#direct-task-route-authority) |
 | `POST /api/tasks/:id/grounding-attempts/:attemptId/receipt` | `{"session":{"id":"producer-session","revision":1},"receipt":"<original receipt JSON bytes as a JSON string>"}` | `receiptId`, passing `agent_asserted` evidence and `replayed` |
 
 Finish and approve attempts, and the generic service APIs, retain their existing
@@ -95,7 +96,7 @@ Challenge bodies are limited to 1,024 actual streamed bytes; upload bodies to 20
 
 ## Direct task-route authority
 
-An authoritatively provisioned task uses the direct adapter before the historical task router for `POST /api/tasks/:id/transition`, `POST /api/tasks/:id/review`, and `PATCH /api/tasks/:id`. A positive direct operation first issues an attempt through strict JSON:
+An authoritatively provisioned task uses the direct adapter before the historical task router for `POST /api/tasks/:id/transition`, `POST /api/tasks/:id/review`, and `PATCH /api/tasks/:id`. A positive direct operation first issues an attempt at `POST /api/tasks/:id/grounding-attempts/direct` through strict JSON:
 
 ```json
 {"version":1,"endpoint":"transition|patch|review","target":"<workflow-state>"}

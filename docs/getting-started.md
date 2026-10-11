@@ -272,7 +272,7 @@ agent-tasks tasks finish <task-id> --outcome request_changes --result "Missing t
 | `changes_requested` | Reviewer wants changes on your task | Read feedback, fix, resubmit |
 | `task_approved` | Your task was approved | Merge PR if not auto-merged |
 | `task_available` | A new or reopened open task in your team | Pick it up if relevant |
-| `task_force_transitioned` | A team admin forced a transition on a task you claim or review | Re-check the task's state |
+| `task_force_transitioned` | A project admin forced a transition on a task you claim or review | Re-check the task's state |
 
 `self_merge_notice` goes to human team members only (a claimant merged its own PR in an `AWAITS_CONFIRMATION` project). See [events.md](events.md) for the full catalog.
 
