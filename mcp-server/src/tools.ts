@@ -498,7 +498,7 @@ export function buildTools(
           .record(z.string(), z.unknown())
           .optional()
           .describe(
-            "Structured spec fields, forwarded to the backend which validates + scores them: goal, acceptanceCriteria (the task's evals), context, constraints, scope, outOfScope, dependencies, risk, agentPrompt, taskType (one of: " + TASK_TYPE_LIST + "), and prefers { testBeforeImplementation, verticalSlices, smallDiffs, explicitStopConditions, noSpeculativeRefactoring }. Populate goal + acceptanceCriteria at minimum so the task is executable.",
+            "Structured spec fields, forwarded to the backend which validates + scores them: goal, acceptanceCriteria (the task's evals), context, constraints, scope, outOfScope, dependencies, risk, agentPrompt (each a string, or a list of strings that is stored as \"- item\" lines), taskType (one of: " + TASK_TYPE_LIST + "), and prefers { testBeforeImplementation, verticalSlices, smallDiffs, explicitStopConditions, noSpeculativeRefactoring }. Populate goal + acceptanceCriteria at minimum so the task is executable.",
           ),
         deliverableRepo: z
           .string()
@@ -583,7 +583,7 @@ export function buildTools(
           .record(z.string(), z.unknown())
           .optional()
           .describe(
-            "Replacement structured spec fields (same shape as task_create's templateData: goal, acceptanceCriteria, context, constraints, scope, outOfScope, dependencies, risk, agentPrompt, taskType (one of: " + TASK_TYPE_LIST + "), prefers). This WHOLESALE REPLACES the task's stored templateData — it is not merged with the existing value. Backend rejects an empty object with 400. At least one of description or templateData is required.",
+            "Replacement structured spec fields (same shape as task_create's templateData: goal, acceptanceCriteria, context, constraints, scope, outOfScope, dependencies, risk, agentPrompt (each a string or a list of strings), taskType (one of: " + TASK_TYPE_LIST + "), prefers). This WHOLESALE REPLACES the task's stored templateData — it is not merged with the existing value. Backend rejects an empty object with 400. At least one of description or templateData is required.",
           ),
         include: includeSchema,
       },

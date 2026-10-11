@@ -33,10 +33,38 @@ export type TaskType = z.infer<typeof taskTypeSchema>;
 // it), so a row written before this cap landed keeps reading back unchanged.
 export const TEMPLATE_DATA_FIELD_MAX_CHARS = 50_000;
 
+// A spec section may be sent as a string or as a list of strings. A list is
+// normalised at the schema edge to one "- item" line per entry joined with
+// "\n" (the same bullet form a prose section uses), so everything downstream
+// (storage, confidence scoring, rendering) only ever sees a string and a list
+// scores exactly like its equivalent bullet string. Blank entries are dropped.
+// The cap applies to the normalised text.
+const TEMPLATE_DATA_LIST_MAX_ITEMS = 200;
+
+export function normalizeTemplateDataList(items: string[]): string {
+  return items
+    .map((i) => i.trim())
+    .filter((i) => i.length > 0)
+    .map((i) => `- ${i}`)
+    .join("\n");
+}
+
 const templateDataStringField = () =>
-  z.string().max(TEMPLATE_DATA_FIELD_MAX_CHARS, {
-    message: `Must be at most ${TEMPLATE_DATA_FIELD_MAX_CHARS} characters`,
-  });
+  z
+    .union([z.string(), z.array(z.string()).max(TEMPLATE_DATA_LIST_MAX_ITEMS)], {
+      // zod 3 applies a plain `message` only to invalid_type issues, so the
+      // union's own issue needs an errorMap to avoid the bare "Invalid input".
+      errorMap: (issue, ctx) =>
+        issue.code === "invalid_union"
+          ? { message: "Expected a string or a list of strings" }
+          : { message: ctx.defaultError },
+    })
+    .transform((v) => (typeof v === "string" ? v : normalizeTemplateDataList(v)))
+    .pipe(
+      z.string().max(TEMPLATE_DATA_FIELD_MAX_CHARS, {
+        message: `Must be at most ${TEMPLATE_DATA_FIELD_MAX_CHARS} characters`,
+      }),
+    );
 
 export const templatePresetSchema = z.object({
   name: z.string().min(1).max(100),

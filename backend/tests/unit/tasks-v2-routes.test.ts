@@ -6862,6 +6862,19 @@ describe("POST /tasks/:id/respec", () => {
     expect(prismaMocks.taskFindUnique).not.toHaveBeenCalled();
     expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
   });
+
+  it("accepts a list-valued templateData field and writes it as '- item' lines", async () => {
+    prismaMocks.taskFindUnique
+      .mockResolvedValueOnce(RESPEC_TASK)
+      .mockResolvedValueOnce({ ...RESPEC_TASK, templateData: { goal: "g" } });
+
+    const res = await respecRequest(AGENT_WITH_UPDATE, {
+      templateData: { goal: "g", acceptanceCriteria: ["one", "two"] },
+    });
+    expect(res.status).toBe(200);
+    const written = JSON.stringify(prismaMocks.taskUpdateMany.mock.calls);
+    expect(written).toContain("- one\\n- two");
+  });
 });
 
 // ── POST /tasks/:id/creator-abandon ─────────────────────────────────────────
@@ -7489,6 +7502,23 @@ describe("POST /projects/:projectId/tasks — templateData field length cap", ()
     expect(body.error).toBeTruthy();
     expect(prismaMocks.taskCreate).not.toHaveBeenCalled();
   });
+
+  it("accepts a list-valued templateData field and stores it as '- item' lines", async () => {
+    const res = await postCreate({
+      title: "List criteria",
+      templateData: { acceptanceCriteria: ["first thing", "  second thing  ", ""], scope: ["a.ts"] },
+    });
+    expect(res.status).toBe(201);
+    const stored = prismaMocks.taskCreate.mock.calls[0][0].data.templateData as Record<string, unknown>;
+    expect(stored.acceptanceCriteria).toBe("- first thing\n- second thing");
+    expect(stored.scope).toBe("- a.ts");
+  });
+
+  it("still rejects a non-string, non-list templateData field with a 400", async () => {
+    const res = await postCreate({ title: "Bad shape", templateData: { acceptanceCriteria: [1, 2] } });
+    expect(res.status).toBe(400);
+    expect(prismaMocks.taskCreate).not.toHaveBeenCalled();
+  });
 });
 
 // ── PATCH /tasks/:id — templateData field length cap (hardening, 769df3c4) ──
@@ -7499,6 +7529,21 @@ describe("POST /projects/:projectId/tasks — templateData field length cap", ()
 // path — the same shape every other PATCH validation failure already uses.
 describe("PATCH /tasks/:id — templateData field length cap", () => {
   const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
+
+  it("accepts a list-valued templateData field and writes it as '- item' lines", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "in_progress" });
+    prismaMocks.taskUpdate.mockResolvedValueOnce({ ...baseTask, templateData: { acceptanceCriteria: "- a\n- b" } });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ templateData: { acceptanceCriteria: ["a", " b ", ""] } }),
+    });
+
+    expect(res.status).toBe(200);
+    const written = prismaMocks.taskUpdate.mock.calls[0][0].data.templateData as Record<string, unknown>;
+    expect(written.acceptanceCriteria).toBe("- a\n- b");
+  });
 
   it("accepts a templateData string field at exactly the 50_000-char cap", async () => {
     const value = "a".repeat(50_000);
