@@ -51,7 +51,14 @@ export function normalizeTemplateDataList(items: string[]): string {
 
 const templateDataStringField = () =>
   z
-    .union([z.string(), z.array(z.string()).max(TEMPLATE_DATA_LIST_MAX_ITEMS)])
+    .union([z.string(), z.array(z.string()).max(TEMPLATE_DATA_LIST_MAX_ITEMS)], {
+      // zod 3 applies a plain `message` only to invalid_type issues, so the
+      // union's own issue needs an errorMap to avoid the bare "Invalid input".
+      errorMap: (issue, ctx) =>
+        issue.code === "invalid_union"
+          ? { message: "Expected a string or a list of strings" }
+          : { message: ctx.defaultError },
+    })
     .transform((v) => (typeof v === "string" ? v : normalizeTemplateDataList(v)))
     .pipe(
       z.string().max(TEMPLATE_DATA_FIELD_MAX_CHARS, {

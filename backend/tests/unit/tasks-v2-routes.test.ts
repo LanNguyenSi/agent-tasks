@@ -7530,6 +7530,21 @@ describe("POST /projects/:projectId/tasks — templateData field length cap", ()
 describe("PATCH /tasks/:id — templateData field length cap", () => {
   const HUMAN: Actor = { type: "human", userId: "user-1", teamId: "team-1" };
 
+  it("accepts a list-valued templateData field and writes it as '- item' lines", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "in_progress" });
+    prismaMocks.taskUpdate.mockResolvedValueOnce({ ...baseTask, templateData: { acceptanceCriteria: "- a\n- b" } });
+
+    const res = await makeApp(HUMAN).request("/tasks/task-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ templateData: { acceptanceCriteria: ["a", " b ", ""] } }),
+    });
+
+    expect(res.status).toBe(200);
+    const written = prismaMocks.taskUpdate.mock.calls[0][0].data.templateData as Record<string, unknown>;
+    expect(written.acceptanceCriteria).toBe("- a\n- b");
+  });
+
   it("accepts a templateData string field at exactly the 50_000-char cap", async () => {
     const value = "a".repeat(50_000);
     prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "in_progress" });
