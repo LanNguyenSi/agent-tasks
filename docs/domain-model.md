@@ -20,15 +20,19 @@ Authoritative source: [`backend/prisma/schema.prisma`](../backend/prisma/schema.
 | `Project` | A project bound to a single GitHub repo (`githubRepo`). Owns tasks, workflows, boards. Carries the **governance fields** (see below). |
 | `ProjectMember` (`PROJECT_VIEWER \| PROJECT_CONTRIBUTOR \| PROJECT_ADMIN`) | Per-project sharing on top of team membership. |
 | `ProjectInvite` | Short-lived hashed share-link to add a `ProjectMember` outside the team. Consumption emits `project.invite_consumed` and may auto-flip `soloMode` off (`project.solo_mode_disabled_by_share`). |
-| `Workflow` | A `definition JSON` (states, transitions, policies) applied per project. `isDefault: true` for the system default; custom workflows can override. |
+| `Workflow` | A per-project `definition` JSON (states, transitions, policies). The built-in default workflow lives in code (`backend/src/services/default-workflow.ts`) and has no row; a row with `isDefault: true` is the project's active customized workflow and replaces it. |
 | `Board` | Saved kanban view (column set, filter set) over a project's tasks. |
 
 ### Governance fields
 
 These fields on `Project` shape every state-write path:
 
-- `confidenceThreshold` (default `60`). Below this, `task_pickup` and `task_start` reject with `422 confidence_below_threshold`.
+- `confidenceThreshold` (default `60`). Base threshold of the agent claim gate at `task_start` and `POST /tasks/:id/claim`; it rejects with `422 low_confidence` only when `enforcementMode` is `BLOCK`.
 - `taskTypeThresholds` (nullable JSON map, M2). Optional per-task-type override of `confidenceThreshold`, keyed on the six `TaskType` values. Resolution order: `taskTypeThresholds[EXPLICIT templateData.taskType]` -> `confidenceThreshold` -> the global default (`60`). See [`scorer-v2-enforcement.md`](scorer-v2-enforcement.md).
+- `enforcementMode` (`OFF \| WARN \| BLOCK`, nullable; null means `WARN`). Only `BLOCK` makes the confidence gate reject claims; `WARN` records a would-block claim and lets it through, `OFF` skips scoring. See [`scorer-v2-enforcement.md`](scorer-v2-enforcement.md).
+- `riskModifiers` (nullable JSON). Points added to the base threshold when a task touches auth, the database, personal data or production; a modifier applies only when the project sets its point value.
+- `allowNonCreatorRespec` (`Boolean`, default `false`). Lets any agent with project access and the `tasks:update` scope respec an open, unclaimed task, not only its creator.
+- `aiHelpersEnabled` (`Boolean`, default `false`). Enables the suggest-rewrite endpoint for the project (see [`llm-rewrite-helper.md`](llm-rewrite-helper.md)).
 - `governanceMode` (`AUTONOMOUS \| AWAITS_CONFIRMATION \| REQUIRES_DISTINCT_REVIEWER`, nullable). Source of truth for new code. See [`state-machines.md`](state-machines.md) for what each tier gates.
 - `soloMode` (`Boolean`, **deprecated**). Kept readable for one release. Server derives `governanceMode` from this when the new field is null. Writes go through `governanceMode` and sync-write the legacy flag via `legacyFlagsFromGovernanceMode`.
 - `requireDistinctReviewer` (`Boolean`, **deprecated**). Same deprecation contract as `soloMode`.
@@ -42,11 +46,12 @@ These fields on `Project` shape every state-write path:
 |---|---|
 | `Task` | The unit of work. `status: String` (free-form, default `"open"`), driven by the `Workflow` definition. Dual `creator` / `claimant` / `reviewer` fields for human + agent. `statusVersion` counts the writes that set `status` and is compared next to `status` by the status compare-and-swap (see `docs/okf/workflow-gates.md`). `mergeReservedByUserId` / `mergeReservedByAgentId` / `mergeReservedAt` are the leased merge reservation a PR merge holds on the task (null when none; claim and status writers answer `409 merge_in_progress` while it is live, see the same doc). Agent-populated `branchName`, `prUrl`, `prNumber`, `result`, `autoMergeSha`. `templateData` and `metadata` carry structured scaffolding (e.g. `metadata.debugFlavor`, set explicitly via the optional create-time `debugFlavor` flag, or derived heuristically at `task_pickup` when that flag is omitted). |
 | `TaskDependency` | Many-to-many self-relation on `Task` modelling `blocks` / `blockedBy`. Cycle-checked. `task_pickup` skips a task until every `blockedBy` parent reaches a resolved status (`done` or `abandoned`). |
-| `TaskAttachment` | Human-uploaded URL pointer (no semantics). |
+| `TaskAttachment` | Human-added file (image or document, bytes on the `UPLOAD_DIR` volume, with `mimeType` and `sizeBytes`) or legacy external URL pointer. Agents read attachments but cannot upload them; agent output goes to `TaskArtifact`. See [`attachments.md`](attachments.md). |
 | `TaskArtifact` | Typed agent output (build logs, coverage, code) with inline `content` or external `url`. Authored by `User` or `AgentToken`. Lifecycle audit-logged as `task.artifact.created` / `.deleted`. |
 | `Comment` | Human or agent comment on a task. |
+| `ConfidenceTelemetry` | One row per task: claim-time score, effective threshold, bounce-back, clarification and override counters. Read by `GET /projects/:id/telemetry/confidence`. |
 
-`Task.status` is a free `String` because custom workflows can define their own states. The product status vocabulary includes six canonical values: `backlog` (agent-created tasks awaiting human review, handled outside the workflow engine), `open`, `in_progress`, `review`, `done` (the four states that compose the default workflow engine), and `abandoned` (terminal, only reachable via human backlog discard or admin reset). Agent creates route to `backlog` automatically via dedicated claim routing; human creates default to `open`. The workflow engine transitions only between the four engine states; `backlog` and `abandoned` are routed via dedicated operator/admin surfaces, not engine transitions.
+`Task.status` is a free `String` because custom workflows can define their own states. The product status vocabulary includes six canonical values: `backlog` (agent-created tasks awaiting human review, handled outside the workflow engine), `open`, `in_progress`, `review`, `done` (the four states that compose the default workflow engine), and `abandoned` (set when a human discards a backlog task, or when an agent withdraws an `open` or `backlog` task it created, with no claim on it, via `task_creator_abandon`; a project admin can restore it to the initial state with `PATCH /tasks/:id`). Agent creates route to `backlog` automatically via dedicated claim routing; human creates default to `open`. The workflow engine transitions only between the four engine states; `backlog` and `abandoned` are set through dedicated routes (human `PATCH`, `task_creator_abandon`), not engine transitions.
 
 ## Signal layer
 
@@ -62,24 +67,27 @@ Acking a signal sets `acknowledgedAt`. When a task lands in a terminal state, `a
 |---|---|
 | `AuditLog` | Immutable trail. `action: String` (drawn from the `AuditAction` union in `backend/src/services/audit.ts`), optional `projectId` / `taskId` / `actorId`, free-form `payload: JSON`. Audit writes are fire-and-forget and swallow errors; do not depend on audit being load-bearing for any flow. **Documented exception (M5, task 698eeb01):** `ConfidenceTelemetry.scoreAtClaim` / `effectiveThreshold` / `overrideUsed` ARE read back from specific `AuditLog` rows (`task.claim_would_block_shadow` / `_override_used` / `_confidence_recorded`) as their source of truth — see `backend/src/services/confidence-telemetry.ts`'s header comment for the rationale and the planned follow-up (snapshot inside the claim transaction instead). |
 | `ToolInvocation` | Idempotency log for side-effecting MCP verbs (`task_submit_pr`, `task_merge`, `pull_requests_create`, `pull_requests_merge`). Unique on `(projectId, verb, idempotencyKey)`, with `payloadHash` to reject key reuse on a different payload. The row is inserted **after** the side-effect, so two truly concurrent retries can both execute once before one loses the race. |
+| `WebhookDelivery` | GitHub webhook delivery-id dedup (`X-GitHub-Delivery`), not project-scoped. Pruned with `ToolInvocation` by the idempotency TTL sweep. |
 
 ## Relations at a glance
 
 ```
 Team
  ├── TeamMember --> User
+ │                   └── UserIdentity
  ├── AgentToken
  ├── SsoConnection
  └── Project
       ├── ProjectMember --> User
       ├── ProjectInvite
-      ├── Workflow (isDefault | custom)
+      ├── Workflow (project-active isDefault row | task-level custom)
       ├── Board
       └── Task
            ├── TaskDependency (blocks / blockedBy)
            ├── TaskAttachment
            ├── TaskArtifact
            ├── Comment
+           ├── ConfidenceTelemetry
            ├── Signal (recipientUser | recipientAgent)
            └── AuditLog
 ```

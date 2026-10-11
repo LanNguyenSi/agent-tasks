@@ -13,10 +13,14 @@ Shipped:
 - [x] Structured logging (JSON, correlation IDs)
 - [x] Workflow templates (pre-built custom workflows, applied per project)
 - [x] Notification webhook (per-project outbound webhook for agent signals)
+- [x] OIDC SSO (team-scoped)
+- [x] MCP server, MCP bridge and HTTP MCP endpoint
+- [x] Confidence enforcement modes (OFF/WARN/BLOCK)
+- [x] Task attachments and artifacts
 
 Planned:
 
 - [ ] Further notification channels (email, browser push)
-- [ ] E2E and integration tests
+- [ ] Browser end-to-end tests
 - [ ] Deploy webhook integration (GitHub Deployments API)
 - [ ] Task export (CSV/Excel)

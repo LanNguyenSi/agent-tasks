@@ -2,25 +2,50 @@
 
 ## Recommended Starting Shape
 
-Das System bleibt ein **modularer Monolith** mit klaren Grenzen zwischen HTTP, Domain-Logik und Persistenz.
+agent-tasks is a **modular monolith**: one backend process that serves the HTTP API, runs the workflow rules and owns the database, plus a frontend and three client packages.
 
-Begründung:
-- schnelle Delivery in der aktuellen Phase
-- geringe operative Komplexität
-- saubere Extraktionspfade für spätere Service-Splits
+Rationale:
+- fast delivery in the current phase
+- low operational complexity
+- extraction paths stay open for later service splits
 
-Siehe auch:
+See also:
 - `adr/0005-modular-monolith-as-starting-architecture.md`
 - `adr/0006-relational-database-as-primary-store.md`
 - `adr/0007-integrations-behind-internal-boundaries.md`
 
 ## Runtime Topology
 
-- Frontend: Next.js App (`frontend/`)
-- Backend API: Hono + Node.js (`backend/`)
+- Frontend: Next.js app (`frontend/`, port 3000)
+- Backend API: Hono + Node.js (`backend/`, port 3001)
 - Primary DB: PostgreSQL + Prisma
 - Optional cache: Redis (`REDIS_URL`; the backend falls back to an in-memory cache when unset)
-- Optional Docker-Dev-Stack: `docker-compose.yml` (db + redis + backend + frontend)
+- Optional Docker dev stack: `docker-compose.yml` (db + redis + backend + frontend)
+- Agent clients: `mcp-server` (stdio MCP server that calls the REST API with a Bearer token), `mcp-bridge` (resolves the token and starts `mcp-server`) and `cli` (REST client). Remote MCP clients use the backend's HTTP MCP endpoint `POST /api/mcp`, which serves a hand-maintained subset of the stdio tool surface.
+- Inbound GitHub webhooks: `POST /api/webhooks/github` (see [webhook-setup.md](webhook-setup.md)).
+- Outbound calls: the GitHub API (OAuth, repository list, checks, merge), a team's OIDC identity provider (discovery, JWKS, token), project notification webhooks when a signal is created (see [notification-webhooks.md](notification-webhooks.md)), and the Anthropic API for the optional suggest-rewrite helper (see [llm-rewrite-helper.md](llm-rewrite-helper.md)).
+- Startup: the backend composes the grounding runtime from `GROUNDING_RUNTIME_CONFIG` before it listens, and exits when that configuration or the database is not ready (see [grounding-migration.md](grounding-migration.md)). While running, it sweeps the idempotency dedup tables every 6 hours (retention `IDEMPOTENCY_TTL_DAYS`).
+
+The diagram shows the deployables, how clients reach the backend, its stores and the external systems it calls.
+
+```mermaid
+flowchart TD
+    Human[Human] --> FE["frontend: Next.js :3000"]
+    FE -->|"REST /api"| BE["backend: Hono :3001"]
+    CLI["cli: @agent-tasks/cli"] -->|"REST /api"| BE
+    Agent[Local agent] --> Bridge[mcp-bridge]
+    Bridge --> MCP[mcp-server stdio]
+    MCP -->|"REST /api, Bearer"| BE
+    Remote[Remote MCP client] -->|"POST /api/mcp"| BE
+    BE --> PG[("PostgreSQL via Prisma")]
+    BE -.->|optional REDIS_URL| Redis[(Redis cache)]
+    GH[GitHub] -->|"webhooks /api/webhooks/github"| BE
+    BE -->|"OAuth, repo list, checks, merge"| GH
+    BE -->|"discovery, JWKS, token"| IdP[OIDC IdP]
+    BE -->|signal POST| Hook[Project notification webhook]
+    BE -.->|optional ANTHROPIC_API_KEY| LLM[Anthropic API]
+    BE --> Sweep[[idempotency TTL sweep]]
+```
 
 ## Logical Modules
 
@@ -29,48 +54,44 @@ Siehe auch:
 - API client and transport helpers (`frontend/src/lib`)
 
 ### Backend
-- Routes (`backend/src/routes`): HTTP parsing, validation, status codes
-- Services (`backend/src/services`): domain rules, authorization decisions
-- Repositories (`backend/src/repositories`): DB access via Prisma
-- Middleware (`backend/src/middleware`): auth, cross-cutting concerns
-- Config (`backend/src/config`): env validation and typed runtime config
+- Routes (`backend/src/routes`): parse and validate requests, check scopes and project access, and run most task-workflow rules (claim, dependency, confidence, review and merge checks) against Prisma directly.
+- Services (`backend/src/services`): shared gates (`services/gates/`), governance and review gates, GitHub (OAuth, sync, checks, merge, webhooks), OIDC SSO, signals and notification webhooks, audit, idempotency and the grounding subsystem.
+- Lib (`backend/src/lib`): governance-mode and enforcement-mode resolution, the confidence scorer, errors, logger and the Prisma client.
+- Repositories (`backend/src/repositories`): Prisma access for agent tokens and teams only.
+- Middleware (`backend/src/middleware`): authentication, rate limiting, request context, JSON body limit, error mapping.
+- Config (`backend/src/config`): env validation (`config/index.ts`) and the grounding runtime configuration.
 
 ## Boundary Rules
 
-- Keine Business-Regeln in Routen.
-- Services sprechen nicht direkt HTTP, sondern Domain.
-- Repositories enthalten nur Persistenzlogik.
-- Integrationen (GitHub-Anbindung, OIDC-SSO) bleiben hinter internen Modulen mit expliziten Fehlerpfaden.
+- Workflow rules live where the code runs them: mostly in the route handlers, with shared checks factored into `services/gates/` and `services/`.
+- Data access goes through Prisma; a repository layer exists only for agent tokens and teams.
+- Integrations (GitHub, OIDC SSO, notification webhooks, the Anthropic API) stay behind service modules with explicit error paths.
 
 ## Security Model
 
-- Humans: E-Mail/Passwort-Login, GitHub-OAuth-Login (`/api/auth/github`), Verknüpfung von GitHub mit einem bestehenden Konto (`/api/auth/github/connect`), team-spezifisches OIDC-SSO (`backend/src/routes/sso.ts`)
-- Agents: dedizierte Bearer-Tokens mit Scopes
-- Team-/Projektzugriff wird auf Service-Ebene geprüft
-- Kritische Aktionen sollen auditierbar sein
+- Humans sign in with email and password, GitHub OAuth (`/api/auth/github`) or team-scoped OIDC SSO (`backend/src/routes/sso.ts`), and can link GitHub to an existing account (`/api/auth/github/connect`). The browser sends the `session` cookie.
+- `Authorization: Bearer` accepts an agent token (scoped, team-bound) or a human session JWT.
+- SSO admin endpoints (`/api/teams/:teamId/sso`, `/api/sso/whoami`) accept only an agent token with the `sso:admin` scope for the same team; a session cookie alone cannot configure SSO.
+- Team and project access and agent scopes are checked server-side; claims, transitions, merges and admin overrides write audit rows.
+- Rate limits apply per client address to register, login, GitHub and SSO auth routes, `/api/mcp` and the suggest-rewrite endpoint. Set `TRUSTED_PROXY_HOPS` to the number of reverse proxies in front of the backend, and to `0` when there is none: the limiter reads the client address from `X-Forwarded-For` that many entries from the right. `.env.example` ships `1` for a deployment behind one proxy.
+- `ALLOWED_GITHUB_LOGINS` restricts which GitHub logins the identity-broker endpoint `POST /api/auth/register-from-project-pilot` provisions; empty accepts any verified GitHub user.
+- GitHub webhook signatures are enforced only with `NODE_ENV=production`. The Docker quick start runs `NODE_ENV=development`, so set `GITHUB_WEBHOOK_SECRET` on any instance GitHub can reach (see [webhook-setup.md](webhook-setup.md)).
+- `/api/mcp` takes the same Bearer authentication as the REST API.
 
 ## Data and Consistency
 
-- Relationales Modell in PostgreSQL (`backend/prisma/schema.prisma`)
-- Idempotenz und Konfliktbehandlung für integrationsnahe Aktionen vorgesehen
-- Claim-/Transition-Konflikte werden explizit behandelt
+- Relational model in PostgreSQL (`backend/prisma/schema.prisma`), applied with `prisma db push`; there is no migrations directory.
+- GitHub webhook deliveries are deduplicated by delivery id (`WebhookDelivery`), and side-effecting GitHub verbs such as `pull_requests_merge` accept an optional idempotency key (`ToolInvocation`); the TTL sweep prunes both tables.
+- Claim and transition conflicts are handled explicitly (`409`).
 
 ## Evolution Path
 
-Kurzfristig:
-- Agent-Token-Lifecycle und Tests vervollständigen
-
-Mittelfristig:
-- Module für Sync, Workflows, Boards, Policies ausbauen
-- Integrations- und Fehlerpfadtests verstärken
-
-Langfristig:
-- Bei Last-/Ownership-Bedarf gezielte Extraktion einzelner Module in Services
+Planned work is tracked in [roadmap.md](roadmap.md).
 
 ## Diagrams
 
-- Systemarchitektur: `diagrams/architecture-overview.mmd`
-- Domänenübersicht: `diagrams/domain-overview.mmd`
+- System architecture: `diagrams/architecture-overview.mmd` (the diagram under Runtime Topology)
+- Domain overview: `diagrams/domain-overview.mmd`
 
 ## Repository layout
 
@@ -83,7 +104,7 @@ agent-tasks/
 │   │   ├── repositories/  # Persistence access
 │   │   ├── middleware/    # Auth, error handling
 │   │   └── config/        # Env config
-│   └── prisma/            # Schema + migrations
+│   └── prisma/            # schema.prisma (applied with prisma db push) + grounding fence SQL
 ├── frontend/         # Next.js app (port 3000)
 │   └── src/
 │       ├── app/           # App Router pages
@@ -109,11 +130,22 @@ agent-tasks/
 
 | Route | Purpose |
 |-------|---------|
-| `/` | Landing page |
+| `/` | Landing page; signed-in users go to `/onboarding` or `/home` |
 | `/auth` | Login / Register |
+| `/auth/error` | Login error page |
 | `/onboarding` | First team creation |
+| `/home` | Signed-in start page: the team's tasks across projects |
 | `/teams` | Project management, GitHub sync |
 | `/dashboard` | Board + list view, task CRUD |
-| `/projects/workflow` | Workflow editor (states, transitions, agent instructions) |
+| `/tasks` | Task list |
+| `/tasks/[id]` | Task detail |
+| `/projects/[id]` | Project overview |
+| `/projects/[id]/settings` | Project settings |
+| `/projects/[id]/members` | Project members |
+| `/projects/[id]/workflow` | Workflow editor (states, transitions, agent instructions) |
 | `/settings` | Account, GitHub connection, API tokens |
+| `/settings/sso` | Team OIDC SSO connection |
+| `/invite/[token]` | Accept a project share |
 | `/docs` | Interactive Swagger UI (served by backend) |
+
+Legacy redirects: `/projects/workflow?projectId=<id>` goes to `/projects/<id>/workflow`, and `/teams/tokens` goes to `/settings`. `/dev/ui` is a developer component gallery.

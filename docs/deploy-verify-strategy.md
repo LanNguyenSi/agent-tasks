@@ -33,7 +33,7 @@ Deploy and verify are modeled as **operational follow-ups**, not task workflow s
 
 | Event | What happens | Task state change |
 |---|---|---|
-| PR merged | Timeline entry + audit log, task → `done` | Yes (`done`) |
+| PR merged | Timeline entry + audit log. `task_merge` / `pull_requests_merge`: `done`. Merge on GitHub (webhook): `AUTONOMOUS` to `done`; other modes move an `open` or `in_progress` task to `review` and leave a task in `review` unchanged | Yes |
 | Deployed to staging | Not tracked by default | No |
 | Deployed to production | Not tracked by default | No |
 | Production verified | Not tracked by default | No |
@@ -53,12 +53,12 @@ open → in_progress → review → merged → deployed → verified → done
 ```
 
 With transitions:
-- `merged`: auto-triggered by PR merge webhook
+- `merged`: manual transition; the GitHub merge webhook only writes `done` (`AUTONOMOUS`) or `review`, so it does not reach a custom post-merge state
 - `deployed`: triggered by deploy webhook or manual transition
 - `verified`: triggered by human or monitoring integration
 - `done`: triggered after verification passes
 
-This workflow would be defined via the existing workflow engine (`POST /api/workflows`) and assigned to the project.
+This workflow would be created with `POST /api/projects/:projectId/workflows` (or derived with `POST /api/projects/:projectId/workflow/customize` or `POST /api/projects/:projectId/workflow/apply-template/:slug`).
 
 ## Future considerations
 
@@ -82,7 +82,7 @@ If demand emerges, the right path is a **workflow template** (the pre-built cust
 
 ## Summary
 
-- Default workflow: unchanged. `done` = PR merged.
+- Default workflow: unchanged. `done` = PR merged; outside `AUTONOMOUS` the task passes the `review` state first.
 - Deploy/verify: visible via timeline, not modeled as states.
 - Teams with deploy gates: use custom workflows.
 - Future deploy webhooks: additive, opt-in, no default workflow changes.

@@ -141,7 +141,7 @@ Copy the client ID and client secret. You'll paste them into the
 
 ### In agent-tasks
 
-1. **Generate an SSO admin token.** Settings → API Tokens → New token →
+1. **Generate an SSO admin token.** Settings → API Tokens → Create custom token →
    select the `sso:admin` scope. Copy the token.
 2. **Open `/settings/sso`**, paste the token, click "Unlock SSO settings".
 3. Fill in the form:
@@ -156,7 +156,7 @@ Copy the client ID and client secret. You'll paste them into the
      already exist in the team can log in via SSO. New SSO logins get a
      `not_provisioned` error.
    - **Enabled** — turn the connection off without deleting it.
-4. Click **Update connection**. The backend re-verifies discovery before
+4. Click **Create connection** (or **Update connection** when editing). The backend re-verifies discovery before
    saving.
 5. **Test the login.** Log out, go to `/auth`, enter your work email, and
    blur the email field. A "Continue with &lt;IdP&gt;" button should appear.
@@ -170,7 +170,7 @@ the `sso:admin` scope, **not** a session cookie.
 | ------ | ---- | ----------- |
 | `GET`  | `/api/sso/whoami` | Returns the team the token belongs to and the current connection (or `null`). Used by the `/settings/sso` page to resolve the team without an out-of-band team ID. |
 | `GET`  | `/api/teams/:teamId/sso` | Current SSO connection for the team. `clientSecretEnc` is never returned. |
-| `PUT`  | `/api/teams/:teamId/sso` | Create or update. Fails fast with `400` if OIDC discovery fails, if a claimed domain is already owned by another team, or if the domain is a blocked public-mail provider. |
+| `PUT`  | `/api/teams/:teamId/sso` | Create or update. Fails with `400` if OIDC discovery fails or the domain is a blocked public-mail provider, and with `409` if a claimed domain is already owned by another team. |
 | `DELETE` | `/api/teams/:teamId/sso` | Remove the connection. Existing sessions for SSO-provisioned users are not invalidated. |
 
 Login-flow endpoints are public:
@@ -187,7 +187,7 @@ Login-flow endpoints are public:
 | ------- | ------------ |
 | PUT returns `503 SSO_ENCRYPTION_KEY must be set` | The env var is missing on the backend. Set a 32-byte key and restart. |
 | PUT returns `400 OIDC discovery failed: ...` | The issuer URL doesn't serve `/.well-known/openid-configuration`, or the discovery document's `issuer` field doesn't match the URL you entered. Double-check trailing slashes. |
-| PUT returns `400 Domain ... already claimed by another team` | Another team has already configured an SSO connection that lists the same domain. Domains are unique across the installation. |
+| PUT returns `409 Domain(s) already claimed by another team` | Another team has already configured an SSO connection that lists the same domain. Domains are unique across the installation. |
 | PUT returns `400 Domain ... is a public mail provider` | `gmail.com`, `outlook.com`, etc. cannot be claimed. Use your company's own domain. |
 | Login redirect lands on `/auth/error?reason=sso_unavailable` | OIDC discovery failed at login time (network, IdP outage). Check backend logs for the sanitized error message. |
 | Login redirect lands on `/auth/error?reason=state_mismatch` | State/nonce cookies were dropped or tampered with. Usually means a cross-origin cookie issue — verify `BACKEND_URL` matches the origin serving the backend. |

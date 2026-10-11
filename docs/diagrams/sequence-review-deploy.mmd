@@ -2,50 +2,43 @@ sequenceDiagram
     actor Agent
     actor Reviewer
     participant API as agent-tasks API
-    participant Gate as review-gate
     participant GH as GitHub
     participant Hook as Webhook handler
-    participant Audit as Audit log
     participant Inbox as Signal inbox
 
-    Note over Agent,Inbox: 1. Agent submits work for review
+    Note over Agent,Inbox: 1. Agent submits work
     Agent->>GH: gh pr create
-    GH-->>Agent: prNumber, prUrl
     Agent->>API: task_submit_pr { taskId, branchName, prUrl, prNumber }
-    API->>API: record PR metadata on task<br/>(branchName, prUrl, prNumber)
-    Agent->>API: task_finish { taskId, result, prUrl }
-    API->>Gate: governanceMode + claimant check
-    alt REQUIRES_DISTINCT_REVIEWER and self-review
-        Gate-->>API: 403 forbidden (reason: self_review)
-    else gate passes
-        API->>Audit: task.transitioned (in_progress to review)
-        API->>Inbox: emit review_needed signal
+    Note right of API: records PR metadata, audit task.pr_submitted,<br/>no status change
+    Agent->>API: task_finish { taskId, result }
+    alt autoMerge: true (AUTONOMOUS only, else 403 autonomous_mode_required)
+        API->>API: self-merge gate
+        API->>GH: merge PR (delegated)
+        Note right of API: status = done
+    else no autoMerge
+        Note right of API: status = review, audit task.transitioned
+        API->>Inbox: review_needed
     end
 
-    Note over Reviewer,Inbox: 2. Reviewer approves and merges
-    Inbox-->>Reviewer: review_needed (UI poll or task_pickup)
-    Reviewer->>API: task_merge { taskId } (or pull_requests_merge)
-
-    Note over Reviewer,Audit: 3. PR merge (mutually exclusive paths)
-    alt 3a. REST merge path<br/>POST /api/github/pull-requests/:n/merge
-        API->>Gate: self-merge gate
-        alt self-merge blocked
-            Gate-->>API: 403 self_merge_blocked
-        else gate passes
-            API->>GH: merge PR (delegated)
-            GH-->>API: merged
-            API->>API: status = "done" (hardcoded)
-            API->>Audit: task.pr_merged
-        end
-    else 3b. Webhook merge path<br/>(PR merged via GitHub UI / gh pr merge)
+    Note over Reviewer,Inbox: 2. Review and merge
+    Inbox-->>Reviewer: review_needed
+    Reviewer->>API: task_start (review claim)
+    opt approve before merging
+        Reviewer->>API: task_finish { outcome: approve }
+        Note right of API: REQUIRES_DISTINCT_REVIEWER: 403 if the reviewer<br/>is the claimant, otherwise status = done
+    end
+    alt task_merge
+        Reviewer->>API: POST /api/tasks/:id/merge
+        API->>API: status gate (review or done), distinct-reviewer gate<br/>(from review), self-merge gate
+        API->>GH: merge PR (delegated)
+        Note right of API: status = done, audit github.pr_merged + task.merged
+    else pull_requests_merge
+        Reviewer->>API: POST /api/github/pull-requests/:prNumber/merge
+        API->>API: same gates as task_merge
+        API->>GH: merge PR (delegated)
+        Note right of API: status = done, audit github.pr_merged
+    else PR merged on GitHub
         GH-->>Hook: pull_request closed { merged: true }
-        Hook->>Hook: pickMergeTargetStatus(governanceMode)
-        alt AUTONOMOUS or custom workflow
-            Hook->>API: status = "done"
-        else default workflow, non-soloMode
-            Hook->>API: status = "review"
-            API->>Inbox: emit review_needed signal
-            Note right of API: explicit task_finish<br/>required to reach done
-        end
-        API->>Audit: task.pr_merged (webhook)
+        Hook->>API: pickMergeTargetStatus
+        Note right of API: AUTONOMOUS: done. Other modes: open or in_progress<br/>to review. Review, done, backlog unchanged.<br/>Audit task.transitioned, no gate, no signal
     end

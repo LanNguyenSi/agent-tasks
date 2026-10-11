@@ -63,6 +63,8 @@ claude mcp add agent-tasks --scope user \
   -- npx -y @agent-tasks/mcp-server
 ```
 
+Self-hosted instance: add `--env AGENT_TASKS_BASE_URL=<your backend origin, e.g. http://localhost:3001>`. Without it the server talks to the hosted instance. (The CLI reads `AGENT_TASKS_ENDPOINT` instead.)
+
 Once the client is connected, the cold-start path is four steps:
 
 1. **Connect.** The MCP `initialize` handshake carries a short `instructions` field, a primer on the task lifecycle, claim model, and canonical verb order. Read it once per session; call the parameterless `workflow_primer` tool any time you need the fuller reference again.
@@ -75,18 +77,23 @@ claim-to-merge flow as one tool call each, with governance state baked in:
 
 | Verb | Purpose |
 |---|---|
-| `task_pickup` | Find the next claimable task with confidence over threshold |
+| `task_pickup` | Return the next pending signal, review-ready task or claimable open task (no confidence filter) |
 | `task_start` | Atomic claim + transition to `in_progress` |
 | `task_note` | Add a comment / progress note |
 | `task_submit_pr` | Record branch and PR metadata on the task after `gh pr create` (not a state transition) |
-| `task_finish` | Move the task to `review` or `done` depending on governance mode |
+| `task_finish` | Move the task to `review`, or to `done` with `autoMerge` in `AUTONOMOUS` projects; a reviewer finishes with `outcome: approve` or `request_changes` |
 | `task_merge` | Merge the bound PR via GitHub delegation; honours self-merge gate |
 | `task_abandon` | Release the claim with a reason |
 | `task_create` | Create a new task in a project; agent creates land in `backlog` until a human promotes them to `open` |
+| `task_respec` | Edit an open or backlog task you created |
+| `task_creator_abandon` | Withdraw an unclaimed task you created |
+| `task_attachment_list` / `task_attachment_get` | Read human-added files on a task |
 | `task_artifact_create` / `task_artifact_list` / `task_artifact_get` | Attach and read structured artifacts on a task |
 | `project_tasks` | Browse a project's tasks |
 | `signals_poll` / `signals_ack` | Pull-based signal inbox + acknowledgement |
 | `pull_requests_create` / `pull_requests_merge` | Lower-level GitHub-identifier verbs |
+
+The table is a subset. [`mcp-server/README.md`](../mcp-server/README.md) lists every tool, including the grounding verbs.
 
 **Default-pruned v1 surface (legacy-only since rc-v1-C007).**
 rc-v1-C007 removed 14 still-deprecated v1 verbs from the default
@@ -112,16 +119,16 @@ are NOT part of this pruned set and stay registered by default.
 See [`mcp-server/README.md`](../mcp-server/README.md) for the full reference.
 
 > **Cross-repo PR guard.** `task_finish` and `task_submit_pr` reject a
-> `prUrl` whose owner/repo does not match `project.githubRepo`. Bind the
-> task to the right project before opening the PR.
+> `prUrl` whose owner/repo does not match the task's deliverable repo
+> (`deliverableRepo` when set at create time, otherwise `project.githubRepo`).
+> Bind the task to the right project before opening the PR.
 
-> **Merge endpoint and task status.** Both `task_merge` and the lower-level
-> `pull_requests_merge` go through the REST endpoint
-> `POST /api/github/pull-requests/:n/merge`, which lands the task on `done`
-> on success regardless of project governance mode. The same project may
-> see PR-merge events arrive via the GitHub webhook path instead, in which
-> case non-soloMode default-workflow tasks land in `review` and need an
-> explicit `task_finish { outcome: "approve" }` to reach `done`.
+> **Merge endpoint and task status.** `task_merge` (`POST /api/tasks/:id/merge`)
+> and `pull_requests_merge` (`POST /api/github/pull-requests/:prNumber/merge`)
+> land the task on `done` on success. A PR merged on GitHub arrives through
+> the webhook instead: in non-`AUTONOMOUS` projects an `open` or `in_progress`
+> task moves to `review` and needs `task_finish { outcome: "approve" }` to
+> reach `done`.
 
 ## Option C: Direct API (curl / SDK)
 
@@ -150,24 +157,26 @@ GET /api/agent/signals
 
 ### 2. Find work
 
-List tasks available to claim:
+Get the next piece of work: a pending signal, a task ready for review, or a claimable open task:
 
 ```bash
 # CLI
-agent-tasks tasks list
+agent-tasks pickup
 
 # API
-GET /api/tasks/claimable
+POST /api/tasks/pickup
 ```
+
+To browse instead, `agent-tasks tasks list` (`GET /api/tasks/claimable`) lists claimable tasks.
 
 ### 3. Claim a task
 
 ```bash
 # CLI
-agent-tasks tasks claim <task-id>
+agent-tasks tasks start <task-id>
 
 # API
-POST /api/tasks/{id}/claim
+POST /api/tasks/{id}/start
 ```
 
 ### 4. Read instructions
@@ -184,37 +193,34 @@ GET /api/tasks/{id}/instructions
 
 ### 5. Do the work
 
-Create a branch, write code, commit, push, create a PR.
-
-**Important:** Set `branchName` on the task **before** creating the PR. This prevents duplicate task creation from webhooks.
+Create a branch, write code, commit, push, create a PR. Then record the branch and PR on the task:
 
 ```bash
 # CLI
-agent-tasks tasks update <task-id> --branch feat/my-branch
-
-# Then create the PR, then update with PR info:
-agent-tasks tasks update <task-id> --pr-url https://github.com/.../pull/1 --pr-number 1
+agent-tasks tasks submit-pr <task-id> --branch feat/my-branch \
+  --pr-url https://github.com/.../pull/1 --pr-number 1
 
 # API
-PATCH /api/tasks/{id}  →  {"branchName": "feat/my-branch"}
-PATCH /api/tasks/{id}  →  {"prUrl": "...", "prNumber": 1}
+POST /api/tasks/{id}/submit-pr  →  {"branchName": "feat/my-branch", "prUrl": "...", "prNumber": 1}
 ```
+
+Recording branch and PR lets the GitHub webhook bind PR events to the task.
 
 ### 6. Submit for review
 
 ```bash
 # CLI
-agent-tasks tasks status <task-id> review
+agent-tasks tasks finish <task-id> --result "Implemented X, tests added"
 
 # API
-POST /api/tasks/{id}/transition  →  {"status": "review"}
+POST /api/tasks/{id}/finish  →  {"result": "..."}
 ```
 
-This emits `review_needed` signals to eligible reviewers.
+This moves the task to `review` and emits `review_needed` signals to eligible reviewers.
 
 ### 7. Respond to feedback
 
-If the reviewer requests changes, you'll receive a `changes_requested` signal:
+If the reviewer requests changes, the task returns to `in_progress`, you keep the claim, and you receive a `changes_requested` signal:
 
 ```bash
 # Check signals
@@ -223,42 +229,39 @@ agent-tasks signals
 # Acknowledge and work on feedback
 agent-tasks ack <signal-id>
 # ... fix the code ...
-agent-tasks tasks status <task-id> review
+agent-tasks tasks finish <task-id> --result "Addressed review feedback"
 ```
 
 ### 8. Done
 
-After approval, the task moves to `done` (automatically if webhooks merge the PR, or manually):
+A reviewer's approval (`tasks finish --outcome approve`) moves the task to `done`. `task_merge` (`POST /api/tasks/:id/merge`) merges the PR from `review` or `done` and lands the task on `done`. A merge made on GitHub moves the task to `done` only in `AUTONOMOUS` projects; in other modes it leaves a task in `review` until it is approved.
 
-```bash
-agent-tasks tasks status <task-id> done
-```
+The v1 commands `tasks claim`, `tasks status`, `tasks release` and `review claim | approve | request-changes | release` still work but print a deprecation warning; see [cli/docs/commands.md](../cli/docs/commands.md).
 
 ## Expected agent behavior
 
 These rules keep the system predictable for all participants:
 
 1. **Always claim before working.** Don't start work on a task you haven't claimed. Claiming works from `open` status only: a task you created yourself starts in `backlog` and stays unclaimable (`403 backlog_not_promoted`) until a human promotes it to `open`.
-2. **Set branchName before creating a PR.** This enables webhook binding and prevents duplicate tasks.
-3. **Set prNumber and prUrl after creating a PR.** This enables the full webhook lifecycle.
-4. **Transition to review when ready.** Don't leave tasks in `in_progress` after opening a PR.
-5. **Respond to signals.** Poll your inbox regularly. Acknowledge signals you've processed.
-6. **Don't self-review.** The system blocks it, but don't try to work around it.
-7. **One task at a time** (recommended). Claim, complete, then claim the next. Parallel work is allowed but increases coordination complexity.
+2. **Record branch and PR with `task_submit_pr` after creating the PR.** Recording branch and PR lets the GitHub webhook bind PR events to the task.
+3. **Finish when ready.** Call `task_finish` after opening the PR; don't leave tasks in `in_progress`.
+4. **Respond to signals.** Poll your inbox regularly. Acknowledge signals you've processed.
+5. **Don't self-review.** The system blocks it, but don't try to work around it.
+6. **One task at a time** (recommended). Claim, complete, then claim the next. Parallel work is allowed but increases coordination complexity.
 
 ## Reviewing other agents' work
 
 Agents with `tasks:transition` scope can review tasks:
 
 ```bash
-# Claim the review lock (prevents concurrent reviews)
-agent-tasks review claim <task-id>
+# Take the review claim on a task in review (prevents concurrent reviews)
+agent-tasks tasks start <task-id>
 
 # Approve
-agent-tasks review approve <task-id> -c "LGTM, tests pass"
+agent-tasks tasks finish <task-id> --outcome approve --result "LGTM, tests pass"
 
 # Or request changes
-agent-tasks review request-changes <task-id> -c "Missing test coverage for edge case"
+agent-tasks tasks finish <task-id> --outcome request_changes --result "Missing test coverage for edge case"
 ```
 
 ## Signal types
@@ -268,7 +271,10 @@ agent-tasks review request-changes <task-id> -c "Missing test coverage for edge 
 | `review_needed` | A task needs your review | Claim review lock, review the PR |
 | `changes_requested` | Reviewer wants changes on your task | Read feedback, fix, resubmit |
 | `task_approved` | Your task was approved | Merge PR if not auto-merged |
-| `task_assigned` | A task was assigned to you | Claim and start work |
+| `task_available` | A new or reopened open task in your team | Pick it up if relevant |
+| `task_force_transitioned` | A team admin forced a transition on a task you claim or review | Re-check the task's state |
+
+`self_merge_notice` goes to human team members only (a claimant merged its own PR in an `AWAITS_CONFIRMATION` project). See [events.md](events.md) for the full catalog.
 
 ## Further reading
 

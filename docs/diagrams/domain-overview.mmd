@@ -11,16 +11,20 @@ classDiagram
         +bool allowAgentPrMerge
         +bool allowAgentPrComment
     }
+    class UserIdentity {
+        +string provider
+        +string providerUserId
+    }
     class TeamMember {
         +MemberRole role
     }
     class AgentToken {
-        +string hashedToken
+        +string tokenHash
         +string[] scopes
         +DateTime expiresAt
     }
     class SsoConnection {
-        +string emailDomain
+        +string[] emailDomains
         +string clientSecretEnc
     }
     class Project {
@@ -35,7 +39,7 @@ classDiagram
         +ProjectMemberRole role
     }
     class ProjectInvite {
-        +string hashedToken
+        +string tokenHash
         +DateTime expiresAt
     }
     class Workflow {
@@ -43,8 +47,7 @@ classDiagram
         +Json definition
     }
     class Board {
-        +Json columns
-        +Json filters
+        +Json config
     }
     class Task {
         +string status
@@ -55,9 +58,11 @@ classDiagram
         +Json templateData
         +Json metadata
     }
-    class TaskDependency {
-        +string blockerTaskId
-        +string blockedTaskId
+    class TaskAttachment {
+        +string url
+        +string mimeType
+        +int sizeBytes
+        +string type
     }
     class TaskArtifact {
         +string type
@@ -86,6 +91,7 @@ classDiagram
     Team "1" o-- "0..1" SsoConnection
     Team "1" o-- "*" Project
     User "1" o-- "*" TeamMember
+    User "1" o-- "*" UserIdentity
     Project "1" o-- "*" ProjectMember
     Project "1" o-- "*" ProjectInvite
     Project "1" o-- "*" Workflow
@@ -95,10 +101,10 @@ classDiagram
     Project "1" o-- "*" ToolInvocation
     User "1" o-- "*" ProjectMember
     Task "1" o-- "*" TaskArtifact
+    Task "1" o-- "*" TaskAttachment
     Task "1" o-- "*" Comment
     Task "1" o-- "*" Signal
     Task "1" o-- "*" AuditLog
-    Task "1" -- "*" TaskDependency : blocks
-    Task "1" -- "*" TaskDependency : blockedBy
+    Task "*" -- "*" Task : blocks / blockedBy
     User "1" o-- "*" Signal : recipientUser
     AgentToken "1" o-- "*" Signal : recipientAgent

@@ -1,23 +1,21 @@
 sequenceDiagram
     actor Human
     participant WebUI
-    participant Auth as Auth Service
+    participant API as agent-tasks API
     participant GitHub
-    participant Sync as Repo Sync Service
-    participant Project as Project Service
     participant DB
 
+    Note over Human,DB: 1. Login
     Human->>WebUI: Login with GitHub
-    WebUI->>Auth: Start OAuth flow
-    Auth->>GitHub: Redirect / authorize
-    GitHub-->>Auth: OAuth callback with code
-    Auth->>GitHub: Exchange code for token
-    GitHub-->>Auth: Access token + user/org data
-    Auth->>DB: Create/update user
-    Auth->>Sync: Trigger initial repo/org sync
-    Sync->>GitHub: Fetch orgs/repos
-    GitHub-->>Sync: Repo list
-    Sync->>Project: Provision/update projects
-    Project->>DB: Save projects
-    Auth-->>WebUI: Authenticated session
-    WebUI-->>Human: Dashboard with synced projects
+    WebUI->>API: GET /api/auth/github
+    API-->>Human: redirect to GitHub authorize
+    GitHub->>API: GET /api/auth/github/callback?code
+    API->>GitHub: exchange code, fetch user
+    API->>DB: upsert user
+    API-->>WebUI: session cookie, redirect /teams
+
+    Note over Human,DB: 2. Later: explicit repo sync by a team member
+    Human->>API: POST /api/teams/:id/sync
+    API->>GitHub: list repos visible to this user
+    API->>DB: update or create one project per repo
+    API->>DB: delete team projects whose repo is not in the list
