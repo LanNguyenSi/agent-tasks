@@ -39,7 +39,7 @@ sources:
 | context | `context` |
 | constraints | `constraints` |
 
-Verified byte-identical between `backend/src/lib/confidence.ts:198-219#"const SECTION_ALIASES"` and `frontend/src/lib/confidence.ts:297-318#"const SECTION_ALIASES"` as of this writing; also enforced live by the `confidence.parity.test.ts` guard above, which fails on any behavioral divergence regardless of line drift.
+Verified byte-identical between `backend/src/lib/confidence.ts:198-219#"constraints"` and `frontend/src/lib/confidence.ts:297-318#"constraints"` as of this writing; also enforced live by the `confidence.parity.test.ts` guard above, which fails on any behavioral divergence regardless of line drift.
 
 ## Claim-time enforcement
 
