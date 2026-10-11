@@ -34,10 +34,10 @@ Agents act through team-scoped agent tokens; what a token may do is set by its [
 A project admin can invite a user to a single project with a share invite. The invite grants one of three per-project roles (`ProjectMemberRole`), layered on top of team membership:
 
 - `PROJECT_VIEWER`: read-only. Every write-tier route refuses it.
-- `PROJECT_CONTRIBUTOR`: claim, transition, comment and review; the same task rights as a team HumanMember.
+- `PROJECT_CONTRIBUTOR`: claim, transition, comment and review; passes both the HumanMember and the Reviewer role gates.
 - `PROJECT_ADMIN`: also force transitions, workflow edits, project settings, admin release and reassign of claims, and invites. Only a team Admin can mint a `PROJECT_ADMIN` invite.
 
-When a route or a workflow edge checks a team role, `PROJECT_ADMIN` satisfies Admin, HumanMember and Reviewer, `PROJECT_CONTRIBUTOR` satisfies HumanMember and Reviewer, and `PROJECT_VIEWER` satisfies none of them. The mapping lives in `hasProjectRole` and `requireProjectWrite` in [`backend/src/services/team-access.ts`](../backend/src/services/team-access.ts).
+When a route or a workflow edge checks a team role, `PROJECT_ADMIN` satisfies Admin, HumanMember and Reviewer, `PROJECT_CONTRIBUTOR` satisfies HumanMember and Reviewer, and `PROJECT_VIEWER` satisfies none of them. Team roles must match exactly: a team Admin does not satisfy an edge that requires HumanMember or Reviewer. The mapping lives in `hasProjectRole` and `requireProjectWrite` in [`backend/src/services/team-access.ts`](../backend/src/services/team-access.ts).
 
 ## Audit trail
 

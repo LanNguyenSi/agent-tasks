@@ -62,7 +62,7 @@ make dev-frontend
 
 ## Running tests
 
-Backend tests need a reachable PostgreSQL database whose name contains `test`; each run creates and drops its own schema in it. With the Docker database running, create the test database once and run the suites with the variables CI sets:
+Backend tests need a reachable PostgreSQL database whose name contains `test` as a separate part, bounded on each side by the start or end of the name, `_` or `-` (for example `agent_tasks_test`; `testdb` is refused); each run creates and drops its own schema in it. With the Docker database running, create the test database once and run the suites with the variables CI sets:
 
 ```bash
 docker compose exec db createdb -U agent_tasks agent_tasks_test

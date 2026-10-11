@@ -1,7 +1,11 @@
 classDiagram
+    direction LR
     class Team {
         +string id
         +string name
+    }
+    class TeamMember {
+        +MemberRole role
     }
     class User {
         +string id
@@ -14,9 +18,6 @@ classDiagram
     class UserIdentity {
         +string provider
         +string providerUserId
-    }
-    class TeamMember {
-        +MemberRole role
     }
     class AgentToken {
         +string tokenHash
@@ -49,6 +50,11 @@ classDiagram
     class Board {
         +Json config
     }
+    class ToolInvocation {
+        +string verb
+        +string idempotencyKey
+        +string payloadHash
+    }
     class Task {
         +string status
         +TaskPriority priority
@@ -57,6 +63,12 @@ classDiagram
         +int prNumber
         +Json templateData
         +Json metadata
+    }
+    class Signal {
+        +string type
+        +string recipientUserId
+        +string recipientAgentId
+        +DateTime acknowledgedAt
     }
     class TaskAttachment {
         +string url
@@ -70,41 +82,37 @@ classDiagram
         +string url
     }
     class Comment
-    class Signal {
-        +string type
-        +string recipientUserId
-        +string recipientAgentId
-        +DateTime acknowledgedAt
+    class ConfidenceTelemetry {
+        +int scoreAtClaim
+        +int bounceBackCount
+        +int clarificationCount
+        +bool overrideUsed
     }
     class AuditLog {
         +string action
         +Json payload
     }
-    class ToolInvocation {
-        +string verb
-        +string idempotencyKey
-        +string payloadHash
-    }
 
     Team "1" o-- "*" TeamMember
+    User "1" o-- "*" TeamMember
+    User "1" o-- "*" UserIdentity
     Team "1" o-- "*" AgentToken
     Team "1" o-- "0..1" SsoConnection
     Team "1" o-- "*" Project
-    User "1" o-- "*" TeamMember
-    User "1" o-- "*" UserIdentity
     Project "1" o-- "*" ProjectMember
+    User "1" o-- "*" ProjectMember
     Project "1" o-- "*" ProjectInvite
     Project "1" o-- "*" Workflow
     Project "1" o-- "*" Board
-    Project "1" o-- "*" Task
-    Project "1" o-- "*" AuditLog
     Project "1" o-- "*" ToolInvocation
-    User "1" o-- "*" ProjectMember
-    Task "1" o-- "*" TaskArtifact
-    Task "1" o-- "*" TaskAttachment
-    Task "1" o-- "*" Comment
-    Task "1" o-- "*" Signal
-    Task "1" o-- "*" AuditLog
-    Task "*" -- "*" Task : blocks / blockedBy
+    Project "1" o-- "*" Task
     User "1" o-- "*" Signal : recipientUser
     AgentToken "1" o-- "*" Signal : recipientAgent
+    Task "1" o-- "*" Signal
+    Task "1" o-- "*" TaskAttachment
+    Task "1" o-- "*" TaskArtifact
+    Task "1" o-- "*" Comment
+    Task "1" o-- "0..1" ConfidenceTelemetry
+    Task "1" o-- "*" AuditLog
+    Project "1" o-- "*" AuditLog
+    Task "*" -- "*" Task : blocks / blockedBy

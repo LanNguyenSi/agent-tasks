@@ -359,10 +359,10 @@ and the dashboard gear icon. Non-admins see a read-only view.
    apply a predefined workflow with transitions and gates pre-configured.
 3. Edit states: the state set (`open`, `in_progress`, `review`,
    `done`), the terminal flag (only `done`) and the initial state
-   (`open`) are fixed, and the table says so; states cannot be added,
-   renamed or removed. Edit each state's label inline, and click
-   "Add instructions…" to open a textarea for the state's agent
-   instructions.
+   (`open`) are fixed: the table shows them read-only and notes that
+   states cannot be added, renamed or removed. Edit each state's label
+   inline, and click "Add instructions…" to open a textarea for the
+   state's agent instructions.
 4. Edit transitions: `from` / `to` are state dropdowns, label is
    inline, `required role` is a dropdown (`any`, `ADMIN`,
    `HUMAN_MEMBER`, `REVIEWER`), and the gates column shows one
@@ -375,8 +375,8 @@ and the dashboard gear icon. Non-admins see a read-only view.
    endpoints and `initialState` only fire for a stored definition
    outside the fixed state set. The backend rejects a definition whose
    states are not exactly `open`, `in_progress`, `review` and `done`,
-   whose `initialState` is not `open`, or in which a state other than
-   `done` is terminal.
+   whose `initialState` is not `open`, or in which `done` is not
+   terminal or another state is.
 6. Reachability warnings (unreachable states, dead-end non-terminal
    states, orphan states with no incoming transition) show as a
    warning banner and do **not** block Save; Save asks for a

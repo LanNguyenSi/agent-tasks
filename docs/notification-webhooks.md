@@ -119,27 +119,31 @@ before JSON parsing (Express `express.raw()`, Hono `c.req.raw.text()`,
 
 ## Delivery semantics
 
-The sequence below shows that the request which creates a signal never waits
-on push delivery, and where the egress check, the timeout, the retry and the
-audit row come in:
+`createSignal` and `maybeDeliverSignalWebhook` live in
+`backend/src/services/signal.ts`, `deliverSignalWebhook` in
+`backend/src/services/notification-webhook.ts`, and the signal routes in
+`backend/src/routes/signals.ts`. The sequence below shows that the request
+which creates a signal never waits on push delivery, and where the egress
+check, the timeout, the retry and the audit row come in:
 
 ```mermaid
 sequenceDiagram
-  participant E as Emitting service<br/>(e.g. review-signal.ts)
-  participant S as createSignal<br/>(signal.ts)
-  participant P as deliverSignalWebhook<br/>(notification-webhook.ts)
-  participant R as Receiver<br/>(notificationWebhookUrl)
-  participant Q as Signal routes<br/>(signals.ts)
+  participant E as Emitting service
+  participant S as createSignal
+  participant P as deliverSignalWebhook
+  participant R as Receiver
+  participant Q as Signal routes
   participant A as Agent
   E->>S: createSignal(input)
   S->>S: insert Signal row
-  S-)P: maybeDeliverSignalWebhook (not awaited)
+  S-)S: maybeDeliverSignalWebhook (not awaited)
   S-->>E: Signal row
-  Note over P: skipped when the project has no notificationWebhookUrl
+  Note over S: maybeDeliverSignalWebhook stops here<br/>when the project has no notificationWebhookUrl
+  S->>P: deliverSignalWebhook
   loop at most 2 attempts, 2 s apart, stop on 2xx
     P->>P: assertPublicWebhookUrl<br/>(private hosts blocked unless allowlisted)
     opt host allowed
-      P->>R: POST payload, 5 s timeout, redirects refused
+      P->>R: POST payload, 5 s timeout,<br/>redirects refused
       R-->>P: status code
     end
   end

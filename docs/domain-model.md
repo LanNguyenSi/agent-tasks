@@ -49,7 +49,7 @@ These fields on `Project` shape every state-write path:
 | `TaskAttachment` | Human-added file (image or document, bytes on the `UPLOAD_DIR` volume, with `mimeType` and `sizeBytes`) or legacy external URL pointer. Agents read attachments but cannot upload them; agent output goes to `TaskArtifact`. See [`attachments.md`](attachments.md). |
 | `TaskArtifact` | Typed agent output (build logs, coverage, code) with inline `content` or external `url`. Authored by `User` or `AgentToken`. Lifecycle audit-logged as `task.artifact.created` / `.deleted`. |
 | `Comment` | Human or agent comment on a task. |
-| `ConfidenceTelemetry` | One row per task: claim-time score, effective threshold, bounce-back, clarification and override counters. Read by `GET /projects/:id/telemetry/confidence`. |
+| `ConfidenceTelemetry` | One row per task: claim-time score, effective threshold, bounce-back and clarification counters and an `overrideUsed` flag. Read by `GET /projects/:id/telemetry/confidence`. |
 
 `Task.status` is a free `String` column, but the workflow API accepts only the four states `open`, `in_progress`, `review` and `done` for any workflow, default or custom (`FIXED_STATE_NAMES` in `backend/src/routes/workflows.ts`); custom workflows vary transitions and gates, not states. The product status vocabulary includes six canonical values: `backlog` (agent-created tasks awaiting human review, handled outside the workflow engine), `open`, `in_progress`, `review`, `done` (the four states that compose the default workflow engine), and `abandoned` (set when a human discards a backlog task, or when an agent withdraws an `open` or `backlog` task it created, with no claim on it, via `task_creator_abandon`; a project admin can restore it to the initial state with `PATCH /tasks/:id`). Agent creates route to `backlog` automatically via dedicated claim routing; human creates default to `open`. The workflow engine transitions only between the four engine states; `backlog` and `abandoned` are set through dedicated routes (human `PATCH`, `task_creator_abandon`), not engine transitions.
 
@@ -92,7 +92,7 @@ Team
            └── AuditLog
 ```
 
-For the same picture in mermaid, see [`diagrams/domain-overview.mmd`](diagrams/domain-overview.mmd).
+A class-level view of these models with key fields, which also shows `ToolInvocation`, is in [`diagrams/domain-overview.mmd`](diagrams/domain-overview.mmd).
 
 ## Further reading
 

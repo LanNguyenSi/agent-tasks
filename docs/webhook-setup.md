@@ -93,7 +93,7 @@ The sequence below shows the order of the signature check, the delivery dedup, t
 ```mermaid
 sequenceDiagram
   participant GH as GitHub
-  participant R as POST /api/webhooks/github<br/>(routes/webhooks.ts)
+  participant R as routes/webhooks.ts<br/>POST /api/webhooks/github
   participant S as github-webhook.ts<br/>handlers
   participant DB as Database
   GH->>R: delivery (X-Hub-Signature-256,<br/>X-GitHub-Event, X-GitHub-Delivery)
@@ -109,7 +109,7 @@ sequenceDiagram
     S->>DB: compare-and-swap status write
     S->>DB: acknowledge signals when moved to done
   end
-  Note over R,S: a processing error is logged, the delivery stays claimed and is not reprocessed
+  Note over R,S: a processing error is logged,<br/>the delivery stays claimed and is not reprocessed
 ```
 
 Delivery semantics:

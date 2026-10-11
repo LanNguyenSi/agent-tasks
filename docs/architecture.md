@@ -20,10 +20,11 @@ See also:
 - Backend API: Hono + Node.js (`backend/`, port 3001)
 - Primary DB: PostgreSQL + Prisma
 - Optional cache: Redis (`REDIS_URL`; the backend falls back to an in-memory cache when unset)
+- Attachment files: a disk directory (`UPLOAD_DIR`, `./uploads` when unset); the compose files mount a volume there, and the database holds only the attachment metadata
 - Optional Docker dev stack: `docker-compose.yml` (db + redis + backend + frontend)
 - Agent clients: `mcp-server` (stdio MCP server that calls the REST API with a Bearer token), `mcp-bridge` (resolves the token and starts `mcp-server`) and `cli` (REST client). Remote MCP clients use the backend's HTTP MCP endpoint `POST /api/mcp`, which serves a hand-maintained subset of the stdio tool surface.
 - Inbound GitHub webhooks: `POST /api/webhooks/github` (see [webhook-setup.md](webhook-setup.md)).
-- Outbound calls: the GitHub API (OAuth, repository list, checks, merge), a team's OIDC identity provider (discovery, JWKS, token), project notification webhooks when a signal is created (see [notification-webhooks.md](notification-webhooks.md)), and the Anthropic API for the optional suggest-rewrite helper (see [llm-rewrite-helper.md](llm-rewrite-helper.md)).
+- Outbound calls: the GitHub API (OAuth, repository list, pull request lookup, creation, comments and merge, checks), a team's OIDC identity provider (discovery, JWKS, token), project notification webhooks when a signal is created (see [notification-webhooks.md](notification-webhooks.md)), and the Anthropic API for the optional suggest-rewrite helper (see [llm-rewrite-helper.md](llm-rewrite-helper.md)).
 - Startup: the backend composes the grounding runtime from `GROUNDING_RUNTIME_CONFIG` before it listens, and exits when that configuration or the database is not ready (see [grounding-migration.md](grounding-migration.md)). While running, it sweeps the idempotency dedup tables every 6 hours (retention `IDEMPOTENCY_TTL_DAYS`).
 
 The diagram shows the deployables, how clients reach the backend, its stores and the external systems it calls.
@@ -38,9 +39,10 @@ flowchart TD
     MCP -->|"REST /api, Bearer"| BE
     Remote[Remote MCP client] -->|"POST /api/mcp"| BE
     BE --> PG[("PostgreSQL via Prisma")]
+    BE --> Uploads[("attachment files (UPLOAD_DIR)")]
     BE -.->|optional REDIS_URL| Redis[(Redis cache)]
     GH[GitHub] -->|"webhooks /api/webhooks/github"| BE
-    BE -->|"OAuth, repo list, checks, merge"| GH
+    BE -->|"OAuth, repo list, PRs (create, read, comment, merge), checks"| GH
     BE -->|"discovery, JWKS, token"| IdP[OIDC IdP]
     BE -->|signal POST| Hook[Project notification webhook]
     BE -.->|optional ANTHROPIC_API_KEY| LLM[Anthropic API]

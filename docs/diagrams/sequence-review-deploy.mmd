@@ -39,6 +39,6 @@ sequenceDiagram
         Note right of API: status = done, audit github.pr_merged
     else PR merged on GitHub
         GH-->>Hook: pull_request closed { merged: true }
-        Hook->>API: pickMergeTargetStatus
-        Note right of API: AUTONOMOUS: done. Other modes: open or in_progress<br/>to review. Review, done, backlog unchanged.<br/>Audit task.transitioned, no gate, no signal
+        Hook->>Hook: pickMergeTargetStatus, then<br/>compare-and-swap status write
+        Note over Hook: AUTONOMOUS: done.<br/>Other modes: open or in_progress<br/>to review, review unchanged.<br/>Done and backlog tasks: not matched.<br/>Audit task.transitioned,<br/>no gate, no signal
     end

@@ -39,7 +39,7 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 
 | Action | Emitted on |
 |---|---|
-| `task.created` | Task created by a GitHub `issues.opened` webhook, or by single create (`POST /api/projects/:projectId/tasks`) on a project selected by the grounding creation policy. Otherwise single create writes it only when it sends `task_available` signals (payload `event: task_available_signal`), so a `backlog` task, or one in a team with no claim-eligible agent, gets no row. The same `task_available_signal` row, under the same condition, is written when `/transition` or a human `PATCH` moves a task back to `open` (not on backlog promote) |
+| `task.created` | Task created by a GitHub `issues.opened` webhook, or by single create (`POST /api/projects/:projectId/tasks`) on a project selected by the grounding creation policy. On every project it is also written, with payload `event: task_available_signal`, whenever `task_available` signals go out: when single create or batch import (`POST /api/projects/:projectId/tasks/import`) creates a task as `open`, and when `/transition` or a human `PATCH` moves a task back to `open` (not on backlog promote). A `backlog` task, or one in a team with no claim-eligible agent, gets no such row, so single create on any other project then writes no creation row. Batch import also writes `task.imported` for every task, so an imported `open` task can carry both actions |
 | `task.claimed` / `task.released` | Claim lifecycle |
 | `task.transitioned` | Standard status change |
 | `task.transitioned.forced` | Admin-forced transition with `force=true` + `forceReason` |
@@ -64,7 +64,7 @@ Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId
 | `task.merged_status_conflict` | The post-merge write lost (the status changed, or only a claim moved): the PR was merged but the API could not record it; nothing was written and the request answered 409 `merged_but_status_changed` (payload carries `via`, `mergeSha`, `expectedFrom`, `targetStatus`, `currentStatus` as read after the last failed write, and `reason`: `status_changed`, `claim_moved` or `merge_in_progress`; the latter two mean the status is as it was read, only a claim moved or another merge holds the task, and retrying the request is safe) |
 | `task.pr_merged.blocked_self_merge` | Self-merge blocked by `REQUIRES_DISTINCT_REVIEWER` gate |
 | `task.self_merge_notice_emitted` | `AWAITS_CONFIRMATION` self-merge succeeded; `self_merge_notice` signal fanned out |
-| `task.imported` | Batch import (`POST /api/projects/:projectId/tasks/import`, used by the CSV/Excel import dialog), one row per created task, backlog included |
+| `task.imported` | Batch import (`POST /api/projects/:projectId/tasks/import`, used by the CSV/Excel import dialog), one row per created task, backlog included; an item created as `open` can also get the `task.created` signal row above |
 | `task.grounding_gate.bypassed` | A debug-flavored task was finished on a project with `requireGroundingForDebug` off; records that the debug-grounding finish gate would have applied (no block, no override) |
 | `task.artifact.created` / `task.artifact.deleted` | Typed artifact lifecycle |
 | `task.attachment.uploaded` / `task.attachment.deleted` | A human uploaded a file attachment, or deleted an attachment (creating a URL-pointer attachment writes no event) |
@@ -108,7 +108,7 @@ A separate `STALE_WHEN_DONE` constant suppresses three signal types (`review_nee
 | Type | Emitted when | Recipient | Suppressed from task_pickup feed when task is done | Pushed via webhook |
 |---|---|---|---|---|
 | `review_needed` | Task enters `review` | Candidate reviewers (humans + agents minus the author) | yes | yes |
-| `task_available` | New claimable `open` task surfaced (tasks in `backlog` status emit no signal until promoted) | Eligible claimants | yes | yes |
+| `task_available` | Task created or imported as `open`, or moved back to `open` (a task created in `backlog` emits none, and promoting it to `open` sends none either) | Eligible claimants | yes | yes |
 | `task_assigned` | Never: declared in the `SignalType` union and filtered by `STALE_WHEN_DONE`, but no code path creates it | n/a | yes | n/a |
 | `changes_requested` | Reviewer transitions `review → in_progress` with comment | The task claimant | no | yes |
 | `task_approved` | Reviewer transitions `review → done` | The task claimant | no | yes |

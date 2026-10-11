@@ -27,7 +27,7 @@ Deploy and verify are modeled as **operational follow-ups**, not task workflow s
 
 3. **The webhook MVP already provides visibility.** PR merged events appear in the Activity timeline. Teams can see when code shipped without needing a workflow state for it.
 
-4. **The workflow state set is fixed.** Every workflow, custom or default, has exactly the states `open`, `in_progress`, `review` and `done` (`FIXED_STATE_NAMES` in `backend/src/routes/workflows.ts`). A custom workflow can change transitions, `requires` gates, `requiredRole`, state labels and `agentInstructions`, but it cannot add a `merged`, `deployed` or `verified` state.
+4. **The workflow state set is fixed.** The built-in default and every workflow created or updated through the workflow API have exactly the states `open`, `in_progress`, `review` and `done` (`FIXED_STATE_NAMES` in `backend/src/routes/workflows.ts`). A custom workflow can change transitions, `requires` gates, `requiredRole`, state labels and `agentInstructions`, but it cannot add a `merged`, `deployed` or `verified` state.
 
 ## Default behavior
 
@@ -40,7 +40,7 @@ Deploy and verify are modeled as **operational follow-ups**, not task workflow s
 
 ## Tracking deploy and verify today
 
-The workflow API rejects any state name outside `open`, `in_progress`, `review` and `done` ("Add/rename/remove of states is not supported"), and it rejects a definition that leaves one of them out. This applies to `POST /api/projects/:projectId/workflows`, `PUT /api/workflows/:id`, `POST /api/projects/:projectId/workflow/customize` (which forks the four-state default) and `POST /api/projects/:projectId/workflow/apply-template/:slug` (every registered template uses the same four states). A workflow such as `open → in_progress → review → merged → deployed → verified → done` cannot be created.
+`POST /api/projects/:projectId/workflows` and `PUT /api/workflows/:id` reject any state name outside `open`, `in_progress`, `review` and `done` ("Add/rename/remove of states is not supported"), and a definition that leaves one of them out. `POST /api/projects/:projectId/workflow/customize` (which forks the four-state default) and `POST /api/projects/:projectId/workflow/apply-template/:slug` (every registered template uses the same four states) take no definition, so they cannot produce any other state set. A workflow such as `open → in_progress → review → merged → deployed → verified → done` cannot be created.
 
 Teams that need a record of deploy and verify steps track them outside the task status:
 

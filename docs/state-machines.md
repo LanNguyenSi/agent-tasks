@@ -69,7 +69,7 @@ Two paths reach the task and they can land it in different states:
 | Path | How it fires | Resulting `status` |
 |---|---|---|
 | REST merge | `task_merge` (`POST /api/tasks/:id/merge`) or `pull_requests_merge` (`POST /api/github/pull-requests/:prNumber/merge`) | `done` after a successful merge |
-| Webhook merge | PR merged through the GitHub UI or `gh pr merge` | `pickMergeTargetStatus`: `done` for `AUTONOMOUS`; in any other mode, with or without a custom workflow, an `open` or `in_progress` task moves to `review`; a task in `review`, `done` or `backlog` is not moved |
+| Webhook merge | PR merged through the GitHub UI or `gh pr merge` | `pickMergeTargetStatus`: `done` for `AUTONOMOUS`; in any other mode, with or without a custom workflow, an `open` or `in_progress` task moves to `review` and a task in `review` stays there; `done` and `backlog` tasks are not matched in any mode |
 
 Only the REST paths run the self-merge gate. The webhook path records a merge that already happened on GitHub and writes the status without checking it against a custom workflow's states. Tooling that wraps both must treat them as separate code paths.
 
@@ -81,22 +81,22 @@ The flowchart shows when an agent claim is allowed, shadow-logged, blocked or ov
 
 ```mermaid
 flowchart TD
-    A["task_start or POST /tasks/:id/claim"] --> B{agent actor?}
+    A["task_start or<br/>POST /tasks/:id/claim"] --> B{agent actor?}
     B -- no --> OK[allow]
-    B -- yes --> C{"enforcementMode (null = WARN)"}
+    B -- yes --> C{"enforcementMode<br/>(null = WARN)"}
     C -- OFF --> OK
-    C -- WARN --> D{score below threshold or keystone violated?}
-    D -- yes --> W[allow, audit task.claim_would_block_shadow]
-    D -- no --> R[allow, audit task.claim_confidence_recorded]
+    C -- WARN --> D{"below threshold<br/>or keystone<br/>violated?"}
+    D -- yes --> W["allow, audit<br/>task.claim_would_block_shadow"]
+    D -- no --> R["allow, audit<br/>task.claim_confidence_recorded"]
     C -- BLOCK --> E{force=true?}
-    E -- no --> G{score below threshold or keystone violated?}
-    G -- yes --> X[422 low_confidence, audit task.claim_blocked_low_readiness]
+    E -- no --> G{"below threshold<br/>or keystone<br/>violated?"}
+    G -- yes --> X["422 low_confidence, audit<br/>task.claim_blocked_low_readiness"]
     G -- no --> R
-    E -- yes --> F{"token has confidence:override?"}
+    E -- yes --> F{"confidence:override<br/>scope?"}
     F -- no --> F403[403 forbidden]
-    F -- yes --> H{forceReason at least 10 chars?}
+    F -- yes --> H{"forceReason<br/>at least<br/>10 chars?"}
     H -- no --> F400[400 bad_request]
-    H -- yes --> O[allow; audit task.claim_override_used when it would have blocked]
+    H -- yes --> O["allow; audit<br/>task.claim_override_used<br/>when it would have blocked"]
 ```
 
 `task_pickup` skips tasks until every `blockedBy` parent reaches a resolved status (`done` or `abandoned`), and `task_start` rejects such a claim with `409 blocked`, so the dependency graph is enforced at claim time, not at transition time.

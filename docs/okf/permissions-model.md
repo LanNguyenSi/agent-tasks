@@ -22,7 +22,7 @@ sources:
   - backend/src/routes/grounding-direct-tasks.ts
 ---
 
-**Three kinds of principal** (`backend/prisma/schema.prisma`): a human holds at most one team role per team (`TeamMember.role`, enum `MemberRole`: `ADMIN`, `HUMAN_MEMBER` as the default, `REVIEWER`) and may hold a per-project role on a project of another team (`ProjectMember.role`, enum `ProjectMemberRole`: `PROJECT_VIEWER`, `PROJECT_CONTRIBUTOR`, `PROJECT_ADMIN`), granted by accepting a `ProjectInvite` share link. An agent token (`AgentToken`) belongs to one team, was created by one user, and carries a `scopes` string array; it has no role. A human actor is never checked against scopes, and an agent actor is never checked against a concrete role.
+**Three kinds of principal** (`backend/prisma/schema.prisma`): a human holds at most one team role per team (`TeamMember.role`, enum `MemberRole`: `ADMIN`, `HUMAN_MEMBER` as the default, `REVIEWER`) and may hold a per-project role on a project of another team (`ProjectMember.role`, enum `ProjectMemberRole`: `PROJECT_VIEWER`, `PROJECT_CONTRIBUTOR`, `PROJECT_ADMIN`), granted by accepting a `ProjectInvite` share link. An agent token (`AgentToken`) belongs to one team, was created by one user, and carries a `scopes` string array; it has no role. An agent token never satisfies a concrete role (`hasProjectRole` returns false for it); scope checks apply to agent tokens only, and routes behind `requireScope` refuse humans.
 
 **Access tiers** (`backend/src/services/team-access.ts`):
 

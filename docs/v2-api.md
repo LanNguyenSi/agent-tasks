@@ -147,8 +147,8 @@ flowchart TD
   GH["PR merged on GitHub<br/>(UI or gh pr merge)"] --> WH["pull_request webhook<br/>POST /api/webhooks/github"]
   WH --> PK{"pickMergeTargetStatus"}
   PK -- "AUTONOMOUS" --> D2["done"]
-  PK -- "already in review" --> S1["stays in review<br/>task_finish approve needed"]
-  PK -- "open or in_progress" --> S2["review"]
+  PK -- "other modes, in review" --> S1["stays in review<br/>task_finish approve needed"]
+  PK -- "other modes, open or in_progress" --> S2["review"]
 ```
 
 - **REST endpoints** `POST /api/tasks/:id/merge` (MCP `task_merge`, derives owner, repo and PR number from the task) and `POST /api/github/pull-requests/:n/merge` (MCP `pull_requests_merge`). Both reject a task that is not in `review` or `done` (`409` on the task route, `403` on the GitHub route), run the self-merge gate, take the merge reservation and write `done` regardless of `governanceMode`. The task write after the GitHub merge is a compare-and-swap: if another writer changed the task between the gate and the write, the PR is already merged and the call answers `409 merged_but_status_changed` (with `mergeSha` and `currentStatus`) without updating the task; the system's own PR-merge webhook having set `done` first completes normally. The merge takes a leased reservation on the task right before the GitHub call: a review lock released between the gate and the merge refuses the merge (`409 conflict`, GitHub is never called), a second merge answers `409 merge_in_progress`, and every claim and status writer answers `409 merge_in_progress` while the reservation is live (it lapses on its own after two minutes). Self-merge gate fires before the merge is attempted (`REQUIRES_DISTINCT_REVIEWER` projects reject the call when the merger also holds the work claim).
