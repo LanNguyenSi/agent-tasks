@@ -22,6 +22,14 @@ sources:
   - backend/src/routes/github.ts
   - backend/src/services/grounding-attempts.ts
   - backend/src/services/grounding-migration.ts
+  - backend/src/middleware/auth.ts
+  - backend/src/routes/mcp.ts
+  - cli/src/api.ts
+  - cli/src/config.ts
+  - mcp-bridge/src/cli.ts
+  - mcp-bridge/src/token-store.ts
+  - mcp-server/src/index.ts
+  - mcp-server/src/client.ts
 ---
 
 npm workspaces monorepo (`package.json` workspaces: `backend`, `frontend`, `mcp-server`, `mcp-bridge`, `cli`). This doc covers the four deployables; `@agent-tasks/cli` is a fifth workspace (a standalone REST CLI client) not detailed here.
@@ -30,6 +38,41 @@ npm workspaces monorepo (`package.json` workspaces: `backend`, `frontend`, `mcp-
 2. **frontend** (`@agent-tasks/frontend`), Next.js 15 app (`frontend/package.json` pins `next@^15`), the human-facing UI. Talks to the backend over HTTP; has a couple of its own `app/api/*` route handlers only for GitHub OAuth redirects (`frontend/src/app/api/auth/github/*`).
 3. **mcp-server** (`@agent-tasks/mcp-server`), stdio MCP server wrapping the backend REST API with a fixed `Authorization: Bearer` token. Published to npm. See `mcp-server.md`.
 4. **mcp-bridge** (`@agent-tasks/mcp-bridge`), a thin CLI wrapper around mcp-server that resolves the bearer token (env var, OS keychain, or file) before handing off to the same stdio runtime. See `mcp-bridge.md`.
+
+**Client paths**: three agent-facing paths reach the backend, and all of them pass the same `authMiddleware` (`backend/src/middleware/auth.ts`), which looks a Bearer token up as a SHA-256 `AgentToken` hash first and tries it as a session JWT only when no token matches (see `auth.md`). `backend/src/app.ts` mounts the middleware per path prefix (`/api/tasks/*`, `/api/projects/*`, `/api/mcp` and others), not on all of `/api`. The CLI (`cli/src/api.ts`) sends `Authorization: Bearer` with the token from `AGENT_TASKS_TOKEN` or, when that is unset, its config file (`cli/src/config.ts`). A local MCP client runs mcp-server over stdio, either through mcp-bridge, which resolves the token from env, keychain or file and calls `runStdioServer` in-process (`mcp-bridge/src/cli.ts`), or directly with `AGENT_TASKS_TOKEN` (`mcp-server/src/index.ts`); mcp-server's `AgentTasksClient` (`mcp-server/src/client.ts`) then calls the REST API with the Bearer token. A remote MCP client posts JSON-RPC to `POST /api/mcp` (`backend/src/routes/mcp.ts`), whose tools dispatch to the REST routes in-process through `callSelf` (`app.fetch` with the caller's Bearer token), so the inner route authenticates the token again. The REST routers own all reads and writes of the PostgreSQL store through Prisma.
+
+The flowchart below shows these client paths, where each client gets its token, and the single auth step in front of the REST routes.
+
+```mermaid
+flowchart TD
+  subgraph clients["Agent-facing clients"]
+    CLI["agent-tasks CLI<br/>cli/src/api.ts"]
+    LMC["local MCP client"]
+    BR["mcp-bridge<br/>mcp-bridge/src/cli.ts"]
+    MS["mcp-server<br/>AgentTasksClient"]
+    RMC["remote MCP client"]
+  end
+  CFG[("CLI config<br/>env vars, then config file")]
+  TS[("token store<br/>env, keychain, file")]
+  subgraph backend["backend (Hono app)"]
+    AUTH{"authMiddleware<br/>AgentToken hash, then session JWT"}
+    MCPH["mcpRouter<br/>POST /api/mcp"]
+    R["REST routers under /api"]
+  end
+  DB[("PostgreSQL<br/>via Prisma")]
+  CLI -->|reads token| CFG
+  CLI -->|Bearer token| AUTH
+  LMC -->|stdio| BR
+  BR -->|resolves token| TS
+  BR -->|"runStdioServer (in-process)"| MS
+  LMC -->|"stdio, AGENT_TASKS_TOKEN"| MS
+  MS -->|Bearer token| AUTH
+  RMC -->|"JSON-RPC, Bearer token"| AUTH
+  AUTH --> MCPH
+  AUTH --> R
+  MCPH -->|"callSelf: app.fetch, same Bearer"| AUTH
+  R --> DB
+```
 
 All state lives in one PostgreSQL database (Prisma schema at `backend/prisma/schema.prisma`); nothing else is a system of record. Prod topology (`docker-compose.prod.yml`) is `db` → one-shot `migrate` (Prisma `db push`) → `backend` and `frontend`, both behind a shared external `traefik` network; see `deploy.md`.
 

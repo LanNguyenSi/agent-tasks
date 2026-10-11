@@ -4,7 +4,7 @@ Authoritative source: the `AuditAction` union in [`backend/src/services/audit.ts
 
 ## Audit actions
 
-Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId`, `taskId`, `projectId`. Audit writes are fire-and-forget and swallow errors: never depend on audit being load-bearing for any flow. **Documented exception (M5, task 698eeb01):** `ConfidenceTelemetry`'s calibration snapshot (`scoreAtClaim` / `effectiveThreshold` / `overrideUsed`) reads specific `task.claim_*` rows below back as its source of truth — see `backend/src/services/confidence-telemetry.ts`'s header comment.
+Every action lands in `AuditLog` with a `payload: JSON` and an optional `actorId`, `taskId`, `projectId`. Audit writes are fire-and-forget and swallow errors: never depend on audit being load-bearing for any flow. **Documented exception:** `ConfidenceTelemetry`'s calibration snapshot (`scoreAtClaim` / `effectiveThreshold` / `overrideUsed`) reads specific `task.claim_*` rows below back as its source of truth; see `backend/src/services/confidence-telemetry.ts`'s header comment.
 
 ### Identity and tokens
 

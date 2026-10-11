@@ -10,12 +10,15 @@ sources:
   - .github/workflows/ci.yml
   - mcp-bridge/package.json
   - mcp-bridge/tests/lockstep.test.ts
+  - cli/package.json
 ---
 
 Three independent tag axes, two workflow files:
 
 - **`v*`** (root release) → `.github/workflows/release.yml`: runs the shared `ci.yml` first (`workflow_call`), then extracts the version from the tag (`${GITHUB_REF_NAME#v}`), pulls the matching `## [x.y.z]` section out of `CHANGELOG.md` (`awk`), and publishes it as a GitHub Release via `softprops/action-gh-release@v3`. No npm publish happens here.
 - **`mcp-server-v*`** and **`mcp-bridge-v*`** → the *same* single workflow, `.github/workflows/publish-npm.yml`, which branches on the tag prefix (`case "$tag" in mcp-server-v*) ... mcp-bridge-v*) ... esac`) to pick the npm workspace and the expected version.
+
+The `cli` workspace (`@agent-tasks/cli`) has no tag axis: `publish-npm.yml` triggers only on `mcp-server-v*` and `mcp-bridge-v*` tags, and its workspace step exits with `Unsupported tag` for any other prefix, so no workflow in this repo publishes the CLI to npm, although `cli/package.json` carries `publishConfig.access: public`.
 
 **`publish-npm.yml` steps** (in order): checkout, Node 22 + npm registry setup, `npm ci`, identify the workspace and expected version from the tag prefix, verify `<workspace>/package.json#version` equals the tag-derived version (fails the job otherwise), then, **only for the `mcp-bridge` workspace**, a preflight that reads `mcp-bridge/package.json#dependencies["@agent-tasks/mcp-server"]` (an exact pin, e.g. `"0.14.0"`, no `^`) and runs `npm view "@agent-tasks/mcp-server@<pinned>" version`; if that lookup fails the job aborts with "Publish mcp-server first (tag: mcp-server-v<pinned>)."
 
@@ -25,7 +28,7 @@ Then build (`mcp-server` always built first, then the target workspace), upgrade
 
 **Concrete steps to cut a release**:
 1. Root (`v*`): bump the relevant `package.json`(s), add a `## [x.y.z]` section to `CHANGELOG.md`, commit, `git tag vX.Y.Z`, push the tag.
-2. `mcp-server` package: bump `mcp-server/package.json#version` **and** the separate `SERVER_VERSION` constant in `mcp-server/src/server.ts` (since `#396`, 2026-07-04, this pair *is* test-enforced equal by `mcp-server/tests/server-version.test.ts`, the same drift-guard pattern as the bridge's own version test, see `mcp-server.md`), and in the same commit the exact `@agent-tasks/mcp-server` pin in `mcp-bridge/package.json#dependencies` plus the lockfile (`mcp-bridge/tests/lockstep.test.ts` requires the pin to equal the workspace `mcp-server` version at all times, so a server bump without the pin fails the MCP Bridge CI job; the repo's bridge then points at a version not yet on npm, which is harmless until a bridge tag is pushed), commit, `git tag mcp-server-vX.Y.Z`, push. Wait for `publish-npm.yml` to go green (or check `npm view @agent-tasks/mcp-server version`).
+2. `mcp-server` package: bump `mcp-server/package.json#version` **and** the separate `SERVER_VERSION` constant in `mcp-server/src/server.ts` (this pair *is* test-enforced equal by `mcp-server/tests/server-version.test.ts`, the same drift-guard pattern as the bridge's own version test, see `mcp-server.md`), and in the same commit the exact `@agent-tasks/mcp-server` pin in `mcp-bridge/package.json#dependencies` plus the lockfile (`mcp-bridge/tests/lockstep.test.ts` requires the pin to equal the workspace `mcp-server` version at all times, so a server bump without the pin fails the MCP Bridge CI job; the repo's bridge then points at a version not yet on npm, which is harmless until a bridge tag is pushed), commit, `git tag mcp-server-vX.Y.Z`, push. Wait for `publish-npm.yml` to go green (or check `npm view @agent-tasks/mcp-server version`).
 3. `mcp-bridge` package: the exact pin already moved with step 2. Bump `mcp-bridge/package.json#version` **and** `PACKAGE_VERSION` in `mcp-bridge/src/cli.ts` (this pair *is* test-enforced by `mcp-bridge/tests/cli-version.test.ts`). Commit, `git tag mcp-bridge-vX.Y.Z`, push, only after step 2's tag has actually published.
 
 Related: `mcp-server.md`, `mcp-bridge.md`, `deploy.md`.

@@ -12,10 +12,9 @@ Status: v1, targets `mcp-server` 0.13.0 (breaking change). See
 
 ## Motivation
 
-A 14-day audit across 16 Pandora sessions measured tool-token spend with
-`mcp-token-audit`. MCP tool traffic accounted for 1.23M of 2.9M total tool
-tokens (42%), and roughly 80% of that MCP traffic was `agent-tasks` calls.
-Per-verb, the outliers were:
+A tool-token audit of agent sessions with `mcp-token-audit` found MCP tool
+traffic to be a large share of tool-token spend, most of it `agent-tasks`
+calls. Per-verb, the outliers were:
 
 | Verb | Calls | Tokens out | Note |
 |---|---:|---:|---|
