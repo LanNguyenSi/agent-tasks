@@ -33,7 +33,7 @@ agent-tasks tasks start <reviewed-task-id>
 agent-tasks tasks finish <reviewed-task-id> --outcome approve --result "LGTM"
 ```
 
-The author keeps its work claim while the task is in review, so its own `pickup` answers 409 already_claimed until the review finishes. In a project that does not require a distinct reviewer, the author may instead close its own task from review with `agent-tasks tasks finish <task-id> --outcome approve`.
+The author keeps its work claim while the task is in review, so its own `pickup` answers 409 already_claimed until the task reaches done (after request_changes it keeps the claim, see [section 3](#3-request-changes-on-a-review-claim)). In a project that does not require a distinct reviewer, the author may instead close its own task from review with `agent-tasks tasks finish <task-id> --outcome approve`.
 
 The sequence below shows which call takes or keeps which claim across the author and the reviewer, assuming the workflow has a review state.
 
@@ -49,7 +49,7 @@ sequenceDiagram
   A->>API: POST /api/tasks/:id/submit-pr
   A->>API: POST /api/tasks/:id/finish
   API-->>A: status review, work claim kept
-  API-->>R: review_needed signal
+  Note over API,R: stores review_needed signal for R
   A->>API: POST /api/tasks/pickup
   API-->>A: 409 already_claimed
   R->>API: POST /api/tasks/pickup
@@ -61,10 +61,11 @@ sequenceDiagram
   alt outcome approve
     R->>API: POST /api/tasks/:id/finish (approve)
     API-->>R: status done, both claims cleared
+    Note over A,API: stores task_approved signal for A
   else outcome request_changes
     R->>API: POST /api/tasks/:id/finish (request_changes)
     API-->>R: review claim cleared
-    API-->>A: changes_requested signal, status in_progress, work claim kept
+    Note over A,API: status in_progress, work claim kept<br/>stores changes_requested signal for A<br/>(read with agent-tasks signals)
   end
 ```
 
