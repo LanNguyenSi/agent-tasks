@@ -3,7 +3,7 @@ type: overview
 title: "agent-tasks system architecture"
 description: "Four independently-deployable components around one PostgreSQL store, with a stdio MCP surface as the agent entry point."
 tags: [architecture, backend, frontend, mcp, monorepo]
-timestamp: 2026-10-11T16:10:03Z
+timestamp: 2026-10-11T16:23:50Z
 sources:
   - backend/src/config/grounding-runtime.ts
   - backend/src/services/grounding-runtime.ts
@@ -32,7 +32,7 @@ sources:
   - mcp-server/src/client.ts
 ---
 
-npm workspaces monorepo (`package.json` workspaces: `backend`, `frontend`, `mcp-server`, `mcp-bridge`, `cli`). This doc covers the four deployables; `@agent-tasks/cli` is a fifth workspace (a standalone REST CLI client) not detailed here.
+npm workspaces monorepo (`package.json` workspaces: `backend`, `frontend`, `mcp-server`, `mcp-bridge`, `cli`). This doc covers the four deployables; `@agent-tasks/cli` is a fifth workspace, a REST CLI client that is not deployed and is described in `cli.md`.
 
 1. **backend** (`@agent-tasks/backend`), a Hono HTTP API (`backend/src/app.ts`, served via `@hono/node-server` in `backend/src/server.ts`), Prisma ORM against PostgreSQL. All API routes mount under `/api`; the Swagger UI page is the one exception, served at `/docs` (`backend/src/app.ts:120`, `backend/src/routes/docs.ts:2063`; see `backend.md`). Owns all state.
 2. **frontend** (`@agent-tasks/frontend`), Next.js 15 app (`frontend/package.json` pins `next@^15`), the human-facing UI. Talks to the backend over HTTP; has a couple of its own `app/api/*` route handlers only for GitHub OAuth redirects (`frontend/src/app/api/auth/github/*`).

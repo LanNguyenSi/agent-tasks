@@ -13,6 +13,7 @@ An OKF (Open Knowledge Format) v0.1 bundle describing the agent-tasks codebase: 
 - [frontend](frontend.md): the Next.js UI: the two independently-authored task list views, the confidence-scorer client mirror.
 - [mcp-server](mcp-server.md): the stdio MCP server wrapping the backend REST API over a bearer token.
 - [mcp-bridge](mcp-bridge.md): the CLI wrapper that resolves a token (env/keychain/file) and hands off to mcp-server.
+- [cli](cli.md): the `agent-tasks` REST CLI: v2 verbs and deprecated aliases, task-id prefix resolution, operation keys, the two `tasks list` modes, config precedence, and its missing publish axis.
 
 ## Invariants
 
@@ -21,6 +22,8 @@ An OKF (Open Knowledge Format) v0.1 bundle describing the agent-tasks codebase: 
 - [governance-merge](governance-merge.md): governance gates, grouped GitHub merge decisions, pending webhook observations and the legacy GitHub webhook ingest (signature, delivery dedup, per-event handling).
 - [workflow-gates](workflow-gates.md): the four transition preconditions, branchName atomic folding, the cross-repo PR guard, externalRef idempotency, the `release-ops-no-pr` template for PR-less task classes.
 - [claim-model](claim-model.md): backlog filtering and guards, task_pickup's resolution order, single-active-claim enforcement, and why status is an unconstrained free string.
+- [signals-and-notification-delivery](signals-and-notification-delivery.md): signal types and their recipients, the pull inbox, acknowledgement on done, and best-effort webhook push delivery behind the egress guard.
+- [permissions-model](permissions-model.md): team roles versus per-project share roles, the access, write and role tiers in `team-access.ts`, and where each token scope is checked.
 
 ## Runbooks
 
