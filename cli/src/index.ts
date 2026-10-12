@@ -50,6 +50,26 @@ function warnDeprecated(oldCmd: string, newCmd: string): void {
   );
 }
 
+// Minimum length the backend enforces for the operator override reason
+// (`forceReason` on the claim route). Checked client-side so a too-short or
+// missing reason fails before the network call with a clear message.
+const MIN_FORCE_REASON_LENGTH = 10;
+
+// Validates the `--force` / `--force-reason` pair of `tasks claim`. Returns an
+// error message, or null when the combination is acceptable.
+function checkForceFlags(force: boolean | undefined, reason: string | undefined): string | null {
+  if (force) {
+    if (reason === undefined || reason.trim().length < MIN_FORCE_REASON_LENGTH) {
+      return `Error: --force requires --force-reason of at least ${MIN_FORCE_REASON_LENGTH} characters.`;
+    }
+    return null;
+  }
+  if (reason !== undefined) {
+    return "Error: --force-reason is only valid together with --force.";
+  }
+  return null;
+}
+
 // Reads a `--file` argument for `tasks respec`: a JSON object with an
 // optional `description` (string) and/or `templateData` (object) key. Exits
 // with a usage error (before any network call) on a missing file, invalid
@@ -185,7 +205,11 @@ tasks
     "--outcome <outcome>",
     "Review outcome: approve | request_changes (review-claim only)",
   )
-  .option("--auto-merge", "Auto-merge the PR after approval")
+  .option(
+    "--auto-merge",
+    "Merge the PR as part of the finish: after an approve outcome (review claim), or for a work " +
+      "claim only when the project's governanceMode is AUTONOMOUS (the backend rejects it otherwise)",
+  )
   .option(
     "--merge-method <method>",
     "Merge method: merge | squash | rebase (default: squash)",
@@ -540,15 +564,27 @@ tasks
 tasks
   .command("claim <task-id>")
   .description("[deprecated] Claim a task — use 'tasks start' (v2)")
-  .option("--force", "Bypass confidence threshold")
+  .option(
+    "--force",
+    "Operator override of the confidence gate (needs the confidence:override token scope and --force-reason)",
+  )
+  .option(
+    "--force-reason <text>",
+    `Justification for --force, at least ${MIN_FORCE_REASON_LENGTH} characters (recorded in the audit event)`,
+  )
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
     const mode = getMode(opts);
+    const forceError = checkForceFlags(opts.force, opts.forceReason);
+    if (forceError) {
+      console.error(forceError);
+      process.exit(1);
+    }
     warnDeprecated("tasks claim", "tasks start");
     const config = loadConfig();
     const resolvedId = await resolveTaskId(config, taskId);
-    const task = await api.claimTask(config, resolvedId, opts.force);
+    const task = await api.claimTask(config, resolvedId, opts.force, opts.forceReason);
     console.log(formatTask(task, mode));
   });
 
@@ -610,9 +646,9 @@ tasks
   .command("respec <task-id>")
   .description(
     "Update a task's description/templateData in place and show the recalculated confidence " +
-      "score. Requires the task to be open and unclaimed (no work claim, no review claim). " +
+      "score. Requires the task to be open or backlog and unclaimed (no work claim, no review claim). " +
       "Agent callers must be the task's creator, unless the project has allowNonCreatorRespec " +
-      "enabled; human callers need project write access.",
+      "enabled or the task is in backlog; human callers need project write access.",
   )
   .option("--description <text>", "New task description (mutually exclusive with --file)")
   .option(

@@ -159,7 +159,11 @@ describe("ConnectAgentModal", () => {
     await user.click(screen.getByRole("tab", { name: /cli/i }));
     let snippet = screen.getByTestId("connect-snippet");
     expect(snippet.textContent).toContain(`AGENT_TASKS_TOKEN="at_live_test123"`);
-    expect(snippet.textContent).toContain("@agent-tasks/cli");
+    // The CLI is not on npm: the snippet must build it from a checkout and
+    // run the built entry point, never `npx @agent-tasks/cli`.
+    expect(snippet.textContent).toContain("npm run build --workspace=@agent-tasks/cli");
+    expect(snippet.textContent).toContain("node cli/dist/index.js tasks list");
+    expect(snippet.textContent).not.toContain("npx");
     expect(snippet.textContent).toContain("AGENT_TASKS_ENDPOINT");
     expect(snippet.textContent).not.toContain("agent-tasks-cli");
 

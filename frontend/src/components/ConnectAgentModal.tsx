@@ -72,9 +72,14 @@ function snippetMcpHttp(token: string, apiBase: string): string {
 }
 
 function snippetCli(token: string, apiBase: string): string {
-  return `export AGENT_TASKS_ENDPOINT="${apiBase}"
+  // The CLI is not published to npm: build it from a checkout (Node 22+).
+  return `git clone https://github.com/LanNguyenSi/agent-tasks.git
+cd agent-tasks
+npm install
+npm run build --workspace=@agent-tasks/cli
+export AGENT_TASKS_ENDPOINT="${apiBase}"
 export AGENT_TASKS_TOKEN="${token}"
-npx -y @agent-tasks/cli tasks list`;
+node cli/dist/index.js tasks list`;
 }
 
 function snippetCurl(token: string, apiBase: string): string {

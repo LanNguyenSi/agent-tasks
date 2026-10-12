@@ -30,7 +30,8 @@ git clone https://github.com/LanNguyenSi/agent-tasks.git
 cd agent-tasks
 npm install
 npm run build --workspace=@agent-tasks/cli
-npm install -g ./cli   # or run node cli/dist/index.js <command> without installing
+npm install -g ./cli   # links back to this checkout, so keep the clone; or run
+                       # node cli/dist/index.js <command> without installing
 ```
 
 ### Configure
