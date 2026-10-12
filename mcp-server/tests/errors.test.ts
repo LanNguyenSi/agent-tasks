@@ -559,10 +559,13 @@ describe("mapBackendError catalog", () => {
   });
 
   // ── 6. force_admin_only ─────────────────────────────────────────────────
-  it("force_admin_only: non-admin force=true has no self-service allowedNext but a concrete recipe (never 'invalid request')", () => {
+  it.each([
+    "Only team admins can force a transition",
+    "Only team admins and project admins can force a transition",
+  ])("force_admin_only: non-admin force=true has no self-service allowedNext but a concrete recipe (never 'invalid request'): %s", (message) => {
     const err = mapBackendError(403, {
       error: "forbidden",
-      message: "Only team admins can force a transition",
+      message,
     });
     expect(err.error.code).toBe("force_admin_only");
     expect(err.error.recipe.toLowerCase()).not.toBe("invalid request");
@@ -587,12 +590,17 @@ describe("mapBackendError catalog", () => {
   });
 
   // ── 7a. creator_abandon_conflict ─────────────────────────────────────────
-  it("creator_abandon_conflict: a claimed/non-open task on task_creator_abandon maps to tasks_get only (no self-service retry)", () => {
+  it.each([
+    "Task must be open and unclaimed to creator-abandon",
+    "Task must be open or backlog and unclaimed to creator-abandon",
+    "Task must be open or backlog and unclaimed to creator-abandon, or it changed before the request completed",
+  ])("creator_abandon_conflict: a claimed/non-open task on task_creator_abandon maps to tasks_get only (no self-service retry): %s", (message) => {
     const err = mapBackendError(409, {
       error: "conflict",
-      message: "Task must be open and unclaimed to creator-abandon",
+      message,
     });
     expect(err.error.code).toBe("creator_abandon_conflict");
+    expect(err.error.recipe).toContain("open or backlog");
     expect(err.error.allowedNext).toEqual(["tasks_get"]);
     assertAllowedNextRegistered(err, registered);
   });
@@ -1854,7 +1862,7 @@ describe("recipe-vs-allowedNext coherence guard (catalog-wide, task 18e54531)", 
       label: "creator_abandon_conflict",
       err: mapBackendError(409, {
         error: "conflict",
-        message: "Task must be open and unclaimed to creator-abandon",
+        message: "Task must be open or backlog and unclaimed to creator-abandon",
       }),
     },
     {

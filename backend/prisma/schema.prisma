@@ -500,7 +500,8 @@ model TaskAttachment {
 }
 
 // Typed, agent-produced task outputs (build logs, test reports, coverage, generated code, etc.).
-// Distinct from TaskAttachment, which is a human-uploaded metadata pointer with no semantics.
+// Distinct from TaskAttachment, which holds files a human uploaded (images and text documents,
+// bytes on the UPLOAD_DIR volume) or plain URL pointers, with no artifact type semantics.
 model TaskArtifact {
   id               String   @id @default(uuid())
   taskId           String
@@ -598,7 +599,7 @@ model Board {
 
 model Signal {
   id               String    @id @default(uuid())
-  type             String // "review_needed" | "changes_requested" | "task_approved" | "task_assigned"
+  type             String // SignalType in src/services/signal.ts: "review_needed" | "changes_requested" | "task_approved" | "task_available" | "task_force_transitioned" | "self_merge_notice"
   taskId           String
   projectId        String
   recipientAgentId String? // Target agent token (null for human)

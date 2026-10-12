@@ -182,7 +182,8 @@ export function noTokenAvailableMessage(filePath?: string): string {
     "env (AGENT_TASKS_TOKEN is not set), " +
     "OS keychain (no entry stored, or the keychain is unavailable), " +
     `file (${path} does not exist or is empty). ` +
-    "Fix one of: set AGENT_TASKS_TOKEN, run 'agent-tasks-mcp-bridge login', " +
+    "Fix one of: set AGENT_TASKS_TOKEN, run 'agent-tasks-mcp-bridge login' " +
+    "(or 'npx -y @agent-tasks/mcp-bridge login' if the bridge is not installed globally), " +
     `or write the token directly to ${path}.`
   );
 }

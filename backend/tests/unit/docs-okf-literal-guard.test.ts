@@ -1,4 +1,4 @@
-// T-007 (agent-tasks tracker 3feb590f, batch45 D-011): guard for quoted VALUE
+// Guard (agent-tasks tracker 3feb590f) for quoted VALUE
 // literals that sit next to a docs/okf line citation. See
 // backend/tests/helpers/okf-literal-guard.ts for the extraction/window
 // design, docs/okf/index.md's Maintenance section for the rule and
@@ -68,8 +68,8 @@ function scanBundle(): {
     const text = fs.readFileSync(path.join(OKF_DIR, doc), "utf8");
     const sources = parseFrontmatterSources(text);
     const blocks = extractBlocks(text);
-    // Baseline for the spans-seen self-check (T-007 round 3, D-030 finding
-    // 3): counted over the raw per-file body (stripFrontmatter only, no
+    // Baseline for the spans-seen self-check (added after review):
+    // counted over the raw per-file body (stripFrontmatter only, no
     // extractBlocks), so a regression in extractBlocks' block-splitting
     // (e.g. dropping the file's last block) still leaves this baseline
     // unchanged and the comparison below fails loudly. This does not
@@ -79,7 +79,7 @@ function scanBundle(): {
     // the right cut point rather than the first body line.
     const rawSpansPresent = countSpans(stripFrontmatter(text));
     // log.md narrates history (old, now-superseded values, e.g. the
-    // pre-fix SERVER_VERSION and allowedNext); T-001 exempted it from the
+    // pre-fix SERVER_VERSION and allowedNext); it is exempted from the
     // bare-citation ratchet the same way. Its counts are gathered but
     // never asserted.
     const isLog = doc === "log.md";
@@ -159,7 +159,7 @@ const LOG_CHECKED_HISTORICAL = LOG_SCAN ? LOG_SCAN.checked : 0;
 const TOTAL_SPANS_SEEN = BUNDLE_SCAN.reduce((a, d) => a + d.spansSeen, 0);
 const TOTAL_SPANS_PRESENT = BUNDLE_SCAN.reduce((a, d) => a + d.spansPresent, 0);
 
-describe("docs/okf quoted-literal guard (T-007)", () => {
+describe("docs/okf quoted-literal guard", () => {
   it(
     `checks ${TOTAL_CHECKED} value literal(s) within a ${WORD_WINDOW}-word citation window across the current docs/okf bundle ` +
       `(${TOTAL_ALLOWLISTED} allowlisted, ${TOTAL_BARE} bare identifier(s) correctly left unchecked, ` +
@@ -187,7 +187,7 @@ describe("docs/okf quoted-literal guard (T-007)", () => {
   });
 });
 
-describe("docs/okf literal-guard allowlist (T-007)", () => {
+describe("docs/okf literal-guard allowlist", () => {
   it(`has at most ${MAX_ALLOWLIST_ENTRIES} entries, each with a non-empty reason`, () => {
     expect(ALLOWLIST.length).toBeLessThanOrEqual(MAX_ALLOWLIST_ENTRIES);
     for (const entry of ALLOWLIST) {
@@ -466,7 +466,7 @@ describe("okf-literal-guard fixtures", () => {
       expect(result.findings).toHaveLength(1);
       expect(result.findings[0].reason).toBe("unreadable-citation");
     } finally {
-      // try/finally (T-010 round 3, D-029 residual): both cleanups run
+      // try/finally: both cleanups run
       // even when an assertion above throws, so a failing run does not
       // leave `outside` (a loose file, not under `root`'s own mkdtemp
       // directory) behind in the shared temp root.
@@ -494,16 +494,16 @@ describe("okf-literal-guard fixtures", () => {
       expect(result.findings).toHaveLength(1);
       expect(result.findings[0].reason).toBe("unreadable-citation");
     } finally {
-      // try/finally (T-010 round 3, D-029 residual): see above.
+      // try/finally: see above.
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(sibling, { recursive: true, force: true });
     }
   });
 
-  // T-010 (agent-tasks tracker 5e95e4bd): a citation path can be lexically
+  // Tracker 5e95e4bd: a citation path can be lexically
   // inside root (passes the `..`-escape check above) while being an
   // in-root symlink whose REAL target sits outside root -- the escape the
-  // pre-T-010 `path.resolve`-only containment test could not see.
+  // an earlier `path.resolve`-only containment test could not see.
   it("rejects an in-root symlink whose real target sits outside the root as unreadable", () => {
     const root = makeFixtureRoot();
     const outside = path.join(
@@ -521,7 +521,7 @@ describe("okf-literal-guard fixtures", () => {
       expect(result.findings).toHaveLength(1);
       expect(result.findings[0].reason).toBe("unreadable-citation");
     } finally {
-      // try/finally (T-010 round 3, D-029 residual): `outside` sits in
+      // try/finally: `outside` sits in
       // root's parent (the shared temp root), not under root's own
       // mkdtemp directory, so it needs its own guaranteed cleanup.
       fs.rmSync(root, { recursive: true, force: true });
@@ -548,7 +548,7 @@ describe("okf-literal-guard fixtures", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  // T-010 round 2: a citation naming a directory (`CITATION_RE` does not
+  // A citation naming a directory (`CITATION_RE` does not
   // require an extension, and a directory can be lexically and really
   // inside root) reached `fs.readFileSync` uncaught and threw EISDIR
   // before the fix above.

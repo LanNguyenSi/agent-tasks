@@ -4799,7 +4799,7 @@ describe("POST /tasks/:id/transition — backlog negative control (T-002 AC7, no
 
     expect(res.status).toBe(403);
     const body = (await res.json()) as { message: string };
-    expect(body.message).toBe("Only team admins can force a transition");
+    expect(body.message).toBe("Only team admins and project admins can force a transition");
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
     expect(logAuditEvent).not.toHaveBeenCalled();
   });
@@ -7101,7 +7101,7 @@ describe("POST /tasks/:id/creator-abandon", () => {
     const res = await creatorAbandonRequest(AGENT_WITH_UPDATE, {});
     expect(res.status).toBe(409);
     const body = (await res.json()) as { message: string };
-    expect(body.message).toBe("Task must be open and unclaimed to creator-abandon");
+    expect(body.message).toBe("Task must be open or backlog and unclaimed to creator-abandon");
     expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
     expect(logAuditEvent).not.toHaveBeenCalled();
   });
