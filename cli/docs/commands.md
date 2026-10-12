@@ -244,7 +244,7 @@ agent-tasks github pr comment <pr-number> "LGTM" \
 
 The first invocation of a deprecated command in a process emits a single stderr line; subsequent calls in the same process are silent.
 
-`tasks claim --force` sends `?force=true` without a `forceReason`. In a project whose confidence gate is in BLOCK mode, the server rejects it either way: 403 without the `confidence:override` scope, and 400 with it, because a forced claim needs a reason of at least 10 characters. In WARN or OFF mode the flag has no effect.
+`tasks claim --force --force-reason "<text>"` overrides the confidence gate. The reason must be at least 10 characters and is required with `--force`; the CLI checks both before sending anything, and `--force-reason` without `--force` is an error. The server still requires the operator-only `confidence:override` token scope (403 without it) and records the reason in the audit event. In WARN or OFF mode the flag has no effect.
 
 ## Output formats
 

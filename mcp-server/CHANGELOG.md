@@ -4,6 +4,9 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+- Tool descriptions and the workflow primer match backend behavior: `task_finish` names `governanceMode` AUTONOMOUS (not `soloMode`) for work-claim `autoMerge`, `task_creator_abandon` covers open and backlog tasks, `task_create` no longer names `task_pickup` as a confidence gate, `task_submit_pr` and the `cross_repo_pr_rejected` entry use the task's deliverable repo when set, and `backlog_not_promoted` is no longer attributed to `task_pickup`.
+- `creator_abandon_conflict` also matches the backend's new `Task must be open or backlog and unclaimed to creator-abandon` text (the older text still maps); its recipe names backlog.
+
 ## 0.17.0
 
 - `task_create` and `task_respec` describe that each `templateData` spec field may be a string or a list of strings. The tool descriptions are the only change here; the list handling is in the backend. Tracker task 8908e2a2.

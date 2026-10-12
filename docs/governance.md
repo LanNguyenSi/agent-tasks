@@ -92,3 +92,5 @@ Every claim, transition, update, and override is recorded with actor and timesta
 GET /api/projects/:id/audit
 GET /api/tasks/:id/audit
 ```
+
+`GET /api/projects/:id/audit` takes `limit` (default 50, at most 200), `offset` and an optional `actionPrefix`. With `actionPrefix`, the server returns only rows whose `action` starts with that prefix, for example `workflow.` or `signal.webhook_`. The prefix is matched literally, is 1 to 100 characters from `A-Z a-z 0-9 . _ : -`, and anything else is answered with `400 bad_request`.

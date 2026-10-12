@@ -475,7 +475,7 @@ export class AgentTasksClient {
   }
 
   // Task 7a1360da: distinct from abandonTask above, which releases a CLAIM.
-  // creatorAbandonTask retires an OPEN, UNCLAIMED task the caller created
+  // creatorAbandonTask retires an OPEN or BACKLOG, UNCLAIMED task the caller created
   // into status="abandoned", with no claim involved at all.
   creatorAbandonTask(taskId: string, input?: { reason?: string }) {
     return this.request<unknown>("POST", `/api/tasks/${taskId}/creator-abandon`, input);

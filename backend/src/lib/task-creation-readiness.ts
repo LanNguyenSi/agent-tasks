@@ -1,7 +1,7 @@
 /**
  * Task-creation readiness — the per-project knobs an agent needs to know BEFORE
  * it composes a task, so it can supply the structured spec fields the confidence
- * scorer (and, in BLOCK mode, the pickup gate) expects.
+ * scorer (and, in BLOCK mode, the claim gate) expects.
  *
  * Surfaced as a `taskCreation` block on the discovery endpoints
  * (`GET /api/projects/:id` and `/effective-gates`, backing the `projects_get` /
@@ -11,7 +11,7 @@
  * the full (deprecated) project payload.
  *
  * Read-only summary; it never blocks. A low-readiness claim is still enforced by
- * the confidence gate at task_pickup/task_start (see services/confidence-gate.ts),
+ * the confidence gate on task_start and the deprecated /claim route (see services/confidence-gate.ts; task_pickup never runs it),
  * governed by `enforcementMode`. Create itself stays informational by design.
  */
 import {

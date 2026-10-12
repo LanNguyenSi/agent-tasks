@@ -59,7 +59,7 @@ These fields on `Project` shape every state-write path:
 |---|---|
 | `Signal` | Pull-based async event for one specific recipient. `type: String` (no DB enum), `taskId`, `projectId`, exactly-one of `recipientAgentId` / `recipientUserId`, `context: JSON`, `acknowledgedAt`. Validation is application-side via the `SignalType` union; see [`events.md`](events.md) for the catalog. |
 
-Acking a signal sets `acknowledgedAt`. When a task lands in a terminal state, `acknowledgeSignalsForTask` bulk-acks every pending signal on that task (unconditional) so reviewers do not see stale entries. A separate `STALE_WHEN_DONE` constant suppresses three signal types (`review_needed`, `task_available`, `task_assigned`) from the `task_pickup` feed when the task is already done; the two mechanisms are orthogonal.
+Acking a signal sets `acknowledgedAt`. When a task lands in a terminal state, `acknowledgeSignalsForTask` bulk-acks every pending signal on that task (unconditional) so reviewers do not see stale entries. A separate `STALE_WHEN_DONE` constant suppresses two signal types (`review_needed`, `task_available`) from the `task_pickup` feed when the task is already done; the two mechanisms are orthogonal.
 
 ## Audit layer
 

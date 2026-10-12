@@ -205,7 +205,7 @@ function confidenceDeviation(c: ConfidenceObj | undefined): Deviation | null {
     // backend's declared maxima" test in tests/receipt.test.ts).
     actNow:
       c.enforcementMode === "BLOCK"
-        ? "Description/templateData not editable after create except via task_respec; at BLOCK, task_pickup/task_start rejects until the score improves."
+        ? "Description/templateData not editable after create except via task_respec; at BLOCK, task_start rejects until the score improves."
         : "Description/templateData not editable after create except via task_respec; not BLOCK, so advisory only for now.",
     next: ["task_respec to raise the score above the threshold"],
   };

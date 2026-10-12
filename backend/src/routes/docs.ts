@@ -23,7 +23,7 @@ export const openApiSpec = {
     title: "agent-tasks API",
     version: "1.0.0",
     description:
-      "API documentation for humans and agents. Agent automation uses Bearer agent tokens with scopes.",
+      "API documentation for humans and agents. Agent automation uses Bearer agent tokens with scopes. This document covers a subset of the API: it has no entries for several route groups, among them task pickup, start, submit-pr, creator-abandon, signals, comments, review, attachments, artifacts, workflows and the admin routes. The route handlers in backend/src/routes are the complete list.",
   },
   servers: [
     { url: "http://localhost:3001", description: "Local development" },
@@ -385,7 +385,7 @@ export const openApiSpec = {
       TaskCreationReadiness: {
         type: "object",
         description:
-          "Per-project task-creation knobs an agent should read BEFORE composing a task, so it can supply the structured spec fields the confidence scorer (and, in BLOCK mode, the claim gate) expects. Read-only summary; it never blocks by itself — a low-readiness claim is still enforced separately at task_pickup/task_start.",
+          "Per-project task-creation knobs an agent should read BEFORE composing a task, so it can supply the structured spec fields the confidence scorer (and, in BLOCK mode, the claim gate) expects. Read-only summary; it never blocks by itself — a low-readiness claim is still enforced separately at task_start and /tasks/{id}/claim (task_pickup does not run the gate).",
         properties: {
           enforcementMode: {
             type: "string",
@@ -1211,7 +1211,7 @@ export const openApiSpec = {
         },
         responses: {
           "201": {
-            description: "Task created. The non-blocking `confidence` object surfaces the score and what's missing at create time; a low score does NOT block creation (the hard gate is at task_pickup/task_start).",
+            description: "Task created. The non-blocking `confidence` object surfaces the score and what's missing at create time; a low score does NOT block creation (the hard gate runs on task_start and /tasks/{id}/claim, not at task_pickup).",
             content: {
               "application/json": {
                 schema: {

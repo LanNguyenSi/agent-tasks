@@ -26,12 +26,11 @@ echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env   # required, >= 32 chars
 docker compose up -d db   # or point DATABASE_URL at any reachable PostgreSQL
 make install       # install all workspace deps
 make setup         # prepare .env + generate Prisma client
-set -a; . ./.env; set +a   # the backend and the Prisma CLI do not read the root .env
 make db-push       # sync schema to the configured DB
 make dev           # backend + frontend in one terminal
 ```
 
-Export the variables in every terminal that runs `make db-push`, `make dev`, `make dev-backend` or `make dev-frontend`. Set `TRUSTED_PROXY_HOPS=0` in `.env` when no reverse proxy is in front of the backend.
+`make db-push` and the backend dev script (`make dev`, `make dev-backend`) load the root `.env` themselves, so nothing needs exporting first; a variable already set in your shell takes precedence over the file. Both parse `.env` with Node's dotenv rules, not shell rules (no `$` expansion, an unquoted ` #` starts a comment), and print a one-line notice when there is no `.env`. The backend dev script uses Node's `--env-file-if-exists`, which needs Node 22.9 or newer (the repository `engines` field says so). The Docker development backend (bind mount plus `npm run dev`) therefore also reads the root `.env` for variables the compose file does not set. Other ways of starting the backend (`npm run start`, `node dist/server.js`) do not read `.env`, and neither does the Prisma CLI when you run it directly: export the variables first (`set -a; . ./.env; set +a`). Set `TRUSTED_PROXY_HOPS=0` in `.env` when no reverse proxy is in front of the backend.
 
 Or run them in separate terminals:
 

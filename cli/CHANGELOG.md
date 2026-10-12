@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tasks claim` gains `--force-reason <text>` (at least 10 characters, required with `--force`, `--force-reason` alone is an error); both are checked before any request. `--force` alone could never succeed under confidence enforcement mode BLOCK because the server needs a reason.
 - `tasks finish`, `tasks abandon`, `github pr create` and `github pr merge`
   gain an optional `--operation-key <key>` flag and now always send an
   `Idempotency-Key` header (and, for the two `github pr` commands, the
@@ -84,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **BREAKING:** `tasks create --json` now emits the full `{ task,
   confidence }` envelope instead of just the task. Scripts that read the
   created id via `.id` must switch to reading it via `.task.id`.
+- Help texts: `tasks claim --force` describes the operator override of the confidence gate, `tasks finish --auto-merge` names the AUTONOMOUS governance requirement on a work claim, and `tasks respec` says the task must be open or backlog and unclaimed.
 
 ### Security
 

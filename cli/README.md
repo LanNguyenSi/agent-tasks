@@ -15,7 +15,8 @@ git clone https://github.com/LanNguyenSi/agent-tasks.git
 cd agent-tasks
 npm install
 npm run build --workspace=@agent-tasks/cli
-npm install -g ./cli   # puts the `agent-tasks` command on PATH
+npm install -g ./cli   # puts the `agent-tasks` command on PATH; npm links back to
+                       # this checkout, so keep the clone and rebuild after pulling
                        # (or skip this and run `node cli/dist/index.js <command>`)
 
 # point at your agent-tasks server, paste your token

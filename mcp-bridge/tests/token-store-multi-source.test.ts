@@ -147,6 +147,7 @@ describe("token resolution degrades gracefully when keytar is broken", () => {
     expect(msg).toMatch(/keychain/i);
     expect(msg).toMatch(/file/i);
     expect(msg).toMatch(/login/);
+    expect(msg).toContain("npx -y @agent-tasks/mcp-bridge login");
     expect(msg).not.toMatch(/^No token stored \(keytar\)/);
   });
 

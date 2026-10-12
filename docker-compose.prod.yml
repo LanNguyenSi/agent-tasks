@@ -73,6 +73,17 @@ services:
       # bytes live on the agent_tasks_uploads volume; the DB stores only
       # metadata.
       UPLOAD_DIR: /app/uploads
+      # Optional settings, forwarded with empty defaults: empty behaves like
+      # unset (the backend falls back to its built-in value). Set them in the
+      # prod .env to use them.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AGENT_TASKS_REWRITE_MODEL: ${AGENT_TASKS_REWRITE_MODEL:-}
+      WEBHOOK_ALLOWED_PRIVATE_HOSTS: ${WEBHOOK_ALLOWED_PRIVATE_HOSTS:-}
+      ATTACHMENT_MAX_COUNT_PER_TASK: ${ATTACHMENT_MAX_COUNT_PER_TASK:-}
+      ATTACHMENT_MAX_TOTAL_BYTES_PER_TASK: ${ATTACHMENT_MAX_TOTAL_BYTES_PER_TASK:-}
+      ARTIFACT_MAX_COUNT_PER_TASK: ${ARTIFACT_MAX_COUNT_PER_TASK:-}
+      ARTIFACT_MAX_TOTAL_BYTES_PER_TASK: ${ARTIFACT_MAX_TOTAL_BYTES_PER_TASK:-}
+      AGENT_TASKS_DISABLE_GROUNDING: ${AGENT_TASKS_DISABLE_GROUNDING:-}
     volumes:
       - agent_tasks_uploads:/app/uploads
     depends_on:

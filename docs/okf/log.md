@@ -827,3 +827,18 @@ Re-verified every claim in `mcp-server.md` against `mcp-server/src/tools.ts`, `e
 ## 2026-10-12 (release-flow.md: package CHANGELOG cut)
 
 Steps 2 and 3 of `release-flow.md` now name the package CHANGELOG cut: the `## Unreleased` entries of `mcp-server/CHANGELOG.md` and `mcp-bridge/CHANGELOG.md` move under the new version heading in the same commit as the version bump. The lockstep pin and the bridge-after-server-publish order were already stated in those steps and are unchanged. The package CHANGELOGs are not added as `sources` (release notes change every release without changing the procedure). The doc was re-stamped.
+
+## 2026-10-12 (frontend.md: point-in-time references moved here)
+
+`frontend.md` no longer carries the history behind two behaviours; it is recorded here instead. The column-gated create affordance on the board (the header `+` only on `Backlog` and `Open`) was an operator decision of 2026-08-20, shipped in `#483`. The backlog-first default of the create modal (`DEFAULT_CREATE_STATUS`, `"backlog"`, for human-initiated creates too) shipped in `#482` and replaced the earlier agent-only backlog default. The behaviour descriptions in `frontend.md` are unchanged.
+
+## 2026-10-12 (re-verification after the string, flag and config alignment)
+
+Re-verified `architecture.md`, `auth.md`, `backend.md`, `claim-model.md`, `cli.md`, `confidence-scorer.md`, `deploy.md`, `frontend.md`, `governance-merge.md`, `mcp-bridge.md`, `mcp-server.md`, `permissions-model.md`, `reconcile-done-but-open.md`, `signals-and-notification-delivery.md`, `task-lifecycle.md` and `workflow-gates.md` against the changed sources: `backend/src/routes/tasks.ts` (message and comment text only, no line moved), `backend/src/services/signal.ts` (the `task_assigned` union member removed), `backend/prisma/schema.prisma` (comments), `docker-compose.prod.yml`, `backend/package.json` (dev script), `cli/src/index.ts` and `cli/src/api.ts` (`tasks claim --force-reason`), `mcp-server/src/errors.ts`, `tools.ts`, `primer.ts`, `client.ts` (strings and the creator-abandon pattern, no line moved in `errors.ts`) and `mcp-bridge/src/token-store.ts` (hint text).
+
+Content changes: `cli.md` states the `--force-reason` rule; `task-lifecycle.md` says creator-abandon covers open and backlog tasks and quotes the new 409 text; `deploy.md` lists the optional settings the compose file now forwards; `claim-model.md` and `signals-and-notification-delivery.md` no longer list `task_assigned` and cite the shifted `signal.ts` lines. The other docs needed no content change: their claims (gate placement, force-transition admin check, error mapping, token resolution) still match the code. Verdict: no drift beyond the edits above; timestamps bumped.
+
+
+## 2026-10-12 (review follow-up: stale-when-done sentence, engines floor)
+
+`signals-and-notification-delivery.md` no longer names `task_assigned` in the sentence about pickup skipping pending rows of done tasks: `STALE_WHEN_DONE` in `backend/src/routes/tasks.ts` holds `review_needed` and `task_available` only. `architecture.md` lists `package.json` as a source, which now carries `engines.node` `>=22.9`; it makes no claim about the Node floor, so it was re-stamped without a content change. Both docs were re-stamped.

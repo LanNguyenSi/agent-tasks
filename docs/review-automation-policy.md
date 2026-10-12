@@ -63,13 +63,7 @@ Before any status transition, the webhook handler must verify:
 
 ## Custom workflows
 
-For projects using custom workflow definitions, the policy matrix above serves as the **default behavior**. Custom workflows may:
-
-- Override transition targets within the fixed state set `open`, `in_progress`, `review`, `done` (the workflow API accepts no other states).
-- Add additional preconditions (e.g., require N approvals before auto-transition).
-- Disable specific automations entirely.
-
-Custom workflow overrides are defined in the workflow definition's `webhookPolicy` field (future work).
+The webhook handlers do not read a project's custom workflow. The policy matrix above is applied to every project as it stands, and each handler writes its target status with a compare-and-swap without checking the target against the workflow's transitions. A project cannot override a transition target, add preconditions (for example N approvals before an auto-transition) or disable a single automation through its workflow definition: the workflow API has no webhook-policy field. Changing this would be a new feature, not an existing option.
 
 ## Out of scope (for now)
 
@@ -82,13 +76,7 @@ The following are explicitly **not** automated in the default workflow:
 
 ## Implementation guidance
 
-Not implemented. `evaluateWebhookPolicy` in `backend/src/services/webhook-policy.ts` exists but no handler calls it (it also still encodes the older merged ⇒ `done` rule and `webhook.*` audit names); the handlers in `github-webhook.ts` encode the policy inline. The intended design:
-
-1. Extract a `evaluateWebhookPolicy(event, task)` function that returns `{ transition?: string, sideEffects: SideEffect[] }`.
-2. Webhook handlers call this function instead of hardcoding transitions.
-3. The function consults the matrix above (or a custom workflow's `webhookPolicy` if defined).
-4. All side effects (timeline entries, metadata updates, audit events) are executed atomically with the transition.
-5. Failed policy evaluations are logged but do not cause webhook delivery failure (return 200 to GitHub).
+The handlers in `backend/src/services/github-webhook.ts` encode the policy inline; there is no separate policy evaluator. The matrix above is the contract, and the handlers implement it. If the policy ever needs to vary per project, extract the matrix into one function that the handlers call, and execute all side effects (timeline entries, metadata updates, audit events) atomically with the transition.
 
 ## ENGINEERING.md pattern
 

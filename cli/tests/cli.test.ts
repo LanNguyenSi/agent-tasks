@@ -500,10 +500,10 @@ describe("tasks respec argument validation", () => {
     expect(res.stderr).toContain("must contain 'description' and/or 'templateData'");
   });
 
-  it("documents the open+unclaimed state guard and the creator/flag rule in --help", () => {
+  it("documents the open-or-backlog+unclaimed state guard and the creator/flag rule in --help", () => {
     const res = run(["tasks", "respec", "--help"]);
     expect(res.status).toBe(0);
-    expect(res.stdout).toContain("open and unclaimed");
+    expect(res.stdout).toContain("open or backlog and unclaimed");
     expect(res.stdout).toContain("allowNonCreatorRespec");
     expect(res.stdout).toContain("--description");
     expect(res.stdout).toContain("--template-data");
@@ -658,5 +658,44 @@ describe("wiring: tasks list --project backfills the PROJECT column via withProj
     } finally {
       await close();
     }
+  });
+});
+
+describe("tasks claim --force / --force-reason", () => {
+  it("rejects --force without --force-reason before any network call", () => {
+    const res = run(["tasks", "claim", "11111111-1111-1111-1111-111111111111", "--force"]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("--force requires --force-reason");
+  });
+
+  it("rejects a --force-reason shorter than 10 characters", () => {
+    const res = run([
+      "tasks", "claim", "11111111-1111-1111-1111-111111111111", "--force", "--force-reason", "too short",
+    ]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("at least 10 characters");
+  });
+
+  it("rejects --force-reason without --force", () => {
+    const res = run([
+      "tasks", "claim", "11111111-1111-1111-1111-111111111111", "--force-reason", "a long enough reason",
+    ]);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("only valid together with --force");
+  });
+
+  it("lists --force-reason in --help and no longer calls --force a plain threshold bypass", () => {
+    const res = run(["tasks", "claim", "--help"]);
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain("--force-reason");
+    expect(res.stdout).not.toContain("Bypass confidence threshold");
+  });
+});
+
+describe("tasks finish --auto-merge help", () => {
+  it("names the AUTONOMOUS governance requirement for a work claim", () => {
+    const res = run(["tasks", "finish", "--help"]);
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain("AUTONOMOUS");
   });
 });

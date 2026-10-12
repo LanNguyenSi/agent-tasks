@@ -13,7 +13,7 @@
  * projects emit nothing (by design). requireDistinctReviewer projects never
  * reach this code path — `checkSelfMergeGate` blocks the merge upstream.
  *
- * Recipients: every human team member (ADMIN, MAINTAINER, REVIEWER, MEMBER).
+ * Recipients: every human team member (ADMIN, HUMAN_MEMBER, REVIEWER).
  * We don't narrow to reviewer/admin here because the whole point is broad
  * visibility — anyone on the team should be able to see what their agents
  * are doing. Agents are excluded — they already saw the merge, and this

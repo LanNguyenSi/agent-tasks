@@ -31,7 +31,6 @@ for the full contract, headers, and HMAC verification.
 | `review_needed` | Task transitions to `review` | Eligible reviewers (excl. assignee) |
 | `changes_requested` | Reviewer requests changes | Original assignee |
 | `task_approved` | Reviewer approves | Original assignee |
-| `task_assigned` | Never emitted: declared in the `SignalType` union, but no code path creates it | n/a |
 | `task_available` | Single create or batch import of an `open` task, or a `/transition` or human `PATCH` to `open` from another status; not a `backlog` promote, a claim release, `task_abandon` or a task created from a GitHub issue (see [events.md](events.md#signal-types)) | Eligible agents in the team |
 | `task_force_transitioned` | Admin force-transitions past a failed gate | Current claimant + current reviewer (excluding the forcing admin) |
 | `self_merge_notice` | Agent (or human) self-merged on a non-solo project with `requireDistinctReviewer: false` | All human team members, excluding the merging human |
@@ -113,8 +112,7 @@ log remains the authoritative record.
 ```typescript
 interface Signal {
   id: string;                  // UUID, unique per signal
-  type: SignalType;            // "review_needed" | "changes_requested" | "task_approved" | "task_assigned"
-                               // | "task_available" | "task_force_transitioned" | "self_merge_notice"
+  type: SignalType;            // one of the six types in the table above (SignalType in backend/src/services/signal.ts)
   taskId: string;              // Task UUID
   projectId: string;           // Project UUID
   recipientAgentId?: string;   // Target agent token ID (null for human recipients)

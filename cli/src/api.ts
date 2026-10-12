@@ -355,9 +355,17 @@ export async function createTask(
   );
 }
 
-export async function claimTask(config: Config, taskId: string, force = false): Promise<Task> {
+export async function claimTask(
+  config: Config,
+  taskId: string,
+  force = false,
+  forceReason?: string,
+): Promise<Task> {
+  const query = force
+    ? `?force=true${forceReason !== undefined ? `&forceReason=${encodeURIComponent(forceReason.trim())}` : ""}`
+    : "";
   const { task } = await request<{ task: Task }>(
-    config, `/api/tasks/${taskId}/claim${force ? "?force=true" : ""}`, { method: "POST" },
+    config, `/api/tasks/${taskId}/claim${query}`, { method: "POST" },
   );
   return task;
 }

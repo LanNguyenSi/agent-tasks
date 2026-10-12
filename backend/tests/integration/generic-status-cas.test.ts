@@ -1570,7 +1570,7 @@ describe("claim-guarded status writers compare the status version", () => {
 
     expect(res.status).toBe(409);
     expect(((await res.json()) as { message: string }).message).toBe(
-      "Task must be open and unclaimed to creator-abandon, or it changed before the request completed",
+      "Task must be open or backlog and unclaimed to creator-abandon, or it changed before the request completed",
     );
     await expectUnchangedAfterLostRace(taskId, { status: "open", claimedByUserId: null });
     expect(logAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "task.creator_abandoned" }));

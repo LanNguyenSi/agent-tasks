@@ -54,7 +54,7 @@ import { DEMOTE_STATE_CONFLICT_MESSAGE, demoteSourceStatusMessage } from "../ser
 // Outcome-notification signals (`task_approved`, `changes_requested`,
 // `task_force_transitioned`) are intentionally NOT listed — they are
 // emitted against terminal tasks by design and must still reach recipients.
-const STALE_WHEN_DONE: SignalType[] = ["review_needed", "task_available", "task_assigned"];
+const STALE_WHEN_DONE: SignalType[] = ["review_needed", "task_available"];
 import {
   templateDataSchema,
   calculateConfidence,
@@ -1259,8 +1259,8 @@ taskRouter.post(
     }
 
     // Create-time confidence surfacing (scorer-v2 T4). INFORMATIONAL only — a low
-    // score never blocks creation; the hard block stays at task_pickup/task_start.
-    // Reuses the same calculateConfidence + deriveNextActions the pickup gate uses
+    // score never blocks creation; the hard block stays at task_start and /claim.
+    // Reuses the same calculateConfidence + deriveNextActions the claim gate uses
     // (one source), so what's-missing is consistent everywhere. UI rendering of
     // these findings is a follow-up (task 1a925647): the dashboard create form
     // still drives a stale client-side scorer, so consuming the server findings
@@ -1335,7 +1335,7 @@ taskRouter.post(
       thresholdSource,
       triggeredRiskModifiers,
       // The effective mode tells the caller whether a `blocking` score will
-      // actually be rejected at task_pickup/task_start (BLOCK) or is advisory
+      // actually be rejected at task_start or /claim (BLOCK) or is advisory
       // (OFF/WARN). Create stays informational regardless.
       enforcementMode: resolveEnforcementMode(projectConf ?? {}),
       blocking: conf.blocking,
@@ -1969,7 +1969,7 @@ taskRouter.post("/tasks/pickup", async (c) => {
   }
 
   // ── 1. Signals ────────────────────────────────────────────────────────────
-  // Defense-in-depth: only `review_needed` / `task_available` / `task_assigned`
+  // Defense-in-depth: only `review_needed` / `task_available`
   // become stale when the task lands on `done` — those ask the recipient to
   // DO something ("pick this up", "review this") that no longer applies.
   // `task_approved`, `changes_requested`, `task_force_transitioned` are
@@ -4447,11 +4447,11 @@ const creatorAbandonSchema = z.object({
   reason: z.string().trim().min(1).max(2000).optional(),
 });
 
-const CREATOR_ABANDON_STATE_CONFLICT_MESSAGE = "Task must be open and unclaimed to creator-abandon";
+const CREATOR_ABANDON_STATE_CONFLICT_MESSAGE = "Task must be open or backlog and unclaimed to creator-abandon";
 // The write's own compare-and-swap lost: the precondition may still hold and
 // only the status version moved (a round trip back to open), so the text does
 // not claim the precondition failed. The prefix stays byte-identical because
-// the MCP server maps the 409 by matching "open and unclaimed to creator-abandon".
+// the MCP server maps the 409 by matching "open or backlog and unclaimed to creator-abandon" (and the older "open and unclaimed" text).
 const CREATOR_ABANDON_WRITE_LOST_CONFLICT_MESSAGE =
   `${CREATOR_ABANDON_STATE_CONFLICT_MESSAGE}, or it changed before the request completed`;
 
@@ -6046,7 +6046,7 @@ taskRouter.post("/tasks/:id/respec", zValidator("json", respecTaskValidator), as
   // Re-score AFTER the write, on the NEW values (D5) — purely informational,
   // same as the create-time confidence surfacing above; a low or worsened
   // score never blocks or reverts the respec. The hard gate stays at
-  // task_pickup/task_start.
+  // task_start and /claim.
   const beforeConf = calculateConfidence({
     title: task.title,
     description: fromDescription,
@@ -7614,7 +7614,7 @@ taskRouter.post(
     // gate below. Lifting the check here makes force a true escape hatch
     // that only project admins can reach.
     if (force && !(await isProjectAdmin(actor, task.projectId))) {
-      return forbidden(c, "Only team admins can force a transition");
+      return forbidden(c, "Only team admins and project admins can force a transition");
     }
 
     // Resolve the effective workflow following the ADR-0008 §50-56 chain:

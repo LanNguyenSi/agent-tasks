@@ -45,7 +45,7 @@ When a precondition rule (`ciGreen` / `prMerged`) fails closed because GitHub is
 1. Agent attempts `task_finish` to advance from `in_progress → done`. Rule `ciGreen` fails closed (GitHub API timeout). The transition is rejected.
 2. Team admin calls `POST /api/tasks/:id/transition { status: "done", force: true, forceReason: "CI offline, validated locally" }`.
 3. The bypass succeeds. Audit row `task.transitioned.forced` carries the `forceReason`. Signal `task_force_transitioned` lands in the inbox of the original claimant + active reviewer so the override is visible to everyone whose claim it touched.
-4. Force from a non-admin returns `403 "Only team admins can force a transition"`, even when the precondition would have passed.
+4. Force from a non-admin returns `403 "Only team admins and project admins can force a transition"`, even when the precondition would have passed.
 
 ## 6. Agent token provisioning + GitHub delegation
 

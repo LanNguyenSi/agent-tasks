@@ -709,7 +709,7 @@ function prAuthorMismatchError(message: string): TeachingError {
 // 6. transition force=admin-only. tasks_transition / POST
 // /tasks/:id/transition { force: true } returns 403 `forbidden` for
 // non-admins (backend/src/routes/tasks.ts: POST /tasks/:id/transition,
-// message "Only team admins can force a transition"). Same generic backend
+// message "Only team admins and project admins can force a transition"). Same generic backend
 // code as not_claimed, message-pattern matched, own code minted. No self-service
 // corrective call exists (this is genuinely an admin-only wall), so
 // allowedNext is empty by design, not an oversight — the recipe itself
@@ -744,10 +744,10 @@ function respecConflictError(message: string): TeachingError {
   });
 }
 
-// 7a. Creator-abandon conflict. task_creator_abandon only retires an OPEN,
-// unclaimed task the caller created (backend/src/routes/tasks.ts,
-// CREATOR_ABANDON_STATE_CONFLICT_MESSAGE = "Task must be open and unclaimed
-// to creator-abandon") -- any other state, or a lost CAS race, is rejected
+// 7a. Creator-abandon conflict. task_creator_abandon retires an OPEN or BACKLOG,
+// unclaimed task the caller created (backend/src/routes/tasks.ts, message "Task must
+// be open or backlog and unclaimed to creator-abandon"; the older "open and unclaimed"
+// text still matches) -- any other state, or a lost CAS race, is rejected
 // with 409 `conflict`. Same generic backend code ("conflict") as
 // RESPEC_CONFLICT_PATTERN immediately above and several other unrelated
 // 409s, so this entry is message-pattern matched and mints its own code,
@@ -760,13 +760,13 @@ function respecConflictError(message: string): TeachingError {
 // blindly retrying the same call is not a reliable next step here) --
 // allowedNext offers only `tasks_get` so the caller can see the task's
 // current state and decide what to do next.
-const CREATOR_ABANDON_CONFLICT_PATTERN = /open and unclaimed to creator-abandon/i;
+const CREATOR_ABANDON_CONFLICT_PATTERN = /open(?: or backlog)? and unclaimed to creator-abandon/i;
 
 function creatorAbandonConflictError(message: string): TeachingError {
   return buildTeachingError({
     code: "creator_abandon_conflict",
     message,
-    recipe: "creator-abandon only works on an open, unclaimed task; call tasks_get to see its current state",
+    recipe: "creator-abandon only works on an open or backlog, unclaimed task; call tasks_get to see its current state",
     allowedNext: ["tasks_get"],
   });
 }

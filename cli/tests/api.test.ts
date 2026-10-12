@@ -3,6 +3,7 @@ import {
   ApiError,
   InvalidOperationKeyError,
   createTask,
+  claimTask,
   taskPickup,
   taskStart,
   taskFinish,
@@ -121,6 +122,24 @@ describe("taskStart", () => {
     expect(result).toEqual(body);
     expect(fetchMock.mock.calls[0]![0]).toBe("http://api.test/api/tasks/t1/start");
     expect(fetchMock.mock.calls[0]![1].method).toBe("POST");
+  });
+});
+
+describe("claimTask", () => {
+  const claimed = { task: { id: "t1", title: "x", status: "in_progress", priority: "MEDIUM" } };
+
+  it("POSTs without a query string by default", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(claimed));
+    await claimTask(config, "t1");
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://api.test/api/tasks/t1/claim");
+  });
+
+  it("sends force=true together with the URL-encoded forceReason", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(claimed));
+    await claimTask(config, "t1", true, "operator & override");
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      "http://api.test/api/tasks/t1/claim?force=true&forceReason=operator%20%26%20override",
+    );
   });
 });
 
