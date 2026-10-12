@@ -10,11 +10,11 @@ export JIRA_URL=https://your-org.atlassian.net
 export JIRA_EMAIL=you@example.com
 export JIRA_TOKEN=ATATT...
 export AGENT_TASKS_URL=https://agent-tasks.opentriologue.ai
-export AGENT_TASKS_TOKEN=<human session token>
+export AGENT_TASKS_TOKEN=<agent token (at_...) or human session token>
 export PROJECT_ID=<uuid>
 ```
 
-The importer sets a status on every issue (see Field Mapping). The import endpoint rejects a whole batch from an agent token (`at_...`) with `400 backlog_routing_enforced` when any item has a status other than `backlog`, so run the tool with a human session token: the value of your `session` cookie, sent as `Authorization: Bearer`. A session token expires after 7 days.
+The importer works with either kind of token and picks the status per token. With a human session token (the value of your `session` cookie, sent as `Authorization: Bearer`; it expires after 7 days) each issue gets the status from its Jira status category (see Field Mapping). The import endpoint rejects a whole batch from an agent token (`at_...`) with `400 backlog_routing_enforced` when any item has a status other than `backlog`, so with an agent token the importer sends `backlog` for every issue; an operator promotes the tasks to `open` afterwards. The agent token needs the `tasks:create` scope.
 
 ## Usage
 
@@ -37,7 +37,7 @@ npx tsx tools/jira-import/jira-import.ts --help
 | Summary | `title` |
 | Description (ADF) | `description` (auto-extracted to plain text) |
 | Priority | `priority` (Highest->CRITICAL, High->HIGH, etc.) |
-| Status Category | `status` (new->open, indeterminate->in_progress, done->done) |
+| Status Category | `status` with a human token (new->open, indeterminate->in_progress, done->done); always `backlog` with an agent token |
 | Labels | `labels` |
 | Issue Type | `labels` (as `type:bug`, `type:story`, etc.) |
 | Due Date | `dueAt` |
@@ -55,5 +55,5 @@ Uses Jira issue key as `externalRef`. Re-running the same import skips already-i
 | `JIRA_TOKEN` | Jira API token ([create one](https://id.atlassian.com/manage-profile/security/api-tokens)) |
 | `JIRA_JQL` | Default JQL query (overridden by `--jql` flag) |
 | `AGENT_TASKS_URL` | agent-tasks API base URL |
-| `AGENT_TASKS_TOKEN` | Human session token (agent tokens are rejected, see Setup) |
+| `AGENT_TASKS_TOKEN` | Agent token (`at_...`, imports as `backlog`) or human session token (see Setup) |
 | `PROJECT_ID` | Target project UUID in agent-tasks |
