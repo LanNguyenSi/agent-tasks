@@ -474,7 +474,7 @@ describe("POST /tasks/pickup", () => {
 
     const whereClause = prismaMocks.signalFindFirst.mock.calls[0]![0].where;
     expect(whereClause.OR).toEqual([
-      { type: { notIn: ["review_needed", "task_available", "task_assigned"] } },
+      { type: { notIn: ["review_needed", "task_available"] } },
       { task: { status: { not: "done" } } },
     ]);
   });

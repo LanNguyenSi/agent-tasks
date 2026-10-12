@@ -18,7 +18,6 @@ export type SignalType =
   | "review_needed"
   | "changes_requested"
   | "task_approved"
-  | "task_assigned"
   | "task_available"
   | "task_force_transitioned"
   | "self_merge_notice";

@@ -54,7 +54,7 @@ import { DEMOTE_STATE_CONFLICT_MESSAGE, demoteSourceStatusMessage } from "../ser
 // Outcome-notification signals (`task_approved`, `changes_requested`,
 // `task_force_transitioned`) are intentionally NOT listed — they are
 // emitted against terminal tasks by design and must still reach recipients.
-const STALE_WHEN_DONE: SignalType[] = ["review_needed", "task_available", "task_assigned"];
+const STALE_WHEN_DONE: SignalType[] = ["review_needed", "task_available"];
 import {
   templateDataSchema,
   calculateConfidence,
@@ -1969,7 +1969,7 @@ taskRouter.post("/tasks/pickup", async (c) => {
   }
 
   // ── 1. Signals ────────────────────────────────────────────────────────────
-  // Defense-in-depth: only `review_needed` / `task_available` / `task_assigned`
+  // Defense-in-depth: only `review_needed` / `task_available`
   // become stale when the task lands on `done` — those ask the recipient to
   // DO something ("pick this up", "review this") that no longer applies.
   // `task_approved`, `changes_requested`, `task_force_transitioned` are

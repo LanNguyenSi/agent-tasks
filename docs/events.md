@@ -103,13 +103,12 @@ See [notification-webhooks.md](notification-webhooks.md#observability) for the p
 
 `Signal` rows are pull-based. One signal targets exactly one recipient (either `recipientUserId` or `recipientAgentId`). Acking sets `acknowledgedAt`. When a task lands in a terminal status, `acknowledgeSignalsForTask` bulk-acks every pending signal on that task (unconditional, all types) so reviewers do not see stale entries on tasks that already shipped.
 
-A separate `STALE_WHEN_DONE` constant suppresses three signal types (`review_needed`, `task_available`, `task_assigned`) from the `task_pickup` feed when the underlying task is already in `done`. This is a read-time filter, not an ack mechanism.
+A separate `STALE_WHEN_DONE` constant suppresses two signal types (`review_needed`, `task_available`) from the `task_pickup` feed when the underlying task is already in `done`. This is a read-time filter, not an ack mechanism.
 
 | Type | Emitted when | Recipient | Suppressed from task_pickup feed when task is done | Pushed via webhook |
 |---|---|---|---|---|
 | `review_needed` | Task enters `review` | Candidate reviewers (humans + agents minus the author) | yes | yes |
 | `task_available` | Sent on these routes: single create or batch import of a task created as `open`, or a `/transition` or human `PATCH` that moves a task to `open` from another status (a `PATCH` promote from `backlog` sends none). A move to `open` keeps any work claim the task holds (for example the Release move from `in_progress`), so such a task stays out of the pickup pool until that claim is released. A claim release or `task_abandon` that resets a task to `open`, and a task created from a GitHub `issues.opened` delivery, send none | Eligible claimants | yes | yes |
-| `task_assigned` | Never: declared in the `SignalType` union and filtered by `STALE_WHEN_DONE`, but no code path creates it | n/a | yes | n/a |
 | `changes_requested` | Reviewer transitions `review → in_progress` with comment | The task claimant | no | yes |
 | `task_approved` | Reviewer transitions `review → done` | The task claimant | no | yes |
 | `task_force_transitioned` | Admin used `force=true` on a transition | The claimant + the active reviewer | no | yes |
