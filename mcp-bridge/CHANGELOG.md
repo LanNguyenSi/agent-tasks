@@ -4,6 +4,21 @@ All notable changes to `@agent-tasks/mcp-bridge` are documented here.
 
 ## Unreleased
 
+## 0.10.0
+
+### Changed
+
+- **`@agent-tasks/mcp-server` dependency bumped to `0.17.0`.** Ships
+  mcp-server 0.17.0 to npx consumers: `task_create` and `task_respec`
+  describe `templateData` spec fields as a string or a list of strings and
+  name the allowed `taskType` values, enum 400 details carry an `allowed`
+  list, `409 merge_in_progress` maps to a teaching error, and `tasks_list`
+  rejects an over-long `cursor`. No breaking change. See
+  `mcp-server/CHANGELOG.md` `## 0.17.0`.
+- The README is corrected against the code: the tool list, the commands table
+  (`serve`, `--version`, `--help`), the legacy tool count and the npx-form
+  commands.
+
 ## 0.9.0
 
 ### Changed
