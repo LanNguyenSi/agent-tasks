@@ -838,3 +838,7 @@ Re-verified `architecture.md`, `auth.md`, `backend.md`, `claim-model.md`, `cli.m
 
 Content changes: `cli.md` states the `--force-reason` rule; `task-lifecycle.md` says creator-abandon covers open and backlog tasks and quotes the new 409 text; `deploy.md` lists the optional settings the compose file now forwards; `claim-model.md` and `signals-and-notification-delivery.md` no longer list `task_assigned` and cite the shifted `signal.ts` lines. The other docs needed no content change: their claims (gate placement, force-transition admin check, error mapping, token resolution) still match the code. Verdict: no drift beyond the edits above; timestamps bumped.
 
+
+## 2026-10-12 (review follow-up: stale-when-done sentence, engines floor)
+
+`signals-and-notification-delivery.md` no longer names `task_assigned` in the sentence about pickup skipping pending rows of done tasks: `STALE_WHEN_DONE` in `backend/src/routes/tasks.ts` holds `review_needed` and `task_available` only. `architecture.md` lists `package.json` as a source, which now carries `engines.node` `>=22.9`; it makes no claim about the Node floor, so it was re-stamped without a content change. Both docs were re-stamped.
