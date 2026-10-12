@@ -4,6 +4,8 @@ All notable changes to `@agent-tasks/mcp-bridge` are documented here.
 
 ## Unreleased
 
+- The "no token available" hint also names the npx form, `npx -y @agent-tasks/mcp-bridge login`, for users who did not install the bridge globally.
+
 ## 0.10.0
 
 ### Changed
