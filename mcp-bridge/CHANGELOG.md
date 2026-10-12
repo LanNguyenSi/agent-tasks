@@ -15,6 +15,9 @@ All notable changes to `@agent-tasks/mcp-bridge` are documented here.
   list, `409 merge_in_progress` maps to a teaching error, and `tasks_list`
   rejects an over-long `cursor`. No breaking change. See
   `mcp-server/CHANGELOG.md` `## 0.17.0`.
+- The README is corrected against the code: the tool list, the commands table
+  (`serve`, `--version`, `--help`), the legacy tool count and the npx-form
+  commands.
 
 ## 0.9.0
 
