@@ -76,7 +76,7 @@ The following are explicitly **not** automated in the default workflow:
 
 ## Implementation guidance
 
-The handlers in `backend/src/routes/github-webhook.ts` encode the policy inline; there is no separate policy evaluator. The matrix above is the contract, and the handlers implement it. If the policy ever needs to vary per project, extract the matrix into one function that the handlers call, and execute all side effects (timeline entries, metadata updates, audit events) atomically with the transition.
+The handlers in `backend/src/services/github-webhook.ts` encode the policy inline; there is no separate policy evaluator. The matrix above is the contract, and the handlers implement it. If the policy ever needs to vary per project, extract the matrix into one function that the handlers call, and execute all side effects (timeline entries, metadata updates, audit events) atomically with the transition.
 
 ## ENGINEERING.md pattern
 

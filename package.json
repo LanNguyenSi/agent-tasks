@@ -21,7 +21,7 @@
     "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.9"
   },
   "devDependencies": {
     "tsx": "^4.22.4"

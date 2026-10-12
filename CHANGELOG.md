@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `GET /projects/:projectId/audit` takes an optional `actionPrefix` query parameter (1 to 100 characters from `A-Z a-z 0-9 . _ : -`, matched literally) that keeps only rows whose `action` starts with it; a malformed value answers `400 bad_request`.
 - The CLI `tasks claim` command gains `--force-reason <text>` (at least 10 characters, required with `--force`, checked before any request). Without it `--force` could never succeed under confidence enforcement mode BLOCK.
 - The Jira import tool sends `backlog` for every issue when the agent-tasks token is an agent token (`at_...`), so an agent-token import is no longer rejected with `400 backlog_routing_enforced`; human tokens keep the status category map.
-- `make db-push` and the backend dev script (`make dev`, `make dev-backend`) load the root `.env` (shell variables still win), so the host quick start no longer needs `set -a; . ./.env; set +a`. The dev script uses `--env-file-if-exists` (Node 22.9 or newer).
+- `make db-push` and the backend dev script (`make dev`, `make dev-backend`) load the root `.env` (shell variables still win), so the host quick start no longer needs `set -a; . ./.env; set +a`. The dev script uses `--env-file-if-exists`, so the root `engines.node` is now `>=22.9`.
 - `docker-compose.prod.yml` forwards `ANTHROPIC_API_KEY`, `AGENT_TASKS_REWRITE_MODEL`, `WEBHOOK_ALLOWED_PRIVATE_HOSTS`, `ATTACHMENT_MAX_COUNT_PER_TASK`, `ATTACHMENT_MAX_TOTAL_BYTES_PER_TASK`, `ARTIFACT_MAX_COUNT_PER_TASK`, `ARTIFACT_MAX_TOTAL_BYTES_PER_TASK` and `AGENT_TASKS_DISABLE_GROUNDING` to the backend with empty defaults (empty behaves like unset). Check the production environment on the next deploy.
 
 ### Fixed

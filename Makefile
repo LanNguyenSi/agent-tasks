@@ -18,7 +18,7 @@ db-generate: ## Generate Prisma client
 	npm run db:generate --workspace=backend
 
 db-push: ## Push schema to configured database (loads the root .env if present)
-	@bash -c 'set -e; if [ -f .env ]; then set -a; . ./.env; set +a; fi; npm run db:push --workspace=backend'
+	@node --env-file-if-exists=.env -e 'try { require("child_process").execFileSync("npm", ["run", "db:push", "--workspace=backend"], { stdio: "inherit" }); } catch (e) { process.exit(e.status || 1); }'
 
 dev: ## Run backend and frontend locally in one terminal (backend loads the root .env)
 	@bash -lc 'set -e; trap "kill 0" EXIT; npm run dev:backend & npm run dev:frontend & wait'

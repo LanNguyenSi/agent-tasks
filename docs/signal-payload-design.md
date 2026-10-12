@@ -112,8 +112,7 @@ log remains the authoritative record.
 ```typescript
 interface Signal {
   id: string;                  // UUID, unique per signal
-  type: SignalType;            // "review_needed" | "changes_requested" | "task_approved"
-                               // | "task_available" | "task_force_transitioned" | "self_merge_notice"
+  type: SignalType;            // one of the six types in the table above (SignalType in backend/src/services/signal.ts)
   taskId: string;              // Task UUID
   projectId: string;           // Project UUID
   recipientAgentId?: string;   // Target agent token ID (null for human recipients)
