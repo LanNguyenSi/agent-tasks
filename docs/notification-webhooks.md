@@ -24,9 +24,8 @@ all seven Signal types — see [events.md](events.md) and
 > redirects are not followed. See [Egress / SSRF guard](#egress--ssrf-guard)
 > below. Only project admins (team `ADMIN` or per-project `PROJECT_ADMIN`)
 > can write this field. A self-hosted deployment that legitimately targets an
-> internal host can opt specific hosts in with `WEBHOOK_ALLOWED_PRIVATE_HOSTS`;
-> `docker-compose.prod.yml` forwards only the variables listed in the backend
-> service's `environment:` block, and this one is not among them.
+> internal host can opt specific hosts in with `WEBHOOK_ALLOWED_PRIVATE_HOSTS`
+> (`docker-compose.prod.yml` forwards it from the deployment's `.env`).
 
 PATCH the project to set the URL and (optionally) a signing secret:
 
@@ -187,9 +186,8 @@ allowlist before sending:
 
 Self-hosted deployments that legitimately target an internal host can opt
 specific hosts in with `WEBHOOK_ALLOWED_PRIVATE_HOSTS` (comma-separated exact
-hostnames/IPs; empty by default; with `docker-compose.prod.yml` it must be in the
-backend service's `environment:` block, which forwards only the variables it
-lists). Note: the check resolves-then-connects, so a
+hostnames/IPs; empty by default; `docker-compose.prod.yml` forwards it from
+the deployment's `.env`). Note: the check resolves-then-connects, so a
 DNS-rebinding attacker who flips the record between the check and the connect is
 not fully blocked.
 

@@ -41,11 +41,10 @@ Either `content` or `url` must be supplied — never both empty.
   the total over the cap is rejected with `413`. Default: 52 428 800 bytes
   (50 MiB). Override globally with `ARTIFACT_MAX_TOTAL_BYTES_PER_TASK`.
   Override per-project via `Project.artifactBytesCap`.
-- **Env overrides in production:** `docker-compose.prod.yml` forwards only the
-  variables listed in the backend service's `environment:` block. Add
-  `ARTIFACT_MAX_COUNT_PER_TASK` or `ARTIFACT_MAX_TOTAL_BYTES_PER_TASK` there
-  (for example `ARTIFACT_MAX_COUNT_PER_TASK: ${ARTIFACT_MAX_COUNT_PER_TASK:-}`)
-  for the override to take effect.
+- **Env overrides in production:** `docker-compose.prod.yml` forwards
+  `ARTIFACT_MAX_COUNT_PER_TASK` and `ARTIFACT_MAX_TOTAL_BYTES_PER_TASK` from the
+  deployment's `.env` to the backend. Empty (the default) means the built-in
+  value applies.
 
 ### Per-project overrides
 
