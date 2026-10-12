@@ -71,6 +71,21 @@ describe("getAuditLogs", () => {
     expect(mockFindMany).toHaveBeenCalledWith(expect.objectContaining({ take: 10, skip: 20 }));
   });
 
+  it("matches an action prefix literally: LIKE wildcards in the prefix are escaped", async () => {
+    await getAuditLogs({ projectId: "proj-1", actionPrefix: "signal.webhook_" });
+    expect(mockFindMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ action: { startsWith: "signal.webhook\\_" } }),
+      }),
+    );
+    await getAuditLogs({ projectId: "proj-1", actionPrefix: "a%b\\c" });
+    expect(mockFindMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ action: { startsWith: "a\\%b\\\\c" } }),
+      }),
+    );
+  });
+
   it("orders by createdAt descending", async () => {
     await getAuditLogs({});
     expect(mockFindMany).toHaveBeenCalledWith(

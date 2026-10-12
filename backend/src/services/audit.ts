@@ -265,6 +265,15 @@ export async function logAuditEvent(opts: {
   }
 }
 
+/**
+ * Prisma passes `startsWith` through to SQL LIKE without escaping, so `_` and
+ * `%` in the value would act as wildcards. PostgreSQL's default LIKE escape
+ * character is the backslash.
+ */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
 export async function getAuditLogs(opts: {
   projectId?: string;
   taskId?: string;
@@ -280,7 +289,7 @@ export async function getAuditLogs(opts: {
       ...(opts.taskId ? { taskId: opts.taskId } : {}),
       ...(opts.actorId ? { actorId: opts.actorId } : {}),
       ...(opts.action ? { action: opts.action } : {}),
-      ...(opts.actionPrefix ? { action: { startsWith: opts.actionPrefix } } : {}),
+      ...(opts.actionPrefix ? { action: { startsWith: escapeLikePattern(opts.actionPrefix) } } : {}),
     },
     orderBy: { createdAt: "desc" },
     take: opts.limit ?? 50,

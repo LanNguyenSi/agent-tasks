@@ -204,9 +204,9 @@ Every attempt outcome is audit-logged:
   (network/timeout text otherwise).
 
 Both rows carry `signalId` so you can correlate against the originating
-Signal. Read them from `GET /api/projects/:id/audit` (paged with `limit`,
-at most 200, and `offset`) and filter rows whose `action` starts with
-`signal.webhook_`; the route has no server-side action filter.
+Signal. Read them from `GET /api/projects/:id/audit?actionPrefix=signal.webhook_`
+(paged with `limit`, at most 200, and `offset`); the server keeps only rows
+whose `action` starts with the prefix.
 
 Repeated failures of one URL are a strong signal that the receiver is
 down or misconfigured; nothing in agent-tasks auto-disables the URL,
