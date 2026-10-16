@@ -3,7 +3,7 @@
 Self-hosted font files for `frontend/src/app/layout.tsx`, loaded with
 `next/font/local`. The app never fetches fonts from the Google Fonts CDN: a
 Google outage must not be able to fail a build or a deploy, and the CI guard
-step in `.github/workflows/ci.yml` (Frontend job, "No Google fonts" step)
+step in `.github/workflows/ci.yml` (Frontend job, "Vendored fonts only" step)
 fails any change that imports the Google fonts loader again.
 
 ## Files
@@ -48,7 +48,7 @@ are declared with `preload: false` in `layout.tsx`.
 
 ## How to update
 
-1. From the worktree root, fetch a package version without adding a
+1. From the repository root, fetch a package version without adding a
    dependency:
    `npm pack @fontsource-variable/inter --pack-destination .scratch`
    (same for `@fontsource-variable/jetbrains-mono`), then
