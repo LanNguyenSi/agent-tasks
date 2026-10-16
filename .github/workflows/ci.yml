@@ -104,6 +104,21 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Vendored fonts only
+        # The app must load its fonts from the vendored files in
+        # frontend/src/fonts (see that README): fetching them from the Google
+        # Fonts CDN at build time lets a Google hiccup fail CI or a deploy.
+        # The exit code is checked explicitly because GNU grep exits 2 when a
+        # path is missing, and a bare `if grep ...` would treat that as "no
+        # match" and let the guard fail open.
+        run: |
+          set +e
+          grep -rn --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.mjs' --include='*.cjs' --include='*.mts' --include='*.cts' --exclude-dir=node_modules --exclude-dir=.next "next/font/google" frontend
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then echo "next/font/google is not allowed, vendor the font (see the fonts README)"; exit 1; fi
+          if [ "$rc" -ne 1 ]; then echo "font guard: grep failed with exit $rc"; exit 1; fi
+
       - name: Type check
         run: npm run typecheck --workspace=frontend
 
