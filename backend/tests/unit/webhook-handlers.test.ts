@@ -49,7 +49,7 @@ vi.mock("../../src/services/audit.js", () => ({
 }));
 
 import { handlePullRequestReviewEvent, handlePullRequestEvent, handleIssuesEvent } from "../../src/services/github-webhook.js";
-import { CUSTOM_VOCABULARY_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
+import { CUSTOM_VOCABULARY_DEFINITION, OPEN_TO_REVIEW_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -257,7 +257,7 @@ describe("handlePullRequestEvent", () => {
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("M3: custom-workflow non-solo project hands off to review (no done carve-out)", async () => {
+  it("custom-workflow non-solo project hands off to review (no done carve-out)", async () => {
     // Regression: a custom workflow used to force "done" here, bypassing the
     // review gate that default-workflow non-solo projects get. A confirmation-
     // required project must keep its review gate on a webhook merge regardless
@@ -751,5 +751,23 @@ describe("webhook handlers on a custom state vocabulary", () => {
       where: { id: "task-1", status: "qa", statusVersion: 0 },
       data: { status: "build", statusVersion: { increment: 1 } },
     });
+  });
+});
+
+describe("webhook handlers on a four-state workflow with a free open -> review edge", () => {
+  it("changes requested: a review task is not review-like in this graph, so it is left alone", async () => {
+    mockWorkflowFindUnique.mockResolvedValue({ definition: OPEN_TO_REVIEW_DEFINITION });
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "review", workflowId: "wf-open-review" })]);
+
+    await handlePullRequestReviewEvent({
+      action: "submitted",
+      repository: { full_name: "test/repo" },
+      pull_request: { number: 42, title: "Fix bug", html_url: "https://github.com/test/repo/pull/42" },
+      review: { state: "changes_requested", user: { login: "bob" }, html_url: "https://review" },
+    });
+
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
+    const audit = mockLogAuditEvent.mock.calls.find(([event]) => event.payload?.event === "changes_requested")![0];
+    expect(audit.payload).not.toHaveProperty("from");
   });
 });

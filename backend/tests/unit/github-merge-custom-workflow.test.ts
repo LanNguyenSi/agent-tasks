@@ -75,7 +75,7 @@ import { githubRouter } from "../../src/routes/github.js";
 import { appErrorHandler } from "../../src/lib/error-handler.js";
 import { taskStatusForMergeRejectionMessage } from "../../src/services/gates/index.js";
 import { distinctReviewerRejectionMessage } from "../../src/services/review-gate.js";
-import { CUSTOM_VOCABULARY_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
+import { CUSTOM_VOCABULARY_DEFINITION, OPEN_TO_REVIEW_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
 
 const MERGE_ACTOR: Actor = {
   type: "agent",
@@ -204,6 +204,31 @@ describe("merge route on a custom state vocabulary", () => {
 
     expect(res.status).toBe(403);
     expect(((await res.json()) as { message: string }).message).toBe(distinctReviewerRejectionMessage());
+  });
+});
+
+describe("merge route on a four-state workflow with a free open -> review edge", () => {
+  beforeEach(() => {
+    prismaMocks.workflowFindUnique.mockResolvedValue({ definition: OPEN_TO_REVIEW_DEFINITION });
+  });
+
+  it("refuses a review task at the status gate: review is not review-like in this graph", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue(taskIn("review", { reviewClaimedByAgentId: "agent-reviewer" }));
+
+    const res = await mergeRequest();
+
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { message: string }).message).toBe(taskStatusForMergeRejectionMessage("review"));
+    expect(performPrMergeMock).not.toHaveBeenCalled();
+  });
+
+  it("a done task is still the idempotent retry", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue(taskIn("done"));
+
+    const res = await mergeRequest();
+
+    expect(res.status).toBe(200);
+    expect(performPrMergeMock).toHaveBeenCalledTimes(1);
   });
 });
 

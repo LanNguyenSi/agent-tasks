@@ -101,32 +101,28 @@ export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
   const { prNumber, prUrl, headBranch } = hint;
 
   // Run all matching strategies in parallel
-  // The status `notIn` filters below still name the built-in terminal status;
-  // moving them onto the task's workflow definition belongs to follow-up
-  // slice (a). The decide functions that run on the fresh row
-  // (`writeWebhookStatus`) are the safety net until then.
+  // The status `notIn` filters below still exclude the built-in terminal
+  // status, not the task's own terminal states; moving them onto the workflow
+  // definition is follow-up work. The decide functions that run on the fresh
+  // row (`writeWebhookStatus`) are the safety net until then.
   const queries = [
     // 1. prNumber (strongest)
-    // slice (a): notIn filter
     prisma.task.findMany({
       where: { projectId, prNumber, status: { notIn: ["done", "backlog"] } },
     }),
     // 2. prUrl
-    // slice (a): notIn filter
     prUrl
       ? prisma.task.findMany({
           where: { projectId, prUrl, status: { notIn: ["done", "backlog"] } },
         })
       : Promise.resolve([]),
     // 3. branchName
-    // slice (a): notIn filter
     headBranch
       ? prisma.task.findMany({
           where: { projectId, branchName: headBranch, status: { notIn: ["done", "backlog"] } },
         })
       : Promise.resolve([]),
     // 4. title pattern (legacy fallback)
-    // slice (a): notIn filter
     prisma.task.findMany({
       where: {
         projectId,
@@ -284,7 +280,7 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
       // Find and close tasks that match this issue. v1 backlog gate: an
       // unpromoted backlog task must never be moved by a webhook event, so
       // it is excluded here the same way findTasksByPr excludes it below.
-      // slice (a): notIn filter, see findTasksByPr.
+      // The `notIn` filter below has the same limit as in findTasksByPr.
       const tasks = await prisma.task.findMany({
         where: {
           projectId: project.id,

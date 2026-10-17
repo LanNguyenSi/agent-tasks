@@ -13,7 +13,7 @@ import {
   isTerminalState,
 } from "../../src/services/default-workflow.js";
 import { WORKFLOW_TEMPLATES } from "../../src/services/workflow-templates.js";
-import { CUSTOM_VOCABULARY_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
+import { CUSTOM_VOCABULARY_DEFINITION, OPEN_TO_REVIEW_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
 
 const AUTONOMOUS = { governanceMode: "AUTONOMOUS" as const };
 const AWAITS = { governanceMode: "AWAITS_CONFIRMATION" as const };
@@ -99,5 +99,35 @@ describe("pickMergeTargetStatus with a custom state vocabulary", () => {
     };
     expect(pickMergeTargetStatus({ project: AWAITS, currentStatus: "open", definition: noReview })).toBeNull();
     expect(pickMergeTargetStatus({ project: AUTONOMOUS, currentStatus: "open", definition: noReview })).toBe("closed");
+  });
+});
+
+describe("a four-state workflow with a free open -> review edge", () => {
+  const definition = OPEN_TO_REVIEW_DEFINITION;
+
+  it("does not read review as review-like, because the initial state leads straight to it", () => {
+    expect(isReviewState(definition, "review")).toBe(false);
+    expect(isTerminalState(definition, "done")).toBe(true);
+  });
+
+  it("the merge gate refuses a review task and still accepts done", () => {
+    expect(checkTaskStatusForMerge({ status: "review" }, definition)).toEqual({
+      ok: false,
+      reason: "bad_status",
+      currentStatus: "review",
+    });
+    expect(checkTaskStatusForMerge({ status: "done" }, definition)).toEqual({ ok: true });
+  });
+
+  it("pickMergeTargetStatus has no review-like state to hand a task to", () => {
+    for (const currentStatus of ["open", "in_progress", "review"]) {
+      expect(pickMergeTargetStatus({ project: AWAITS, currentStatus, definition })).toBeNull();
+      expect(pickMergeTargetStatus({ project: DR, currentStatus, definition })).toBeNull();
+    }
+  });
+
+  it("AUTONOMOUS still targets the terminal state, and leaves done alone", () => {
+    expect(pickMergeTargetStatus({ project: AUTONOMOUS, currentStatus: "review", definition })).toBe("done");
+    expect(pickMergeTargetStatus({ project: AUTONOMOUS, currentStatus: "done", definition })).toBeNull();
   });
 });
