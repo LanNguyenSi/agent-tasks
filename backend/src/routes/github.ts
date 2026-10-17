@@ -23,6 +23,11 @@ import {
   effectiveDeliverableRepo,
   isForeignDeliverable,
 } from "../services/gates/index.js";
+import {
+  isReviewState,
+  resolveEffectiveDefinition,
+  terminalStates,
+} from "../services/default-workflow.js";
 import { performPrMerge, type BeforeGithubMerge } from "../services/github-merge.js";
 import { writeStatusAfterMerge } from "../services/task-merge-status-write.js";
 import { GITHUB_FENCE_CONFLICT_MESSAGE, reserveTaskForMerge } from "../services/task-status-cas.js";
@@ -514,16 +519,18 @@ githubRouter.post(
 
     // Task-status gate. Merging drives the task to `done`, so the same
     // review→done invariants the /transition handler enforces must also
-    // apply here. Previously this endpoint wrote `status: "done"`
+    // apply here. Previously this endpoint wrote the done status
     // directly no matter what the task's current status was — which meant
     // an agent could fast-track an `open` or `in_progress` task straight
     // to done by pointing this endpoint at a valid PR number, bypassing
     // every workflow precondition, every review lock, and every
     // distinct-reviewer check.
     //
-    // Legal entry states:
-    //   - `review`: normal happy path, apply the distinct-reviewer gate
-    //   - `done`: idempotent re-try against an already-merged PR; the
+    // Legal entry states, judged on the task's effective workflow (task-
+    // pinned, else project default, else built-in; for the built-in four-state
+    // workflow they are `review` and `done`):
+    //   - a review-like state: normal happy path, apply the distinct-reviewer gate
+    //   - a terminal state: idempotent re-try against an already-merged PR; the
     //     distinct-reviewer gate was evaluated when the task first
     //     reached `done` and does not need to run again (re-checking
     //     would spuriously reject admin-force-transitioned tasks that
@@ -535,7 +542,8 @@ githubRouter.post(
     // endpoint. The escape hatch lives in exactly one place — the
     // transition handler — instead of being duplicated here where the
     // actor is always an agent and can never satisfy `isProjectAdmin`.
-    const statusGate = checkTaskStatusForMerge(task);
+    const definition = await resolveEffectiveDefinition(task, prisma);
+    const statusGate = checkTaskStatusForMerge(task, definition);
     if (!statusGate.ok) {
       const isKnownBadStatus =
         task.status === "open" || task.status === "in_progress";
@@ -565,7 +573,7 @@ githubRouter.post(
     // `done` idempotent entry skips it on purpose (see above). Shared
     // service from backend/src/services/review-gate.ts keeps this in
     // lockstep with the /transition handler so the rule cannot drift.
-    if (task.status === "review") {
+    if (isReviewState(definition, task.status)) {
       const gate = checkReviewApprovalGate(task, actor, task.project);
       if (!gate.allowed) {
         void logAuditEvent({
@@ -699,12 +707,16 @@ githubRouter.post(
           // merge: the system's own PR-merge webhook having moved the task to
           // `done` first completes this write, any other change answers the
           // merged-but-changed 409 and writes nothing.
+          // The merge drives the task to the terminal state of its own
+          // workflow; the gate above admitted only review-like or terminal
+          // states, so the definition has one.
+          const mergedStatus = terminalStates(definition)[0] ?? task.status;
           const written = await writeStatusAfterMerge(
             prisma,
             actor,
             { ...task, projectId: task.project.id },
-            { status: "done" },
-            "done",
+            { status: mergedStatus },
+            mergedStatus,
             {},
             { sha: mergeResult.sha, via: "github_pr_merge" },
             held.reservation,
@@ -732,7 +744,7 @@ githubRouter.post(
                 : "Pull request successfully merged",
               task: {
                 id: task.id,
-                status: "done",
+                status: mergedStatus,
               },
             },
           };

@@ -19,6 +19,17 @@ import {
   resolveGovernanceMode,
   type GovernanceFlagsLike,
 } from "../lib/governance-mode.js";
+import {
+  BACKLOG_STATE,
+  defaultWorkflowDefinition,
+  isReviewState,
+  isTerminalState,
+  requestChangesTarget,
+  resolveEffectiveDefinition,
+  reviewStates,
+  terminalStates,
+  type WorkflowDefinitionShape,
+} from "./default-workflow.js";
 
 export type GitHubWebhookEvent = "push" | "issues" | "pull_request" | "pull_request_review" | "ping";
 
@@ -90,24 +101,32 @@ export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
   const { prNumber, prUrl, headBranch } = hint;
 
   // Run all matching strategies in parallel
+  // The status `notIn` filters below still name the built-in terminal status;
+  // moving them onto the task's workflow definition belongs to follow-up
+  // slice (a). The decide functions that run on the fresh row
+  // (`writeWebhookStatus`) are the safety net until then.
   const queries = [
     // 1. prNumber (strongest)
+    // slice (a): notIn filter
     prisma.task.findMany({
       where: { projectId, prNumber, status: { notIn: ["done", "backlog"] } },
     }),
     // 2. prUrl
+    // slice (a): notIn filter
     prUrl
       ? prisma.task.findMany({
           where: { projectId, prUrl, status: { notIn: ["done", "backlog"] } },
         })
       : Promise.resolve([]),
     // 3. branchName
+    // slice (a): notIn filter
     headBranch
       ? prisma.task.findMany({
           where: { projectId, branchName: headBranch, status: { notIn: ["done", "backlog"] } },
         })
       : Promise.resolve([]),
     // 4. title pattern (legacy fallback)
+    // slice (a): notIn filter
     prisma.task.findMany({
       where: {
         projectId,
@@ -265,6 +284,7 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
       // Find and close tasks that match this issue. v1 backlog gate: an
       // unpromoted backlog task must never be moved by a webhook event, so
       // it is excluded here the same way findTasksByPr excludes it below.
+      // slice (a): notIn filter, see findTasksByPr.
       const tasks = await prisma.task.findMany({
         where: {
           projectId: project.id,
@@ -274,10 +294,13 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
       });
 
       for (const task of tasks) {
+        const definition = await resolveEffectiveDefinition(task, prisma);
         // Re-decided against the fresh row after a lost race: a task another
         // writer already finished (or demoted to backlog) is left alone.
         const moved = await writeWebhookStatus(task, (status) =>
-          status === "done" || status === "backlog" ? null : "done",
+          isTerminalState(definition, status) || status === BACKLOG_STATE
+            ? null
+            : (terminalStates(definition)[0] ?? null),
         );
         if (!moved.written) continue;
         await acknowledgeSignalsForTask(task.id);
@@ -285,7 +308,7 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
           action: "task.transitioned",
           projectId: project.id,
           taskId: task.id,
-          payload: { source: "github_webhook", issue_number: payload.issue.number, to: "done" },
+          payload: { source: "github_webhook", issue_number: payload.issue.number, to: moved.to },
         });
       }
     }
@@ -297,20 +320,25 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
  * was merged. Returns null to mean "no transition" (idempotent or explicit
  * approval still required).
  *
- * - AUTONOMOUS → always target `done` (preserves ADR-0010 auto-merge semantics).
+ * The states are read from `definition`, the task's effective workflow
+ * (default: the built-in four-state workflow, where the terminal state is
+ * `done` and the review state is `review`).
+ *
+ * - AUTONOMOUS → always target the first terminal state (preserves ADR-0010
+ *   auto-merge semantics).
  * - AWAITS_CONFIRMATION / REQUIRES_DISTINCT_REVIEWER (any workflow):
- *     - `review` or `done` → no transition (explicit approval required).
- *     - anything else (open/in_progress) → `review` to hand off for review.
+ *     - a review-like or terminal state → no transition (explicit approval
+ *       required).
+ *     - anything else (open/in_progress) → the first review-like state to
+ *       hand off for review; null when the workflow has none.
  *
- * Custom workflows no longer get a `done` carve-out here. A confirmation-
- * required project must keep its review gate on a webhook merge regardless of
+ * Custom workflows get no terminal carve-out here. A confirmation-required
+ * project must keep its review gate on a webhook merge regardless of
  * workflow — the old carve-out (M3) let custom-workflow non-solo projects
- * auto-`done` and silently bypass the review gate that default-workflow
- * non-solo projects get. Per-workflow merge targets are the job of the
- * custom-workflow vocabulary epic; until then the safe default is the review
- * hand-off.
+ * auto-complete and silently bypass the review gate that default-workflow
+ * non-solo projects get.
  *
- * `backlog` short-circuits the same way `done` does, regardless of
+ * `backlog` short-circuits the same way a terminal state does, regardless of
  * governance mode: an unpromoted backlog task leaves backlog only through an
  * operator's explicit PATCH promotion, never through a webhook-observed PR
  * merge. (findTasksByPr already excludes backlog tasks from its query, so in
@@ -320,13 +348,17 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
 export function pickMergeTargetStatus(input: {
   project: GovernanceFlagsLike;
   currentStatus: string;
+  definition?: WorkflowDefinitionShape;
 }): string | null {
   const { project, currentStatus } = input;
-  if (currentStatus === "done") return null;
-  if (currentStatus === "backlog") return null;
-  if (resolveGovernanceMode(project) === GovernanceMode.AUTONOMOUS) return "done";
-  if (currentStatus === "review") return null;
-  return "review";
+  const definition = input.definition ?? defaultWorkflowDefinition();
+  if (isTerminalState(definition, currentStatus)) return null;
+  if (currentStatus === BACKLOG_STATE) return null;
+  if (resolveGovernanceMode(project) === GovernanceMode.AUTONOMOUS) {
+    return terminalStates(definition)[0] ?? null;
+  }
+  if (isReviewState(definition, currentStatus)) return null;
+  return reviewStates(definition)[0] ?? null;
 }
 
 /** Process a GitHub pull_request event — per review-automation-policy.md */
@@ -380,9 +412,10 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
       const tasks = await findTasksByPr(project.id, hint);
 
       if (payload.pull_request.merged) {
-        // Policy: PR merged → done (AUTONOMOUS) OR → review (confirmation-
-        // required, pre-review state), regardless of workflow (M3 — custom
-        // workflows no longer get a `done` carve-out; see pickMergeTargetStatus).
+        // Policy: PR merged → terminal state (AUTONOMOUS) OR → review-like
+        // state (confirmation-required, pre-review state), regardless of
+        // workflow (custom workflows get no terminal carve-out; see
+        // pickMergeTargetStatus).
         //
         // Rationale: AUTONOMOUS projects skip review by design (ADR-0010). For
         // confirmation-required projects the review state is a real gate —
@@ -390,18 +423,16 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
         // approval via task_finish({ outcome: "approve" }), not terminate it
         // silently.
         //
-        // Limitation: the target is written directly, not validated against a
-        // custom workflow's state vocabulary, so a custom workflow without a
-        // `review` state (or with post-review stages) can get a backward/out-
-        // of-vocabulary transition here. Resolving the target against the
-        // workflow definition is deferred to the custom-workflow vocabulary
-        // epic.
+        // The target comes from the task's effective workflow definition, so
+        // it is always a state of that workflow; a workflow without a
+        // review-like state gets no confirmation-required transition.
         const mergedBy = payload.pull_request.merged_by?.login ?? "unknown";
         for (const task of tasks) {
+          const definition = await resolveEffectiveDefinition(task, prisma);
           const moved = await writeWebhookStatus(task, (currentStatus) =>
-            pickMergeTargetStatus({ project, currentStatus }),
+            pickMergeTargetStatus({ project, currentStatus, definition }),
           );
-          if (moved.written && moved.to === "done") {
+          if (moved.written && moved.to !== null && isTerminalState(definition, moved.to)) {
             await acknowledgeSignalsForTask(task.id);
           }
           await addTimelineComment(task.id, `PR #${prNumber} merged by ${mergedBy}`);
@@ -473,9 +504,12 @@ export async function handlePullRequestReviewEvent(payload: GitHubPullRequestRev
         }
 
         case "changes_requested": {
-          // Policy: review → in_progress
+          // Policy: review-like state → the workflow's request-changes target
+          const definition = await resolveEffectiveDefinition(task, prisma);
           const moved = await writeWebhookStatus(task, (status) =>
-            status === "review" ? "in_progress" : null,
+            isReviewState(definition, status)
+              ? (requestChangesTarget(definition, status) ?? null)
+              : null,
           );
           await addTimelineComment(task.id, `Changes requested by ${reviewer}`);
           await logAuditEvent({
@@ -487,7 +521,7 @@ export async function handlePullRequestReviewEvent(payload: GitHubPullRequestRev
               event: "changes_requested",
               reviewer,
               pr_number: prNumber,
-              ...(moved.written ? { from: "review", to: "in_progress" } : {}),
+              ...(moved.written ? { from: moved.from, to: moved.to } : {}),
             },
           });
           break;

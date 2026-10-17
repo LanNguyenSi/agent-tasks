@@ -37,6 +37,8 @@ const prismaMocks = vi.hoisted(() => ({
   taskUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
   toolFindUnique: vi.fn(),
   toolCreate: vi.fn(),
+  workflowFindFirst: vi.fn().mockResolvedValue(null),
+  workflowFindUnique: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -49,6 +51,11 @@ vi.mock("../../src/lib/prisma.js", () => ({
     toolInvocation: {
       findUnique: prismaMocks.toolFindUnique,
       create: prismaMocks.toolCreate,
+    },
+    // No custom workflow: the merge route resolves the built-in definition.
+    workflow: {
+      findFirst: prismaMocks.workflowFindFirst,
+      findUnique: prismaMocks.workflowFindUnique,
     },
   },
 }));
@@ -185,6 +192,8 @@ function wireToolInvocationStub(): void {
 beforeEach(() => {
   vi.clearAllMocks();
   wireToolInvocationStub();
+  prismaMocks.workflowFindFirst.mockResolvedValue(null);
+  prismaMocks.workflowFindUnique.mockResolvedValue(null);
   prismaMocks.taskFindUnique.mockResolvedValue({
     id: TASK_ID,
     projectId: "proj-1",

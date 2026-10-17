@@ -10,6 +10,8 @@ const {
   mockCommentCreate,
   mockLogAuditEvent,
   mockSignalUpdateMany,
+  mockWorkflowFindFirst,
+  mockWorkflowFindUnique,
 } = vi.hoisted(() => ({
   mockTaskFindMany: vi.fn(),
   mockTaskUpdate: vi.fn().mockResolvedValue({}),
@@ -22,6 +24,8 @@ const {
   mockCommentCreate: vi.fn().mockResolvedValue({}),
   mockLogAuditEvent: vi.fn().mockResolvedValue(undefined),
   mockSignalUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  mockWorkflowFindFirst: vi.fn().mockResolvedValue(null),
+  mockWorkflowFindUnique: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -36,6 +40,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     project: { findMany: mockProjectFindMany },
     comment: { create: mockCommentCreate },
     signal: { updateMany: mockSignalUpdateMany },
+    workflow: { findFirst: mockWorkflowFindFirst, findUnique: mockWorkflowFindUnique },
   },
 }));
 
@@ -44,11 +49,15 @@ vi.mock("../../src/services/audit.js", () => ({
 }));
 
 import { handlePullRequestReviewEvent, handlePullRequestEvent, handleIssuesEvent } from "../../src/services/github-webhook.js";
+import { CUSTOM_VOCABULARY_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: false }]);
   mockTaskUpdateMany.mockResolvedValue({ count: 1 });
+  // No custom workflow by default: every task resolves to the built-in one.
+  mockWorkflowFindFirst.mockResolvedValue(null);
+  mockWorkflowFindUnique.mockResolvedValue(null);
 });
 
 function makeTask(overrides = {}) {
@@ -567,5 +576,145 @@ describe("webhook status writes lose to a concurrent writer without writing over
     expect(mockTaskUpdateMany).toHaveBeenCalledTimes(1);
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
     expect(mockLogAuditEvent).not.toHaveBeenCalled();
+  });
+});
+
+// The decisions read review and terminal semantics from the task's effective
+// workflow definition, so a workflow with its own state names is moved between
+// its own states and never to a literal review/done.
+describe("webhook handlers on a custom state vocabulary", () => {
+  const prPayload = {
+    action: "closed" as const,
+    repository: { full_name: "test/repo" },
+    pull_request: {
+      number: 42,
+      title: "Fix bug",
+      body: null,
+      html_url: "https://github.com/test/repo/pull/42",
+      state: "closed" as const,
+      merged: true,
+      merged_by: { login: "merger" },
+    },
+  };
+  const reviewPayload = (state: "changes_requested") => ({
+    action: "submitted" as const,
+    repository: { full_name: "test/repo" },
+    pull_request: { number: 42, title: "Fix bug", html_url: "https://github.com/test/repo/pull/42" },
+    review: { state, user: { login: "bob" }, html_url: "https://review" },
+  });
+  const issuePayload = {
+    action: "closed" as const,
+    repository: { full_name: "test/repo" },
+    issue: { number: 7, title: "Something", body: null, html_url: "https://github.com/test/repo/issues/7", state: "closed" as const },
+  };
+  const customTask = (status: string) => makeTask({ status, workflowId: "wf-custom" });
+
+  beforeEach(() => {
+    mockWorkflowFindUnique.mockResolvedValue({ definition: CUSTOM_VOCABULARY_DEFINITION });
+  });
+
+  it("changes requested: moves the review-like state to the request-changes target", async () => {
+    mockTaskFindMany.mockResolvedValue([customTask("qa")]);
+
+    await handlePullRequestReviewEvent(reviewPayload("changes_requested"));
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "qa", statusVersion: 0 },
+      data: { status: "build", statusVersion: { increment: 1 } },
+    });
+    const audit = mockLogAuditEvent.mock.calls.find(([event]) => event.payload?.event === "changes_requested")![0];
+    expect(audit.payload).toMatchObject({ from: "qa", to: "build" });
+  });
+
+  it("changes requested: leaves a task that is not in a review-like state alone", async () => {
+    mockTaskFindMany.mockResolvedValue([customTask("build")]);
+
+    await handlePullRequestReviewEvent(reviewPayload("changes_requested"));
+
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
+    const audit = mockLogAuditEvent.mock.calls.find(([event]) => event.payload?.event === "changes_requested")![0];
+    expect(audit.payload).not.toHaveProperty("from");
+  });
+
+  it("issue closed: moves a working task to the workflow's terminal state and reports it", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+    mockTaskFindMany.mockResolvedValue([customTask("build")]);
+
+    await handleIssuesEvent(issuePayload);
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "build", statusVersion: 0 },
+      data: { status: "shipped", statusVersion: { increment: 1 } },
+    });
+    expect(mockSignalUpdateMany).toHaveBeenCalled();
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "task.transitioned",
+        payload: expect.objectContaining({ to: "shipped" }),
+      }),
+    );
+  });
+
+  it("issue closed: leaves a task already in the terminal state alone", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+    mockTaskFindMany.mockResolvedValue([customTask("shipped")]);
+
+    await handleIssuesEvent(issuePayload);
+
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mockSignalUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("PR merged (confirmation required): hands a working task to the review-like state, without acking signals", async () => {
+    mockTaskFindMany.mockResolvedValue([customTask("build")]);
+
+    await handlePullRequestEvent(prPayload);
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "build", statusVersion: 0 },
+      data: { status: "qa", statusVersion: { increment: 1 } },
+    });
+    expect(mockSignalUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("PR merged (confirmation required): leaves a task in the review-like state for explicit approval", async () => {
+    mockTaskFindMany.mockResolvedValue([customTask("qa")]);
+
+    await handlePullRequestEvent(prPayload);
+
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("PR merged (solo): moves the task to the terminal state and acks its signals", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: true }]);
+    mockTaskFindMany.mockResolvedValue([customTask("build")]);
+
+    await handlePullRequestEvent(prPayload);
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "build", statusVersion: 0 },
+      data: { status: "shipped", statusVersion: { increment: 1 } },
+    });
+    expect(mockSignalUpdateMany).toHaveBeenCalledWith({
+      where: { taskId: "task-1", acknowledgedAt: null },
+      data: { acknowledgedAt: expect.any(Date) },
+    });
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ event: "pr_merged", from: "build", to: "shipped" }),
+      }),
+    );
+  });
+
+  it("resolves the project default workflow for a task without its own workflow", async () => {
+    mockWorkflowFindFirst.mockResolvedValue({ definition: CUSTOM_VOCABULARY_DEFINITION });
+    mockTaskFindMany.mockResolvedValue([makeTask({ status: "qa", workflowId: null })]);
+
+    await handlePullRequestReviewEvent(reviewPayload("changes_requested"));
+
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "qa", statusVersion: 0 },
+      data: { status: "build", statusVersion: { increment: 1 } },
+    });
   });
 });
