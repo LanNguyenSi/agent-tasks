@@ -24,7 +24,7 @@ This page describes the legacy webhook handlers. When the backend runs with `GRO
 | `pull_request_review` | `submitted` (changes_requested) | Task is `review` | `review → in_progress` | Add timeline entry: "Changes requested by {reviewer}" | `task.reviewed` (event `changes_requested`) |
 | `pull_request_review` | `submitted` (commented) | Any | None | Add timeline entry: "Review comment by {reviewer}" | `task.reviewed` (event `review_commented`) |
 | `pull_request_review` | `dismissed` | Any | None | Add timeline entry: "Review dismissed for {reviewer}" | `task.reviewed` (event `review_dismissed`) |
-| `pull_request` | `closed` + `merged=true` | Task is not `done` or `backlog` | `governanceMode: AUTONOMOUS`: `* → done`. Every other mode, default or custom workflow: `open`/`in_progress → review`; `review` unchanged (explicit approval still required). | Add timeline entry: "PR #N merged by {user}" (the merger is also in the audit payload's `merged_by`) | `task.transitioned` (event `pr_merged`, with `from` and `to`) |
+| `pull_request` | `closed` + `merged=true` | Task is not `done` or `backlog` | `governanceMode: AUTONOMOUS`: `* → done`. Every other mode, default or custom workflow: `open`/`in_progress → review` (the workflow's first review-like state); `review` unchanged (explicit approval still required). | Add timeline entry: "PR #N merged by {user}" (the merger is also in the audit payload's `merged_by`) | `task.transitioned` (event `pr_merged`, with `from` and `to`) |
 | `pull_request` | `closed` + `merged=false` | Task is not `done` or `backlog` | **No auto-transition** | Add timeline entry: "PR #N closed without merge" | `task.reviewed` (event `pr_closed`) |
 | `pull_request` | `opened` | Task is not `done` or `backlog` | None | Add timeline entry: "PR #N opened"; fill `prNumber`, `prUrl`, `branchName` if unset | None for a matched task; `task.reviewed` (event `pr_opened_unmatched`) when no task matches |
 
@@ -44,7 +44,7 @@ In the default workflow `review → done` is a real gate: the reviewer — human
 One escape hatch preserves the old "merge ⇒ done" shortcut where it matches intent:
 - **`governanceMode: AUTONOMOUS` projects** (formerly `soloMode: true`, ADR-0010) opt out of review-gating entirely. A merge still moves the task straight to `done`, and no `self_merge_notice` is emitted since there's no counterparty to notify.
 
-Tasks bound to a custom workflow get the same targets as the default workflow. Known limitation: the webhook writes `review` without checking it against a custom workflow's states.
+The webhook reads the task's effective workflow (task-pinned, else project default, else built-in) to find the targets: the hand-off target is the workflow's first review-like state, the `AUTONOMOUS` target is its first terminal state, and a task already in a review-like or terminal state is left alone. For the built-in workflow these are `review` and `done`. The task lookups still exclude tasks by the literal `done` and `backlog` statuses.
 
 Projects with `governanceMode: AWAITS_CONFIRMATION` (formerly the ambiguous `soloMode=false, requireDistinctReviewer=false` combo) follow the default "merge ⇒ review" path above, AND emit a `self_merge_notice` signal to every human team member when the task subsequently reaches `done` via a self-merge. See `signal-payload-design.md#self_merge_notice`.
 
@@ -58,12 +58,12 @@ Closing a PR without merging is ambiguous — it could mean the approach was aba
 Before any status transition, the webhook handler must verify:
 
 1. **Task exists and is bound**: the event maps to one or more tasks via the [binding strategy](adr/0014-webhook-event-model.md#pr--task-binding-policy); every matching task is handled.
-2. **Current status allows transition**: each handler decides the target from the task's current status (for example, `changes_requested` moves only a task in `review`) and writes it with a compare-and-swap. A task in any other status is left as is; the skip writes no separate audit row. The target is not checked against a custom workflow's transitions.
+2. **Current status allows transition**: each handler decides the target from the task's current status (for example, `changes_requested` moves only a task in a review-like state of its workflow, to the first non-terminal, non-review-like target of an edge out of that state: `review → in_progress` in the built-in workflow) and writes it with a compare-and-swap. A task in any other status is left as is; the skip writes no separate audit row. The PR-merged and issue-closed targets are not checked against the workflow's transitions.
 3. **Idempotency**: if the task is already in the target status, the write is skipped. Repeated deliveries are dropped by their `X-GitHub-Delivery` id before any handler runs (see [webhook-setup.md](webhook-setup.md#how-a-delivery-is-processed)).
 
 ## Custom workflows
 
-The webhook handlers do not read a project's custom workflow. The policy matrix above is applied to every project as it stands, and each handler writes its target status with a compare-and-swap without checking the target against the workflow's transitions. A project cannot override a transition target, add preconditions (for example N approvals before an auto-transition) or disable a single automation through its workflow definition: the workflow API has no webhook-policy field. Changing this would be a new feature, not an existing option.
+The webhook handlers read the task's effective workflow only to find its review-like and terminal states; the policy matrix above is applied to every project with those states substituted for `review` and `done`. A state is review-like when it is neither initial nor terminal, has an edge to a terminal state and is not a direct target of the initial state. Each handler writes its target status with a compare-and-swap, and the PR-merged and issue-closed targets are not checked against the workflow's transitions. A project cannot override a transition target, add preconditions (for example N approvals before an auto-transition) or disable a single automation through its workflow definition: the workflow API has no webhook-policy field. Changing this would be a new feature, not an existing option.
 
 ## Out of scope (for now)
 

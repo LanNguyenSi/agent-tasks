@@ -15,15 +15,28 @@
  */
 import type { Gate } from "./types.js";
 import { GateCode } from "./types.js";
+import {
+  defaultWorkflowDefinition,
+  isReviewState,
+  isTerminalState,
+  type WorkflowDefinitionShape,
+} from "../default-workflow.js";
 
 export type TaskStatusForMergeResult =
   | { ok: true }
   | { ok: false; reason: "bad_status"; currentStatus: string };
 
-export function checkTaskStatusForMerge(task: {
-  status: string;
-}): TaskStatusForMergeResult {
-  if (task.status === "review" || task.status === "done") {
+/**
+ * `definition` is the task's effective workflow (task-pinned, else project
+ * default, else built-in); omitted, the built-in four-state workflow applies.
+ * A status passes when it is a review-like or a terminal state of that
+ * definition, which for the built-in workflow is exactly {review, done}.
+ */
+export function checkTaskStatusForMerge(
+  task: { status: string },
+  definition: WorkflowDefinitionShape = defaultWorkflowDefinition(),
+): TaskStatusForMergeResult {
+  if (isReviewState(definition, task.status) || isTerminalState(definition, task.status)) {
     return { ok: true };
   }
   return { ok: false, reason: "bad_status", currentStatus: task.status };

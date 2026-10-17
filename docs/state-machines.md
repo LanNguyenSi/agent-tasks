@@ -69,9 +69,9 @@ Two paths reach the task and they can land it in different states:
 | Path | How it fires | Resulting `status` |
 |---|---|---|
 | REST merge | `task_merge` (`POST /api/tasks/:id/merge`) or `pull_requests_merge` (`POST /api/github/pull-requests/:prNumber/merge`) | `done` after a successful merge |
-| Webhook merge | PR merged through the GitHub UI or `gh pr merge` | `pickMergeTargetStatus`: `done` for `AUTONOMOUS`; in any other mode, with or without a custom workflow, an `open` or `in_progress` task moves to `review` and a task in `review` stays there; `done` and `backlog` tasks are not matched in any mode |
+| Webhook merge | PR merged through the GitHub UI or `gh pr merge` | `pickMergeTargetStatus`: `done` for `AUTONOMOUS`; in any other mode, with or without a custom workflow, a task that is neither review-like nor terminal moves to the workflow's first review-like state (`review` in the built-in workflow) and a task already in a review-like state stays there; `done` and `backlog` tasks are not matched in any mode |
 
-Only the REST paths run the self-merge gate. The webhook path records a merge that already happened on GitHub and writes the status without checking it against a custom workflow's states. Tooling that wraps both must treat them as separate code paths.
+Only the REST paths run the self-merge gate. The webhook path records a merge that already happened on GitHub; it takes the target from the task's effective workflow (its first review-like state, or its first terminal state for `AUTONOMOUS`) and writes it without checking it against the workflow's transitions. Tooling that wraps both must treat them as separate code paths.
 
 ## Confidence gate
 
