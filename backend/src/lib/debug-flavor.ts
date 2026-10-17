@@ -11,8 +11,9 @@
 // backend/src/routes/tasks.ts; see `deriveDebugFlavor` and
 // `reconstructSessionFromMetadata`). Phase 3: the finish-gate on
 // evidence-ledger entries (implemented in backend/src/routes/tasks.ts,
-// task_finish handler, "Phase 3 grounding finish-gate"; reads state via
-// `getSessionPhase` below). All three phases are implemented.
+// task_finish handler, "Phase 3 grounding finish-gate"; it reads the
+// session id and the ledger summary, not the persisted session phase). All
+// three phases are implemented.
 
 // Keywords match against a lowercased "title + description" string. Short,
 // generic words (bug / debug / broken / failing) are word-boundaried so
@@ -193,14 +194,15 @@ export interface GroundingSessionFields {
 
 // Phase 2: the backend has already started a grounding session for this
 // task via the GroundingClient and persisted its id/state (the Phase-3
-// finish-gate in `getSessionPhase` below reads that persisted state). But
+// finish-gate reads only the persisted session id, never the persisted
+// phase, which nothing in the backend advances). But
 // that session was minted in-process by the wrapper — the real grounding-mcp
 // MCP server the agent talks to has never seen that session id, so a hint
 // telling the agent to `grounding_advance` it would fail with "session not
 // found". Instead this reuses the same `grounding_start` recipe as Phase 1
 // (same keyword/problem, same escaping), which the agent's own tools can
 // actually follow. The session fields are still surfaced on the returned
-// hint for callers that want them (e.g. the Phase-3 gate reads persisted
+// hint for callers that want them (the Phase-3 gate reads persisted
 // metadata directly, not this return value).
 export function buildGroundingHintWithSession(
   task: { title: string; project: { slug: string } },
@@ -229,24 +231,4 @@ export function readMetadata(value: unknown): TaskMetadata {
     return value as TaskMetadata;
   }
   return {};
-}
-
-// Phase 3: read the grounding session's current phase from the persisted
-// `groundingSessionState` blob. Pure function on top of the metadata we
-// already store: deliberately NOT a method on GroundingClient because that
-// would require reading grounding-mcp's session-store from the backend,
-// which is unworkable in a multi-host deployment where the wrapper runs
-// on the agent's machine. The session JSON we persisted at start time is good
-// enough for this gate; the agent advances the phase in-process and a
-// follow-up `task_advance_phase` (or similar) would push the new state back
-// to the backend.
-export function getSessionPhase(metadata: TaskMetadata): { currentPhase: string | null } {
-  const state = metadata.groundingSessionState;
-  if (state && typeof state === "object" && !Array.isArray(state)) {
-    const phase = (state as Record<string, unknown>).current_phase;
-    if (typeof phase === "string" && phase.length > 0) {
-      return { currentPhase: phase };
-    }
-  }
-  return { currentPhase: null };
 }

@@ -5,7 +5,10 @@
 //   1. Have an active grounding session attached (from Phase 2 auto-start).
 //   2. Have at least one evidence-ledger entry tagged with the session id.
 //   3. Have advanced the session to or past `claim-evaluation`, so the
-//      agent has had a chance to weigh facts before declaring a fix.
+//      agent has had a chance to weigh facts before declaring a fix. This
+//      third check is optional (`requireClaimEvaluationPhase`, default on).
+//      The task finish route turns it off because nothing advances the
+//      persisted session phase; the legacy-cohort completion paths keep it.
 //
 // The gate is opt-in (default false) because the evidence-ledger db lives
 // on the local filesystem of whichever process writes/reads it. In the
@@ -34,7 +37,11 @@ export interface GroundingGateInput {
   metadata: TaskMetadata;
   project: { requireGroundingForDebug: boolean };
   ledgerSummary: { entryCount: number };
-  currentPhase: string | null;
+  // Only read when `requireClaimEvaluationPhase` is on; may be omitted
+  // otherwise.
+  currentPhase?: string | null;
+  // Default `true`. With `false` the `claimEvaluationPhase` check is skipped.
+  requireClaimEvaluationPhase?: boolean;
 }
 
 export interface GroundingGateResult {
@@ -75,9 +82,10 @@ export function evaluateGroundingGate(input: GroundingGateInput): GroundingGateR
   const missing: GroundingGateMissing[] = [];
   if (!sessionId) missing.push("sessionStarted");
   if (input.ledgerSummary.entryCount < 1) missing.push("ledgerEntries");
+  const currentPhase = input.currentPhase ?? null;
   if (
-    !input.currentPhase ||
-    !PHASES_AT_OR_PAST_CLAIM_EVAL.includes(input.currentPhase)
+    (input.requireClaimEvaluationPhase ?? true) &&
+    (!currentPhase || !PHASES_AT_OR_PAST_CLAIM_EVAL.includes(currentPhase))
   ) {
     missing.push("claimEvaluationPhase");
   }
@@ -86,7 +94,7 @@ export function evaluateGroundingGate(input: GroundingGateInput): GroundingGateR
     allowed: missing.length === 0,
     missing,
     sessionId,
-    currentPhase: input.currentPhase,
+    currentPhase,
     entryCount: input.ledgerSummary.entryCount,
   };
 }

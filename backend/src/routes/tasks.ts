@@ -29,7 +29,6 @@ import {
   detectDebugFlavor,
   buildGroundingHint,
   buildGroundingHintWithSession,
-  getSessionPhase,
   readMetadata,
   type GroundingHint,
   type TaskMetadata,
@@ -3677,10 +3676,9 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
   // guard first, avoiding (a) unbounded bypass-audit growth and (b) a
   // misleading `grounding_required` 409 where `bad_state` is the real
   // answer. Only fires when the project opted in AND the task is
-  // debug-flavored. Three failure modes (sessionStarted / ledgerEntries /
-  // claimEvaluationPhase) collapse into a single 409 with a structured
-  // `missing[]` so operators and clients can see exactly which
-  // precondition the task failed.
+  // debug-flavored. Two failure modes (sessionStarted / ledgerEntries) collapse into a
+  // single 409 with a structured `missing[]` so operators and clients can
+  // see exactly which precondition the task failed.
   //
   // Reads of the evidence-ledger db degrade soft (returns 0 entries), see
   // RealGroundingClient.getLedgerSummary. That keeps the gate deterministic
@@ -3694,21 +3692,24 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       const ledger = sessionId
         ? await groundingClient.getLedgerSummary(sessionId)
         : { entryCount: 0 };
-      const phase = getSessionPhase(finishMetadata);
       const gateResult = evaluateGroundingGate({
         metadata: finishMetadata,
         project: { requireGroundingForDebug: task.project.requireGroundingForDebug },
         ledgerSummary: ledger,
-        currentPhase: phase.currentPhase,
+        // The persisted session phase is never advanced by anything in the
+        // backend, so requiring it would block every finish. The cohort
+        // completion paths keep the phase check; this route does not.
+        requireClaimEvaluationPhase: false,
       });
       if (!gateResult.allowed) {
         return c.json(
           {
             error: "grounding_required",
-            message: "Debug task requires grounding evidence",
+            message: gateResult.missing.includes("sessionStarted")
+              ? "Debug task requires an attached grounding session"
+              : "Debug task requires at least one grounding evidence-ledger entry for its session",
             missing: gateResult.missing,
             sessionId: gateResult.sessionId,
-            currentPhase: gateResult.currentPhase,
             entryCount: gateResult.entryCount,
           },
           409,

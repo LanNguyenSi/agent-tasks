@@ -4,7 +4,9 @@
  * The gate is a Phase 3 addition to the grounding-hint integration: when
  * a project opts in via `requireGroundingForDebug`, finishing a debug-
  * flavored task is gated on (a) a session, (b) ledger entries, and (c)
- * advancement past `claim-evaluation`. The function under test is pure
+ * advancement past `claim-evaluation` (the phase check can be switched off
+ * with `requireClaimEvaluationPhase: false`, which the finish route does).
+ * The function under test is pure
  * (no DB, no module loads, no I/O), so the suite stays fast and the
  * cascading-missing-fields semantics are easy to verify.
  *
@@ -178,5 +180,96 @@ describe("evaluateGroundingGate", () => {
       "complete",
     ]);
     expect(PHASES_AT_OR_PAST_CLAIM_EVAL).toContain(CLAIM_EVALUATION_PHASE);
+  });
+});
+
+describe("evaluateGroundingGate with requireClaimEvaluationPhase: false", () => {
+  const gated = { requireGroundingForDebug: true };
+  const noPhase = { requireClaimEvaluationPhase: false } as const;
+
+  it.each([null, "scope-resolution", "doc-reading", "unknown-phase", "claim-evaluation", "complete"])(
+    "allows a session with entries at phase %s",
+    (currentPhase) => {
+      const result = evaluateGroundingGate({
+        metadata: { debugFlavor: true, groundingSessionId: "sess-abc" },
+        project: gated,
+        ledgerSummary: { entryCount: 1 },
+        currentPhase,
+        ...noPhase,
+      });
+      expect(result.allowed).toBe(true);
+      expect(result.missing).toEqual([]);
+      expect(result.sessionId).toBe("sess-abc");
+      expect(result.entryCount).toBe(1);
+    },
+  );
+
+  it("allows when the phase is omitted entirely", () => {
+    const result = evaluateGroundingGate({
+      metadata: { debugFlavor: true, groundingSessionId: "sess-abc" },
+      project: gated,
+      ledgerSummary: { entryCount: 2 },
+      ...noPhase,
+    });
+    expect(result.allowed).toBe(true);
+    expect(result.currentPhase).toBeNull();
+  });
+
+  it("still reports ledgerEntries (only) when a session has no entries", () => {
+    const result = evaluateGroundingGate({
+      metadata: { debugFlavor: true, groundingSessionId: "sess-abc" },
+      project: gated,
+      ledgerSummary: { entryCount: 0 },
+      currentPhase: "complete",
+      ...noPhase,
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(["ledgerEntries"]);
+  });
+
+  it("still reports sessionStarted and ledgerEntries, never claimEvaluationPhase, without a session", () => {
+    const result = evaluateGroundingGate({
+      metadata: { debugFlavor: true },
+      project: gated,
+      ledgerSummary: { entryCount: 0 },
+      currentPhase: null,
+      ...noPhase,
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(["sessionStarted", "ledgerEntries"]);
+    expect(result.sessionId).toBeNull();
+  });
+
+  it("reports sessionStarted alone when entries exist but no session id is attached", () => {
+    const result = evaluateGroundingGate({
+      metadata: { debugFlavor: true },
+      project: gated,
+      ledgerSummary: { entryCount: 4 },
+      currentPhase: "complete",
+      ...noPhase,
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(["sessionStarted"]);
+  });
+
+  it("keeps the phase check when the flag is explicitly true", () => {
+    const result = evaluateGroundingGate({
+      metadata: { debugFlavor: true, groundingSessionId: "sess-abc" },
+      project: gated,
+      ledgerSummary: { entryCount: 1 },
+      currentPhase: "scope-resolution",
+      requireClaimEvaluationPhase: true,
+    });
+    expect(result.missing).toEqual(["claimEvaluationPhase"]);
+  });
+
+  it("keeps the phase check when the flag is omitted (legacy cohort default)", () => {
+    const result = evaluateGroundingGate({
+      metadata: { debugFlavor: true, groundingSessionId: "sess-abc" },
+      project: gated,
+      ledgerSummary: { entryCount: 1 },
+      currentPhase: null,
+    });
+    expect(result.missing).toEqual(["claimEvaluationPhase"]);
   });
 });

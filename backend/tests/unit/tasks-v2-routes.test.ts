@@ -2499,11 +2499,14 @@ describe("task_finish grounding gate (Phase 3)", () => {
     };
   }
 
-  it("happy path: debug + opted-in + 3 entries + claim-evaluation → 200", async () => {
+  it("happy path: debug + opted-in + 3 entries + never-advanced scope-resolution → 200", async () => {
+    // The backend never advances the persisted session phase, so the real
+    // value at finish time is the wrapper's initial `scope-resolution`. The
+    // gate must not require anything past it.
     prismaMocks.taskFindUnique.mockResolvedValueOnce(
       makeFinishableDebugTask({
         sessionId: "sess-debug-1",
-        sessionState: debugSession,
+        sessionState: { ...debugSession, current_phase: "scope-resolution" },
       }),
     );
     prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
@@ -2534,20 +2537,33 @@ describe("task_finish grounding gate (Phase 3)", () => {
       body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
     });
     expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: string; missing: string[]; sessionId: string | null };
+    const body = (await res.json()) as {
+      error: string;
+      message: string;
+      missing: string[];
+      sessionId: string | null;
+      entryCount: number;
+      currentPhase?: unknown;
+    };
     expect(body.error).toBe("grounding_required");
     expect(body.missing).toEqual(["ledgerEntries"]);
+    expect(body.message).toBe(
+      "Debug task requires at least one grounding evidence-ledger entry for its session",
+    );
     expect(body.sessionId).toBe("sess-debug-1");
+    expect(body.entryCount).toBe(0);
+    expect(body).not.toHaveProperty("currentPhase");
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
 
-  it("blocks with missing=claimEvaluationPhase when phase is too early", async () => {
+  it("does not block on the session phase when the ledger has entries", async () => {
     prismaMocks.taskFindUnique.mockResolvedValueOnce(
       makeFinishableDebugTask({
         sessionId: "sess-debug-1",
         sessionState: { ...debugSession, current_phase: "scope-resolution" },
       }),
     );
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
     groundingClientMock.getLedgerSummary.mockResolvedValueOnce({ entryCount: 5 });
 
     const res = await makeApp().request("/tasks/task-1/finish", {
@@ -2555,12 +2571,23 @@ describe("task_finish grounding gate (Phase 3)", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
     });
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: string; missing: string[]; currentPhase: string };
-    expect(body.error).toBe("grounding_required");
-    expect(body.missing).toEqual(["claimEvaluationPhase"]);
-    expect(body.currentPhase).toBe("scope-resolution");
-    expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(prismaMocks.taskUpdateMany).toHaveBeenCalled();
+  });
+
+  it("does not require a persisted session state blob at all", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValueOnce(
+      makeFinishableDebugTask({ sessionId: "sess-debug-1" }),
+    );
+    prismaMocks.workflowFindFirst.mockResolvedValueOnce(null);
+    groundingClientMock.getLedgerSummary.mockResolvedValueOnce({ entryCount: 1 });
+
+    const res = await makeApp().request("/tasks/task-1/finish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
+    });
+    expect(res.status).toBe(200);
   });
 
   it("blocks with missing=sessionStarted when no session is attached", async () => {
@@ -2578,9 +2605,18 @@ describe("task_finish grounding gate (Phase 3)", () => {
       body: JSON.stringify({ prUrl: "https://github.com/acme/thing/pull/42" }),
     });
     expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: string; missing: string[]; sessionId: string | null };
+    const body = (await res.json()) as {
+      error: string;
+      message: string;
+      missing: string[];
+      sessionId: string | null;
+      currentPhase?: unknown;
+    };
+    expect(body.error).toBe("grounding_required");
     expect(body.missing).toContain("sessionStarted");
+    expect(body.message).toBe("Debug task requires an attached grounding session");
     expect(body.sessionId).toBeNull();
+    expect(body).not.toHaveProperty("currentPhase");
     expect(groundingClientMock.getLedgerSummary).not.toHaveBeenCalled();
     expect(prismaMocks.taskUpdate).not.toHaveBeenCalled();
   });
