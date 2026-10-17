@@ -665,6 +665,41 @@ describe("webhook handlers on a custom state vocabulary", () => {
     expect(mockSignalUpdateMany).not.toHaveBeenCalled();
   });
 
+  it("issue closed: leaves a task in any terminal state alone, not only the first one", async () => {
+    mockWorkflowFindUnique.mockResolvedValue({
+      definition: {
+        initialState: "open",
+        states: [
+          { name: "open", label: "Open", terminal: false },
+          { name: "work", label: "Work", terminal: false },
+          { name: "released", label: "Released", terminal: true },
+          { name: "cancelled", label: "Cancelled", terminal: true },
+        ],
+        transitions: [
+          { from: "open", to: "work" },
+          { from: "work", to: "released" },
+          { from: "work", to: "cancelled" },
+        ],
+      },
+    });
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+    mockTaskFindMany.mockResolvedValue([customTask("cancelled")]);
+
+    await handleIssuesEvent(issuePayload);
+
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mockSignalUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("issue closed: leaves a backlog task alone even if the query returned it", async () => {
+    mockProjectFindMany.mockResolvedValue([{ id: "proj-1" }]);
+    mockTaskFindMany.mockResolvedValue([customTask("backlog")]);
+
+    await handleIssuesEvent(issuePayload);
+
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("PR merged (confirmation required): hands a working task to the review-like state, without acking signals", async () => {
     mockTaskFindMany.mockResolvedValue([customTask("build")]);
 
