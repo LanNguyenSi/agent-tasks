@@ -150,6 +150,24 @@ describe.each(PAGINATION_HANDLERS)(
       expect(auditMocks.getAuditLogs).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ["just above the int32 range", "2147483648"],
+      ["400-digit", "9".repeat(400)],
+    ])("rejects a %s offset with 400 and runs no query", async (_kind, value) => {
+      const res = await request(`?offset=${value}`, path);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string; message: string };
+      expect(body.error).toBe("bad_request");
+      expect(body.message).toContain("offset");
+      expect(auditMocks.getAuditLogs).not.toHaveBeenCalled();
+    });
+
+    it("accepts the largest int32 offset and clamps a 400-digit limit to 200", async () => {
+      const res = await request(`?offset=2147483647&limit=${"9".repeat(400)}`, path);
+      expect(res.status).toBe(200);
+      expect(auditMocks.getAuditLogs).toHaveBeenCalledWith({ ...queryBase, limit: 200, offset: 2147483647 });
+    });
+
     it("answers 403 before validating the parameters when access is denied", async () => {
       // not Once(): if a mutant skips the access check the value must not
       // leak into the next test
