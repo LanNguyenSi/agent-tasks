@@ -23,6 +23,7 @@ import { emitTaskAvailableSignal } from "../services/task-signal.js";
 import { acknowledgeSignalsForTask, type SignalType } from "../services/signal.js";
 import { emitSelfMergeNoticeIfApplicable } from "../services/self-merge-notice.js";
 import { GovernanceMode, resolveGovernanceMode } from "../lib/governance-mode.js";
+import { escapeLikePattern } from "../lib/like-pattern.js";
 import { logger, setLogContext } from "../lib/logger.js";
 import {
   detectDebugFlavor,
@@ -768,7 +769,10 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
   }
 
   // Search across the human-meaningful string fields. Labels match exactly
-  // (clicking a label chip); the rest are case-insensitive substrings.
+  // (clicking a label chip); the rest are case-insensitive substrings. The
+  // `contains` values go through `escapeLikePattern` so `%` and `_` in the
+  // query match literally instead of acting as SQL LIKE wildcards (Prisma
+  // passes `contains` to LIKE unescaped).
   //
   // Task ids are plain-text lowercase UUIDs (no @db.Uuid cast, see
   // schema.prisma), so a query that looks like a hex/UUID fragment (see
@@ -782,9 +786,9 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
   const q = c.req.query("q")?.trim();
   if (q) {
     const or: Prisma.TaskWhereInput[] = [
-      { title: { contains: q, mode: "insensitive" } },
-      { description: { contains: q, mode: "insensitive" } },
-      { externalRef: { contains: q, mode: "insensitive" } },
+      { title: { contains: escapeLikePattern(q), mode: "insensitive" } },
+      { description: { contains: escapeLikePattern(q), mode: "insensitive" } },
+      { externalRef: { contains: escapeLikePattern(q), mode: "insensitive" } },
       { labels: { has: q } },
     ];
     const idQuery = normalizeIdQuery(q);
