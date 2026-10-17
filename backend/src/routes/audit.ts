@@ -12,6 +12,30 @@ export const auditRouter = new Hono<{ Variables: AppVariables }>();
 // accepts only that alphabet; getAuditLogs matches it literally.
 const ACTION_PREFIX_PATTERN = /^[A-Za-z0-9._:-]{1,100}$/;
 
+// Pagination parameters go through this one parser on both project audit
+// handlers: an absent parameter falls back to the default, a present value
+// must be a string of decimal digits only (so empty, negative, fractional,
+// exponent, whitespace and non-numeric values are refused with a 400 before
+// any database call), and an optional cap such as the limit's 200 clamps a
+// larger valid number rather than rejecting it.
+type ParsedPaginationParam =
+  | { ok: true; value: number }
+  | { ok: false; error: string };
+
+function parsePaginationParam(
+  raw: string | undefined,
+  name: string,
+  defaultValue: number,
+  cap?: number,
+): ParsedPaginationParam {
+  if (raw === undefined) return { ok: true, value: defaultValue };
+  if (!/^\d+$/.test(raw)) {
+    return { ok: false, error: `${name} must be a non-negative integer (digits only)` };
+  }
+  const value = Number(raw);
+  return { ok: true, value: cap === undefined ? value : Math.min(value, cap) };
+}
+
 auditRouter.get("/projects/:projectId/audit", async (c) => {
   const actor = c.get("actor");
   const projectId = c.req.param("projectId");
@@ -20,8 +44,12 @@ auditRouter.get("/projects/:projectId/audit", async (c) => {
     return forbidden(c, "Access denied");
   }
 
-  const limit = Math.min(Number(c.req.query("limit") ?? "50"), 200);
-  const offset = Number(c.req.query("offset") ?? "0");
+  const parsedLimit = parsePaginationParam(c.req.query("limit"), "limit", 50, 200);
+  if (!parsedLimit.ok) return errorResponse(c, 400, "bad_request", parsedLimit.error);
+  const parsedOffset = parsePaginationParam(c.req.query("offset"), "offset", 0);
+  if (!parsedOffset.ok) return errorResponse(c, 400, "bad_request", parsedOffset.error);
+  const limit = parsedLimit.value;
+  const offset = parsedOffset.value;
 
   // Optional server-side filter: keep only rows whose `action` starts with the
   // given prefix (for example "workflow." or "signal.webhook_"). A present but
@@ -53,8 +81,12 @@ auditRouter.get("/projects/:projectId/audit/github-delegation", async (c) => {
     return forbidden(c, "Access denied");
   }
 
-  const limit = Math.min(Number(c.req.query("limit") ?? "50"), 200);
-  const offset = Number(c.req.query("offset") ?? "0");
+  const parsedLimit = parsePaginationParam(c.req.query("limit"), "limit", 50, 200);
+  if (!parsedLimit.ok) return errorResponse(c, 400, "bad_request", parsedLimit.error);
+  const parsedOffset = parsePaginationParam(c.req.query("offset"), "offset", 0);
+  if (!parsedOffset.ok) return errorResponse(c, 400, "bad_request", parsedOffset.error);
+  const limit = parsedLimit.value;
+  const offset = parsedOffset.value;
   const action = c.req.query("action"); // e.g. "github.pr_created"
 
   const logs = await getAuditLogs({
