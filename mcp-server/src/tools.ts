@@ -755,11 +755,12 @@ export function buildTools(
     // Server-side PR create + merge. Pairs with the existing GitHub
     // delegation (a team member connects GitHub once and opts in per
     // capability). Self-merge is explicitly blocked on projects with
-    // `requireDistinctReviewer` unless `soloMode` is on — see task_merge.
+    // `requireDistinctReviewer` unless the project's governanceMode is AUTONOMOUS
+    // (legacy `soloMode` is only a fallback while governanceMode is unset); see task_merge.
     def({
       name: "task_merge",
       description:
-        "Merge the PR attached to a task. Task-scoped verb (not a GitHub-identifier verb): derives owner/repo/PR number from the task/project metadata and uses the team's GitHub delegation. Requires `github:pr_merge` scope for agent callers, and, when `project.requireDistinctReviewer` is enabled and the project is not in `soloMode`, refuses with 403 `self_merge_blocked` if the caller also holds the work claim. Idempotent on an already-merged PR (task stays at `done`).\n\nReturns a receipt by default ({ ok, task: { id, status } }), no `transition` field: the route accepts both `review` and an idempotent `done` retry as valid starting states, and the backend's `alreadyMerged` flag describes the GitHub PR's own merge state, not whether a DB transition happened on this call, so the receipt reports the outcome via `task.status` alone. Pass include:[\"task\"] for the full { task, merged, sha, alreadyMerged } object.",
+        "Merge the PR attached to a task. Task-scoped verb (not a GitHub-identifier verb): derives owner/repo/PR number from the task/project metadata and uses the team's GitHub delegation. Requires `github:pr_merge` scope for agent callers, and, when `project.requireDistinctReviewer` is enabled and the project's governanceMode is not AUTONOMOUS (the legacy soloMode=true flag is only a fallback while governanceMode is unset), refuses with 403 `self_merge_blocked` if the caller also holds the work claim. Idempotent on an already-merged PR (task stays at `done`).\n\nReturns a receipt by default ({ ok, task: { id, status } }), no `transition` field: the route accepts both `review` and an idempotent `done` retry as valid starting states, and the backend's `alreadyMerged` flag describes the GitHub PR's own merge state, not whether a DB transition happened on this call, so the receipt reports the outcome via `task.status` alone. Pass include:[\"task\"] for the full { task, merged, sha, alreadyMerged } object.",
       inputShape: {
         taskId: uuid(),
         mergeMethod: z.enum(["squash", "merge", "rebase"]).optional(),

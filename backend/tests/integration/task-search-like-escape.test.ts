@@ -5,8 +5,9 @@
  * wildcard (a search for `a_b` also finds `axb`). `escapeLikePattern`
  * (lib/like-pattern.ts) escapes the value first; this test drives the task
  * search route (`GET /teams/:teamId/tasks?q=...`, backend/src/routes/tasks.ts)
- * against a real PostgreSQL database and asserts `%` and `_` match literally
- * in title, description and externalRef.
+ * against a real PostgreSQL database and asserts `%`, `_` and the backslash
+ * match literally, and case-insensitively, in title, description and
+ * externalRef.
  */
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
@@ -122,6 +123,8 @@ beforeEach(async () => {
   await db.project.create({ data: { id: projectId, teamId, name: "LikeEscape", slug: randomUUID() } });
   await db.task.create({ data: { id: randomUUID(), projectId, title: "alpha_beta" } });
   await db.task.create({ data: { id: randomUUID(), projectId, title: "alphaXbeta" } });
+  await db.task.create({ data: { id: randomUUID(), projectId, title: "back\\slash" } });
+  await db.task.create({ data: { id: randomUUID(), projectId, title: "backslash" } });
   await db.task.create({ data: { id: randomUUID(), projectId, title: "cost 50%" } });
   await db.task.create({ data: { id: randomUUID(), projectId, title: "cost 500" } });
   await db.task.create({ data: { id: randomUUID(), projectId, title: "ref-holder", externalRef: "ref_1" } });
@@ -141,6 +144,14 @@ describe("GET /teams/:teamId/tasks: LIKE wildcards in q match literally", () => 
 
   it("a plain query without wildcards still matches every task containing it", async () => {
     expect(await search("alpha")).toEqual(["alphaXbeta", "alpha_beta"]);
+  });
+
+  it("a backslash in q matches literally: q=back\\slash returns only back\\slash, not backslash", async () => {
+    expect(await search("back\\slash")).toEqual(["back\\slash"]);
+  });
+
+  it("an escaped query stays case-insensitive: q=ALPHA_beta returns only alpha_beta, not alphaXbeta", async () => {
+    expect(await search("ALPHA_beta")).toEqual(["alpha_beta"]);
   });
 
   it("externalRef match escapes wildcards too: q=ref_1 returns only ref_1", async () => {
