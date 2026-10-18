@@ -4,6 +4,7 @@ All notable changes to `@agent-tasks/mcp-server` are documented here.
 
 ## Unreleased
 
+- The `task_merge` description names `governanceMode` AUTONOMOUS (legacy `soloMode=true` only a fallback while `governanceMode` is unset) as the switch that allows a self-merge, matching `task_finish`.
 - Tool descriptions and the workflow primer match backend behavior: `task_finish` names `governanceMode` AUTONOMOUS (not `soloMode`) for work-claim `autoMerge`, `task_creator_abandon` covers open and backlog tasks, `task_create` no longer names `task_pickup` as a confidence gate, `task_submit_pr` and the `cross_repo_pr_rejected` entry use the task's deliverable repo when set, and `backlog_not_promoted` is no longer attributed to `task_pickup`.
 - `creator_abandon_conflict` also matches the backend's new `Task must be open or backlog and unclaimed to creator-abandon` text (the older text still maps); its recipe names backlog.
 

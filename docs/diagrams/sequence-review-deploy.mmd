@@ -34,7 +34,7 @@ sequenceDiagram
         Note right of API: status = done, audit github.pr_merged + task.merged
     else pull_requests_merge
         Reviewer->>API: POST /api/github/pull-requests/:prNumber/merge
-        API->>API: same gates as task_merge
+        API->>API: same gates as task_merge, but the status gate<br/>judges a review or terminal state of the task's workflow<br/>(review / done in the default workflow)
         API->>GH: merge PR (delegated)
         Note right of API: status = done, audit github.pr_merged
     else PR merged on GitHub
