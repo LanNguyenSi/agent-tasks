@@ -43,16 +43,29 @@ function statesOfKind(def: WorkflowDefinitionShape, kind: WorkflowStateKind): st
 
 /**
  * The state names of `kind` in a stored definition. A definition that cannot
- * be read (states or transitions not a list) yields no states instead of
- * throwing, so one broken row cannot take a whole team's poll down; it then
- * reads as "no terminal and no review state".
+ * be read (states or transitions not a list) falls back to the built-in
+ * definition's states, so the row behaves as a built-in project for every
+ * caller instead of throwing (one broken row must not take a whole team's
+ * poll down) or reading as "no terminal and no review state".
+ *
+ * That fallback is fail-closed for each caller, and no weaker than the
+ * literal `review` / `done` these filters used before:
+ * - work-claim check (terminal, `notIn`): a claim on any task whose status is
+ *   not `done` counts as active, so the single-claim rule can only
+ *   over-block, never open;
+ * - review pickup and review-claim check (review, `in`): the `review` branch
+ *   stays in place, so the pool still offers `review` tasks and a review
+ *   claim on one still counts, where an empty list would drop the branch and
+ *   let an agent take a second claim;
+ * - webhook lookups (terminal, `notIn`): `done` stays excluded, where an
+ *   empty list would make a finished task bindable again.
  */
 function safeStates(row: WorkflowRow, kind: WorkflowStateKind): string[] {
   try {
     const def = sanitizeStoredDefinition(row.definition, { workflowId: row.id, projectId: row.projectId });
     return [...new Set(statesOfKind(def, kind))].sort();
   } catch {
-    return [];
+    return [...new Set(statesOfKind(defaultWorkflowDefinition(), kind))].sort();
   }
 }
 

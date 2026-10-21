@@ -18,7 +18,7 @@ import type { AppVariables } from "../../src/types/hono.js";
 import type { Actor } from "../../src/types/auth.js";
 import type { WorkflowDefinitionShape } from "../../src/services/default-workflow.js";
 import { groundingPostgres } from "../helpers/grounding-postgres.js";
-import { CUSTOM_VOCABULARY_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
+import { CUSTOM_VOCABULARY_DEFINITION, OPEN_TO_REVIEW_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
 
 const shared = vi.hoisted(() => ({ db: undefined as PrismaClient | undefined }));
 
@@ -71,6 +71,7 @@ vi.mock("../../src/services/grounding-client.js", () => ({
 }));
 
 import { taskRouter } from "../../src/routes/tasks.js";
+import { findActiveAgentClaim } from "../../src/services/workflow-status-filter.js";
 import { findTasksByPr, handleIssuesEvent } from "../../src/services/github-webhook.js";
 
 /** open -> build -> done -> shipped: `done` is a review-like work state here, `shipped` is terminal. */
@@ -88,6 +89,31 @@ const DONE_IS_OPEN_DEFINITION: WorkflowDefinitionShape = {
     { from: "done", to: "shipped" },
   ],
 };
+
+/**
+ * Built-in state names with a free `open -> plan -> in_progress -> done` path:
+ * `in_progress` has an edge to the terminal state and is no direct target of
+ * the initial state, so the helpers read it as review-like and `review` is
+ * not a state of this workflow at all.
+ */
+const IN_PROGRESS_IS_REVIEW_DEFINITION: WorkflowDefinitionShape = {
+  initialState: "open",
+  states: [
+    { name: "open", label: "Open", terminal: false },
+    { name: "plan", label: "Plan", terminal: false },
+    { name: "in_progress", label: "In progress", terminal: false },
+    { name: "done", label: "Done", terminal: true },
+  ],
+  transitions: [
+    { from: "open", to: "plan" },
+    { from: "plan", to: "in_progress" },
+    { from: "in_progress", to: "done" },
+    { from: "in_progress", to: "plan" },
+  ],
+};
+
+/** A stored definition the helpers cannot read: `states` is not a list. */
+const UNREADABLE_DEFINITION = { initialState: "open", states: "not-a-list", transitions: [] } as unknown as WorkflowDefinitionShape;
 
 let store: Awaited<ReturnType<typeof groundingPostgres>>;
 let db: PrismaClient;
@@ -235,6 +261,33 @@ describe("review pickup follows the task's workflow", () => {
     expect(body.task.id).toBe(doneOpen);
   });
 
+  it("does not offer `review` under a project default where `review` is a direct target of the initial state (free-edge shape)", async () => {
+    const project = await seedProject();
+    await seedWorkflow(project, OPEN_TO_REVIEW_DEFINITION, true);
+    await seedTask(project, { status: "review", ...authoredBy(author) });
+    expect(await (await pickup(worker)).json()).toEqual({ kind: "idle" });
+  });
+
+  it("offers an `in_progress` task to reviewers where `in_progress` is the review-like state of the workflow (free-edge shape)", async () => {
+    const project = await seedProject();
+    await seedWorkflow(project, IN_PROGRESS_IS_REVIEW_DEFINITION, true);
+    await seedTask(project, { status: "review", ...authoredBy(author) });
+    const inProgress = await seedTask(project, { status: "in_progress", ...authoredBy(author) });
+    const body = await (await pickup(worker)).json();
+    expect(body.kind).toBe("review");
+    expect(body.task.id).toBe(inProgress);
+  });
+
+  it("falls back to the built-in review state for a workflow whose stored definition is unreadable", async () => {
+    const project = await seedProject();
+    await seedWorkflow(project, UNREADABLE_DEFINITION, true);
+    await seedTask(project, { status: "done", ...authoredBy(author) });
+    const review = await seedTask(project, { status: "review", ...authoredBy(author) });
+    const body = await (await pickup(worker)).json();
+    expect(body.kind).toBe("review");
+    expect(body.task.id).toBe(review);
+  });
+
   it("does not let a pinned custom workflow in one project change the built-in review state of another", async () => {
     const customProject = await seedProject();
     await seedWorkflow(customProject, CUSTOM_VOCABULARY_DEFINITION);
@@ -306,6 +359,22 @@ describe("single-active-claim check follows the task's workflow", () => {
         expect(await blocked.json()).toMatchObject({ activeClaim: { taskId: claimed, role: "author" } });
       });
 
+      it("does not count a review claim on `review` under a project default where `review` is not review-like (free-edge shape)", async () => {
+        const project = await seedProject();
+        await seedWorkflow(project, OPEN_TO_REVIEW_DEFINITION, true);
+        await seedTask(project, { status: "review", ...reviewedBy(worker) });
+        expect((await call(project)).status).toBe(200);
+      });
+
+      it("counts a review claim on `in_progress` where `in_progress` is the review-like state (free-edge shape)", async () => {
+        const project = await seedProject();
+        await seedWorkflow(project, IN_PROGRESS_IS_REVIEW_DEFINITION, true);
+        const claimed = await seedTask(project, { status: "in_progress", ...reviewedBy(worker) });
+        const blocked = await call(project);
+        expect(blocked.status).toBe(409);
+        expect(await blocked.json()).toMatchObject({ activeClaim: { taskId: claimed, role: "reviewer" } });
+      });
+
       it("keeps the built-in behaviour: a claim on `done` frees the agent, a work claim on an in_progress task and a review claim on `review` block", async () => {
         const project = await seedProject();
         const done = await seedTask(project, { status: "done", ...workedBy(worker) });
@@ -321,6 +390,39 @@ describe("single-active-claim check follows the task's workflow", () => {
       });
     });
   }
+
+  describe("with an unreadable stored workflow definition", () => {
+    // task_start and admin-reassign fail on such a definition for reasons of
+    // their own, so the claim check is exercised through the shared helper
+    // they call and through pickup, which only depends on the helper.
+    it("findActiveAgentClaim treats the project like a built-in one", async () => {
+      const project = await seedProject();
+      await seedWorkflow(project, UNREADABLE_DEFINITION, true);
+      const claimed = await seedTask(project, { status: "done", ...workedBy(worker) });
+      expect(await findActiveAgentClaim(db, workerId())).toBeNull();
+
+      await db.task.update({ where: { id: claimed }, data: { status: "in_progress" } });
+      expect(await findActiveAgentClaim(db, workerId())).toMatchObject({ id: claimed });
+
+      await db.task.update({ where: { id: claimed }, data: { status: "review", claimedByAgentId: null, claimedAt: null, ...reviewedBy(worker) } });
+      expect(await findActiveAgentClaim(db, workerId())).toMatchObject({ id: claimed, reviewClaimedByAgentId: workerId() });
+    });
+
+    it("pickup is blocked by a claim in a work state and by a review claim on `review`, and not by one on `done`", async () => {
+      const project = await seedProject();
+      await seedWorkflow(project, UNREADABLE_DEFINITION, true);
+      const claimed = await seedTask(project, { status: "done", ...workedBy(worker) });
+      expect((await (await pickup(worker)).json()).kind).toBe("idle");
+
+      await db.task.update({ where: { id: claimed }, data: { status: "in_progress" } });
+      expect((await pickup(worker)).status).toBe(409);
+
+      await db.task.update({ where: { id: claimed }, data: { status: "review", claimedByAgentId: null, claimedAt: null, ...reviewedBy(worker) } });
+      const blocked = await pickup(worker);
+      expect(blocked.status).toBe(409);
+      expect(await blocked.json()).toMatchObject({ activeClaim: { taskId: claimed, role: "reviewer" } });
+    });
+  });
 
   it("task_start does not count the task being started as another claim of the agent", async () => {
     const project = await seedProject();
@@ -388,6 +490,17 @@ describe("webhook status filters follow the task's workflow", () => {
       expect(doneOpen.foundIds).toEqual([doneOpen.byStatus.get("done")]);
     });
   }
+
+  it("binds like a built-in project when the stored workflow definition is unreadable: `done` and `backlog` are skipped", async () => {
+    const project = await seedProject();
+    const wf = await seedWorkflow(project, UNREADABLE_DEFINITION, true);
+    const byStatus = new Map<string, string>();
+    for (const status of ["in_progress", "review", "done", "backlog"]) {
+      byStatus.set(status, await seedTask(project, { status, workflowId: status === "review" ? wf : null, prNumber: PR }));
+    }
+    const ids = (await findTasksByPr(project, { prNumber: PR })).map((t) => t.id);
+    expect(ids.sort()).toEqual([byStatus.get("in_progress")!, byStatus.get("review")!].sort());
+  });
 
   it("resolves an unpinned task through the project default workflow and mixes pinned and unpinned tasks of one project", async () => {
     const project = await seedProject();
