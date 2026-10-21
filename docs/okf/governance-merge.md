@@ -3,7 +3,7 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-10-21T04:59:16Z
+timestamp: 2026-10-21T05:22:00Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
@@ -260,7 +260,7 @@ order. Both lookups skip `backlog` and every task in a terminal state of its
 own workflow; the terminal states are read per workflow
 (`taskStatusByWorkflow`, `backend/src/services/workflow-status-filter.ts`), so
 a state name that is terminal in one workflow and open in another is judged by
-each task's own workflow. `sweepIdempotencyTables` (`backend/src/services/idempotency-sweep.ts`,
+each task's own workflow; a workflow whose stored definition cannot be read (its states are not a list) is judged by the built-in states, so a task in `done` stays excluded. `sweepIdempotencyTables` (`backend/src/services/idempotency-sweep.ts`,
 scheduled every six hours from `backend/src/server.ts`) deletes delivery
 rows older than `IDEMPOTENCY_TTL_DAYS` (default 30).
 
