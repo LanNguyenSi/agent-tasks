@@ -66,6 +66,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     },
     workflow: {
       findFirst: prismaMocks.workflowFindFirst,
+      findMany: vi.fn().mockResolvedValue([]),
     },
     agentToken: {
       findUnique: prismaMocks.agentTokenFindUnique,
@@ -420,7 +421,8 @@ describe("POST /tasks/pickup", () => {
     // The 2nd findFirst call (review pickup) must include distinct-reviewer filter
     const reviewCall = prismaMocks.taskFindFirst.mock.calls[1]![0];
     expect(reviewCall.where.createdByAgentId).toEqual({ not: "agent-1" });
-    expect(reviewCall.where.status).toBe("review");
+    // No workflow row: every task resolves to the built-in workflow, whose review-like state is `review`.
+    expect(reviewCall.where.AND).toEqual([{ OR: [{ workflowId: null, status: { in: ["review"] } }] }]);
     expect(reviewCall.where.reviewClaimedByAgentId).toBeNull();
     expect(reviewCall.where.reviewClaimedByUserId).toBeNull();
   });

@@ -94,6 +94,7 @@ import {
   gatesForTransition,
   type WorkflowDefinitionShape,
 } from "../services/default-workflow.js";
+import { findActiveAgentClaim, taskStatusByWorkflow } from "../services/workflow-status-filter.js";
 import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES, parseOwnerRepo } from "../services/transition-rules.js";
 import { performPrMerge, type BeforeGithubMerge, type MergeResult } from "../services/github-merge.js";
@@ -1948,15 +1949,7 @@ taskRouter.post("/tasks/pickup", async (c) => {
 
   // Hard-limit: reject if the agent already holds any active claim
   if (actor.type === "agent") {
-    const existing = await prisma.task.findFirst({
-      where: {
-        OR: [
-          { claimedByAgentId: actor.tokenId, status: { not: "done" } }, // TODO: use terminalStates across team workflows
-          { reviewClaimedByAgentId: actor.tokenId, status: "review" }, // TODO: use reviewStates across team workflows
-        ],
-      },
-      select: { id: true, title: true, claimedByAgentId: true, reviewClaimedByAgentId: true },
-    });
+    const existing = await findActiveAgentClaim(prisma, actor.tokenId);
     if (existing) {
       const role = existing.reviewClaimedByAgentId === actor.tokenId ? "reviewer" : "author";
       return c.json(
@@ -2020,9 +2013,14 @@ taskRouter.post("/tasks/pickup", async (c) => {
 
   // ── 2. Review pickup ──────────────────────────────────────────────────────
   // Distinct-reviewer: the agent must not be the author of the task.
+  const reviewStatusFilter = await taskStatusByWorkflow(prisma, {
+    kind: "review",
+    match: "in",
+    scope: { project: { teamId: actor.teamId } },
+  });
   const reviewTask = await prisma.task.findFirst({
     where: {
-      status: "review", // TODO: use reviewStates across team workflows — misses non-default review states
+      AND: [reviewStatusFilter],
       reviewClaimedByAgentId: null,
       reviewClaimedByUserId: null,
       createdByAgentId: { not: actor.tokenId },
@@ -2251,16 +2249,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
   // Hard-limit: reject if the agent already holds any active claim. Humans
   // are exempt — they may manage multiple tasks through the web UI.
   if (actor.type === "agent") {
-    const existing = await prisma.task.findFirst({
-      where: {
-        id: { not: task.id },
-        OR: [
-          { claimedByAgentId: actor.tokenId, status: { not: "done" } },
-          { reviewClaimedByAgentId: actor.tokenId, status: "review" },
-        ],
-      },
-      select: { id: true, title: true, claimedByAgentId: true, reviewClaimedByAgentId: true },
-    });
+    const existing = await findActiveAgentClaim(prisma, actor.tokenId, { excludeTaskId: task.id });
     if (existing) {
       const role = existing.reviewClaimedByAgentId === actor.tokenId ? "reviewer" : "author";
       return c.json(
@@ -7454,16 +7443,7 @@ taskRouter.post(
         // /tasks/:id/start: an agent holds at most one active claim. Humans
         // are exempt. This task is excluded: it is the claim being moved.
         if (target.type === "agent") {
-          const existing = await db.task.findFirst({
-            where: {
-              id: { not: task.id },
-              OR: [
-                { claimedByAgentId: target.id, status: { not: "done" } },
-                { reviewClaimedByAgentId: target.id, status: "review" },
-              ],
-            },
-            select: { id: true, title: true, reviewClaimedByAgentId: true },
-          });
+          const existing = await findActiveAgentClaim(db, target.id, { excludeTaskId: task.id });
           if (existing) return { value: { outcome: "already_claimed", existing }, changed: false };
         }
 

@@ -44,7 +44,7 @@ In the default workflow `review → done` is a real gate: the reviewer — human
 One escape hatch preserves the old "merge ⇒ done" shortcut where it matches intent:
 - **`governanceMode: AUTONOMOUS` projects** (formerly `soloMode: true`, ADR-0010) opt out of review-gating entirely. A merge still moves the task straight to `done`, and no `self_merge_notice` is emitted since there's no counterparty to notify.
 
-The webhook reads the task's effective workflow (task-pinned, else project default, else built-in) to find the targets: the hand-off target is the workflow's first review-like state, the `AUTONOMOUS` target is its first terminal state, and a task already in a review-like or terminal state is left alone. For the built-in workflow these are `review` and `done`. The task lookups still exclude tasks by the literal `done` and `backlog` statuses.
+The webhook reads the task's effective workflow (task-pinned, else project default, else built-in) to find the targets: the hand-off target is the workflow's first review-like state, the `AUTONOMOUS` target is its first terminal state, and a task already in a review-like or terminal state is left alone. For the built-in workflow these are `review` and `done`. The task lookups skip tasks in a terminal state of their own workflow (`done` for the built-in one) and in `backlog`.
 
 Projects with `governanceMode: AWAITS_CONFIRMATION` (formerly the ambiguous `soloMode=false, requireDistinctReviewer=false` combo) follow the default "merge ⇒ review" path above, AND emit a `self_merge_notice` signal to every human team member when the task subsequently reaches `done` via a self-merge. See `signal-payload-design.md#self_merge_notice`.
 

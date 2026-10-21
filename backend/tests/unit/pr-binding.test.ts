@@ -1,10 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const mockTaskFindMany = vi.hoisted(() => vi.fn());
+const mockWorkflowFindMany = vi.hoisted(() => vi.fn());
 
 vi.mock("../../src/lib/prisma.js", () => ({
   prisma: {
     task: { findMany: mockTaskFindMany },
+    workflow: { findMany: mockWorkflowFindMany },
   },
 }));
 
@@ -17,6 +19,7 @@ import { findTasksByPr } from "../../src/services/github-webhook.js";
 beforeEach(() => {
   vi.clearAllMocks();
   mockTaskFindMany.mockResolvedValue([]);
+  mockWorkflowFindMany.mockResolvedValue([]);
 });
 
 const task1 = { id: "t1", projectId: "p1", status: "review", prNumber: 42, prUrl: "https://pr/42", branchName: "feat/x" };
@@ -120,7 +123,9 @@ describe("findTasksByPr — binding strategy", () => {
     const calls = mockTaskFindMany.mock.calls as Array<[{ where: Record<string, unknown> }]>;
     expect(calls).toHaveLength(4);
     for (const [{ where }] of calls) {
-      expect(where.status).toEqual({ notIn: ["done", "backlog"] });
+      expect(where.status).toEqual({ not: "backlog" });
+      // No workflow row: every task resolves to the built-in workflow, whose terminal state is `done`.
+      expect(where.AND).toEqual([{ OR: [{ workflowId: null, status: { notIn: ["done"] } }] }]);
     }
   });
 });

@@ -12,6 +12,7 @@ const {
   mockSignalUpdateMany,
   mockWorkflowFindFirst,
   mockWorkflowFindUnique,
+  mockWorkflowFindMany,
 } = vi.hoisted(() => ({
   mockTaskFindMany: vi.fn(),
   mockTaskUpdate: vi.fn().mockResolvedValue({}),
@@ -26,6 +27,7 @@ const {
   mockSignalUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
   mockWorkflowFindFirst: vi.fn().mockResolvedValue(null),
   mockWorkflowFindUnique: vi.fn().mockResolvedValue(null),
+  mockWorkflowFindMany: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -40,7 +42,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     project: { findMany: mockProjectFindMany },
     comment: { create: mockCommentCreate },
     signal: { updateMany: mockSignalUpdateMany },
-    workflow: { findFirst: mockWorkflowFindFirst, findUnique: mockWorkflowFindUnique },
+    workflow: { findFirst: mockWorkflowFindFirst, findUnique: mockWorkflowFindUnique, findMany: mockWorkflowFindMany },
   },
 }));
 
@@ -58,6 +60,9 @@ beforeEach(() => {
   // No custom workflow by default: every task resolves to the built-in one.
   mockWorkflowFindFirst.mockResolvedValue(null);
   mockWorkflowFindUnique.mockResolvedValue(null);
+  // The status filters read the project's workflow rows in one call; the
+  // query result itself is mocked, so no rows are needed here.
+  mockWorkflowFindMany.mockResolvedValue([]);
 });
 
 function makeTask(overrides = {}) {
@@ -447,7 +452,11 @@ describe("handleIssuesEvent", () => {
 
     expect(mockTaskFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ status: { notIn: ["done", "backlog"] } }),
+        where: expect.objectContaining({
+          status: { not: "backlog" },
+          // No workflow row: every task resolves to the built-in workflow, whose terminal state is `done`.
+          AND: [{ OR: [{ workflowId: null, status: { notIn: ["done"] } }] }],
+        }),
       }),
     );
   });

@@ -30,6 +30,7 @@ import {
   terminalStates,
   type WorkflowDefinitionShape,
 } from "./default-workflow.js";
+import { taskStatusByWorkflow } from "./workflow-status-filter.js";
 
 export type GitHubWebhookEvent = "push" | "issues" | "pull_request" | "pull_request_review" | "ping";
 
@@ -97,29 +98,45 @@ export interface PrBindingHint {
   headBranch?: string;
 }
 
+/**
+ * Where-fragment for the tasks of one project that a webhook event may still
+ * move: not in a terminal state of the task's own workflow, and never in
+ * `backlog`.
+ */
+async function openTaskStatusFilter(projectId: string): Promise<Prisma.TaskWhereInput> {
+  const notTerminal = await taskStatusByWorkflow(prisma, {
+    kind: "terminal",
+    match: "notIn",
+    scope: { projectId },
+  });
+  return { status: { not: BACKLOG_STATE }, AND: [notTerminal] };
+}
+
 export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
   const { prNumber, prUrl, headBranch } = hint;
 
+  // The task's own workflow decides which statuses are terminal, so the
+  // filter is built per workflow (see workflow-status-filter.ts); `backlog`
+  // stays excluded for every workflow. The decide functions that run on the
+  // fresh row (`writeWebhookStatus`) remain the safety net.
+  const open = await openTaskStatusFilter(projectId);
+
   // Run all matching strategies in parallel
-  // The status `notIn` filters below still exclude the built-in terminal
-  // status, not the task's own terminal states; moving them onto the workflow
-  // definition is follow-up work. The decide functions that run on the fresh
-  // row (`writeWebhookStatus`) are the safety net until then.
   const queries = [
     // 1. prNumber (strongest)
     prisma.task.findMany({
-      where: { projectId, prNumber, status: { notIn: ["done", "backlog"] } },
+      where: { projectId, prNumber, ...open },
     }),
     // 2. prUrl
     prUrl
       ? prisma.task.findMany({
-          where: { projectId, prUrl, status: { notIn: ["done", "backlog"] } },
+          where: { projectId, prUrl, ...open },
         })
       : Promise.resolve([]),
     // 3. branchName
     headBranch
       ? prisma.task.findMany({
-          where: { projectId, branchName: headBranch, status: { notIn: ["done", "backlog"] } },
+          where: { projectId, branchName: headBranch, ...open },
         })
       : Promise.resolve([]),
     // 4. title pattern (legacy fallback)
@@ -127,7 +144,7 @@ export async function findTasksByPr(projectId: string, hint: PrBindingHint) {
       where: {
         projectId,
         title: { contains: `[PR #${prNumber}]` },
-        status: { notIn: ["done", "backlog"] },
+        ...open,
       },
     }),
   ];
@@ -280,12 +297,12 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
       // Find and close tasks that match this issue. v1 backlog gate: an
       // unpromoted backlog task must never be moved by a webhook event, so
       // it is excluded here the same way findTasksByPr excludes it below.
-      // The `notIn` filter below has the same limit as in findTasksByPr.
+      // The status filter follows each task's own workflow, as in findTasksByPr.
       const tasks = await prisma.task.findMany({
         where: {
           projectId: project.id,
           title: { contains: `[GH #${payload.issue.number}]` },
-          status: { notIn: ["done", "backlog"] },
+          ...(await openTaskStatusFilter(project.id)),
         },
       });
 
