@@ -3,7 +3,7 @@ type: module
 title: "cli: the agent-tasks REST command-line client"
 description: "@agent-tasks/cli wraps the REST API in commander verbs: v2 verbs plus deprecated v1 aliases, client-side task-id prefix resolution over the claimable search, Idempotency-Key handling, two tasks-list modes, env-over-file config with a permission warning, and no npm publish workflow."
 tags: [cli, client, rest, config, idempotency]
-timestamp: 2026-10-12T16:01:54Z
+timestamp: 2026-10-21T04:59:16Z
 sources:
   - cli/package.json
   - cli/src/index.ts
@@ -25,7 +25,7 @@ sources:
 
 **Operation keys** (`cli/src/api.ts:28-29#"PR_OPERATION_KEY_PATTERN"`): `tasks finish`, `tasks abandon` and `github pr merge` send an `Idempotency-Key` header that must match the stricter pattern (letters, digits and `._:-`, 1 to 128 characters); `github pr create` accepts printable ASCII without spaces, 1 to 255 characters. Both PR commands also send the key as the `idempotencyKey` body field. Without `--operation-key` each invocation generates a fresh UUID, so a plain re-run is a new operation; to make a retry idempotent the caller passes the same key again. An invalid key fails before any network call, including the prefix lookup. The `--operation-key` help of `tasks finish` and `tasks abandon` states that the backend deduplicates by the key only on a grounding-provisioned task.
 
-**`tasks list` modes**: without `--project` it calls `GET /api/tasks/claimable` with no parameters, the claimable slice, and the backend's default page of 25 rows applies (`backend/src/routes/tasks.ts:1588#"parsedLimit"`); `--status`, `--priority`, `--labels`, `--unclaimed` and `--limit` are rejected there. With `--project` (slug or UUID) it browses `GET /api/projects/:id/tasks` with those filters, validates statuses (including `backlog`) and the case-sensitive priorities before the request, defaults to 50 rows and lets the backend clamp the limit to 500 (`backend/src/routes/tasks.ts:1022#"Math.min(parsed, 500)"`). Table output looks up the project record to fill the PROJECT column; JSON and quiet output with a UUID skip that lookup. A 403 or 404 on the project lookup is reported as project not found.
+**`tasks list` modes**: without `--project` it calls `GET /api/tasks/claimable` with no parameters, the claimable slice, and the backend's default page of 25 rows applies (`backend/src/routes/tasks.ts:1592#"parsedLimit"`); `--status`, `--priority`, `--labels`, `--unclaimed` and `--limit` are rejected there. With `--project` (slug or UUID) it browses `GET /api/projects/:id/tasks` with those filters, validates statuses (including `backlog`) and the case-sensitive priorities before the request, defaults to 50 rows and lets the backend clamp the limit to 500 (`backend/src/routes/tasks.ts:1026#"Math.min(parsed, 500)"`). Table output looks up the project record to fill the PROJECT column; JSON and quiet output with a UUID skip that lookup. A 403 or 404 on the project lookup is reported as project not found.
 
 **Release status**: no workflow publishes the CLI to npm. `.github/workflows/publish-npm.yml` runs only for `mcp-server-v*` and `mcp-bridge-v*` tags, although `cli/package.json` carries a public `publishConfig` and a `prepublishOnly` build (see `release-flow.md`). The `--version` string is a literal in `cli/src/index.ts`, kept equal to the package version by hand.
 

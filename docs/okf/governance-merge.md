@@ -3,11 +3,12 @@ type: invariant
 title: "Governance, grouped merges and webhook observations"
 description: "Governance gates apply before grouped GitHub merges; configured webhooks preserve protected completion as a pending observation."
 tags: [governance, merge, self-merge, distinct-reviewer, webhook]
-timestamp: 2026-10-17T10:17:27Z
+timestamp: 2026-10-21T04:59:16Z
 sources:
   - backend/src/lib/governance-mode.ts
   - backend/src/services/review-gate.ts
   - backend/src/services/github-webhook.ts
+  - backend/src/services/workflow-status-filter.ts
   - backend/src/routes/tasks.ts
   - backend/src/routes/github.ts
   - backend/src/app.ts
@@ -244,7 +245,9 @@ before the handler runs; the handlers run detached after the response. Per
 event: `ping` does nothing; `push` sets `githubSyncAt` on every project
 linked to the repository; `issues` `opened` creates an `open` task titled
 `[GH #<n>] <issue title>` in each linked project, and `closed` moves the
-matching `[GH #<n>]` tasks outside `done` and `backlog` to `done`;
+matching `[GH #<n>]` tasks outside the terminal states of their own workflow
+and `backlog` to that workflow's first terminal state (`done` in the built-in
+workflow);
 `pull_request` `opened` fills a missing `prNumber`, `prUrl` or `branchName`
 on the matching tasks and never creates a task, a merged `closed` applies the
 merge target above, and an unmerged `closed` adds a timeline entry only;
@@ -253,7 +256,11 @@ timeline entries and moves a task in `review` back to `in_progress` on
 `changes_requested`. Other events are ignored. `findTasksByPr` matches a PR
 to tasks by `prNumber`, then `prUrl`, then a `branchName` equal to the PR
 head branch, then a title containing `[PR #<n>]`, deduplicated in that
-order. `sweepIdempotencyTables` (`backend/src/services/idempotency-sweep.ts`,
+order. Both lookups skip `backlog` and every task in a terminal state of its
+own workflow; the terminal states are read per workflow
+(`taskStatusByWorkflow`, `backend/src/services/workflow-status-filter.ts`), so
+a state name that is terminal in one workflow and open in another is judged by
+each task's own workflow. `sweepIdempotencyTables` (`backend/src/services/idempotency-sweep.ts`,
 scheduled every six hours from `backend/src/server.ts`) deletes delivery
 rows older than `IDEMPOTENCY_TTL_DAYS` (default 30).
 
