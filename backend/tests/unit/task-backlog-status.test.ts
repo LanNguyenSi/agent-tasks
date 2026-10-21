@@ -57,7 +57,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
       findFirst: prismaMocks.signalFindFirst,
       update: prismaMocks.signalUpdate,
     },
-    workflow: { findFirst: prismaMocks.workflowFindFirst },
+    workflow: { findFirst: prismaMocks.workflowFindFirst, findMany: vi.fn().mockResolvedValue([]) },
     agentToken: { findUnique: prismaMocks.agentTokenFindUnique },
     user: { findUnique: prismaMocks.userFindUnique },
     project: { findUnique: prismaMocks.projectFindUnique },

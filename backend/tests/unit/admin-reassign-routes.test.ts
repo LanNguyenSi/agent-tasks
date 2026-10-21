@@ -34,6 +34,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
     workflow: {
       findFirst: vi.fn().mockResolvedValue(null),
       findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
     },
   },
 }));
@@ -91,7 +92,10 @@ vi.mock("../../src/services/grounding-route-context.js", () => ({
   }) => {
     const task = groundingMocks.locked.value ?? ((await prismaMocks.taskFindUnique.mock.results[0]!.value) as Record<string, unknown>);
     groundingMocks.mutateRuns(input.reason);
-    const db = { task: { updateMany: prismaMocks.taskUpdateMany, findFirst: prismaMocks.taskFindFirst } };
+    const db = {
+      task: { updateMany: prismaMocks.taskUpdateMany, findFirst: prismaMocks.taskFindFirst },
+      workflow: { findMany: vi.fn().mockResolvedValue([]) },
+    };
     await input.revalidate(db, task);
     return input.mutate(db, task);
   },
@@ -455,12 +459,14 @@ describe("POST /tasks/:id/admin-reassign: refused reassignments", () => {
     expect(body.message).toMatch(/already holds an active claim/);
     expect(body.activeClaim).toEqual({ taskId: "task-other", title: "Other work", role: "author" });
 
-    // The same predicate the agent branches of pickup and start use, minus this task.
+    // The same predicate the agent branches of pickup and start use, minus this
+    // task. Without a workflow row every task resolves to the built-in
+    // workflow: terminal `done`, review-like `review`.
     expect(prismaMocks.taskFindFirst.mock.calls[0]![0].where).toEqual({
       id: { not: TASK_ID },
       OR: [
-        { claimedByAgentId: "agent-new", status: { not: "done" } },
-        { reviewClaimedByAgentId: "agent-new", status: "review" },
+        { claimedByAgentId: "agent-new", AND: [{ OR: [{ workflowId: null, status: { notIn: ["done"] } }] }] },
+        { reviewClaimedByAgentId: "agent-new", AND: [{ OR: [{ workflowId: null, status: { in: ["review"] } }] }] },
       ],
     });
     expect(prismaMocks.taskUpdateMany).not.toHaveBeenCalled();
