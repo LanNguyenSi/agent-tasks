@@ -322,6 +322,16 @@ describe("single-active-claim check follows the task's workflow", () => {
     });
   }
 
+  it("task_start does not count the task being started as another claim of the agent", async () => {
+    const project = await seedProject();
+    const own = await seedTask(project, { status: "open", ...workedBy(worker) });
+    const res = await start(worker, own);
+    // The task is claimed by the caller itself, so the start answers the plain
+    // conflict, not the single-active-claim error that would name the task itself.
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: "conflict" });
+  });
+
   it("pickup still offers an open task as work once the only claim is on a terminal task of a custom workflow", async () => {
     const project = await seedProject();
     const wf = await seedWorkflow(project, CUSTOM_VOCABULARY_DEFINITION);
