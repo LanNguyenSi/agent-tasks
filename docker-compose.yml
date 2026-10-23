@@ -1,3 +1,8 @@
+# Dev stack. The explicit name keeps it apart from the prod stack (name:
+# agent-tasks in docker-compose.prod.yml) even when both files sit in the same
+# directory; the prod file always needs `-f docker-compose.prod.yml`.
+name: agent-tasks-dev
+
 services:
   db:
     image: postgres:16-alpine
@@ -54,6 +59,10 @@ services:
       # uploads_data volume mounted below at /app/uploads overlays the repo
       # bind mount so uploaded files stay out of the working tree.
       UPLOAD_DIR: /app/uploads
+      # Dev has no reverse proxy in front of the backend, so trust no hops
+      # (the limiter then keys on the raw socket peer address). Behind
+      # Traefik use 1, see docker-compose.prod.yml.
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-0}
       # Uncomment the block below (and the matching depends_on line
       # further down) to share the GitHub-checks cache across multiple
       # backend instances. The `redis` service above provides the

@@ -1,3 +1,13 @@
+# Explicit project name: it must equal the name compose derived before this
+# line existed (the basename of the deploy checkout, `agent-tasks`), so the
+# existing containers, networks and the agent_tasks_postgres / agent_tasks_uploads
+# volumes keep their names. The dev file uses agent-tasks-dev, so a bare
+# `docker compose up` in the same directory can no longer adopt this stack.
+# Always pass `-f docker-compose.prod.yml` for this file.
+name: agent-tasks
+
+# Domain used by the Traefik routers and the public URLs below. Override with
+# APP_DOMAIN in the deployment .env; the default is the current production host.
 services:
   db:
     image: postgres:16-alpine
@@ -18,6 +28,11 @@ services:
     # off this so 512M is comfortable for our workload (single-tenant,
     # small dataset). Bump if pg_stat_activity ever shows pressure.
     mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - internal
 
@@ -38,6 +53,11 @@ services:
     # leaving headroom for a future migrate-deploy that would need
     # more.
     mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   backend:
     build:
@@ -57,8 +77,8 @@ services:
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
       SESSION_SECRET: ${SESSION_SECRET}
       GROUNDING_RUNTIME_CONFIG: ${GROUNDING_RUNTIME_CONFIG:-}
-      FRONTEND_URL: https://agent-tasks.opentriologue.ai
-      CORS_ORIGINS: https://agent-tasks.opentriologue.ai
+      FRONTEND_URL: https://${APP_DOMAIN:-agent-tasks.opentriologue.ai}
+      CORS_ORIGINS: https://${APP_DOMAIN:-agent-tasks.opentriologue.ai}
       # Number of trusted reverse-proxy hops in front of the backend. Prod runs
       # behind exactly one Traefik hop, so the rate limiter must read the real
       # client IP from the rightmost X-Forwarded-For entry. Without this it
@@ -66,6 +86,14 @@ services:
       # client together, turning the per-client auth limits into global caps.
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      # Optional, empty by default (the backend treats empty like unset).
+      # SSO_ENCRYPTION_KEY is required before any SSO connection is created;
+      # BACKEND_URL is the public backend origin used for SSO callback URLs;
+      # IDEMPOTENCY_TTL_DAYS and REDIS_URL are documented in .env.example.
+      SSO_ENCRYPTION_KEY: ${SSO_ENCRYPTION_KEY:-}
+      BACKEND_URL: ${BACKEND_URL:-}
+      IDEMPOTENCY_TTL_DAYS: ${IDEMPOTENCY_TTL_DAYS:-}
+      REDIS_URL: ${REDIS_URL:-}
       # Optional: gates the identity-broker register endpoint. Empty by
       # default (back-compat accept-any); set in prod .env to restrict.
       ALLOWED_GITHUB_LOGINS: ${ALLOWED_GITHUB_LOGINS:-}
@@ -89,17 +117,38 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    # Probes GET /api/health (public route, backend/src/app.ts) with node's
+    # global fetch: node:22-slim ships no curl/wget. Same pattern and timings
+    # as the frontend check below, including the Traefik coupling described
+    # there: the Docker provider only routes healthy containers, so a backend
+    # that is up but not answering is de-routed instead of serving hung
+    # /api and /docs calls. start_period 20s gives the one-shot Prisma client
+    # and server boot room before failures count.
+    # /api/health also checks the database (503 when it is unreachable), so a
+    # database outage longer than the retries takes the API route out of Traefik
+    # until the next successful probe.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then((r) => process.exit(r.status === 200 ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
     # Idle ~92M, request-burst peak observed ~250M. 768M caps without
     # constraining normal traffic and prevents a runaway request
     # handler from eating the whole host on a memory-leak regression.
     mem_limit: 768m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - internal
       - traefik
     labels:
       traefik.enable: "true"
-      traefik.http.routers.agent-tasks-api.rule: Host(`agent-tasks.opentriologue.ai`) && (PathPrefix(`/api`) || PathPrefix(`/docs`))
+      traefik.http.routers.agent-tasks-api.rule: Host(`${APP_DOMAIN:-agent-tasks.opentriologue.ai}`) && (PathPrefix(`/api`) || PathPrefix(`/docs`))
       traefik.http.routers.agent-tasks-api.entrypoints: websecure
       traefik.http.routers.agent-tasks-api.tls.certresolver: letsencrypt
       traefik.http.services.agent-tasks-api.loadbalancer.server.port: "3001"
@@ -110,7 +159,7 @@ services:
       dockerfile: frontend/Dockerfile
       target: prod
       args:
-        NEXT_PUBLIC_API_URL: https://agent-tasks.opentriologue.ai
+        NEXT_PUBLIC_API_URL: https://${APP_DOMAIN:-agent-tasks.opentriologue.ai}
     environment:
       NODE_ENV: production
       API_URL: http://backend:3001
@@ -165,12 +214,17 @@ services:
     # whole stack tops out at ~2.8G under normal operation, leaving
     # ample room for the build process during deploy on a 7.7G host.
     mem_limit: 1g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - internal
       - traefik
     labels:
       traefik.enable: "true"
-      traefik.http.routers.agent-tasks.rule: Host(`agent-tasks.opentriologue.ai`)
+      traefik.http.routers.agent-tasks.rule: Host(`${APP_DOMAIN:-agent-tasks.opentriologue.ai}`)
       traefik.http.routers.agent-tasks.entrypoints: websecure
       traefik.http.routers.agent-tasks.tls.certresolver: letsencrypt
       traefik.http.services.agent-tasks.loadbalancer.server.port: "3000"

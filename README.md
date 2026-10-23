@@ -49,7 +49,7 @@ echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env   # required, >= 32 chars
 make dev-docker          # docker compose up: db + redis + backend + frontend
 ```
 
-This is a development stack (`NODE_ENV=development`); set `TRUSTED_PROXY_HOPS=0` in `.env` when no reverse proxy is in front of the backend.
+This is a development stack (`NODE_ENV=development`, compose project `agent-tasks-dev`); `TRUSTED_PROXY_HOPS` defaults to `0` because no reverse proxy is in front of the backend. The production stack is a separate file with its own project name, `docker-compose.prod.yml`, and always needs `-f`: `docker compose -f docker-compose.prod.yml up -d --build`. A bare `docker compose` command uses the dev file. Volumes from a dev stack started before the project had an explicit name keep their old prefix and are not picked up: re-seed, or remove them with `docker compose -p <old-project> down -v`.
 
 Open http://localhost:3000, register the first user, create a team, and generate a token in **Settings → API Tokens**. Full local-dev guide, a host-only setup (Node >= 22 and a reachable PostgreSQL; Docker optional), and Make targets: [docs/development.md](docs/development.md).
 

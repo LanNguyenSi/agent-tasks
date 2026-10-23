@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+// docker-compose.prod.yml forwards some optional settings with an empty
+// default (`${VAR:-}`), so an unset variable arrives as "". zod's .default()
+// and .optional() only react to undefined, so map "" to undefined first and
+// let the schema default apply.
+const emptyAsUnset = (value: unknown) => (value === "" ? undefined : value);
+
 const configSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(3001),
@@ -10,14 +16,14 @@ const configSchema = z.object({
   // 32-byte key (hex or base64) used to encrypt OIDC client secrets at rest.
   // Required as soon as any SsoConnection exists; optional otherwise.
   SSO_ENCRYPTION_KEY: z.string().default(""),
-  BACKEND_URL: z.string().url().default("http://localhost:3001"),
+  BACKEND_URL: z.preprocess(emptyAsUnset, z.string().url().default("http://localhost:3001")),
   FRONTEND_URL: z.string().url().default("http://localhost:3000"),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
   // Optional Redis URL for shared caches. When unset, backing services
   // fall back to in-memory — local dev and single-instance deploys keep
   // working identically. Set this when running more than one backend
   // pod behind a load balancer so GitHub API cache hits stay shared.
-  REDIS_URL: z.string().url().optional(),
+  REDIS_URL: z.preprocess(emptyAsUnset, z.string().url().optional()),
   // Key prefix for Redis-backed caches, so cross-environment deploys
   // sharing a redis instance don't collide. Unused when REDIS_URL is
   // absent.
@@ -47,7 +53,7 @@ const configSchema = z.object({
   // - any realistic MCP client idempotency-key retry window (retries
   //   happen within minutes-to-hours of the original attempt, not days).
   // 30 days comfortably clears both without weakening dedup.
-  IDEMPOTENCY_TTL_DAYS: z.coerce.number().int().min(1).default(30),
+  IDEMPOTENCY_TTL_DAYS: z.preprocess(emptyAsUnset, z.coerce.number().int().min(1).default(30)),
   GROUNDING_RUNTIME_CONFIG: z.string().default(""),
 });
 
