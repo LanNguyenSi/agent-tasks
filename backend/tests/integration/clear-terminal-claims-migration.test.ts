@@ -15,7 +15,7 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import type { PrismaClient } from "@prisma/client";
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from "vitest";
-import type { WorkflowDefinitionShape } from "../../src/services/default-workflow.js";
+import { defaultWorkflowDefinition, type WorkflowDefinitionShape } from "../../src/services/default-workflow.js";
 import { groundingPostgres } from "../helpers/grounding-postgres.js";
 
 const QA_DEFINITION: WorkflowDefinitionShape = {
@@ -165,6 +165,31 @@ describe("clear-terminal-claims.sql", () => {
     runRepair();
     expect(await claims(done)).toEqual(cleared);
     expect((await row(shipped)).claimedByUserId).toBe(userId);
+  });
+
+  it("judges a pinned task whose own definition cannot be read by the built-in states, not by the project default", async () => {
+    const p = await project();
+    await workflow(p, QA_DEFINITION, true);
+    const unreadablePin = await workflow(p, UNREADABLE_DEFINITION);
+    const done = await task(p, "done", { workflowId: unreadablePin, ...CLAIMED(when) });
+    const shipped = await task(p, "shipped", { workflowId: unreadablePin, ...CLAIMED(when) });
+    runRepair();
+    expect(await claims(done)).toEqual(cleared);
+    expect((await row(shipped)).claimedByUserId).toBe(userId);
+  });
+
+  it("reads the oldest default row of a project when it has more than one", async () => {
+    const p = await project();
+    await db.workflow.create({
+      data: { projectId: p, name: "older", definition: QA_DEFINITION as never, isDefault: true, createdAt: new Date("2026-01-01T00:00:00Z") },
+    });
+    await db.workflow.create({
+      data: { projectId: p, name: "newer", definition: defaultWorkflowDefinition() as never, isDefault: true, createdAt: new Date("2026-02-01T00:00:00Z") },
+    });
+    // `done` is terminal in the newer (built-in) row only.
+    const done = await task(p, "done", CLAIMED(when));
+    runRepair();
+    expect((await row(done)).claimedByUserId).toBe(userId);
   });
 
   it("leaves a backlog task alone even when a workflow marks a state of that name terminal", async () => {
