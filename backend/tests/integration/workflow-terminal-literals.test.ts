@@ -527,6 +527,15 @@ describe("POST /tasks/:id/finish on a custom vocabulary", () => {
     expect(auditCalls("task.reviewed")[0]!.payload).toMatchObject({ from: "qa", to: "shipped", via: "task_finish" });
   });
 
+  it("self-approval by the work claim holder of a `qa` task ends in the terminal state too", async () => {
+    await db.project.update({ where: { id: projectId }, data: { governanceMode: "AWAITS_CONFIRMATION", requireDistinctReviewer: false } });
+    const taskId = await seedQaTask({ reviewClaimedByUserId: null, reviewClaimedAt: null });
+    const res = await post(author, `/tasks/${taskId}/finish`, { outcome: "approve" });
+    expect(res.status).toBe(200);
+    expect(await row(taskId)).toMatchObject({ status: "shipped", ...NO_CLAIMS });
+    expect(auditCalls("task.reviewed")[0]!.payload).toMatchObject({ from: "qa", to: "shipped", via: "task_finish_self_approve" });
+  });
+
   describe("autoMerge after a review approve (Mode B)", () => {
     it("fails the prMerged post-check of the qa -> shipped edge", async () => {
       const taskId = await seedQaTask();
@@ -617,6 +626,14 @@ describe("POST /tasks/:id/review on a custom vocabulary", () => {
     expect(res.status).toBe(400);
   });
 
+  it("approve acknowledges the pending review asks of the task", async () => {
+    const taskId = await seedQaTask();
+    const worker = await seedAgent();
+    const ask = await db.signal.create({ data: { type: "review_needed", taskId, projectId, recipientAgentId: worker.tokenId, context: {} } });
+    expect((await post(reviewer, `/tasks/${taskId}/review`, { action: "approve" })).status).toBe(200);
+    expect((await db.signal.findUniqueOrThrow({ where: { id: ask.id } })).acknowledgedAt).not.toBeNull();
+  });
+
   it("review/claim takes the review lock on a review-like state and refuses a literal `review`", async () => {
     const qa = await seedTask({ status: "qa", claimedByUserId: authorId, claimedAt: new Date() });
     expect((await post(reviewer, `/tasks/${qa}/review/claim`)).status).toBe(200);
@@ -680,6 +697,17 @@ describe("PATCH /tasks/:id on a workflow with the built-in names and free edges"
 // ---------------------------------------------------------------------------
 // Next-action hints, team counters, member removal
 // ---------------------------------------------------------------------------
+
+describe("POST /tasks/:id/start of a review claim on a custom vocabulary", () => {
+  it("previews the finish gates of the qa -> shipped edge and the request-changes edge", async () => {
+    const taskId = await seedTask({ status: "qa", claimedByUserId: authorId, claimedAt: new Date(), ...PR_FIELDS });
+    const res = await post(reviewer, `/tasks/${taskId}/start`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.kind).toBe("review");
+    expect(body.effectiveGates).toEqual({ finish: ["prMerged"], requestChanges: [] });
+  });
+});
 
 describe("GET /tasks/:id/instructions on a custom vocabulary", () => {
   it("offers review actions and the review hint to a reviewer of a task in the review-like state", async () => {
