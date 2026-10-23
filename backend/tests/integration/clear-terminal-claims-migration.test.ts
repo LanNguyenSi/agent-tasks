@@ -157,6 +157,15 @@ describe("clear-terminal-claims.sql", () => {
     expect(await claims(shippedInPinned)).toEqual(cleared);
   });
 
+  it("clears a pinned task in a state that is terminal only in its pinned workflow", async () => {
+    const p = await project();
+    await workflow(p, QA_DEFINITION, true);
+    const builtinLike = await workflow(p, defaultWorkflowDefinition());
+    const done = await task(p, "done", { workflowId: builtinLike, ...CLAIMED(when) });
+    runRepair();
+    expect(await claims(done)).toEqual(cleared);
+  });
+
   it("judges a stored definition it cannot read by the built-in states", async () => {
     const p = await project();
     await workflow(p, UNREADABLE_DEFINITION, true);
