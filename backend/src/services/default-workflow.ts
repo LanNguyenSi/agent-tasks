@@ -287,6 +287,15 @@ export function sanitizeStoredDefinition(
  * the hardcoded final fallback defined in ADR 0008.
  */
 /**
+ * Which row counts as "the" default of a project that holds more than one:
+ * the oldest, ties broken by id. Every reader of the project default uses this
+ * order (this file, `loadWorkflowRows`, the effective-workflow read route),
+ * and the one-off claim repair `prisma/clear-terminal-claims.sql` picks the
+ * same row, so the app and the repair judge a task by the same definition.
+ */
+export const FIRST_DEFAULT_ROW_ORDER = [{ createdAt: "asc" as const }, { id: "asc" as const }];
+
+/**
  * Resolve the effective workflow definition for a task following the
  * ADR-0008 §50-56 resolution chain:
  *   1. task.workflowId → that Workflow row's definition
@@ -318,6 +327,7 @@ export async function resolveEffectiveDefinition(
   }
   const projectDefault = await prismaClient.workflow.findFirst({
     where: { projectId: task.projectId, isDefault: true },
+    orderBy: FIRST_DEFAULT_ROW_ORDER,
   });
   return projectDefault
     ? sanitizeStoredDefinition(projectDefault.definition, { projectId: task.projectId })
@@ -490,6 +500,7 @@ export async function resolveProjectEffectiveDefinition(
 ): Promise<WorkflowDefinitionShape> {
   const projectDefault = await prismaClient.workflow.findFirst({
     where: { projectId, isDefault: true },
+    orderBy: FIRST_DEFAULT_ROW_ORDER,
   });
   return projectDefault
     ? sanitizeStoredDefinition(projectDefault.definition, { projectId })

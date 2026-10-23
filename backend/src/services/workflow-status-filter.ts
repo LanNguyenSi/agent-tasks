@@ -20,6 +20,7 @@
 import type { Prisma } from "@prisma/client";
 import {
   defaultWorkflowDefinition,
+  FIRST_DEFAULT_ROW_ORDER,
   reviewStates,
   sanitizeStoredDefinition,
   terminalStates,
@@ -96,11 +97,18 @@ export async function taskStatusByWorkflow(
   return buildTaskStatusFilter(await loadWorkflowRows(db, opts.scope), opts);
 }
 
-/** The workflow rows `buildTaskStatusFilter` reads; load once and build several filters from them. */
+/**
+ * The workflow rows `buildTaskStatusFilter` reads; load once and build several
+ * filters from them. The rows come back oldest first (ties by id), so the first
+ * default row of a project in the list is the one `resolveEffectiveDefinition`
+ * and the claim repair pick: `buildTaskStatusFilter` and `isStatusOfKind` take
+ * the first default row they meet and rely on this order.
+ */
 export function loadWorkflowRows(db: WorkflowReader, scope: Prisma.WorkflowWhereInput): Promise<WorkflowRow[]> {
   return db.workflow.findMany({
     where: scope,
     select: { id: true, projectId: true, isDefault: true, definition: true },
+    orderBy: FIRST_DEFAULT_ROW_ORDER,
   });
 }
 
@@ -119,8 +127,9 @@ export function buildTaskStatusFilter(
     pin.ids.push(row.id);
     pinned.set(key, pin);
 
-    // `resolveEffectiveDefinition` reads the first default row of a project;
-    // a second one is ignored here as well.
+    // `resolveEffectiveDefinition` reads the first default row of a project
+    // (the oldest, which is the first one in `rows`, see `loadWorkflowRows`); a
+    // second one is ignored here as well.
     if (row.isDefault && !projectsWithDefault.has(row.projectId)) {
       projectsWithDefault.add(row.projectId);
       const grp = projectDefault.get(key) ?? { projectIds: [], states };
