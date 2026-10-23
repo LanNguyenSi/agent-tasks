@@ -67,3 +67,78 @@ describe("backend config: SESSION_SECRET fail-loud guard (L3)", () => {
     expect(mockExit).not.toHaveBeenCalled();
   });
 });
+
+// docker-compose.prod.yml forwards BACKEND_URL, REDIS_URL and
+// IDEMPOTENCY_TTL_DAYS as `${VAR:-}`, so an operator who sets none of them
+// hands the backend empty strings. Empty must behave like unset, not fail the
+// url() / min(1) checks.
+describe("backend config: empty optional values behave like unset", () => {
+  const origEnv = { ...process.env };
+
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    process.env = { ...origEnv };
+    vi.restoreAllMocks();
+  });
+
+  async function importConfigWithEnv(extra: Record<string, string | undefined>) {
+    process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/test";
+    process.env.SESSION_SECRET = "a".repeat(32);
+    for (const [key, value] of Object.entries(extra)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    return import("../../src/config/index.js");
+  }
+
+  it("applies the defaults when the variables are empty strings", async () => {
+    const { config } = await importConfigWithEnv({
+      BACKEND_URL: "",
+      REDIS_URL: "",
+      IDEMPOTENCY_TTL_DAYS: "",
+      SSO_ENCRYPTION_KEY: "",
+    });
+
+    expect(config.BACKEND_URL).toBe("http://localhost:3001");
+    expect(config.REDIS_URL).toBeUndefined();
+    expect(config.IDEMPOTENCY_TTL_DAYS).toBe(30);
+    expect(config.SSO_ENCRYPTION_KEY).toBe("");
+  });
+
+  it("applies the same defaults when the variables are absent", async () => {
+    const { config } = await importConfigWithEnv({
+      BACKEND_URL: undefined,
+      REDIS_URL: undefined,
+      IDEMPOTENCY_TTL_DAYS: undefined,
+    });
+
+    expect(config.BACKEND_URL).toBe("http://localhost:3001");
+    expect(config.REDIS_URL).toBeUndefined();
+    expect(config.IDEMPOTENCY_TTL_DAYS).toBe(30);
+  });
+
+  it("keeps explicitly set values over the defaults", async () => {
+    const { config } = await importConfigWithEnv({
+      BACKEND_URL: "https://api.example.test",
+      REDIS_URL: "redis://redis:6379",
+      IDEMPOTENCY_TTL_DAYS: "7",
+    });
+
+    expect(config.BACKEND_URL).toBe("https://api.example.test");
+    expect(config.REDIS_URL).toBe("redis://redis:6379");
+    expect(config.IDEMPOTENCY_TTL_DAYS).toBe(7);
+  });
+
+  it("still rejects a malformed BACKEND_URL", async () => {
+    const mockExit = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("exit");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(importConfigWithEnv({ BACKEND_URL: "not a url" })).rejects.toThrow("exit");
+    expect(mockExit).toHaveBeenCalledWith(1);
+  });
+});
