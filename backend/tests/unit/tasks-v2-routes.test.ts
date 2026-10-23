@@ -640,8 +640,9 @@ describe("POST /tasks/:id/start", () => {
 // -- `unresolved = blockers.filter(dep => dep.status !== "done")` treated
 // "abandoned" as still-blocking, and there is no agent path back out of
 // "abandoned". Orchestrator decision: treat-abandoned-as-resolved at this
-// predicate (RESOLVED_BLOCKER_STATUSES = ["done", "abandoned"]), not
-// auto-detach -- the blockedBy edge itself is left intact.
+// predicate (`findUnresolvedBlockers` in routes/tasks.ts: a blocker is
+// resolved when it is abandoned or in a terminal state of its own workflow),
+// not auto-detach -- the blockedBy edge itself is left intact.
 describe("POST /tasks/:id/start — dependency gate treats an abandoned blocker as resolved (task 5200f326)", () => {
   it("open task whose SOLE blocker is creator-abandoned is claimable, not blocked (200)", async () => {
     prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "open" }); // initial fetch

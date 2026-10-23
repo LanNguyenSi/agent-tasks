@@ -2,18 +2,19 @@
 -- the review claim (user and agent holders, with their timestamps) of every
 -- task whose status is a terminal state of its own effective workflow.
 --
--- A finished task keeps no claim: every writer that ends a task clears them.
--- Rows written before that held a claim on a finished task, and such a claim
--- counts as an active claim again as soon as the task's workflow stops
--- treating its status as terminal (a workflow switch), which blocks the
--- holder's next pickup. This statement clears those leftovers.
+-- A finished task keeps no claim: the task and merge routes clear them (the
+-- legacy review approve and the Grounding webhook do not; this repair is
+-- their backstop). Rows written before that held a claim on a finished task,
+-- and such a claim counts as an active claim again as soon as the task's
+-- workflow stops treating its status as terminal (a workflow switch), which
+-- blocks the holder's next pickup. This statement clears those leftovers.
 --
 -- Idempotent: after one run no task in a terminal state holds a claim, so a
 -- second run matches no row and changes nothing. Only the claim columns are
 -- written (no status, no status version, no updatedAt).
 --
 -- The effective workflow follows resolveEffectiveDefinition: the task's pinned
--- workflow row, else the first default row of the task's project, else the
+-- workflow row, else the oldest default row of the task's project, else the
 -- built-in workflow, whose terminal state is `done`. A definition whose
 -- `states` is not a list is judged by the built-in workflow too (the same
 -- fallback as the status filters in workflow-status-filter.ts). `backlog` is

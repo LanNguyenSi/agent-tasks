@@ -4487,12 +4487,13 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
 // every other from="abandoned" write 400s.
 //
 // The gap this used to leave open, closed by task 5200f326: `blockedBy`
-// dependency gating (`RESOLVED_BLOCKER_STATUSES` above, used at both
-// task_pickup's `blockedBy: { none: ... }` queries and the task_start /
-// POST /tasks/:id/claim `unresolved` filters) now treats `abandoned` the
-// same as `done` for gating purposes, so a dependent whose sole blocker
-// gets creator-abandoned here becomes claimable again instead of deadlocked
-// forever. Deliberately a predicate change only, not auto-detach: the
+// dependency gating (`ABANDONED_STATUS` and `findUnresolvedBlockers` above,
+// used at both task_pickup's `blockedBy: { none: ... }` queries and the
+// task_start / POST /tasks/:id/claim `unresolved` filters) now treats
+// `abandoned` the same as a terminal state of the blocker's own workflow
+// (`done` in the built-in one) for gating purposes, so a dependent whose
+// sole blocker gets creator-abandoned here becomes claimable again instead
+// of deadlocked forever. Deliberately a predicate change only, not auto-detach: the
 // blockedBy edge itself is left intact for audit/history.
 const creatorAbandonSchema = z.object({
   reason: z.string().trim().min(1).max(2000).optional(),

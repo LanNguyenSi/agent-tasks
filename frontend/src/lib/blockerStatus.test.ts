@@ -1,6 +1,7 @@
 /**
  * blockerStatus -- helper to identify resolved blocker statuses
- * (mirrors backend RESOLVED_BLOCKER_STATUSES from backend/src/routes/tasks.ts)
+ * (a literal list; the backend judges a blocker by the terminal states of its
+ * own workflow, see findUnresolvedBlockers in backend/src/routes/tasks.ts)
  */
 import { describe, it, expect } from "vitest";
 
