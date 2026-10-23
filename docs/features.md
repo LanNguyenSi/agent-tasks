@@ -25,8 +25,12 @@ Markdown.
 A separate CLI tool, `tools/jira-import/jira-import.ts`, imports directly
 from a live Jira instance over its REST API (JQL query, dry-run mode) for
 teams that want to pull issues without an intermediate export file. It
-sets a status on every issue, which the import endpoint rejects from an agent
-token (`400 backlog_routing_enforced`), so it runs with a human session token
+works with either kind of token and picks the status per token: with a human
+session token each issue keeps the status of its Jira status category, while
+with an agent token (`at_...`) every issue is imported as `backlog`, because
+the import endpoint rejects a batch from an agent token whose items carry any
+other status (`400 backlog_routing_enforced`); an operator promotes the
+imported tasks afterwards
 (see [tools/jira-import/README.md](../tools/jira-import/README.md)).
 
 ## Board and list views

@@ -95,6 +95,7 @@ The four-step MCP cold-start path (initialize handshake, `workflow_primer`, `pro
 - [docs/architecture.md](docs/architecture.md): runtime topology, modules, boundary rules.
 - [docs/deploy-verify-strategy.md](docs/deploy-verify-strategy.md): deploy and verification approach.
 - [docs/webhook-setup.md](docs/webhook-setup.md): optional GitHub webhook setup.
+- [docs/ops-backups.md](docs/ops-backups.md): production database and uploads volume backup/restore runbook.
 - [docs/review-automation-policy.md](docs/review-automation-policy.md) / [docs/review-notification-policy.md](docs/review-notification-policy.md): review automation and notification policy.
 - [docs/enterprise-sso.md](docs/enterprise-sso.md): OIDC SSO configuration.
 - [docs/roadmap.md](docs/roadmap.md): shipped and planned work.

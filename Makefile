@@ -58,4 +58,4 @@ ci: ## Run core CI checks locally
 	npm run build
 
 clean: ## Remove local build artifacts
-	rm -rf backend/dist frontend/.next coverage
+	rm -rf backend/dist frontend/.next mcp-server/dist mcp-bridge/dist cli/dist coverage

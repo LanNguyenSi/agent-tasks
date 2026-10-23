@@ -165,7 +165,7 @@ function errorResult(err: unknown) {
 }
 
 /**
- * Build a fresh `McpServer` with all 21 tools bound to the caller's
+ * Build a fresh `McpServer` with all 26 tools bound to the caller's
  * token. Called per request so there is no shared mutable state
  * between concurrent MCP requests.
  */

@@ -52,7 +52,7 @@ make dev-frontend
 | `make dev-frontend` | Run only the frontend |
 | `make dev-docker` | Start the full dev stack in Docker |
 | `make docker-up` / `make docker-down` / `make docker-logs` | Manage the Docker dev stack |
-| `make build` | Build backend and frontend |
+| `make build` | Build all workspaces |
 | `make test` | Run the frontend, cli and backend test suites (backend tests need PostgreSQL, see [Running tests](#running-tests)) |
 | `make typecheck` | Run TypeScript checks |
 | `make lint` | Run lint checks |
