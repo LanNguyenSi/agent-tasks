@@ -40,7 +40,8 @@ A `TaskAttachment` row can be one of two things:
 - **Storage location:** the `UPLOAD_DIR` directory (`/app/uploads` in
   containers), backed by the `agent_tasks_uploads` named volume in production.
   This volume is **not** covered by the Postgres backups and must be added to
-  the backup scope separately.
+  the backup scope separately; see [docs/ops-backups.md](ops-backups.md) for
+  the backup and restore runbook.
 - **Per-task count cap:** once a task reaches its attachment count cap the next
   upload is rejected with `429`. Default: 20 attachments per task. Override
   globally with the env var `ATTACHMENT_MAX_COUNT_PER_TASK`, or per-project via

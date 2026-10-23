@@ -42,8 +42,8 @@ The config file resolver only reads `endpoint` and `token` from a single file, s
 export AGENT_TASKS_ENDPOINT=https://agent-tasks.opentriologue.ai
 export AGENT_TASKS_TOKEN=at_prod_...
 
-# Local dev
-export AGENT_TASKS_ENDPOINT=http://localhost:3000
+# Local dev (backend origin; the frontend on port 3000 has no /api proxy)
+export AGENT_TASKS_ENDPOINT=http://localhost:3001
 export AGENT_TASKS_TOKEN=at_dev_...
 ```
 
