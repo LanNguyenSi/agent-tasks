@@ -106,7 +106,7 @@ import { taskRouter } from "../../src/routes/tasks.js";
 import { githubRouter } from "../../src/routes/github.js";
 import { projectInviteAdminRouter } from "../../src/routes/invites.js";
 import { handleIssuesEvent, handlePullRequestEvent } from "../../src/services/github-webhook.js";
-import { GroundingAccessError, isInReviewState, resolveTaskMergeTarget, type GroundingTask } from "../../src/services/grounding-context.js";
+import { isInReviewState, resolveTaskMergeTarget, type GroundingTask } from "../../src/services/grounding-context.js";
 import { resolveDirectGroundingTarget } from "../../src/services/grounding-direct-context.js";
 
 /**
@@ -793,7 +793,6 @@ describe("grounding policies on a custom vocabulary", () => {
 
     const build = await groundingTask(await seedTask({ status: "build", ...PR_FIELDS }));
     await expect(resolveTaskMergeTarget(db, build, reviewer, authority)).rejects.toMatchObject({ code: "bad_state" });
-    expect(GroundingAccessError).toBeDefined();
   });
 
   it("resolves the direct review endpoint from the review-like state and refuses it from another", async () => {
