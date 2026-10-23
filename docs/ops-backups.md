@@ -39,12 +39,18 @@ docker compose -f docker-compose.prod.yml exec -T db \
 
 The compose file declares the volume without a `name:` key, so Docker
 Compose prefixes it with the project name: on the host it is
-`<project>_agent_tasks_uploads`. Resolve the exact name first (it must
-match exactly one volume):
+`<project>_agent_tasks_uploads`. A host can hold more than one volume with
+that suffix (for example after the project name changed), so take the one
+the backend container actually mounts at `/app/uploads` (`-a` also finds a
+stopped container) and stop if there is none:
 
 ```bash
-docker volume ls | grep agent_tasks_uploads
-UPLOADS_VOL=$(docker volume ls --quiet --filter name=agent_tasks_uploads)
+BACKEND=$(docker compose -f docker-compose.prod.yml ps -aq backend)
+UPLOADS_VOL=$(docker inspect --format \
+  '{{range .Mounts}}{{if eq .Destination "/app/uploads"}}{{.Name}}{{end}}{{end}}' \
+  "$BACKEND")
+[ -n "$UPLOADS_VOL" ] || { echo "no uploads volume found" >&2; exit 1; }
+echo "$UPLOADS_VOL"
 ```
 
 Then tar the volume out with a throwaway container: the volume mounted
