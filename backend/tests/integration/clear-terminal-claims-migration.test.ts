@@ -113,7 +113,7 @@ const claims = async (id: string) => {
 };
 const cleared = [null, null, null, null, null, null];
 
-describe("clear-terminal-claims.sql", () => {
+describe("clear-terminal-claims.sql", { timeout: 60000 }, () => {
   const when = new Date("2026-01-01T00:00:00Z");
 
   it("clears both claims of a task in the built-in terminal state and keeps a task in a work or review state", async () => {
@@ -132,6 +132,21 @@ describe("clear-terminal-claims.sql", () => {
     const agentHeld = await task(p, "done", { claimedByAgentId: agentId, claimedAt: when });
     runRepair();
     expect(await claims(agentHeld)).toEqual(cleared);
+  });
+
+  it("selects a finished task by any one claim column: a review claim alone, a work claim by user without a timestamp, a review claim by user alone", async () => {
+    const p = await project();
+    const reviewOnly = await task(p, "done", { reviewClaimedByAgentId: agentId, reviewClaimedAt: when });
+    const userWithoutTimestamp = await task(p, "done", { claimedByUserId: userId });
+    const reviewUserOnly = await task(p, "done", { reviewClaimedByUserId: userId });
+    const reviewAgentOnly = await task(p, "done", { reviewClaimedByAgentId: agentId });
+    const reviewTimestampOnly = await task(p, "done", { reviewClaimedAt: when });
+    const agentWithoutTimestamp = await task(p, "done", { claimedByAgentId: agentId });
+    const workTimestampOnly = await task(p, "done", { claimedAt: when });
+    runRepair();
+    for (const id of [reviewOnly, userWithoutTimestamp, reviewUserOnly, reviewAgentOnly, reviewTimestampOnly, agentWithoutTimestamp, workTimestampOnly]) {
+      expect(await claims(id)).toEqual(cleared);
+    }
   });
 
   it("judges a task by the project's default workflow: `shipped` is terminal there, `done` is not", async () => {
@@ -199,6 +214,25 @@ describe("clear-terminal-claims.sql", () => {
     const done = await task(p, "done", CLAIMED(when));
     runRepair();
     expect((await row(done)).claimedByUserId).toBe(userId);
+  });
+
+  it("breaks a tie on the creation time of two default rows by id, like the app does", async () => {
+    const p = await project();
+    const sameTime = new Date("2026-01-01T00:00:00Z");
+    const [smallerId, largerId] = [randomUUID(), randomUUID()].sort();
+    // The row with the larger id is inserted first; the smaller id wins.
+    await db.workflow.create({
+      data: { id: largerId, projectId: p, name: "larger", definition: defaultWorkflowDefinition() as never, isDefault: true, createdAt: sameTime },
+    });
+    await db.workflow.create({
+      data: { id: smallerId, projectId: p, name: "smaller", definition: QA_DEFINITION as never, isDefault: true, createdAt: sameTime },
+    });
+    // `done` is terminal in the larger-id (built-in) row only, `shipped` in the smaller-id one.
+    const done = await task(p, "done", CLAIMED(when));
+    const shipped = await task(p, "shipped", CLAIMED(when));
+    runRepair();
+    expect((await row(done)).claimedByUserId).toBe(userId);
+    expect(await claims(shipped)).toEqual(cleared);
   });
 
   it("leaves a backlog task alone even when a workflow marks a state of that name terminal", async () => {

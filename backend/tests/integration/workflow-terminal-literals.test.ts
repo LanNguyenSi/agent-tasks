@@ -333,6 +333,22 @@ describe("pickup: signal staleness follows the task's workflow", () => {
     expect(body.signal.id).toBe(wanted);
   });
 
+  it("applies the same staleness rule to a human recipient: a review_needed signal for a task in the terminal state is dropped, the one for a review-like state is delivered", async () => {
+    const shipped = await seedTask({ status: "shipped" });
+    const qa = await seedTask({ status: "qa" });
+    const stale = await db.signal.create({
+      data: { type: "review_needed", taskId: shipped, projectId, recipientUserId: authorId, context: {}, createdAt: new Date(1000) },
+    });
+    const wanted = await db.signal.create({
+      data: { type: "review_needed", taskId: qa, projectId, recipientUserId: authorId, context: {}, createdAt: new Date(2000) },
+    });
+
+    const body = await (await pickup(author)).json();
+    expect(body.kind).toBe("signal");
+    expect(body.signal.id).toBe(wanted.id);
+    expect((await db.signal.findUniqueOrThrow({ where: { id: stale.id } })).acknowledgedAt).toBeNull();
+  });
+
   it("delivers an outcome notification for a task in the terminal state", async () => {
     const worker = await seedAgent();
     const shipped = await seedTask({ status: "shipped" });
