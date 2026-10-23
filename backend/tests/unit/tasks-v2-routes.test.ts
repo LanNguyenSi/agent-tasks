@@ -4365,6 +4365,7 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     // Verify workflowFindFirst was called with the project-default lookup.
     expect(prismaMocks.workflowFindFirst).toHaveBeenCalledWith({
       where: { projectId: "proj-1", isDefault: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
   });
 
@@ -4448,6 +4449,7 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     // workflowFindFirst was called but returned null → built-in default used
     expect(prismaMocks.workflowFindFirst).toHaveBeenCalledWith({
       where: { projectId: "proj-1", isDefault: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
   });
 
