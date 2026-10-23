@@ -12,7 +12,7 @@ import { verifyGroundingReceipt, GroundingReceiptVerificationError, type Groundi
 import {
   GROUNDING_POLICY, GroundingAccessError, fetchGroundingHead, groundingAuthority, groundingIntentSchema,
   mismatch, projectGroundingContext, resolveGroundingTarget, unavailable,
-  resolveTaskMergeTarget, fetchTaskMergeHead,
+  resolveTaskMergeTarget, fetchTaskMergeHead, isInReviewState,
   type GroundingAuthority, type GroundingHeadProvider, type GroundingIntent, type GroundingTarget, type GroundingTask,
 } from "./grounding-context.js";
 
@@ -96,7 +96,7 @@ export class GroundingAttemptsService {
 
   private async authorizePolicy(task: GroundingTask, actor: Actor, db: Prisma.TransactionClient, intent?: GroundingIntent, taskRoute = false, direct: GroundingDirectDescriptor | null = null) {
     if (direct) await resolveDirectGroundingTarget(db, task, actor, direct, this.authority);
-    else if (taskRoute && intent === "merge" && task.status === "review") await resolveTaskMergeTarget(db, task, actor, this.authority);
+    else if (taskRoute && intent === "merge" && await isInReviewState(db, task)) await resolveTaskMergeTarget(db, task, actor, this.authority);
     else await this.authorizeTask(task, actor, db);
   }
 
@@ -166,7 +166,7 @@ export class GroundingAttemptsService {
   }
 
   private async context(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, intent: GroundingIntent, taskRoute = false, direct: GroundingDirectDescriptor | null = null) {
-    const standalone = taskRoute && intent === "merge" && task.status === "review";
+    const standalone = taskRoute && intent === "merge" && await isInReviewState(db, task);
     const resolved = direct ? await resolveDirectGroundingTarget(db, task, actor, direct, this.authority) : standalone ? await resolveTaskMergeTarget(db, task, actor, this.authority) : await resolveGroundingTarget(db, task, actor, intent, this.authority);
     const binding = await db.groundingBinding.findUnique({ where: { taskId: task.id } });
     if (!binding) throw new GroundingAccessError("grounding_not_provisioned", 409);

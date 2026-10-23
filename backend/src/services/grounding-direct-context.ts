@@ -53,7 +53,7 @@ export async function resolveDirectGroundingTarget(db: Prisma.TransactionClient,
   // A discard is a disposition even when a custom workflow includes abandoned as terminal.
   const success = !discard && !promote && !reopen && !demote && to !== "abandoned" && (terminal || isReviewState(def, to));
   if (direct.endpoint === "review") {
-    if (task.status !== "review" || ![approveTarget(def, task.status), requestChangesTarget(def, task.status)].includes(to)) throw new GroundingAccessError("bad_state", 409);
+    if (!fromReview || ![approveTarget(def, task.status), requestChangesTarget(def, task.status)].includes(to)) throw new GroundingAccessError("bad_state", 409);
     const holdsReview = actor.type === "agent" ? task.reviewClaimedByAgentId === actor.tokenId : task.reviewClaimedByUserId === actor.userId;
     if ((task.reviewClaimedByAgentId || task.reviewClaimedByUserId) && !holdsReview) throw new GroundingAccessError("bad_state", 409);
     if (!checkReviewApprovalGate(task, actor, task.project).allowed) throw new GroundingAccessError("forbidden", 403);

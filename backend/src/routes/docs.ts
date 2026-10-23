@@ -995,7 +995,7 @@ export const openApiSpec = {
                         name: "Task status allows PR merge",
                         active: true,
                         because:
-                          "Every project requires a mergeable task status before merging the backing PR: pull_requests_merge accepts a review state or terminal state of the task's workflow (review / done in the default workflow), task_merge accepts the literal status review or done. Tasks in other states must transition first.",
+                          "Every project requires a mergeable task status before merging the backing PR: pull_requests_merge and task_merge accept a review state or terminal state of the task's workflow (review / done in the default workflow). Tasks in other states must transition first.",
                         appliesTo: ["pull_requests_merge", "task_merge"],
                       },
                       pr_repo_matches_project: {

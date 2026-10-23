@@ -7,6 +7,7 @@ import type { AppVariables } from "../types/hono.js";
 import { forbidden, notFound } from "../middleware/error.js";
 import {
   defaultWorkflowDefinition,
+  FIRST_DEFAULT_ROW_ORDER,
   sanitizeStoredDefinition,
   type WorkflowDefinitionShape,
 } from "../services/default-workflow.js";
@@ -237,7 +238,7 @@ workflowRouter.get("/projects/:projectId/effective-workflow", async (c) => {
 
   const custom = await prisma.workflow.findFirst({
     where: { projectId, isDefault: true },
-    orderBy: { createdAt: "asc" },
+    orderBy: FIRST_DEFAULT_ROW_ORDER,
   });
 
   if (custom) {

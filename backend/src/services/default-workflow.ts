@@ -287,6 +287,15 @@ export function sanitizeStoredDefinition(
  * the hardcoded final fallback defined in ADR 0008.
  */
 /**
+ * Which row counts as "the" default of a project that holds more than one:
+ * the oldest, ties broken by id. Every reader of the project default uses this
+ * order (this file, `loadWorkflowRows`, the effective-workflow read route),
+ * and the one-off claim repair `prisma/clear-terminal-claims.sql` picks the
+ * same row, so the app and the repair judge a task by the same definition.
+ */
+export const FIRST_DEFAULT_ROW_ORDER = [{ createdAt: "asc" as const }, { id: "asc" as const }];
+
+/**
  * Resolve the effective workflow definition for a task following the
  * ADR-0008 §50-56 resolution chain:
  *   1. task.workflowId → that Workflow row's definition
@@ -318,6 +327,7 @@ export async function resolveEffectiveDefinition(
   }
   const projectDefault = await prismaClient.workflow.findFirst({
     where: { projectId: task.projectId, isDefault: true },
+    orderBy: FIRST_DEFAULT_ROW_ORDER,
   });
   return projectDefault
     ? sanitizeStoredDefinition(projectDefault.definition, { projectId: task.projectId })
@@ -415,6 +425,24 @@ export function approveTarget(def: WorkflowDefinitionShape, fromState: string): 
 }
 
 /**
+ * The terminal state a finish that ends the task moves it to from `fromState`:
+ * the approve target when the workflow has an edge from `fromState` into a
+ * terminal state, else the workflow's first terminal state. The last resort,
+ * `done`, applies only to a definition without any terminal state, which the
+ * workflow API does not accept. Used by the review-approve fallbacks and by
+ * autoMerge, which end the task wherever the workflow says it ends instead
+ * of at the literal `done`.
+ */
+export function terminalTargetFrom(def: WorkflowDefinitionShape, fromState: string): string {
+  return approveTarget(def, fromState) ?? terminalStates(def)[0] ?? "done";
+}
+
+/** Whether `stateName` is one of the definition's states. */
+export function isKnownState(def: WorkflowDefinitionShape, stateName: string): boolean {
+  return def.states.some((s) => s.name === stateName);
+}
+
+/**
  * Find the transition target for a review-finish "request_changes" outcome:
  * the first transition from `fromState` to a non-terminal, non-review state.
  */
@@ -472,6 +500,7 @@ export async function resolveProjectEffectiveDefinition(
 ): Promise<WorkflowDefinitionShape> {
   const projectDefault = await prismaClient.workflow.findFirst({
     where: { projectId, isDefault: true },
+    orderBy: FIRST_DEFAULT_ROW_ORDER,
   });
   return projectDefault
     ? sanitizeStoredDefinition(projectDefault.definition, { projectId })

@@ -450,8 +450,13 @@ describe("POST /tasks/pickup", () => {
 
     const reviewCall = prismaMocks.taskFindFirst.mock.calls[1]![0];
     const workCall = prismaMocks.taskFindFirst.mock.calls[2]![0];
-    expect(reviewCall.where.blockedBy).toEqual({ none: { status: { notIn: ["done", "abandoned"] } } });
-    expect(workCall.where.blockedBy).toEqual({ none: { status: { notIn: ["done", "abandoned"] } } });
+    // `done` is the blocker's own workflow's terminal state: with no workflow
+    // rows every blocker is judged by the built-in workflow.
+    const unresolvedBlocker = {
+      none: { status: { not: "abandoned" }, AND: [{ OR: [{ workflowId: null, status: { notIn: ["done"] } }] }] },
+    };
+    expect(reviewCall.where.blockedBy).toEqual(unresolvedBlocker);
+    expect(workCall.where.blockedBy).toEqual(unresolvedBlocker);
   });
 
   it("returns idle when no signals, no review task, no work task", async () => {
@@ -477,7 +482,7 @@ describe("POST /tasks/pickup", () => {
     const whereClause = prismaMocks.signalFindFirst.mock.calls[0]![0].where;
     expect(whereClause.OR).toEqual([
       { type: { notIn: ["review_needed", "task_available"] } },
-      { task: { status: { not: "done" } } },
+      { task: { OR: [{ workflowId: null, status: { notIn: ["done"] } }] } },
     ]);
   });
 });
@@ -635,8 +640,9 @@ describe("POST /tasks/:id/start", () => {
 // -- `unresolved = blockers.filter(dep => dep.status !== "done")` treated
 // "abandoned" as still-blocking, and there is no agent path back out of
 // "abandoned". Orchestrator decision: treat-abandoned-as-resolved at this
-// predicate (RESOLVED_BLOCKER_STATUSES = ["done", "abandoned"]), not
-// auto-detach -- the blockedBy edge itself is left intact.
+// predicate (`findUnresolvedBlockers` in routes/tasks.ts: a blocker is
+// resolved when it is abandoned or in a terminal state of its own workflow),
+// not auto-detach -- the blockedBy edge itself is left intact.
 describe("POST /tasks/:id/start — dependency gate treats an abandoned blocker as resolved (task 5200f326)", () => {
   it("open task whose SOLE blocker is creator-abandoned is claimable, not blocked (200)", async () => {
     prismaMocks.taskFindUnique.mockResolvedValueOnce({ ...baseTask, status: "open" }); // initial fetch
@@ -4359,6 +4365,7 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     // Verify workflowFindFirst was called with the project-default lookup.
     expect(prismaMocks.workflowFindFirst).toHaveBeenCalledWith({
       where: { projectId: "proj-1", isDefault: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
   });
 
@@ -4442,6 +4449,7 @@ describe("POST /tasks/:id/transition — project-default workflow resolution", (
     // workflowFindFirst was called but returned null → built-in default used
     expect(prismaMocks.workflowFindFirst).toHaveBeenCalledWith({
       where: { projectId: "proj-1", isDefault: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
   });
 

@@ -20,6 +20,7 @@
 import type { Prisma } from "@prisma/client";
 import {
   defaultWorkflowDefinition,
+  FIRST_DEFAULT_ROW_ORDER,
   reviewStates,
   sanitizeStoredDefinition,
   terminalStates,
@@ -30,7 +31,7 @@ export type WorkflowStateKind = "terminal" | "review";
 
 type WorkflowReader = Pick<Prisma.TransactionClient, "workflow">;
 
-interface WorkflowRow {
+export interface WorkflowRow {
   id: string;
   projectId: string;
   isDefault: boolean;
@@ -42,11 +43,17 @@ function statesOfKind(def: WorkflowDefinitionShape, kind: WorkflowStateKind): st
 }
 
 /**
- * The state names of `kind` in a stored definition. A definition that cannot
- * be read (states or transitions not a list) falls back to the built-in
- * definition's states, so the row behaves as a built-in project for every
- * caller instead of throwing (one broken row must not take a whole team's
- * poll down) or reading as "no terminal and no review state".
+ * The state names of `kind` in a stored definition. The fallback is per kind:
+ * when the names of the asked `kind` cannot be read from the stored definition,
+ * the built-in definition's names of that same kind are used, so the row
+ * behaves as a built-in project for that kind instead of throwing (one broken
+ * row must not take a whole team's poll down) or reading as "no terminal and no
+ * review state". Which kinds are readable differs: terminal states need only
+ * the `states` list, review-like states also need the `transitions` list. A
+ * definition whose `states` is a list but whose `transitions` is not therefore
+ * keeps its own terminal states and falls back to the built-in `review` for the
+ * review kind. A definition whose `states` is not a list falls back for both
+ * kinds (`done` for terminal, `review` for review).
  *
  * That fallback is fail-closed for each caller, and no weaker than the
  * literal `review` / `done` these filters used before:
@@ -90,18 +97,25 @@ export async function taskStatusByWorkflow(
   return buildTaskStatusFilter(await loadWorkflowRows(db, opts.scope), opts);
 }
 
-function loadWorkflowRows(db: WorkflowReader, scope: Prisma.WorkflowWhereInput): Promise<WorkflowRow[]> {
+/**
+ * The workflow rows `buildTaskStatusFilter` reads; load once and build several
+ * filters from them. The rows come back oldest first (ties by id), so the first
+ * default row of a project in the list is the one `resolveEffectiveDefinition`
+ * and the claim repair pick: `buildTaskStatusFilter` and `isStatusOfKind` take
+ * the first default row they meet and rely on this order.
+ */
+export function loadWorkflowRows(db: WorkflowReader, scope: Prisma.WorkflowWhereInput): Promise<WorkflowRow[]> {
   return db.workflow.findMany({
     where: scope,
     select: { id: true, projectId: true, isDefault: true, definition: true },
+    orderBy: FIRST_DEFAULT_ROW_ORDER,
   });
 }
 
-function buildTaskStatusFilter(
+export function buildTaskStatusFilter(
   rows: WorkflowRow[],
   opts: { kind: WorkflowStateKind; match: "in" | "notIn" },
 ): Prisma.TaskWhereInput {
-
   const pinned = new Map<string, { ids: string[]; states: string[] }>();
   const projectDefault = new Map<string, { projectIds: string[]; states: string[] }>();
   const projectsWithDefault = new Set<string>();
@@ -113,8 +127,9 @@ function buildTaskStatusFilter(
     pin.ids.push(row.id);
     pinned.set(key, pin);
 
-    // `resolveEffectiveDefinition` reads the first default row of a project;
-    // a second one is ignored here as well.
+    // `resolveEffectiveDefinition` reads the first default row of a project
+    // (the oldest, which is the first one in `rows`, see `loadWorkflowRows`); a
+    // second one is ignored here as well.
     if (row.isDefault && !projectsWithDefault.has(row.projectId)) {
       projectsWithDefault.add(row.projectId);
       const grp = projectDefault.get(key) ?? { projectIds: [], states };
@@ -152,6 +167,29 @@ function buildTaskStatusFilter(
   // The built-in branch is always present for `notIn`, and the built-in
   // workflow has a review state, so `branches` is never empty.
   return { OR: branches };
+}
+
+function builtinStates(kind: WorkflowStateKind): string[] {
+  return [...new Set(statesOfKind(defaultWorkflowDefinition(), kind))].sort();
+}
+
+/**
+ * Whether `task.status` is a state of `kind` in the task's OWN effective
+ * workflow, judged in code from rows loaded with `loadWorkflowRows`. It
+ * resolves the workflow the way the `where` builders do (the pinned row, else
+ * the first default row of the task's project, else the built-in states) and
+ * reads the states with the same per-kind fallback. For callers that already
+ * hold a handful of task rows and must not issue one definition lookup per
+ * task.
+ */
+export function isStatusOfKind(
+  rows: WorkflowRow[],
+  task: { workflowId: string | null; projectId: string; status: string },
+  kind: WorkflowStateKind,
+): boolean {
+  const pinned = task.workflowId ? rows.find((r) => r.id === task.workflowId) : undefined;
+  const row = pinned ?? rows.find((r) => r.isDefault && r.projectId === task.projectId);
+  return (row ? safeStates(row, kind) : builtinStates(kind)).includes(task.status);
 }
 
 export interface ActiveClaim {

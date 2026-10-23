@@ -16,9 +16,17 @@ import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from "vites
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
 import type { Actor } from "../../src/types/auth.js";
-import type { WorkflowDefinitionShape } from "../../src/services/default-workflow.js";
+import {
+  defaultWorkflowDefinition,
+  resolveEffectiveDefinition,
+  resolveProjectEffectiveDefinition,
+  reviewStates,
+  terminalStates,
+  type WorkflowDefinitionShape,
+} from "../../src/services/default-workflow.js";
 import { groundingPostgres } from "../helpers/grounding-postgres.js";
 import { CUSTOM_VOCABULARY_DEFINITION, OPEN_TO_REVIEW_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
+import { workflowDefinitionSchema } from "../../src/routes/workflows.js";
 
 const shared = vi.hoisted(() => ({ db: undefined as PrismaClient | undefined }));
 
@@ -71,7 +79,8 @@ vi.mock("../../src/services/grounding-client.js", () => ({
 }));
 
 import { taskRouter } from "../../src/routes/tasks.js";
-import { findActiveAgentClaim } from "../../src/services/workflow-status-filter.js";
+import { workflowRouter } from "../../src/routes/workflows.js";
+import { buildTaskStatusFilter, findActiveAgentClaim, isStatusOfKind, loadWorkflowRows } from "../../src/services/workflow-status-filter.js";
 import { findTasksByPr, handleIssuesEvent } from "../../src/services/github-webhook.js";
 
 /** open -> build -> done -> shipped: `done` is a review-like work state here, `shipped` is terminal. */
@@ -91,24 +100,25 @@ const DONE_IS_OPEN_DEFINITION: WorkflowDefinitionShape = {
 };
 
 /**
- * Built-in state names with a free `open -> plan -> in_progress -> done` path:
- * `in_progress` has an edge to the terminal state and is no direct target of
- * the initial state, so the helpers read it as review-like and `review` is
- * not a state of this workflow at all.
+ * The four built-in states with free edges, accepted by the workflow API:
+ * `review` is a direct target of the initial state, so it is not review-like
+ * (and has no edge to the terminal state); `in_progress` has an edge to the
+ * terminal state and is no direct target of the initial state, so the helpers
+ * read it as review-like.
  */
 const IN_PROGRESS_IS_REVIEW_DEFINITION: WorkflowDefinitionShape = {
   initialState: "open",
   states: [
     { name: "open", label: "Open", terminal: false },
-    { name: "plan", label: "Plan", terminal: false },
     { name: "in_progress", label: "In progress", terminal: false },
+    { name: "review", label: "In review", terminal: false },
     { name: "done", label: "Done", terminal: true },
   ],
   transitions: [
-    { from: "open", to: "plan" },
-    { from: "plan", to: "in_progress" },
+    { from: "open", to: "review" },
+    { from: "review", to: "in_progress" },
     { from: "in_progress", to: "done" },
-    { from: "in_progress", to: "plan" },
+    { from: "in_progress", to: "review" },
   ],
 };
 
@@ -196,6 +206,13 @@ beforeEach(async () => {
   await db.teamMember.create({ data: { teamId, userId: adminId, role: "ADMIN" } });
   author = await seedAgent();
   worker = await seedAgent();
+});
+
+describe("the free-edge fixtures", () => {
+  it("IN_PROGRESS_IS_REVIEW_DEFINITION is a definition the workflow API accepts, and in_progress is its only review-like state", () => {
+    expect(workflowDefinitionSchema.safeParse(IN_PROGRESS_IS_REVIEW_DEFINITION).success).toBe(true);
+    expect(reviewStates(IN_PROGRESS_IS_REVIEW_DEFINITION)).toEqual(["in_progress"]);
+  });
 });
 
 describe("review pickup follows the task's workflow", () => {
@@ -424,6 +441,35 @@ describe("single-active-claim check follows the task's workflow", () => {
     });
   });
 
+  describe("with a stored definition whose states are readable but whose transitions are not", () => {
+    // Terminal states need only the `states` list and are read from the stored
+    // definition; review-like states also need the transitions and fall back to
+    // the built-in `review`. The fallback is per kind, not per row.
+    const TRANSITIONS_UNREADABLE = {
+      initialState: "open",
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "build", label: "Build", terminal: false },
+        { name: "shipped", label: "Shipped", terminal: true },
+      ],
+      transitions: "not-a-list",
+    } as unknown as WorkflowDefinitionShape;
+
+    it("keeps the stored terminal state for the work claim and the built-in `review` for the review claim", async () => {
+      const project = await seedProject();
+      await seedWorkflow(project, TRANSITIONS_UNREADABLE, true);
+      const claimed = await seedTask(project, { status: "shipped", ...workedBy(worker) });
+      expect(await findActiveAgentClaim(db, workerId())).toBeNull();
+
+      // `done` is no terminal state of this definition, so a claim on it counts.
+      await db.task.update({ where: { id: claimed }, data: { status: "done" } });
+      expect(await findActiveAgentClaim(db, workerId())).toMatchObject({ id: claimed });
+
+      await db.task.update({ where: { id: claimed }, data: { status: "review", claimedByAgentId: null, claimedAt: null, ...reviewedBy(worker) } });
+      expect(await findActiveAgentClaim(db, workerId())).toMatchObject({ id: claimed, reviewClaimedByAgentId: workerId() });
+    });
+  });
+
   it("task_start does not count the task being started as another claim of the agent", async () => {
     const project = await seedProject();
     const own = await seedTask(project, { status: "open", ...workedBy(worker) });
@@ -581,5 +627,73 @@ describe("webhook status filters follow the task's workflow", () => {
     expect(await status(builtinDone)).toBe("done");
     expect(await status(builtinOpen)).toBe("done");
     expect(await status(doneNotTerminal)).toBe("shipped");
+  });
+});
+
+describe("a project with more than one default workflow row reads the oldest one everywhere", () => {
+  // `shipped` is terminal in DONE_IS_OPEN_DEFINITION and `done` is a work state
+  // there; in the built-in definition it is the other way round. The older row
+  // gets the larger id, so that the id order contradicts the creation order,
+  // and the newer row is inserted first, so that the storage order does not
+  // help either.
+  const row = (id: string, projectId: string, definition: WorkflowDefinitionShape, createdAt: Date) =>
+    db.workflow.create({ data: { id, projectId, name: `W-${id.slice(0, 8)}`, definition: definition as never, isDefault: true, createdAt } });
+  const idPair = () => [randomUUID(), randomUUID()].sort() as [string, string];
+
+  async function projectWithTwoDefaults() {
+    const projectId = await seedProject();
+    const [smallerId, largerId] = idPair();
+    await row(smallerId, projectId, defaultWorkflowDefinition(), new Date("2026-02-01T00:00:00Z"));
+    await row(largerId, projectId, DONE_IS_OPEN_DEFINITION, new Date("2026-01-01T00:00:00Z"));
+    return projectId;
+  }
+
+  it("resolves a task, and a project without a task, to the oldest default row", async () => {
+    const projectId = await projectWithTwoDefaults();
+    expect(terminalStates(await resolveEffectiveDefinition({ workflowId: null, projectId }, db))).toEqual(["shipped"]);
+    expect(terminalStates(await resolveProjectEffectiveDefinition(projectId, db))).toEqual(["shipped"]);
+  });
+
+  it("judges task statuses by the oldest default row, in code and in the where clause", async () => {
+    const projectId = await projectWithTwoDefaults();
+    const shipped = await seedTask(projectId, { status: "shipped" });
+    const done = await seedTask(projectId, { status: "done" });
+
+    const rows = await loadWorkflowRows(db, { projectId });
+    expect(isStatusOfKind(rows, { workflowId: null, projectId, status: "shipped" }, "terminal")).toBe(true);
+    expect(isStatusOfKind(rows, { workflowId: null, projectId, status: "done" }, "terminal")).toBe(false);
+
+    const terminal = await db.task.findMany({ where: { projectId, ...buildTaskStatusFilter(rows, { kind: "terminal", match: "in" }) } });
+    expect(terminal.map((t) => t.id)).toEqual([shipped]);
+    const notTerminal = await db.task.findMany({ where: { projectId, ...buildTaskStatusFilter(rows, { kind: "terminal", match: "notIn" }) } });
+    expect(notTerminal.map((t) => t.id)).toEqual([done]);
+  });
+
+  it("breaks a tie on the creation time by id", async () => {
+    const projectId = await seedProject();
+    const sameTime = new Date("2026-01-01T00:00:00Z");
+    const [smallerId, largerId] = idPair();
+    // The row with the larger id is inserted first.
+    await row(largerId, projectId, defaultWorkflowDefinition(), sameTime);
+    await row(smallerId, projectId, DONE_IS_OPEN_DEFINITION, sameTime);
+
+    expect(terminalStates(await resolveEffectiveDefinition({ workflowId: null, projectId }, db))).toEqual(["shipped"]);
+    expect(terminalStates(await resolveProjectEffectiveDefinition(projectId, db))).toEqual(["shipped"]);
+    const rows = await loadWorkflowRows(db, { projectId });
+    expect(rows.map((r) => r.id)).toEqual([smallerId, largerId]);
+    expect(isStatusOfKind(rows, { workflowId: null, projectId, status: "shipped" }, "terminal")).toBe(true);
+  });
+
+  it("answers the effective-workflow read with the oldest default row", async () => {
+    const projectId = await projectWithTwoDefaults();
+    const app = new Hono<{ Variables: AppVariables }>();
+    app.use("*", async (c, next) => {
+      c.set("actor", { type: "human", userId: adminId, teamId });
+      await next();
+    });
+    app.route("/", workflowRouter);
+    const body = await (await app.request(`/projects/${projectId}/effective-workflow`)).json();
+    expect(body.source).toBe("custom");
+    expect(body.definition.states.filter((st: { terminal: boolean }) => st.terminal).map((st: { name: string }) => st.name)).toEqual(["shipped"]);
   });
 });

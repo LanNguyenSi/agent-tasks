@@ -53,6 +53,16 @@ vi.mock("../../src/services/audit.js", () => ({
 import { handlePullRequestReviewEvent, handlePullRequestEvent, handleIssuesEvent } from "../../src/services/github-webhook.js";
 import { CUSTOM_VOCABULARY_DEFINITION, OPEN_TO_REVIEW_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
 
+/** A webhook write into a terminal state also clears the work claim and the review claim. */
+const CLEARED_CLAIMS = {
+  claimedByUserId: null,
+  claimedByAgentId: null,
+  claimedAt: null,
+  reviewClaimedByUserId: null,
+  reviewClaimedByAgentId: null,
+  reviewClaimedAt: null,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockProjectFindMany.mockResolvedValue([{ id: "proj-1", soloMode: false }]);
@@ -239,7 +249,7 @@ describe("handlePullRequestEvent", () => {
 
     expect(mockTaskUpdateMany).toHaveBeenCalledWith({
       where: { id: "task-1", status: "in_progress", statusVersion: 0 },
-      data: { status: "done", statusVersion: { increment: 1 } },
+      data: { status: "done", statusVersion: { increment: 1 }, ...CLEARED_CLAIMS },
     });
     expect(mockTaskUpdate).not.toHaveBeenCalled();
     // Pending signals for the task are auto-acked so the pickup queue drops them
@@ -302,7 +312,7 @@ describe("handlePullRequestEvent", () => {
 
     expect(mockTaskUpdateMany).toHaveBeenCalledWith({
       where: { id: "task-1", status: "in_progress", statusVersion: 0 },
-      data: { status: "done", statusVersion: { increment: 1 } },
+      data: { status: "done", statusVersion: { increment: 1 }, ...CLEARED_CLAIMS },
     });
     expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
@@ -429,7 +439,7 @@ describe("handleIssuesEvent", () => {
 
     expect(mockTaskUpdateMany).toHaveBeenCalledWith({
       where: { id: "task-1", status: "in_progress", statusVersion: 0 },
-      data: { status: "done", statusVersion: { increment: 1 } },
+      data: { status: "done", statusVersion: { increment: 1 }, ...CLEARED_CLAIMS },
     });
     expect(mockTaskUpdate).not.toHaveBeenCalled();
     expect(mockSignalUpdateMany).toHaveBeenCalledWith({
@@ -512,7 +522,7 @@ describe("webhook status writes lose to a concurrent writer without writing over
     expect(mockTaskUpdateMany).toHaveBeenCalledTimes(2);
     expect(mockTaskUpdateMany).toHaveBeenLastCalledWith({
       where: { id: "task-1", status: "review", statusVersion: 6 },
-      data: { status: "done", statusVersion: { increment: 1 } },
+      data: { status: "done", statusVersion: { increment: 1 }, ...CLEARED_CLAIMS },
     });
     expect(mockSignalUpdateMany).toHaveBeenCalledTimes(1);
   });
@@ -653,7 +663,7 @@ describe("webhook handlers on a custom state vocabulary", () => {
 
     expect(mockTaskUpdateMany).toHaveBeenCalledWith({
       where: { id: "task-1", status: "build", statusVersion: 0 },
-      data: { status: "shipped", statusVersion: { increment: 1 } },
+      data: { status: "shipped", statusVersion: { increment: 1 }, ...CLEARED_CLAIMS },
     });
     expect(mockSignalUpdateMany).toHaveBeenCalled();
     expect(mockLogAuditEvent).toHaveBeenCalledWith(
@@ -737,7 +747,7 @@ describe("webhook handlers on a custom state vocabulary", () => {
 
     expect(mockTaskUpdateMany).toHaveBeenCalledWith({
       where: { id: "task-1", status: "build", statusVersion: 0 },
-      data: { status: "shipped", statusVersion: { increment: 1 } },
+      data: { status: "shipped", statusVersion: { increment: 1 }, ...CLEARED_CLAIMS },
     });
     expect(mockSignalUpdateMany).toHaveBeenCalledWith({
       where: { taskId: "task-1", acknowledgedAt: null },

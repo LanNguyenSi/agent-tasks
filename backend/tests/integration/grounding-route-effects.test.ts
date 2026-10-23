@@ -236,6 +236,19 @@ it.each([true, false])("task merge persists observed alreadyMerged=%s through la
   expect(f.merge).toHaveBeenCalledTimes(alreadyMerged ? 0 : 1);
 });
 
+it("a task merge on the workflow's own review-like state is the standalone route: it needs write access, not a claim on the task", async () => {
+  // `checking` is the review-like state of this workflow (no literal `review`).
+  await review();
+  await f.db.task.update({ where: { id: f.taskId }, data: { claimedByAgentId: null, claimedByUserId: ids.user, reviewClaimedByAgentId: null } });
+  const challenge = await f.attempts.issueForRoute(f.taskId, actor, "merge");
+  expect(challenge.attemptId).toBeDefined();
+  // The approve route is not the standalone one, so it still wants a claim.
+  await expect(f.attempts.issueForRoute(f.taskId, actor, "approve")).rejects.toMatchObject({ code: "forbidden" });
+  // A state that is not review-like is no standalone merge target.
+  await f.db.task.update({ where: { id: f.taskId }, data: { status: "working" } });
+  await expect(f.attempts.issueForRoute(f.taskId, actor, "merge")).rejects.toMatchObject({ code: "forbidden" });
+});
+
 it.each(["unavailable", "head", "missing-sha"])("task merge rejects %s pre-dispatch observation without dispatch or remote mutation", async failure => {
   await standaloneReview(); await f.evidence("merge");
   await f.service.reserveMerge(f.taskId, actor, "observation-error", { ...input("task_merge", "merge", true), action: "merge" });

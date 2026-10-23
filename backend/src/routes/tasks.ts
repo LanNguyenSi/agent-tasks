@@ -89,12 +89,19 @@ import {
   firstTransitionTarget,
   terminalStates,
   reviewStates,
-  approveTarget,
   requestChangesTarget,
+  terminalTargetFrom,
+  isKnownState,
   gatesForTransition,
   type WorkflowDefinitionShape,
 } from "../services/default-workflow.js";
-import { findActiveAgentClaim, taskStatusByWorkflow } from "../services/workflow-status-filter.js";
+import {
+  buildTaskStatusFilter,
+  findActiveAgentClaim,
+  isStatusOfKind,
+  loadWorkflowRows,
+} from "../services/workflow-status-filter.js";
+import { clearAllClaims } from "../services/task-claim-fields.js";
 import { findDelegationUser } from "../services/github-delegation.js";
 import { GITHUB_BACKED_RULES, parseOwnerRepo } from "../services/transition-rules.js";
 import { performPrMerge, type BeforeGithubMerge, type MergeResult } from "../services/github-merge.js";
@@ -127,6 +134,7 @@ import {
   prRepoMatchesProjectRejectionMessage,
   effectiveDeliverableRepo,
   isForeignDeliverable,
+  checkTaskStatusForMerge,
 } from "../services/gates/index.js";
 import { SCOPES } from "../services/scopes.js";
 import { bodyLimit } from "hono/body-limit";
@@ -159,7 +167,31 @@ import { httpUrl } from "../lib/url-guard.js";
 // creator-abandon route below), or a human can DELETE
 // /tasks/:id/dependencies/:blockerTaskId to detach the blocking edge
 // outright.
-const RESOLVED_BLOCKER_STATUSES: string[] = ["done", "abandoned"];
+//
+// "Done" is the blocker's own workflow's terminal state, not the literal
+// `done`: a blocker in a custom terminal state (`shipped`) resolves its
+// dependents too. `abandoned` stays resolved for every workflow.
+const ABANDONED_STATUS = "abandoned";
+
+/**
+ * The blockers of `taskId` that still hold it back: not abandoned and not in a
+ * terminal state of their own workflow. The few blocker rows are judged in
+ * code against one read of the workflow rows of their projects, so the check
+ * costs two queries however many blockers there are.
+ */
+async function findUnresolvedBlockers(taskId: string): Promise<{ id: string; title: string; status: string }[]> {
+  const blockers = await prisma.task.findMany({
+    where: { blocks: { some: { id: taskId } } },
+    select: { id: true, title: true, status: true, workflowId: true, projectId: true },
+  });
+  if (blockers.length === 0) return [];
+  const rows = await loadWorkflowRows(prisma, {
+    projectId: { in: [...new Set(blockers.map((b) => b.projectId))] },
+  });
+  return blockers
+    .filter((b) => b.status !== ABANDONED_STATUS && !isStatusOfKind(rows, b, "terminal"))
+    .map(({ id, title, status }) => ({ id, title, status }));
+}
 
 // Answer for a generic status write (PATCH /tasks/:id with a status, POST
 // /tasks/:id/transition) whose compare-and-swap on the status the handler
@@ -849,6 +881,12 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
 
   const doneBoundary = new Date(Date.now() - RECENT_DONE_DAYS * 24 * 60 * 60 * 1000);
 
+  // "Done" and "not done" are the terminal states of each task's own workflow
+  // (`done` in the built-in one), read once for the whole team.
+  const workflowRows = await loadWorkflowRows(prisma, { projectId: { in: projectIds } });
+  const terminalStatus = buildTaskStatusFilter(workflowRows, { kind: "terminal", match: "in" });
+  const notTerminalStatus = buildTaskStatusFilter(workflowRows, { kind: "terminal", match: "notIn" });
+
   const [tasks, filteredTotal, statusGroups, priorityCount, mineCount, doneRecent, doneOlder] =
     await Promise.all([
       prisma.task.findMany({
@@ -880,17 +918,17 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
         where: {
           ...countWhere,
           claimedByUserId: actor.userId,
-          status: { not: "done" },
+          AND: [notTerminalStatus],
         },
       }),
       // Team-wide done split at the 14-day window, so the home "Recently
       // Done" widget can label its two links authoritatively instead of
       // deriving the counts from a client-side slice.
       prisma.task.count({
-        where: { ...countWhere, status: "done", updatedAt: { gte: doneBoundary } },
+        where: { ...countWhere, AND: [terminalStatus], updatedAt: { gte: doneBoundary } },
       }),
       prisma.task.count({
-        where: { ...countWhere, status: "done", updatedAt: { lt: doneBoundary } },
+        where: { ...countWhere, AND: [terminalStatus], updatedAt: { lt: doneBoundary } },
       }),
     ]);
 
@@ -900,7 +938,8 @@ taskRouter.get("/teams/:teamId/tasks", async (c) => {
   const counts = {
     open: (byStatus.open ?? 0) + (byStatus.in_progress ?? 0),
     review: byStatus.review ?? 0,
-    done: byStatus.done ?? 0,
+    // The two windows partition the terminal tasks, so their sum is the count.
+    done: doneRecent + doneOlder,
     doneRecent,
     doneOlder,
     priority: priorityCount,
@@ -1964,9 +2003,31 @@ taskRouter.post("/tasks/pickup", async (c) => {
     }
   }
 
+  // The workflow rows of the caller's scope, read once for the filters below:
+  // the signal staleness check, the review pool and the blocker checks each
+  // judge a task's status by its OWN workflow (see workflow-status-filter.ts).
+  // An agent's tasks are its team's; a human only reads its own signals, so
+  // its scope is the projects of the tasks those signals point at.
+  const workflowRows = await loadWorkflowRows(
+    prisma,
+    actor.type === "agent"
+      ? { project: { teamId: actor.teamId } }
+      : {
+          project: {
+            tasks: { some: { signals: { some: { acknowledgedAt: null, recipientUserId: actor.userId } } } },
+          },
+        },
+  );
+  const taskNotTerminal = buildTaskStatusFilter(workflowRows, { kind: "terminal", match: "notIn" });
+  // A blocker no longer holds a dependent back once it is abandoned or in a
+  // terminal state of its own workflow.
+  const noUnresolvedBlocker: Prisma.TaskWhereInput = {
+    blockedBy: { none: { status: { not: ABANDONED_STATUS }, AND: [taskNotTerminal] } },
+  };
+
   // ── 1. Signals ────────────────────────────────────────────────────────────
   // Defense-in-depth: only `review_needed` / `task_available`
-  // become stale when the task lands on `done` — those ask the recipient to
+  // become stale when the task lands on a terminal state — those ask the recipient to
   // DO something ("pick this up", "review this") that no longer applies.
   // `task_approved`, `changes_requested`, `task_force_transitioned` are
   // *outcome notifications* emitted against tasks that are already terminal
@@ -1976,7 +2037,7 @@ taskRouter.post("/tasks/pickup", async (c) => {
       acknowledgedAt: null,
       OR: [
         { type: { notIn: STALE_WHEN_DONE } },
-        { task: { status: { not: "done" } } },
+        { task: taskNotTerminal },
       ],
       ...(actor.type === "agent"
         ? { recipientAgentId: actor.tokenId }
@@ -2013,11 +2074,7 @@ taskRouter.post("/tasks/pickup", async (c) => {
 
   // ── 2. Review pickup ──────────────────────────────────────────────────────
   // Distinct-reviewer: the agent must not be the author of the task.
-  const reviewStatusFilter = await taskStatusByWorkflow(prisma, {
-    kind: "review",
-    match: "in",
-    scope: { project: { teamId: actor.teamId } },
-  });
+  const reviewStatusFilter = buildTaskStatusFilter(workflowRows, { kind: "review", match: "in" });
   const reviewTask = await prisma.task.findFirst({
     where: {
       AND: [reviewStatusFilter],
@@ -2025,7 +2082,7 @@ taskRouter.post("/tasks/pickup", async (c) => {
       reviewClaimedByUserId: null,
       createdByAgentId: { not: actor.tokenId },
       ...teamFilter,
-      blockedBy: { none: { status: { notIn: RESOLVED_BLOCKER_STATUSES } } },
+      ...noUnresolvedBlocker,
     },
     orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
     include: {
@@ -2090,7 +2147,7 @@ taskRouter.post("/tasks/pickup", async (c) => {
       claimedByAgentId: null,
       claimedByUserId: null,
       ...teamFilter,
-      blockedBy: { none: { status: { notIn: RESOLVED_BLOCKER_STATUSES } } },
+      ...noUnresolvedBlocker,
     },
     orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
     include: {
@@ -2304,11 +2361,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     }
 
     // Dependency gate
-    const blockers = await prisma.task.findMany({
-      where: { blocks: { some: { id: task.id } } },
-      select: { id: true, title: true, status: true },
-    });
-    const unresolved = blockers.filter((dep) => !RESOLVED_BLOCKER_STATUSES.includes(dep.status));
+    const unresolved = await findUnresolvedBlockers(task.id);
     if (unresolved.length > 0) {
       return c.json(
         {
@@ -2496,8 +2549,10 @@ taskRouter.post("/tasks/:id/start", async (c) => {
       // ADR-0008 chain stages (task-level workflow, project-customized
       // default, built-in default) instead of the caller having to guess
       // from workflowId alone (rc-v1-C003 review finding). An `autoMerge:
-      // true` work finish hard-sets targetStatus to "done" and strips
-      // prMerged via skipRules (see the work-finish branch below) — a
+      // true` work finish hard-sets targetStatus to the terminal state the
+      // workflow reaches from the current one (`done` in the built-in
+      // workflow) and strips prMerged via skipRules (see the work-finish
+      // branch below) — a
       // DIFFERENT edge under customized workflows this list does not cover.
       // Also: these are the gates CONFIGURED on the edge, not necessarily
       // all ENFORCED at finish-time — the ADR-0010 §5c foreign-deliverable
@@ -2617,7 +2672,7 @@ taskRouter.post("/tasks/:id/start", async (c) => {
     // outcome (see the review-finish branch below). Review-claim finish is
     // polymorphic on `outcome`, unlike the work-claim's single edge, so the
     // preview needs one key per outcome.
-    const approveTo = approveTarget(effectiveDefinition, task.status) ?? "done";
+    const approveTo = terminalTargetFrom(effectiveDefinition, task.status);
     const requestChangesTo = requestChangesTarget(effectiveDefinition, task.status) ?? task.status;
     const presentation = await presentGroundingRouteContext(prisma, {
       taskId: updated.id,
@@ -2977,7 +3032,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     const { outcome, result, autoMerge, mergeMethod } = parsed.data;
 
     const targetStatus = outcome === "approve"
-      ? approveTarget(effectiveDefinition, task.status) ?? "done"
+      ? terminalTargetFrom(effectiveDefinition, task.status)
       : requestChangesTarget(effectiveDefinition, task.status) ?? task.status;
 
     // Distinct-reviewer gate. Defense-in-depth: pickup already excludes the
@@ -3102,7 +3157,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       const workflowHadPrMerged =
         effectiveDefinition
           ? effectiveDefinition.transitions
-              .find((t) => t.from === "review" && t.to === "done")
+              .find((t) => t.from === task.status && t.to === targetStatus)
               ?.requires?.includes("prMerged") ?? false
           : false;
 
@@ -3192,7 +3247,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
       actorId: actor.type === "human" ? actor.userId : undefined,
       projectId: task.projectId,
       taskId: task.id,
-      payload: { reviewAction: outcome, from: "review", to: targetStatus, actorType: actor.type, reviewerId: actorId, via: "task_finish" },
+      payload: { reviewAction: outcome, from: task.status, to: targetStatus, actorType: actor.type, reviewerId: actorId, via: "task_finish" },
     });
 
     // Audit the autoMerge join record (ties the merge to this task finish).
@@ -3299,7 +3354,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     const { outcome: selfApprOutcome, result: selfApprResult, autoMerge: selfApprAutoMerge, mergeMethod: selfApprMergeMethod } = selfApprParsed.data;
 
     const selfApprTargetStatus = selfApprOutcome === "approve"
-      ? approveTarget(effectiveDefinition, task.status) ?? "done"
+      ? terminalTargetFrom(effectiveDefinition, task.status)
       : requestChangesTarget(effectiveDefinition, task.status) ?? task.status;
 
     // Transition gates — same path as the review-finish branch.
@@ -3581,13 +3636,16 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
 
   // ── Retry idempotency (ADR-0010 §8) ──────────────────────────────────
   if (workAutoMerge) {
-    // Short-circuit: task already done + autoMergeSha set → return existing.
-    if (task.status === "done" && task.autoMergeSha) {
-      return c.json({ kind: "work", task, targetStatus: "done", autoMergeSha: task.autoMergeSha });
+    // Short-circuit: task already in a terminal state + autoMergeSha set →
+    // return existing.
+    if (isTerminalState(effectiveDefinition, task.status) && task.autoMergeSha) {
+      return c.json({ kind: "work", task, targetStatus: task.status, autoMergeSha: task.autoMergeSha });
     }
-    // Mid-flight recovery: task still in_progress + autoMergeSha set →
+    // Mid-flight recovery: task still in a work state + autoMergeSha set →
     // check if the merge actually succeeded on GitHub and skip re-merging.
-    if (task.status === "in_progress" && task.autoMergeSha) {
+    if (isWorkState(effectiveDefinition, task.status) && task.autoMergeSha) {
+      // The state the merge ends the task in, from where it stands now.
+      const recoveredStatus = terminalTargetFrom(effectiveDefinition, task.status);
       // The merge succeeded in a prior call but the transition didn't complete.
       // Verify via prMerged rule, then proceed to transition only.
       const delegate = await findDelegationUser(task.project.teamId, "allowAgentPrMerge", {
@@ -3610,13 +3668,11 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           actor,
           task,
           {
-            status: "done",
-            claimedByUserId: null,
-            claimedByAgentId: null,
-            claimedAt: null,
+            status: recoveredStatus,
+            ...clearAllClaims,
             ...(result !== undefined ? { result } : {}),
           },
-          "done",
+          recoveredStatus,
           taskInclude,
           { sha: task.autoMergeSha, via: "task_finish_auto_merge_recovery" },
         );
@@ -3642,9 +3698,9 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
           actorId: actor.type === "human" ? actor.userId : undefined,
           projectId: task.projectId,
           taskId: task.id,
-          payload: { from: "in_progress", to: "done", actorType: actor.type, via: "task_finish", recovery: true },
+          payload: { from: task.status, to: recoveredStatus, actorType: actor.type, via: "task_finish", recovery: true },
         });
-        return c.json({ kind: "work", task: recovered, targetStatus: "done", autoMergeSha: task.autoMergeSha });
+        return c.json({ kind: "work", task: recovered, targetStatus: recoveredStatus, autoMergeSha: task.autoMergeSha });
       }
       // PR not yet merged despite having autoMergeSha — fall through to
       // the normal merge path (GitHub API 405 will handle idempotency).
@@ -3723,8 +3779,9 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     }
   }
 
-  // When autoMerge is requested, hard-set targetStatus to "done" and verify
-  // the workflow actually supports in_progress → done (ADR-0010 §2 Mode A).
+  // When autoMerge is requested, hard-set targetStatus to the terminal state
+  // the workflow ends the task in from here (`done` in the built-in workflow)
+  // and verify the workflow actually has that edge (ADR-0010 §2 Mode A).
   let targetStatus: string;
   if (workAutoMerge) {
     if (resolveGovernanceMode(task.project) !== GovernanceMode.AUTONOMOUS) {
@@ -3737,7 +3794,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
         403,
       );
     }
-    targetStatus = "done";
+    targetStatus = terminalTargetFrom(effectiveDefinition, task.status);
   } else {
     targetStatus = expectedFinishStateFromDefinition(effectiveDefinition);
   }
@@ -3855,7 +3912,7 @@ taskRouter.post("/tasks/:id/finish", async (c) => {
     const workflowHadPrMerged =
       effectiveDefinition
         ? effectiveDefinition.transitions
-            .find((t) => t.from === "in_progress" && t.to === "done")
+            .find((t) => t.from === task.status && t.to === targetStatus)
             ?.requires?.includes("prMerged") ?? false
         : false;
 
@@ -4430,11 +4487,11 @@ taskRouter.post("/tasks/:id/abandon", async (c) => {
 // every other from="abandoned" write 400s.
 //
 // The gap this used to leave open, closed by task 5200f326: `blockedBy`
-// dependency gating (`RESOLVED_BLOCKER_STATUSES` above, used at both
-// task_pickup's `blockedBy: { none: ... }` queries and the task_start /
-// POST /tasks/:id/claim `unresolved` filters) now treats `abandoned` the
-// same as `done` for gating purposes, so a dependent whose sole blocker
-// gets creator-abandoned here becomes claimable again instead of deadlocked
+// dependency gating (`ABANDONED_STATUS` and `findUnresolvedBlockers` above,
+// used at task_pickup and at the task_start / POST /tasks/:id/claim checks)
+// now treats `abandoned` like a terminal state of the blocker's workflow
+// (`done` in the built-in one), so a dependent whose sole blocker gets
+// creator-abandoned here becomes claimable again instead of deadlocked
 // forever. Deliberately a predicate change only, not auto-detach: the
 // blockedBy edge itself is left intact for audit/history.
 const creatorAbandonSchema = z.object({
@@ -4564,15 +4621,17 @@ taskRouter.post("/tasks/:id/creator-abandon", async (c) => {
 //
 // Rules:
 //   - requires `github:pr_merge` scope for agent callers
-//   - task must be in `review` (or already `done` for idempotent retries)
+//   - task must be in a review-like state of its workflow (`review` in the
+//     built-in one), or already in a terminal state (`done`) for idempotent
+//     retries
 //   - distinct-reviewer gate (review state only) runs in lockstep with the
 //     existing `/github/pull-requests/:n/merge` endpoint
 //   - self-merge gate (always): if `requireDistinctReviewer && !soloMode`,
 //     the actor who holds the work claim cannot merge
 //
-// Admin force path: force-transition to `done` first (`POST
+// Admin force path: force-transition to the terminal state first (`POST
 // /tasks/:id/transition` with `force: true`), then call this endpoint. The
-// `done` entry is idempotent so the merge still happens.
+// terminal entry is idempotent so the merge still happens.
 
 const taskMergeSchema = z.object({
   mergeMethod: z.enum(["squash", "merge", "rebase"]).default("squash"),
@@ -4612,7 +4671,14 @@ taskRouter.post(
       return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
     }
 
-    if (task.status === "open" || task.status === "in_progress") {
+    // The status rule is the same as the GitHub route's: a review-like or a
+    // terminal state of the task's effective workflow (`review` and `done`
+    // in the built-in workflow). A state of the workflow that is neither is a
+    // known bad status; a status the workflow does not define is unknown.
+    const effectiveDefinition = await resolveEffectiveDefinition(task, prisma);
+    const statusGate = checkTaskStatusForMerge(task, effectiveDefinition);
+    if (!statusGate.ok) {
+      const known = isKnownState(effectiveDefinition, task.status);
       void logAuditEvent({
         action: "task.merge_rejected_bad_status",
         projectId: task.projectId,
@@ -4622,31 +4688,18 @@ taskRouter.post(
           actorType: actor.type,
           agentTokenId: actor.type === "agent" ? actor.tokenId : undefined,
           via: "task_merge",
+          ...(known ? {} : { unknown: true }),
         },
       });
+      const expectedReview = reviewStates(effectiveDefinition)[0];
       return c.json(
         {
           error: "bad_state",
-          message: `Cannot merge: task is in '${task.status}', expected 'review'. Transition the task to 'review' first.`,
+          message:
+            known && expectedReview !== undefined
+              ? `Cannot merge: task is in '${task.status}', expected '${expectedReview}'. Transition the task to '${expectedReview}' first.`
+              : `Cannot merge: task is in '${task.status}'.`,
         },
-        409,
-      );
-    }
-    if (task.status !== "review" && task.status !== "done") {
-      void logAuditEvent({
-        action: "task.merge_rejected_bad_status",
-        projectId: task.projectId,
-        taskId: task.id,
-        payload: {
-          status: task.status,
-          actorType: actor.type,
-          agentTokenId: actor.type === "agent" ? actor.tokenId : undefined,
-          via: "task_merge",
-          unknown: true,
-        },
-      });
-      return c.json(
-        { error: "bad_state", message: `Cannot merge: task is in '${task.status}'.` },
         409,
       );
     }
@@ -4684,8 +4737,8 @@ taskRouter.post(
     // Distinct-reviewer gate — catches the broader "you have no review lock
     // yet" / "the review lock is held by the claimant" cases that the
     // self-merge gate above doesn't cover. Only runs on the review→done
-    // path; done→done is an idempotent retry where DR has already run.
-    if (task.status === "review") {
+    // path; terminal→terminal is an idempotent retry where DR has already run.
+    if (isReviewState(effectiveDefinition, task.status)) {
       const gate = checkReviewApprovalGate(task, actor, task.project);
       if (!gate.allowed) {
         void logAuditEvent({
@@ -4725,21 +4778,21 @@ taskRouter.post(
     // validated against. The PR is already merged, so a lost race completes
     // against the webhook-moved row (the system's own PR-merge webhook got to
     // `done` first) or answers the merged-but-changed 409.
+    // The merge ends the task in the terminal state its workflow reaches from
+    // the current one; a task already in a terminal state keeps it.
+    const mergedStatus = isTerminalState(effectiveDefinition, task.status)
+      ? task.status
+      : terminalTargetFrom(effectiveDefinition, task.status);
     const mergeWrite = await writeStatusCas(
       c,
       actor,
       task,
       {
-        status: "done",
-        claimedByUserId: null,
-        claimedByAgentId: null,
-        claimedAt: null,
-        reviewClaimedByUserId: null,
-        reviewClaimedByAgentId: null,
-        reviewClaimedAt: null,
+        status: mergedStatus,
+        ...clearAllClaims,
         autoMergeSha: mergeResult.sha,
       },
-      "done",
+      mergedStatus,
       taskInclude,
       { sha: mergeResult.sha, via: "task_merge" },
     );
@@ -4884,8 +4937,10 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
   const isSelfReview =
     (actor.type === "human" && task.claimedByUserId === actor.userId) ||
     (actor.type === "agent" && task.claimedByAgentId === actor.tokenId);
+  // The review state is the task's own workflow's (`review` in the built-in one).
+  const inReview = isReviewState(effectiveDef, task.status);
   const reviewActions =
-    task.status === "review" && !isSelfReview && canTransition
+    inReview && !isSelfReview && canTransition
       ? ["approve", "request_changes"]
       : [];
 
@@ -4909,14 +4964,14 @@ taskRouter.get("/tasks/:id/instructions", async (c) => {
     recommendedAction = "Open a PR and update prUrl/prNumber.";
   } else if (task.status === "in_progress" && task.prUrl) {
     recommendedAction = "Submit for review when ready.";
-  } else if (task.status === "review" && !isSelfReview) {
+  } else if (inReview && !isSelfReview) {
     recommendedAction = "Review the PR and approve or request changes. Merge/deploy/verify are separate operational follow-ups, not default task states.";
-  } else if (task.status === "review" && isSelfReview) {
+  } else if (inReview && isSelfReview) {
     recommendedAction = "Wait for review. Once review is complete, the task may be marked done; merge/deploy/verify are tracked operationally outside the default task states.";
   }
 
   const effectiveAgentInstructions = currentState?.agentInstructions
-    ?? (task.status === "review"
+    ?? (inReview
       ? "Review is a code-review state. Approve or request changes here. Merge, deploy, and production verification are external follow-up actions unless your project defines a custom workflow for them."
       : null);
 
@@ -5259,6 +5314,9 @@ taskRouter.patch("/tasks/:id", async (c) => {
   let didStatusChange = false;
   let statusClaimPatch: Record<string, unknown> = {};
   let isTerminalTransition = false;
+  // Set by the generic transition lookup: the write moves the task into a
+  // review state of its workflow from a state that is not one.
+  let isEnteringReview = false;
   // Set only by the unabandon special case just below — distinguishes it
   // from an ordinary "task.transitioned" write in the audit event fired
   // further down, without adding a second code path for the write itself.
@@ -5460,7 +5518,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
       // Distinct-reviewer gate: same structural backstop /transition applies
       // on review → done, now driven by the shared pipeline instead of the
       // narrower inline special case this replaces.
-      if (previousStatus === "review" && targetStatus === "done") {
+      if (isReviewState(effectiveDef, previousStatus) && isTerminalState(effectiveDef, targetStatus)) {
         const gate = checkReviewApprovalGate(task, actor, task.project);
         if (!gate.allowed) {
           void logAuditEvent({
@@ -5539,6 +5597,8 @@ taskRouter.patch("/tasks/:id", async (c) => {
       // only the review-claim. Closes the dangling-claim gap this task also
       // flagged: PATCH status='done' used to leave claims untouched.
       isTerminalTransition = isTerminalState(effectiveDef, targetStatus);
+      isEnteringReview =
+        isReviewState(effectiveDef, targetStatus) && !isReviewState(effectiveDef, previousStatus);
       const isLeavingReview =
         !isTerminalTransition && isReviewState(effectiveDef, previousStatus);
       statusClaimPatch = isTerminalTransition
@@ -5708,7 +5768,7 @@ taskRouter.patch("/tasks/:id", async (c) => {
   // a terminal transition's pending asks are cleared first, same ordering
   // /transition uses.
   if (didStatusChange) {
-    if (body.status === "review" && previousStatus !== "review") {
+    if (isEnteringReview) {
       void emitReviewSignal(
         task.id,
         task.projectId,
@@ -7011,12 +7071,9 @@ taskRouter.post("/tasks/:id/claim", async (c) => {
     return c.json({ error: "bad_state", message: REVIEW_HOLDER_WORK_CLAIM_MESSAGE }, 409);
   }
 
-  // Dependency gate — all blocking tasks must be done or abandoned
-  const blockers = await prisma.task.findMany({
-    where: { blocks: { some: { id: task.id } } },
-    select: { id: true, title: true, status: true },
-  });
-  const unresolved = blockers.filter((dep) => !RESOLVED_BLOCKER_STATUSES.includes(dep.status));
+  // Dependency gate — all blocking tasks must be in a terminal state of their
+  // own workflow or abandoned
+  const unresolved = await findUnresolvedBlockers(task.id);
   if (unresolved.length > 0) {
     return c.json({
       error: "blocked",
@@ -7656,7 +7713,7 @@ taskRouter.post(
     // rejected self-review does not trigger a GitHub round-trip (ciGreen /
     // prMerged checks). force=true is an admin-only escape hatch and is
     // already verified at the top of the handler.
-    if (previousStatus === "review" && status === "done" && !force) {
+    if (isReviewState(effectiveDef, previousStatus) && isTerminalState(effectiveDef, status) && !force) {
       const gate = checkReviewApprovalGate(task, actor, task.project);
       if (!gate.allowed) {
         void logAuditEvent({
@@ -7853,7 +7910,7 @@ taskRouter.post(
     }
 
     // Emit review signal when entering review state
-    if (status === "review" && previousStatus !== "review") {
+    if (isReviewState(effectiveDef, status) && !isReviewState(effectiveDef, previousStatus)) {
       void emitReviewSignal(
         task.id,
         task.projectId,
@@ -7914,7 +7971,8 @@ taskRouter.post(
       return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
     }
 
-    if (task.status !== "review") {
+    const effectiveDef = await resolveEffectiveDefinition(task, prisma);
+    if (!isReviewState(effectiveDef, task.status)) {
       return c.json({ error: "bad_request", message: "Task must be in review status" }, 400);
     }
 
@@ -7941,7 +7999,11 @@ taskRouter.post(
     }
 
     const { action, comment: reviewComment } = c.req.valid("json");
-    const newStatus = action === "approve" ? "done" : "in_progress";
+    // The workflow's own approve and request-changes targets from this review
+    // state (`done` and `in_progress` in the built-in workflow).
+    const newStatus = action === "approve"
+      ? terminalTargetFrom(effectiveDef, task.status)
+      : requestChangesTarget(effectiveDef, task.status) ?? task.status;
 
     // Complete review: transition status and clear review lock, and store the
     // review comment, in one transaction.
@@ -7982,7 +8044,7 @@ taskRouter.post(
 
     // Ack BEFORE emitting `task_approved` below, which is deliberately
     // emitted against a terminal task and must survive.
-    if (newStatus === "done") {
+    if (isTerminalState(effectiveDef, newStatus)) {
       await acknowledgeSignalsForTask(task.id);
     }
 
@@ -7991,7 +8053,7 @@ taskRouter.post(
       actorId: actor.type === "human" ? actor.userId : undefined,
       projectId: task.projectId,
       taskId: task.id,
-      payload: { reviewAction: action, from: "review", to: newStatus, actorType: actor.type, reviewerId: actorId },
+      payload: { reviewAction: action, from: task.status, to: newStatus, actorType: actor.type, reviewerId: actorId },
     });
 
     // Emit durable signals to the original assignee
@@ -8044,7 +8106,7 @@ taskRouter.post("/tasks/:id/review/claim", async (c) => {
     return forbidden(c, "Requires write access (PROJECT_VIEWER is read-only)");
   }
 
-  if (task.status !== "review") {
+  if (!isReviewState(await resolveEffectiveDefinition(task, prisma), task.status)) {
     return c.json({ error: "bad_request", message: "Task must be in review status" }, 400);
   }
 
