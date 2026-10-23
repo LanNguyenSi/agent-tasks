@@ -35,6 +35,7 @@ import { logAuditEvent } from "../services/audit.js";
 import { mutateGroundingContext } from "../services/grounding-context-mutation.js";
 import { GroundingAccessError } from "../services/grounding-context.js";
 import { withNoLiveMergeReservation } from "../services/task-merge-reservation.js";
+import { buildTaskStatusFilter, loadWorkflowRows } from "../services/workflow-status-filter.js";
 import { lockGroundingAuthority } from "../services/grounding-direct-authority.js";
 
 export const projectInviteAdminRouter = new Hono<{ Variables: AppVariables }>();
@@ -247,12 +248,18 @@ projectInviteAdminRouter.delete("/projects/:id/members/:userId", async (c) => {
         if (!selfRemoval && !await hasProjectRole(actor, projectId, "ADMIN", db)) {
           throw new GroundingAccessError("forbidden", 403);
         }
+        // A work claim counts until the task reaches a terminal state of its
+        // own workflow, a review claim while it sits in a review-like state of
+        // it (`done` and `review` in the built-in workflow).
+        const workflowRows = await loadWorkflowRows(db, { projectId });
+        const notTerminal = buildTaskStatusFilter(workflowRows, { kind: "terminal", match: "notIn" });
+        const inReview = buildTaskStatusFilter(workflowRows, { kind: "review", match: "in" });
         const tasks = await db.task.findMany({
           where: {
             projectId,
             OR: [
-              { claimedByUserId: targetUserId, status: { not: "done" } },
-              { reviewClaimedByUserId: targetUserId, status: "review" },
+              { claimedByUserId: targetUserId, AND: [notTerminal] },
+              { reviewClaimedByUserId: targetUserId, AND: [inReview] },
             ],
           },
           select: { id: true },

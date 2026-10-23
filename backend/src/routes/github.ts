@@ -24,12 +24,14 @@ import {
   isForeignDeliverable,
 } from "../services/gates/index.js";
 import {
+  isKnownState,
   isReviewState,
   resolveEffectiveDefinition,
   terminalStates,
 } from "../services/default-workflow.js";
 import { performPrMerge, type BeforeGithubMerge } from "../services/github-merge.js";
 import { writeStatusAfterMerge } from "../services/task-merge-status-write.js";
+import { clearAllClaims } from "../services/task-claim-fields.js";
 import { GITHUB_FENCE_CONFLICT_MESSAGE, reserveTaskForMerge } from "../services/task-status-cas.js";
 import { releaseMergeReservation, type MergeReservation } from "../services/task-merge-reservation.js";
 import { mergeInProgressBody } from "../middleware/error.js";
@@ -545,8 +547,7 @@ githubRouter.post(
     const definition = await resolveEffectiveDefinition(task, prisma);
     const statusGate = checkTaskStatusForMerge(task, definition);
     if (!statusGate.ok) {
-      const isKnownBadStatus =
-        task.status === "open" || task.status === "in_progress";
+      const isKnownBadStatus = isKnownState(definition, task.status);
       void logAuditEvent({
         action: "task.merge_rejected_bad_status",
         projectId: task.project.id,
@@ -563,7 +564,7 @@ githubRouter.post(
       return c.json(
         {
           error: "forbidden",
-          message: taskStatusForMergeRejectionMessage(statusGate.currentStatus),
+          message: taskStatusForMergeRejectionMessage(statusGate.currentStatus, definition),
         },
         403,
       );
@@ -715,7 +716,7 @@ githubRouter.post(
             prisma,
             actor,
             { ...task, projectId: task.project.id },
-            { status: mergedStatus },
+            { status: mergedStatus, ...clearAllClaims },
             mergedStatus,
             {},
             { sha: mergeResult.sha, via: "github_pr_merge" },

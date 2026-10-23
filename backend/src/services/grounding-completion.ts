@@ -1,4 +1,5 @@
 import { checkPrRepoMatchesProject } from "./gates/pr-repo-matches-project.js";
+import { clearWork, clearReview } from "./task-claim-fields.js";
 import { readDirectDescriptor, requireDirectActor, resolveDirectGroundingTarget } from "./grounding-direct-context.js";
 import { changesDirectContext, readDirectOperation } from "./grounding-direct-input.js";
 import { createHash } from "node:crypto";
@@ -42,8 +43,7 @@ export interface GroundingDecision {
   localDigest: string; contextDigest: string; receiptId: string | null; attemptId: string | null; contextRevision: number | null;
   expiresAt: number | null; overrideReason: string | null; reason: string | null; skippedRules: string[]; ciHeadSha: string | null;
 }
-export const clearWork = { claimedByUserId: null, claimedByAgentId: null, claimedAt: null };
-export const clearReview = { reviewClaimedByUserId: null, reviewClaimedByAgentId: null, reviewClaimedAt: null };
+export { clearWork, clearReview };
 function stale(): never { throw new GroundingReceiptVerificationError("grounding_receipt_stale"); }
 function forbidden(): never { throw new GroundingAccessError("forbidden", 403); }
 function badState(): never { throw new GroundingAccessError("bad_state", 409); }

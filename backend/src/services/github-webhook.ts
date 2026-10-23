@@ -31,6 +31,7 @@ import {
   type WorkflowDefinitionShape,
 } from "./default-workflow.js";
 import { taskStatusByWorkflow } from "./workflow-status-filter.js";
+import { clearAllClaims } from "./task-claim-fields.js";
 
 export type GitHubWebhookEvent = "push" | "issues" | "pull_request" | "pull_request_review" | "ping";
 
@@ -194,9 +195,16 @@ interface WebhookStatusWrite {
  * already moved to the target simply needs no transition). After
  * `WEBHOOK_STATUS_WRITE_ATTEMPTS` lost races the write is given up with a
  * warning and `written: false`.
+ *
+ * A write into a terminal state of `definition` (the task's effective
+ * workflow) also clears the work claim and the review claim, like the finish
+ * and approve paths: the task is over, and a claim left on it would count as
+ * an active claim again once its workflow stops treating that status as
+ * terminal.
  */
 async function writeWebhookStatus(
   task: WebhookStatusRow,
+  definition: WorkflowDefinitionShape,
   decide: (status: string) => string | null,
 ): Promise<WebhookStatusWrite> {
   let current: WebhookStatusRow = task;
@@ -207,7 +215,7 @@ async function writeWebhookStatus(
     }
     const result = await prisma.task.updateMany({
       where: { id: current.id, ...taskStatusVersionWhere(current) },
-      data: { status: target, ...STATUS_VERSION_BUMP },
+      data: { status: target, ...STATUS_VERSION_BUMP, ...(isTerminalState(definition, target) ? clearAllClaims : {}) },
     });
     if (result.count === 1) return { written: true, from: current.status, to: target };
     const fresh = await prisma.task.findUnique({
@@ -310,7 +318,7 @@ export async function handleIssuesEvent(payload: GitHubIssuePayload): Promise<vo
         const definition = await resolveEffectiveDefinition(task, prisma);
         // Re-decided against the fresh row after a lost race: a task another
         // writer already finished (or demoted to backlog) is left alone.
-        const moved = await writeWebhookStatus(task, (status) =>
+        const moved = await writeWebhookStatus(task, definition, (status) =>
           isTerminalState(definition, status) || status === BACKLOG_STATE
             ? null
             : (terminalStates(definition)[0] ?? null),
@@ -442,7 +450,7 @@ export async function handlePullRequestEvent(payload: GitHubPullRequestPayload):
         const mergedBy = payload.pull_request.merged_by?.login ?? "unknown";
         for (const task of tasks) {
           const definition = await resolveEffectiveDefinition(task, prisma);
-          const moved = await writeWebhookStatus(task, (currentStatus) =>
+          const moved = await writeWebhookStatus(task, definition, (currentStatus) =>
             pickMergeTargetStatus({ project, currentStatus, definition }),
           );
           if (moved.written && moved.to !== null && isTerminalState(definition, moved.to)) {
@@ -519,7 +527,7 @@ export async function handlePullRequestReviewEvent(payload: GitHubPullRequestRev
         case "changes_requested": {
           // Policy: review-like state → the workflow's request-changes target
           const definition = await resolveEffectiveDefinition(task, prisma);
-          const moved = await writeWebhookStatus(task, (status) =>
+          const moved = await writeWebhookStatus(task, definition, (status) =>
             isReviewState(definition, status)
               ? (requestChangesTarget(definition, status) ?? null)
               : null,

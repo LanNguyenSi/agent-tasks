@@ -16,9 +16,10 @@ import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from "vites
 import { Hono } from "hono";
 import type { AppVariables } from "../../src/types/hono.js";
 import type { Actor } from "../../src/types/auth.js";
-import type { WorkflowDefinitionShape } from "../../src/services/default-workflow.js";
+import { reviewStates, type WorkflowDefinitionShape } from "../../src/services/default-workflow.js";
 import { groundingPostgres } from "../helpers/grounding-postgres.js";
 import { CUSTOM_VOCABULARY_DEFINITION, OPEN_TO_REVIEW_DEFINITION } from "../helpers/custom-vocabulary-workflow.js";
+import { workflowDefinitionSchema } from "../../src/routes/workflows.js";
 
 const shared = vi.hoisted(() => ({ db: undefined as PrismaClient | undefined }));
 
@@ -91,24 +92,25 @@ const DONE_IS_OPEN_DEFINITION: WorkflowDefinitionShape = {
 };
 
 /**
- * Built-in state names with a free `open -> plan -> in_progress -> done` path:
- * `in_progress` has an edge to the terminal state and is no direct target of
- * the initial state, so the helpers read it as review-like and `review` is
- * not a state of this workflow at all.
+ * The four built-in states with free edges, accepted by the workflow API:
+ * `review` is a direct target of the initial state, so it is not review-like
+ * (and has no edge to the terminal state); `in_progress` has an edge to the
+ * terminal state and is no direct target of the initial state, so the helpers
+ * read it as review-like.
  */
 const IN_PROGRESS_IS_REVIEW_DEFINITION: WorkflowDefinitionShape = {
   initialState: "open",
   states: [
     { name: "open", label: "Open", terminal: false },
-    { name: "plan", label: "Plan", terminal: false },
     { name: "in_progress", label: "In progress", terminal: false },
+    { name: "review", label: "In review", terminal: false },
     { name: "done", label: "Done", terminal: true },
   ],
   transitions: [
-    { from: "open", to: "plan" },
-    { from: "plan", to: "in_progress" },
+    { from: "open", to: "review" },
+    { from: "review", to: "in_progress" },
     { from: "in_progress", to: "done" },
-    { from: "in_progress", to: "plan" },
+    { from: "in_progress", to: "review" },
   ],
 };
 
@@ -196,6 +198,13 @@ beforeEach(async () => {
   await db.teamMember.create({ data: { teamId, userId: adminId, role: "ADMIN" } });
   author = await seedAgent();
   worker = await seedAgent();
+});
+
+describe("the free-edge fixtures", () => {
+  it("IN_PROGRESS_IS_REVIEW_DEFINITION is a definition the workflow API accepts, and in_progress is its only review-like state", () => {
+    expect(workflowDefinitionSchema.safeParse(IN_PROGRESS_IS_REVIEW_DEFINITION).success).toBe(true);
+    expect(reviewStates(IN_PROGRESS_IS_REVIEW_DEFINITION)).toEqual(["in_progress"]);
+  });
 });
 
 describe("review pickup follows the task's workflow", () => {
@@ -421,6 +430,35 @@ describe("single-active-claim check follows the task's workflow", () => {
       const blocked = await pickup(worker);
       expect(blocked.status).toBe(409);
       expect(await blocked.json()).toMatchObject({ activeClaim: { taskId: claimed, role: "reviewer" } });
+    });
+  });
+
+  describe("with a stored definition whose states are readable but whose transitions are not", () => {
+    // Terminal states need only the `states` list and are read from the stored
+    // definition; review-like states also need the transitions and fall back to
+    // the built-in `review`. The fallback is per kind, not per row.
+    const TRANSITIONS_UNREADABLE = {
+      initialState: "open",
+      states: [
+        { name: "open", label: "Open", terminal: false },
+        { name: "build", label: "Build", terminal: false },
+        { name: "shipped", label: "Shipped", terminal: true },
+      ],
+      transitions: "not-a-list",
+    } as unknown as WorkflowDefinitionShape;
+
+    it("keeps the stored terminal state for the work claim and the built-in `review` for the review claim", async () => {
+      const project = await seedProject();
+      await seedWorkflow(project, TRANSITIONS_UNREADABLE, true);
+      const claimed = await seedTask(project, { status: "shipped", ...workedBy(worker) });
+      expect(await findActiveAgentClaim(db, workerId())).toBeNull();
+
+      // `done` is no terminal state of this definition, so a claim on it counts.
+      await db.task.update({ where: { id: claimed }, data: { status: "done" } });
+      expect(await findActiveAgentClaim(db, workerId())).toMatchObject({ id: claimed });
+
+      await db.task.update({ where: { id: claimed }, data: { status: "review", claimedByAgentId: null, claimedAt: null, ...reviewedBy(worker) } });
+      expect(await findActiveAgentClaim(db, workerId())).toMatchObject({ id: claimed, reviewClaimedByAgentId: workerId() });
     });
   });
 

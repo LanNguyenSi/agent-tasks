@@ -17,8 +17,11 @@ import type { Gate } from "./types.js";
 import { GateCode } from "./types.js";
 import {
   defaultWorkflowDefinition,
+  isKnownState,
   isReviewState,
   isTerminalState,
+  reviewStates,
+  terminalStates,
   type WorkflowDefinitionShape,
 } from "../default-workflow.js";
 
@@ -42,16 +45,30 @@ export function checkTaskStatusForMerge(
   return { ok: false, reason: "bad_status", currentStatus: task.status };
 }
 
+/** `'a'`, `'a' or 'b'`, `'a', 'b' or 'c'`. */
+function orList(names: string[]): string {
+  const quoted = names.map((n) => `'${n}'`);
+  if (quoted.length <= 1) return quoted.join("");
+  return `${quoted.slice(0, -1).join(", ")} or ${quoted[quoted.length - 1]}`;
+}
+
 /**
  * Human-readable rejection message. Kept in sync with the pre-existing
  * inline message in routes/github.ts so clients that match on prose don't
- * break when the gate is extracted.
+ * break when the gate is extracted. The state names come from `definition`
+ * (the task's effective workflow; the built-in one when omitted): for the
+ * built-in workflow the texts are exactly the `review` / `done` ones.
  */
-export function taskStatusForMergeRejectionMessage(currentStatus: string): string {
-  if (currentStatus === "open" || currentStatus === "in_progress") {
-    return `Cannot merge: task is in '${currentStatus}', expected 'review'. Transition the task to 'review' first (POST /tasks/:id/transition) — or, if you need to bypass the review flow entirely, force-transition to 'done' as an admin and then re-run this merge.`;
+export function taskStatusForMergeRejectionMessage(
+  currentStatus: string,
+  definition: WorkflowDefinitionShape = defaultWorkflowDefinition(),
+): string {
+  const review = reviewStates(definition);
+  const terminal = terminalStates(definition);
+  if (isKnownState(definition, currentStatus) && review.length > 0 && terminal.length > 0) {
+    return `Cannot merge: task is in '${currentStatus}', expected '${review[0]}'. Transition the task to '${review[0]}' first (POST /tasks/:id/transition) — or, if you need to bypass the review flow entirely, force-transition to '${terminal[0]}' as an admin and then re-run this merge.`;
   }
-  return `Cannot merge: task is in '${currentStatus}', expected 'review' or 'done'.`;
+  return `Cannot merge: task is in '${currentStatus}', expected ${orList([...review, ...terminal])}.`;
 }
 
 export const taskStatusForMergeGate: Gate = {
@@ -63,7 +80,7 @@ export const taskStatusForMergeGate: Gate = {
     return {
       active: true,
       because:
-        "Every project requires a mergeable task status before merging the backing PR: pull_requests_merge accepts a review state or terminal state of the task's workflow (review / done in the default workflow), task_merge accepts the literal status review or done. Tasks in other states must transition first.",
+        "Every project requires a mergeable task status before merging the backing PR: pull_requests_merge and task_merge accept a review state or terminal state of the task's workflow (review / done in the default workflow). Tasks in other states must transition first.",
     };
   },
 };

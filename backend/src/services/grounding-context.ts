@@ -64,15 +64,20 @@ export async function requireTaskMergeActor(db: Prisma.TransactionClient, task: 
 /** Installed standalone route policy; never selected by a receipt-supplied flag. */
 export async function resolveTaskMergeTarget(db: Prisma.TransactionClient, task: GroundingTask, actor: Actor, authority: GroundingAuthority = groundingAuthority): Promise<{ target: GroundingTarget; definition: unknown }> {
   await requireTaskMergeActor(db, task, actor, authority);
-  if (task.status !== "review") throw new GroundingAccessError("bad_state", 409);
-  if (!checkSelfMergeGate(task, actor, task.project).allowed || !checkReviewApprovalGate(task, actor, task.project).allowed) throw new GroundingAccessError("forbidden", 403);
   const { definition, def, workflowId } = await groundingWorkflow(db, task);
+  if (!isReviewState(def, task.status)) throw new GroundingAccessError("bad_state", 409);
+  if (!checkSelfMergeGate(task, actor, task.project).allowed || !checkReviewApprovalGate(task, actor, task.project).allowed) throw new GroundingAccessError("forbidden", 403);
   const candidates = def.transitions.filter(t => t.from === task.status && isTerminalState(def, t.to));
   if (candidates.length !== 1) throw new GroundingAccessError("bad_state", 409);
   const edge = candidates[0]!;
   if (edge.requiredRole && !await authority.hasRole(actor, task.projectId, edge.requiredRole as ProjectRole, db)) throw new GroundingAccessError("forbidden", 403);
   if (!await findDelegationUser(task.project.teamId, "allowAgentPrMerge", { preferUserId: actor.userId, db })) throw new GroundingAccessError("forbidden", 403);
   return { target: { workflowId, from: task.status, to: edge.to, action: "merge" }, definition };
+}
+
+/** Whether `task` sits in a review-like state of its own workflow: the standalone task-merge route applies to it. */
+export async function isInReviewState(db: Prisma.TransactionClient, task: GroundingTask): Promise<boolean> {
+  return isReviewState((await groundingWorkflow(db, task)).def, task.status);
 }
 
 export async function resolveGroundingTarget(

@@ -415,6 +415,24 @@ export function approveTarget(def: WorkflowDefinitionShape, fromState: string): 
 }
 
 /**
+ * The terminal state a finish that ends the task moves it to from `fromState`:
+ * the approve target when the workflow has an edge from `fromState` into a
+ * terminal state, else the workflow's first terminal state. The last resort,
+ * `done`, applies only to a definition without any terminal state, which the
+ * workflow API does not accept. Used by the review-approve fallbacks and by
+ * autoMerge, which end the task wherever the workflow says it ends instead
+ * of at the literal `done`.
+ */
+export function terminalTargetFrom(def: WorkflowDefinitionShape, fromState: string): string {
+  return approveTarget(def, fromState) ?? terminalStates(def)[0] ?? "done";
+}
+
+/** Whether `stateName` is one of the definition's states. */
+export function isKnownState(def: WorkflowDefinitionShape, stateName: string): boolean {
+  return def.states.some((s) => s.name === stateName);
+}
+
+/**
  * Find the transition target for a review-finish "request_changes" outcome:
  * the first transition from `fromState` to a non-terminal, non-review state.
  */
