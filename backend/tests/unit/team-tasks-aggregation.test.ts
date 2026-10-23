@@ -15,6 +15,7 @@ const prismaMocks = vi.hoisted(() => ({
   projectFindMany: vi.fn(),
   taskGroupBy: vi.fn(),
   taskCount: vi.fn(),
+  workflowFindMany: vi.fn(),
 }));
 
 vi.mock("../../src/lib/prisma.js", () => ({
@@ -25,6 +26,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
       count: prismaMocks.taskCount,
     },
     project: { findMany: prismaMocks.projectFindMany },
+    workflow: { findMany: prismaMocks.workflowFindMany },
   },
 }));
 
@@ -93,6 +95,8 @@ function makeApp(actor: AgentActor | HumanActor) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // No workflow rows: every task resolves to the built-in workflow.
+  prismaMocks.workflowFindMany.mockResolvedValue([]);
   accessMocks.resolveTeamId.mockResolvedValue({ ok: true, teamId: "team-A" });
   prismaMocks.projectFindMany.mockResolvedValue([
     { id: "p-1", teamId: "team-A", name: "Owned", slug: "owned" },
@@ -286,10 +290,12 @@ describe("GET /teams/:teamId/tasks (aggregation)", () => {
     it("mine count is scoped to actor.userId AND status != done", async () => {
       await makeApp(HUMAN).request("/teams/team-A/tasks");
       const mineWhere = prismaMocks.taskCount.mock.calls[2]![0]!.where;
+      // "Not done" is the terminal state of each task's own workflow; with no
+      // workflow rows every task is judged by the built-in one (`done`).
       expect(mineWhere).toEqual({
         projectId: { in: ["p-1", "p-2"] },
         claimedByUserId: "u-1",
-        status: { not: "done" },
+        AND: [{ OR: [{ workflowId: null, status: { notIn: ["done"] } }] }],
       });
     });
 

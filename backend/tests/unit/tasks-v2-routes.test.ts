@@ -450,8 +450,13 @@ describe("POST /tasks/pickup", () => {
 
     const reviewCall = prismaMocks.taskFindFirst.mock.calls[1]![0];
     const workCall = prismaMocks.taskFindFirst.mock.calls[2]![0];
-    expect(reviewCall.where.blockedBy).toEqual({ none: { status: { notIn: ["done", "abandoned"] } } });
-    expect(workCall.where.blockedBy).toEqual({ none: { status: { notIn: ["done", "abandoned"] } } });
+    // `done` is the blocker's own workflow's terminal state: with no workflow
+    // rows every blocker is judged by the built-in workflow.
+    const unresolvedBlocker = {
+      none: { status: { not: "abandoned" }, AND: [{ OR: [{ workflowId: null, status: { notIn: ["done"] } }] }] },
+    };
+    expect(reviewCall.where.blockedBy).toEqual(unresolvedBlocker);
+    expect(workCall.where.blockedBy).toEqual(unresolvedBlocker);
   });
 
   it("returns idle when no signals, no review task, no work task", async () => {
@@ -477,7 +482,7 @@ describe("POST /tasks/pickup", () => {
     const whereClause = prismaMocks.signalFindFirst.mock.calls[0]![0].where;
     expect(whereClause.OR).toEqual([
       { type: { notIn: ["review_needed", "task_available"] } },
-      { task: { status: { not: "done" } } },
+      { task: { OR: [{ workflowId: null, status: { notIn: ["done"] } }] } },
     ]);
   });
 });

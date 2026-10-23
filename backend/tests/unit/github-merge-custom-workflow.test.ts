@@ -149,7 +149,7 @@ describe("merge route on a custom state vocabulary", () => {
 
     expect(res.status).toBe(403);
     const body = (await res.json()) as { message: string };
-    expect(body.message).toBe(taskStatusForMergeRejectionMessage(status));
+    expect(body.message).toBe(taskStatusForMergeRejectionMessage(status, CUSTOM_VOCABULARY_DEFINITION));
     expect(performPrMergeMock).not.toHaveBeenCalled();
   });
 
@@ -218,7 +218,9 @@ describe("merge route on a four-state workflow with a free open -> review edge",
     const res = await mergeRequest();
 
     expect(res.status).toBe(403);
-    expect(((await res.json()) as { message: string }).message).toBe(taskStatusForMergeRejectionMessage("review"));
+    expect(((await res.json()) as { message: string }).message).toBe(
+      taskStatusForMergeRejectionMessage("review", OPEN_TO_REVIEW_DEFINITION),
+    );
     expect(performPrMergeMock).not.toHaveBeenCalled();
   });
 
