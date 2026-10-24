@@ -131,7 +131,7 @@ describe("createServer tool callback wiring", () => {
   });
 });
 
-// Fix B (datetime rejection message), mcp-server side: the isoDatetime union in
+// Datetime rejection message, mcp-server side: the isoDatetime union in
 // src/zod-formats.ts carries an explicit `error`, so a dueAt the SDK's input
 // validation rejects surfaces the base prose "Invalid datetime at dueAt"
 // (zod 4's bare union would say "Invalid input at dueAt"). Driven through a real

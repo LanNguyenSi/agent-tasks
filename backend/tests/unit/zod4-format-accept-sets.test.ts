@@ -230,7 +230,7 @@ describe("guid fields through the real token/task schemas (z.guid, not z.uuid)",
   });
 });
 
-// Fix B (datetime rejection message): the isoDatetime union carries an explicit
+// Datetime rejection message: the isoDatetime union carries an explicit
 // `error` so a rejected value reports code `invalid_union` with message
 // `Invalid datetime`. The zod 3 `.datetime()` produced a single `invalid_string`
 // issue with that same message for a bad string, and `invalid_type` for a
@@ -261,7 +261,7 @@ describe("createTaskSchema.dueAt rejection code and message (invalid_union / Inv
   });
 });
 
-// Fix A (site 2): directPatchSchema.dueAt (grounding direct-input patch) uses
+// directPatchSchema.dueAt (grounding direct-input patch) uses
 // the same isoDatetime helper. The mutation that reverts it to a bare
 // z.iso.datetime() drops the minute-precision branch, so the accepted minute
 // form (value unchanged) is the discriminator; the offset reject guards the
@@ -277,7 +277,7 @@ describe("directPatchSchema.dueAt accept-set (isoDatetime)", () => {
   });
 });
 
-// Fix A (site 3): the grounding route-effects patch schema (patchSchema, run
+// The grounding route-effects patch schema (patchSchema, run
 // through the exported readGroundingRoutePlan) carries the same dueAt field.
 // A minimal valid plan is built and round-tripped; the minute-precision dueAt
 // must survive unchanged, which the z.iso.datetime() revert rejects.

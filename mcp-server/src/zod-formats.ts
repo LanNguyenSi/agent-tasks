@@ -7,7 +7,7 @@ import { z } from "zod";
  * through unchanged. zod 4's `z.iso.datetime()` alone REQUIRES seconds, so the
  * minute-precision form is restored as a second union branch (`precision: -1`
  * means minutes only, no seconds). Same helper as the backend's
- * src/zod-formats.ts (this is a separate package; it cannot import from
+ * lib/zod-formats.ts (this is a separate package; it cannot import from
  * backend/src). A rejected value reports code `invalid_union` with the message
  * `Invalid datetime`, matching the single `invalid_string`/`Invalid datetime`
  * the zod 3 `.datetime()` used (which was `invalid_type` for a non-string).

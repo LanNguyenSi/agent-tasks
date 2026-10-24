@@ -218,7 +218,7 @@ describe("backend config: zod 4 env coercions and defaults", () => {
     );
   });
 
-  // Fix A (sites 4 and 5): DATABASE_URL and REDIS_URL are urlString() (the zod
+  // DATABASE_URL and REDIS_URL are urlString() (the zod
   // 3 `.url()` behavior). The z.url() revert trims and strips tab/CR/LF from
   // the OUTPUT, so these whitespace-bearing forms pin the raw value surviving.
   it('DATABASE_URL=" postgresql://u:p@h/db" (leading space) is kept EXACTLY (no trim)', async () => {

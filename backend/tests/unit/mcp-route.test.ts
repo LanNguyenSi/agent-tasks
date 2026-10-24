@@ -371,7 +371,7 @@ describe("POST /api/mcp — tool dispatch self-forwards via app.fetch", () => {
     });
   });
 
-  // Fix A (site 1): the tasks_create dueAt field is isoDatetime(), the same
+  // The tasks_create dueAt field is isoDatetime(), the same
   // helper as the REST createTaskSchema. The z.iso.datetime() revert drops the
   // minute-precision branch, so forwarding the minute form unchanged is the
   // discriminator; the offset reject guards the other direction.
